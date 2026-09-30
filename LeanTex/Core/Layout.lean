@@ -1254,9 +1254,9 @@ private structure FlattenSt where
   diags : Array Diag := #[]
   /-- The size ladder named runs resolve through (`Geom.scale`). -/
   ladder : List (String × Nat) := Ir.sizeScale
-  /-- Internal title-part roles whose exact absolute size has been resolved
-  at the slot boundary. Other roles remain transparent. -/
-  roleSizes : List (String × Sp) := []
+  /-- Internal title-part roles whose exact size and optional baseline skip
+  have been resolved at the slot boundary. Other roles remain transparent. -/
+  roleMetrics : List (String × (Sp × Option Sp)) := []
   /-- The inline leaf counter (`LeafCtr`). -/
   ctr : LeafCtr := .fixed .unattributed
   /-- The overlay step this page sets, the number `Ir.altShowsFirst` reads to
@@ -1461,10 +1461,12 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       let inner := flatten mathOk noteOk { st with ctr := st.ctr.enter } sty body
       { inner with ctr := LeafCtr.leave inner.ctr st.ctr }
     else
-      match st.roleSizes.lookup n with
-      | some size =>
+      match st.roleMetrics.lookup n with
+      | some (size, leading) =>
         flatten mathOk noteOk st
-          { sty with fontSize := some (.lit { width := Dim.Length.ofSp size }), leading := none }
+          { sty with
+            fontSize := some (.lit { width := Dim.Length.ofSp size })
+            leading := leading.map fun l => .lit { width := Dim.Length.ofSp l } }
           body
       | none => flatten mathOk noteOk st sty body
   -- The underline is the link's affordance in both backends (the HTML
@@ -1500,7 +1502,7 @@ The block half is `role_transparent_collect`, beside the block walk. The
 Layout-private `leafRole` marker changes attribution only and is excluded. -/
 theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
-    (hs : st.roleSizes.lookup n = none) :
+    (hs : st.roleMetrics.lookup n = none) :
     flattenOne mathOk noteOk st sty (.role n body)
       = flatten mathOk noteOk st sty body := by
   simp [flattenOne, h, hs]
@@ -3478,11 +3480,11 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
-    (roleSizes : List (String × Sp) := []) :
+    (roleMetrics : List (String × (Sp × Option Sp)) := []) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
-    { ladder := ladder, roleSizes := roleSizes, ctr := ctr, step := step } baseStyle xs
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
   let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
     { cache := cache }
   let mut items := acc.items
@@ -5286,7 +5288,7 @@ the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
-    (leaf : Option Nat := none) : B :=
+    (leaf : Option Nat := none) (firstBaseline : Option Sp := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
@@ -5317,7 +5319,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   (b.fitCommit mk
     (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
-      + (if b.ignoreDepth then b.boxDepth + ink.1
+      + firstBaseline.getD
+        (if b.ignoreDepth then b.boxDepth + ink.1
          else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
@@ -5343,19 +5346,21 @@ peer boundary the pending skip is the resolved parskip
 (`flushGap_default_exact`), so the realized baseline delta is the leading
 plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (firstBaseline : Option Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false)
     (hfit : b.y + b.skip.width
-        + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
+        + firstBaseline.getD
+          (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)
         + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
             b.geom.leading size segs).inkBelow - b.bottom
         ≤ b.pageShrink + b.skip.shrink) :
-    (b.placeLine fs x size segs w hang ex).cur.lines.back?.map (·.y) =
+    (b.placeLine fs x size segs w hang ex #[] false none firstBaseline).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
-        + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
+        + firstBaseline.getD
+          (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
@@ -5556,6 +5561,9 @@ private structure ParaJob where
   indent : Sp
   center : Bool
   size : Sp
+  /-- A title part that opens a new line takes TeX's baseline skip in force
+  on that lower line, rather than combining two CSS half-leading boxes. -/
+  firstBaseline : Option Sp := none
   /-- The line hangs from the right edge of the measure (`Geom.flushRight`):
   the third horizontal origin, beside centred and left. -/
   flushRight : Bool := false
@@ -5602,41 +5610,41 @@ private structure ParaJob where
 /-- A title slot's placement resolved to the page: which point of its box
 (`anchor`) stands at which point of the page (`pagePoint`), the shifts in
 page coordinates (`dy` down-positive, TikZ's `yshift` negated), the inner
-sep around the text, and — when the slot declares its width — the box's
-left edge and width as collected. -/
+sep around the text, pgf's outer anchor clearance, and — when the slot
+declares its width — the box's left edge and width as collected. -/
 structure SlotSpec where
   anchor : Ir.BoxPoint
   pagePoint : Ir.BoxPoint
   dx : Int
   dy : Int
   sep : Int
+  outerSep : Int
   box : Option (Int × Int)
   deriving Repr, Inhabited
 
-/-- **Where a slot's box goes.** The box is the text's extent plus the
-inner sep on every side (pgf manual §17.2.2: the border is the text plus
-`inner sep`); the shift is what moves the box's `anchor` point onto the
-page's `pagePoint`, plus the declared shifts — the page point and the box
-point both read through the one share arithmetic (`Ir.shareOf`), the
-vocabulary a frame's vertical distribution declares in. `left`/`w` and
-`top`/`h` are the text extent as set. -/
+/-- **Where a slot's box goes.** The border box is the text's extent plus
+inner sep; pgf's outer sep expands only the rectangle's anchor extent
+(pgf manual §17.2.2–3). The shift moves that expanded `anchor` point onto
+the page's `pagePoint`, plus the declared shifts. `left`/`w` and `top`/`h`
+are the shipped text extent. -/
 def slotShift (spec : SlotSpec) (pageW pageH left w top h : Int) : Int × Int :=
-  let bw := w + 2 * spec.sep
-  let bh := h + 2 * spec.sep
+  let inset := spec.sep + spec.outerSep
+  let bw := w + 2 * inset
+  let bh := h + 2 * inset
   let px := Ir.shareOf spec.pagePoint.hshares pageW + spec.dx
   let py := Ir.shareOf spec.pagePoint.vshares pageH + spec.dy
-  (px - (left - spec.sep + Ir.shareOf spec.anchor.hshares bw),
-   py - (top - spec.sep + Ir.shareOf spec.anchor.vshares bh))
+  (px - (left - inset + Ir.shareOf spec.anchor.hshares bw),
+   py - (top - inset + Ir.shareOf spec.anchor.vshares bh))
 
-/-- **The pinned point lands where it is declared** (`_exact`): after the
-shift, the box's anchor point is the page point plus the declared shifts —
-for every anchor and every page point, whatever the box. -/
+/-- **The expanded anchor point lands where it is declared** (`_exact`):
+after the shift, the rectangle's anchor including inner and outer sep is
+the page point plus the declared shifts, for every compass point. -/
 theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int) :
-    left + (slotShift spec pageW pageH left w top h).1 - spec.sep
-        + Ir.shareOf spec.anchor.hshares (w + 2 * spec.sep)
+    left + (slotShift spec pageW pageH left w top h).1 - spec.sep - spec.outerSep
+        + Ir.shareOf spec.anchor.hshares (w + 2 * (spec.sep + spec.outerSep))
       = Ir.shareOf spec.pagePoint.hshares pageW + spec.dx ∧
-    top + (slotShift spec pageW pageH left w top h).2 - spec.sep
-        + Ir.shareOf spec.anchor.vshares (h + 2 * spec.sep)
+    top + (slotShift spec pageW pageH left w top h).2 - spec.sep - spec.outerSep
+        + Ir.shareOf spec.anchor.vshares (h + 2 * (spec.sep + spec.outerSep))
       = Ir.shareOf spec.pagePoint.vshares pageH + spec.dy := by
   unfold slotShift
   dsimp only
@@ -5794,9 +5802,12 @@ private structure Rd where
   already wrap what they set, so a document title there takes the body size
   before the part's role applies any declared absolute size. -/
   slotTitle : Bool := false
-  /-- Exact absolute title-part sizes, resolved at the slot boundary and
-  scoped to that slot. -/
-  roleSizes : List (String × Sp) := []
+  /-- Exact title-part size and optional baseline skip, resolved at the
+  slot boundary and scoped to that slot. -/
+  roleMetrics : List (String × (Sp × Option Sp)) := []
+  /-- For each part that opens a later line, TeX's baseline skip in force
+  on that line. The explicit part gap stays ordinary pending glue. -/
+  roleBaselines : List (String × Sp) := []
   /-- The gap above the footline band: the document's furniture gap, else
   beamer's 4 pt (`Ir.footline.sep`) — the page builder's own (`B.footGap`),
   from one binding in `run`. -/
@@ -6219,6 +6230,9 @@ private def collectPara (r : Rd) (a : Acc)
   -- to its own `\hsize` (latex.ltx, `\@iiiminipage`), so `.95\textwidth`
   -- inside a column names 95% of the column.
   let measure := (a.measure.getD r.geom.textWidth) - indent
+  let firstBaseline := match inlines[0]? with
+    | some (.role n _) => r.roleBaselines.lookup n
+    | _ => none
   -- The page's text colour is the default: content that declared its own
   -- keeps it, so a themed page colours everything or nothing silently dies
   -- on a dark standout background.
@@ -6228,7 +6242,7 @@ private def collectPara (r : Rd) (a : Acc)
   let (items, ds, cache, extras, rawNotes) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
-      (ladder := r.geom.scale) (step := r.step) (roleSizes := r.roleSizes)
+      (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
   let items :=
     if r.geom.justify then items
     else if display then
@@ -6319,6 +6333,7 @@ private def collectPara (r : Rd) (a : Acc)
       items := items, extras := extras, diags := ds
       target := measure
       indent := indent, center := center, size := size
+      firstBaseline := firstBaseline
       flushRight := r.geom.flushRight
       justify := r.geom.justify
       protrude := r.geom.protrude
@@ -7797,10 +7812,24 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
   | blk :: rest =>
     let a := match slotOfBlock slots blk with
       | some (sl, i) =>
-        let roleSizes := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
+        let partSize (p : Ir.TitlePart) : Sp :=
+          let explicit := p.size.map fun g => (r.resolve g).width
+          let templated := p.font.map fun tpl => Ir.templateSize r.geom.fontSize tpl
+          max 1 ((explicit <|> templated).getD r.geom.fontSize)
+        let roleMetrics := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
           p.size.map fun g =>
-            (Ir.titlePartRole i k, max 0 (r.resolve g).width)
-        let rs := { r with slotTitle := true, roleSizes := roleSizes }
+            let size := max 1 (r.resolve g).width
+            let leading := p.leading.map fun l => (r.resolve l).width
+            (Ir.titlePartRole i k, (size, leading))
+        let roleBaselines := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
+          if p.newLine then
+            let size := partSize p
+            let leading := (p.leading.map fun g => (r.resolve g).width).getD
+              (Ir.leadingFor size r.geom.leading)
+            some (Ir.titlePartRole i k, leading)
+          else none
+        let rs : Rd :=
+          { r with slotTitle := true, roleMetrics := roleMetrics, roleBaselines := roleBaselines }
         let (width, place) := sl.box
         match place with
         | some pl =>
@@ -7817,6 +7846,7 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
               dy := -((pl.yshift.map fun g => (r.resolve g).width).getD 0)
               sep := (pl.innerSep.map fun g => (r.resolve g).width).getD
                 (Ir.pgfInnerSep r.geom.fontSize)
+              outerSep := Ir.pgfOuterSep
               box := w.map fun w => (r.geom.hmargin + indent, w) }
           { a.pushOp (.slotClose spec) with measure := saved }
         | none => collectBlock rs a blk indent
@@ -8784,9 +8814,10 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   -- follows its mark through fit and spill alike.
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
+  let firstBaseline := if st.2.2 then j.firstBaseline else none
   (placeParaTrailer fs j brk g.1
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
-      (counted := !j.inFloat) (leaf := j.leaf)), brk, false)
+      (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)), brk, false)
 
 /-- How many lines the document declared for a paragraph: one per forced
 break in its items. Every paragraph carries a trailing forced break —
@@ -9137,9 +9168,10 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
 `slotShift` as one box, stay pinned where they land (the page's vertical
 distribution moves nothing placed), and the next slot starts where this one
 did — a slot is an overlay node, never a neighbour's spill. The text extent
-is the lines' own: their ascents above the first ink, their descents below
-the last, their widest reach across — or the declared width. -/
-private def B.placeSlot (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec) : B :=
+is the shipped lines' glyph ink (`segsInk`), not the face's nominal ascent
+and descent: TikZ anchors the TeX box that the node body actually built. -/
+private def B.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+    (spec : SlotSpec) : B :=
   let (col, l0, f0) := save
   let group := b.cur.lines.extract l0 b.cur.lines.size
   let restored := { b with y := col.y, prevDepth := col.prevDepth
@@ -9148,10 +9180,11 @@ private def B.placeSlot (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec)
   match group[0]? with
   | none => restored
   | some first =>
-    let asc (l : LineOut) : Sp := b.ascent * l.size / b.geom.fontSize
-    let dsc (l : LineOut) : Sp := b.descent * l.size / b.geom.fontSize
-    let top := group.foldl (fun m l => min m (l.y - asc l)) (first.y - asc first)
-    let bot := group.foldl (fun m l => max m (l.y + dsc l)) (first.y + dsc first)
+    let extent (l : LineOut) := segsInk fs l.segs
+    let top := group.foldl (fun m l => min m (l.y - (extent l).1))
+      (first.y - (extent first).1)
+    let bot := group.foldl (fun m l => max m (l.y + (extent l).2))
+      (first.y + (extent first).2)
     let lo := group.foldl (fun m l => min m l.x) first.x
     let hi := group.foldl (fun m l => max m (l.x + l.setWidth)) (first.x + first.setWidth)
     let (left, w) := spec.box.getD (lo, hi - lo)
@@ -9166,10 +9199,12 @@ private def B.placeSlot (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec)
 /-- A slot moves ink inside the page being built and nothing else: the
 shipped pages, the geometry, the document's ground and the break flag
 stand — what the page-step facts below read. -/
-private theorem placeSlot_keeps (b : B) (save : ColSave × Nat × Nat) (spec : SlotSpec) :
-    (b.placeSlot save spec).pages = b.pages ∧ (b.placeSlot save spec).geom = b.geom ∧
-    (b.placeSlot save spec).docBg = b.docBg ∧
-    (b.placeSlot save spec).noBreak = b.noBreak := by
+private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+    (spec : SlotSpec) :
+    (b.placeSlot fs save spec).pages = b.pages ∧
+    (b.placeSlot fs save spec).geom = b.geom ∧
+    (b.placeSlot fs save spec).docBg = b.docBg ∧
+    (b.placeSlot fs save spec).noBreak = b.noBreak := by
   obtain ⟨col, l0, f0⟩ := save
   simp only [B.placeSlot]
   split <;> exact ⟨rfl, rfl, rfl, rfl⟩
@@ -9441,7 +9476,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .slotClose spec =>
     if let some save := slotSaves.back? then
       slotSaves := slotSaves.pop
-      b := b.placeSlot save spec
+      b := b.placeSlot fs save spec
   return { b := b, colSaves := colSaves, slotSaves := slotSaves, logoSpans := logoSpans,
            prose := prose }
 
@@ -9701,8 +9736,8 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline) := by
   simp only [B.placeLine]
   exact fitCommit_extends ..
 
@@ -9710,15 +9745,15 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf).pages = b.pages := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).pages = b.pages := by
   simp only [B.placeLine]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf).noBreak = true := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).noBreak = true := by
   simp only [B.placeLine]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -9726,8 +9761,9 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
 `placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
-    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf).pendingNotes,
+    (lf : Option Nat) (firstBaseline : Option Sp) (nb : NoteBlock) (hnb : nb ∈ ns)
+    (l : LineOut) (hl : l ∈ nb.lines) :
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).pendingNotes,
       l'.segs = l.segs := by
   simp only [B.placeLine]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
@@ -9736,8 +9772,9 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
-    (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf) :=
+    (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
+    (firstBaseline : Option Sp) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -9966,8 +10003,8 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns c lf) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline) := by
   simp only [B.placeLine]
   exact bgStep_fitCommit ..
 

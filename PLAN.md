@@ -24155,3 +24155,26 @@ loss, and CMYK HTML is an unprofiled screen preview rather than colour-managed
 print simulation. Exact device riders survive direct values and aliases;
 `!` mixes still use the established byte/thousandth arithmetic, so sub-byte
 decimal precision and DeviceGray identity are not yet preserved through a mix.
+
+### 2026-09-29 — title nodes use their shipped box and TeX baseline skip
+
+Two structurally supported title-page shapes disagreed only when optional metadata shared a pinned node. The separate-node control isolated the cause: slot placement used nominal face ascent and descent rather than the glyph box the node body shipped, omitted pgf's default outer anchor clearance, dropped the second argument of beamer's `size*`, and spaced two part paragraphs by cross-size half-leading rather than the lower paragraph's baseline skip. `slotShift_exact` now covers inner plus outer separation; `B.placeSlot` reads `segsInk`; `placeLine_gap_exact` covers an explicit first-baseline distance; and `TitlePart.leading` projects through the PDF and typed HTML from one IR value. Beamer's default title-template size commands resolve through the measured 11-point size table, including each matching baseline skip.
+
+The full-shape optional guard compares a template with empty optional arms against the same template with those arms absent. It requires equality of every non-furniture `Layout.Out` line and run, no separator ink, and identical typed-HTML slot rules. Populated arms are also compared with their conditionals removed. Only a final scoped arm inserting the datum it tests qualifies; four nearby shapes retain the named arrangement fallback instead of being normalized past what the reader proved.
+
+The external report is `scripts/title-placement-diff.lean`, deliberately outside `lake test`. It writes under the ignored build tree, builds invented compound-node and split-node templates twice with LuaLaTeX and once with leantex, reads baselines with Ghostscript txtwrite at 1440 dpi, word boxes with Poppler, and the page ground through Poppler rasterization plus ImageMagick. The exact run was:
+
+```sh
+bash -c 'export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang; export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"; lake env lean --run scripts/title-placement-diff.lean'
+```
+
+Its baseline bound is 0.25 PDF point: two Ghostscript roundings contribute at most 0.05 pt and LuaTeX's largest baseline in the probe contributes 0.123 pt when TeX points become PDF points; 0.20 pt leaves less than one coordinate quantum for both PDF spellings, so 0.25 pt is the smallest honest grid bound. Before → after leantex-minus-LuaLaTeX offsets, in points, were:
+
+| shape | title | subtitle | author | institute |
+|---|---:|---:|---:|---:|
+| compound | -6.55 → 0.00 | -4.75 → +0.05 | -3.60 → -0.05 | -2.95 → 0.00 |
+| split | -5.70 → +0.05 | -1.10 → 0.00 | -2.95 → -0.05 | -2.95 → -0.05 |
+
+The final worst residual is 0.05 pt; every sampled ground pixel agrees exactly. Poppler's word boxes remain report evidence, not an identity gate: it bounds the two writers' embedded font descriptors differently even when Ghostscript reads the same baseline.
+
+The private acceptance used invented metadata through the two original theme variants, with every generated input and output confined to the ignored target-worktree scratch tree. Both LuaLaTeX and leantex produced one page with identical sampled grounds. The compound variant's title, subtitle, author and institute baseline offsets were 0.00, +0.05, -0.10 and -0.05 pt; the separate variant's two rendered lines were +0.05 and 0.00 pt. No private text, path, font, palette, or spacing value entered a tracked fixture or this record.

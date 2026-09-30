@@ -5408,23 +5408,21 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      (lineXOf cF 0 "Probe Heading").any (· > Dim.mm 19) &&
      (lineXOf cF 0 "River Detail").any (· > Dim.mm 19) &&
      (lineYOf cF 0 "River Detail").any fun sy =>
-       (lineYOf cF 0 "Probe Heading").any fun ty => sy - ty > Dim.mm 10)
+       (lineYOf cF 0 "Probe Heading").any fun ty =>
+         sy - ty == Dim.pt 14 + Dim.mm 5)
   t "each present part keeps its declared size and colour on the shipped page"
     (lineSizeOf cF 0 "Probe Heading" == some (Dim.pt 20) &&
-     lineSizeOf cF 0 "River Detail" ==
-       some (Ir.scaleStep docF.page.fontSize "large") &&
-     lineSizeOf cF 0 "example.org" ==
-       some (Ir.scaleStep docF.page.fontSize "small") &&
+     lineSizeOf cF 0 "River Detail" == some (Dim.pt 12) &&
+     lineSizeOf cF 0 "example.org" == some (Dim.pt 10) &&
      runColorOf docF "River Detail" == some { r := 0xF2, g := 0xCC, b := 0x60 } &&
      runColorOf docF "example.org" == some { r := 0xF4, g := 0xF4, b := 0xF0 })
   let htmlF := renderedTitle docF
-  let cssF := HtmlDoc.titleSlotCss docF
   t "typed HTML keeps the two boxes and every independently styled part"
     (["u-titlepage-slot-0-part-0", "u-titlepage-slot-0-part-1",
       "u-titlepage-slot-1-part-0", "u-titlepage-slot-1-part-1"].all (hasStr htmlF) &&
      hasStr htmlF "class=\"ragged\"" && hasStr htmlF "var(--probeGold" &&
-     hasStr htmlF "var(--probeSnow" && hasStr cssF "u-titlepage-slot-0-part-0" &&
-     hasStr cssF "font-size: 1.818em")
+     hasStr htmlF "var(--probeSnow" &&
+     hasStr htmlF "font-size:20pt;line-height:24pt")
   let (_, dsS, cS, hS) := shipWith optional
     ("\\title{Probe Heading}\\subtitle{}\\author{Pat Example}\\institute{example.org}")
   t "an empty subtitle omits only its part"
@@ -5505,12 +5503,13 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     | [pct, shift] => (emSp shift).map (pct, ·)
     | _ => none
   let near (a b : Dim.Sp) : Bool := (a - b).natAbs ≤ (em / 1000).natAbs + 1
+  let outer := Ir.pgfOuterSep
   let want : List (Nat × String × Dim.Sp × String × Dim.Sp × String) :=
-    [(0, "0", Dim.mm 16, "50", Dim.mm 4, "translate(-0%, -50%)"),
-     (1, "0", Dim.mm 16, "0", Dim.mm 14, "translate(-0%, -0%)"),
-     (2, "0", Dim.mm 16, "100", -Dim.mm 14, "translate(-0%, -100%)"),
-     (3, "100", -Dim.mm 16, "100", -Dim.mm 14, "translate(-100%, -100%)"),
-     (4, "100", -Dim.mm 16, "0", Dim.mm 14, "translate(-100%, -0%)")]
+    [(0, "0", Dim.mm 16 + outer, "50", Dim.mm 4, "translate(-0%, -50%)"),
+     (1, "0", Dim.mm 16 + outer, "0", Dim.mm 14 + outer, "translate(-0%, -0%)"),
+     (2, "0", Dim.mm 16 + outer, "100", -Dim.mm 14 - outer, "translate(-0%, -100%)"),
+     (3, "100", -Dim.mm 16 - outer, "100", -Dim.mm 14 - outer, "translate(-100%, -100%)"),
+     (4, "100", -Dim.mm 16 - outer, "0", Dim.mm 14 + outer, "translate(-100%, -0%)")]
   for (i, lp, dx, tp, dy, tr) in want do
     let decls := cssRuleOf tgCss s!"section.slide.title-page > .u-titlepage-slot-{i}"
     t s!"slot {i}: its left is the page point's horizontal share plus its x shift"
@@ -5527,6 +5526,144 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         ((tgRule.bind (field · "padding")).bind emSp) with
      | some x, some ("0", s), some pad => near (s + pad) x
      | _, _, _ => false)
+
+/-- Optional metadata changes a node's contents, never its pin. An empty
+subtitle or institute must ship exactly the page without that arm, even
+when the arm declares a gap and another font. Judged on the shipped lines
+and the typed HTML tree; the metadata is declared after the template. -/
+def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let subtitleArm := "\\vskip3pt{\\small\\color{probeAccent}\\insertsubtitle\\par}"
+  let instituteArm := "{\\small\\color{probePaper}\\insertinstitute\\par}"
+  let optional (datum arm : String) :=
+    s!"\\ifx\\insert{datum}\\@empty\\else" ++ arm ++ "\\fi"
+  let pre (includeOptional : Bool) : String :=
+    "\\definecolor{probeGround}{HTML}{253546}\\definecolor{probePaper}{HTML}{F5EFE3}" ++
+    "\\definecolor{probeAccent}{HTML}{89D7B1}" ++
+    "\\setbeamerfont{probe heading}{size*={28pt}{33pt},series=\\bfseries}" ++
+    "\\setbeamerfont{probe credit}{size=\\large}" ++
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\fill[probeGround] (current page.south west) rectangle (current page.north east);" ++
+    "\\node[anchor=west,align=left,text width=0.7\\paperwidth,text=probePaper]" ++
+    " at ([xshift=17mm]current page.west)" ++
+    " {{\\raggedright\\usebeamerfont{probe heading}\\inserttitle\\par}" ++
+    (if includeOptional then optional "subtitle" subtitleArm else "") ++ "};" ++
+    "\\node[anchor=south west,align=left,text=probeAccent,font=\\usebeamerfont{probe credit}]" ++
+    " at ([xshift=17mm,yshift=11mm]current page.south west)" ++
+    " {{\\raggedright\\insertauthor\\par}" ++
+    (if includeOptional then optional "institute" instituteArm else "") ++ "};" ++
+    "\\end{tikzpicture}}\\title{Synthetic Heading}\\author{A. Example}" ++
+    "\\subtitle{}\\institute{}"
+  let shipPre (preamble : String) :=
+    let (doc, ds) := elabStr (deck169 preamble "\\titlepage")
+    let out := layoutOf oneFace doc
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    (doc, ds, out, head, body)
+  let ship (optional : Bool) := shipPre (pre optional)
+  let (docK, _, outK, _, bodyK) := ship false
+  let (doc, ds, out, head, body) := ship true
+  let census := censusOf (coveredColorsOf doc) out
+  let shape (o : Layout.Out) := o.pages.map fun p =>
+    p.lines.filterMap fun l =>
+      if l.furniture then none else
+      some (lineText l, l.x, l.y, l.segs.filterMap fun s => match s with
+        | .run _ c _ w _ z .. => some (c, w, z)
+        | _ => none)
+  t "empty optional metadata leaves the pinned page's lines, sizes, and inks unchanged"
+    (shape out == shape outK && out.pages.size == 1)
+  t "the optional title keeps its declared size and the author's bottom pin"
+    (lineSizeOf census 0 "Synthetic Heading" == some (Dim.pt 28) &&
+     (lineYOf census 0 "A. Example").any (· > doc.page.height * 3 / 4) &&
+     lineXOf census 0 "Synthetic Heading" == lineXOf census 0 "A. Example")
+  t "empty optional metadata does not restore the default separator"
+    ((census[0]?.map (·.rules)) == some 0)
+  t "an empty metadata test emits no test operand or dimension in HTML"
+    (titleSlideTextList false "" body.toList == titleSlideTextList false "" bodyK.toList &&
+     pageOccurs census 0 "Synthetic Heading" == 1 && pageOccurs census 0 "A. Example" == 1)
+  let css := treeCssList (treeCssList "" head.toList) body.toList
+  for (i, tr) in [(0, "translate(-0%, -50%)"), (1, "translate(-0%, -100%)")] do
+    t s!"optional metadata keeps title slot {i} pinned in the typed HTML output"
+      ((cssRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}").any fun rule =>
+        hasStr rule "position: absolute" && hasStr rule tr)
+  t "a supported optional title template has no arrangement loss"
+    (ds.all fun d => d.code != "W0363" && d.code != "W0361")
+  t "selected custom title fonts reach the page without a dropped-font warning"
+    (ds.all fun d => d.severity != .error &&
+      !(d.code == "W0104" && d.subject.any (·.startsWith "beamer:setbeamerfont:probe")))
+  t "the typed title span carries the declared absolute size and leading"
+    ((elemStylesList #[] body.toList).any fun (text, style) =>
+      text == "Synthetic Heading" && hasStr style "font-size:28pt" &&
+      hasStr style "line-height:33pt")
+  t "control: the title-size declaration reaches the shipped page"
+    (lineSizeOf (censusOf (coveredColorsOf docK) outK) 0 "Synthetic Heading" ==
+      some (Dim.pt 28))
+  for (subtitle, institute) in
+      [("Further Detail", ""), ("", "Example Lab"), ("Further Detail", "Example Lab")] do
+    let populated := (pre true).replace "\\subtitle{}" s!"\\subtitle\{{subtitle}}" |>.replace
+      "\\institute{}" s!"\\institute\{{institute}}"
+    let (_, dsN, outN, headN, bodyN) := shipPre populated
+    let unguarded := populated.replace (optional "subtitle" subtitleArm)
+      (if subtitle.isEmpty then "" else subtitleArm) |>.replace
+      (optional "institute" instituteArm) (if institute.isEmpty then "" else instituteArm) |>.replace
+      "\\vskip3pt" ""
+    let (_, _, outU, _, bodyU) := shipPre unguarded
+    let cN := censusOf (coveredColorsOf doc) outN
+    -- The explicit arm's ink is the oracle; its conditional gap is held
+    -- separately below by the three-point baseline difference.
+    let ink (o : Layout.Out) := (shape o).map fun lines =>
+      lines.map fun (text, _, _, runs) => (text, runs)
+    t s!"populated optional fields select their content once: {subtitle}/{institute}"
+      (ink outN == ink outU &&
+       titleSlideTextList false "" bodyN.toList == titleSlideTextList false "" bodyU.toList &&
+       pageOccurs cN 0 "Synthetic Heading" == 1 && pageOccurs cN 0 "A. Example" == 1 &&
+       pageOccurs cN 0 "Further Detail" == (if subtitle.isEmpty then 0 else 1) &&
+       pageOccurs cN 0 "Example Lab" == (if institute.isEmpty then 0 else 1) &&
+       dsN.all (fun d => d.severity != .error && d.code != "W0363"))
+    let cssN := treeCssList (treeCssList "" headN.toList) bodyN.toList
+    t s!"optional fields retain the two HTML node pins: {subtitle}/{institute}"
+      (([0, 1] : List Nat).all fun i =>
+        cssRuleOf cssN s!"section.slide.title-page > .u-titlepage-slot-{i}" ==
+        cssRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}")
+    unless institute.isEmpty do
+      t "a populated institute and author form one bottom-anchored group"
+        ((lineYOf cN 0 "A. Example").any (· > doc.page.height * 3 / 4) &&
+         (lineYOf cN 0 "A. Example").any (fun y => (lineYOf cN 0 "Example Lab").any (y < ·)) &&
+         lineXOf cN 0 "A. Example" == lineXOf cN 0 "Example Lab" &&
+         (lineSizeOf cN 0 "A. Example").any fun size =>
+           (lineSizeOf cN 0 "Example Lab").any (· < size))
+      t "the institute inherits page ink while the author's accent stays scoped in HTML"
+        (hasStr cssN "color: var(--titlepagefg" &&
+         (elemStylesList #[] bodyN.toList).all (fun (text, style) =>
+           !hasStr text "Example Lab" || !hasStr style "color:") &&
+         (elemStylesList #[] bodyN.toList).any (fun (text, style) =>
+           text == "A. Example" && hasStr style "var(--probeAccent"))
+    unless subtitle.isEmpty do
+      let (_, _, outZ, _, _) := shipPre (populated.replace "\\vskip3pt" "\\vskip0pt")
+      let cZ := censusOf (coveredColorsOf doc) outZ
+      let gap (c : Array CensusPage) : Option Dim.Sp := do
+        return (← lineYOf c 0 "Further Detail") - (← lineYOf c 0 "Synthetic Heading")
+      t "the optional subtitle's declared skip reaches the shipped baselines"
+        (match gap cN, gap cZ with
+         | some a, some b => a - b == Dim.pt 3
+         | _, _ => false)
+  -- Only a final scoped insert of the tested field can be normalized.
+  -- Refusing nearby shapes must keep the built-in page's metadata.
+  for arm in
+      ["\\ifx\\insertdate\\@empty\\else{\\small\\insertsubtitle}\\fi",
+       "\\ifx\\insertsubtitle\\@empty\\else{Label \\insertsubtitle}\\fi",
+       "\\ifx\\insertsubtitle\\@empty\\else\\small\\insertsubtitle\\fi",
+       "\\ifx\\insertsubtitle\\@empty\\else{\\insertsubtitle}\\fi\\insertauthor",
+       "\\ifx\\insertsubtitle\\@empty\\else\\vskip1em{\\insertsubtitle}\\fi",
+       "\\ifx\\insertsubtitle\\@empty\\else\\vskip1ex{\\insertsubtitle}\\fi",
+       "\\vskip3pt\\insertsubtitle"] do
+    let bad := (pre false).replace "\\inserttitle\\par}" ("\\inserttitle\\par}" ++ arm)
+    let (_, dsB, outB, _, bodyB) := shipPre bad
+    let cB := censusOf (coveredColorsOf doc) outB
+    t "a conditional outside the supported shape retains its named fallback and metadata"
+      (dsB.any (·.code == "W0363") && dsB.all (·.severity != .error) &&
+       pageOccurs cB 0 "Synthetic Heading" == 1 && pageOccurs cB 0 "A. Example" == 1 &&
+       hasStr (titleSlideTextList false "" bodyB.toList) "Synthetic Heading")
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

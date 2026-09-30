@@ -292,7 +292,14 @@ def reports : List Report := [
     pins := [thm% Ir.TitleSlot.ofNodeParts_exact,
       thm% Ir.TitleSlot.ofNodeParts_projects, check% titleSlotShipChecks]
     accept := ["two private title-page builds measured against their lualatex pages"]
-    state := .guarded "82e1e271" .before .author }
+    state := .guarded "82e1e271" .before .author },
+  { id := "R47", date := "2026-09-29"
+    what := "two title-page theme shapes placed the same metadata differently because compound optional parts lost their baseline skips and the node anchor used nominal face metrics"
+    pins := [thm% Layout.slotShift_exact, check% titleSlotShipChecks,
+      check% titleTemplateOptionalChecks]
+    accept := ["the external synthetic title placement differential against LuaLaTeX",
+      "invented-metadata builds through both private theme variants measured against their LuaLaTeX pages"]
+    state := .guarded "82613240" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

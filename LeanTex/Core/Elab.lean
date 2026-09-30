@@ -11422,7 +11422,7 @@ def titleSlotKeys : List String :=
 
 /-- The keys of one independently styled part in a title slot. -/
 def titlePartKeys : List String :=
-  ["set", "content", "font", "align", "size", "new-line", "before"]
+  ["set", "content", "font", "align", "size", "leading", "new-line", "before"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -11582,6 +11582,7 @@ institute, or date, got '{vt}'" pos
                     diag ctx .E0323
                       s!"'align' in a title part expects left, center, or right, got '{vt}'" pos
                 | "size" => p := { p with size := ← lengthOf "size" v }
+                | "leading" => p := { p with leading := ← lengthOf "leading" v }
                 | "new-line" =>
                   if vt == "true" then p := { p with newLine := true }
                   else if vt == "false" then p := { p with newLine := false }

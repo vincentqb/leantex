@@ -27,6 +27,7 @@ structure Part where
   content : String := ""
   font : String := ""
   size : Option String := none
+  leading : Option String := none
   ink : Option String := none
   align : Option String := none
   newLine : Bool := false
@@ -75,6 +76,7 @@ commands and, apart, the size it declares (beamerbasefont.sty's `size*`). -/
 structure Font where
   cmds : String := ""
   size : Option String := none
+  leading : Option String := none
   /-- What the declaration said that the record does not take. -/
   unread : Array String := #[]
   deriving Repr, BEq, Inhabited
@@ -207,6 +209,7 @@ a ragged declaration. A group scopes each of them, as TeX's does. -/
 structure Style where
   font : String := ""
   size : Option String := none
+  leading : Option String := none
   ink : Option String := none
   align : Option String := none
   deriving Repr, BEq, Inhabited
@@ -232,6 +235,9 @@ structure Scan where
   /-- A line end and gap met since the last datum. -/
   broke : Bool := false
   before : Option String := none
+  /-- The current `\ifx` arm was proved to be the final optional-datum
+  shape. Only glue in that arm may disappear with empty metadata. -/
+  optionalArm : Bool := false
   deriving Repr, Inhabited
 
 /-- NFSS's font-change commands, declaration beside its one-argument form —
@@ -244,12 +250,86 @@ def fontAxes : List (String × String) :=
    ("itshape", "textit"), ("slshape", "textsl"), ("scshape", "textsc"),
    ("normalfont", "textnormal"), ("em", "emph")]
 
+/-- Beamer's default 11-point named sizes and baseline skips, measured
+from its loaded size file (TeX Live 2026). A title-template font command is
+resolved here because the template reader emits exact native part metrics;
+the document-wide modular scale remains the engine's own. -/
+def beamerSizes : List (String × (String × String)) :=
+  [("tiny", ("6pt", "7pt")), ("scriptsize", ("8pt", "9.5pt")),
+   ("footnotesize", ("9pt", "11pt")), ("small", ("10pt", "12pt")),
+   ("normalsize", ("10.95pt", "13.6pt")), ("large", ("12pt", "14pt")),
+   ("Large", ("14.4pt", "18pt")), ("LARGE", ("17.28pt", "22pt")),
+   ("huge", ("20.74pt", "25pt")), ("Huge", ("24.88pt", "30pt"))]
+
 /-- A font declaration in content: an NFSS axis or a size of the scale. -/
 def fontDecl (n : String) : Bool :=
   fontAxes.any (·.1 == n) || Ir.sizeScale.any (·.1 == n)
 
 /-- Control words that end or break a line and set no ink of their own. -/
 def lineCtrls : List String := ["par", "\\", "newline", "null"]
+
+/-- Facts needed to admit exactly the final scoped optional-datum arm.
+Literal ink, another datum, or an unknown control makes the arm structural
+rather than a conditional omission. -/
+private structure OptionalFacts where
+  data : Array String := #[]
+  clean : Bool := true
+
+private def optionalFacts (acc : OptionalFacts) : List Tok → OptionalFacts
+  | [] => acc
+  | .space :: rest => optionalFacts acc rest
+  | .group body :: rest => optionalFacts (optionalFacts acc body) rest
+  | .ctrl "color" :: .group _ :: rest
+  | .ctrl "usebeamerfont" :: .group _ :: rest => optionalFacts acc rest
+  | .ctrl n :: rest =>
+    match insertDatum n with
+    | some d => optionalFacts { acc with data := acc.data.push d } rest
+    | none =>
+      if fontDecl n || lineCtrls.contains n || n == "raggedright" ||
+          n == "raggedleft" || n == "centering" then
+        optionalFacts acc rest
+      else optionalFacts { acc with clean := false } rest
+  | _ :: rest => optionalFacts { acc with clean := false } rest
+termination_by ts => sizeOf ts
+decreasing_by
+  all_goals simp_wf
+  all_goals omega
+
+private def splitOptionalFi (acc : Array Tok) : List Tok → Option (List Tok × List Tok)
+  | [] => none
+  | .ctrl "fi" :: rest => some (acc.toList, rest)
+  | x :: rest => splitOptionalFi (acc.push x) rest
+
+private def absoluteSkipUnit (unit : String) : Bool :=
+  ["pt", "bp", "mm", "cm", "in", "pc", "dd", "cc", "sp"].contains unit
+
+private def absoluteSkipSyntax (ts : List Tok) : Bool :=
+  match (trim ts).filter (· != .space) with
+  | [.num _, .ident unit]
+  | [.sym '-', .num _, .ident unit] => absoluteSkipUnit unit
+  | _ => false
+
+private def optionalGapPrefix (ts : List Tok) : Bool :=
+  match (trim ts).filter (· != .space) with
+  | [] => true
+  | [.ctrl "vskip", .group body] => absoluteSkipSyntax body
+  | [.ctrl "vskip", .num _, .ident unit]
+  | [.ctrl "vskip", .sym '-', .num _, .ident unit] => absoluteSkipUnit unit
+  | _ => false
+
+/-- Only a final scoped arm inserting the datum it tests is an optional
+part. This prevents a nearby conditional from being normalized into a
+slot it did not describe. -/
+private def supportedOptional (tested : String) (rest : List Tok) : Bool :=
+  match insertDatum tested, splitOptionalFi #[] rest with
+  | some expected, some (arm, after) =>
+    if !(trim after).isEmpty then false else
+    match (trim arm).reverse with
+    | .group body :: revPrefix =>
+      let facts := optionalFacts {} body
+      optionalGapPrefix revPrefix.reverse && facts.clean && facts.data == #[expected]
+    | _ => false
+  | _, _ => false
 
 /-- **What a node's content sets**, one scan in source order. A datum is
 recorded with the style in force where its insert stands; a group scopes
@@ -269,26 +349,36 @@ def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List To
     else scanList fonts st { acc with skipped := acc.skipped.push s!"\\{n}" } rest
   | .ctrl "ifx" :: .ctrl datum :: .ctrl "@empty" :: .ctrl "else" :: rest
   | .ctrl "ifx" :: .ctrl "@empty" :: .ctrl datum :: .ctrl "else" :: rest =>
-    if (insertDatum datum).isSome then scanList fonts st acc rest
-    else scanList fonts st { acc with skipped := acc.skipped.push "\\ifx" } rest
+    if supportedOptional datum rest then
+      scanList fonts st { acc with optionalArm := true } rest
+    else scanList fonts st { acc with words := true } rest
   | .ctrl "ifx" :: rest =>
     scanList fonts st { acc with skipped := acc.skipped.push "\\ifx" } rest
-  | .ctrl "fi" :: rest => scanList fonts st acc rest
+  | .ctrl "fi" :: rest => scanList fonts st { acc with optionalArm := false } rest
   | .ctrl "vskip" :: .space :: rest =>
     scanList fonts st acc (.ctrl "vskip" :: rest)
   | .ctrl "vskip" :: .group body :: rest =>
-    scanList fonts st { acc with broke := true, before := some (srcList (trim body)) } rest
-  | .ctrl "vskip" :: n@(.num _) :: u@(.ident _) :: rest =>
-    scanList fonts st { acc with broke := true, before := some (srcList [n, u]) } rest
-  | .ctrl "vskip" :: s@(.sym '-') :: n@(.num _) :: u@(.ident _) :: rest =>
-    scanList fonts st { acc with broke := true, before := some (srcList [s, n, u]) } rest
+    if acc.optionalArm && absoluteSkipSyntax body then
+      scanList fonts st { acc with broke := true, before := some (srcList (trim body)) } rest
+    else scanList fonts st { acc with words := true } rest
+  | .ctrl "vskip" :: n@(.num _) :: u@(.ident unit) :: rest =>
+    if acc.optionalArm && absoluteSkipUnit unit then
+      scanList fonts st { acc with broke := true, before := some (srcList [n, u]) } rest
+    else scanList fonts st { acc with words := true } rest
+  | .ctrl "vskip" :: s@(.sym '-') :: n@(.num _) :: u@(.ident unit) :: rest =>
+    if acc.optionalArm && absoluteSkipUnit unit then
+      scanList fonts st { acc with broke := true, before := some (srcList [s, n, u]) } rest
+    else scanList fonts st { acc with words := true } rest
   | .ctrl "vskip" :: rest =>
     scanList fonts st { acc with skipped := acc.skipped.push "\\vskip" } rest
   | .ctrl "usebeamerfont" :: .group g :: rest =>
     let name := srcList (trim g)
     match fonts.lookup name with
     | some f =>
-      scanList fonts { st with font := st.font ++ f.cmds, size := f.size <|> st.size }
+      let size := f.size.orElse fun _ => st.size
+      let leading := f.leading.orElse fun _ => st.leading
+      scanList fonts
+        { st with font := st.font ++ f.cmds, size := size, leading := leading }
         { acc with used := acc.used.push name } rest
     | none =>
       scanList fonts st
@@ -334,8 +424,12 @@ where
       else if n == "raggedright" then ({ st with align := some "left" }, acc)
       else if n == "raggedleft" then ({ st with align := some "right" }, acc)
       else if n == "centering" then ({ st with align := some "center" }, acc)
-      else if fontDecl n then ({ st with font := st.font ++ s!"\\{n} " }, acc)
-      else (st, { acc with skipped := acc.skipped.push s!"\\{n}" })
+      else match beamerSizes.lookup n with
+        | some (size, leading) =>
+          ({ st with size := some size, leading := some leading }, acc)
+        | none =>
+          if fontDecl n then ({ st with font := st.font ++ s!"\\{n} " }, acc)
+          else (st, { acc with skipped := acc.skipped.push s!"\\{n}" })
 
 /-- Two opposite corners of the page: the rectangle between them is the
 whole page. -/
@@ -375,6 +469,7 @@ def fontOf (fonts : List (String × Font)) (ts : List Tok) :
     Option (Font × Array String) := do
   let mut cmds := ""
   let mut size : Option String := none
+  let mut leading : Option String := none
   let mut unread : Array String := #[]
   let mut used : Array String := #[]
   let mut rest := trim ts
@@ -389,15 +484,20 @@ def fontOf (fonts : List (String × Font)) (ts : List Tok) :
         let f ← fonts.lookup name
         cmds := cmds ++ f.cmds
         size := f.size <|> size
+        leading := f.leading <|> leading
         unread := unread ++ f.unread
         used := used.push name
         rest := r'
       | _ => failure
-    | t@(.ctrl _) :: r =>
-      cmds := cmds ++ srcOne t
+    | t@(.ctrl n) :: r =>
+      match beamerSizes.lookup n with
+      | some (s, l) =>
+        size := some s
+        leading := some l
+      | none => cmds := cmds ++ srcOne t
       rest := r
     | _ => failure
-  return ({ cmds := cmds, size := size, unread := unread }, used)
+  return ({ cmds := cmds, size := size, leading := leading, unread := unread }, used)
 
 /-- `\node[<options>] (<name>) at (<page point>) {<content>}`. -/
 def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read := Id.run do
@@ -468,7 +568,7 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
     | ("font", some v) =>
       match fontOf fonts v with
       | some (f, names) =>
-        base := { base with font := f.cmds, size := f.size }
+        base := { base with font := f.cmds, size := f.size, leading := f.leading }
         unread := unread ++ f.unread
         used := used ++ names
       | none => unread := unread.push s!"font={srcList v}"
@@ -481,16 +581,17 @@ def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok) : Read 
   match sc.data[0]? with
   | none =>
     let literal : Part :=
-      { datum := none, content := srcList body, font := base.font, size := base.size
-        ink := base.ink, align := base.align }
+      { datum := none, content := srcList body, font := base.font, size := base.size,
+        leading := base.leading, ink := base.ink, align := base.align }
     let node := { n with parts := #[literal] }
     return { rd with
       nodes := rd.nodes.push node
       unplaced := if node.pinned then rd.unplaced else rd.unplaced.push #[] }
   | some first =>
     let parts := sc.data.map fun p =>
-      { datum := some p.datum, font := p.style.font, size := p.style.size
-        ink := p.style.ink, align := p.style.align, newLine := p.newLine, before := p.before }
+      { datum := some p.datum, font := p.style.font, size := p.style.size,
+        leading := p.style.leading, ink := p.style.ink, align := p.style.align,
+        newLine := p.newLine, before := p.before }
     let data := sc.data.map (·.datum)
     let node := { n with parts := parts }
     let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, first.datum) }
@@ -596,6 +697,7 @@ def native (rd : Read) : String :=
       (if p.newLine then ["new-line = true"] else []) ++
       (p.before.map (s!"before = {·}")).toList ++
       (p.size.map (s!"size = {·}")).toList ++
+      (p.leading.map (s!"leading = {·}")).toList ++
       (p.align.map (s!"align = {·}")).toList ++
       (if font.isEmpty then [] else ["font = {" ++ font.trimAscii.toString ++ "}"])
     "part = { " ++ String.intercalate ", " fields ++ " }"

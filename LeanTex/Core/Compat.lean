@@ -5365,13 +5365,18 @@ has no styleable element for; skipped" pos
           for e in (rawSrc args[1]).splitOn "," do
             match (e.splitOn "=").map (·.trimAscii.toString) with
             | [key, v] =>
-              if beamerFontKeys.contains key then font := { font with cmds := font.cmds ++ v }
+              if key == "size" then
+                let n := if v.startsWith "\\" then (v.drop 1).toString else v
+                match TitleTemplate.beamerSizes.lookup n with
+                | some (size, leading) => font := { font with size := some size, leading := some leading }
+                | none => font := { font with cmds := font.cmds ++ v }
               else if key == "size*" then
                 let gs := braceGroups v
-                font := { font with size := gs[0]? }
-                if gs.size > 1 then
-                  let note := s!"the baselineskip of '{element}'"
+                font := { font with size := gs[0]?, leading := gs[1]? }
+                if gs.size > 2 then
+                  let note := s!"extra size fields of '{element}'"
                   font := { font with unread := font.unread.push note }
+              else if beamerFontKeys.contains key then font := { font with cmds := font.cmds ++ v }
               else
                 let note := s!"'{key}' of '{element}'"
                 font := { font with unread := font.unread.push note }

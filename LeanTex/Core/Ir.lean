@@ -6080,18 +6080,24 @@ node's options are read in the surrounding font, the body's. The same
 value as `Picture.innerSepDefault`, which the picture subset reads. -/
 def pgfInnerSep (em : Sp) : Sp := em * 3333 / 10000
 
+/-- pgf's rectangular-node anchor clearance, the initial `outer sep`:
+half the initial 0.4 pt line width (pgf manual §17.2.3). It expands anchor
+points but is not padding; the text box still carries only `inner sep`. -/
+def pgfOuterSep : Sp := Dim.pt 1 / 5
+
 /-- One independently styled part of a title slot. `datum` selects document
 metadata; with no datum, `content` is literal slot content. `newLine` starts
 this part below the preceding present part, and `before` is the additional
 vertical gap there. A missing or empty datum omits this part and its gap.
-Font, alignment and absolute size belong to the part, while width and
-placement belong once to the containing slot. -/
+Font, alignment, absolute size and its baseline skip belong to the part,
+while width and placement belong once to the containing slot. -/
 structure TitlePart where
   datum : Option TitleDatum
   content : Array Inline := #[]
   font : Option (Array Inline) := none
   align : Option String := none
   size : Option SymGlue := none
+  leading : Option SymGlue := none
   newLine : Bool := false
   before : Option SymGlue := none
   deriving Repr, BEq, Inhabited
@@ -6146,6 +6152,14 @@ def titlePartRole (slot part : Nat) : String := s!"titlepage-slot-{slot}-part-{p
 one lookup both backends make from the block to the value that places it. -/
 def titleSlotOf (slots : Array TitleSlot) (n : String) : Option TitleSlot :=
   (slots.zipIdx.find? fun (_, i) => titleSlotRole i == n).map (·.1)
+
+/-- The part an inline role shows. Both backends use this lookup for the
+part's exact size and baseline skip; a role that names no part stays an
+authored, metric-transparent role. -/
+def titlePartOf (slots : Array TitleSlot) (n : String) : Option TitlePart :=
+  slots.zipIdx.findSome? fun (slot, i) =>
+    slot.parts.zipIdx.findSome? fun (part, k) =>
+      if titlePartRole i k == n then some part else none
 
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.

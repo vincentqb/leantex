@@ -342,12 +342,13 @@ def censusTable :
     ("the frame after it ships its own page",
       pageHas c 1 "On the document" &&
         pageHas c 1 "on the ground every other page carries"),
-    -- Each datum stands where its slot pins it: the title's border 1.6cm
-    -- in, its text one inner sep (pgf's 0.3333em of the body) inside that,
+    -- Each datum stands where its slot pins it: the title's anchor 1.6cm
+    -- in, its text one inner sep plus pgf's outer anchor clearance inside,
     -- at the slot's own size; the author above the page foot, the
     -- institute set flush right at the foot's other corner.
-    ("the title starts one inner sep inside its pinned left edge",
-      lineXOf c 0 "A Placeholder Deck" == some (Dim.mm 16 + Ir.pgfInnerSep geom.fontSize)),
+    ("the title starts inside its pinned node separations",
+      lineXOf c 0 "A Placeholder Deck" ==
+        some (Dim.mm 16 + Ir.pgfInnerSep geom.fontSize + Ir.pgfOuterSep)),
     ("the title sets at its slot's declared size",
       lineSizeOf c 0 "A Placeholder Deck" == some (Dim.pt 18)),
     ("the author's slot is pinned above the page foot, not under the title",

@@ -1316,25 +1316,27 @@ def titleSlotCss (doc : Doc) : String :=
     let (slotWidth, place) := sl.box
     place.map fun pl =>
       let sel := s!"section.slide.title-page > .{roleClass (Ir.titleSlotRole i)}"
-      let dx := (pl.xshift.map (·.width)).getD zero
+      let outer := Dim.Length.ofSp Ir.pgfOuterSep
+      let anchorOffset (s : Nat × Nat) : Dim.Length :=
+        outer.scale ((s.2 : Int) - (s.1 : Int)) (s.1 + s.2)
+      let dx := ((pl.xshift.map (·.width)).getD zero).add
+        (anchorOffset pl.anchor.hshares)
       let dy := (pl.yshift.map (·.width)).getD zero
-      -- TikZ's `yshift` is up; the stage's `top` grows down.
-      let up : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+      -- TikZ's `yshift` is up; the stage's `top` grows down. Its outer
+      -- sep expands compass anchors but is not CSS padding.
+      let up0 : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+      let up := up0.add (anchorOffset pl.anchor.vshares)
       let sep := (pl.innerSep.map (·.width)).getD
         (Dim.Length.ofSp (Ir.pgfInnerSep doc.page.fontSize))
       let width := match slotWidth with
         | some w => s!" width: {emOf w.width};"
         | none => ""
-      let partSizes := String.join (sl.parts.zipIdx.toList.filterMap fun (p, k) =>
-        p.size.map fun z =>
-          let partSel := s!"{sel} .{roleClass (Ir.titlePartRole i k)}"
-          s!"{partSel} \{ font-size: {emOf z.width}; }\n")
       s!"{sel} \{ position: absolute; margin: 0;\n" ++
       s!"  left: calc({decMilli (Ir.shareOf pl.pagePoint.hshares 100000)}% + {emOf dx});\n" ++
       s!"  top: calc({decMilli (Ir.shareOf pl.pagePoint.vshares 100000)}% + {emOf up});\n" ++
       s!"  transform: translate(-{decMilli (Ir.shareOf pl.anchor.hshares 100000)}%, \
 -{decMilli (Ir.shareOf pl.anchor.vshares 100000)}%);\n" ++
-      s!"  padding: {emOf sep};{width} }\n" ++ partSizes
+      s!"  padding: {emOf sep};{width} }\n"
   "@media screen, print { section.slide.title-page { position: relative; }\n" ++
   String.join rules ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] h1 {\n" ++
@@ -4480,11 +4482,16 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     | .lang tag => acc.push (Html.elem "span" kids #[("lang", tag)])
     | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
   | .role n body =>
-    -- The class hook: the authored name survives as an addressable class,
-    -- through the typed tree and the attribute escaper by construction
-    -- (role_class_reaches_artifact).
-    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-      #[("class", roleClass n)])
+    -- The class hook survives as an addressable class. A title-part role
+    -- also projects its exact size and baseline skip from the one IR part;
+    -- ordinary authored roles remain style-free.
+    let style := (Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n).bind fun p =>
+      let decls :=
+        (p.size.map fun z => s!"font-size:{cssLength z.width};").toList ++
+        (p.leading.map fun z => s!"line-height:{cssLength z.width};").toList
+      if decls.isEmpty then none else some (String.join decls)
+    let attrs := #[some ("class", roleClass n), style.map ("style", ·)].filterMap id
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) attrs)
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
@@ -4776,18 +4783,19 @@ theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
         #[("style", s!"color: var(--{n}, {cssColor c})")]) := by
   simp [inlineNodeInto]
 
-/-- The class hook's emission half: an authored role reaches the artifact
-as an element carrying exactly `roleClass name`, children the emission of
-its body. The name enters attribute position only through the typed tree,
-so it passes `escapeAttr` by construction (`escapeAttr_no_quote` is what
-closes attribute breakout); `roleClass_single_token` is why the value is
-one class token. -/
+/-- The class hook's emission half: an authored role (not an internal
+title-part role) reaches the artifact as an element carrying exactly
+`roleClass name`, children the emission of its body. The name enters
+attribute position only through the typed tree, so it passes `escapeAttr`
+by construction (`escapeAttr_no_quote` closes attribute breakout), and
+`roleClass_single_token` keeps the value one class token. -/
 theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
-    (n : String) (body : Array Inline) :
+    (n : String) (body : Array Inline)
+    (h : Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n = none) :
     inlineNodeInto cfg acc (.role n body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
         #[("class", roleClass n)]) := by
-  simp [inlineNodeInto]
+  simp [inlineNodeInto, h]
 
 /-- A link's URL enters the artifact only as the `href` attribute of the
 typed tree — never spliced into markup — so it passes `escapeAttr` by
