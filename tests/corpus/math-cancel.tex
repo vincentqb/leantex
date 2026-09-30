@@ -1,0 +1,26 @@
+% Invented formulas: diagonal marks, a value on a fraction, and colour
+% scoped inside an alignment. Every mark is held by the shipped census.
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+\usepackage{amsmath,xcolor}
+\usepackage[makeroom]{cancel}
+\title{Annotated Formulas}
+
+\begin{document}
+
+\maketitle
+
+The three diagonal marks preserve their operands:
+$\cancel{x} + \bcancel{y} + \xcancel{a+b}$.
+
+A value sits beside the arrow and above its operand:
+\[
+  \cancelto{0}{\frac{r}{s}} + t^2
+\]
+
+Colour stays inside its group, including the arrow and value:
+\begin{align*}
+  a &= {\color{red}\textcolor{blue}{\cancelto{7}{z}}} + w^2
+\end{align*}
+
+\end{document}

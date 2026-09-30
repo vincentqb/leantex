@@ -968,31 +968,21 @@ sequences; and the PDF footer text is the HTML footer text, frame for
 frame — both read `Ir.frameNumbers` and neither counts. -/
 def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- The HTML tree pretty-prints, so tags and indentation are stripped and
-  -- the comparison is over the footer's own characters.
-  let strip (s : String) : String := Id.run do
-    let mut out := ""
-    let mut inTag := false
-    for c in s.toList do
-      if c == '<' then inTag := true
-      else if c == '>' then inTag := false
-      else if !inTag && !c.isWhitespace then out := out.push c
-    return out
-  let htmlFoots (html : String) : List String :=
-    -- Consecutive sections sharing one footer are one frame: the deck is
-    -- one section per frame now, so this collapse is the PDF side's
-    -- (steps, spills) mirrored — the frame-level sequence both agree on.
-    let raw := ((html.splitOn ("class=\"slide-foot size-" ++ Ir.footline.step ++ "\">")).drop 1).map fun s =>
-      strip ((s.splitOn "</footer>")[0]?.getD "")
-    (raw.foldl (fun (acc : List String) s =>
-      if acc.head? == some s then acc else s :: acc) []).reverse
+  -- Read the typed footer slots: adding a paint attribute must not make
+  -- a visible footer disappear from this comparison.
+  let compact (s : String) : String :=
+    String.ofList (s.toList.filter (!·.isWhitespace))
+  let htmlFoots (doc : Ir.Doc) : List String :=
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    (dedupConsecutive (slideFootsList #[] body.toList)).toList.map
+      fun (left, right) => compact (left ++ right)
   -- Consecutive pages sharing one footer are one frame (steps, spills):
   -- the frame-level sequence both backends must agree on.
   let pdfFoots (out : Layout.Out) : List String :=
     (out.pages.foldl (fun (acc : List String) p =>
       match p.foot with
       | some f =>
-        let s := strip (Ir.plainText (Ir.bandInlines f))
+        let s := compact (Ir.plainText (Ir.bandInlines f))
         if acc.head? == some s then acc else s :: acc
       | none => acc) []).reverse
   -- The headline disagreement: the title page carried footer "1" and the
@@ -1023,7 +1013,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((html.splitOn ">1</span>").length == 2)
   t "html progress is 0% before any content frame"
     ((html.splitOn "width: 0%").length == 2)
-  t "pdf and html footers are the same text" (pdfFoots out == htmlFoots html)
+  t "pdf and html footers are the same text" (pdfFoots out == htmlFoots doc)
   -- Steps, a \framefoot note, and the two-sequences deck: the note takes
   -- the left slot beside the frame's number, a stepped frame's pages share
   -- one number, and the backends agree frame for frame.
@@ -1042,9 +1032,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (dOut.pages[1]?.bind (·.foot) == dOut.pages[2]?.bind (·.foot))
   t "the framefoot note sits beside the frame's own number"
     ((dOut.pages[4]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "note2")
-  let (dHtml, _) := HtmlDoc.emit {} dDoc
   t "pdf and html footers agree across steps and notes"
-    (pdfFoots dOut == htmlFoots dHtml && htmlFoots dHtml == ["1", "note2"])
+    (pdfFoots dOut == htmlFoots dDoc && htmlFoots dDoc == ["1", "note2"])
   -- \pagenumber/\pagecount stay the physical sequence: a \runningfoot deck
   -- numbers its pages 1..pages.size (title page included), while the frame
   -- count is its own declared sequence — two models, both stated.
@@ -1098,7 +1087,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "appendixnumberbeamer: each part's frames read n over the part's own count"
     (pdfFoots aOut == ["1/2", "2/2", "1/2", "2/2"])
   t "appendixnumberbeamer: pdf and html footers are the same text"
-    (pdfFoots aOut == htmlFoots (HtmlDoc.emit {} aDoc).1)
+    (pdfFoots aOut == htmlFoots aDoc)
   let (nDoc, _) := appendixDeck false
   t "without appendixnumberbeamer the appendix numbers on"
     (nDoc.frameNumbers.toList.filterMap id == [1, 2, 3, 4] &&
@@ -1115,9 +1104,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the fraction footer reads n / N"
     (cOut.pages.map (fun p => (p.foot.map (fun f => Ir.plainText (Ir.bandInlines f))).getD "") ==
       #["1 / 2", "2 / 2"])
-  let (cHtml, _) := HtmlDoc.emit {} cDoc
   t "pdf and html agree on the fraction form"
-    (pdfFoots cOut == htmlFoots cHtml && htmlFoots cHtml == ["1/2", "2/2"])
+    (pdfFoots cOut == htmlFoots cDoc && htmlFoots cDoc == ["1/2", "2/2"])
   -- The physical gate does not silence frame furniture: \runninghead's
   -- [from = 2] keeps the head off the opening page (the physical model),
   -- while the opening frame's own chrome footer — the frame model — stays.
@@ -1832,6 +1820,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((noteCodes (grey "\\textcolor{grey}{x}")).contains "N0022")
   t "borderline grey passes as large-scale text"
     (!(warnCodes (grey "{\\Huge \\textcolor{grey}{x}}")).contains "W0315")
+  for (name, decl, realized) in [
+      ("absolute large", "\\fontsize{20pt}{24pt}\\selectfont", false),
+      ("absolute small after Huge", "\\Huge\\fontsize{8pt}{10pt}\\selectfont", true),
+      ("absolute large after small", "\\small\\fontsize{20pt}{24pt}\\selectfont", false),
+      ("unresolved size after Huge", "\\Huge\\fontsize{1ex}{10pt}\\selectfont", true)] do
+    t s!"contrast font size: {name}"
+      ((noteCodes (grey ("{" ++ decl ++ "\\textcolor{grey}{x}}"))).contains "N0022" ==
+        realized)
   -- The judge reads the layout's own scale (contrast_judges_what_layout_sets):
   -- at a 9 pt base a section sets at 12.96 pt — not WCAG large-scale — while
   -- the old absolute 14 pt bold was, so the judge passed text the page fails.

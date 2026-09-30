@@ -18,8 +18,8 @@ para
 note[N0100] 2:1 '\usepackage{listings}' → nothing: the engine does this itself
 note[N0100] 3:1 '\usepackage{minted}' → nothing: the engine does this itself
 note[N0100] 4:1 '\usepackage{siunitx}' → nothing: the engine does this itself
-note[N0100] 19:45 '\SI' spells its text natively: locale digits and unit symbols (siunitx)
-note[N0100] 20:10 '\si' spells its text natively: locale digits and unit symbols (siunitx)
-note[N0100] 20:40 '\ang' spells its text natively: locale digits and unit symbols (siunitx)
-note[N0100] 20:56 '\num' spells its text natively: locale digits and unit symbols (siunitx)
-note[N0100] 21:10 '\numrange' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 20:45 '\SI' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 21:10 '\si' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 21:40 '\ang' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 21:56 '\num' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 22:10 '\numrange' spells its text natively: locale digits and unit symbols (siunitx)

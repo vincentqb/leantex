@@ -4,6 +4,7 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Image
 import LeanTex.Core.Math
 import LeanTex.Core.LocaleContract
+import LeanTex.Core.ListingHighlight
 import Std.Data.HashMap
 
 namespace LeanTex.Core.Ir
@@ -322,38 +323,6 @@ pasted on a board. A document's own `\assert{ text.xheight >= ... }`
 takes control. -/
 def posterXHeightFloor : Sp := Dim.mm100 350
 
-/-- The PDF device model a source colour declared. Its components are
-canonical decimal spellings validated by `Decl.parseColorSpec`; retaining them
-lets the PDF backend preserve rgb, gray, and cmyk without quantizing through
-the screen preview. -/
-inductive PdfColor where
-  | rgb (r g b : String)
-  | gray (v : String)
-  | cmyk (c m y k : String)
-  deriving Repr, BEq
-
-/-- A source colour's screen preview plus its exact PDF device-model rider.
-`r g b` are always populated for HTML, contrast judgement, and dimming.
-`pdfModel` is present for an explicit xcolor model; legacy/native palette
-bytes use the established derived DeviceRGB spelling. `cmyk` remains the
-thousandth projection used by xcolor mix arithmetic and print registration. -/
-structure Color where
-  r : UInt8
-  g : UInt8
-  b : UInt8
-  /-- CMYK components projected to thousandths for the existing model-closed
-  mix arithmetic. Exact source components live in `pdfModel` and reach PDF. -/
-  cmyk : Option (Nat × Nat × Nat × Nat) := none
-  pdfModel : Option PdfColor := none
-  deriving Repr, Inhabited
-
-/-- Colour equality is screen-and-mix equality. `pdfModel` is source
-projection provenance: PDF emission reads it directly, while contrast,
-palette diffing, and equivalent model spellings compare the shared preview
-and the CMYK arithmetic rider. -/
-instance : BEq Color where
-  beq a b := a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk
-
 /-- The equality boundary is explicit: device-operator provenance cannot
 silently enter a screen or contrast comparison. -/
 theorem Color.beq_screen_exact (a b : Color) :
@@ -371,14 +340,6 @@ theorem Color.sameSource_pdfModel_exact (a b : Color) :
   simp [Color.sameSource]
 
 def Color.black : Color := { r := 0, g := 0, b := 0 }
-
-/-- One byte as two hex digits; `upper` picks the alphabet's case. The dump
-printers and diagnostics quote colours uppercase; CSS serializes lowercase
-(`HtmlDoc.cssColor`). One printer for every reader, so a byte cannot render
-two ways. -/
-def Color.hexByte (v : UInt8) (upper : Bool := true) : String :=
-  let d := (if upper then "0123456789ABCDEF" else "0123456789abcdef").toList
-  String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
 
 /-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
 then the package's TeX-scaled conversion to an HTML byte. -/
@@ -4645,6 +4606,20 @@ def listingLang? (raw : String) : Option ListingLang :=
   let s := raw.trimAscii.toString.toLower
   if h : listingLangOk s = true then some ⟨s, h⟩ else none
 
+/-- The native style choices, independent of lexical classification.
+Pygments style names are case-sensitive; unsupported names remain a
+frontend option diagnostic, never an implicit default selection. -/
+inductive ListingStyle where
+  | default
+  | friendly
+  deriving Repr, BEq, Inhabited
+
+def ListingStyle.ofName? (name : String) : Option ListingStyle :=
+  match name.trimAscii.toString with
+  | "default" => some .default
+  | "friendly" => some .friendly
+  | _ => none
+
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
 manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
@@ -4659,13 +4634,26 @@ furniture beside it, generated ink outside the census as a list's markers
 are. `language` is listings' `language=` key or minted's mandatory
 argument, normalized (`listingLang?`): one fact the HTML `code` element's
 class and the markdown fence's info string both project (`htmlClass`,
-`fenceInfo`, `listing_language_agree`); the PDF names no language — the
-engine colours nothing by it. A bare `{verbatim}` is the default value
-everywhere. -/
+`fenceInfo`, `listing_language_agree`). `highlight` holds native lexical
+classes, assigned once during elaboration; both backends consume the same
+segments. A bare `{verbatim}` is the default value everywhere. -/
 structure ListingSpec where
   caption : Option (Nat × Array Inline) := none
   numbers : Bool := false
   language : Option ListingLang := none
+  /-- Both backends pass this value to the one shared token painter. -/
+  style : ListingStyle := .default
+  /-- One segment array per normalized source line. Empty means plain text.
+  `tokenLines` validates the text before either backend consumes this cache. -/
+  highlight : Array (Array ListingHighlight.Token) := #[]
+  /-- Resolved size declaration, using the ordinary size resolving sites.
+  Plain verbatim retains its code-frame step; minted/listings inherit the
+  current size unless their options select a named LaTeX step. -/
+  fontSize : Style := .size "footnotesize"
+  /-- FancyVerb/listings default: eight columns between tab stops. -/
+  tabSize : Nat := 8
+  /-- FancyVerb/listings default: source lines do not wrap. -/
+  breakLines : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The declared language as the bare token, `none` when none is declared:
@@ -5915,16 +5903,51 @@ def verbatimLines (s : String) : Array String := Id.run do
     | none => break
   return lines
 
-/-- Verbatim content as inline text, for a backend that sets lines rather
-than reading the string whole: spaces become no-break spaces so indentation
-survives layout as fixed kerns, lines join by forced breaks, and a blank line
-keeps one no-break space so the break before it still sets a line. -/
-def verbatimInlines (s : String) : Array Inline := Id.run do
+/-- The one source-preserving reader of listing classification. Metadata may
+come from elaboration or a program constructing IR directly: a stale or
+malformed cache must never delete, insert or reorder code. Such a cache falls
+back to ordinary text. No backend lexes or reconstructs the source. -/
+def ListingSpec.tokenLines (spec : ListingSpec) (source : String) :
+    Array (Array ListingHighlight.Token) :=
+  if spec.highlight.map ListingHighlight.lineText = verbatimLines source then
+    spec.highlight
+  else
+    (verbatimLines source).map fun line => #[{ text := line }]
+
+/-- Every listing a backend reads has exactly the normalized source lines,
+regardless of the cached token classes. This IR statement is the common
+text-preservation premise of the PDF and HTML projections. -/
+theorem listing_source_exact (spec : ListingSpec) (source : String) :
+    (spec.tokenLines source).map ListingHighlight.lineText = verbatimLines source := by
+  unfold ListingSpec.tokenLines
+  split
+  · assumption
+  · simp [Array.map_map, Function.comp_def, ListingHighlight.lineText]
+
+/-- A listing segment's layout spelling and next source column. TAB
+advances to the next stop, including a full stop at an exact boundary.
+The caller resets the column at each source newline and may thread it
+through highlighted segments; neither stored source nor token text changes.
+No-wrap spaces, and the first indentation space, are unbreakable. -/
+def ListingSpec.layoutText (spec : ListingSpec) (column : Nat) (s : String) :
+    String × Nat :=
+  s.foldl (fun (out, col) c =>
+    let space := if spec.breakLines && col > 0 then ' ' else '\u00a0'
+    if c == '\t' then
+      let width := max 1 spec.tabSize
+      let count := width - col % width
+      (out ++ String.ofList (List.replicate count space), col + count)
+    else (out.push (if c == ' ' then space else c), col + 1)) ("", column)
+
+/-- Verbatim content as inline text: tabs follow the declared stops,
+spaces follow the wrapping policy, source lines join by forced breaks,
+and a blank line keeps one no-break space so it still sets a line. -/
+def verbatimInlines (s : String) (spec : ListingSpec := {}) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for line in verbatimLines s do
     unless out.isEmpty do
       out := out.push (.linebreak {})
-    let kept := line.foldl (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
+    let kept := (spec.layoutText 0 line).1
     out := out.push (.text (if kept.isEmpty then "\u00a0" else kept))
   return out
 
@@ -6418,6 +6441,9 @@ and naming one slot never clears its sibling. -/
 structure Chrome where
   footerLeft : Option ChromeSlot := none
   footerRight : Option ChromeSlot := none
+  /-- Restore an explicit note on an unnumbered standout frame. Undeclared
+  keeps the class's plain standout; `some false` explicitly disables it. -/
+  standoutNote : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 def Chrome.hasFooter (c : Chrome) : Bool :=
@@ -6492,6 +6518,31 @@ theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline))
   rcases h with h | h
   · exact .inl (mem_bandSlotIf h)
   · exact .inr (mem_bandSlotIf h)
+
+/-- The frame's band, selected once for both backends. Moloch's standout
+option normally clears the footline. Restoring its plain template only
+when `frame footer` is nonempty restores that note, never a section datum
+or a number on an unnumbered frame (beamerinnerthememoloch.sty,
+`KV@beamerframe@standout`; beamerouterthememoloch.sty, `footline/plain`). -/
+def Chrome.frameFootBand (c : Chrome) (ff : Option (Array Inline))
+    (sec : Array Inline) (n : Option Nat) (total : Nat) (standout : Bool) :
+    Option (Array BandSlot) :=
+  match n with
+  | some k =>
+    if c.hasFooter || ff.isSome then some (c.footBand ff sec k total) else none
+  | none =>
+    if standout && c.standoutNote.getD false && !(ff.getD #[]).isEmpty then
+      some (bandSlotIf .left (ff.getD #[]) notePriority "the \\framefoot note")
+    else none
+
+/-- An unnumbered restored standout band contains only its explicit note:
+neither chrome datum reaches either backend, and an empty note has no band. -/
+theorem Chrome.standoutFootBand_exact (c : Chrome) (ff : Option (Array Inline))
+    (sec : Array Inline) (total : Nat) :
+    { c with standoutNote := some true }.frameFootBand ff sec none total true =
+      if (ff.getD #[]).isEmpty then none else
+        some (bandSlotIf .left (ff.getD #[]) notePriority "the \\framefoot note") := by
+  simp [frameFootBand]
 
 /-- A band's inline content read left to right — the reading order, as
 distinct from the paint order (`BandSlot.rank`). -/
@@ -7145,11 +7196,9 @@ content, and that is what the floor exists to keep.
 argument is not merely noise on the page but a *false reading* —
 `\cancelto{0}{x}` shipped `0x`, a product, where the source says `x`
 cancels to `0`. A lossy floor is the contract; a floor that states the
-opposite of the source is not. The strike itself stays unrendered
-(tests/compat-index/cancel.txt carries why: every cancel command draws a
-diagonal through a measured subformula, and an inline rule here is
-axis-aligned), so `x` under a W0012 is the honest floor until the
-diagonal exists. -/
+opposite of the source is not. Native math carries the strike and value;
+this policy still governs recovery when another construct makes the
+whole formula unrenderable, or a use appears outside mathematics. -/
 def floorNamedArgs : List (String × Nat) :=
   [("textcolor", 1), ("colorbox", 1), ("fcolorbox", 2), ("color", 1),
    ("pagecolor", 1), ("label", 1), ("ref", 1), ("eqref", 1), ("tag", 1),
@@ -8444,6 +8493,8 @@ def dumpMathItem (acc : String) (x : Math.MItem) : String :=
     let acc := acc ++ s!"{cls.label}:" ++ (if lim then "lim:" else "")
     dumpMathSub (dumpMathSup (dumpMathNucleus acc nuc) sup) sub
   | .space mu => acc ++ s!"mu:{mu}"
+  | .ink c n => acc ++ s!"ink:#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+      ++ (match n with | some n => s!"({n})" | none => "")
 
 def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   match n with
@@ -8487,6 +8538,27 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
           | .center => "c"
           | .right => "r") ++ (if s == 1000 then "" else s!"*{s}")
     dumpMathRows (acc ++ tag ++ "[") rows ++ "]"
+  | .cancel mark spec value body =>
+    -- The mark, then what the spec declares beyond the defaults, then the
+    -- struck subformula and the value it cancels to.
+    let tag := match mark with
+      | .up => "cancel"
+      | .down => "bcancel"
+      | .cross => "xcancel"
+      | .to => "cancelto"
+    let size := match spec.size with
+      | .same => " samesize"
+      | .step => ""
+      | .sup => " Smaller"
+    let opts := (if spec.thick then " thick" else "") ++ (if spec.room then "" else " overlap")
+      ++ size ++ (match spec.color with
+        | some (c, _) => s!" #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+        | none => "")
+    let acc := (dumpMathList (acc ++ tag ++ (if opts.isEmpty then "" else s!"[{(opts.drop 1).toString}]") ++ "{")
+      body).push '}'
+    match value with
+    | .nil => acc
+    | _ => (dumpMathList (acc ++ "to{") value).push '}'
 
 def dumpMathRows (acc : String) (rs : Math.MRows) : String :=
   match rs with
@@ -8928,6 +9000,18 @@ def titledLook (pal : Palette) : TitledKind → TitledLook
       bar := bar }
 
 
+/-- The lexical inks a design resolves once for both artifacts. The unstyled
+class inherits its enclosing foreground, so it needs no palette entry. -/
+structure ListingColors where
+  keyword : Color
+  string : Color
+  number : Color
+  comment : Color
+  builtin : Color
+  name : Color
+  operator : Color
+  deriving Repr, BEq
+
 /-- The document's resolved design: every semantic role the backends read,
 with every default applied here and nowhere else — the type is the totality
 claim, so a consumer can never invent a per-site fallback for a missing
@@ -8954,8 +9038,20 @@ structure Design where
   /-- Quieted secondary furniture — the chrome footer's small text draws in
   it; the body ink when undeclared. -/
   muted : Color
+  /-- Native listing colours, resolved from `code…` roles. The shared listing
+  painter chooses a legible default on the actual ground; authored palette
+  entries instead pass through the ordinary contrast judge. -/
+  listing : ListingColors
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
+  /-- The title's ink when no bar is declared, and the subtitle's ink on
+  the same title surface. Beamer's subtitle inherits its title. -/
+  frameTitleFg : Color
+  framesubtitle : Color
+  /-- The section divider's heading, on the page's ground. -/
+  sectionTitle : Color
+  /-- The chrome footline's ink and optional band background. -/
+  footline : TitledLook
   /-- The titled block's title look, one per kind (`titledLook`, the one
   resolving site). Total: an undeclared palette pairs the kind's content
   colour with no bar. -/
@@ -8964,6 +9060,9 @@ structure Design where
   exampleTitle : TitledLook
   /-- The themed section page and its progress bar, when the design has one. -/
   progress : Option ColorPair
+  /-- The section-page variant inherits the base progress colours but
+  may override either channel without recolouring other progress sites. -/
+  sectionProgress : Option ColorPair
   /-- A `[standout]` frame's pair — total: without the keys it inverts the
   page's own colours. -/
   standout : ColorPair
@@ -9005,25 +9104,69 @@ chain behind it is not, and it was written out a second time in
 The two fields a palette cannot answer — the progress bar's thickness and
 the style table — take their undeclared values here, and `ofDoc` overlays
 the document's declarations. -/
-def Design.ofPalette (pal : Palette) : Design :=
+def Design.ofPalette (pal : Palette) (style : ListingStyle := .default) : Design :=
   let fg := (pal.find? "fg").getD Color.black
   let bg := (pal.find? "bg").getD Color.white
+  -- Pygments 2.20.0 DefaultStyle / FriendlyStyle:
+  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/default.py
+  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/friendly.py
+  -- Native classes project Keyword, String, Number, Comment, Name.Builtin,
+  -- Name.Function and Operator. Authored roles override these defaults below.
+  let listing : ListingColors := match style with
+    | .default => {
+        keyword := { r := 0, g := 128, b := 0 }
+        string := { r := 186, g := 33, b := 33 }
+        number := { r := 102, g := 102, b := 102 }
+        comment := { r := 61, g := 123, b := 123 }
+        builtin := { r := 0, g := 128, b := 0 }
+        name := { r := 0, g := 0, b := 255 }
+        operator := { r := 102, g := 102, b := 102 } }
+    | .friendly => {
+        keyword := { r := 0, g := 112, b := 32 }
+        string := { r := 64, g := 112, b := 160 }
+        number := { r := 64, g := 160, b := 112 }
+        comment := { r := 96, g := 160, b := 176 }
+        builtin := { r := 0, g := 112, b := 32 }
+        name := { r := 6, g := 40, b := 126 }
+        operator := { r := 102, g := 102, b := 102 } }
+  let frameTitleFg := (pal.find? "frametitlefg").getD fg
+  let frametitle := (pal.find? "frametitlebg").map fun barBg =>
+    { fg := (pal.find? "frametitlefg").getD bg, bg := barBg : ColorPair }
+  let muted := (pal.find? "muted").getD fg
+  let footBg := pal.find? "footlinebg"
+  let footKey := if (pal.find? "muted").isSome then "muted" else "fg"
+  let footInk := footBg.bind fun ground =>
+    pal.inks.find? fun e => e.role == footKey && e.declared == muted && e.ground == ground
   { fg := fg
     bg := bg
     fgDeclared := (pal.find? "fg").isSome
     bgDeclared := (pal.find? "bg").isSome
     coveredFraction := pal.coveredFraction.getD coveredFractionDefault
     covered := pal.find? "covered"
-    muted := (pal.find? "muted").getD fg
-    frametitle := (pal.find? "frametitlebg").map fun barBg =>
-      { fg := (pal.find? "frametitlefg").getD bg
-        bg := barBg }
+    muted := muted
+    listing := {
+      keyword := (pal.find? "codekeyword").getD listing.keyword
+      string := (pal.find? "codestring").getD listing.string
+      number := (pal.find? "codenumber").getD listing.number
+      comment := (pal.find? "codecomment").getD listing.comment
+      builtin := (pal.find? "codebuiltin").getD listing.builtin
+      name := (pal.find? "codename").getD listing.name
+      operator := (pal.find? "codeoperator").getD listing.operator }
+    frametitle := frametitle
+    frameTitleFg := frameTitleFg
+    framesubtitle := (pal.find? "framesubtitlefg").getD
+      ((frametitle.map (·.fg)).getD frameTitleFg)
+    sectionTitle := (pal.find? "sectiontitlefg").getD fg
+    footline := { fg := (footInk.map (·.ink)).getD muted, bar := footBg }
     blockTitle := titledLook pal .block
     alertTitle := titledLook pal .alert
     exampleTitle := titledLook pal .example
     progress := (pal.find? "progressfg").map fun barFg =>
       { fg := barFg
         bg := (pal.find? "progressbg").getD bg }
+    sectionProgress := ((pal.find? "sectionprogressfg").or (pal.find? "progressfg")).map fun barFg =>
+      { fg := barFg
+        bg := ((pal.find? "sectionprogressbg").or (pal.find? "progressbg")).getD bg }
     standout := { fg := (pal.find? "standoutfg").getD bg
                   bg := (pal.find? "standoutbg").getD fg }
     titlepage := (pal.find? "titlepagebg").map fun ground =>
@@ -9079,6 +9222,17 @@ def Design.ofDoc (doc : Doc) : Design :=
       { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := doc.styles }
 
+/-- A restored standout footer stands on the standout canvas and uses its
+foreground. The deferred `use={standout,background canvas}` colour reads
+these values at the frame, after standout has set the canvas; ordinary
+footers retain their own pair. Both backends project this one value. -/
+def Design.frameFootLook (d : Design) (standout : Bool) : TitledLook :=
+  if standout then { fg := d.standout.fg, bar := some d.standout.bg } else d.footline
+
+theorem Design.standoutFootLook_projects (d : Design) :
+    (d.frameFootLook true).fg = d.standout.fg ∧
+    (d.frameFootLook true).bar = some d.standout.bg := ⟨rfl, rfl⟩
+
 /-- **Two projections of one resolved value agree.** The frame-title pair is
 a function of the palette alone: the document-level design's pair is the one
 `ofPalette` resolves from the document's palette, so the value the PDF reads
@@ -9088,6 +9242,14 @@ of the chain `frametitlefg` → `bg` → white. `ofDoc`'s overlay could have
 touched the pair; this says it does not. -/
 theorem frametitle_agree (doc : Doc) :
     (Design.ofDoc doc).frametitle = (Design.ofPalette doc.palette).frametitle := rfl
+
+/-- The added Beamer sites travel the same palette resolution chain in
+the document design and in an epoch's design. -/
+theorem beamerColors_agree (doc : Doc) :
+    ((Design.ofDoc doc).framesubtitle, (Design.ofDoc doc).sectionTitle,
+      (Design.ofDoc doc).sectionProgress, (Design.ofDoc doc).footline) =
+    ((Design.ofPalette doc.palette).framesubtitle, (Design.ofPalette doc.palette).sectionTitle,
+      (Design.ofPalette doc.palette).sectionProgress, (Design.ofPalette doc.palette).footline) := rfl
 
 /-- The title page's pair travels the same one chain, for the same reason:
 the layout resolves the *epoch* palette in force where the title frame
@@ -9125,14 +9287,20 @@ def Design.consumedRoles : List String :=
    "covered",                         -- Layout.run's overlay dimming
    "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
    "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss
+   "framesubtitlefg",                 -- Elab.frameRestGo's coloured title line
+   "sectiontitlefg",                  -- Layout.collectSection, HtmlDoc.themeCss
+   "footlinebg",                      -- Layout.B.finishPage, HtmlDoc.themeCss
    "blocktitlefg", "blocktitlebg",    -- Layout.collectBlock titled arm,
    "alerttitlefg", "alerttitlebg",    --   HtmlDoc.themeCss (titledLook is
    "exampletitlefg", "exampletitlebg",--   the one resolving site)
    "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
+   "sectionprogressfg", "sectionprogressbg", -- the section-page progress variant
    "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
    "titlepagefg", "titlepagebg",      -- Layout.titleGround / collectBlock frame
                                       -- arm, HtmlDoc.themeCss, Contrast's
                                       -- titlePageStep
+   "codekeyword", "codestring", "codenumber", "codecomment",
+   "codebuiltin", "codename", "codeoperator", -- Listing.tokenInline, both backends
    "separator"]                       -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)
@@ -11013,7 +11181,8 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
     (.frame (recolorRolesInlines recolor pal (pal.find? "frametitlebg") #[] title.toList)
       standout valign br r.1, r.2)
   | .framefoot content =>
-    (.framefoot (recolorRolesInlines recolor pal ground #[] content.toList), pal)
+    (.framefoot (recolorRolesInlines recolor pal (Design.ofPalette pal).footline.bar
+      #[] content.toList), pal)
   -- The epoch boundary: the palette is rewritten where it stands, and the
   -- walk's context switches to the declared (pre-rewrite) state, the one
   -- the judge keyed its plan by.
@@ -11141,9 +11310,10 @@ def recolorRolesInline (recolor : RoleRecolor) (pal : Palette)
     .alt n last (recolorRolesInlines recolor pal ground #[] firstPage.toList)
       (recolorRolesInlines recolor pal ground #[] otherPage.toList)
   | .footnote n body => .footnote n (recolorRolesInlines recolor pal ground #[] body.toList)
+  -- A formula's colours are realized as a run's are, on the same ground.
+  | .formula d src body => .formula d src (body.mapInk fun c nm => recolor pal ground nm c)
   | .text s => .text s
   | .math d src => .math d src
-  | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
   | .label k => .label k
@@ -11222,7 +11392,10 @@ theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
     rw [recolorRolesInline]
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
       plainTextList]
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .formula d src body =>
+    rw [recolorRolesInline]
+    simp [plainTextOne, formulaFloor, Math.MList.mapInk_scalars]
+  | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ => rfl
 
@@ -11385,7 +11558,8 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
   | .framefoot content =>
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor pal ground content.toList #[], plainTextList]
+      recolorRolesInlines_text recolor pal (Design.ofPalette pal).footline.bar
+        content.toList #[], plainTextList]
   | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _ _
   | .logo _ | .rule _ _ _ | .picture _ => rfl
   | .algorithm n sm lines =>

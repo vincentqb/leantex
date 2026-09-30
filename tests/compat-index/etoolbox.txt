@@ -16,4 +16,4 @@ pre refuse:W0301 \robustify{\emph}
 pre refuse:W0301 \newbool{mybool}
 pre refuse:W0301 \newbool{mybool}\setbool{mybool}{true}
 pre refuse:W0301 \patchcmd{\emph}{a}{b}{}{}
-pre refuse:W0301 \apptocmd{\emph}{x}{}{}
+pre refuse:E0111 \apptocmd{\emph}{x}{}{}

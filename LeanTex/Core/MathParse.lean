@@ -226,7 +226,28 @@ inductive Note where
   parsed as mathematics along with the rest of the formula. `what` names the
   construct. -/
   | constructFloored (what : String)
+  /-- A colour expression the formula inks in, as the palette resolved it:
+  the elaborator records its span, as the text path does, so the contrast
+  judge can name where a colour came from. -/
+  | inkUsed (expr : String) (color : Ir.Color) (entry : Bool)
+  /-- A colour expression the palette cannot resolve: its content sets in
+  the colour in force, named as the text path names it (W0304). -/
+  | inkMissed (expr : String)
   deriving Repr, BEq
+
+/-- What a formula reads from the document beyond its own tokens: a colour
+expression resolved as the text path resolves one (`Palette.resolve`), with
+whether it names a declared entry (`Palette.find?`, the HTML custom
+property's name), and the cancel package's options and `\CancelColor`. The
+defaults resolve nothing and load no option, which is how a formula parses
+where no document stands behind it. -/
+structure Env where
+  ink : String → Option (Ir.Color × Bool) := fun _ => none
+  cancel : CancelSpec := {}
+  /-- The expression `\CancelColor` names when the palette cannot resolve
+  it: a formula that draws a mark names it (W0304), the marks set in the
+  colour in force. -/
+  cancelMiss : Option String := none
 
 /-- Text-style commands whose styling cannot be carried inside `\text`:
 there the body is one upright word, so the command contributes its letters
@@ -282,7 +303,13 @@ than quietly starting to be contained. -/
 def structuralCtrl : List String :=
   ["over", "genfrac", "sqrt", "ensuremath", "left", "right",
    "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor",
+   "color", "cancelto",
    "bmod", "mod", "pod", "pmod", "dotsi"]
+
+/-- cancel.sty's one-argument marks (v2.2): the command and the mark it
+draws. `\cancelto` takes two arguments and is structural. -/
+def cancelCtrl : List (String × CancelMark) :=
+  [("cancel", .up), ("bcancel", .down), ("xcancel", .cross)]
 
 /-- The fraction commands, each the `\genfrac` row its definition is
 (amsmath.sty, TeX Live 2026: `\dfrac` is `\genfrac{}{}{}0`, `\tfrac`
@@ -317,6 +344,7 @@ def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
 /-- Does this slice model the control word at all? -/
 def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
+    || (cancelCtrl.lookup n).isSome
     || (fracCmds.lookup n).isSome
     || (alphaCtrl.lookup n).isSome
     || (accentCtrl.lookup n).isSome
@@ -579,7 +607,7 @@ private def attach (acc : Array MItem) (isSup : Bool) (script : MList) :
     | _, true => .error "a double superscript"
     | _, false => .error "a double subscript"
   match acc.back? with
-  | some (.space _) | none =>
+  | some (.space _) | some (.ink _ _) | none =>
     let fresh ← put (.atom .ord (.list .nil) .nil .nil false)
     .ok (acc.push fresh)
   | some x =>
@@ -605,7 +633,7 @@ private def attachPrime (acc : Array MItem) : Except String (Array MItem) := do
       .ok (acc.pop.push (.atom cls nuc (appendPrime sup) sub lim))
     else
       .error "a prime after a superscript"
-  | some (.space _) | none =>
+  | some (.space _) | some (.ink _ _) | none =>
     .ok (acc.push (.atom .ord (.list .nil) (.cons primeAtom .nil) .nil false))
 
 /-- One atom for a token met as a script argument or in the run of a list. -/
@@ -729,6 +757,16 @@ private inductive Dest where
   /-- amsmath's `\pod`/`\pmod` argument: it closes into `(…)`, after the
   word "mod" and a 6 mu kern when `withMod` (`\pmod` is `\pod{mod\mkern6mu #1}`). -/
   | pod (withMod : Bool)
+  /-- `\textcolor`'s content: it closes into `{\color{c} …}`, the braced
+  Ord atom whose list opens with the colour switch (xcolor's
+  `\textcolor` is `{\color{c}#2}`). -/
+  | inked (color : Ir.Color) (name : Option String)
+  /-- `\cancelto`'s first argument, the value: it becomes the request for
+  the second. -/
+  | cancelValue (spec : CancelSpec)
+  /-- A cancel mark's struck subformula: it closes into the mark's Ord
+  atom (cancel.sty sets the mark as a box). -/
+  | cancelBody (mark : CancelMark) (spec : CancelSpec) (value : MList)
   /-- A grid awaiting its rows. `wrap` is `none` for the formula's own
   alignment (`top`), which only the end of the formula closes; a nested
   grid carries the delimiters it closes between, `(none, none)` for an
@@ -806,6 +844,14 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
         (if withMod then [modWord, .space 6] else []) ++
         [.atom .ord (.list arg) .nil .nil false, .atom .closing (.sym ')') .nil .nil false]
       arg := .cons (.atom .ord (.list (MList.ofList inner)) .nil .nil false) .nil
+      rest := more
+    | .inked c n :: more =>
+      arg := .cons (.atom .ord (.list (.cons (.ink c n) arg)) .nil .nil false) .nil
+      rest := more
+    | .cancelValue spec :: more =>
+      return (acc, .cancelBody .to spec arg :: more)
+    | .cancelBody mark spec value :: more =>
+      arg := .cons (.atom .ord (.cancel mark spec value arg) .nil .nil false) .nil
       rest := more
     | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
     | .grid _ _ _ _ :: _ => throw "an unbalanced group"
@@ -890,7 +936,8 @@ bottom of the stack (`align`/`gather` bodies); notes name ragged rows.
 innermost first — `x^\frac{a}{b}` stacks the fraction's request on the
 script's — and `resolveChain` is where every argument lands. `display` is
 amsmath's `\if@display`, which picks the modulo commands' leading kerns. -/
-private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Bool) :
+private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Bool)
+    (env : Env) :
     Except String (MList × Array Note) := do
   let mut stack : Array PFrame := #[]
   let mut acc : Array MItem := #[]
@@ -1180,14 +1227,53 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       i := j + 1
     | .ctrl n =>
       if n == "textcolor" then
-        -- `\textcolor{name}{body}`: the colour is a name, not content, so
-        -- its group is consumed here and the body's group is then an
-        -- ordinary one. The mathematics renders; the colour is named as
-        -- lost, because the math list carries no colour to put it in.
+        -- `\textcolor{c}{body}`: the colour is a name, not content, so its
+        -- group is consumed here; the body is the next argument, which
+        -- closes into `{\color{c} body}`. An expression the palette cannot
+        -- resolve leaves the body in the colour in force, named (W0304),
+        -- as the text path leaves it.
         let (name, j) ← skipNamedArg toks (i + 1) n
-        notes := notes.push (.styleDropped s!"the colour '{name}'")
+        match env.ink name with
+        | some (c, entry) =>
+          notes := notes.push (.inkUsed name c entry)
+          pending := .inked c (if entry then some name else none) :: pending
+        | none => notes := notes.push (.inkMissed name)
         i := j
+      else if n == "color" then
+        -- `\color{c}`: a declaration, TeX's colour whatsit — the rest of
+        -- this list inks in `c`, and no atom or class enters the list.
+        -- xcolor's model form (`\color[rgb]{…}`) names its colour by
+        -- components the palette cannot resolve by name: its group is
+        -- consumed and the change named (W0385), the content kept.
+        unless pending.isEmpty do throw (tokName tok)
+        let k := if toks[i + 1]? == some .ws then i + 2 else i + 1
+        if toks[k]? == some (.ch '[') then
+          let o := skipTokOption toks k
+          let model := String.ofList ((toks.extract (k + 1) (o - 1)).toList.filterMap
+            fun t => match t with
+              | .ch c => some c
+              | _ => none)
+          notes := notes.push (.styleDropped s!"the colour in model '{model}'")
+          i := skipTokGroup toks (skipTokWs toks o)
+        else
+          let (name, j) ← skipNamedArg toks (i + 1) n
+          match env.ink name with
+          | some (c, entry) =>
+            notes := notes.push (.inkUsed name c entry)
+            acc := acc.push (.ink c (if entry then some name else none))
+          | none => notes := notes.push (.inkMissed name)
+          i := j
+      else if n == "cancelto" then
+        if let some k := env.cancelMiss then notes := notes.push (.inkMissed k)
+        pending := .cancelValue env.cancel :: pending
+        i := i + 1
       else
+      match cancelCtrl.lookup n with
+      | some mark =>
+        if let some k := env.cancelMiss then notes := notes.push (.inkMissed k)
+        pending := .cancelBody mark env.cancel .nil :: pending
+        i := i + 1
+      | none =>
       match fracCmds.lookup n with
       | some spec =>
         pending := .fracNum spec :: pending
@@ -1260,10 +1346,10 @@ stays, and the formula parses. Where containment leaves the formula inking
 nothing at all the whole-formula floor is the better recovery — it has a
 declared placeholder (`Ir.floorInk_accounts`) where this path would ship a
 blank — so the construct is named through the same channel it always was. -/
-def parseMath (display : Bool) (raws : Array Parse.Raw) :
+def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
-  let (l, notes) ← parseToks toks none display
+  let (l, notes) ← parseToks toks none display env
   if let some n := names[0]? then
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
@@ -1271,10 +1357,10 @@ def parseMath (display : Bool) (raws : Array Parse.Raw) :
 /-- Parse an alignment environment's body (`align`/`gather` rows split at
 `&` and `\\`) into one grid formula. Containment applies as it does to a
 formula (`parseMath`): one unmodelled addend of one row costs that addend. -/
-def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) :
+def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
-  let (l, notes) ← parseToks toks (some kind) true
+  let (l, notes) ← parseToks toks (some kind) true env
   if let some n := names[0]? then
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)

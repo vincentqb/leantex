@@ -401,14 +401,12 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0384 => dvL one (dvDeck "\\theme{moloch}\n"
       ("\\begin{frame}{Too tall}\n" ++
        String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}"))
-  -- A colour and a font change inside math: the formula renders, the
-  -- presentation does not, because a math list carries neither.
-  | .W0385 =>
-    dvE "$\\textcolor{indigo}{x}$" ++ dvE "$\\text{\\textbf{bold} word}$"
+  -- A font change inside a math word: the word survives in one face.
+  | .W0385 => dvE "$\\text{\\textbf{bold} word}$"
   -- A construct outside the modeled subset whose one content operand stands
   -- in its place: the formula around it parses, so the loss is the
   -- construct's rather than the display's.
-  | .W0389 => dvE "$\\cancelto{0}{\\sum_{k} x_k}$"
+  | .W0389 => dvE "$\\raisebox{1pt}{\\sum_{k} x_k}$"
   -- The slot report is the driver's own decision, run as a unit: the probe
   -- hands `Cli.SlotLoss` a document setting typewriter runs, a resolved set
   -- whose mono slot is the proportional body face, and an artifact that
@@ -1822,5 +1820,4 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"salvage {n}: no recovered ink spells a diagnostic code"
       (fDoc.salvage.all fun s =>
         DiagCode.all.all fun c => !hasStr s.text c.code)
-
 

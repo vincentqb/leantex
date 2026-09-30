@@ -3,6 +3,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.Ir
+import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
 
@@ -21,7 +22,7 @@ The rewrite works on the parsed tree, never on text, so it cannot unbalance a
 brace it did not create; and translated content re-enters through the lexer
 and parser, so it obeys exactly the rules hand-written input does. -/
 
-/-- Packages whose whole job the engine does natively. Seeing one is a note,
+/-- Package interfaces the engine handles natively. Seeing one is a note,
 not a warning: nothing was lost at the `\usepackage` line — a construct one
 of these packages provides that the engine cannot render is named where it
 is used, never at the load (`tikzpicture` renders its subset and W0334 or
@@ -44,7 +45,8 @@ def nativePackages : List String :=
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
-   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm"]
+   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
+   "cancel"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -67,30 +69,15 @@ Where several beamer elements share one engine role, the engine has one
 piece of furniture where beamer has several names for it, and the last
 declaration wins: `frametitle` and `headline` are the same title band (the
 poster lineage draws it under the second name), the three `progress bar`
-placements are one bar — moloch itself derives its two placement variants
-from `progress bar` with `parent=`, so the collapse is the inheritance it
-declares — and `footline` and `page number in head/foot` are the one footer
+placements inherit the base bar without sharing their overrides. Only the
+section placement has a native PDF site; head/foot progress is named as
+unsupported. `footline` and `page number in head/foot` share the footer
 ink. `background canvas` has a ground and no ink: beamer's default canvas
 template reads only its `bg`, painting it as a full-page rule
 (beamerouterthemedefault.sty, `\defbeamertemplate*{background canvas}`), so
 it is the page's `bg`, and in the body the ground of the frames after it. -/
 def beamerColorRoles : List (String × String × String) :=
-  [("normal text", "fg", "bg"),
-   ("background canvas", "", "bg"),
-   ("frametitle", "frametitlefg", "frametitlebg"),
-   ("headline", "frametitlefg", "frametitlebg"),
-   ("block title", "blocktitlefg", "blocktitlebg"),
-   ("block title alerted", "alerttitlefg", "alerttitlebg"),
-   ("block title example", "exampletitlefg", "exampletitlebg"),
-   ("alerted text", "alert", ""),
-   ("example text", "example", ""),
-   ("standout", "standoutfg", "standoutbg"),
-   ("progress bar", "progressfg", "progressbg"),
-   ("progress bar in head/foot", "progressfg", "progressbg"),
-   ("progress bar in section page", "progressfg", "progressbg"),
-   ("title separator", "separator", ""),
-   ("footline", "muted", ""),
-   ("page number in head/foot", "muted", "")]
+  BeamerColor.roles
 
 /-- Beamer's font elements, mapped onto the engine's styleable element and
 the `\style` key that carries the font: the author line is the title page's
@@ -356,7 +343,6 @@ def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("useinnertheme", 1),
    ("useoutertheme", 1),
-   ("addtobeamertemplate", 3),
    ("metroset", 1),
    ("beamertemplatenavigationsymbolsempty", 0)]
 
@@ -371,7 +357,8 @@ def beamerNative : List (String × String) :=
 its entries directly"),
    ("setbeamertemplate", "'frame footer' translates to \\framefoot{...}; \\style{element}{...} \
 styles elements; \\runningfoot sets a document footer"),
-   ("addtobeamertemplate", "\\style{element}{...} styles elements; \\framefoot sets a frame footer")]
+   ("addtobeamertemplate", "put \\smallskip, \\medskip or \\bigskip at a block's body start; \
+\\framefoot sets a frame footer")]
 
 /-- Classes that produce a presentation: `beamer` (which rewrites to
 `slides`) and `slides` itself. What a beamer mode specification is read
@@ -498,9 +485,10 @@ policy — keep the document's declared fonts — which is what \
    ("metroset", "the keys are the theme's own option vocabulary, not engine \
 tokens; each would need its own mapping, and the shipped bundle of that \
 lineage already carries the design the options adjust"),
-   ("addtobeamertemplate", "the body is arbitrary TeX spliced at a named \
-point inside a template the engine does not model; where such a body carries \
-content the loss is E0111's, which is a dropped body and not a style key")]
+   ("addtobeamertemplate", "only preamble block-begin additions of the \
+standard skips translate; arbitrary template injections have no native \
+receiver. Where a refused body carries content its loss is E0111's, \
+which is a dropped body and not a style key")]
 
 /-- A definition the conditional pass can read: its replacement text and the
 two prefixes its meaning carries, `\long` and e-TeX's `\protected`, which
@@ -760,6 +748,10 @@ private structure St where
   deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
   /-- The loads the loaded-test pass has read so far (`resolveLoaded`). -/
   loads : LoadSet := {}
+  /-- Native spacers appended to the ordinary block-begin template in the
+  preamble. Applied after rewriting, including to blocks in definitions
+  made before the addition: beamer reads its template when a block opens. -/
+  beamerBlockBegin : Array Raw := #[]
   /-- A theme's own beamer font elements, as `\setbeamerfont` declared
   them: what `\usebeamerfont{<element>}` selects in a template the engine
   reads (`TitleTemplate.read`). Latest declaration wins. -/
@@ -1097,6 +1089,35 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | some (r@(.ctrl _ _)) => out := out.push #[r]; j := k + 1
     | _ => break
   return (out, j)
+
+/-- etoolbox's `\apptocmd` takes four TeX arguments: a group or one token
+each. A lexer word can hold several character arguments. The index owns
+that whole word; prepasses copy it unchanged and the dispatcher returns
+the unconsumed tail. All hook passes use this same boundary. -/
+private def takeHookArgs (raws : Array Raw) (i : Nat) :
+    Array (Array Raw) × Nat × Array Raw := Id.run do
+  let mut args : Array (Array Raw) := #[]
+  let mut j := i
+  let mut tail : Array Raw := #[]
+  for _ in [0:4] do
+    if args.size == 4 then break
+    let k := skipSpaces raws j
+    match raws[k]? with
+    | some (.group body _) => args := args.push body; j := k + 1
+    | some (.word s p) =>
+      let cs := s.toList
+      let n := min (4 - args.size) cs.length
+      let mut pos := p
+      for c in cs.take n do
+        args := args.push #[.word c.toString pos]
+        pos := pos.next false
+      let rest := String.ofList (cs.drop n)
+      if !rest.isEmpty then tail := #[.word rest pos]
+      j := k + 1
+    | some (r@(.ctrl _ _)) | some (r@(.sym _ _)) | some (r@(.par _)) =>
+      args := args.push #[r]; j := k + 1
+    | _ => break
+  return (args, j, tail)
 
 /-- `\tikz`'s one-command form from `i`: the raws up to and including the
 first `;` a top-level word carries — where TikZ's path parser ends the
@@ -2499,6 +2520,12 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
             (r.used + (if unlessHead.isSome then 1 else 0))
     else if !(stack.all CondOpen.keeps) then
       condList ex raws out stack rest (i + 1) 0
+    else if n == "apptocmd" then
+      -- Patch text and callbacks are arguments, not conditionals in force.
+      -- The finite hook arm decides the whole call after these passes.
+      let (_, k, _) := takeHookArgs raws (i + 1)
+      condList ex raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
+        stack rest (i + 1) (k - (i + 1))
     else if n.endsWith "true" && st.flags.contains (n.dropEnd 4).toString then
       let x := (n.dropEnd 4).toString
       setFlag x true
@@ -2999,11 +3026,17 @@ array gives the lookahead, as `condList` pairs them; `plan` is what the
 groups after a resolved test become, one entry per group, and the spaces
 between them go too. -/
 private def loadList (final : Option LoadSet) (raws : Array Raw) (t : LoadTiming)
-    (out : Array Raw) (plan : List Bool) : List Raw → Nat → M (Array Raw)
-  | [], _ => pure out
-  | .space :: rest, i =>
-    loadList final raws t (if plan.isEmpty then out.push .space else out) plan rest (i + 1)
-  | .ctrl name pos :: rest, i => do
+    (out : Array Raw) (plan : List Bool) : List Raw → Nat → Nat → M (Array Raw)
+  | [], _, _ => pure out
+  | _ :: rest, i, skip + 1 => loadList final raws t out plan rest (i + 1) skip
+  | .space :: rest, i, 0 =>
+    loadList final raws t (if plan.isEmpty then out.push .space else out) plan rest (i + 1) 0
+  | .ctrl "apptocmd" pos :: rest, i, 0 => do
+    -- A load test in an unselected callback must never run.
+    let (_, k, _) := takeHookArgs raws (i + 1)
+    loadList final raws t ((out.push (.ctrl "apptocmd" pos)) ++ raws.extract (i + 1) k)
+      [] rest (i + 1) (k - (i + 1))
+  | .ctrl name pos :: rest, i, 0 => do
     match (loadedTests.find? (·.ctrl == name)).bind fun test =>
         (loadedAt raws (i + 1) test).map (test, ·) with
     | some (test, q) =>
@@ -3013,25 +3046,25 @@ private def loadList (final : Option LoadSet) (raws : Array Raw) (t : LoadTiming
       | some ans =>
         let msg := loadedMsg test q ans t
         sayOnce ("ifloaded:" ++ msg) .N0114 msg pos
-        loadList final raws t out (loadedPlan test ans) rest (i + 1)
-      | none => loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1)
+        loadList final raws t out (loadedPlan test ans) rest (i + 1) 0
+      | none => loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1) 0
     | none =>
       if t == .now then recordLoad raws name i
-      loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1)
-  | r :: rest, i => do
+      loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1) 0
+  | r :: rest, i, 0 => do
     -- A group is tested, not matched, so `r` stays the list's own element.
     if r matches .group _ _ then
       match plan with
       | keep :: more =>
         let out ← if keep then loadOne final t out true r else pure out
-        loadList final raws t out more rest (i + 1)
+        loadList final raws t out more rest (i + 1) 0
       | [] =>
         let out ← loadOne final .after out false r
-        loadList final raws t out [] rest (i + 1)
+        loadList final raws t out [] rest (i + 1) 0
     else
       let out ← loadOne final t out false r
-      loadList final raws t out [] rest (i + 1)
-termination_by structural l _ => l
+      loadList final raws t out [] rest (i + 1) 0
+termination_by structural l _ _ => l
 
 /-- One element under the pass. A kept branch is walked into the level it
 stands in, unbraced; the first walk leaves every other group whole, since the
@@ -3041,10 +3074,10 @@ to be read, so the file's own tests already see it. -/
 private def loadOne (final : Option LoadSet) (t : LoadTiming) (out : Array Raw)
     (unbrace : Bool) : Raw → M (Array Raw)
   | .group body p => do
-    if unbrace then loadList final body t out [] body.toList 0
+    if unbrace then loadList final body t out [] body.toList 0 0
     else if final.isNone then pure (out.push (.group body p))
     else
-      let inner ← loadList final body t #[] [] body.toList 0
+      let inner ← loadList final body t #[] [] body.toList 0 0
       pure (out.push (.group inner p))
   | .env n body p => do
     match Parse.inputEnvFile? n with
@@ -3054,11 +3087,11 @@ private def loadOne (final : Option LoadSet) (t : LoadTiming) (out : Array Raw)
         write fun st => { st with loads := st.loads.addPkg pkg none }
       let saved := (← get).file
       write fun st => { st with file := f }
-      let inner ← loadList final body t #[] [] body.toList 0
+      let inner ← loadList final body t #[] [] body.toList 0 0
       write fun st => { st with file := saved }
       pure (out.push (.env n inner p))
     | none =>
-      let inner ← loadList final body t #[] [] body.toList 0
+      let inner ← loadList final body t #[] [] body.toList 0 0
       pure (out.push (.env n inner p))
   | r => pure (out.push r)
 termination_by structural r => r
@@ -3070,10 +3103,10 @@ every test standing in the flow, and a second answers every test inside a
 group against the whole preamble. A site is answered by exactly one walk, so
 each choice is named once. -/
 private def resolveLoaded (raws : Array Raw) : M (Array Raw) := do
-  let raws ← loadList none raws .now #[] [] raws.toList 0
+  let raws ← loadList none raws .now #[] [] raws.toList 0 0
   let final := (← get).loads
   write fun st => { st with loads := {} }
-  loadList (some final) raws .now #[] [] raws.toList 0
+  loadList (some final) raws .now #[] [] raws.toList 0 0
 
 /-- One collected hook: the note naming its replay point, and the body
 stored against that point. Separate from the walk so the walk's recursive
@@ -3102,42 +3135,49 @@ at the hook's own moment, and its group is read where it stands
 The `document` environment is not descended into: a hook is a preamble
 declaration (LaTeX's own `\\@onlypreamble`), so a hook standing in the body
 is at its replay point already and takes the same arm. -/
-private def collectDeferList (out : Array Raw) : List Raw → M (Array Raw)
-  | [] => pure out
-  | .ctrl name pos :: .group body p :: rest => do
+private def collectDeferList (out : Array Raw) : List Raw → Nat → M (Array Raw)
+  | [], _ => pure out
+  | _ :: rest, skip + 1 => collectDeferList out rest skip
+  | .ctrl "apptocmd" pos :: rest, 0 => do
+    -- A callback's deferred declaration belongs to the callback.
+    let args := rest.toArray
+    let (_, k, _) := takeHookArgs args 0
+    collectDeferList ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) rest k
+  | .ctrl name pos :: .group body p :: rest, 0 => do
     if let some pt := deferredHooks.lookup name then
       deferOne name pt body pos
-      collectDeferList out rest
+      collectDeferList out rest 0
     else
       let g ← collectDeferOne (.group body p)
-      collectDeferList ((out.push (.ctrl name pos)).push g) rest
-  | .ctrl name pos :: .space :: .group body p :: rest => do
+      collectDeferList ((out.push (.ctrl name pos)).push g) rest 0
+  | .ctrl name pos :: .space :: .group body p :: rest, 0 => do
     if let some pt := deferredHooks.lookup name then
       deferOne name pt body pos
-      collectDeferList out rest
+      collectDeferList out rest 0
     else
       let g ← collectDeferOne (.group body p)
-      collectDeferList (((out.push (.ctrl name pos)).push .space).push g) rest
-  | r :: rest => do
-    collectDeferList (out.push (← collectDeferOne r)) rest
+      collectDeferList (((out.push (.ctrl name pos)).push .space).push g) rest 0
+  | r :: rest, 0 => do
+    collectDeferList (out.push (← collectDeferOne r)) rest 0
+termination_by structural l _ => l
 
 /-- Descend into a group or environment body; an `\\input` wrapper switches
 the file its note names, as `condOne` and `rewriteRaw` do. The document
 environment is left whole: see `collectDeferList`. -/
 private def collectDeferOne : Raw → M Raw
   | .group body p => do
-    return .group (← collectDeferList #[] body.toList) p
+    return .group (← collectDeferList #[] body.toList 0) p
   | .env "document" body p => pure (.env "document" body p)
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
       write fun st => { st with file := f }
-      let body' ← collectDeferList #[] body.toList
+      let body' ← collectDeferList #[] body.toList 0
       write fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      return .env n (← collectDeferList #[] body.toList) p
+      return .env n (← collectDeferList #[] body.toList 0) p
   | r => pure r
 
 end
@@ -4545,6 +4585,109 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
+/-- The finite block-hook grammar: whitespace and the three standard skip
+commands, each read through its existing native translation. Unknown raws
+refuse the entire addition; a nested command is never executed here. -/
+private def blockHookSkips (out : Array String) : List Raw → Option (Array String)
+  | [] => some out
+  | .space :: rest => blockHookSkips out rest
+  | .ctrl name _ :: rest =>
+    if ["smallskip", "medskip", "bigskip"].contains name then
+      (simpleNative.lookup name).bind fun native =>
+        blockHookSkips (out.push native) rest
+    else none
+  | _ => none
+
+/-- beamerbasetemplates.sty appends the after-body to the named template;
+beamerbaseblocks.sty uses `block begin` between the title and body. Only
+top-level preamble additions are global here. All three arguments belong
+to this command even on refusal, so their content cannot reach recovery. -/
+private def blockHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let (args, k) := takeGroups raws start 3
+  let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
+  match blockHookSkips #[] (args.getD 1 #[]).toList,
+      blockHookSkips #[] (args.getD 2 #[]).toList with
+  | some before, some after =>
+    -- premise: beamerHookChecks — body, grouped and wrong-slot additions cannot set a global gap.
+    if args.size == 3 && element == "block begin" && before.isEmpty && (← docPreamble) then
+      let native := String.join after.toList
+      let spacing ← synthAt native pos
+      write fun st => { st with beamerBlockBegin := st.beamerBlockBegin ++ spacing }
+      if spacing.isEmpty then
+        discard "\\addtobeamertemplate{block begin}" "both additions are empty"
+          "addtobeamertemplate:block begin" pos
+      else
+        became "\\addtobeamertemplate{block begin}"
+          s!"{native} at each ordinary block's body start" pos
+    else
+      sayOnce ("beamer:addtobeamertemplate:" ++ element) .W0104
+        s!"'\\addtobeamertemplate\{{element}}' is skipped: only top-level preamble \
+additions with an empty before-body and standard skips after 'block begin' are supported" pos
+        (help := beamerNative.lookup "addtobeamertemplate")
+  | _, _ =>
+    say .E0111
+      s!"'\\addtobeamertemplate\{{element}}' is dropped with its unsupported template bodies" pos
+      (help := beamerNative.lookup "addtobeamertemplate")
+      (subject := some ("beamer:addtobeamertemplate:" ++ element))
+  return some (#[], k)
+
+/-- The footline restoration reads exactly the standout foreground and
+the current canvas background. Other keys or expressions are patch code
+the engine cannot interpret, even if one of these fields is also present. -/
+private def standoutFootColors (body : Array Raw) : Bool :=
+  let fields := Decl.splitEntries (rawSrc body)
+  let entries := fields.filterMap Decl.splitEntry
+  fields.length == 3 && entries.length == 3 &&
+    entries.lookup "fg" == some "standout.fg" &&
+    entries.lookup "bg" == some "background canvas.bg" &&
+    (match (entries.lookup "use").bind Decl.parseValue with
+     | some (.block names) => Decl.splitEntries names == ["standout", "background canvas"]
+     | _ => false)
+
+/-- The supported appended body, structurally matched without evaluating
+any package code: when the explicit note exists, restore the plain
+footline in the frame's colors and clear the unnumbered frame's number. -/
+private def standoutFootBody (body : Array Raw) : Bool :=
+  match (body.filter (!· matches .space)).toList with
+  | [.ctrl "ifbeamertemplateempty" _, .group slot _, .group empty _, .group restore _] =>
+    rawSrc slot == "frame footer" && empty.all (· matches .space) &&
+      (match (restore.filter (!· matches .space)).toList with
+       | [.ctrl "setbeamercolor" _, .group colorSlot _, .group colors _,
+          .ctrl "setbeamertemplate" _, .group footSlot _,
+          .sym '[' _, .word "plain" _, .sym ']' _,
+          .ctrl "ifbeamer@noframenumbering" _,
+          .ctrl "setbeamertemplate" _, .group numberSlot _, .group numberBody _,
+          .ctrl "fi" _] =>
+         rawSrc colorSlot == "footline" && standoutFootColors colors &&
+           rawSrc footSlot == "footline" && rawSrc numberSlot == "page number in head/foot" &&
+           numberBody.all (· matches .space)
+       | _ => false)
+  | _ => false
+
+/-- etoolbox's append succeeds for the known beamer standout option, so
+only its empty success callback runs. The failure callback is never read
+as executable input. All four arguments are owned even on refusal.
+The native setting carries the behavior to both backends; this is not a
+general macro patch interpreter. -/
+private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let (args, k, tail) := takeHookArgs raws start
+  -- premise: beamerHookChecks — altered bodies, callbacks and scopes refuse whole;
+  -- the supported shape changes the shipped standout note in both backends.
+  if args.size == 4 && (← get).deck && (← docPreamble) &&
+      ctrlName (args.getD 0 #[]) == some "KV@beamerframe@standout" &&
+      standoutFootBody (args.getD 1 #[]) && (args.getD 2 #[]).all (· matches .space) then
+    let native := "\\chrome{standout-note=true}"
+    became "\\apptocmd{\\KV@beamerframe@standout}" native pos
+    return some ((← synthAt native pos) ++ tail, k)
+  else
+    say .E0111 "'\\apptocmd' is dropped with its patch and callbacks: only the \
+standout explicit-footer restoration with an empty success callback is supported in a beamer preamble"
+      pos (help := "use '\\chrome{standout-note=true}' to restore explicit notes on standout frames")
+      (subject := some "ctrl:apptocmd")
+    return some (tail, k)
+
 /-- cleveref's range form (manual v0.21.4 §2, `\crefrange{key1}{key2}`):
 desugared to the pair the resolver renders — the first key carries the
 plural name and the range conjunction (`@crefrange`), the second the
@@ -4593,6 +4736,8 @@ falls through to here for every name it does not claim. -/
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
+  | "addtobeamertemplate" => blockHookArm pos raws start
+  | "apptocmd" => standoutFootHookArm pos raws start
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is \linespread by another name
     -- (setspace.sty: both set \baselinestretch).
@@ -5258,57 +5403,17 @@ is skipped" pos
             "; \\allow{E0111} accepts the loss")
       return some (#[], k)
   | "setbeamercolor" =>
-    -- The translation the help text has been naming all along: a beamer
-    -- colour element the engine has a role for *is* a `\palette` entry
-    -- (`beamerColorRoles` carries the mapping and its source). The value
-    -- side rides verbatim into `\palette`, where names and `!` mixes
-    -- evaluate at the one resolving site (`Ir.Palette.resolve`).
-    --
-    -- What is not translated is named, and named *specifically*: an
-    -- element with no role names that element, a key whose side has no
-    -- role names the element and the key, and beamer's inheritance
-    -- (`parent=`/`use=`) names itself — the engine has no palette
-    -- inheritance, so an inherited value is a value nobody declared. A
-    -- blanket "the engine does not have this construct" over thirteen
-    -- distinct elements told the author nothing about which it dropped.
+    -- Keep relationships until elaboration: a later parent declaration
+    -- changes its children, so flattening each declaration here is wrong.
+    -- Elab accounts for unsupported sites after seeing their consumers.
     let j := skipStar raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
       let element := (rawSrc args[0]).trimAscii.toString
-      match beamerColorRoles.lookup element with
-      | none =>
-        sayOnce ("beamer:setbeamercolor:" ++ element) .W0104
-          s!"'\\setbeamercolor\{{element}}' names a beamer colour element the \
-engine has no role for; skipped" pos
-          (help := beamerNative.lookup "setbeamercolor")
-        return some (#[], k)
-      | some (fgRole, bgRole) =>
-        let mut entries : Array String := #[]
-        for e in (rawSrc args[1]).splitOn "," do
-          match (e.splitOn "=").map (·.trimAscii.toString) with
-          | [key, v] =>
-            if key == "parent" || key == "use" then
-              sayOnce ("beamer:setbeamercolor:" ++ element ++ ":" ++ key) .W0104
-                s!"'\\setbeamercolor\{{element}}' inherits with '{key}'; the engine \
-has no palette inheritance, so only declared values are taken" pos
-                (help := beamerNative.lookup "setbeamercolor")
-            else
-              let role := if key == "fg" then fgRole
-                else if key == "bg" then bgRole else ""
-              if role.isEmpty then
-                sayOnce ("beamer:setbeamercolor:" ++ element ++ ":" ++ key) .W0104
-                  s!"'\\setbeamercolor\{{element}}' key '{key}' has no engine role; \
-its value is skipped" pos
-                  (help := beamerNative.lookup "setbeamercolor")
-              else
-                entries := entries.push s!"{role} = {v}"
-          | _ => pure ()
-        if entries.isEmpty then
-          return some (#[], k)
-        else
-          let native := s!"\\palette\{ {String.intercalate ", " entries.toList} }"
-          became s!"\\setbeamercolor\{{element}}" native pos
-          return some (← synthAt native pos, k)
+      became s!"\\setbeamercolor\{{element}}" "named colour declaration in \\palette" pos
+      let marker := if j == skipSpaces raws start then BeamerColor.marker
+        else BeamerColor.starMarker
+      return some (#[.ctrl marker pos, .group args[0] pos, .group args[1] pos], k)
     else return none
   | "mbox" | "makebox" =>
     -- An hbox's geometry is not modelled — neither command breaks lines, so
@@ -5359,8 +5464,8 @@ has no styleable element for; skipped" pos
           -- also recorded for the one template reader the engine has: a
           -- read template that selects it withdraws this skip by its
           -- subject, and what the record could not take joins that
-          -- template's own named loss. `size*`'s size rides apart, as the
-          -- slot's own size.
+          -- template's own named loss. `size*` takes the existing native
+          -- font-size path, carrying both size and leading.
           let mut font : TitleTemplate.Font := {}
           for e in (rawSrc args[1]).splitOn "," do
             match (e.splitOn "=").map (·.trimAscii.toString) with
@@ -5373,6 +5478,8 @@ has no styleable element for; skipped" pos
               else if key == "size*" then
                 let gs := braceGroups v
                 font := { font with size := gs[0]?, leading := gs[1]? }
+                if gs.size < 2 then
+                  font := { font with unread := font.unread.push s!"'size*' of '{element}'" }
                 if gs.size > 2 then
                   let note := s!"extra size fields of '{element}'"
                   font := { font with unread := font.unread.push note }
@@ -5675,6 +5782,12 @@ keeps the main part's last number as the total and sets `framenumber` to 0). A s
 in no control word, so no document spells the mark. -/
 def frameRestartMark : String := "appendix restart"
 
+/-- The mark a cancel package load leaves in the preamble, its option list in
+the group after it: the elaborator's preamble reads it into the context every
+formula's marks read (`Ctx.cancel`). A space is in no control word, so no
+document spells the mark. -/
+def cancelOptionsMark : String := "cancel options"
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. An empty replacement passes the silence guard
@@ -5857,6 +5970,21 @@ dropped: {String.intercalate ", " dropped}" pos
         out := out ++ (← synthAt native pos)
       else if p == "lineno" && opt.isSome then
         out := out ++ (← linenoLoad (opt.getD "") pos)
+      else if p == "cancel" then
+        -- The package's options are the marks' own settings, read where a
+        -- formula draws one: carried as data to the elaborator's preamble
+        -- (`cancelOptionsMark`), each named option read as the package's
+        -- `\ProcessOptions` reads it, an undeclared one named and dropped.
+        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+          |>.filter (!·.isEmpty)
+        let (_, unknown) := Math.CancelSpec.ofOptions opts
+        unless unknown.isEmpty do
+          say .W0101 s!"'cancel' options without a native equivalent were \
+dropped: {String.intercalate ", " unknown}" pos
+        became s!"\\usepackage\{cancel}"
+          "the cancel marks, drawn from the math font's own rule constants" pos
+        out := (out.push (.ctrl cancelOptionsMark pos)).push
+          (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then
@@ -6867,6 +6995,11 @@ private def delimCallsList (sigs : Array (String × (Array DelimAtom × Array (A
     Array Raw × Array (String × (Array DelimAtom × Array (Array DelimAtom)))
   | [], _, _ => (out, sigs)
   | _ :: rest, i, skip + 1 => delimCallsList sigs xs out rest (i + 1) skip
+  | .ctrl "apptocmd" pos :: rest, i, 0 =>
+    -- Definitions inside a patch or either callback are not in force.
+    let (_, k, _) := takeHookArgs xs (i + 1)
+    delimCallsList sigs xs ((out.push (.ctrl "apptocmd" pos)) ++ xs.extract (i + 1) k)
+      rest (i + 1) (k - (i + 1))
   | .ctrl d p :: rest, i, 0 =>
     match (if redefiners.contains d then definedCmd xs i else none) with
     | some n =>
@@ -7324,19 +7457,26 @@ in a group instead would offer the group to a frame as its title, which is
 what `\begin{frame}{...}` reads — and running first leaves the items'
 content to the main pass, so an idiom inside an alternative is rewritten
 exactly as it would be anywhere else. -/
-private def overprintList : List Raw → Array Raw → M (Array Raw)
-  | [], out => pure out
-  | r :: rest, out => do
+private def overprintList : List Raw → Array Raw → Nat → M (Array Raw)
+  | [], out, _ => pure out
+  | _ :: rest, out, skip + 1 => overprintList rest out skip
+  | .ctrl "apptocmd" pos :: rest, out, 0 => do
+    -- Overlay bodies inside a patch or callback are not live material.
+    let args := rest.toArray
+    let (_, k, _) := takeHookArgs args 0
+    overprintList rest ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) k
+  | r :: rest, out, 0 => do
     let rs ← overprintRaw r
-    overprintList rest (out ++ rs)
+    overprintList rest (out ++ rs) 0
+termination_by structural l _ _ => l
 
 /-- Descend into a group or environment, so an overprint nested anywhere is
 found. Split from the list walk so the recursion is structural on `Raw`, as
 the idiom rewrite's own pair is. -/
 private def overprintRaw : Raw → M (Array Raw)
-  | .group body p => do return #[.group (← overprintList body.toList #[]) p]
+  | .group body p => do return #[.group (← overprintList body.toList #[] 0) p]
   | .env "overprint" body p => do
-    let body' ← overprintList body.toList #[]
+    let body' ← overprintList body.toList #[] 0
     match overprintPlan body' p with
     | some (repl, loose) =>
       became "\\begin{overprint}" "\\alt alternation, one item per overlay" p
@@ -7358,7 +7498,7 @@ step stands on the steps no other item claims; a second such item is not shown"
 specs are not modelled")
       return repl
     | none => return #[.env "overprint" body' p]
-  | .env n body p => do return #[.env n (← overprintList body.toList #[]) p]
+  | .env n body p => do return #[.env n (← overprintList body.toList #[] 0) p]
   | r => pure #[r]
 
 end
@@ -7566,6 +7706,39 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
   | r :: rest, i, 0, (pre, body) =>
     seamSplit raws rest (i + 1) 0 (pre, body.push r)
 
+mutual
+
+/-- Apply the preamble's completed block hook to parsed block environments,
+including those inside macro definitions. The existing native spacer is
+inserted after the mandatory title; missing titles retain their own error.
+This pass runs only when a supported, nonempty hook was declared. -/
+-- conserves: none — adds native spacing commands, without changing authored text.
+private def blockHookRaw (spacing : Array Raw) : Raw → Raw
+  | .group body p => .group (blockHookList spacing #[] body.toList) p
+  | .env n body p =>
+    let body := blockHookList spacing #[] body.toList
+    let i := skipSpaces body 0
+    let body := if n == "block" then
+        match body[i]? with
+        | some (.group _ _) =>
+          body.extract 0 (i + 1) ++ spacing ++ body.extract (i + 1) body.size
+        | _ => body
+      else body
+    .env n body p
+  | .math d body p => .math d (blockHookList spacing #[] body.toList) p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+private def blockHookList (spacing : Array Raw) (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | r :: rest => blockHookList spacing (out.push (blockHookRaw spacing r)) rest
+
+end
+
 /-- Rewrite a whole parsed document. The gathered running content lands just
 before `\begin{document}`, where a declaration belongs.
 
@@ -7591,9 +7764,9 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
       else (delimCallsList #[] raws #[] raws.toList 0 0).1
     let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
-    let raws ← collectDeferList #[] raws.toList
+    let raws ← collectDeferList #[] raws.toList 0
     let raws := (splitColumnsList raws.toList).toArray
-    let raws ← overprintList raws.toList #[]
+    let raws ← overprintList raws.toList #[] 0
     let out ← rewriteList false raws #[] raws.toList 0 0
     -- After the idiom rewrite, so a `\parbox` is the box it became.
     let out ← boxRowList #[] out.toList
@@ -7644,6 +7817,8 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
       boundaryOpen := !boundaryRefused raws,
       wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
   let (out, st) := go.run st0
+  let out := if st.beamerBlockBegin.isEmpty then out
+    else blockHookList st.beamerBlockBegin #[] out.toList
   (out, st.diags, st.warned)
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
@@ -8303,15 +8478,18 @@ private structure TextSt where
   /-- `\lstset` entries standing, injected ahead of every following
   listing's own option head. -/
   lstOpts : Array String := #[]
+  /-- Minted's global and exact-lexer defaults are separate layers:
+  language defaults override even a later global declaration. -/
+  mintedOpts : Array String := #[]
+  mintedLangOpts : Array (String × Array String) := #[]
   /-- Names the document defines; a defined `\num` is the document's. -/
   defined : Array String := #[]
 
-/-- `\lstset`'s standing entries spliced ahead of a listing's option
-head: the environment's own entries stand last, so they win at
-elaboration — listings' own precedence. -/
-private def injectLstOpts (st : TextSt) (s : String) : String :=
-  if st.lstOpts.isEmpty then s else
-  let joined := String.intercalate "," st.lstOpts.toList
+/-- Standing entries precede the environment's own options, which win.
+Appending declarations within a layer updates keys individually. -/
+private def injectListingOpts (opts : Array String) (s : String) : String :=
+  if opts.isEmpty then s else
+  let joined := String.intercalate "," opts.toList
   match Parse.listingOptHead s with
   | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
   | none => "[" ++ joined ++ "]" ++ s
@@ -8368,7 +8546,7 @@ mutual
 threaded: the list drives the recursion, the array gives argument access,
 `skip` counts elements a replacement consumed. -/
 -- conserves: none — the rewrite spells siunitx constructs as their output
--- text and consumes `\lstset` into the next listing's option head.
+-- text and consumes listing defaults into following option heads.
 private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     (out : Array Raw) : List Raw → Nat → Nat → M (Array Raw × TextSt)
   | [], _, _ => return (out, st)
@@ -8381,12 +8559,23 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
         | some b => { st with defined := st.defined.push b }
         | none => st
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
-    else if n == "lstset" && !st.defined.contains n then
-      let (args, k) := takeGroups raws (i + 1) 1
+    else if (n == "lstset" || n == "setminted") && !st.defined.contains n then
+      let (lang, j) := if n == "setminted" then takeOpt raws (i + 1)
+        else (none, i + 1)
+      let (args, k) := takeGroups raws j 1
       let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).filterMap
         fun e => let e := e.trimAscii.toString
           if e.isEmpty then none else some e
-      let st := { st with lstOpts := st.lstOpts ++ entries.toArray }
+      let entries := entries.toArray
+      let st := if n == "lstset" then
+          { st with lstOpts := st.lstOpts ++ entries }
+        else match lang with
+          | none => { st with mintedOpts := st.mintedOpts ++ entries }
+          | some lang =>
+            let lang := lang.trimAscii.toString
+            let old := ((st.mintedLangOpts.find? (·.1 == lang)).map (·.2)).getD #[]
+            { st with mintedLangOpts :=
+              (st.mintedLangOpts.filter (·.1 != lang)).push (lang, old ++ entries) }
       textList loc st raws out rest (i + 1) (k - (i + 1))
     else if siCtrls.contains n && !st.defined.contains n then
       let (repl, k) ← siCtrl loc n pos raws (i + 1)
@@ -8394,22 +8583,30 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     else
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
   | .verb env s vpos :: rest, i, 0 =>
-    let s := if env == "lstlisting" then injectLstOpts st s else s
+    let s := if env == "lstlisting" then injectListingOpts st.lstOpts s
+      else if env == "minted" then
+        let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
+        let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
+        let opts := ((st.mintedLangOpts.find? (·.1 == lang)).map (·.2)).getD #[]
+        injectListingOpts (st.mintedOpts ++ opts) s
+      else s
     textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0
   | r :: rest, i, 0 => do
     let (r, st) ← textRaw loc st r
     textList loc st raws (out.push r) rest (i + 1) 0
 
-/-- Descend into groups and environments: `\lstset` in the preamble of an
-`\input`ed file, or `\num` inside a cell, reads exactly as at top level.
-The state threads through in flow order and out again. -/
+/-- Listing defaults are TeX-local to groups and environments. An input
+wrapper is transparent: input does not open a TeX group. This matches
+LuaLaTeX's synthetic minted/listings probe (`mintedSettingsChecks`). -/
 private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
   | .group body p => do
-    let (body, st) ← textList loc st body #[] body.toList 0 0
-    return (.group body p, st)
+    let (body, inner) ← textList loc st body #[] body.toList 0 0
+    return (.group body p, { st with defined := inner.defined })
   | .env n body p => do
-    let (body, st) ← textList loc st body #[] body.toList 0 0
-    return (.env n body p, st)
+    let (body, inner) ← textList loc st body #[] body.toList 0 0
+    let next := if (Parse.inputEnvFile? n).isSome then inner
+      else { st with defined := inner.defined }
+    return (.env n body p, next)
   | r => return (r, st)
 
 end
@@ -8445,13 +8642,13 @@ end
 
 mutual
 
-/-- Whether the pass has anything to do: a `\lstset` or a siunitx command
+/-- Whether the pass has anything to do: listing defaults or a siunitx command
 anywhere. A read-only scan, so the common document — which has neither —
 never pays for the rebuilding walk (`scripts/bench.lean` is the check). -/
 private def textNeededList : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
-    n == "lstset" || siCtrls.contains n || textNeededList rest
+    n == "lstset" || n == "setminted" || siCtrls.contains n || textNeededList rest
   | r :: rest => textNeededOne r || textNeededList rest
 
 private def textNeededOne : Raw → Bool
@@ -8461,8 +8658,8 @@ private def textNeededOne : Raw → Bool
 
 end
 
-/-- The listings/siunitx pass, run right after `rewrite`: `\lstset` folds
-into the listings that follow it, and the siunitx commands become their
+/-- The listings/siunitx pass, run right after `rewrite`: `\lstset` and
+`\setminted` fold into the listings that follow, and siunitx commands become their
 spelled text under the document's own locale. Third in the document's
 warn-once chain (`rewrite`'s docstring carries why the set travels): the
 keys it receives are the ones `rewrite` fired, the keys it returns go on to

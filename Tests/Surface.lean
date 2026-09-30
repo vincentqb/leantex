@@ -1553,12 +1553,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\setbeamercovered{transparent}\\addtobeamertemplate{block begin}{}{\\smallskip}" ++
     "\\setbeameroption{hide notes}") ++ "\n\\begin{document}x\\end{document}"
   t "compat beamer config skipped without errors" (errCodes beamerPre == [])
-  -- \setbeamercovered{transparent}, \usefonttheme{professionalfonts}, and
-  -- \setbeameroption{hide notes} no longer count: each agrees with what
-  -- the engine already does and warns nothing. \addtobeamertemplate is
-  -- the one construct left asking for templating that is not here.
-  t "compat beamer config warns once per construct"
-    ((warnCodes beamerPre).length == 1 && (warnCodes beamerPre).all (· == "W0104"))
+  -- Covered text, professional fonts, hidden notes and the finite block
+  -- skip hook each use the native behavior their declaration requests.
+  t "compat supported beamer config has no skipped-configuration warning"
+    ((warnCodes beamerPre).isEmpty)
   t "compat usetheme selects the bundle instead of warning"
     ((elabStr beamerPre).1.palette.find? "frametitlebg" |>.isSome)
   -- moloch is the maintained metropolis fork: both metropolis spellings
@@ -4275,6 +4273,7 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
       | .gap w _ => w
       | .rule w _ _ _ => w
       | .image _ w _ => w
+      | .poly _ _ => 0
   return out
 
 /-- **The reference list is natbib's list**, on the shipped page and in the
@@ -4972,16 +4971,16 @@ def beamerColorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "two elements with no role are two diagnostics, not one blanket"
     (dsP.any fun d => d.code == "W0104" &&
       (d.message.splitOn "palette primary").length == 2)
-  -- Composition, the half that is not covered: a key whose side has no
-  -- role (`alerted text` has no background here) and beamer's inheritance
-  -- (`parent=`) are named rather than silently discarded.
+  -- A channel with no paint site is named; supported inheritance is
+  -- resolved by the shared named-element state.
   t "a key whose side has no role is named with the element and the key"
     (dsP.any fun d => d.code == "W0104" &&
       (d.message.splitOn "alerted text").length == 2 &&
       (d.message.splitOn "bg").length ≥ 2)
-  t "beamer's colour inheritance is named, never silently dropped"
-    (dsP.any fun d => d.code == "W0104" &&
-      (d.message.splitOn "parent").length == 2)
+  t "supported beamer colour inheritance does not report a false loss"
+    (dsP.all fun d => d.code != "W0104" ||
+      !(d.message.contains "\\setbeamercolor") ||
+      (d.message.splitOn "parent").length != 2)
   -- Composition, the half that is covered: `fg=` alone leaves `bg`
   -- standing, because `\palette` installs per role.
   let (docC, _) := Elab.run "d.tex" (deck169
@@ -5228,6 +5227,47 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match fontProbe "\\Large", fontProbe "\\small" with
      | some a, some b => a > b
      | _, _ => false)
+  -- Selecting a custom font withdraws its declaration's skip, but every
+  -- unread key or missing size* argument must still be named at the use.
+  let fontLossProbe (fields : String) (inBody : Bool) :=
+    let select := "\\usebeamerfont{probe heading}"
+    let pre := "\\setbeamerfont{probe heading}{" ++ fields ++ "}" ++
+      "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+      "\\node[anchor=west" ++ (if inBody then "" else ",font=" ++ select) ++
+      "] at (current page.west) {" ++ (if inBody then select else "") ++
+      "\\inserttitle};\\end{tikzpicture}}\\title{Font Alpha\\\\Font Beta}"
+    let (doc, ds) := elabStr (deck169 pre "\\titlepage")
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    (doc, ds, layoutOf oneFace doc, body)
+  for (label, key, fields) in
+      [("unsupported parent", "parent", "size*={28pt}{33pt},parent=probe base"),
+       ("size* missing leading", "size*", "size*={28pt}"),
+       ("size* missing both arguments", "size*", "size*=")] do
+    for inBody in [false, true] do
+      let site := if inBody then "body" else "node option"
+      let (doc, ds, out, body) := fontLossProbe fields inBody
+      let note := s!"'{key}' of 'probe heading'"
+      let code := if inBody then "W0104" else "W0110"
+      let subject := "beamer:setbeamertemplate:title page" ++
+        (if inBody then ":" ++ note else "")
+      let losses := ds.filter fun d => d.code == "W0104" || d.code == "W0110"
+      t s!"a custom font's {label} is named once when selected in the {site}"
+        (losses.size == 1 && losses.any (fun d =>
+          d.code == code && d.subject == some subject && hasStr d.message note) &&
+         ds.all fun d => d.severity != .error && d.code != "W0361" && d.code != "W0363")
+      let c := censusOf (coveredColorsOf doc) out
+      t s!"a custom font's {label} keeps the title's ink in the {site}"
+        (out.pages.size == 1 && pageOccurs c 0 "Font Alpha" == 1 &&
+         pageOccurs c 0 "Font Beta" == 1 &&
+         treeOccurs body "Font Alpha" == 1 && treeOccurs body "Font Beta" == 1)
+      unless fields == "size*=" do
+        t s!"a custom font's {label} keeps its read size in the {site}"
+          (lineSizeOf c 0 "Font Alpha" == some (Dim.pt 28) &&
+           lineSizeOf c 0 "Font Beta" == some (Dim.pt 28))
+      if key == "parent" then
+        t s!"an unread custom font key preserves the declared leading in the {site}"
+          ((lineYOf c 0 "Font Alpha").any fun y =>
+            lineYOf c 0 "Font Beta" == some (y + Dim.pt 33))
 
 mutual
 
@@ -5387,6 +5427,37 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      (lineXOf cA 0 "example.org").any (· > Dim.mm 19) &&
      (lineYOf cA 0 "Pat Example").any (· > Dim.pt 175) &&
      (lineYOf cA 0 "example.org").any (· > Dim.pt 175))
+  let (docL, dsL, cL, _) := ship (overlay (pinnedTitle "\\inserttitle")
+    (pinnedAuthor "{\\insertauthor}{\\small\\insertinstitute}"))
+  let creditLines := (bodyLines (layoutOf oneFace docL)).filter fun l =>
+    hasStr (lineText l) "Pat Example" || hasStr (lineText l) "example.org"
+  t "a style change without a source break keeps both data on one shipped line"
+    (creditLines.size == 1 && creditLines.all (fun l =>
+      hasStr (lineText l) "Pat Example" && hasStr (lineText l) "example.org") &&
+     pageOccurs cL 0 "Pat Example" == 1 && pageOccurs cL 0 "example.org" == 1 &&
+     dsL.all fun d => d.severity != .error && d.code != "W0363" && d.code != "W0110")
+  let (_, bodyL, _) := HtmlDoc.emitTree {} docL
+  let htmlSlots := bodyL.flatMap fun
+    | .elem "main" _ sections => sections.flatMap fun
+      | .elem "section" attrs kids =>
+        if attrs.contains ("class", "slide title-page") then
+          kids.filter fun
+            | .elem "div" attrs _ => attrs.any fun (k, v) =>
+              k == "class" && v.startsWith "u-titlepage-slot-"
+            | _ => false
+        else #[]
+      | _ => #[]
+    | _ => #[]
+  t "unbroken mixed-style data share one HTML slot containing both parts"
+    (htmlSlots.size == 2 &&
+     (htmlSlots.filter fun n =>
+       (attrValuesOf (· == "div") "class" n).contains "u-titlepage-slot-1").size == 1 &&
+     htmlSlots.any fun n =>
+       let classes := attrValuesOf (fun _ => true) "class" n
+       classes.contains "u-titlepage-slot-1" &&
+       classes.contains "u-titlepage-slot-1-part-0" &&
+       classes.contains "u-titlepage-slot-1-part-1" &&
+       treeOccurs #[n] "Pat Example" == 1 && treeOccurs #[n] "example.org" == 1)
   -- Optional title data are a conditional omission, not template control
   -- flow in the output model. The gap belongs to the optional part and
   -- materialises only when that datum does.
@@ -5417,12 +5488,16 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      runColorOf docF "River Detail" == some { r := 0xF2, g := 0xCC, b := 0x60 } &&
      runColorOf docF "example.org" == some { r := 0xF4, g := 0xF4, b := 0xF0 })
   let htmlF := renderedTitle docF
+  let (_, bodyF, _) := HtmlDoc.emitTree {} docF
   t "typed HTML keeps the two boxes and every independently styled part"
     (["u-titlepage-slot-0-part-0", "u-titlepage-slot-0-part-1",
       "u-titlepage-slot-1-part-0", "u-titlepage-slot-1-part-1"].all (hasStr htmlF) &&
      hasStr htmlF "class=\"ragged\"" && hasStr htmlF "var(--probeGold" &&
      hasStr htmlF "var(--probeSnow" &&
-     hasStr htmlF "font-size:20pt;line-height:24pt")
+     (elemStylesList #[] bodyF.toList).any fun (text, style) =>
+       text == "Probe Heading" &&
+       cssStageLength style "font-size" (Dim.pt 20) docF.page.height &&
+       cssStageLength style "line-height" (Dim.pt 24) docF.page.height)
   let (_, dsS, cS, hS) := shipWith optional
     ("\\title{Probe Heading}\\subtitle{}\\author{Pat Example}\\institute{example.org}")
   t "an empty subtitle omits only its part"
@@ -5591,10 +5666,35 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
   t "selected custom title fonts reach the page without a dropped-font warning"
     (ds.all fun d => d.severity != .error &&
       !(d.code == "W0104" && d.subject.any (·.startsWith "beamer:setbeamerfont:probe")))
-  t "the typed title span carries the declared absolute size and leading"
+  t "the typed title span scales the declared size and leading with the stage"
     ((elemStylesList #[] body.toList).any fun (text, style) =>
-      text == "Synthetic Heading" && hasStr style "font-size:28pt" &&
-      hasStr style "line-height:33pt")
+      text == "Synthetic Heading" &&
+      cssStageLength style "font-size" (Dim.pt 28) doc.page.height &&
+      cssStageLength style "line-height" (Dim.pt 33) doc.page.height)
+  for aspect in ["169", "43"] do
+    for leading in [33, 0] do
+      let source := (deck169
+        ((pre true).replace "{28pt}{33pt}" s!"\{28pt}\{{leading}pt}" |>.replace
+          "\\title{Synthetic Heading}" "\\title{Line Alpha\\\\Line Beta}")
+        "\\titlepage").replace "aspectratio=169" s!"aspectratio={aspect}"
+      let (d, _) := elabStr source
+      let o := layoutOf oneFace d
+      let c := censusOf (coveredColorsOf d) o
+      let (h, b, _) := HtmlDoc.emitTree {} d
+      let baseline : Option Dim.Sp := do
+        return (← lineYOf c 0 "Line Beta") - (← lineYOf c 0 "Line Alpha")
+      t s!"title size* keeps both PDF run sizes and its leading on stage {aspect}/{leading}"
+        (lineSizeOf c 0 "Line Alpha" == some (Dim.pt 28) &&
+         lineSizeOf c 0 "Line Beta" == some (Dim.pt 28) && baseline == some (Dim.pt leading))
+      t s!"title size* scales its HTML size and leading with stage {aspect}/{leading}"
+        ((elemStylesList #[] b.toList).any fun (text, style) =>
+          hasStr text "Line Alpha" && hasStr text "Line Beta" &&
+          (lineSizeOf c 0 "Line Alpha").any (cssStageLength style "font-size" · d.page.height) &&
+          baseline.any (cssStageLength style "line-height" · d.page.height))
+      let cssD := treeCssList (treeCssList "" h.toList) b.toList
+      t s!"title size* and named deck sizes share the stage basis on {aspect}/{leading}"
+        ((cssRulesOf cssD "main").any (cssStageLength · "font-size" d.page.fontSize d.page.height) &&
+         (cssRuleOf cssD ".size-large").any (hasStr · "em"))
   t "control: the title-size declaration reaches the shipped page"
     (lineSizeOf (censusOf (coveredColorsOf docK) outK) 0 "Synthetic Heading" ==
       some (Dim.pt 28))
@@ -5664,6 +5764,69 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
       (dsB.any (·.code == "W0363") && dsB.all (·.severity != .error) &&
        pageOccurs cB 0 "Synthetic Heading" == 1 && pageOccurs cB 0 "A. Example" == 1 &&
        hasStr (titleSlideTextList false "" bodyB.toList) "Synthetic Heading")
+
+/-- A title node's colour expression has the same meaning as an ordinary
+inline colour. Both source spellings must ship the same ink and placement;
+scoped metadata keeps its separate ink. The ordinary inline reader is the
+oracle, so the title reader cannot grow its own mix grammar. -/
+def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let ship (options authorBody author : String) :=
+    let pre :=
+      "\\definecolor{probeGround}{HTML}{1E2530}\\definecolor{probePaper}{HTML}{F1EBD6}" ++
+      "\\definecolor{probeAccent}{HTML}{9FDAC7}\\definecolor{black}{HTML}{B8CBDD}" ++
+      "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+      "\\fill[probeGround] (current page.south west) rectangle (current page.north east);" ++
+      "\\node[anchor=west,text=probePaper] at ([xshift=19mm]current page.west)" ++
+      " {\\inserttitle};" ++
+      "\\node[anchor=south west,align=left," ++ options ++
+      "] at ([xshift=19mm,yshift=13mm]current page.south west)" ++
+      " {{" ++ authorBody ++ "\\par}{\\color{probeAccent}\\insertinstitute}};" ++
+      "\\end{tikzpicture}}\\title{Colour Heading}\\author{" ++ author ++
+      "}\\institute{Institute Sample}"
+    let (doc, ds) := elabStr (deck169 pre "\\titlepage")
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    (doc, ds, layoutOf oneFace doc, head, body)
+  let shape (out : Layout.Out) := out.pages.map fun p =>
+    p.lines.filterMap fun l =>
+      if l.furniture then none else
+      some (lineText l, l.x, l.y, l.segs.filterMap fun s => match s with
+        | .run _ c _ w _ z .. => some (c, w, z)
+        | _ => none)
+  for expr in ["probeAccent", "probePaper!61!probeAccent",
+      "probePaper!61!probeAccent!43!white", "probeAccent!64", "black!82!probePaper"] do
+    let (_, dsK, outK, _, bodyK) :=
+      ship "" "\\insertauthor" s!"\\textcolor\{{expr}}\{Colour Sample}"
+    for (label, options, authorBody) in
+        [("inline", "", s!"\\color\{{expr}}\\insertauthor"),
+         ("node", s!"text={expr}", "\\insertauthor")] do
+      let (doc, ds, out, head, body) := ship options authorBody "Colour Sample"
+      let ink := doc.palette.resolve expr
+      let c := censusOf (coveredColorsOf doc) out
+      t s!"{label} title colour {expr} ships the ordinary colour's ink and placement"
+        (shape out == shape outK && out.pages.size == 1 &&
+         (out.pages[0]?.bind fun p => p.lines.find? fun l => hasStr (lineText l) "Colour Sample").any
+           fun line => line.segs.any fun s => match s with
+             | .run _ color .. => ink == some color
+             | _ => false)
+      t s!"{label} title colour {expr} reaches its typed HTML span without source ink"
+        (titleSlideTextList false "" body.toList ==
+           titleSlideTextList false "" bodyK.toList &&
+         (elemStylesList #[] body.toList).any fun (text, style) =>
+           text == "Colour Sample" && ink.any (hasStr style <| HtmlDoc.cssColor ·))
+      t s!"{label} title colour {expr} keeps scoped metadata and the bottom pin"
+        (pageOccurs c 0 "Colour Sample" == 1 && pageOccurs c 0 "Institute Sample" == 1 &&
+         (lineYOf c 0 "Colour Sample").any (· > doc.page.height * 3 / 4) &&
+         (elemStylesList #[] body.toList).any (fun (text, style) =>
+           text == "Institute Sample" && hasStr style "var(--probeAccent") &&
+         (cssRuleOf (treeCssList (treeCssList "" head.toList) body.toList)
+           "section.slide.title-page > .u-titlepage-slot-1").any
+           (hasStr · "translate(-0%, -100%)"))
+      t s!"{label} title colour {expr} is read without a title loss"
+        (ds.all (fun d => d.severity != .error && d.code != "W0104" && d.code != "W0110" &&
+          d.code != "W0361" && d.code != "W0363") &&
+         dsK.all (·.severity != .error))
 
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the

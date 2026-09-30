@@ -4,6 +4,7 @@ import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Ir
 import LeanTex.Core.Oklab
+import LeanTex.Core.Listing
 import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
 import LeanTex.Core.Struct
@@ -672,6 +673,10 @@ inductive Item where
   overbar: `w` wide, `thickness` tall, its bottom at the baseline plus
   `raise`. Never a breakpoint, like any box. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
+  /-- A filled polygon in the stream — a cancel strike, an arrowhead: its
+  points from where it stands and the baseline, y up. It takes no width
+  and is never a breakpoint; the kerns around it place what it marks. -/
+  | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
 
 def forcedCost : Int := -10000
@@ -704,6 +709,10 @@ inductive Seg where
   indexes the `Image.Store` the backends were given; an entry that did not
   load renders as an outlined placeholder of the same size. -/
   | image (store : Option Nat) (w : Sp) (h : Sp)
+  /-- A filled polygon — a formula's cancel strike or arrowhead — its
+  points from the pen position where it stands and the baseline, y up. No
+  width: the runs around it place what it marks. -/
+  | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
 
 structure LineOut where
@@ -778,19 +787,20 @@ def Geom.ground (g : Geom) (c : Ir.Color) : Fill :=
   { x := -g.bleed, y := -g.bleed, w := g.pageW + 2 * g.bleed,
     h := g.pageH + 2 * g.bleed, color := c }
 
-/-- The ground a page ships: its own frame/title style, else the persistent
-palette epoch, else the opening document ground. -/
-def effectivePageGround (page epoch opening : Option Ir.Color) : Option Ir.Color :=
-  (page.orElse fun _ => epoch).orElse fun _ => opening
+/-- The ground a page ships: its own frame/title style, else the current
+palette epoch. An epoch replaces the persistent ground, including `none`;
+there is no fallback to a superseded opening palette. -/
+def effectivePageGround (page epoch : Option Ir.Color) : Option Ir.Color :=
+  page.orElse fun _ => epoch
 
-theorem effectivePageGround_page_exact (c : Ir.Color) (epoch opening : Option Ir.Color) :
-    effectivePageGround (some c) epoch opening = some c := rfl
+theorem effectivePageGround_page_exact (c : Ir.Color) (epoch : Option Ir.Color) :
+    effectivePageGround (some c) epoch = some c := rfl
 
-theorem effectivePageGround_epoch_exact (c : Ir.Color) (opening : Option Ir.Color) :
-    effectivePageGround none (some c) opening = some c := rfl
+theorem effectivePageGround_epoch_exact (epoch : Option Ir.Color) :
+    effectivePageGround none epoch = epoch := rfl
 
 theorem effectivePageGround_clear_exact :
-    effectivePageGround none none none = none := rfl
+    effectivePageGround none none = none := rfl
 
 /-- The eight printer's cut marks a page ships under `\page{ marks = cut }`:
 a pure function of the trim box (`W × H`), the bleed, the gap, and the
@@ -1032,13 +1042,15 @@ structure PageOut where
   /-- The chrome footer this page carries, resolved at collection time (the
   frame's own number, the section in force): the band of slots the final
   pass lays into the margin once the page count is known. `none` on section
-  pages, standout frames, and every page of an unthemed document. -/
+  pages, plain standout frames, and every page without declared furniture. -/
   foot : Option (Array Ir.BandSlot) := none
   /-- The chrome footer's box on this page — its glyphs' height above and
   depth below the baseline (`segsInk`) — measured where the page was built,
   so the band's baseline (`footBaseline`) is set from the same value the
   page's text-area floor was (`B.bottom`). `none` where `foot` is. -/
   footBox : Option (Sp × Sp) := none
+  /-- The footer's resolved colour pair from the frame's palette epoch. -/
+  footLook : Option Ir.TitledLook := none
   /-- The countable frame this page belongs to — its `Ir.frameNumbers`
   number, written at `finishPage` from the same `.foot` op that carries
   the footer, so a stepped or spilling frame's pages all bear it. `none`
@@ -2062,7 +2074,7 @@ def raggedItems (items : Array Item) : Array Item :=
     | .glue g =>
       if g.fil then it
       else .glue { width := g.width, stretch := g.width * 6, word := g.word }
-    | .box .. | .pen .. | .img .. | .rule .. => it
+    | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
 
 /-- Ragged setting for display lines — titles and headings: interword glue
 keeps its natural width and gains *finite* stretch (six times its own
@@ -2087,7 +2099,7 @@ def displayItems (target : Sp) (items : Array Item) : Array Item :=
                                      stretch := max 0 (target / 2),
                                      parfill := true }
       else .glue { width := g.width, stretch := g.width * 6, word := g.word }
-    | .box .. | .pen .. | .img .. | .rule .. => it
+    | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
 
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
@@ -2541,6 +2553,10 @@ private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.
     | .rule _ t r _ =>
       top := max top (r + t)
       bot := min bot r
+    | .poly pts _ =>
+      for (_, y) in pts do
+        top := max top y
+        bot := min bot y
     | .glue _ | .pen _ _ _ _ _ _ | .img _ _ _ => pure ()
   return (top, bot)
 
@@ -2550,6 +2566,7 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
   items.map fun it => match it with
     | .box w i c l g s ld u r gr a => .box w i c l g s ld u (r + delta) gr a
     | .rule w t r c => .rule w t (r + delta) c
+    | .poly pts c => .poly (pts.map fun (x, y) => (x, y + delta)) c
     | .glue g => .glue g
     | .pen w c f i col g => .pen w c f i col g
     | .img s w h => .img s w h
@@ -2868,6 +2885,46 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
         (min (raise + bBot) (accRaise + mBot))
     return (items, missing0)
 
+/-- Assemble a laid cancel mark — cancel.sty's four commands — by the
+stated conventions (`Math.cancelGeom`; PLAN, 2026-09-29 cancellation entry): the
+marks from the math font's overbar rule, doubled under `thicklines`, and
+its overbar clearance, both at the style's size; the value as the struck
+subformula's superscript, by TeX's rule 18 over the style's superscript
+constants; room for all of it only when the document asks for cancel.sty's
+`makeroom`. The polygons stand at the construct's origin, the struck
+subformula after them, and struts give the line the marks' and the
+value's reach, so no line ever collides with them. -/
+private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+    (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
+    (bItems vItems : Array Item) : Array Item :=
+  let size := e.sizeAt st
+  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let (vTop, vBot) := mathItemsExtent e.font vItems
+  let θ := e.constAt size e.consts.overbarRuleThickness
+  let w := mathItemsWidth bItems
+  let vw := mathItemsWidth vItems
+  let g := Math.cancelGeom mark spec.room
+    { rule := if spec.thick then 2 * θ else θ
+      gap := e.constAt size e.consts.overbarVerticalGap
+      w, top := bTop, bot := bBot, vw, vbot := vBot
+      supShift := e.constAt size (if st.cramped then e.consts.superscriptShiftUpCramped
+        else e.consts.superscriptShiftUp)
+      supDrop := e.constAt size e.consts.superscriptBaselineDropMax
+      supBottom := e.constAt size e.consts.superscriptBottomMin
+      space := e.constAt size e.consts.spaceAfterScript }
+  let marks := g.polys.map fun pts => Item.poly (pts.map fun (x, y) => (x, y + raise)) ink
+  let (mTop, mBot) := mathItemsExtent e.font marks
+  let raised := raiseItems raise bItems
+  let body := #[mathKern e size g.shift] ++ raised
+  let value := if vItems.isEmpty then #[] else
+    #[mathKern e size (g.valueX - g.shift - w)] ++ raiseItems (raise + g.valueY) vItems
+  let reached := if vItems.isEmpty then g.shift + w else g.valueX + vw
+  let vRaise := raise + g.valueY
+  let top := max mTop (max (raise + bTop) (if vItems.isEmpty then raise else vRaise + vTop))
+  let bot := min mBot (min (raise + bBot) (if vItems.isEmpty then raise else vRaise + vBot))
+  let reach := struts e top bot
+  ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
+
 mutual
 
 /-- Lay one math list: spacing between adjacent atoms from the degraded
@@ -2878,6 +2935,11 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (cls : List Math.MathClass) (prev : Option Math.MathClass) (acc : MAcc) :
     Math.MList → MAcc
   | .nil => acc
+  | .cons (.ink c _) rest =>
+    -- A colour switch: the rest of this list inks in `c`. It is no atom and
+    -- carries no class (`MItem.classOf`), so the spacing walk keeps the
+    -- atom before it — TeX's colour whatsit, invisible to the spacing table.
+    layMathTail { e with color := c } st raise cls prev acc rest
   | .cons x rest =>
     match x.classOf with
     | none =>
@@ -2918,6 +2980,9 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .space mu =>
     let size := e.sizeAt st
     ((acc.1.push (mathKern e size (muAt size mu))), acc.2)
+  -- `layMathTail` reads a switch before it reaches here; one met alone
+  -- inks nothing.
+  | .ink _ _ => acc
   | .atom cls nuc sup sub lim =>
     let size := e.sizeAt st
     let display := st.rank == 3
@@ -3112,6 +3177,16 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | _ => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
+  | .cancel mark spec value body =>
+    -- The package boxes its argument in the current style (`\mathpalette`),
+    -- so the struck subformula is a list of its own; the value sets in the
+    -- style the package option names, in the marks' colour (cancel.sty
+    -- colours the value with the arrow).
+    let (bItems, m1) := layMathTail e st 0 (Math.degrade body.classes) none (#[], acc.2) body
+    let ink := (spec.color.map (·.1)).getD e.color
+    let (vItems, m2) := layMathTail { e with color := ink } (spec.size.style st) 0
+      (Math.degrade value.classes) none (#[], m1) value
+    (acc.1 ++ cancelAssemble e st raise mark spec ink bItems vItems, m2)
 
 /-- The cells of one row, each laid into its own run. -/
 private def layGridRow (e : MathEnv) (st : Math.MathStyle)
@@ -3705,6 +3780,7 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
       m := { m with natural := m.natural + w, boxW := m.boxW + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
     | .rule w _ _ _ => m := { m with natural := m.natural + w }
+    | .poly _ _ => pure ()
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -3808,6 +3884,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
       | .box w _ _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
       | .img _ w _ => (w, 0, 0, 0, 0)
       | .rule w _ _ _ => (w, 0, 0, 0, 0)
+      | .poly _ _ => (0, 0, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -3948,13 +4025,13 @@ def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
     (expand : Bool := false) : Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
-    | .box .. | .glue .. | .img .. | .rule .. => false
+    | .box .. | .glue .. | .img .. | .rule .. | .poly .. => false
   if !items.any sealable then return kp items target protrude expand
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
-    | .box .. | .glue .. | .img .. | .rule .. => it
+    | .box .. | .glue .. | .img .. | .rule .. | .poly .. => it
   let breaks := kp plain target protrude expand
   if breaks.isEmpty then return kp items target protrude expand
   let mut prev := plain.size
@@ -4072,6 +4149,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     | .rule w thickness raise color =>
       segs := segs.push (.rule w thickness raise color)
       width := width + w
+    | .poly pts color =>
+      -- The line's expansion rescales what the polygon marks, so its
+      -- points scale with it about where it stands.
+      segs := segs.push (.poly (pts.map fun (x, y) => (x + x * f / 1000, y)) color)
     | .glue g =>
       let setW : Sp :=
         if !justify then
@@ -4224,11 +4305,9 @@ private structure B where
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
-  /-- Background every page gets from the opening document palette. -/
+  /-- Persistent background from the current palette, initially the
+  document's opening palette. `.pageGround` replaces it even with `none`. -/
   docBg : Option Ir.Color := none
-  /-- Background selected by the current palette epoch. It survives page
-  closes; a page's own `.pageStyle` background wins while present. -/
-  epochBg : Option Ir.Color := none
   /-- How the page being built distributes its leftover vertical space;
   reset when it closes. `.top` (all leftover below) is the undeclared
   default; a standout frame or section page sets `.center`. -/
@@ -4242,6 +4321,7 @@ private structure B where
   filsAbove : Array Nat := #[]
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Ir.BandSlot) := none
+  curFootLook : Option Ir.TitledLook := none
   /-- The bottom edge of the open page's `.titleBar` fill, for
   `PageOut.band`: written where the bar paints, cleared with the page. -/
   curBand : Option Sp := none
@@ -4587,7 +4667,15 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
        d)
   let fills := if delta == 0 then b.cur.fills else
     b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
-  let fills := match effectivePageGround b.pageBg b.epochBg b.docBg with
+  -- The footer background occupies its measured band, including the
+  -- template's closing skip, below the body floor. It is page furniture
+  -- and therefore never participates in the body's vertical distribution.
+  let fills := match b.curFoot, b.footBox, b.curFootLook.bind (·.bar) with
+    | some _, some (h, d), some c =>
+      let y := footBaseline b.geom.pageH d - h
+      fills.push { x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c }
+    | _, _, _ => fills
+  let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
     | none => fills
   -- Picture paths ride with the fills: the same vertical-distribution
@@ -4610,6 +4698,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
                                    paths := paths, foot := b.curFoot,
                                    footBox := b.footBox,
+                                   footLook := b.curFootLook,
                                    frame := b.curFrame, band := b.curBand },
            cur := {}, curBand := none,
            shrinkAbove := #[], pageShrink := 0, stretchAbove := #[], pageStretch := 0,
@@ -4891,6 +4980,7 @@ def Seg.stripGlyphs : Seg → Seg
   | .gap w word => .gap w word
   | .rule w t r c => .rule w t r c
   | .image s w h => .image s w h
+  | .poly pts c => .poly pts c
 
 /-- What a line's box measures: the leaded metric extent above and below
 the baseline (CSS 2.1 §10.8.1 — the interline rule's terms), and the ink
@@ -4957,6 +5047,10 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
       scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
   | .image _ _ h => mergeLineBox acc ⟨h, 0, h, 0⟩
   | .rule _ t r _ => mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
+  | .poly pts _ =>
+    let (above, below) := pts.foldl
+      (fun (a, b) (_, y) => (max a y, max b (-y))) (0, 0)
+    mergeLineBox acc ⟨above, below, above, below⟩
   | .gap _ _ => acc
 
 /-- A line's vertical extent, measured seg by seg, each run its own
@@ -4968,7 +5062,8 @@ baseline with no depth and no half-leading (CSS 2.1 §10.8.1's
 replaced-element rule): it raises the box, and the leading after it is
 the text's own. A math rule (a fraction bar) reaches from `raise` to
 `raise + thickness`: it can add height above the baseline or depth below
-it, never both. `fontSize`, `bodyAscent`, and `bodyDescent` are the
+it, never both. A polygon contributes its vertex bounds above and below
+the baseline. `fontSize`, `bodyAscent`, and `bodyDescent` are the
 page's body metrics — the strut of every line of text, so an empty line
 still holds one leading. The strut belongs to lines carrying a glyph
 run; a line of rules, gaps, or images has exactly the box its segments
@@ -5715,6 +5810,7 @@ private inductive Op where
   number, the section in force), a section page or standout frame clears
   them, and a spill page inherits its frame's. -/
   | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
+      (look : Option Ir.TitledLook)
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
@@ -5869,6 +5965,7 @@ private structure Acc where
   footer off. -/
   chromeL : Option Ir.ChromeSlot := none
   chromeR : Option Ir.ChromeSlot := none
+  standoutNote : Option Bool := none
   /-- Slides without a `\runningfoot`: the classes of documents whose pages
   may carry a chrome footer at all. -/
   footAllowed : Bool := false
@@ -6199,18 +6296,13 @@ private theorem Acc.setTokens_emits_nothing (a : Acc) (tk : Ir.Tokens) :
   ⟨rfl, rfl, rfl, rfl⟩
 
 /-- The chrome footer a frame's pages carry: the one declared slot band
-(`Ir.Chrome.footBand` — fixed sides, resolved content, declared priorities)
-resolved to this frame's data. A frame the numbering skips carries no
-footer (the caller already guards). `none` when nothing is declared. -/
-private def Acc.chromeFoot (a : Acc) : Option (Array Ir.BandSlot) :=
-  if a.chromeL.isNone && a.chromeR.isNone && a.frameFoot.isNone then none else
-  match a.frameNum with
-  | some n =>
-    let chrome : Ir.Chrome := { footerLeft := a.chromeL, footerRight := a.chromeR }
-    some (chrome.footBand a.frameFoot a.curSection n a.frameCount)
-  | none =>
-    some (Ir.bandSlotIf .left (a.frameFoot.getD #[]) Ir.notePriority
-      "the \\framefoot note")
+(`Ir.Chrome.frameFootBand` — fixed sides, resolved content, declared
+priorities), including an explicitly restored standout note. -/
+private def Acc.chromeFoot (a : Acc) (standout : Bool := false) :
+    Option (Array Ir.BandSlot) :=
+  let chrome : Ir.Chrome :=
+    { footerLeft := a.chromeL, footerRight := a.chromeR, standoutNote := a.standoutNote }
+  chrome.frameFootBand a.frameFoot a.curSection a.frameNum a.frameCount standout
 
 private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
@@ -6220,7 +6312,7 @@ private def collectPara (r : Rd) (a : Acc)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (hangIndent : Sp := 0) : Acc :=
+    (hangIndent : Sp := 0) (literalLines : Bool := false) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -6243,6 +6335,13 @@ private def collectPara (r : Rd) (a : Acc)
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
+  -- Listings break only at declared whitespace, never at an identifier's
+  -- literal hyphen. Keep item indices (including forced source newlines)
+  -- stable for the line-extra map.
+  let items := if literalLines then items.map (fun item => match item with
+    | .pen w cost flag f c gs =>
+      .pen w (if cost ≤ forcedCost then cost else 10000) flag f c gs
+    | item => item) else items
   let items :=
     if r.geom.justify then items
     else if display then
@@ -6455,7 +6554,8 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .glue g => w + g.width
     | .pen .. => w
     | .img _ bw _ => w + bw
-    | .rule bw .. => w + bw) 0
+    | .rule bw .. => w + bw
+    | .poly .. => w) 0
 
 /-- The one door the document title renders through, centred or not: a
 declared `titlepage` font template wraps it — the same template the HTML
@@ -6845,6 +6945,7 @@ def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
            max acc.2 (scaledAt sz font (-font.descent).toNat - raise))) acc
     | .image _ _ h => (max acc.1 h, acc.2)
     | .rule _ t raise _ => (max acc.1 (raise + t), max acc.2 (-raise))
+    | .poly pts _ => pts.foldl (fun acc (_, y) => (max acc.1 y, max acc.2 (-y))) acc
     | .gap _ _ => acc) (0, 0)
 
 /-- A run emptied of its glyphs contributes exactly what it contributed
@@ -6866,6 +6967,7 @@ theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) 
   | gap => rfl
   | rule => rfl
   | image => rfl
+  | poly => rfl
 
 /-- **A label's vertical placement does not depend on which glyphs it
 contains.** Emptying every run's glyph array changes neither reach, so a
@@ -7215,14 +7317,15 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   -- before it is generated ink (`Struct`'s `.section` arm reads no number).
   let span := leafCount title
   let (a, leaf) := a.leafRange span
-  if r.slides && level == 1 && (a.pal.find? "progressfg").isSome then
+  let design := Ir.Design.ofPalette a.pal
+  if r.slides && level == 1 && design.sectionProgress.isSome then
     -- The themed section page: its own page, vertically centred, the
     -- title ragged-left in a centred measure with the deck position
     -- drawn under it as a progress bar.
     let a := a.pageBreak
     -- A divider carries no footer; the break above closed the previous
     -- page with its own.
-    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
+    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none none) } else a
     -- One page of the deck like any frame, on the palette's own ground.
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
@@ -7232,6 +7335,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     let mp : Sp := r.geom.textWidth * 7875 / 10000
     let indent : Sp := (r.geom.textWidth - mp) / 2
     let st := r.style "sectionpage"
+    let saved := (a.fg, a.ground)
+    let a := { a with fg := design.sectionTitle, ground := ground }
     let a := match st.font with
       | some tpl =>
         collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
@@ -7239,8 +7344,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
       | none =>
         collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
           (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
-    let fgC := (a.pal.find? "progressfg").getD a.fg
-    let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
+    let a := { a with fg := saved.1, ground := saved.2 }
     -- The fallback is moloch's own default, `progressbar linewidth=1pt`
     -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
     -- value the bundles declare through the token.
@@ -7252,17 +7356,19 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     -- comes from a lagging aux file, and this engine has no aux file to
     -- lag. A deck with no countable frame has no position to show, so
     -- it draws no bar at all rather than a fraction over a fake 1.
-    let a := if a.frameCount == 0 then a else
-      { a with ops := a.ops.push (.progress
-        a.framesDone a.frameCount fgC bgC thick
-        (r.geom.hmargin + indent) mp) }
+    let a := match design.sectionProgress with
+      | some bar => if a.frameCount == 0 then a else
+        { a with ops := a.ops.push (.progress
+          a.framesDone a.frameCount bar.fg bar.bg thick
+          (r.geom.hmargin + indent) mp) }
+      | none => a
     a.pageBreak
   else
   -- In slides, a section is a divider: its own page between frames rather
   -- than a heading dropped onto the bottom of the previous slide.
   let a := if r.slides then a.pageBreak else a
   let a := if a.footAllowed then
-      { a with ops := a.ops.push (.foot none none) } else a
+      { a with ops := a.ops.push (.foot none none none) } else a
   let element := match level with
     | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
   let st := r.style element
@@ -7300,6 +7406,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   -- The heading keeps its text (`ParaJob.keepNext`): the after-skip and
   -- two lines of the body must fit below it, or it opens the next page.
   let keep := after.width + 2 * Ir.leadingFor r.geom.fontSize r.geom.leading
+  let savedFg := a.fg
+  let a := if r.slides && level == 1 then { a with fg := design.sectionTitle } else a
   let a := match st.font with
     | some tpl =>
       collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
@@ -7308,7 +7416,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
       collectDisplay r a title indent false (sectionSize r.geom level)
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
-  let a := { a.vskip after with afterHeading := true }
+  let a := { a.vskip after with afterHeading := true, fg := savedFg }
   if r.slides then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
@@ -7368,8 +7476,7 @@ private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
   { a with ops := a.ops.push (.setLogo content) }
 
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
-  -- Code lines, kept literally, at the scale's own \footnotesize (the
-  -- code-frame convention) — derived from the table, not a loose decimal.
+  -- Code lines use the declared size through the ordinary style resolver.
   -- No hyphenation patterns: the engine must never invent a hyphen inside
   -- an identifier. A pending overlay's shade rides in `covered`: code
   -- must read as covered like any other text.
@@ -7399,9 +7506,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- Declared line numbers are furniture beside each line — generated
   -- ink, like a list's markers: right-aligned digits in the mono face,
   -- held to their line by no-break spaces.
-  let inner : Array Ir.Inline :=
-    if spec.numbers then Id.run do
-      let lines := Ir.verbatimLines s
+  let inner : Array Ir.Inline := Id.run do
+      let lines := spec.tokenLines s
       let w := (toString lines.size).length
       let mut out : Array Ir.Inline := #[]
       let mut i := 0
@@ -7409,20 +7515,36 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
         i := i + 1
         unless out.isEmpty do
           out := out.push (.linebreak {})
-        let numStr := toString i
-        let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
-        let kept := line.foldl
-          (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
-        out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0" ++ kept))
+        if spec.numbers then
+          let numStr := toString i
+          let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
+          out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0"))
+        if (ListingHighlight.lineText line).isEmpty then
+          out := out.push (.text "\u00a0")
+        else
+          let mut column := 0
+          for token in line do
+            let (kept, nextColumn) := spec.layoutText column token.text
+            column := nextColumn
+            out := out.push (Listing.tokenInline a.pal a.ground covered
+              { token with text := kept } (style := spec.style))
       pure #[.styled .mono out]
-    else #[.styled .mono (Ir.verbatimInlines s)]
   let inner := match covered with
     | some c => #[.colored c none inner]
     | none => inner
+  -- A listing owns its line box, not the enclosing body's strut.
+  -- Resolve once against the body/local measure, then give collectPara
+  -- that size and an explicit skip: its ordinary mixed-size paragraph
+  -- strut would otherwise hold 8pt code on 12pt body baselines.
+  let (size, leading) := (applyStyle r.geom.scale {} spec.fontSize).metrics
+    r.geom.fontSize r.xHeight ((a.measure.getD r.geom.textWidth) - indent) r.geom.textHeight
+  let leading := leading.getD (Ir.leadingFor size r.geom.leading)
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
-  collectPara { r with pats := none } a inner indent false
-    (Ir.scaleStep r.geom.fontSize "footnotesize") (leaf := leaf) (span := 1)
+  collectPara { r with pats := none, geom := { r.geom with justify := false } }
+    a inner indent false size
+    (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
+    (leaf := leaf) (span := 1) (literalLines := true)
 
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: each line one display-type paragraph at the body size —
@@ -7673,9 +7795,11 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
                       ops := a.ops.push (.titleBar barBg pad strut) }
     { a with wantDefault := true }
   | none =>
+    let savedFg := a.fg
+    let a := { a with fg := (Ir.Design.ofPalette a.pal).frameTitleFg }
     let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
-    { a with wantDefault := true }
+    { a with wantDefault := true, fg := savedFg }
 
 /-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
 become literal text. Running content is laid out after the body, so both
@@ -7734,14 +7858,17 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the
 footer that belongs to the frame — its pages, spill pages included, carry
 the frame's own number. A frame the numbering skips — the title page, a
-standout — carries no footer at all: moloch renders both plain
+standout — normally carries no footer: moloch renders both plain
 (beamerinnerthememoloch.dtx:314-320, 777-778), and a number slot with no
-number has nothing true to show. -/
-private def collectFrameOpen (a : Acc) (breakable : Bool) : Acc :=
+number has nothing true to show. An explicit standout-note restoration
+is selected by the shared band rule. -/
+private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
   let a := a.pageBreak
   let a := { a with ops := a.ops.push (.frameOpen breakable) }
   if a.footAllowed then
-    let foot := Op.foot (if a.frameNum.isNone then none else a.chromeFoot) a.frameNum
+    let band := a.chromeFoot standout
+    let foot := Op.foot band a.frameNum
+      (some ((Ir.Design.ofPalette a.pal).frameFootLook (standout && band.isSome)))
     { a with ops := a.ops.push foot }
   else a
 
@@ -7749,8 +7876,8 @@ private def collectFrameOpen (a : Acc) (breakable : Bool) : Acc :=
 the footline — the band `collectFrameOpen` opens — `\textheight` is
 beamer's there: the paper less `\footheight`, `footFloor` of the band's
 box, the floor the page builder stands the body on (`B.bottom`). -/
-private def frameReader (r : Rd) (a : Acc) : Rd :=
-  match (if a.footAllowed && a.frameNum.isSome then a.chromeFoot else none) with
+private def frameReader (r : Rd) (a : Acc) (standout : Bool) : Rd :=
+  match (if a.footAllowed then a.chromeFoot standout else none) with
   | some band =>
     let (h, d) := bandBox r.fs r.imgs r.geom r.xHeight 1 band
     { r with geom := { r.geom with
@@ -8298,8 +8425,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- read off `Ir.frameNumbers`, once per logical frame, so a stepped
     -- frame's pages share it. The boundary, the marker and the frame's own
     -- footer travel together through `frameOpen`.
-    let a := collectFrameOpen a breakable
-    let r := frameReader r a
+    let a := collectFrameOpen a standout breakable
+    let r := frameReader r a standout
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
     -- the builder's top-flush default.
@@ -8630,6 +8757,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w
     | .image _ w _ => x := x + w
+    | .poly _ _ => pure ()
     | .run fontIdx _ _ w glyphs size _ _ _ _ _ =>
       let font := fs.get fontIdx
       let sz := if size == 0 then lineSize else size
@@ -8655,6 +8783,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .rule w _ _ _ =>
       out := out.push (.gap w false)
       x := x + w
+    | .poly _ _ => pure ()
     | .image _ w _ =>
       out := out.push (.gap w false)
       x := x + w
@@ -8853,7 +8982,15 @@ author ended every line before it and the paragraph ended that one. -/
 private def declaredReflow (items : Array Item) (breaks : Array Nat) : Bool :=
   match lastDeclaredEnd? items with
   | none => false
-  | some cut => breaks.any fun k => k < cut && !isForced items k
+  | some cut => breaks.any fun k =>
+    -- The breaker can choose the end-fill immediately before a forced
+    -- newline. Both end the same source line; lineStart skips the penalty.
+    -- premise: Tests.mintedSettingsChecks — kept boundaries and indentation
+    -- ship unchanged; a genuinely split declared line still raises W0386.
+    let atEndFill := match items[k]? with
+      | some (.glue g) => g.parfill && isForced items (k + 1)
+      | _ => false
+    k < cut && !isForced items k && !atEndFill
 
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
@@ -8957,6 +9094,7 @@ private inductive StagedOp where
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
+      (look : Option Ir.TitledLook)
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen (pos : Array Ir.BoxPos)
   | colNext
@@ -9319,9 +9457,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     frameBreak := none, spillWarned := false, opened := false }
   | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
-  | .pageGround bg => b := { b with epochBg := bg }
-  | .foot c fr =>
-    b := { b with curFoot := c, curFrame := fr
+  | .pageGround bg => b := { b with docBg := bg, pageBg := none }
+  | .foot c fr look =>
+    b := { b with curFoot := c, curFrame := fr, curFootLook := look
                   footBox := c.map (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
   | .pin =>
     -- The resume depth clears the chrome's ink: the title bar (the last
@@ -9899,35 +10037,34 @@ private def bgFilled (g : Geom) (p : PageOut) : Prop :=
   ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
     f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed
 
-/-- One placement step, seen by the background invariant: geometry and
-the declared document background ride through untouched, and — when a
-background is declared — every page the step ships beyond its input's
-is `bgFilled`. Composes (`BgStep.trans`); `finishPage` is the one step
-that ships, and it ships filled (`finishPage_bg`). -/
+/-- One placement step that keeps a background declared: geometry is
+unchanged, the persistent ground remains declared when it was declared
+before, and every new page then carries its full-page fill. The colour
+may change between epochs; an epoch removing `bg` does not satisfy this
+premise. -/
 private def BgStep (b b' : B) : Prop :=
-  b'.geom = b.geom ∧ b'.docBg = b.docBg ∧
+  b'.geom = b.geom ∧ (b.docBg.isSome = true → b'.docBg.isSome = true) ∧
     (b.docBg.isSome = true → ∀ p ∈ b'.pages, p ∈ b.pages ∨ bgFilled b.geom p)
 
 private theorem BgStep.refl (b : B) : BgStep b b :=
-  ⟨rfl, rfl, fun _ _p hp => Or.inl hp⟩
+  ⟨rfl, id, fun _ _p hp => Or.inl hp⟩
 
 private theorem BgStep.of_eq {b c : B} (hg : c.geom = b.geom)
     (hd : c.docBg = b.docBg) (hp : c.pages = b.pages) : BgStep b c :=
-  ⟨hg, hd, fun _ _p hpp => Or.inl (hp ▸ hpp)⟩
+  ⟨hg, fun hs => hd ▸ hs, fun _ _p hpp => Or.inl (hp ▸ hpp)⟩
 
 private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
     BgStep a c := by
   obtain ⟨hg1, hd1, hp1⟩ := h1
   obtain ⟨hg2, hd2, hp2⟩ := h2
-  refine ⟨hg2.trans hg1, hd2.trans hd1, fun hs p hp => ?_⟩
-  rcases hp2 (hd1 ▸ hs) p hp with h | h
+  refine ⟨hg2.trans hg1, fun hs => hd2 (hd1 hs), fun hs p hp => ?_⟩
+  rcases hp2 (hd1 hs) p hp with h | h
   · exact hp1 hs p h
   · exact Or.inr (hg1 ▸ h)
 
-/-- The one shipping step ships filled: the page `finishPage` pushes
-carries the full-page background fill whenever the opening document
-declared one — `pageBg.orElse epochBg.orElse docBg` is some either way, and the fill it selects
-is prepended whole, before anything can shift it. -/
+/-- The shipping door prepends the current ground whole before anything
+can shift it. A declared persistent ground suffices even when a page's
+own style chooses another colour. -/
 private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     b.docBg.isSome = true → ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilled b.geom p := by
@@ -9939,19 +10076,16 @@ private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     unfold bgFilled
     dsimp only
     rcases hpb : b.pageBg with _ | c
-    · rcases heb : b.epochBg with _ | e
-      · rcases hdb : b.docBg with _ | c'
-        · rw [hdb] at hd; simp at hd
-        · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
-          simp [effectivePageGround]
-      · refine ⟨b.geom.ground e, ?_, rfl, rfl, rfl, rfl⟩
+    · rcases hdb : b.docBg with _ | c'
+      · rw [hdb] at hd; simp at hd
+      · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
         simp [effectivePageGround]
     · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
       simp [effectivePageGround]
 
 private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
     BgStep b (b.finishPage o f) :=
-  ⟨rfl, rfl, finishPage_bg b⟩
+  ⟨rfl, id, finishPage_bg b⟩
 
 /-- The full-page fill, *with its colour*: what `bgFilled` deliberately
 leaves out, and the half a declared per-page ground needs. A page whose
@@ -10043,12 +10177,21 @@ private theorem bgStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
   · exact bgStep_spillPage b 0
   · exact BgStep.refl b
 
+/-- Whether an op leaves a declared persistent ground declared. This is
+a proof premise, not an emission gate: `.pageGround none` still executes
+and removes the page fill. -/
+private def StagedOp.preservesGround : StagedOp → Bool
+  | .pageGround bg => bg.isSome
+  | _ => true
+
 private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (op : StagedOp) : BgStep st.b (stepStaged fs imgs st op).b := by
+    (st : StepSt) (op : StagedOp) (h : op.preservesGround = true) :
+    BgStep st.b (stepStaged fs imgs st op).b := by
   cases op <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
        done)
+    | exact ⟨rfl, fun _ => h, fun _ _p hp => Or.inl hp⟩
     | exact bgStep_fitCommit ..
     | exact bgStep_placeLine ..
     | exact (bgStep_keepHeading ..).trans (bgStep_placePara ..)
@@ -10062,19 +10205,22 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
        done)
 
 private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
-    (group : Array StagedOp) (st : StepSt) :
+    (group : Array StagedOp) (st : StepSt)
+    (hg : ∀ op ∈ group, op.preservesGround = true) :
     BgStep st.b (group.foldl (stepStaged fs imgs) st).b :=
   Array.foldl_induction
     (motive := fun _ (acc : StepSt) => BgStep st.b acc.b)
     (BgStep.refl st.b)
-    (fun _ _acc hacc => hacc.trans (bgStep_stepStaged ..))
+    (fun i acc hacc => hacc.trans
+      (bgStep_stepStaged fs imgs acc group[i] (hg _ (Array.getElem_mem i.2))))
 
 private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (group : Array StagedOp) :
+    (st : StepSt) (group : Array StagedOp)
+    (hg : ∀ op ∈ group, op.preservesGround = true) :
     BgStep st.b (runFloat fs imgs st group).b := by
   simp only [LeanTex.Core.Layout.runFloat]
   split
-  · exact bgStep_foldSteps ..
+  · exact bgStep_foldSteps fs imgs group st hg
   · have h1 : BgStep st.b (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
         then st.b else st.b.finishPage) := by
       split
@@ -10083,7 +10229,7 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
     have h2 := bgStep_foldSteps fs imgs group
       { st with b :=
         { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
-           else st.b.finishPage) with noBreak := true } }
+           else st.b.finishPage) with noBreak := true } } hg
     refine (h1.trans ((BgStep.of_eq rfl rfl rfl).trans
       (h2.trans (BgStep.of_eq ?_ ?_ ?_))))
     all_goals repeat' split
@@ -10175,6 +10321,11 @@ private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array S
     else s
   | _ => s
 
+private theorem keepAt_preservesGround (b : B) (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (si : Nat) (s : StagedOp) :
+    (keepAt b fs imgs staged si s).preservesGround = s.preservesGround := by
+  cases s <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
+
 /-- Placement, one op at a time (`stepStaged`) — except a float's ops,
 which travel as one unbreakable group between `floatOpen` and its
 matching close (`runFloat`). Explicit index recursion (the elabBlocks
@@ -10195,7 +10346,8 @@ termination_by staged.size - si
 decreasing_by all_goals omega
 
 private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
-    (staged : Array StagedOp) (st : StepSt) (si : Nat) :
+    (staged : Array StagedOp) (st : StepSt) (si : Nat)
+    (hg : ∀ op ∈ staged, op.preservesGround = true) :
     BgStep st.b (placeFrom fs imgs staged st si).b := by
   rw [placeFrom]
   split
@@ -10203,8 +10355,15 @@ private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
     have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
       matchingClose_ge staged (si + 1) 1
     split
-    · exact (bgStep_runFloat ..).trans (bgStep_placeFrom ..)
-    · exact (bgStep_stepStaged ..).trans (bgStep_placeFrom ..)
+    · have hgroup : ∀ op ∈ staged.extract (si + 1) (matchingClose staged (si + 1) 1),
+          op.preservesGround = true := by
+        intro op hop
+        obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hop
+        exact hg _ (Array.getElem_mem (by omega))
+      exact (bgStep_runFloat fs imgs st _ hgroup).trans (bgStep_placeFrom _ _ _ _ _ hg)
+    · apply (bgStep_stepStaged fs imgs st _ ?_).trans (bgStep_placeFrom _ _ _ _ _ hg)
+      rw [keepAt_preservesGround]
+      exact hg _ (Array.getElem_mem h)
   · exact BgStep.refl _
 termination_by staged.size - si
 decreasing_by all_goals omega
@@ -10396,7 +10555,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
       (y : Sp) (baseStyle : TextStyle) (cache : _) :
       Option LineOut × Array Diag × _ :=
     let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
-      { baseStyle with ground := furnGround } (substPage n total content) cache
+      { baseStyle with ground := baseStyle.ground.or furnGround } (substPage n total content) cache
     -- The band holds one line, as the running bands do: a slot that wraps
     -- loses every line but its first, named, never silent.
     let ds := if wraps then ds.push (Diag.of .W0328
@@ -10546,7 +10705,8 @@ private def runPost (sh : Shipped) : Out := Id.run do
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
         let (l?, ds, c) := slotLine slot.side slot.content (i + 1) footY
-          { color := mutedC } cache
+          { color := (page.footLook.map (·.fg)).getD mutedC,
+            ground := page.footLook.bind (·.bar) } cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then
@@ -10681,13 +10841,12 @@ lose content). The structure tree the attribution channel indexes is
 set. -/
 def pdfView (doc : Doc) : Doc := { doc with body := Ir.keepFor "pdf" doc.body }
 
-/-- The whole pipeline up to the marks seam: placement, the close, and
-the furniture pass. `run` is this plus `addMarks`; the split keeps each
-half's proof (`runCore_bg`, `addMarks_mem`) inside its own elaboration
-budget — the giant term is crossed once per theorem, not twice in one. -/
-private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) :
-    Out := Id.run do
+/-- The existing collection/staging seam, with its postlude. The continuation
+lets the background contract inspect the exact ops placement consumes, without
+re-running another IR walk or adding background state to the runtime builder. -/
+private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (k : Array StagedOp → B → (StepSt → Out) → α) : α := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
   -- owns.
@@ -10779,6 +10938,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
                       frameCount := doc.frameCount
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
                       chromeR := if footAllowed then doc.chrome.footerRight else none
+                      standoutNote := doc.chrome.standoutNote
                       footAllowed := footAllowed
                       fg := design.fg
                       ground := doc.palette.find? "bg" }
@@ -10850,7 +11010,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
-    | .foot c fr => .foot c fr
+    | .foot c fr look => .foot c fr look
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
@@ -10912,66 +11072,81 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     footGap := footGap
     diags := preDiags
   }
-  -- Placement, one op at a time (`stepStaged`) — except a float's ops,
-  -- which travel as one unbreakable group between `floatOpen` and its
-  -- matching close (`runFloat`).
-  let st : StepSt := placeFrom fs imgs staged { b := b0 } 0
-  let logoSpans := st.logoSpans
-  let prose := st.prose
-  -- The trailing boundary of a final frame has already closed its page; a
-  -- document is never given an empty page for it.
-  let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
-      || st.b.pages.isEmpty then
-      st.b.finishPage st.b.closingOwed
-    else st.b
-  -- The measure, checked against the readable band once the document has
-  -- shown continuous text (a paragraph of four or more full-measure lines).
-  -- Bringhurst: 45–75 characters is satisfactory for a single column of
-  -- text-size prose and 66 is the ideal (Elements §2.1.2); Butterick allows
-  -- 45–90. The character count comes from the body face's own lowercase
-  -- alphabet length through the copy-fitting table's fitted lines
-  -- (memoir manual eqs. 2.1–2.2: L₆₅ = 2.042α + 33.41 pt,
-  -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
-  -- reading, and are out of the rule's own scope; `\page{ measure = free }`
-  -- declares the document takes responsibility.
-  let shipDiags :=
-    if doc.docClass.record.measureBand && doc.page.measureChecked
-        && prose ≥ 4 then
-      let alphabet := (List.range 26).foldl (fun acc k =>
-        acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
-      if alphabet > 0 then
-        let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
-        let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
-        let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
-        if cpl10 < 450 || cpl10 > 900 then
-          let dir := if cpl10 > 900 then "narrow" else "widen"
-          b.diags.push (Diag.of .W0201
-            (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
-              "per line, outside the readable 45\u201390 band")
-            (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
-              "is the ideal) or declare \\page{ measure = free }"))
+  let post := fun (st : StepSt) => Id.run do
+    let logoSpans := st.logoSpans
+    let prose := st.prose
+    -- The trailing boundary of a final frame has already closed its page; a
+    -- document is never given an empty page for it.
+    let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
+        || st.b.pages.isEmpty then
+        st.b.finishPage st.b.closingOwed
+      else st.b
+    -- The measure, checked against the readable band once the document has
+    -- shown continuous text (a paragraph of four or more full-measure lines).
+    -- Bringhurst: 45–75 characters is satisfactory for a single column of
+    -- text-size prose and 66 is the ideal (Elements §2.1.2); Butterick allows
+    -- 45–90. The character count comes from the body face's own lowercase
+    -- alphabet length through the copy-fitting table's fitted lines
+    -- (memoir manual eqs. 2.1–2.2: L₆₅ = 2.042α + 33.41 pt,
+    -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
+    -- reading, and are out of the rule's own scope; `\page{ measure = free }`
+    -- declares the document takes responsibility.
+    let shipDiags :=
+      if doc.docClass.record.measureBand && doc.page.measureChecked
+          && prose ≥ 4 then
+        let alphabet := (List.range 26).foldl (fun acc k =>
+          acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
+        if alphabet > 0 then
+          let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
+          let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
+          let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
+          if cpl10 < 450 || cpl10 > 900 then
+            let dir := if cpl10 > 900 then "narrow" else "widen"
+            b.diags.push (Diag.of .W0201
+              (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
+                "per line, outside the readable 45\u201390 band")
+              (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
+                "is the ideal) or declare \\page{ measure = free }"))
+          else b.diags
         else b.diags
       else b.diags
-    else b.diags
-  runPost {
-    b := b
-    diags := shipDiags
-    doc := doc
-    geom := geom
-    xHeight := xHeight
-    pats := pats
-    fs := fs
-    imgs := imgs
-    hyphCache := acc.hyphCache
-    navEntries := acc.navEntries
-    logoSpans := logoSpans
-    plainFoot := plainFoot
-    footSize := footSize
-    headY := furnHeadY headFurn (scale font.ascent)
-    footY := match latexFoot with
-      | some fs => latexFootY geom fs
-      | none => furnFootY footFurn geom.pageH (scale (-font.descent))
-    muted := design.muted }
+    runPost {
+      b := b
+      diags := shipDiags
+      doc := doc
+      geom := geom
+      xHeight := xHeight
+      pats := pats
+      fs := fs
+      imgs := imgs
+      hyphCache := acc.hyphCache
+      navEntries := acc.navEntries
+      logoSpans := logoSpans
+      plainFoot := plainFoot
+      footSize := footSize
+      headY := furnHeadY headFurn (scale font.ascent)
+      footY := match latexFoot with
+        | some fs => latexFootY geom fs
+        | none => furnFootY footFurn geom.pageH (scale (-font.descent))
+      muted := design.muted }
+  return k staged b0 post
+
+/-- The pre-marks pipeline: the staged ops, placement, final close, and
+furniture pass. -/
+private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) : Out :=
+  withLayoutOps geom fs pats doc imgs fun staged b0 post =>
+    post (placeFrom fs imgs staged { b := b0 } 0)
+
+/-- The precondition for an all-pages background claim: no collected palette
+epoch removes `bg`. This observes the same staging seam as `run`, including
+backend projection and overlay selection. It neither gates emission nor
+changes diagnostics; a false result permits the explicitly unpainted pages
+that `nopagecolor` requests. -/
+def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) : Bool :=
+  withLayoutOps geom fs pats doc imgs fun staged _ _ =>
+    staged.all StagedOp.preservesGround
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. Printer's
@@ -10983,7 +11158,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
 
 /-- The background fact over the pre-marks pipeline: every page `runCore`
-ships under a declared `bg` carries the full-page fill. The proof is
+ships under a `bg` that stays declared carries the full-page fill. The proof is
 three seams: `finishPage_bg` (the one shipping door prepends the fill
 whole), `bgStep_placeFrom` (every placement step preserves the
 invariant), and `runPost_pages` (the furniture pass cannot touch
@@ -10991,7 +11166,8 @@ fills). -/
 private theorem runCore_bg
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
-    (hbg : (doc.palette.find? "bg").isSome = true) :
+    (hbg : (doc.palette.find? "bg").isSome = true)
+    (hepoch : pageGroundsDeclared geom fs pats doc imgs = true) :
     ∀ p ∈ (runCore geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
         f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
@@ -11005,8 +11181,9 @@ private theorem runCore_bg
       simp at h
     · exact h
   intro p hp
-  unfold runCore at hp
-  dsimp only [Id.run, bind, pure, Id] at hp
+  unfold runCore withLayoutOps at hp
+  unfold pageGroundsDeclared withLayoutOps at hepoch
+  dsimp only [Id.run, bind, pure, Id] at hp hepoch
   obtain ⟨q, hq, hfills, -, -, -⟩ := runPost_pages _ p hp
   have fin : ∀ (b0 : B), bgFilled b0.geom q →
       b0.geom.pageW = geom.pageW → b0.geom.pageH = geom.pageH →
@@ -11029,7 +11206,7 @@ private theorem runCore_bg
     split
     · exact h.trans (bgStep_finishPage _)
     · exact h
-  refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom ..)) ?_ rfl q hq)
+  refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch))) ?_ rfl q hq)
     ?_ ?_ ?_
   all_goals first
     | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, pdfView, hbg]
@@ -11038,8 +11215,8 @@ private theorem runCore_bg
        repeat' split
        all_goals rfl)
 
-/-- Every page of a document that declares a `bg` palette entry ships a
-fill over its whole medium, the bleed strip included (`Geom.ground`): what
+/-- Every page of a document whose opening palette declares `bg` and whose
+collected epochs keep it declared ships a fill over its whole medium, the bleed strip included (`Geom.ground`): what
 the walk attaches to a page survives to that page's output, observed at the
 page background. Discharged from `Obligations`
 (arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
@@ -11049,7 +11226,8 @@ fourth and only appends (`addMarks_mem`), so the fill rides through. -/
 theorem page_background_survives
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
-    (hbg : (doc.palette.find? "bg").isSome = true) :
+    (hbg : (doc.palette.find? "bg").isSome = true)
+    (hepoch : pageGroundsDeclared geom fs pats doc imgs = true) :
     ∀ p ∈ (run geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
         f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
@@ -11057,7 +11235,7 @@ theorem page_background_survives
   intro p hp
   unfold run at hp
   obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
-  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats doc imgs hbg p0 hp0
+  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats doc imgs hbg hepoch p0 hp0
   have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
   have hfp : f ∈ p.fills.toList := by
     rw [hpf, Array.mem_toList_iff]

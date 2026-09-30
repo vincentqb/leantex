@@ -989,6 +989,7 @@ def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
           | .gap w _ => x := x + w
           | .rule w _ _ _ => x := x + w
+          | .poly _ _ => pure ()
     return acc
   let img := "\\includegraphics[keepaspectratio,totalheight=.28\\textheight,\
 width=.4\\textwidth]{rects.png}%\n"

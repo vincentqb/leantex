@@ -351,6 +351,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
       | .gap w _ => x := x + w
       | .rule w _ _ _ => x := x + w
       | .image _ w _ => x := x + w
+      | .poly _ _ => pure ()
   return out
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do

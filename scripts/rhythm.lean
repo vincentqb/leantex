@@ -30,9 +30,9 @@ bp (1/72 in: the PDF user unit, and this engine's pt):
   pitch   as span, inside one block: a table's rows, a code block's lines
 
 "Marks" are everything a page paints that is not text: picture paths, fills,
-rules, images. A fixture whose source is not LaTeX names its LaTeX half with
-`% reference: <file>`; otherwise the reference engine compiles the fixture
-itself, which is the user's case — a LaTeX document built by both engines.
+rules, images, polygons. A fixture whose source is not LaTeX names its LaTeX
+half with `% reference: <file>`; otherwise the reference engine compiles the
+fixture itself, which is the user's case — a LaTeX document built by both engines.
 
 The reference is lualatex's output, measured by `--reference` with the
 engine's own PDF reader (`Tests.Artifact.readArtifact`, the reader the parity
@@ -344,7 +344,7 @@ def premiseFault (pages : Array MPage) (s : Spec) : Option String := do
 spaces — and a kern too (a glyphless run: `\,`, `\quad`, `~`, a label's
 `\labelsep`), which the reference's PDF reads as the space it is, so a
 marker a kern precedes or follows stays a word; marks are picture paths,
-fills, and the rules and images a line carries. -/
+fills, and the rules, images and polygons a line carries. -/
 def ofOut (out : Layout.Out) : Array MPage :=
   out.pages.map fun p => Id.run do
     let mut lines : Array MLine := #[]
@@ -360,6 +360,11 @@ def ofOut (out : Layout.Out) : Array MPage :=
         | .gap _ _ => text := text.push ' '
         | .rule _ th raise _ => marks := marks.push (l.y - raise - th, l.y - raise)
         | .image _ _ h => marks := marks.push (l.y - h, l.y)
+        | .poly pts _ =>
+          if let some (_, y) := pts[0]? then
+            let bounds := pts.foldl (fun (t, b) (_, y) =>
+              (min t (l.y - y), max b (l.y - y))) (l.y - y, l.y - y)
+            marks := marks.push bounds
       if !(text.trimAscii.isEmpty) then
         lines := lines.push { y := l.y, text, leaf := l.leaf, furniture := l.furniture }
     for f in p.fills do marks := marks.push (f.y, f.y + f.h)
@@ -1270,6 +1275,28 @@ def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   let scaled := "q 2 0 0 3 10 10 cm 0 0 m 1 1 l S Q q 50 0 0 40 7 9 cm /Im1 Do Q".toUTF8
   no s!"marks: scale composes, and an image is its unit square mapped: {ctmMarks scaled}"
     (ctmMarks scaled == #[(bp 10, bp 10, bp 12, bp 13), (bp 7, bp 9, bp 57, bp 49)])
+  -- Polygon coordinates rise from a line's baseline; page marks run down.
+  -- Seed bounds from a vertex so the baseline itself adds no phantom ink.
+  let polygonMarks (pts : Array (Int × Int)) : Array (Int × Int) :=
+    let line : Layout.LineOut :=
+      { x := 0, y := bp 160, size := bp 12
+        segs := #[.poly pts Ir.Color.black], setWidth := 0 }
+    (ofOut { pages := #[{ lines := #[line] }], diags := #[] }).flatMap (·.marks)
+  no "marks: a polygon spanning its baseline has both extents"
+    (polygonMarks #[(0, bp 5), (bp 10, bp (-10)), (bp 20, bp 20)] == #[(bp 140, bp 170)])
+  no "marks: a polygon wholly above the baseline stops above it"
+    (polygonMarks #[(0, bp 5), (bp 10, bp 20), (bp 20, bp 10)] == #[(bp 140, bp 155)])
+  no "marks: a polygon wholly below the baseline starts below it"
+    (polygonMarks #[(0, bp (-5)), (bp 10, bp (-20)), (bp 20, bp (-10))] == #[(bp 165, bp 180)])
+  no "marks: an empty polygon paints nothing" (polygonMarks #[] == #[])
+  let polygonPage : MPage :=
+    { lines := #[{ y := bp 100, text := "Alder", leaf := some 0 },
+                  { y := bp 200, text := "Birch", leaf := some 1 }]
+      marks := polygonMarks #[(0, bp 20), (bp 10, bp (-10)), (bp 20, 0)] }
+  no "gap: above includes polygon ink"
+    (gapOf #[polygonPage] { cls := "c", marker := "Birch", kind := .above } == .ok (bp 40))
+  no "gap: below includes polygon ink"
+    (gapOf #[polygonPage] { cls := "c", marker := "Birch", kind := .below } == .ok (bp 30))
   -- The premise's first half: a marker opens its line.
   let merged : MPage := { lines := #[{ y := bp 100, text := "Elm ends here. Hazel starts", leaf := some 4 },
     { y := bp 112, text := "• Birch item", leaf := some 5 }], marks := #[] }

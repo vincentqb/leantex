@@ -2406,7 +2406,7 @@ def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- The measured defect, at synthetic scale: one unmodelled construct in one
   -- addend of a display whose other addends are ordinary mathematics.
   let disp := "\\begin{align*} P_u = Q_u \
-+ \\cancelto{0}{\\sum_{k} R_{uk}} + \\sum_{km} G_{ukm} \\end{align*}"
++ \\raisebox{1pt}{\\sum_{k} R_{uk}} + \\sum_{km} G_{ukm} \\end{align*}"
   let d := mathText disp
   t "a big operator beside an unmodelled construct still sets as mathematics"
     (has d "\u2211")
@@ -2421,13 +2421,13 @@ def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "containment names the construct by its own code"
     ((warnCodes disp).contains "W0389" && !(warnCodes disp).contains "W0012")
   -- The sub-expression floor is the whole-formula policy at a smaller
-  -- scope: `Ir.floorNamedArgs` says `\cancelto`'s first argument names, so
-  -- the value may not stand beside the content as a product.
-  let one := mathText "$\\cancelto{0}{x}$"
+  -- scope: `Ir.floorNamedArgs` says the first argument names a length,
+  -- which must not stand beside the content as mathematics.
+  let one := mathText "$\\raisebox{1pt}{x}$"
   t "a contained construct ships its content operand as mathematics"
     (has one "𝑥")
   t "a contained construct does not ship its naming argument"
-    (!has one "0")
+    (!has one "1" && !has one "pt")
   -- The boundary, stated as a page fact: two content operands are not
   -- isolable, so the formula degrades whole and its floor is the filtered
   -- source — exactly the behaviour `recoveryChecks` pins.
@@ -2446,7 +2446,7 @@ def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((warnCodes "$a & b$").contains "W0012")
   -- Scripts are the other half of the measured loss: a superscript beside a
   -- contained construct stays a script, so its digit leaves the baseline.
-  let sup := mathText "$\\cancelto{0}{y} + z^2$"
+  let sup := mathText "$\\raisebox{1pt}{y} + z^2$"
   t "a script beside a contained construct is still a script"
     (has sup "2" && has sup "𝑧")
   -- `structuralCtrl` is a list beside a `match`, so it can drift from the
@@ -2462,6 +2462,8 @@ def mathContainChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       | "limits" => "$\\sum\\limits_k a$"
       | "nolimits" => "$\\sum\\nolimits_k a$"
       | "textcolor" => "$\\textcolor{teal}{a}$"
+      | "color" => "$\\color{teal}a$"
+      | "cancelto" => "$\\cancelto{0}{a}$"
       | "ensuremath" => "$\\ensuremath{a}$"
       | _ => s!"$\\{n}\{a}$"
     let cs := warnCodes src
@@ -3538,6 +3540,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           | .gap g _ => x := x + g
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
           | .image _ w _ => x := x + w
+          | .poly _ _ => pure ()
     return acc
   t "the three rules ship" (ruleSegs.size == 3)
   t "toprule and bottomrule span the same extent"
@@ -3576,7 +3579,8 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
             | .run _ _ _ w .. => a + w
             | .gap w _ => a + w
             | .rule w .. => a + w
-            | .image _ w _ => a + w) (0 : Dim.Sp)
+            | .image _ w _ => a + w
+            | .poly .. => a) (0 : Dim.Sp)
           return some (l.x + l.hang, l.x + w)
     return none
   let tab (spec body : String) : String :=
@@ -3884,7 +3888,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
         | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-        | .gap _ _ | .rule .. | .image .. => false
+        | .gap _ _ | .rule .. | .image .. | .poly .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
   t "an article at this measure does hyphenate"

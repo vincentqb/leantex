@@ -361,6 +361,30 @@ def listingOptHead (s : String) : Option (String × Nat) := Id.run do
     return none
   else return none
 
+/-- The mandatory `{language}` head of a `{minted}` body, after any option
+head. Shared by defaults injection and elaboration so both read the same
+lexer name without changing the captured source. -/
+def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := start
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '{' then return none
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '}' then return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
 /-! `Raw` back to source text. Declaration blocks and lengths are parsed from
 this string, so it must round-trip what the lexer accepted. -/
 

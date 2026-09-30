@@ -1196,7 +1196,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-          | .gap _ _ | .rule .. | .image .. => false
+          | .gap _ _ | .rule .. | .image .. | .poly .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
       -- word that hyphenates as body text must set unbroken as a heading,
@@ -1205,7 +1205,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
             | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-            | .gap _ _ | .rule .. | .image .. => false
+            | .gap _ _ | .rule .. | .image .. | .poly .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
       t "a frame title never hyphenates"
@@ -1243,7 +1243,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '•')
-          | .gap _ _ | .rule .. | .image .. => false
+          | .gap _ _ | .rule .. | .image .. | .poly .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
 
@@ -1290,6 +1290,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     subscriptShiftDown := 350
     superscriptShiftUp := 400
     superscriptShiftUpCramped := 270
+    superscriptBottomMin := 130
+    superscriptBaselineDropMax := 360
     spaceAfterScript := 41
     displayOperatorMinHeight := 1500
     upperLimitGapMin := 150
@@ -1508,14 +1510,14 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "$\\textbf{v} + \\textit{w} + \\texttt{m} + \\textsf{s}$" == [] &&
       glyphChars "$\\textbf{v}$" == #['𝐯'] &&
       glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$")
-  -- A colour inside math: the mathematics renders, the colour is named as
-  -- lost (W0385) because the math list carries no colour to put it in.
-  t "a colour inside math keeps its content and names the colour"
-    (warnCodes "$\\textcolor{indigo}{x}$" == ["W0385"] &&
-      glyphChars "$\\textcolor{indigo}{x}$" == glyphChars "$x$")
+  -- Colour declarations now travel in the math list; the shipped colour
+  -- and its scope are held by cancelReportChecks.
+  t "a colour inside math keeps its content without a presentation loss"
+    (warnCodes "$\\textcolor{blue}{x}$" == [] &&
+      glyphChars "$\\textcolor{blue}{x}$" == glyphChars "$x$")
   t "a colour wrapping a styled operator renders both"
-    (warnCodes "$\\textcolor{indigo}{\\textbf{\\sum_z}}$" == ["W0385"] &&
-      (glyphChars "$\\textcolor{indigo}{\\textbf{\\sum_z}}$").contains '∑')
+    (warnCodes "$\\textcolor{blue}{\\textbf{\\sum_z}}$" == [] &&
+      (glyphChars "$\\textcolor{blue}{\\textbf{\\sum_z}}$").contains '∑')
   -- A group inside \text is grouping, a known symbol contributes its
   -- scalar, and a style command contributes its letters with the styling
   -- named as lost — none of the three degrades the formula any more.
@@ -1536,8 +1538,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- coloured, styled align rows take, and it used to degrade whole.
   t "a coloured styled alignment renders as a grid, never as source"
     (let src := "\\begin{align*} &P(A) \\\\ &= \
-\\textcolor{indigo}{\\textbf{\\sum_z}} P(B) \\end{align*}"
-     warnCodes src == ["W0385"] &&
+\\textcolor{blue}{\\textbf{\\sum_z}} P(B) \\end{align*}"
+     warnCodes src == [] &&
        ((Elab.run "t" src).1.body.any fun b => match b with
          | .center xs => xs.any fun bb => match bb with
            | .para ys => ys.any fun x => match x with
@@ -1582,6 +1584,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .gap w _ => x := x + w
       | .rule w _ _ _ => x := x + w
       | .image _ w _ => x := x + w
+      | .poly _ _ => pure ()
     return none
   let hatG := (fira.gid '\u0302').getD 0
   t "an accent adds no width: hat x advances as x alone"
@@ -1719,6 +1722,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .gap w _ => x := x + w
           | .rule w _ _ _ => x := x + w
           | .image _ w _ => x := x + w
+          | .poly _ _ => pure ()
           | .run _ _ _ w glyphs sz _ _ raise _ _ =>
             let mut gx := x
             for (g, c, _) in glyphs do

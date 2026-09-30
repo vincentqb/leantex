@@ -45,6 +45,11 @@ structure Config where
   document's preamble+theme palette (`emitTree` seeds it); each
   `.setPalette` replaces it as the walk passes the block. -/
   pal : Ir.Palette := {}
+  /-- A listing's local frame colours. Its code panel states the same ground
+  that PDF paints, so default syntax inks have one contrast contract on
+  screen and paper, including standout and title-page frames. -/
+  listingGround : Option Ir.Color := none
+  listingFg : Option Ir.Color := none
   /-- The token state in force, same door (`.setTokens`). -/
   tokens : Ir.Tokens := {}
   /-- Whether the emitted page is the paged deck (the slides class's frame
@@ -94,11 +99,21 @@ structure Config where
   it in `cqi` against the row, which then declares itself the container. -/
   inFillRow : Bool := false
 
-def cssColor (c : Color) : String :=
-  let r := Color.hexByte c.r false
-  let g := Color.hexByte c.g false
-  let b := Color.hexByte c.b false
-  "#" ++ r ++ g ++ b
+def cssColor (c : Color) : String := c.css
+
+/-- What a formula's cancel marks read from the math face, in thousandths
+of an em — its overbar rule and clearance, the two quantities the PDF lays
+the marks with — when the page ships its faces; TeX's own stand-ins
+(`MathMl.Marks`' defaults) where it does not. -/
+def mathMarks (cfg : Config) : MathMl.Marks :=
+  match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
+  | some f =>
+    match f.math with
+    | some mc =>
+      let per (v : Int) : Nat := (v * 1000 / (max 1 f.unitsPerEm : Int)).toNat
+      { rule := per mc.overbarRuleThickness, gap := per mc.overbarVerticalGap }
+    | none => {}
+  | none => {}
 
 /-- The class an authored role wears in the artifact: verbatim after a
 fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
@@ -382,13 +397,16 @@ structure MarkerCss where
   decls : Array String := #[]
   deriving Repr, BEq
 
-/-- What one style wrapper says in a `::marker` rule, when it says anything
-(CSS Pseudo-Elements 4 §4.1: all font properties apply). The bold weight is
+/-- Font declarations shared by markers and listings (CSS Pseudo-Elements 4
+§4.1 permits all font properties on `::marker`). The bold weight is
 600, the same weight the base stylesheet's level-2 dash carries. An unknown
 size name resolves to nothing, which makes the whole marker inexpressible
-rather than silently unsized. -/
-private def markerStyleDecls (scale : List (String × Nat)) :
-    Style → Option (Array String)
+rather than silently unsized. A listing supplies its frame's length
+projection, the same one inline fonts use. -/
+private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
+    (lengthCss : Affine Measure → String := Ir.Track.contextCss) :
+    Option (Array String) :=
+  match st with
   | .bold => some #["font-weight: 600;"]
   | .italic => some #["font-style: italic;"]
   | .emph => some #["font-style: italic;"]
@@ -403,8 +421,8 @@ private def markerStyleDecls (scale : List (String × Nat)) :
   | .size name => (scale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
   | .fontSize size leading => some #[
-      s!"font-size: {Ir.Track.contextCss size};",
-      s!"line-height: {Ir.Track.contextCss leading};"]
+      s!"font-size: {lengthCss size};",
+      s!"line-height: {lengthCss leading};"]
   -- a language changes no marker styling; the wrapper is expressible as
   -- nothing rather than inexpressible
   | .lang _ => some #[]
@@ -462,7 +480,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     Inline → Option MarkerCss
   | .text s => some { text := s, decls := decls }
   | .styled st body =>
-    match markerStyleDecls scale st with
+    match fontStyleDecls scale st with
     | some ds => markerCssList scale (decls ++ ds) body.toList
     | _ => none
   | .colored c name body =>
@@ -1238,6 +1256,7 @@ judges a run on (`Ir.recolorRolesBlock`), read off the one resolved
 `Design`. -/
 def inkScopes (d : Design) : List (String × Ir.Color) :=
   (d.frametitle.map fun p => ("section.slide > header", p.bg)).toList ++
+    (d.footline.bar.map fun bg => ("footer.slide-foot", bg)).toList ++
     [("section.slide.standout", d.standout.bg)] ++
     (d.titlepage.map fun p => ("section.slide.title-page", p.bg)).toList ++
     ([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
@@ -1400,7 +1419,9 @@ def themeCss (doc : Doc) : String :=
       s!"  font-size: {stepFactor "Large"}em;\n" ++
       s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
       s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n"
-     else "") else "") ++
+     else "") else
+    "section.slide > header { color: var(--frametitlefg, var(--fg)); }\n" ++
+    "section.slide > header h2 { color: inherit; }\n") ++
   -- The headline band: the poster page's <header> around the title matter
   -- and the two corner-logo slots. Colours are the same frametitle tokens
   -- the PDF band resolves (one resolving site per backend, one declared
@@ -1461,19 +1482,21 @@ def themeCss (doc : Doc) : String :=
   -- records there, so a run's var(--role) resolves to the value the PDF
   -- paints it in rather than the page's.
   inkScopeCss d ++
-  (if d.progress.isSome then
+  -- Rules are available to later palette epochs too; the section node
+  -- itself is gated on that epoch's resolved section-progress pair.
+  (if doc.docClass.record.model == .frame then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
-    "  min-width: 60%; margin: 0; }\n" ++
+    "  min-width: 60%; margin: 0; color: var(--sectiontitlefg, var(--fg)); }\n" ++
     -- The height reads the same token the PDF path reads
     -- (`progressheight`), with the same fallback — moloch's own 1pt
     -- (beamerouterthememoloch.dtx) — one resolving site per backend, one
     -- declared value.
-    ".progress { background: var(--progressbg, var(--rule));\n" ++
+    ".progress { background: var(--sectionprogressbg, var(--progressbg, var(--bg)));\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
     s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
-    ".progress > div { background: var(--progressfg); height: 100%; }\n" ++
+    ".progress > div { background: var(--sectionprogressfg, var(--progressfg)); height: 100%; }\n" ++
     -- The paged deck's own progress: a hairline across the viewport top,
     -- scaled by how far the reader has paged through the deck —
     -- declarative where the platform has scroll-driven animations
@@ -1484,7 +1507,7 @@ def themeCss (doc : Doc) : String :=
     -- no scroll to report, and the hairline does not print — unstyled it
     -- is an empty box after the last stage's forced break, for which
     -- Chromium opens a blank sheet.
-    (if doc.docClass == .slides then
+    (if doc.docClass == .slides && d.progress.isSome then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);\n" ++
@@ -1508,7 +1531,8 @@ to { transform: scaleX(1) } }\n" ++
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
     "section.slide > footer.slide-foot { position: relative;\n" ++
-    s!"  min-height: 1lh; margin-top: {quantaRem 2}; color: var(--muted); }\n" ++
+    s!"  min-height: 1lh; margin-top: {quantaRem 2}; color: var(--muted);\n" ++
+    "  background: var(--footlinebg, transparent); }\n" ++
     "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
     "  white-space: nowrap; }\n" ++
     "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
@@ -1558,7 +1582,7 @@ determined and not claimed: it is the PDF's declared-model channel
 theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
-  simp only [cssColor, Color.hexByte, Bool.false_eq_true, ite_false,
+  simp only [cssColor, Color.css, Color.hexByte, Bool.false_eq_true, ite_false,
     String.toList_append, String.toList_ofList,
     List.cons_append, List.nil_append, List.append_assoc] at hl
   have hl6 := List.append_cancel_left hl
@@ -4049,6 +4073,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
+  "pre > code { font-size: inherit; }\n" ++
   s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
   "      border-radius: 4px; }\n" ++
   -- A captioned listing wears the figure-caption shape, caption above
@@ -4329,6 +4354,16 @@ def imgAltAttrs : Ir.Alt → Array (String × String)
   | .decorative => #[("alt", ""), ("role", "presentation")]
   | .undeclared => #[("alt", "")]
 
+/-- Absolute font size and leading keep their physical lengths in the IR;
+on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
+so they scale with its named size ladder. Context-dependent expressions keep
+their CSS resolution rather than being evaluated against a guessed measure. -/
+private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
+  if cfg.deck && e.rigidAbsolute && !(e.anyRef fun _ => true) then
+    let length := (e.eval fun _ => {}).width.sp
+    s!"{decMilli (deckStageMilli length cfg.page.height)}vh"
+  else Ir.Track.contextCss e
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -4458,7 +4493,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- engine (caniuse.com/mathml, 2026: Chromium 109+, Firefox, Safari).
     acc.push (MathMl.formula display
       #[("class", if display then "math math-display" else "math"),
-        ("data-tex", src)] body)
+        ("data-tex", src)] body (mathMarks cfg))
   | .styled st body =>
     let kids := inlineNodesInto cfg #[] body.toList
     match st with
@@ -4475,7 +4510,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       acc.push (Html.elem "span" kids #[("style", s!"font-weight: {w.css}")])
     | .fontSize size leading =>
       acc.push (Html.elem "span" kids #[
-        ("style", s!"font-size:{Ir.Track.contextCss size};line-height:{Ir.Track.contextCss leading}")])
+        ("style", s!"font-size:{fontLengthCss cfg size};line-height:{fontLengthCss cfg leading}")])
     -- The language of a run is a declaration, not a style: the span
     -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
     -- `hyphens: auto` and assistive technology both read.
@@ -4487,8 +4522,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- ordinary authored roles remain style-free.
     let style := (Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n).bind fun p =>
       let decls :=
-        (p.size.map fun z => s!"font-size:{cssLength z.width};").toList ++
-        (p.leading.map fun z => s!"line-height:{cssLength z.width};").toList
+        (p.size.map fun z => s!"font-size:{fontLengthCss cfg (.lit z)};").toList ++
+        (p.leading.map fun z => s!"line-height:{fontLengthCss cfg (.lit z)};").toList
       if decls.isEmpty then none else some (String.join decls)
     let attrs := #[some ("class", roleClass n), style.map ("style", ·)].filterMap id
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) attrs)
@@ -4927,10 +4962,14 @@ def epochTokenStyle (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
 
-/-- Advance the palette epoch while retaining its semantic ground fact. -/
+/-- Advance the palette epoch while retaining its semantic ground fact.
+A body declaration replaces the frame-entry listing pair: like layout's
+palette transition, it resets the ground and default ink together. Clearing
+the cached foreground lets the listing read the new palette's default ink. -/
 def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.pal p
   { cfg with pal := p
+             listingGround := p.find? "bg", listingFg := none
              epochStyle := joinStyles cfg.epochStyle diff.style
              epochGround := cfg.epochGround || diff.groundChanged }
 
@@ -5715,7 +5754,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | some n => #[Html.elem "span" #[Html.text n]
           #[("class", "section-number")], Html.text "\u2003"] ++ kids
       | none => kids
-    Html.elem tag kids (if st.rule.isSome then #[("class", "ruled")] else #[])
+    let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
+    let attrs := if cfg.deck && level == 1 then
+      attrs.push ("style", "color: var(--sectiontitlefg, var(--fg))") else attrs
+    Html.elem tag kids attrs
   | .list ordered items =>
     -- A description list (every item run in by its label) is HTML's own
     -- `<dl>`; the label reading is the page's (`Ir.descLabel?`).
@@ -5857,21 +5899,39 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- A declared language is the `code` element's class, read from the one
     -- IR projection the markdown fence reads too (`listing_language_agree`);
     -- the attribute value goes through the escaper as every attribute does.
-    let lines := (verbatimLines s).toList
+    let lines := spec.tokenLines s
     let codeAttrs : Array (String × String) := match spec.htmlClass with
       | some c => #[("class", c)]
       | none => #[]
-    let code :=
-      if spec.numbers then
-        Html.elem "code" ((lines.map fun l =>
-          Html.elem "span" #[Html.text (l ++ "\n")] #[("class", "line")]).toArray) codeAttrs
+    let codeKids := Id.run do
+      let mut kids := #[]
+      for i in [:lines.size] do
+        if i > 0 then kids := kids.push (Html.text "\n")
+        let line := inlines cfg
+          (lines[i]!.map (Listing.tokenInline cfg.pal cfg.listingGround covered
+            (style := spec.style)))
+        kids := if spec.numbers then
+          kids.push (Html.elem "span" line #[("class", "line")])
+          else kids ++ line
+      return kids
+    let code := Html.elem "code" codeKids codeAttrs
+    let design := Ir.Design.ofPalette cfg.pal
+    let paint := if spec.highlight.isEmpty then
+        (covered.map fun c => s!"color: {cssColor c};").getD ""
       else
-        Html.elem "code" #[Html.text (String.intercalate "\n" lines)] codeAttrs
+        s!"background: {cssColor (cfg.listingGround.getD design.bg)}; " ++
+        s!"color: {cssColor (covered.getD (cfg.listingFg.getD design.fg))};"
+    let style := String.intercalate " "
+      (((fontStyleDecls cfg.page.scale spec.fontSize (fontLengthCss cfg)).getD #[]).toList) ++
+      (match spec.fontSize with
+        | .fontSize .. => ""
+        | _ => s!" line-height: {decMilli (Ir.leadingMilli * cfg.page.leading / 1000)};") ++
+      s!" tab-size: {spec.tabSize};" ++
+      (if spec.breakLines then " white-space: pre-wrap;" else "") ++
+      (if paint.isEmpty then "" else " " ++ paint)
     let pre := Html.elem "pre" #[code]
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++
-       (match covered with
-        | some c => #[("style", s!"color: {cssColor c}")]
-        | none => #[]) ++
+       #[("style", style)] ++
        -- A code block scrolls sideways (`overflow-x: auto` in `baseCss`),
        -- so it is a tab stop: a keyboard reaches what a long line spills
        -- (WCAG 2.2 SC 2.1.1). Its role takes no name, so it carries none.
@@ -5921,7 +5981,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout"
       else if valign matches .golden then "slide title-page" else "slide"
-    let kids := blockNodesInto cfg.into #[] body.toList
+    let design := Ir.Design.ofPalette cfg.pal
+    let listingFg := if standout then some design.standout.fg
+      else if valign matches .golden then design.titlepage.map (·.fg) else none
+    let bodyCfg := { cfg.into with
+      listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
+    let kids := blockNodesInto bodyCfg #[] body.toList
     let kids := if cfg.deck then
         let (above, below) := vdistShares valign
         let spacer (n : Nat) : Array Html.Node :=
@@ -6564,10 +6629,6 @@ def emitTree (cfg : Config) (doc : Doc) :
                         tokens := doc.tokens
                         deck := doc.docClass.record.model == .frame
                         page := doc.page }
-  -- The themed section page: in a slides document with progress keys, a
-  -- top-level section becomes its own deck section carrying the position.
-  let themedSections := doc.docClass.record.model == .frame &&
-    (Design.ofDoc doc).progress.isSome
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
   -- step — the same declarations the PDF path reads. A `\framefoot` note
@@ -6633,7 +6694,7 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title _ _ _ fb =>
+        | .frame title standout _ _ fb =>
           let num := nums[i]?.getD none
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*
@@ -6679,22 +6740,29 @@ first; retitle one frame, or link to '#{id}'"))
               (#[], taken, walkDiags)
           taken := taken2
           walkDiags := diags2
-          -- The frame's footer: the chrome band slots (`Ir.Chrome.footBand`,
+          -- The frame's footer: the chrome band slots (`Ir.Chrome.frameFootBand`,
           -- the same function the PDF's final pass consumes, so the two
           -- backends resolve the same slots and can only diverge by
           -- rendering them; fixed positions from the declared side, paint
           -- order the declared priority, `z-index` carrying `rank`).
           let node := if chromeFoot then
-              match num, node with
-              | some n, .elem tag attrs kids =>
-                let band := doc.chrome.footBand frameFoot curSection n total
+              match doc.chrome.frameFootBand frameFoot curSection num total standout, node with
+              | some band, .elem tag attrs kids =>
+                let design := Design.ofPalette cfg.pal
+                let look := design.frameFootLook standout
+                let paint := if standout then
+                    [s!"color: {cssColor look.fg};", s!"background: {cssColor design.standout.bg};"]
+                  else []
                 Node.elem tag attrs (kids.push (Html.elem "footer"
                   (band.map fun s => Html.elem "span" (inlines cfg s.content)
                     #[("class", match s.side with
                         | .left => "band-left"
                         | .right => "band-right"),
                       ("style", s!"z-index: {s.rank}")])
-                  #[("class", "slide-foot size-" ++ Ir.footline.step)]))
+                  #[("class", "slide-foot size-" ++ Ir.footline.step),
+                    ("style", String.intercalate " "
+                      (paint ++ (look.bar.map fun ground =>
+                        inkDecls design ground).getD []))]))
               | _, other => other
             else node
           -- The frame's logo: the state in force at this position, from
@@ -6723,7 +6791,7 @@ first; retitle one frame, or link to '#{id}'"))
           acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround node)
         | .section 1 starred num title =>
           curSection := title
-          if themedSections then
+          if (Design.ofPalette cfg.pal).sectionProgress.isSome then
             -- No clamp, as on the PDF path: `done ≤ total` by theorem
             -- over the numbering both walks read; a deck with no
             -- countable frame draws no bar.
@@ -6798,10 +6866,9 @@ first; retitle one frame, or link to '#{id}'"))
         #[("class", "headline")]]
     | none => #[]
   let mut body : Array Node := headerNode ++ #[main]
-  -- The deck's progress hairline, emitted exactly when the deck draws
-  -- progress at all (`themedSections`, the section-page gate): an inert
-  -- marker div the class-gated stylesheet scales by scroll position.
-  if themedSections then
+  -- The deck's own progress hairline uses the base bar. A section-only
+  -- override cannot enable or recolour this separate indicator.
+  if doc.docClass == .slides && (Design.ofDoc doc).progress.isSome then
     body := body.push (Html.elem "div" #[]
       #[("class", "deck-progress"), ("aria-hidden", "true")])
   -- The slides class's constant keyboard/uncover script: one raw-text

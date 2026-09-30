@@ -60,11 +60,13 @@ def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
 
 end
 
-/-- The attributes the HTML backend gives every code block's `<pre>`: a tab
-stop, so a keyboard can reach and scroll it, which is the contract for a box
-a stylesheet scrolls (`HtmlDoc.a11yFacts`). Named once, so a backend change
-to them fails the fence rows at this line rather than at four literals. -/
-def mdCodeBlockPreAttrs : Array (String × String) := #[("tabindex", "0")]
+/-- The attributes of an unconfigured fence's `<pre>`: the verbatim size,
+leading and tab settings, and a tab stop so a keyboard can reach and scroll it
+(`HtmlDoc.a11yFacts`). Named once, so a backend change fails the fence rows
+at this line rather than at four literals. The exact attribute check also
+rejects leaked language text or an attribute hiding the code. -/
+def mdCodeBlockPreAttrs : Array (String × String) :=
+  #[("style", "font-size: 0.8em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
 
 /-- The page's code blocks, in order, each as the one text its `<code>`
 holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`

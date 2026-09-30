@@ -108,9 +108,8 @@ def censusTable :
       hasStr (censusText c) "adds one"),
     ("the quantity ships its unit symbols",
       hasStr (censusText c) "345.6" && hasStr (censusText c) "kg"),
-    ("the code sets at the scale's footnotesize",
-      lineSizeOf c 0 "defprobe(n):" ==
-        some (geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000))]),
+    ("the code inherits the surrounding size when none is declared",
+      lineSizeOf c 0 "defprobe(n):" == some geom.fontSize)]),
   ("footnotes", fun geom c => [
     ("the article spans two pages", c.size ≥ 2),
     ("the first note ships at the foot of page one",
@@ -878,11 +877,8 @@ def censusTable :
     ("\\mathrm sets upright", hasStr (censusText c) "Err"),
     ("a document macro's expansion ships", hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),
-  -- The coverage boundary for LaTeX's text and colour commands in math,
-  -- read off the shipped page: the constructs that render, and the one that
-  -- does not degrading to content. The colour itself is not asserted — it
-  -- is the declared loss (W0385), so the page carries the letter and not
-  -- its colour.
+  -- Colour and text in math; a font change inside one word still names
+  -- its loss. cancelReportChecks holds the shipped colours and scope.
   ("math-text", fun _ c => [
     ("one page", c.size == 1),
     ("\\textbf and \\textit ship the alphabets \\mathbf and \\mathit mean",
@@ -900,6 +896,16 @@ def censusTable :
     ("no page of this fixture ships a control sequence",
       !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"
         && !hasStr (censusText c) "textbf")]),
+  ("math-cancel", fun _ c => [
+    ("one page", c.size == 1),
+    ("the document title ships", hasStr (censusText c) "Annotated Formulas"),
+    ("the four commands ship their strikes and arrowheads",
+      ((c[0]?.map (·.polys.size)).getD 0) == 8),
+    ("both annotation values and the neighbouring superscripts ship",
+      ["0", "7", "𝑥", "𝑦", "𝑧", "𝑤", "2"].all (hasStr (censusText c) ·)),
+    ("the fraction still ships its bar", ((c[0]?.map (·.rules)).getD 0) > 0),
+    ("no cancellation command reaches the page as markup",
+      !hasStr (censusText c) "cancel" && !hasStr (censusText c) "textcolor")]),
   ("math-companion", fun _ c => [
     ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),

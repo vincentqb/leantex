@@ -568,7 +568,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html themed fixture elaborates clean"
     (themedDs.all fun d => d.severity == .note)
   t "html progress height reads the token the PDF reads"
-    ((themedPage.splitOn (".progress { background: var(--progressbg, var(--rule));\n" ++
+    ((themedPage.splitOn (".progress { background: var(--sectionprogressbg, var(--progressbg, var(--bg)));\n" ++
       "  height: var(--progressheight, 1pt);")).length == 2)
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
@@ -2792,6 +2792,7 @@ def pdfCensusTable :
   ("math-companion", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-first", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("math-text", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("math-cancel", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("greek-literal", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("abstract", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("crossref", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
@@ -3540,7 +3541,7 @@ tracks. -/
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ | .rule _ _ _ _ | .gap _ _ => false
+    | .image _ _ _ | .rule _ _ _ _ | .gap _ _ | .poly _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
 tags, not from the stream: one block for its fills when it has any, one
@@ -3553,13 +3554,14 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
   let rules := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
-      | .rule _ _ _ _ => acc + 1
+      -- the layout block holds the rules and the polygons alike
+      | .rule _ _ _ _ | .poly _ _ => acc + 1
       | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .image _ _ _ => acc + 1
-      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
+      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ | .poly _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
     let nonEmpty := lineInks l || l.expand != tz
     (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)

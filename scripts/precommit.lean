@@ -393,11 +393,11 @@ def backendFiles : List String :=
    "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
    "LeanTex/Core/MathMl.lean"]
 
-/-- `IO` named outside a comment. A string literal naming IO still matches,
-and a block comment's continuation line naming IO still matches — both
-stated blind spots of the line scanner, not claims the gate makes. -/
+/-- `IO` as a code token, using the same string and line-comment boundary as
+the banned-keyword gate. A block comment's continuation still looks like
+code; the shared string scanner's stated limitations apply here too. -/
 def ioInCore (l : String) : Bool :=
-  hasWord (stripLineComment l) "IO"
+  bannedWord "IO" l
 
 def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
 
@@ -1684,6 +1684,10 @@ def selftest : IO UInt32 := do
     -- the fix: `--` comments no longer trip the check
     ("  -- files and fonts surface as request values, never IO here", false),
     ("/-- Effects as data: the IO happens in Main.lean. -/", false),
+    ("  let names := [\"IO\", \"Char\"]", false),
+    ("  let label := \"quoted \\\"IO\\\"\"", false),
+    ("  let label := \"--\"; let bytes ← IO.FS.readBinFile path", true),
+    ("  let label := \"IO\"; IO.println label", true),
     ("  let priority := ioPriority.toNat", false)]
 
   expect "surfaceReach" surfaceReach [

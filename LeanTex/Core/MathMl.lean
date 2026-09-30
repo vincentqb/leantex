@@ -141,22 +141,128 @@ def radNode (body deg : Array Html.Node) : Html.Node :=
     .elem "mroot" #[]
       #[.elem "mrow" #[] body, .elem "mrow" #[] deg]
 
+/-- What a formula's cancel marks read beyond the AST, in thousandths of an
+em: the math face's overbar rule and clearance when the page ships its
+faces — the two quantities the PDF lays the marks with — else TeX's own
+stand-ins, plain TeX's default rule (0.4 pt at the 10 pt base, 40 per
+mille) and rule 9's clearance of three rules. -/
+structure Marks where
+  rule : Nat := 40
+  gap : Nat := 120
+  deriving Repr, BEq, Inhabited
+
+/-- A length in thousandths of an em, as CSS reads it. -/
+def milliEm (m : Nat) : String :=
+  let fs := toString (m % 1000)
+  s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
+
+/-- A colour as CSS reads it on a MathML element: the palette's custom
+property with the literal as its fallback when the colour came from a
+named entry — the text runs' emission, so a host page restyles a formula's
+colours as it restyles its text's. -/
+def inkCss (c : Ir.Color) : Option String → String
+  | some n => s!"var(--{n}, {c.css})"
+  | none => c.css
+
+/-- A colour switch's reach: the colour every element after the switch in
+its list carries, merged into a style the element already declares. Each
+element carries it rather than a wrapper around them, because a wrapper
+`mrow` would change how MathML infers an operator's form — the `+` after a
+switch would become a prefix operator. -/
+def paint (ink : Option String) : Html.Node → Html.Node
+  | .elem t attrs kids =>
+    match ink with
+    | none => .elem t attrs kids
+    | some css =>
+      match attrs.findIdx? (·.1 == "style") with
+      | some i => .elem t (attrs.modify i fun (k, v) => (k, s!"color: {css}; " ++ v)) kids
+      | none => .elem t (attrs.push ("style", s!"color: {css}")) kids
+  | .text s => .text s
+  | .style s => .style s
+  | .script src nonce => .script src nonce
+
+/-- A cancel mark's diagonal band as a CSS gradient over the padded box: a
+corner keyword angles the gradient across the box, so its midline is the
+box's other diagonal whatever the box's proportions — `top left` draws the
+rising diagonal, `top right` the falling one — and the band is `half` each
+side of it, cut by the box's own edges exactly as the PDF's band is. -/
+def cancelBand (corner ink half : String) : String :=
+  s!"linear-gradient(to {corner}, transparent calc(50% - {half}), {ink} calc(50% - {half}), \
+{ink} calc(50% + {half}), transparent calc(50% + {half}))"
+
+/-- A cancel mark over its emitted struck row and value: CSS over the struck
+row's padded box, the box the PDF strikes corner to corner — `padding` the
+clearance, the gradient the band (`cancelBand`), and the arrowhead an empty
+element placed at the box's top-right corner and turned along its diagonal
+by the box itself (`offset-path` over the containing box, `offset-rotate`):
+MathML Core has no `menclose`, and this needs no script. The value is the
+row's superscript, a clearance from the head, in the style the package's
+table names — a superscript steps one level down, which `smaller` keeps
+except over a display base (text style there) and `samesize` never takes —
+and in the marks' colour, as cancel.sty colours it. Overlapping
+(cancel.sty's `overlap`), negative margins give the marks' room back and
+the value takes none. -/
+def cancelNode (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
+    (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
+  let ink := match spec.color with
+    | some (c, n) => inkCss c n
+    | none => "currentColor"
+  let r := mk.rule * (if spec.thick then 2 else 1)
+  let half := milliEm ((r + 1) / 2)
+  let bands := match mark with
+    | .up | .to => cancelBand "top left" ink half
+    | .down => cancelBand "top right" ink half
+    | .cross => cancelBand "top left" ink half ++ ", " ++ cancelBand "top right" ink half
+  let print := "print-color-adjust: exact; -webkit-print-color-adjust: exact"
+  let give := if spec.room then "" else
+    s!"margin-left: -{milliEm mk.gap}; margin-right: -{milliEm mk.gap}; "
+  let box := s!"{give}padding: {milliEm mk.gap}; background-image: {bands}; {print}"
+  let head := Html.Node.elem "mspace" #[("style", s!"position: absolute; left: 0; top: 0; \
+width: {milliEm (4 * r)}; height: {milliEm (3 * r)}; background: {ink}; \
+clip-path: polygon(0 0, 100% 50%, 0 100%); offset-path: shape(from 100% 0%, line to 0% 100%); \
+offset-distance: 0%; offset-rotate: reverse; offset-anchor: 100% 50%; {print}")] #[]
+  let base := if mark == .to then
+      Html.Node.elem "mrow" #[("style", "position: relative; " ++ box)] (struck.push head)
+    else Html.Node.elem "mrow" #[("style", box)] struck
+  let level : Array (String × String) := match spec.size, disp with
+    | .same, _ => #[("scriptlevel", "+0"), ("displaystyle", if disp then "true" else "false")]
+    | .step, true => #[("scriptlevel", "+0")]
+    | _, _ => #[]
+  let tint := match spec.color with
+    | some _ => s!"; color: {ink}"
+    | none => ""
+  let valueRow := Html.Node.elem "mrow"
+    (level.push ("style", s!"padding-left: {milliEm mk.gap}" ++ tint)) vals
+  -- The direct script child owns the size step; an inner +0 only
+  -- preserves the size its mpadded parent already received.
+  let valueNode := if spec.room then valueRow else
+    .elem "mpadded" (level.push ("width", "0")) #[valueRow]
+  if mark == .to || shown then .elem "msup" #[] #[base, valueNode] else base
+
 mutual
 
-/-- The MathML children of a math list, one element per item, onto `acc`. -/
-def listNodes (disp : Bool) (acc : Array Html.Node) :
+/-- The MathML children of a math list, one element per item, onto `acc`;
+`ink` the colour a switch earlier in the list put in force. -/
+def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Array Html.Node) :
     MList → Array Html.Node
   | .nil => acc
-  | .cons x rest => listNodes disp (acc.push (itemNode disp x)) rest
+  | .cons (.ink c n) rest => listNodes mk disp (some (inkCss c n)) acc rest
+  | .cons (.space mu) rest =>
+    listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.space mu)))) rest
+  | .cons (.atom cls nuc sup sub lim) rest =>
+    listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim))))
+      rest
 
 /-- One item as one element: an explicit space is `mspace`; an atom is its
 nucleus under its script schema (`scriptNode`). `disp` goes false inside
-scripts, as the script styles are never display. -/
-def itemNode (disp : Bool) : MItem → Html.Node
+scripts, as the script styles are never display. A colour switch is read
+by its list (`listNodes`) and emits nothing of its own. -/
+def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
   | .space mu => .elem "mspace" #[("width", muWidth mu)] #[]
+  | .ink _ _ => .elem "mrow" #[] #[]
   | .atom cls nuc sup sub lim =>
-    scriptNode (lim && disp) (nucNode disp cls nuc)
-      (listNodes false #[] sub) (listNodes false #[] sup)
+    scriptNode (lim && disp) (nucNode mk disp cls nuc)
+      (listNodes mk false none #[] sub) (listNodes mk false none #[] sup)
 
 /-- One nucleus as one element. A lone scalar is final — elaboration
 already remapped variables into the Mathematical Alphanumeric block — so a
@@ -173,7 +279,7 @@ operator (`overlineChar`). A grid is `mtable`/`mtr`/`mtd`; the table sets
 restores `displaystyle="true"` (§2.1.6) — amsmath sets align cells in
 display style — while an `array` keeps text style, as the PDF's cell
 style rule does. -/
-def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
+def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
   | .sym c =>
     -- A lone scalar never grows: TeX stretches a delimiter only under
     -- `\left`/`\right` (`delimMo`), and MathML Core's dictionary makes every
@@ -183,26 +289,26 @@ def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
         else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
-  | .list body => .elem "mrow" #[] (listNodes disp #[] body)
+  | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
-      #[.elem "mrow" #[] (listNodes false #[] num),
-        .elem "mrow" #[] (listNodes false #[] den)]
+      #[.elem "mrow" #[] (listNodes mk false none #[] num),
+        .elem "mrow" #[] (listNodes mk false none #[] den)]
     if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
     else .elem "mrow" (styleAttrs spec.style) (fracKids disp spec bar)
   | .rad deg body =>
-    radNode (listNodes disp #[] body) (listNodes false #[] deg)
+    radNode (listNodes mk disp none #[] body) (listNodes mk false none #[] deg)
   | .delim l r body =>
     let opened := match l with
       | some c => #[delimMo c]
       | none => (#[] : Array Html.Node)
-    let withBody := listNodes disp opened body
+    let withBody := listNodes mk disp none opened body
     let closed := match r with
       | some c => withBody.push (delimMo c)
       | none => withBody
     .elem "mrow" #[] closed
   | .accent mark stretch body =>
-    let base := Html.Node.elem "mrow" #[] (listNodes disp #[] body)
+    let base := Html.Node.elem "mrow" #[] (listNodes mk disp none #[] body)
     match mark == '\u0305' with
     | true =>
       .elem "mover" #[("accent", "false")]
@@ -221,7 +327,10 @@ def nucNode (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
       | .array _ _ => #[]
       | .align => #[("displaystyle", "true")]
       | .gather => #[("displaystyle", "true")]
-    .elem "mtable" attrs (rowsNodes cellDisp kind #[] rows)
+    .elem "mtable" attrs (rowsNodes mk cellDisp kind #[] rows)
+  | .cancel mark spec value body =>
+    cancelNode mk disp mark spec (listNodes mk disp none #[] body)
+      (listNodes mk (spec.size == .same && disp) none #[] value) (value matches .cons _ _)
 
 /-- The `mtd` cells of one row. A cell's alignment is the grid kind's for
 its column (`GridKind.colAlign`), declared as CSS `text-align` — MathML
@@ -241,7 +350,7 @@ Playwright Chromium), and an unsupported value invalidates only its own
 declaration (CSS Syntax 3 §declaration error handling), so each engine
 keeps the one it understands — delete the twin when Chromium honours the
 standard value. -/
-def rowNodes (disp : Bool) (kind : GridKind) (k : Nat)
+def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
     (acc : Array Html.Node) : MRow → Array Html.Node
   | .nil => acc
   | .cons cell rest =>
@@ -263,16 +372,16 @@ def rowNodes (disp : Bool) (kind : GridKind) (k : Nat)
         match [align, stretchPad s].filterMap id with
         | [] => #[]
         | parts => #[("style", "; ".intercalate parts)]
-    rowNodes disp kind (k + 1)
-      (acc.push (.elem "mtd" attrs (listNodes disp #[] cell))) rest
+    rowNodes mk disp kind (k + 1)
+      (acc.push (.elem "mtd" attrs (listNodes mk disp none #[] cell))) rest
 
 /-- The `mtr` rows of a grid. -/
-def rowsNodes (disp : Bool) (kind : GridKind) (acc : Array Html.Node) :
+def rowsNodes (mk : Marks) (disp : Bool) (kind : GridKind) (acc : Array Html.Node) :
     MRows → Array Html.Node
   | .nil => acc
   | .cons row rest =>
-    rowsNodes disp kind
-      (acc.push (.elem "mtr" #[] (rowNodes disp kind 0 #[] row))) rest
+    rowsNodes mk disp kind
+      (acc.push (.elem "mtr" #[] (rowNodes mk disp kind 0 #[] row))) rest
 
 end
 
@@ -282,10 +391,10 @@ the content box — MathML Core §2.1.1), absent for inline, which the same
 stylesheet treats as `inline`. The backend's own attributes (class,
 `data-tex`) ride in `extra`. -/
 def formula (display : Bool) (extra : Array (String × String))
-    (body : MList) : Html.Node :=
+    (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "math"
     ((if display then #[("display", "block")] else #[]) ++ extra)
-    (listNodes display #[] body)
+    (listNodes mk display none #[] body)
 
 -- The glyph-text fold: what the emission's token leaves spell, in
 -- document order, as a pure fold over the AST — the exposed statement of
@@ -310,6 +419,7 @@ def listChars (acc : Array Char) : MList → Array Char
 
 def itemChars (acc : Array Char) : MItem → Array Char
   | .space _ => acc
+  | .ink _ _ => acc
   | .atom _ nuc sup sub _ =>
     listChars (listChars (nucChars acc nuc) sub) sup
 
@@ -340,6 +450,8 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
         | true => overlineChar
         | false => mark)
   | .grid _ rows => rowsChars acc rows
+  -- The struck row, then the value: `msup`'s child order.
+  | .cancel _ _ value body => listChars (listChars acc body) value
 
 def rowChars (acc : Array Char) : MRow → Array Char
   | .nil => acc
@@ -403,30 +515,72 @@ theorem toList_of_isEmpty {α : Type} {a : Array α} (h : a.isEmpty = true) :
   rw [hs] at this
   exact List.eq_nil_of_length_eq_zero this
 
-/-- An emitted list grows the accumulator: one element per item, none
-removed — the fact that lets `scriptNode` and `radNode` read `.nil`
+/-- A cancel mark's text is its struck row's, then its value's when the
+value shows: the head and the marks are an empty element and CSS. -/
+theorem cancelNode_chars (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
+    (struck vals : Array Html.Node) (shown : Bool) (c : Array Char) :
+    nodeChars c (cancelNode mk disp mark spec struck vals shown)
+      = if mark == .to || shown then nodeListChars (nodeListChars c struck.toList) vals.toList
+        else nodeListChars c struck.toList := by
+  unfold cancelNode
+  cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
+    simp [nodeChars, nodeListChars, Array.toList_push, nodeListChars_append]
+
+/-- Painting a colour onto an element changes its attributes, never its
+text. -/
+theorem paint_chars (ink : Option String) (n : Html.Node) (c : Array Char) :
+    nodeChars c (paint ink n) = nodeChars c n := by
+  cases n with
+  | elem t attrs kids =>
+    cases ink with
+    | none => rfl
+    | some css =>
+      simp only [paint]
+      split <;> rfl
+  | text s => rfl
+  | style s => rfl
+  | script a j => rfl
+
+/-- An emitted list grows the accumulator: one element per atom or space,
+none removed — the fact that lets `scriptNode` and `radNode` read `.nil`
 (no script, no degree) off an empty child array. -/
-theorem listNodes_size (disp : Bool) :
-    ∀ (ml : MList) (acc : Array Html.Node),
-      acc.size ≤ (listNodes disp acc ml).size
-  | .nil, _ => Nat.le_refl _
-  | .cons x rest, acc =>
+theorem listNodes_size (mk : Marks) (disp : Bool) :
+    ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node),
+      acc.size ≤ (listNodes mk disp ink acc ml).size
+  | _, .nil, _ => Nat.le_refl _
+  | _, .cons (.ink co n) rest, acc => listNodes_size mk disp _ rest acc
+  | ink, .cons (.space mu) rest, acc =>
     Nat.le_trans (by simp)
-      (listNodes_size disp rest (acc.push (itemNode disp x)))
+      (listNodes_size mk disp ink rest (acc.push (paint ink (itemNode mk disp (.space mu)))))
+  | ink, .cons (.atom cls nuc sup sub lim) rest, acc =>
+    Nat.le_trans (by simp)
+      (listNodes_size mk disp ink rest
+        (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))))
 
 /-- An empty emission is an empty list, on the fold: the glyph text of a
 list whose emission is empty is the accumulator unchanged. -/
-theorem listChars_of_empty (disp : Bool) (ml : MList)
-    (h : (listNodes disp #[] ml).isEmpty = true) (c : Array Char) :
-    listChars c ml = c := by
-  cases ml with
-  | nil => rfl
-  | cons x rest =>
+theorem listChars_of_empty (mk : Marks) (disp : Bool) :
+    ∀ (ink : Option String) (ml : MList),
+      (listNodes mk disp ink #[] ml).isEmpty = true → ∀ (c : Array Char), listChars c ml = c
+  | _, .nil, _, _ => rfl
+  | _, .cons (.ink co n) rest, h, c => listChars_of_empty mk disp _ rest h c
+  | ink, .cons (.space mu) rest, h, c => by
     exfalso
-    have hs := listNodes_size disp rest #[itemNode disp x]
-    have h0 : (listNodes disp #[itemNode disp x] rest).size = 0 := by
+    have hs := listNodes_size mk disp ink rest #[paint ink (itemNode mk disp (.space mu))]
+    have h0 : (listNodes mk disp ink #[paint ink (itemNode mk disp (.space mu))] rest).size
+        = 0 := by
       simpa [listNodes, Array.isEmpty_iff_size_eq_zero] using h
-    have h1 : (#[itemNode disp x] : Array Html.Node).size = 1 := rfl
+    have h1 : (#[paint ink (itemNode mk disp (.space mu))] : Array Html.Node).size = 1 := rfl
+    omega
+  | ink, .cons (.atom cls nuc sup sub lim) rest, h, c => by
+    exfalso
+    have hs := listNodes_size mk disp ink rest
+      #[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))]
+    have h0 : (listNodes mk disp ink
+        #[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))] rest).size = 0 := by
+      simpa [listNodes, Array.isEmpty_iff_size_eq_zero] using h
+    have h1 : (#[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))] :
+        Array Html.Node).size = 1 := rfl
     omega
 
 /-- The script schema's text is base, subscript, superscript, whether the
@@ -465,47 +619,60 @@ theorem radNode_chars (body deg : Array Html.Node) (c : Array Char) :
 
 mutual
 
-theorem listNodes_chars (disp : Bool) :
-    ∀ (ml : MList) (acc : Array Html.Node) (c : Array Char),
-      nodeListChars c (listNodes disp acc ml).toList
+theorem listNodes_chars (mk : Marks) (disp : Bool) :
+    ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node) (c : Array Char),
+      nodeListChars c (listNodes mk disp ink acc ml).toList
         = listChars (nodeListChars c acc.toList) ml
-  | .nil, acc, c => rfl
-  | .cons x rest, acc, c => by
-    show nodeListChars c (listNodes disp (acc.push (itemNode disp x)) rest).toList
-        = listChars (itemChars (nodeListChars c acc.toList) x) rest
-    rw [listNodes_chars disp rest, Array.toList_push, nodeListChars_append]
+  | _, .nil, acc, c => rfl
+  | _, .cons (.ink co n) rest, acc, c => by
+    show nodeListChars c (listNodes mk disp (some (inkCss co n)) acc rest).toList
+        = listChars (nodeListChars c acc.toList) rest
+    exact listNodes_chars mk disp _ rest acc c
+  | ink, .cons (.space mu) rest, acc, c => by
+    show nodeListChars c (listNodes mk disp ink
+        (acc.push (paint ink (itemNode mk disp (.space mu)))) rest).toList
+      = listChars (itemChars (nodeListChars c acc.toList) (.space mu)) rest
+    rw [listNodes_chars mk disp ink rest, Array.toList_push, nodeListChars_append]
     simp only [nodeListChars]
-    rw [itemNode_chars disp x]
+    rw [paint_chars, itemNode_chars mk disp]
+  | ink, .cons (.atom cls nuc sup sub lim) rest, acc, c => by
+    show nodeListChars c (listNodes mk disp ink
+        (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList
+      = listChars (itemChars (nodeListChars c acc.toList) (.atom cls nuc sup sub lim)) rest
+    rw [listNodes_chars mk disp ink rest, Array.toList_push, nodeListChars_append]
+    simp only [nodeListChars]
+    rw [paint_chars, itemNode_chars mk disp]
 
-theorem itemNode_chars (disp : Bool) :
+theorem itemNode_chars (mk : Marks) (disp : Bool) :
     ∀ (x : MItem) (c : Array Char),
-      nodeChars c (itemNode disp x) = itemChars c x
+      nodeChars c (itemNode mk disp x) = itemChars c x
   | .space _, c => rfl
+  | .ink _ _, c => rfl
   | .atom cls nuc sup sub lim, c => by
-    show nodeChars c (scriptNode (lim && disp) (nucNode disp cls nuc)
-        (listNodes false #[] sub) (listNodes false #[] sup))
+    show nodeChars c (scriptNode (lim && disp) (nucNode mk disp cls nuc)
+        (listNodes mk false none #[] sub) (listNodes mk false none #[] sup))
       = listChars (listChars (nucChars c nuc) sub) sup
-    rw [scriptNode_chars, nucNode_chars disp cls nuc c,
-      listNodes_chars false sub #[] (nucChars c nuc),
-      listNodes_chars false sup #[]]
+    rw [scriptNode_chars, nucNode_chars mk disp cls nuc c,
+      listNodes_chars mk false none sub #[] (nucChars c nuc),
+      listNodes_chars mk false none sup #[]]
     rfl
 
-theorem nucNode_chars (disp : Bool) (cls : MathClass) :
+theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     ∀ (nuc : MNucleus) (c : Array Char),
-      nodeChars c (nucNode disp cls nuc) = nucChars c nuc
+      nodeChars c (nucNode mk disp cls nuc) = nucChars c nuc
   | .sym ch, c => by
     show pushChars c (charText ch).toList = c.push ch
     exact pushChars_charText c ch
   | .word _, c => rfl
   | .list body, c => by
-    show nodeListChars c (listNodes disp #[] body).toList = listChars c body
-    rw [listNodes_chars disp body #[] c]
+    show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
+    rw [listNodes_chars mk disp none body #[] c]
     rfl
   | .frac ⟨l, r, rule, style⟩ num den, c => by
-    have bar : ∀ c', nodeListChars (nodeListChars c' (listNodes false #[] num).toList)
-        (listNodes false #[] den).toList = listChars (listChars c' num) den := by
+    have bar : ∀ c', nodeListChars (nodeListChars c' (listNodes mk false none #[] num).toList)
+        (listNodes mk false none #[] den).toList = listChars (listChars c' num) den := by
       intro c'
-      rw [listNodes_chars false num #[] c', listNodes_chars false den #[]]
+      rw [listNodes_chars mk false none num #[] c', listNodes_chars mk false none den #[]]
       rfl
     have mo : ∀ (m : Char) (s : String) (c' : Array Char),
         nodeChars c' (sizedMo m s) = c'.push m :=
@@ -513,112 +680,125 @@ theorem nucNode_chars (disp : Bool) (cls : MathClass) :
     cases l <;> cases r <;> cases style <;>
       simp [nucNode, nucChars, fracKids, nodeChars, nodeListChars, bar, mo]
   | .rad deg body, c => by
-    show nodeChars c (radNode (listNodes disp #[] body)
-        (listNodes false #[] deg)) = listChars (listChars c body) deg
-    rw [radNode_chars, listNodes_chars disp body #[] c,
-      listNodes_chars false deg #[]]
+    show nodeChars c (radNode (listNodes mk disp none #[] body)
+        (listNodes mk false none #[] deg)) = listChars (listChars c body) deg
+    rw [radNode_chars, listNodes_chars mk disp none body #[] c,
+      listNodes_chars mk false none deg #[]]
     rfl
   | .delim l r body, c => by
     cases l with
     | none =>
       cases r with
       | none =>
-        show nodeListChars c (listNodes disp #[] body).toList = listChars c body
-        rw [listNodes_chars disp body #[] c]
+        show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
+        rw [listNodes_chars mk disp none body #[] c]
         rfl
       | some cr =>
         show nodeListChars c
-            ((listNodes disp #[] body).push (delimMo cr)).toList
+            ((listNodes mk disp none #[] body).push (delimMo cr)).toList
           = (listChars c body).push cr
         rw [Array.toList_push, nodeListChars_append,
-          listNodes_chars disp body #[] c]
+          listNodes_chars mk disp none body #[] c]
         show nodeChars (listChars c body) (delimMo cr) = _
         rw [delimMo_chars]
     | some cl =>
       cases r with
       | none =>
-        show nodeListChars c (listNodes disp #[delimMo cl] body).toList
+        show nodeListChars c (listNodes mk disp none #[delimMo cl] body).toList
           = listChars (c.push cl) body
-        rw [listNodes_chars disp body]
+        rw [listNodes_chars mk disp none body]
         show listChars (nodeChars c (delimMo cl)) body = _
         rw [delimMo_chars]
       | some cr =>
         show nodeListChars c
-            ((listNodes disp #[delimMo cl] body).push (delimMo cr)).toList
+            ((listNodes mk disp none #[delimMo cl] body).push (delimMo cr)).toList
           = (listChars (c.push cl) body).push cr
         rw [Array.toList_push, nodeListChars_append,
-          listNodes_chars disp body]
+          listNodes_chars mk disp none body]
         show nodeChars (listChars (nodeChars c (delimMo cl)) body)
             (delimMo cr) = _
         rw [delimMo_chars, delimMo_chars]
   | .accent mark stretch body, c => by
     cases h : mark == '\u0305' <;> simp only [nucNode, nucChars, h]
     · show nodeChars
-          (nodeListChars c (listNodes disp #[] body).toList)
+          (nodeListChars c (listNodes mk disp none #[] body).toList)
           (.elem "mo" #[("stretchy", if stretch then "true" else "false")]
             #[.text (charText mark)]) = _
-      rw [listNodes_chars disp body #[] c, moLeaf_chars]
+      rw [listNodes_chars mk disp none body #[] c, moLeaf_chars]
       rfl
     · show nodeChars
-          (nodeListChars c (listNodes disp #[] body).toList)
+          (nodeListChars c (listNodes mk disp none #[] body).toList)
           (.elem "mo" #[("stretchy", "true")]
             #[.text (charText overlineChar)]) = _
-      rw [listNodes_chars disp body #[] c, moLeaf_chars]
+      rw [listNodes_chars mk disp none body #[] c, moLeaf_chars]
       rfl
   | .grid kind rows, c => by
     cases kind <;>
       simp only [nucNode, nucChars] <;>
-      show nodeListChars c (rowsNodes _ _ #[] rows).toList = rowsChars c rows <;>
+      show nodeListChars c (rowsNodes mk _ _ #[] rows).toList = rowsChars c rows <;>
       rw [rowsNodes_chars] <;>
       rfl
+  | .cancel mark spec value body, c => by
+    show nodeChars c (cancelNode mk disp mark spec (listNodes mk disp none #[] body)
+        (listNodes mk (spec.size == .same && disp) none #[] value) (value matches .cons _ _))
+      = listChars (listChars c body) value
+    have hs := listNodes_chars mk disp none body #[] c
+    have hv := listNodes_chars mk (spec.size == .same && disp) none value #[]
+    simp only [nodeListChars] at hs hv
+    rw [cancelNode_chars, hs, hv]
+    cases value with
+    | nil => simp [listChars]
+    | cons _ _ => simp
 
-theorem rowNodes_chars (disp : Bool) (kind : GridKind) :
+theorem rowNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
     ∀ (row : MRow) (k : Nat) (acc : Array Html.Node) (c : Array Char),
-      nodeListChars c (rowNodes disp kind k acc row).toList
+      nodeListChars c (rowNodes mk disp kind k acc row).toList
         = rowChars (nodeListChars c acc.toList) row
   | .nil, _, acc, c => rfl
   | .cons cell rest, k, acc, c => by
-    show nodeListChars c (rowNodes disp kind (k + 1) _ rest).toList
+    show nodeListChars c (rowNodes mk disp kind (k + 1) _ rest).toList
         = rowChars (listChars (nodeListChars c acc.toList) cell) rest
-    rw [rowNodes_chars disp kind rest, Array.toList_push,
+    rw [rowNodes_chars mk disp kind rest, Array.toList_push,
       nodeListChars_append]
     simp only [nodeListChars]
     show rowChars (nodeListChars (nodeListChars c acc.toList)
-        (listNodes disp #[] cell).toList) rest = _
-    rw [listNodes_chars disp cell #[]]
+        (listNodes mk disp none #[] cell).toList) rest = _
+    rw [listNodes_chars mk disp none cell #[]]
     rfl
 
-theorem rowsNodes_chars (disp : Bool) (kind : GridKind) :
+theorem rowsNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
     ∀ (rows : MRows) (acc : Array Html.Node) (c : Array Char),
-      nodeListChars c (rowsNodes disp kind acc rows).toList
+      nodeListChars c (rowsNodes mk disp kind acc rows).toList
         = rowsChars (nodeListChars c acc.toList) rows
   | .nil, acc, c => rfl
   | .cons row rest, acc, c => by
-    show nodeListChars c (rowsNodes disp kind _ rest).toList
+    show nodeListChars c (rowsNodes mk disp kind _ rest).toList
         = rowsChars (rowChars (nodeListChars c acc.toList) row) rest
-    rw [rowsNodes_chars disp kind rest, Array.toList_push,
+    rw [rowsNodes_chars mk disp kind rest, Array.toList_push,
       nodeListChars_append]
     simp only [nodeListChars]
     show rowsChars (nodeListChars (nodeListChars c acc.toList)
-        (rowNodes disp kind 0 #[] row).toList) rest = _
-    rw [rowNodes_chars disp kind row 0 #[]]
+        (rowNodes mk disp kind 0 #[] row).toList) rest = _
+    rw [rowNodes_chars mk disp kind row 0 #[]]
     rfl
 
 end
 
 /-- The MathML census: the emission's leaf text — the `mi`/`mn`/`mo`
 contents in order, which is all the text the element carries — equals the
-pure glyph-text fold over the same math list, for either display mode and
-whatever backend attributes ride on the element. What this holds fixed:
-the projection to MathML drops no glyph the AST carries and invents none
-beyond it; the fold's agreement with the PDF's coverage census
+pure glyph-text fold over the same math list, for either display mode,
+whatever backend attributes ride on the element and whatever the marks'
+measures are. What this holds fixed: the projection to MathML drops no
+glyph the AST carries and invents none beyond it — a colour switch paints,
+a cancel mark's strike and arrowhead are CSS and an empty element, text of
+neither; the fold's agreement with the PDF's coverage census
 (`Math.MList.scalarsList` — same scalars, its order, overline excepted)
 is pinned by test in `mathmlChecks`. -/
 theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
-    (body : MList) :
-    nodeChars #[] (formula display extra body) = listChars #[] body := by
+    (body : MList) (mk : Marks) :
+    nodeChars #[] (formula display extra body mk) = listChars #[] body := by
   simp only [formula, nodeChars]
-  rw [listNodes_chars display body #[] #[]]
+  rw [listNodes_chars mk display none body #[] #[]]
   rfl
 
 end LeanTex.Core.MathMl

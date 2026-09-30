@@ -493,7 +493,6 @@ warning[W0383]: '\lIf' is an algorithm construct outside the modeled subset; its
 warning[W0384]: frame 1 is 3.437pt taller than its page; it continues on the next page
   help: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
-warning[W0385]: the colour 'indigo' inside math sets in the surrounding style
 warning[W0385]: '\textbf' inside math sets in the surrounding style
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
 warning[W0386]: a declared line break did not hold: 2 lines were declared, 4 ship
@@ -505,7 +504,7 @@ warning[W0387]: '\thispagestyle' was read and had no effect
 warning[W0388]: the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
   help: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
-warning[W0389]: math with \cancelto is not rendered yet; its content operand sets in its place
+warning[W0389]: math with \raisebox is not rendered yet; its content operand sets in its place
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
 warning[W0390]: nothing declares a 'mono' family; typewriter runs set in the body face, which is not fixed-pitch
   help: \fonts{ mono = "<family>" } gives the slot its own face; `leantex fonts` lists the installed families

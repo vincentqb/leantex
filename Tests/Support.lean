@@ -165,7 +165,7 @@ def goldenNames : List String :=
    "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-scm",
    "diagram-tikzset",
    "tables", "tables-ragged", "subfigures", "float-center", "box-sides",
-   "math-companion", "math-first", "math-text", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
+   "math-companion", "math-first", "math-text", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded"]
@@ -416,6 +416,11 @@ structure CensusPage where
   request's box (fulfilled or placeholder) — what the diagram-boundary
   row reads to pin that the request ships ink where the picture stood. -/
   images : Nat := 0
+  /-- Filled polygons shipped in the page's lines — a formula's cancel
+  strikes and arrowheads — as their points in page coordinates (y down):
+  what the cancel facts read, the strike's corners and the arrowhead's
+  tip against the struck ink. -/
+  polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
 
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.text))
@@ -441,13 +446,16 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     let mut rules := 0
     let mut ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
     let mut images := 0
+    let mut polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
     for l in p.lines do
+      let mut px := l.x
       let mut chars := ""
       let mut runSize : Dim.Sp := 0
       let mut runFonts : Array Nat := #[]
       for seg in l.segs do
         match seg with
-        | .run idx color _ _ glyphs size _ _ _ _ _ =>
+        | .run idx color _ w glyphs size _ _ _ _ _ =>
+          px := px + w
           runSize := max runSize size
           runFonts := runFonts.push idx
           if coveredColors.contains color then
@@ -458,14 +466,19 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
             for (_, c, _) in glyphs do
               chars := chars.push c
             covered := covered.push ' '
-        | .gap _ _ =>
+        | .gap w _ =>
+          px := px + w
           chars := chars.push ' '
           covered := covered.push ' '
-        | .rule _ th _ _ =>
+        | .rule w th _ _ =>
+          px := px + w
           rules := rules + 1
           ruleSegs := ruleSegs.push (l.y, th)
         -- an image is decorative ink to the text census, like a rule
-        | .image .. => images := images + 1
+        | .image _ w _ =>
+          px := px + w
+          images := images + 1
+        | .poly pts _ => polys := polys.push (pts.map fun (x, y) => (px + x, l.y - y))
       -- The census asks where the text block stands, so a protruded
       -- line reports its measure edge: the ink deliberately hangs
       -- `l.hang` left of it (`Layout.protrudeLeft`).
@@ -478,6 +491,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           covered := covered
                           rules := rules
                           ruleSegs := ruleSegs
+                          polys := polys
                           fills := p.fills.size
                           fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
                           paths := p.paths.size
@@ -623,6 +637,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
       x := x + w
     | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w
+    | .poly _ _ => pure ()
     | .image _ w _ => x := x + w
   return out
 
@@ -981,6 +996,7 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
       x := x + w
     | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w
+    | .poly _ _ => pure ()
     | .image _ w _ => x := x + w
   return out
 
@@ -995,7 +1011,7 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
       unless glyphs.isEmpty do
         out := out ++ pending
         pending := #[]
-    | .rule _ _ _ _ | .image _ _ _ => pure ()
+    | .rule _ _ _ _ | .poly _ _ | .image _ _ _ => pure ()
   return out
 
 /-- Painted inline rules on shipped body pages. -/
@@ -1133,6 +1149,19 @@ def cssRulesOf (css sel : String) : List String :=
 /-- The declarations of the first stylesheet rule whose selector is `sel`
 exactly: the text between its braces. -/
 def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+
+/-- Read a CSS stage length and compare its share to the shipped PDF
+length. One printed milli-percent is the rounding bound, independently of
+viewport height. -/
+def cssStageLength (style key : String) (length height : Dim.Sp) : Bool :=
+  ((style.splitOn ";").findSome? fun decl => do
+    let [name, value] := decl.splitOn ":" | none
+    if name.trimAscii.toString != key then none else
+    let value := value.trimAscii.toString
+    if !value.endsWith "vh" then none else
+    let (m, sc) ← Decl.parseDecimal (value.dropEnd 2).toString
+    return m * 1000 / (sc : Int)).any fun m =>
+      m * height ≤ length * 100000 && length * 100000 < (m + 1) * height
 
 /-- The read-side census of produced PDF bytes, for a claim about what a
 file carries (fonts embedded, filters, page count) — `PdfCensus.census`

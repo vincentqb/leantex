@@ -1066,6 +1066,7 @@ def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id
       | .gap w _ => x := x + w
       | .rule w _ _ _ => x := x + w
       | .image _ w _ => x := x + w
+      | .poly _ _ => pure ()
   return out
 
 /-- Glyphs whose painted start misses the layout's: the file's pen, glyph
@@ -1984,9 +1985,9 @@ spelled as the declaration this engine already has. Invented values. -/
 def artEpochDeck : String :=
   "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++
   "\\begin{frame}{On the document's ground}\nA first frame.\n\\end{frame}\n" ++
-  "\\palette{ bg = #14213D, fg = #F5F5F5 }\n" ++
+  "\\palette{ bg = #14213D, fg = #F5F5F5, muted = #F5F5F5 }\n" ++
   "\\begin{frame}{On a declared dark ground}\nA second frame.\n\\end{frame}\n" ++
-  "\\palette{ bg = #FFFFFF, fg = #000000 }\n" ++
+  "\\palette{ bg = #FFFFFF, fg = #000000, muted = #696664 }\n" ++
   "\\begin{frame}{Back on a light ground}\nA third frame.\n\\end{frame}\n" ++
   "\\end{document}\n"
 

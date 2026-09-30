@@ -1,6 +1,12 @@
 import Tests.Support
 import Tests.Surface
 import Tests.FontSize
+import Tests.CancelRegression
+import Tests.CancelHtml
+import Tests.BeamerHooks
+import Tests.BeamerColors
+import Tests.MintedSettings
+import Tests.ListingHighlight
 import Tests.Markdown
 import Tests.Census
 import Tests.Backends
@@ -35,6 +41,7 @@ import Tests.Reports
 import Tests.Natbib
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+open Tests (mintedSettingsChecks listingHighlightChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -56,6 +63,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
+  mintedSettingsChecks ref
+  listingHighlightChecks ref
   mdPreambleChecks ref
   backendChecks ref
   landmarkChecks ref
@@ -101,7 +110,10 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   footnoteLayoutChecks ref oneFace
   themeTitleShipChecks ref oneFace
   titleSlotShipChecks ref oneFace
+  beamerHookChecks ref oneFace
+  beamerColorsChecks ref oneFace
   titleTemplateOptionalChecks ref oneFace
+  titleTemplateColorChecks ref oneFace
   headingRhythmChecks ref oneFace
   titleBreakChecks ref oneFace
   bodyColorChecks ref oneFace
@@ -129,6 +141,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recoveryChecks ref oneFace
   floorPolicyChecks ref oneFace
   mathContainChecks ref oneFace
+  cancelReportChecks ref oneFace
+  cancelGeometryChecks ref oneFace
+  cancelHtmlChecks ref
   roleLayoutChecks ref geom oneFace
   navLayoutChecks ref geom oneFace
   vdistChecks ref geom oneFace
@@ -459,4 +474,3 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln s!"FAIL {name}"
     IO.eprintln s!"tests: {failed.length} failed"
     return 1
-

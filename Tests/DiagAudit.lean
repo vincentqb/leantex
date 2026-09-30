@@ -112,8 +112,8 @@ def registry : List AuditRow :=
    ⟨.N0200, .keep, .rewritten, check% spacingChecks⟩,
    -- One element-style field closes it.
    ⟨.W0110, .native, .native, check% themeTitleShipChecks⟩,
-   -- The strike and its value as a script; the index rows are the gate.
-   ⟨.W0389, .native, .native, .tier "compat" "cancel.impl"⟩,
+   -- A contained wrapper still owes its positioning; cancellation is native.
+   ⟨.W0389, .native, .native, check% mathContainChecks⟩,
    -- A rewrite's note beside the refusal of what it produced, and a
    -- picture's constructs beside its placeholder: the siteAccounting rows.
    ⟨.N0100, .merge, .rewritten, check% siteAccountingChecks⟩,

@@ -1,28 +1,17 @@
-# source: cancel.sty v2.2, its documented command list — \cancel (a
-# positive-slope strike), \bcancel (negative slope), \xcancel (both), and
-# \cancelto{value}{expr} (a northeast strike carrying an arrow to a value
-# set at script size). All four draw a diagonal through a measured
-# subformula, which is the one shape the inline layout vocabulary cannot
-# express: every rule in a line is axis-aligned, and the vocabulary that
-# does carry slopes and arrow tips is reachable only from a block-level
-# picture. So the package stays OFF nativePackages — its load warns W0103
-# and every use is named where it stands — and this file records that as a
-# decision rather than an accident, with the code each use actually fires.
-#
-# The \cancelto row is the one that was not merely lossy: the floor inked
-# both arguments, so "x cancels to 0" read as the product 0x. Its value
-# argument names rather than carries, and the naming-arity table carries
-# that row now — so the construct is reduced to its content operand where
-# it stands and the formula around it still sets as mathematics, which is
-# W0389 rather than the whole-formula degrade. The other three have no such
-# row: nothing has ruled on their operands, so they degrade the formula
-# whole and stay W0012.
-#
-# \CancelColor is not a row: it is a colour hook a document redefines, and
-# a redefinition is read as a definition here, so it fires no refusal of
-# its own. The makeroom option rides with the load's W0103.
-body refuse:W0389 $\cancelto{0}{x}$
-body refuse:W0012 $\cancel{y}$
-body refuse:W0012 $\bcancel{z}$
-body refuse:W0012 $\xcancel{w}$
+# source: cancel.sty v2.2, manual "The cancel package": the four commands,
+# the \CancelColor hook, and Options. Math marks use the face's rule and
+# clearance, overlapping by default. The explicit makeroom option
+# reserves the mark's width; the value-size options retain the package's
+# style table. Text-mode cancellation remains a named refusal.
+body impl $\cancelto{0}{x}$
+body impl $\cancel{y}$
+body impl $\bcancel{z}$
+body impl $\xcancel{w}$
+pre inert:sets-later-math \renewcommand{\CancelColor}{\color{red}}
+pre inert:sets-later-math \usepackage[samesize]{cancel}
+pre inert:sets-later-math \usepackage[smaller]{cancel}
+pre inert:sets-later-math \usepackage[Smaller]{cancel}
+pre inert:sets-later-math \usepackage[makeroom]{cancel}
+pre inert:sets-later-math \usepackage[overlap]{cancel}
+pre inert:sets-later-math \usepackage[thicklines]{cancel}
 body refuse:W0301 \cancel{q}

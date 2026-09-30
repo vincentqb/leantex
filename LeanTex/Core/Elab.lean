@@ -176,6 +176,11 @@ structure Ctx where
   reset restores only its ground from this snapshot while preserving every
   unrelated body declaration. -/
   basePalette : Palette := {}
+  /-- The cancel package's load options, as its `\ProcessOptions` reads
+  them (`Math.CancelSpec.ofOptions`): the marks every formula draws. The
+  marks' colour is not here — `\CancelColor` is a command the document may
+  redefine anywhere, read where a formula stands (`mathEnv`). -/
+  cancel : Math.CancelSpec := {}
   /-- The document's resolved main locale, from the preamble's declared
   language: what the body walk's generated furniture (the References
   heading) is worded in. -/
@@ -488,8 +493,10 @@ structure ESt where
   the content after that scope closes: flow scope, no brace revert (the
   engine's `\centering` choice). `none` while the body declared nothing.
   The document palette both backends read as epoch 0 stays the
-  preamble+theme state; the flow state rides the `.setPalette` blocks. -/
-  flowPalette : Option Palette := none
+  preamble+theme state; the flow state rides the `.setPalette` blocks.
+  Named Beamer declarations share this record, outside the inline knot's
+  top-level fields, so later parents resolve against the next epoch. -/
+  flowPalette : BeamerColor.State := {}
   /-- Body-declared tokens (`\setlength` mid-document), same door. -/
   flowTokens : Option Tokens := none
   /-- The language in force from a block-level switch (`\selectlanguage`),
@@ -565,37 +572,13 @@ emitted — and W0361 then quoted that construct. One helper, so a field of
 this kind is reset at the one place a trial begins, never field by field. -/
 def ESt.freshReport (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], runShapes := #[] }
-/-- The mandatory `{language}` head of a `{minted}` body, after any option
-head: the language text and the index past the `}`, `none` when the group
-is missing. -/
-private def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
-  let cs := s.toList.toArray
-  let mut i := start
-  for _ in [0:cs.size] do
-    if h : i < cs.size then
-      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
-    else break
-  if h : i < cs.size then
-    if cs[i] != '{' then return none
-    let mut j := i + 1
-    let mut out := ""
-    for _ in [0:cs.size] do
-      if h2 : j < cs.size then
-        let c := cs[j]
-        if c == '}' then return some (out, j + 1)
-        out := out.push c
-        j := j + 1
-      else break
-    return none
-  else return none
-
 /-- Where a listing body's content starts: past the option head and, for
 `{minted}`, its language argument — the one index both the block arm and
 the inline degradation strip from. -/
 private def listingContentStart (env s : String) : Nat :=
   let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
   if env == "minted" then
-    ((mintedLangHead s afterOpt).map (·.2)).getD afterOpt
+    ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
   else afterOpt
 
 /-- Strip the value's one surrounding brace group: `{An example}` reads as
@@ -747,6 +730,18 @@ private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool
     if st.spans.colors.any (·.1 == expr) then st
     else { st with spans :=
       { st.spans with colors := st.spans.colors.push (expr, c, role, ⟨ctx.file, pos⟩) } }
+
+/-- The one W0304: a palette name that resolves to nothing keeps its
+content uncoloured. Every colour door — the inline `\textcolor` arm, the
+flow block form, and a formula's colours — speaks through here, so the
+message has one spelling. Outside the knot. -/
+private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx ("palette:" ++ key) .W0304
+    s!"'{key}' is not in the palette; content kept uncoloured" pos
+    (help := if ctx.palette.entries.isEmpty then
+        "declare colours with \\palette{ name = #RRGGBB }"
+      else s!"declared: {String.intercalate ", "
+        (ctx.palette.entries.toList.map (·.1))}")
 
 /-- Where a coloured use came from, for the contrast judge: a role's first
 use, or the first expression that resolved to an anonymous colour. -/
@@ -1455,6 +1450,10 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
     let tail := expandMathList user limit args rest
     if let some (_, sub) := args.find? (·.1 == n) then
       sub ++ tail
+    else if n.startsWith "@ink:" then
+      -- Compatibility rewrites colour declarations inside macro bodies too;
+      -- feed their value to the same math colour resolver as a direct use.
+      #[Raw.ctrl "color" pos, Raw.group #[Raw.word (n.drop 5).toString pos] pos] ++ tail
     else
       match lookupUserIn user limit n with
       | some (k, cmd) =>
@@ -1507,6 +1506,46 @@ private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
     warnOnce ctx ("math:contain:" ++ what) .W0389
       s!"{where_}math with {what} is not rendered yet; its content operand sets \
 in its place" pos
+  | .inkUsed expr c entry => recordColorSpan ctx expr c entry pos
+  | .inkMissed expr => warnPaletteMiss ctx expr pos
+
+/-- The colour `\CancelColor` names, as the document last defined it.
+cancel.sty declares it empty (`\newcommand{\CancelColor}{}`: the marks take
+the colour in force) for a document to redefine as a colour command; the
+body is read as the colour it selects — a palette command (`\color{red}`
+reaches here as `\red`), a `\color` marker's expression, or `\color{…}`
+itself — through the palette the text path reads. `.error` carries an
+expression the palette cannot resolve. -/
+private def cancelColorOf (ctx : Ctx) : Except String (Option (Color × Option String)) :=
+  match lookupUser ctx "CancelColor" with
+  | none => .ok none
+  | some (_, cmd) =>
+    let key? : Option String :=
+      match (cmd.body.filter fun r => !(r matches .space)).toList with
+      | [] => none
+      | [.ctrl n _] =>
+        some (if n.startsWith "@ink:" then (n.drop "@ink:".length).toString else n)
+      | [.ctrl "color" _, .group g _] => some (rawSrc g).trimAscii.toString
+      | _ => some (rawSrc cmd.body).trimAscii.toString
+    match key? with
+    | none => .ok none
+    | some key =>
+      match ctx.palette.resolve key with
+      | some c => .ok (some (c, if (ctx.palette.find? key).isSome then some key else none))
+      | none => .error key
+
+/-- What a formula reads from its document: colour expressions through the
+palette the text path resolves with — the one resolving site, so contrast
+realization reaches a formula's colours as it reaches a run's — and the
+cancel package's marks, coloured as `\CancelColor` says where the formula
+stands. -/
+private def mathEnv (ctx : Ctx) : MathParse.Env :=
+  let (color, miss) := match cancelColorOf ctx with
+    | .ok c => (c, none)
+    | .error key => (none, some key)
+  { ink := fun key => (ctx.palette.resolve key).map fun c => (c, (ctx.palette.find? key).isSome)
+    cancel := { ctx.cancel with color }
+    cancelMiss := miss }
 
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as its text content with a warning naming the construct when it cannot —
@@ -1519,7 +1558,7 @@ content kept. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
-  match MathParse.parseMath display expanded with
+  match MathParse.parseMath display expanded (mathEnv ctx) with
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note "" pos
@@ -1539,7 +1578,7 @@ once — the equation numbers are owed, the mathematics is not. -/
 private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
   let expanded := expandMathList ctx.user ctx.limit #[] body.toList
-  match MathParse.parseMathRows kind expanded with
+  match MathParse.parseMathRows kind expanded (mathEnv ctx) with
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note s!"'\{{name}}': " pos
@@ -3636,18 +3675,6 @@ private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
     (pos : Pos) : EM Unit :=
   warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
 
-/-- The one W0304: a palette name that resolves to nothing keeps its
-content uncoloured. Both colour doors — the inline `\textcolor` arm and
-the flow block form — speak through here, so the message has one
-spelling. Outside the knot. -/
-private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
-  warnOnce ctx ("palette:" ++ key) .W0304
-    s!"'{key}' is not in the palette; content kept uncoloured" pos
-    (help := if ctx.palette.entries.isEmpty then
-        "declare colours with \\palette{ name = #RRGGBB }"
-      else s!"declared: {String.intercalate ", "
-        (ctx.palette.entries.toList.map (·.1))}")
-
 private inductive ColorRead where
   | resolved (color : Color) (token : Option String)
   | missing
@@ -3799,7 +3826,7 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) :
   let mathOf (d : Bool) (raws : Array Parse.Raw) :
       Ir.Inline × Array Picture.PDiag :=
     let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
-    match MathParse.parseMath d expanded with
+    match MathParse.parseMath d expanded (mathEnv ctx) with
     | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
     | .error what => (.math d (Parse.rawSrc raws),
         #[(.W0012, s!"math with {what} is not rendered yet; the \
@@ -5580,7 +5607,7 @@ private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
   match ← readColor ctx ctx.palette none source pos with
   | .resolved c _ =>
     let pal := ctx.palette.declare "fg" c
-    modify fun st => { st with flowPalette := some pal
+    modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
                                flowGen := st.flowGen + 1 }
     return some pal
   | .missing =>
@@ -6065,6 +6092,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   if let some (c, nm) := tps.separator then
     unless inner.isEmpty && (part st.author).isNone && (part st.institute).isNone
         && (part st.date).isNone do
+      let c := (nm.bind ctx.palette.find?).getD c
       -- moloch's own default, `titleseparator linewidth=0.5pt`
       -- (beamerinnerthememoloch.dtx, \moloch@inner@setdefaults), when no
       -- token names one. A default is nobody's declaration, so it carries no
@@ -6247,13 +6275,67 @@ private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
       skipBlock := true
   return (decorative, skipBlock)
 
-/-- `\palette{...}`: named colours. Every entry becomes usable both as
-`\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
-entries one at a time — a value may be a mix expression (`black!2`,
-`accent!50!black`) over the entries declared so far, which a generic
-pre-parse would reject. A redeclared name replaces the earlier entry: a
-later declaration overrides, which is what lets a document override a
-theme's defaults. -/
+/-- Resolve named Beamer colours into the palette in force; report
+unresolved expressions only once declarations have settled. -/
+private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
+    (settle : Bool := false) : EM Palette := do
+  let (colors, pal, issues) := (← get).flowPalette.resolve pal
+  modify fun st => { st with flowPalette := colors }
+  if settle then
+    for issue in issues do
+      warnOnce ctx ("beamercolor:" ++ issue) .W0104
+        ("'\\setbeamercolor': " ++ issue ++ "; the unresolved value is ignored") {}
+  return pal
+
+private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
+    (star : Bool) (src : String) (pos : Pos) : EM Palette := do
+  let name := name.trimAscii.toString
+  let (colors, unsupported) := (← get).flowPalette.declare name star src pos
+  modify fun st => { st with flowPalette := colors }
+  for key in unsupported do
+    warnOnce ctx ("beamercolor:key:" ++ name ++ ":" ++ key) .W0104
+      s!"'\\setbeamercolor' key '{key}' on '{name}' is unsupported; the key is dropped" pos
+  if let some (fg, bg) := BeamerColor.roles.lookup name then
+    for entry in Decl.splitEntries src do
+      if let some (key, _) := Decl.splitEntry entry then
+        if (key == "fg" && fg.isEmpty) || (key == "bg" && bg.isEmpty) then
+          warnOnce ctx ("beamercolor:channel:" ++ name ++ ":" ++ key) .W0104
+            s!"'\\setbeamercolor' {key} on '{name}' has no paint site; that channel is kept only for inheritance" pos
+  resolveBeamerColors ctx pal
+
+/-- Keep declaration parsing and state updates outside the block knot;
+the returned index carries the progress fact its measure reads. -/
+private def beamerColorArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (star : Bool) (pos : Pos) : EM { t : Option Palette × Nat // i ≤ t.2 } := do
+  let j := skipSpaces raws i
+  have hj : i ≤ j := skipSpaces_ge raws i
+  let j2 := skipSpaces raws (j + 1)
+  have hj2 : j + 1 ≤ j2 := skipSpaces_ge raws (j + 1)
+  match raws[j]?, raws[j2]? with
+  | some (.group elem _), some (.group body _) =>
+    let pal ← applyBeamerColor ctx ctx.palette (rawSrc elem) star (rawSrc body) pos
+    let pal ← resolveBeamerColors ctx pal true
+    modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+                               flowGen := st.flowGen + 1 }
+    return ⟨(some pal, j2 + 1), by omega⟩
+  | _, _ =>
+    diag ctx .E0304 "'\\setbeamercolor' needs an element and a colour declaration" pos
+    return ⟨(none, i), Nat.le_refl _⟩
+
+/-- A named element can be a parent even when it has no paint site of its
+own. Refuse it only when no supported site resolves through it. -/
+private def finishBeamerColors (ctx : Ctx) : EM Unit := do
+  let colors := (← get).flowPalette
+  for e in colors.elements do
+    -- premise: beamerColorsChecks — changing a consumed parent changes
+    -- heading ink on Layout.Out; an unsupported placement changes none.
+    if e.declared && !(colors.reached.contains e.name) then
+      warnOnce ctx ("beamercolor:element:" ++ e.name) .W0104
+        s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.pos
+        (help := Compat.beamerNative.lookup "setbeamercolor")
+
+/-- Native colour declarations update the same epoch as named Beamer
+colours. Later explicit native declarations retain their precedence. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
     (pos : Pos) (decorative : Bool := false) : EM Palette := do
   let mut pal := pal
@@ -6290,6 +6372,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
       else
         let put (pal : Palette) (c : Color) : EM Palette := do
           noteDeclared ctx "palette" key
+          modify fun st => { st with flowPalette := st.flowPalette.native key c }
           return pal.declare key c decorative
         match ← readColor ctx pal none valueSrc pos with
         | .resolved c _ => pal := ← put pal c
@@ -6306,7 +6389,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
           | none =>
             diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
               (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
-  return pal
+  resolveBeamerColors ctx pal
 
 
 private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := do
@@ -7111,7 +7194,7 @@ everything else kept in order — explicit recursion carrying the kept run's
 weight and pars bounds, the facts the frame arm's recursion into the kept
 content stands on. -/
 private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
-    (title : Array Inline) (rest : Array Raw) (bound pbound : Nat)
+    (title subtitle : Array Inline) (rest : Array Raw) (bound pbound : Nat)
     (hw : rawWeightList rest.toList + sliceWeight body j ≤ bound)
     (hp : nestedParsList rest.toList + slicePars body j ≤ pbound) :
     EM (Array Inline × { rest : Array Raw //
@@ -7125,11 +7208,19 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
         diag ctx .W0311 "this '\\frametitle' replaces the frame's earlier title"
           (some fpos) (help := "the last one wins; remove the other '\\frametitle'")
       let title ← elabInlines ctx t
-      frameRestGo ctx body (j + 2) title rest bound pbound
+      frameRestGo ctx body (j + 2) title subtitle rest bound pbound
+        (by have := sliceWeight_le body (show j ≤ j + 2 by omega); omega)
+        (by have := slicePars_le body (show j ≤ j + 2 by omega); omega)
+    | .ctrl "framesubtitle" fpos, some (.group t _) =>
+      unless subtitle.isEmpty do
+        diag ctx .W0311 "this '\\framesubtitle' replaces the frame's earlier subtitle"
+          (some fpos) (help := "the last one wins; remove the other '\\framesubtitle'")
+      let subtitle ← elabInlines ctx t
+      frameRestGo ctx body (j + 2) title subtitle rest bound pbound
         (by have := sliceWeight_le body (show j ≤ j + 2 by omega); omega)
         (by have := slicePars_le body (show j ≤ j + 2 by omega); omega)
     | r', _ =>
-      frameRestGo ctx body (j + 1) title (rest.push r') bound pbound
+      frameRestGo ctx body (j + 1) title subtitle (rest.push r') bound pbound
         (by
           have h1 := sliceWeight_here body h
           rw [hj] at h1
@@ -7145,6 +7236,12 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
   else
     have h1 := sliceWeight_end body (show body.size ≤ j by omega)
     have h2 := slicePars_end body (show body.size ≤ j by omega)
+    -- Beamer's frame-title template reads the subtitle only when there is
+    -- a title. Reuse the title's inline line break and colour sites; this
+    -- adds no new IR constructor or document walk.
+    let title := if title.isEmpty || subtitle.isEmpty then title else
+      title ++ #[.linebreak {}, .colored (Design.ofPalette ctx.palette).framesubtitle
+        (some "framesubtitlefg") #[.styled (.size "small") subtitle]]
     return (title, ⟨rest, by omega, by omega⟩)
 termination_by body.size - j
 
@@ -7461,7 +7558,7 @@ no-declaration path one Nat comparison. Named so the refresh provably
 leaves every measure component alone (`flowCtx_measure`). -/
 private def flowCtx (ctx : Ctx) (st : ESt) (gen : Nat) : Ctx :=
   if st.flowGen != gen then
-    { ctx with palette := st.flowPalette.getD ctx.palette
+    { ctx with palette := st.flowPalette.current.getD ctx.palette
                tokens := st.flowTokens.getD ctx.tokens }
   else ctx
 
@@ -7732,12 +7829,17 @@ keys from its option head, `{minted}` its option head and its mandatory
 language argument. Honoured keys: `caption` (numbered in flow order — the
 listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
-`linenos`, `language` (named data the engine does not colour by: the
-spelling normalizes through `Ir.listingLang?` to the one token both text
-artifacts carry, and a spelling outside the token grammar is named W0110
-and carries nothing — never raw text into an attribute), and a
-`basicstyle` at the engine's own listing step (mono at footnotesize —
-the code-frame convention Layout sets). Every other key, and a value
+`linenos`, `language` (normalized through `Ir.listingLang?` to the token
+both text artifacts carry; Lean and Python receive native lexical classes,
+other names remain plain, and a spelling outside the token grammar is
+named W0110 and carries nothing), minted's
+`fontsize` (a named size command or `auto`) and `style` (`default` or
+`friendly`), listings' `basicstyle`
+(`\ttfamily` and named size commands), `tabsize` and `breaklines`.
+LuaLaTeX's synthetic probe pins the defaults: ambient size, eight-column
+tabs, no wrapping. Bare fontsize names are text in FancyVerb, not size
+commands; name that unsupported spelling with its correction.
+Every other key, and a value
 asking for what the engine does not draw, is named W0110 — never a
 silent drop. The caption is kept as its literal text: a listing caption
 is plain prose; markup inside one is out of the blind capture's reach. -/
@@ -7750,6 +7852,18 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut label : Option String := none
   let mut numbers := false
   let mut language : Option Ir.ListingLang := none
+  let mut style := Ir.ListingStyle.default
+  let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
+    | .style s@(.size _) | .style s@(.fontSize _ _) => s
+    | _ => size) (Ir.Style.size "normalsize")
+  let mut fontSize := inherited
+  let mut tabSize := 8
+  let mut breakLines := false
+  let sizeName? (v : String) : Option String :=
+    if v.startsWith "\\" then
+      let name := (v.drop 1).toString
+      if Ir.sizeScale.any (·.1 == name) then some name else none
+    else none
   let langOf (raw : String) : EM (Option Ir.ListingLang) := do
     match Ir.listingLang? raw with
     | some l => pure (some l)
@@ -7778,27 +7892,72 @@ does not draw; lines keep no numbers" (some pos)
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
     | some ("language", v) => language ← langOf (listingVal v)
+    | some ("style", v) =>
+      let v := listingVal v
+      if env == "minted" then
+        match Ir.ListingStyle.ofName? v with
+        | some selected => style := selected
+        | none =>
+          diag ctx .W0110 s!"listing style '{v}' is not supported; the current style stands"
+            (some pos) (help := "use style=default or style=friendly")
+      else
+        diag ctx .W0110 s!"listing named style '{v}' is not supported; the current style stands"
+          (some pos)
+    | some ("fontsize", v) =>
+      let v := listingVal v
+      if env == "minted" && v == "auto" then fontSize := inherited
+      else if env == "minted" && (sizeName? v).isSome then
+        fontSize := .size ((sizeName? v).getD "normalsize")
+      else
+        diag ctx .W0110 s!"listing fontsize '{v}' is not a supported size command; \
+the current size stands" (some pos)
+          (help := "use a named size command such as fontsize=\\small, or fontsize=auto")
+    | some ("tabsize", v) =>
+      let v := listingVal v
+      -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
+      match v.toNat? with
+      | some n =>
+        if 0 < n && n ≤ 100 then tabSize := n
+        else diag ctx .W0110 s!"listing tabsize '{v}' is outside 1..100; \
+the current tab stops stand" (some pos)
+      | none =>
+        diag ctx .W0110 s!"listing tabsize '{v}' is not an integer; \
+the current tab stops stand" (some pos)
+    | some ("breaklines", v) =>
+      let v := listingVal v
+      if v == "true" then breakLines := true
+      else if v == "false" then breakLines := false
+      else diag ctx .W0110 s!"listing breaklines '{v}' is not true or false; \
+the current wrapping stands" (some pos)
     | some ("basicstyle", v) =>
-      match Ir.sizeScale.find? (fun p => p.1 != "footnotesize"
-          && (v.splitOn ("\\" ++ p.1)).length > 1) with
-      | some (nm, _) =>
-        diag ctx .W0110 s!"'basicstyle' asks for \\{nm}; listings set at \
-the engine's own step, mono at footnotesize" (some pos)
-      | none => pure ()
+      let v := listingVal v
+      let names := v.splitOn "\\"
+      let valid := env == "lstlisting" && (names.headD "").trimAscii.isEmpty &&
+        names.tail.all (fun name => let name := name.trimAscii.toString
+          name == "ttfamily" || Ir.sizeScale.any (·.1 == name))
+      if valid then
+        fontSize := names.tail.foldl (fun size name =>
+          let name := name.trimAscii.toString
+          if name == "ttfamily" then size else .size name) inherited
+      else
+        diag ctx .W0110 "listing basicstyle supports only \\ttfamily and named \
+size commands; the current style stands" (some pos)
     | some (k, _) =>
       diag ctx .W0110 s!"listing key '{k}' is not honoured; ignored" (some pos)
     | none =>
       if bare == "linenos" then numbers := true
+      else if bare == "breaklines" then breakLines := true
       else diag ctx .W0110 s!"listing key '{bare}' is not honoured; ignored" (some pos)
   if env == "minted" then
-    match mintedLangHead s afterOpt with
+    match Parse.mintedLangHead s afterOpt with
     | some (lang, _) => language ← langOf lang
     | none =>
       diag ctx .E0304 s!"'\\begin\{minted}' needs its \{language} argument" (some pos)
     content := (s.drop (listingContentStart env s)).toString
   else
     content := (s.drop afterOpt).toString
-  let spec : Ir.ListingSpec ← match caption with
+  let spec : Ir.ListingSpec := { numbers, language, style, fontSize, tabSize, breakLines }
+  let spec ← match caption with
     | some cap => do
       let num := (← get).ctr.lstNum + 1
       modify fun st => { st with ctr := { st.ctr with lstNum := num } }
@@ -7810,16 +7969,17 @@ the engine's own step, mono at footnotesize" (some pos)
         -- prefix is the resolver slice's): a \cref meanwhile sets the
         -- plain number, named W0380 — degraded, never silently wrong.
         recordLabel ctx key (some { kind := none, num := toString num }) pos
-        pure { caption := some (num, #[.label key, .text cap]), numbers := numbers,
-               language := language }
+        pure { spec with caption := some (num, #[.label key, .text cap]) }
       | none =>
-        pure { caption := some (num, #[.text cap]), numbers := numbers,
-               language := language }
+        pure { spec with caption := some (num, #[.text cap]) }
     | none => do
       if let some key := label then
         recordLabel ctx key (← get).refTarget pos
-      pure { caption := none, numbers := numbers, language := language }
-  return .verbatim none content spec
+      pure spec
+  let highlight := match spec.langToken.bind ListingHighlight.language? with
+    | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
+    | none => #[]
+  return .verbatim none content { spec with highlight }
 
 /-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)
 around an elaborated tag, the parentheses joining the tag's first and last
@@ -9725,7 +9885,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
       title ← elabInlines ctx t
       k := k + 1
     -- \frametitle{...} anywhere in the frame names it too.
-    let (title2, ⟨rest, hrf⟩) ← frameRestGo ctx body k title #[]
+    let (title2, ⟨rest, hrf⟩) ← frameRestGo ctx body k title #[] #[]
       (sliceWeight body k) (slicePars body k)
       (by simp [rawWeightList]) (by simp [nestedParsList])
     title := title2
@@ -10507,7 +10667,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
             pure (some (ctx'.palette.restore ctx'.basePalette "bg"))
         match pal? with
         | some pal => modify fun st =>
-          { st with flowPalette := some pal, flowGen := st.flowGen + 1 }
+          { st with flowPalette := { st.flowPalette with current := some pal },
+                    flowGen := st.flowGen + 1 }
         | none => pure ()
         let ⟨palCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
@@ -10539,6 +10700,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
           || (cur.isEmpty && n == Compat.pageColorResetMark)
           || (cur.isEmpty && n.startsWith "@lang:")
+          || n == BeamerColor.marker || n == BeamerColor.starMarker
           || (n != "note" &&
             ((sectionLevel n).isSome
               || declCtrl.contains n || runningCtrl.contains n || n == "define"
@@ -10724,7 +10886,8 @@ a side channel, never slide content" cpos
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
         match pal? with
         | some pal => modify fun st =>
-          { st with flowPalette := some pal, flowGen := st.flowGen + 1 }
+          { st with flowPalette := { st.flowPalette with current := some pal },
+                    flowGen := st.flowGen + 1 }
         | none => pure ()
         have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
@@ -10738,7 +10901,7 @@ a side channel, never slide content" cpos
         -- A reset is an epoch, not a textual colour: restore the opening
         -- document/class ground and preserve every other body declaration.
         let pal := ctx'.palette.restore ctx'.basePalette "bg"
-        modify fun st => { st with flowPalette := some pal
+        modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
                                    flowGen := st.flowGen + 1 }
         let ⟨palCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal }, rfl, rfl, rfl, rfl⟩
@@ -10748,6 +10911,19 @@ a side channel, never slide content" cpos
           slicePars_le raws (by omega)
         elabBlocksGo palCtx raws (i + 1) (blocks.push (.setPalette pal)) #[]
           ((← get).flowGen)
+      else if n == BeamerColor.marker || n == BeamerColor.starMarker then
+        let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // i + 1 ≤ t.2 } ←
+          beamerColorArm ctx' raws (i + 1) (n == BeamerColor.starMarker) cpos
+        let ⟨palCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
+        have ht1 : sliceWeight raws j < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws j ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo palCtx raws j
+          (match pal? with
+            | some pal => blocks.push (.setPalette pal)
+            | none => blocks) #[] ((← get).flowGen)
       else if n == "palette" then
         -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
         -- the entries apply from here on, and the document palette both
@@ -10787,7 +10963,7 @@ a side channel, never slide content" cpos
             -- The declaration rides the IR in flow order: both backends
             -- replay it where it stands, and the flow state carries it
             -- past this scope's close (no brace revert).
-            modify fun st => { st with flowPalette := some pal
+            modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
                                        flowGen := st.flowGen + 1 }
             elabBlocksGo palCtx raws (jf + 1)
               (blocks.push (.setPalette pal)) #[] ((← get).flowGen)
@@ -11786,8 +11962,19 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
         | none =>
           evs := say evs .E0321 s!"cannot read value for 'footer' in '\\chrome': {valueSrc.quote}"
             (help := "footer = { left = \\sectiontitle, right = \\framenumber }")
+      else if key == "standout-note" then
+        match valueSrc.trimAscii.toString with
+        | "true" | "false" =>
+          let enabled := valueSrc.trimAscii.toString == "true"
+          chrome := { chrome with standoutNote := some enabled }
+          evs := evs.push (.scalar "chrome" key (toString enabled) pos)
+          evs := evs.push (.declared "chrome" key)
+        | _ =>
+          evs := say evs .E0321
+            s!"cannot read 'standout-note' in '\\chrome': {valueSrc.quote}"
+            (help := "standout-note = true or false")
       else
-        evs := evs.push (.say (Decl.unknownKey ctx.file "chrome" key ["footer"] pos))
+        evs := evs.push (.say (Decl.unknownKey ctx.file "chrome" key ["footer", "standout-note"] pos))
   return (chrome, evs)
 
 /-- The two bare comma lists `\output` takes; an entry without `=`
@@ -12023,6 +12210,7 @@ inductive PDecl where
   one piece of inline content each, the headline band's corner slots. -/
   | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
+  | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
   /-- A preamble page-ground selection, resolved where it stands. `none`
   is `\nopagecolor`; a concrete source is `\pagecolor`. -/
   | pageGround (source : Option String) (pos : Pos)
@@ -12068,6 +12256,9 @@ inductive PDecl where
   /-- amsthm's `\theoremstyle{s}`: the style the `\newtheorem`s after it
   take. -/
   | theoremstyle (name : Option String) (pos : Pos)
+  /-- A cancel package load's options (`Compat.cancelOptionsMark`), as
+  written: the marks every formula after it draws. -/
+  | cancelOpts (src : String) (pos : Pos)
   | stray
 
 /-- The preamble fold's threaded state: exactly the loop-local values the
@@ -12281,6 +12472,15 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.logoSlot (name == "logoleft") (some body) pos)
           | _ =>
             out := out.push (.logoSlot (name == "logoleft") none pos)
+        else if name == BeamerColor.marker || name == BeamerColor.starMarker then
+          let j := skipSpaces preamble i
+          let j2 := skipSpaces preamble (j + 1)
+          match preamble[j]?, preamble[j2]? with
+          | some (.group elem _), some (.group body _) =>
+            i := j2 + 1
+            out := out.push (.beamerColor (rawSrc elem) (name == BeamerColor.starMarker)
+              (rawSrc body) pos)
+          | _, _ => out := out.push (.unknownCmd "setbeamercolor" none pos)
         else if name == "palette" then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
           let j := skipSpaces preamble k
@@ -12315,6 +12515,12 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           let (_, k) := takeOptRun preamble (skipSpaces preamble i)
           i := k
           out := out.push (.pictures (some "tool = lualatex") pos)
+        else if name == Compat.cancelOptionsMark then
+          match preamble[i]? with
+          | some (.group body _) =>
+            i := i + 1
+            out := out.push (.cancelOpts (rawSrc body) pos)
+          | _ => out := out.push (.cancelOpts "" pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
@@ -12762,6 +12968,9 @@ the built-in's heading and margins stand{replaced}"
     | none =>
       diag s.ctx .E0304 s!"'\\{cmd}' needs one group of inline content" pos
       return s
+  | .beamerColor name star src pos =>
+    let pal ← applyBeamerColor s.ctx s.palette name star src pos
+    return { s with palette := pal, ctx := { s.ctx with palette := pal } }
   | .palette opts body pos =>
     -- `\palette[decorative]{...}`: options read by the one door
     -- (`parsePaletteOpts`), the body arm's too.
@@ -12848,12 +13057,15 @@ the built-in's heading and margins stand{replaced}"
         modify fun st => { st with
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
         let ds := Theme.apply th before
+        for (key, c) in th.palette.entries do
+          modify fun st => { st with flowPalette := st.flowPalette.native key c }
+        let pal ← resolveBeamerColors s.ctx ds.palette
         return { s with
-          palette := ds.palette
+          palette := pal
           tokens := ds.tokens
           styles := ds.styles
           chrome := ds.chrome
-          ctx := { s.ctx with palette := ds.palette, tokens := ds.tokens } }
+          ctx := { s.ctx with palette := pal, tokens := ds.tokens } }
       | none =>
         diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
           (some pos)
@@ -13142,6 +13354,10 @@ does not keep; the number stands alone" pos
 remark; plain applies, as amsthm sets it" pos
       modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := .plain } } }
       return s
+  | .cancelOpts src _ =>
+    -- Compat named every option the package does not declare at the load.
+    let opts := (src.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .unknownCmd name unclosed pos =>
     -- A tikz-family set line is not unknown: the engine reads `\tikzset`
     -- itself (`Compat.nativeSetCtrls`), and while the boundary is open the
@@ -13762,7 +13978,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     let own : Theme.Decls := { palette := s.palette, tokens := s.tokens
                                styles := s.styles, chrome := s.chrome }
     if defaultBundle then Theme.applyUnder Theme.daylight own else own
-  let basePalette := themedDs.palette
+  let basePalette ← resolveBeamerColors ctx themedDs.palette true
   let palette := match s.pageGround with
     | some c => basePalette.declare "bg" c
     | none => basePalette
@@ -13869,6 +14085,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     | .bodyStart m p => some (.ctrl m p)
     | _ => none
   let blocks := Ir.numberFloats (← elabBlocks ctx (opening ++ body))
+  finishBeamerColors ctx
   -- **Whatever drew a picture, the keys that drawing did not read are
   -- named.** A `\tikzset` entry outside the rendered subset has exactly one
   -- other reader: the real TikZ, and only for a picture that went to the
@@ -13938,7 +14155,7 @@ names the .bib file")
   -- state exists only for the shadow judge below, which must see every
   -- role the document ever declares.
   let stBody ← get
-  let finalPalette := stBody.flowPalette.getD palette
+  let finalPalette := stBody.flowPalette.current.getD palette
   -- A definition that shadows a palette role replaces a value that adapts
   -- with one that cannot: the palette no longer reaches those words (a
   -- variant or a host page's override dies there), and the contrast judge —

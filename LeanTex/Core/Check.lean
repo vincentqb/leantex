@@ -84,6 +84,16 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
               x (x + w) (l.y - raise - thickness) (l.y - raise) worstAt
           x := x + w
+        | .poly pts _ =>
+          -- A polygon is ink: its bounding box must respect the area.
+          unless l.furniture do
+            if let some (px, py) := pts[0]? then
+              let (xmin, xmax, ymin, ymax) := pts.foldl
+                (fun (xmin, xmax, ymin, ymax) (px, py) =>
+                  (min xmin px, max xmax px, min ymin py, max ymax py))
+                (px, px, py, py)
+              worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
+                (x + xmin) (x + xmax) (l.y - ymax) (l.y - ymin) worstAt
         | .run idx _ _ w glyphs size _ _ raise _ _ =>
           unless glyphs.isEmpty do
             let font := fs.get idx

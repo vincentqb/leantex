@@ -24,6 +24,11 @@ structure MathConsts where
   subscriptShiftDown : Int
   superscriptShiftUp : Int
   superscriptShiftUpCramped : Int
+  /-- TeX's rule 18c floor and 18a drop for a superscript, in OpenType's
+  names (MATH spec, MathConstants): the least height of a superscript's
+  bottom, and the most its baseline may drop below a box base's top. -/
+  superscriptBottomMin : Int
+  superscriptBaselineDropMax : Int
   spaceAfterScript : Int
   /-- "Minimum height of n-ary operators (such as integral and summation)
   for formulas in display mode" (MATH spec, MathConstants). -/
@@ -86,6 +91,8 @@ private def parseMath (b : ByteArray) : Option MathConsts := do
     subscriptShiftDown := value 24
     superscriptShiftUp := value 36
     superscriptShiftUpCramped := value 40
+    superscriptBottomMin := value 44
+    superscriptBaselineDropMax := value 48
     spaceAfterScript := value 60
     displayOperatorMinHeight := u16 b (cOff + 6)
     upperLimitGapMin := value 64

@@ -474,7 +474,7 @@ own routes only when *attributing* an `owed` case; `inLi` says the parent
 is a list item, where a loose list's `<p>` sits. -/
 def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) : String :=
   match n with
-  | .text s => if pre then dropOneTrailingNewline s else squeeze s
+  | .text s => if pre then s else squeeze s
   -- A stylesheet or script node is compared as the element it prints as,
   -- never dropped: dropping them was a normalization nothing declared.
   | .style css => "<style>" ++ squeeze css ++ "</style>"
@@ -506,8 +506,12 @@ def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) :
       let as := keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) ""
       let pre' := pre || Html.preserveTags.contains tag
       if Html.voidTags.contains tag then "<" ++ tag' ++ as ++ ">"
-      else "<" ++ tag' ++ as ++ ">" ++ canonGList gaps base pre' (tag == "li") "" kids.toList
-        ++ "</" ++ tag' ++ ">"
+      else
+        let body := canonGList gaps base pre' (tag == "li") "" kids.toList
+        -- Text-node boundaries are not line boundaries. Normalize once on
+        -- the assembled block code, leaving its child elements intact.
+        let body := if pre && tag == "code" then dropOneTrailingNewline body else body
+        "<" ++ tag' ++ as ++ ">" ++ body ++ "</" ++ tag' ++ ">"
 
 def canonGList (gaps : List String) (base : Nat) (pre inLi : Bool) (acc : String) :
     List Html.Node → String
@@ -1117,6 +1121,37 @@ def selftest : IO UInt32 := do
      differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>"]
   for c in cs do
     if let some m := c then bad := bad.push m
+  -- Listing tokens may split text anywhere, including immediately after a
+  -- newline. Only the code block's final newline is normalized, once.
+  let code (kids : Array Html.Node) : String :=
+    canon 1 false (.elem "pre" #[] #[.elem "code" #[] kids])
+  for (raw, want) in [("", ""), ("\n", ""), ("<\n >\n", "<\n >"),
+      ("aaa\n    ```\n", "aaa\n    ```"), ("α\t\nβ\n\n", "α\t\nβ\n"),
+      ("a\n b", "a\n b"), ("a\n\nb\n", "a\n\nb")] do
+    let chars := raw.toList
+    let expected := "<pre><code>" ++ want ++ "</code></pre>"
+    for i in [:chars.length + 1] do
+      let kids := #[Html.Node.text (String.ofList (chars.take i)), .text "",
+        .text (String.ofList (chars.drop i)), .text ""]
+      if let some m := check s!"pre: text split at {i} in {repr raw}" (code kids) expected then
+        bad := bad.push m
+    if let some m := check s!"pre: one node per character in {repr raw}"
+        (code (chars.toArray.map fun c => .text (String.singleton c))) expected then
+      bad := bad.push m
+  for (name, a, b) in
+      [("interior newline", #[Html.Node.text "a\n", .text "b"], #[.text "ab"]),
+       ("interior blank line", #[.text "a\n", .text "\n", .text "b"], #[.text "a\nb"]),
+       ("second trailing newline", #[.text "a\n", .text "\n"], #[.text "a\n"]),
+       ("interior spaces", #[.text "a\n", .text "  b"], #[.text "a\n b"]),
+       ("child element", #[.elem "span" #[] #[.text "a"], .text "\n"], #[.text "a\n"]),
+       ("child attribute", #[.elem "span" #[("hidden", "")] #[.text "a"], .text "\n"],
+         #[.elem "span" #[] #[.text "a"], .text "\n"])] do
+    if code a == code b then bad := bad.push s!"pre: segmentation hid a genuine {name} difference"
+  for (name, source, want) in
+      [("inline code", "<p><code>a\n</code></p>", "<p><code>a\n</code></p>"),
+       ("textarea", "<textarea>a\n</textarea>", "<textarea>a\n</textarea>")] do
+    if let some m := check s!"{name}: final newline is not the code-block normalization"
+        (cn 1 source) want then bad := bad.push m
   -- The attribute table, broken row by row in both directions: each declared
   -- drop hides its own attribute and neither the text nor a compared
   -- attribute beside it; each attribute that decides whether content reaches

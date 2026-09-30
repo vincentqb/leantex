@@ -23,6 +23,15 @@ leantex doc.tex -o out.html     the output name picks the backend
 leantex doc.tex --watch         rebuild on every change
 ```
 
+## LaTeX compatibility
+
+Supported LaTeX commands and package interfaces translate into the engine's
+native document model. Document-local `.sty` files are read through that
+same translation; leantex does not execute arbitrary TeX packages, Lua code,
+or external syntax highlighters. Unsupported constructs produce diagnostics
+where they occur. The command-level contracts live in
+[`tests/compat-index`](tests/compat-index).
+
 ## Fonts
 
 A document names font families, as LaTeX does (`\fonts{ body = "Source Serif
@@ -30,10 +39,10 @@ Pro" }`, or fontspec's `\setmainfont`/`\babelfont`), and leantex resolves
 them against the fonts installed on the machine: on macOS
 `/System/Library/Fonts`, its `Supplemental` folder, `/Library/Fonts`, and
 `~/Library/Fonts`; on Linux `/usr/share/fonts` and `~/.fonts`; plus a TeX
-Live tree when MacTeX/TeX Live is installed (asked of `kpsewhich`). So a
-document that compiles under lualatex on a machine compiles under leantex on
-the same machine: the fonts it names are there. Add directories with
-`--font-dir` or `LEANTEX_FONT_PATH` (colon-separated); `leantex fonts` lists
+Live tree when MacTeX/TeX Live is installed (asked of `kpsewhich`). This lets
+leantex find fonts already available to lualatex on the same machine;
+the document's commands still need supported translations. Add directories
+with `--font-dir` or `LEANTEX_FONT_PATH` (colon-separated); `leantex fonts` lists
 every family the scan can see, and a family it cannot is error E0403 naming
 the nearest ones. The first build scans once and caches under
 `~/.cache/leantex` (or `$XDG_CACHE_HOME/leantex`).
@@ -71,13 +80,21 @@ frame is one `<section>` of the HTML deck and one page of the PDF handout.
 (`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever
 installed or shipped face covers it, with a required text alternative.
 `listings.tex` shows `{lstlisting}` and `{minted}` — numbered captions,
-`\lstset`, line numbers — beside the siunitx spellings (`\num`, `\qty`,
-`\si`, `\ang`): locale-grouped digits, real superscripts, unit symbols.
+scoped `\lstset` and `\setminted` defaults, line numbers, font sizes, tab
+stops and wrapping. Lean and Python listings receive native syntax colors
+in PDF and HTML; minted accepts `style=default` and `style=friendly`.
+Keywords are bold and comments italic, and the colors adapt to the page
+background. Other languages keep their source as plain code.
+`math-cancel.tex` shows cancellation strokes and raised arrow targets,
+including fractions and scoped colors, in both artifacts.
+The siunitx spellings (`\num`, `\qty`, `\si`, `\ang`) provide locale-grouped
+digits, real superscripts and unit symbols.
 `themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
 shows the frame-title bar, a section page with its progress bar, and a
-standout frame. A deck that declares no theme gets the `daylight` bundle —
-warm paper, one azure accent, no title bar (`daylight.tex` shows it);
+standout frame. `\chrome{standout-note=true}` keeps an explicit `\framefoot`
+note on an unnumbered standout frame. A deck that declares no theme gets the
+`daylight` bundle — warm paper, one azure accent, no title bar (`daylight.tex` shows it);
 `\theme{default}` opts back to the bare look, as beamer's own
 `\usetheme{default}` does. `theme-modern.tex` sketches the rest of the M5b
 bundle (dark variant, chrome) and does not build yet.

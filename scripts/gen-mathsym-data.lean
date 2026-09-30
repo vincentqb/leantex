@@ -6,9 +6,9 @@ OpenType math. Run from the repository root with:
   lake env lean --run scripts/gen-mathsym-data.lean
 
 Sources, located with kpsewhich and never vendored:
-- fontmath.ltx (the LaTeX kernel's math font setup) for the class of each
-  symbol the manual's "Math formulas" chapter documents — the names
-  `tests/coverage/latex2e-index.txt` records there;
+- fontmath.ltx (the LaTeX kernel's math font setup) for its declared symbol
+  names and classes, supplemented by the names the manual's "Math formulas"
+  chapter records in `tests/coverage/latex2e-index.txt`;
 - amsfonts.sty and amssymb.sty (AMS, LPPL-compatible notice in each file):
   a `\DeclareMathSymbol{\name}{\mathclass}{font}{"slot}` is the package's
   own statement of what the command is — its TeX atom class, and its glyph
@@ -315,7 +315,7 @@ def main : IO UInt32 := do
         match al[n]?.bind (table[·]?) with
         | some v => some v
         | none => (renamed.lookup n).bind (table[·]?)
-  -- The kernel first: its documented symbols, each with the class
+  -- The kernel first: its declared and documented symbols, each with the class
   -- fontmath.ltx declares for it (unicode-math's where it declares none).
   -- A name unicode-math answers with an accent, a radical or a fence is a
   -- construct the parser reads structurally, not a symbol atom.
@@ -323,9 +323,12 @@ def main : IO UInt32 := do
   stamps := stamps.push (provides fontmath)
   let fmDecls := declsOf fontmath
   let index ← IO.FS.readFile "tests/coverage/latex2e-index.txt"
-  stamps := stamps.push ("the kernel's documented names: tests/coverage/latex2e-index.txt, " ++
+  stamps := stamps.push ("additional kernel names: tests/coverage/latex2e-index.txt, " ++
     "chapter Math formulas")
-  for n in kernelNames index do
+  -- An index is not the declaration list: long double arrows are declared
+  -- by the kernel even where the manual has no individual index entries.
+  let candidates := kernelNames index ++ fmDecls.map Decl.name
+  for n in candidates do
     if kernelConstructs.contains n then continue
     if let some (v, umCls) := byName n then
       let declared := (fmDecls.findSome? fun d => match d with
@@ -400,7 +403,7 @@ namespace LeanTex.Core.MathSymData
 
 open LeanTex.Core.Math
 
-/-- The symbol rows: the kernel's documented symbols, then each package's;
+/-- The symbol rows: the kernel's documented and declared symbols, then each package's;
 the first declaration of a name stands. -/
 def rows : List (String × MathClass × Char) :=
   ["

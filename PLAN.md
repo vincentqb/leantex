@@ -24178,3 +24178,249 @@ Its baseline bound is 0.25 PDF point: two Ghostscript roundings contribute at mo
 The final worst residual is 0.05 pt; every sampled ground pixel agrees exactly. Poppler's word boxes remain report evidence, not an identity gate: it bounds the two writers' embedded font descriptors differently even when Ghostscript reads the same baseline.
 
 The private acceptance used invented metadata through the two original theme variants, with every generated input and output confined to the ignored target-worktree scratch tree. Both LuaLaTeX and leantex produced one page with identical sampled grounds. The compound variant's title, subtitle, author and institute baseline offsets were 0.00, +0.05, -0.10 and -0.05 pt; the separate variant's two rendered lines were +0.05 and 0.00 pt. No private text, path, font, palette, or spacing value entered a tracked fixture or this record.
+
+### 2026-09-29 — title metadata stays inside its pinned node
+
+A final optional metadata insert tested against the empty macro contributes
+neither ink nor a preceding gap when that datum is absent. The title reader
+recognizes that finite conditional shape without executing arbitrary TeX.
+It retains the node's pin and records the font in force at each insert.
+`TitlePart` replaces the separate first-datum and later-data fields with one
+ordered representation. The elaborator fills those parts through the existing
+inline font and block-spacing paths. A source node remains one slot, with
+parts sharing a line until the source requests a break; the slot owns its
+width and pin. Per-part size and leading travel through the shared IR, and
+layout measures the complete node's shipped ink before placing it.
+Unsupported mixed content still names its loss.
+
+`titleTemplateOptionalChecks`, `titleSlotShipChecks`, and
+`themeTitleShipChecks` read shipped layout and the typed HTML tree. Six
+checks fail on `671e3fa6` before the fix. Synthetic LuaLaTeX probes establish
+the empty-branch and font semantics; the composition oracle checks that
+preamble declarations still commute on the corpus. R46 records the report.
+
+### 2026-09-29 — cancellation is native math with visible targets
+
+The four cancellation commands carry a struck math list, a mark, and an
+optional target through the shared math tree. A target is never an argument
+that recovery drops. A strike spans the operand's ink with the math font's
+overbar clearance and rule thickness; a double-weight option doubles that
+stroke. The arrow has a filled head four stroke widths long and three wide,
+and its shaft ends at the head's base. These are the engine's drawing
+conventions, replacing the legacy package's quantized picture slopes.
+The target starts beyond every arrowhead point and uses TeX's superscript
+clearance rules. Explicit room reserves the marks and target; overlap keeps
+the operand's advance. Polygon ink participates in line height.
+
+`cancelBand_between`, `cancelto_value_between`, and
+`cancelto_value_clears_between` hold geometry independently of a backend.
+PDF fills those polygons. MathML keeps the operand and target as semantic
+math, with CSS marks that also print when background printing is disabled.
+An explicit relative script level prevents the browser from shrinking an
+overlapped same-size target. Math colour is a scoped math-list value, so
+colouring a cancellation neither changes its following term nor sends an
+aligned formula through text recovery.
+
+The initial report guard fails 21 assertions on `671e3fa6`;
+`cancelReportChecks` now holds the operand, raised target, scripts, and
+scoped colours on `Layout.Out` and typed HTML. `cancelGeometryChecks`
+holds all four marks, room versus overlap, the mark-only colour hook, and
+polygon line extents. The independent HTML guard fails nine assertions
+before the script-level fix; Chromium measures a same-size target at
+32 CSS pixels on screen and in print, against 23.04 before it.
+The invented cancellation fixture owes eight polygons and every operand
+and target to the shipped-page census. R48 pins these guards.
+
+### 2026-09-29 — finite block hooks and generated long arrows
+
+A preamble addition to the ordinary block-begin template can append the
+three standard skips through their existing native translations. The
+completed preamble hook is applied when blocks are formed, including blocks
+inside earlier macro definitions. Other slots and locally scoped additions
+remain named refusals; unsupported bodies are consumed as one construct
+with a content-loss diagnostic, never leaked into the document.
+`beamerHookChecks` fails 25 assertions on `2bb0d181` and holds the resulting
+layout and HTML. LuaLaTeX measures the natural small skip as 3 points in a
+top-aligned frame. A finite standout-footer patch translates to
+`\chrome{standout-note=true}`: only a nonempty explicit note returns, using
+the standout foreground and canvas, while its frame number remains absent.
+The shared IR selects the band and paint for both backends. All four patch
+arguments stay opaque through the preamble passes, so an unselected failure
+callback cannot run or leak content. Unsupported patches are consumed whole
+and remain named refusals. Twelve additional layout and typed-HTML assertions
+fail before this repair; a synthetic LuaLaTeX probe holds the restored note
+and unchanged ordinary numbering. R49 records both hook failures.
+
+Review adds one argument boundary shared by every hook prepass: a TeX
+argument may be a group or one token, including a character within a lexer
+word. Dormant delimited definitions stay opaque too. Twelve fail-first
+assertions hold callback ink and delimiter syntax out of both artifacts,
+while preserving the text after the fourth argument.
+
+The math-symbol generator now enumerates the commands declared by
+`fontmath.ltx` as well as the index. Their classes still come from their
+declaring file and their scalars from unicode-math. This admits the three
+long implication arrows and five other kernel declarations without hand
+aliases. Two moustache delimiters are recorded as missing in the shipped
+math face; the six covered additions enter the LuaLaTeX parity fixture.
+`longArrowReportChecks` fails 24 assertions on `671e3fa6` and holds arrows,
+adjacent scripts, and the absence of whole-formula recovery in inline and
+aligned math. R50 pins it. This is a generator coverage repair, not another
+symbol table.
+
+### 2026-09-29 — listing defaults reach their one resolving site
+
+Minted's global and exact-language defaults now follow the same scoped
+compatibility pass as listings' defaults. Each layer updates keys
+individually; local options win over language defaults, which win over
+global defaults even after a later global update. Groups and ordinary
+environments restore their outer settings, while input wrappers remain
+transparent. A shared language-head reader keeps lookup and elaboration in
+agreement.
+
+`ListingSpec` carries font size, tab stops and wrapping through the existing
+style and paragraph paths. Both listing interfaces inherit the active font
+size, use eight-column tab stops and preserve source lines by default,
+as the synthetic LuaLaTeX probe measured. Whitespace wrapping preserves
+literal hyphens and repeated spaces. The source retains its tabs; one layout
+helper expands them from the current column, while HTML uses `tab-size`
+and keeps the original source text. Unsupported settings remain diagnosed.
+
+`mintedSettingsChecks` failed 22 shipped-page and typed-HTML assertions on
+`2bb0d181` and passes after the change. Existing listing, language, package
+contract and HTML checks pass, as does the 300-paragraph line-breaking
+oracle. R51 records the report. The README now explains the package boundary:
+local style files pass through native translations, and an installed TeX
+package or external highlighter is not an executable extension of the engine.
+
+### 2026-09-30 — listing classification paints both artifacts
+
+Elaboration classifies Lean and Python listings into exact source segments.
+The listing spec carries those classes; both backends project them through
+one shared painter into existing text, font and colour inlines. The painter
+reads the resolved design and the current frame ground. Undeclared lexical
+inks use sourced Pygments defaults, adjusted only when necessary to meet text
+AA on that ground; authored colours follow the existing contrast judge.
+Covered overlays dim each token's own ink. Unknown languages keep plain code.
+
+`listing_source_exact` and `token_inline_source_exact` preserve source through
+classification and paint. `listingHighlightChecks` failed six artifact
+assertions on `2bb0d181`; it also checks 512 generated reconstruction cases,
+typed HTML text and colours, PDF glyph colours and emitted fills, and every
+built-in theme's ground. A separate four-failure guard caught an overlay
+colour override before its fix. Invented light, dark and long listings were
+rendered in Chromium on screen and paper, including printing with exact text
+and no blank sheet. R52 records the report.
+
+### 2026-09-30 — named beamer colours resolve at palette epochs
+
+Beamer colour declarations retain their names, ordered parents, `use`
+bindings and starred resets until they resolve through the existing palette
+reader. Later declarations and native palette changes affect the next
+frame. The resolver visits a shrinking list of declarations and reports
+cycles. It neither executes package code nor reparses content in a backend.
+
+The design now supplies the actual subtitle, section-title, section-progress
+and footer-band paint sites. Both artifacts read those values. A custom
+element can supply inheritance without a paint site of its own; a declaration
+with no supported consumer remains named, as does an unsupported channel or
+progress placement. `beamerColorsChecks` failed 22 assertions on `2bb0d181`
+and holds the resulting layout and typed HTML. Synthetic LuaLaTeX probes
+establish inheritance, ordering, `use` and reset semantics. The composition
+oracle passes the synthetic inputs and 86 corpus files. R53 pins the report.
+
+### 2026-09-30 — listing and title review followups
+
+The core-effect gate now shares the banned-keyword scanner's literal boundary.
+Its selftest first failed on two strings naming the effect type and missed a
+real effect after a string containing a comment marker; all three now hold.
+Listing keyword data no longer needs an artificial spelling to pass the gate.
+
+Minted's `default` and `friendly` styles are typed values in the listing
+spec. Their sourced palettes resolve in `Design.ofPalette`; PDF, HTML and
+the contrast walk pass the same selected style to the shared painter.
+Global, language, local and group-scoped declarations are held to actual
+glyph colours and typed HTML. Ten source-path assertions failed before this
+threading; selecting a style only in a test-built IR had missed the gap.
+Other Pygments styles and listings' unrelated named-style mechanism remain
+diagnosed. The existing listing example now exercises Friendly.
+
+Listings resolve font size and leading together through the existing text
+metrics. Small code no longer keeps the body strut; blank lines and wrapped
+continuations use the same baseline spacing. Eleven assertions failed before
+the repair. An explicit source line ending is also distinguished from
+whitespace wrapping when reporting line movement.
+
+Title-node colours retain their full xcolor expressions and use the shared
+palette reader. Twenty colour assertions failed before that repair. The
+contrast walk now replaces a named size with a declared absolute size;
+without a measured context, relative sizes conservatively retain the body
+threshold. Four assertions caught the stale large-text exemption and false
+small-text adjustment before the change.
+
+Absolute title fonts and leading now use the same stage-relative HTML
+lengths as named deck sizes. The physical IR values stay unchanged; four
+typed-HTML assertions over two aspect ratios failed before this projection
+repair. The title therefore scales with its frame in a browser as it does
+in the PDF layout. This projection also covers the compound title's part
+roles, including zero leading. Selected custom fonts retain diagnostics for
+unread settings in node bodies as well as node options; an incomplete
+`size*` is named without dropping the size or extra-field accounting.
+Reconciliation with compound-slot placement keeps inline parts in one box
+until a source paragraph or line break. Reverting only the responsive part
+lengths and the two unread-font checks in an isolated copy fails eleven
+guard assertions; the combined tree passes the full suite.
+
+The same projection now reaches listings with an inherited absolute font.
+Four size-and-leading assertions over two aspect ratios failed before that
+repair. Their CSS-to-layout comparison is shared with the title tests, and
+markers and listings share the font declaration serializer.
+
+Beamer colour resolution distinguishes a missing channel from an explicit
+empty assignment, binds `use` aliases before reading parents, and resolves
+normal-text defaults before furniture. Thirteen layout and diagnostic
+assertions failed before these refinements; typed HTML checks the same
+channels, including a later palette epoch. The existing flow-palette record
+also owns the named declarations, removing a top-level elaborator state
+field. The stage-ground fixture now declares readable footer ink in its
+dark epoch: its previous 2.80:1 contrast genuinely exceeded the bounded
+repair contract, so the contrast judge remains unchanged.
+
+Cancellation defaults to overlap, as measured under LuaLaTeX for all four
+commands; only `makeroom` extends the advance. The contrast census records
+colours of atoms, rules and marks that actually ship, rather than unused
+declarations or an enclosing colour fully replaced by a nested one. Ten
+layout and contrast assertions failed before these review repairs, with
+low-contrast positive controls preserving the judge's sensitivity.
+
+Palette epochs now replace the persistent page ground, including an explicit
+removal, and supersede a frame's earlier ground. The redundant background
+field is gone. Nine shipped-page failures and the same nine rendered-PDF
+failures become zero across fifteen normal, title and standout probes.
+Continuation guards cover removal, redeclaration and spill pages. The
+all-pages background theorem now states its actual premise: collected
+epochs keep a ground declared. Its predicate and placement read the same
+staging seam; the premise never gates rendering or diagnostics.
+
+Highlighting exposed a reader-oracle defect: text-node boundaries were
+treated as line endings. CommonMark comparison now removes one final newline
+from the assembled code block, preserving interior lines and child elements.
+Sixteen fail-first segmentation assertions restore thirteen fenced-code
+cases without changing their verdicts. The rhythm reader also accounts for
+polygon ink bounds; five fail-first bounds and gap assertions prevent an
+arrowhead from disappearing from its measurement. Neither repair lowers a
+baseline.
+
+Acceptance uses unchanged sources from the private reference corpus. Both
+presentations build as PDF and HTML; rendered titles were compared with
+LuaLaTeX, and cancellation targets and coloured listings were checked on
+screen and paper. Rebuilding with the reviewed engine reproduces all four
+inspected artifacts byte for byte at their original output names. The
+synthetic title-placement differential passes with a worst baseline delta
+of 0.05 pt against its 0.25 pt bound. The full build and test suite,
+composition oracle over 86 corpus files, 300-paragraph line-breaking oracle
+and every scoreboard tier pass. The Chromium matrix adds the cancellation fixture
+without regressing an existing cell; its two existing image failures remain
+recorded, and Firefox remains untested because it cannot launch on this host.
+The standard benchmark completes with five runs per case; the reference-list
+phase grows 4.0 times for four times the entries, within its bound of eight.

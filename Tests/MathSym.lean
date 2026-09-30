@@ -25,7 +25,8 @@ def firaGaps : List String :=
    "precneqq", "succneqq", "precnapprox", "succnapprox", "lnapprox", "gnapprox", "diagup",
    "diagdown", "subsetneqq", "supsetneqq", "nvdash", "nVdash", "nvDash", "nVDash",
    "ntrianglerighteq", "ntrianglelefteq", "ntriangleleft", "ntriangleright", "divideontimes",
-   "Finv", "Game", "ltimes", "rtimes", "succapprox", "precapprox", "digamma"]
+   "Finv", "Game", "ltimes", "rtimes", "succapprox", "precapprox", "digamma",
+   "lmoustache", "rmoustache"]
 
 /-- Hand rows of `MathParse.ctrlAtom` that shadow a generated row saying
 otherwise: the hand row is what the engine sets, and the difference is a
@@ -76,6 +77,36 @@ def mathLeavesList (acc : Array (String × String)) : List Html.Node → Array (
   | k :: rest => mathLeavesList (mathLeavesOne acc k) rest
 
 end
+
+/-- A kernel relation absent from a manual index still reaches both
+surfaces as mathematics. Each long double arrow keeps its scalar and the
+adjacent exponent, including in an alignment row. -/
+def longArrowReportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for (name, scalar) in [("Longleftarrow", '⟸'), ("Longrightarrow", '⟹'),
+      ("Longleftrightarrow", '⟺')] do
+    for aligned in [false, true] do
+      let formula := "x^2 \\" ++ name ++ " y"
+      let body := if aligned then "\\begin{align*}a &= " ++ formula ++ "\\end{align*}"
+        else "$" ++ formula ++ "$"
+      let (doc, ds) := elabStr (dvDoc "\\usepackage{amsmath}" body)
+      let out := layoutOf fonts doc
+      let runs := (bodyLines out).flatMap (·.segs)
+      let ink := runs.flatMap fun s => match s with
+        | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
+        | _ => #[]
+      let label := if aligned then "alignment" else "inline"
+      t s!"long arrow: {name} ships its scalar in {label}" (ink.contains scalar)
+      t s!"long arrow: {name} preserves the neighbouring exponent in {label}"
+        (runs.any fun s => match s with
+          | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
+            raise > 0 && glyphs.any (·.2.1 == '2')
+          | _ => false)
+      t s!"long arrow: {name} needs no recovery in {label}"
+        (!(ds ++ out.diags).any fun d => d.code == "W0012" || d.code == "E0405")
+      let (_, tree, _) := HtmlDoc.emitTree { fonts := some fonts } doc
+      t s!"long arrow: {name} ships an HTML relation in {label}"
+        ((mathLeavesList #[] tree.toList).contains ("mo", String.singleton scalar))
 
 /-- The commands a source spells as one-symbol formulas, `$\name$`, in order. -/
 def symbolCalls (src : String) : Array String :=
@@ -179,3 +210,4 @@ and firaGaps does not say so" (firaGaps.contains n)
     let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
     t s!"parity fixture {fixture}: the HTML sets each symbol as the table's leaf, in order"
       (mathLeavesList #[] body.toList == want)
+  longArrowReportChecks ref fs

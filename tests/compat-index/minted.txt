@@ -1,10 +1,10 @@
 # source: minted manual (v3.7), Commands and environments: the minted
 # environment with its mandatory {language} argument and linenos option;
 # \mint, \mintinline, \inputminted; \setminted and \usemintedstyle
-# configuration. The environment is lexically blind, its language named
-# data the engine does not colour by. \inputminted reads a file — a
-# driver request later; the short forms and the Pygments style machinery
-# refuse by name.
+# configuration. Environment capture preserves source literally; Lean and
+# Python are classified natively after capture. Other lexer names preserve
+# plain source. \inputminted reads a file — a driver request later; the
+# short forms and external Pygments machinery refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[linenos]{python} print(1) \end{minted}
 body impl \begin{minted}{C++} int x; \end{minted}
@@ -12,6 +12,24 @@ body refuse:W0110 \begin{minted}{Python 3} print(1) \end{minted}
 body refuse:W0301 \mint{python}|print(1)|
 body refuse:W0301 \mintinline{python}|print(1)|
 body refuse:W0301 \inputminted{python}{example.py}
-pre refuse:W0301 \setminted{linenos}
+pre inert:binds \setminted{linenos}
+pre inert:binds \setminted[python]{fontsize=\small,tabsize=3,breaklines}
+body impl \setminted{fontsize=\small,tabsize=3,breaklines}\begin{minted}{text} Alpha Bravo \end{minted}
+body impl \setminted[python]{fontsize=\scriptsize}\begin{minted}{python} print(1) \end{minted}
+body impl \begin{minted}[fontsize=auto,breaklines=false]{text} Alpha Bravo \end{minted}
+body impl \setminted{style=friendly}\begin{minted}{python} def probe(): return 7 \end{minted}
+body impl \setminted[python]{style=friendly}\begin{minted}[style=default]{python} def probe(): return 7 \end{minted}
+body impl \begin{minted}[style=friendly]{lean} def probe := 7 \end{minted}
+body refuse:W0110 \begin{minted}[fontsize=small]{text} Alpha Bravo \end{minted}
+body refuse:W0110 \begin{minted}[style=unknown-style]{python} print(1) \end{minted}
+body refuse:W0110 \setminted{unknownsetting=on}\begin{minted}{text} Alpha Bravo \end{minted}
 pre refuse:W0301 \usemintedstyle{tango}
 pre refuse:W0301 \newminted{python}{linenos}
+# \setminted binds global or exact-lexer defaults. Environment options win;
+# language defaults beat global defaults even when the latter are newer.
+# Fontsize accepts named size commands (\small) and auto; bare names are
+# literal text in FancyVerb and are diagnosed with the corrected spelling.
+# tabsize uses positive stops through 100; breaklines wraps at whitespace.
+# The default and friendly styles use native lexical classes. Other
+# Pygments styles are diagnosed; no external highlighter is executed.
+# Arbitrary formatting macros and additional fvextra keys remain named W0110.

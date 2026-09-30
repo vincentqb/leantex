@@ -10,6 +10,13 @@ import Tests.Settings
 import Tests.Redefine
 import Tests.Images
 import Tests.FontSize
+import Tests.CancelRegression
+import Tests.CancelHtml
+import Tests.MathSym
+import Tests.BeamerHooks
+import Tests.BeamerColors
+import Tests.MintedSettings
+import Tests.ListingHighlight
 import scripts.LandCore
 
 /-!
@@ -37,6 +44,7 @@ promoted.
 
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
+open Tests (mintedSettingsChecks listingHighlightChecks)
 
 namespace Reports
 
@@ -299,7 +307,44 @@ def reports : List Report := [
       check% titleTemplateOptionalChecks]
     accept := ["the external synthetic title placement differential against LuaLaTeX",
       "invented-metadata builds through both private theme variants measured against their LuaLaTeX pages"]
-    state := .guarded "82613240" .before .author }
+    state := .guarded "82613240" .before .author },
+  { id := "R48", date := "2026-09-29"
+    what := "a cancellation's target disappeared and coloured cancellation inside an aligned formula fell back to source text"
+    pins := [check% cancelReportChecks, check% cancelGeometryChecks,
+      check% cancelHtmlChecks, thm% Math.cancelBand_between,
+      thm% Math.cancelto_value_clears_between]
+    accept := ["the private presentation's cancellation formulas in both artifacts",
+      "the invented cancellation page in the browser and its printed output"]
+    state := .guarded "671e3fa6" .before .author },
+  { id := "R49", date := "2026-09-29"
+    what := "block spacing and explicit standout footer hooks were skipped, and a dormant failure callback was executed"
+    pins := [check% beamerHookChecks, thm% Ir.Chrome.standoutFootBand_exact,
+      thm% Ir.Design.standoutFootLook_projects]
+    accept := ["the private presentations build with their declared block spacing and explicit standout notes"]
+    state := .guarded "2bb0d181" .before .author },
+  { id := "R50", date := "2026-09-29"
+    what := "kernel-declared long implication arrows were absent from the generated symbol table, turning whole aligned formulas into source text"
+    pins := [check% longArrowReportChecks]
+    accept := ["the private presentation's aligned implication formulas in both artifacts"]
+    state := .guarded "671e3fa6" .before .author },
+  { id := "R51", date := "2026-09-29"
+    what := "minted defaults were skipped, so listings lost their declared font size, tab stops, wrapping and scoped option precedence"
+    pins := [check% mintedSettingsChecks]
+    accept := ["the private presentation's listings compared with their lualatex build"]
+    state := .guarded "2bb0d181" .before .author },
+  { id := "R52", date := "2026-09-30"
+    what := "declared listing languages shipped as plain text without syntax highlighting"
+    pins := [check% listingHighlightChecks, thm% Ir.listing_source_exact,
+      thm% Listing.token_inline_source_exact]
+    accept := ["the private presentations' code blocks in both artifacts",
+      "invented light and dark listings on screen and in print"]
+    state := .guarded "2bb0d181" .before .author },
+  { id := "R53", date := "2026-09-30"
+    what := "beamer colour inheritance was discarded, and declared subtitle, section and footer colours had no paint sites"
+    pins := [check% beamerColorsChecks, check% titleTemplateColorChecks,
+      thm% Ir.beamerColors_agree]
+    accept := ["the private presentations' title, section and footer colours compared with their lualatex builds"]
+    state := .guarded "2bb0d181" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

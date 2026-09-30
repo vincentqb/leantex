@@ -10,6 +10,9 @@ pre inert:binds \lstset{language=Python}
 pre inert:binds \lstset{numbers=left}
 pre inert:binds \lstset{caption={An invented default}}
 pre inert:binds \lstset{basicstyle=\ttfamily\footnotesize}
+pre inert:binds \lstset{basicstyle=\ttfamily\small,tabsize=3,breaklines=true}
+body impl \lstset{basicstyle=\ttfamily\small,tabsize=3,breaklines=true}\begin{lstlisting} Alpha Bravo \end{lstlisting}
+body refuse:W0110 \begin{lstlisting}[basicstyle=\unlistedstyle] Alpha Bravo \end{lstlisting}
 body impl \lstset{numbers=left}\begin{lstlisting} x = 1 \end{lstlisting}
 body impl \lstset{caption={An invented default}}\begin{lstlisting} x = 1 \end{lstlisting}
 body impl \begin{lstlisting} x = 1 \end{lstlisting}

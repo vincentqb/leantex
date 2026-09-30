@@ -379,7 +379,7 @@ def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List To
       let leading := f.leading.orElse fun _ => st.leading
       scanList fonts
         { st with font := st.font ++ f.cmds, size := size, leading := leading }
-        { acc with used := acc.used.push name } rest
+        { acc with used := acc.used.push name, skipped := acc.skipped ++ f.unread } rest
     | none =>
       scanList fonts st
         { acc with skipped := acc.skipped.push s!"\\usebeamerfont\{{name}}" } rest

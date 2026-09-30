@@ -1,3 +1,5 @@
+import LeanTex.Core.Color
+
 namespace LeanTex.Core.Math
 
 /-! Math atoms, styles, and the inter-atom spacing table: TeX's model
@@ -811,6 +813,269 @@ structure FracSpec where
   style : Option MathStyle := none
   deriving Repr, BEq, Inhabited
 
+/-- cancel.sty's four marks (v2.2): a strike through a measured subformula
+— `up` (`\cancel`, the rising diagonal), `down` (`\bcancel`, the falling
+one), `cross` (`\xcancel`, both) — or `to` (`\cancelto`), the rising
+strike ending in an arrowhead that points at a value. -/
+inductive CancelMark where
+  | up
+  | down
+  | cross
+  | to
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The style a `\cancelto` value sets in, from the package option in force
+(cancel.sty's table): `step` (`smaller`, the default) one style down the
+progression, `sup` (`Smaller`) a superscript's style, `same` (`samesize`)
+the current one. Always uncramped: the package switches style by name. -/
+inductive CancelSize where
+  | same
+  | step
+  | sup
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def CancelSize.style : CancelSize → MathStyle → MathStyle
+  | .same, .display _ => .display false
+  | .same, .text _ => .text false
+  | .same, .script _ => .script false
+  | .same, .scriptscript _ => .scriptscript false
+  | .step, .display _ => .text false
+  | .step, .text _ => .script false
+  | .step, _ => .scriptscript false
+  | .sup, .display _ | .sup, .text _ => .script false
+  | .sup, _ => .scriptscript false
+
+/-- What a cancel mark declares beyond its operands, from the package's
+load options and `\CancelColor`: `thick` under `thicklines` (the stroke
+doubles, as LaTeX's `\thicklines` doubles `\thinlines`), `room` only under
+`makeroom` (cancel.sty's default `\hidewidth` overlaps), the value's
+style, and the marks' colour with its palette name (`none`: the colour in
+force). -/
+structure CancelSpec where
+  thick : Bool := false
+  room : Bool := false
+  size : CancelSize := .step
+  color : Option (Ir.Color × Option String) := none
+  deriving Repr, BEq, Inhabited
+
+/-- cancel.sty's options, read as its `\ProcessOptions` reads them: in the
+order the package declares them, whatever order the document wrote them in
+— so `Smaller` beats `samesize` and `overlap` beats `makeroom` — with the
+names it does not declare returned for the caller to name. -/
+def CancelSpec.ofOptions (opts : List String) : CancelSpec × List String :=
+  let declared := ["samesize", "smaller", "Smaller", "makeroom", "overlap", "thicklines"]
+  let apply (s : CancelSpec) : String → CancelSpec
+    | "samesize" => { s with size := .same }
+    | "smaller" => { s with size := .step }
+    | "Smaller" => { s with size := .sup }
+    | "makeroom" => { s with room := true }
+    | "overlap" => { s with room := false }
+    | "thicklines" => { s with thick := true }
+    | _ => s
+  (declared.foldl (fun s o => if opts.contains o then apply s o else s) {},
+   opts.filter (!declared.contains ·))
+
+/-- What a cancel mark's geometry reads, in sp at the size its struck
+subformula sets at: `rule` the stroke (the math font's
+`OverbarRuleThickness`, doubled under `thicklines`) and `gap` the
+clearance (`OverbarVerticalGap`) — the two quantities TeX's rule 9 lays
+`\overline` with, a mark drawn over a subformula — then the struck box (`w`
+its advance, `top`/`bot` its ink from the baseline) and, for `\cancelto`,
+the value's advance and ink bottom with the superscript constants of the
+struck subformula's style: TeX's rule 18 (`SuperscriptShiftUp` or its
+cramped twin, `SuperscriptBaselineDropMax`, `SuperscriptBottomMin`) and
+the `SpaceAfterScript` every superscript is followed by. -/
+structure CancelIn where
+  rule : Int
+  gap : Int
+  w : Int
+  top : Int
+  bot : Int
+  vw : Int := 0
+  vbot : Int := 0
+  supShift : Int := 0
+  supDrop : Int := 0
+  supBottom : Int := 0
+  space : Int := 0
+  deriving Repr, BEq, Inhabited
+
+/-- The mark box: the struck ink grown by the clearance on every side, as
+`(x0, y0, x1, y1)` from the construct's origin on the baseline. With room
+the struck subformula stands `gap` in from the construct's left edge, so
+the box starts at 0; overlapping (cancel.sty's `overlap`), the subformula
+starts at 0 and the box `gap` left of it. -/
+def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
+  let x0 := if room then 0 else -i.gap
+  (x0, i.bot - i.gap, x0 + i.w + 2 * i.gap, i.top + i.gap)
+
+/-- A diagonal's length, to the sp below. -/
+def cancelDiag (w h : Int) : Int :=
+  Int.ofNat (Nat.sqrt (w.toNat * w.toNat + h.toNat * h.toNat))
+
+/-- A strike: the band `rule` wide on a diagonal of the box `(x0, y0, x1,
+y1)` — rising from the bottom-left corner to the top-right one, or falling
+from the top-left to the bottom-right — cut by the box's own edges. So it
+ends exactly in the corners and none of it leaves the box: `dx` and `dy`
+are where the band's edges cross the box's, half the rule divided by the
+diagonal's sine and cosine. -/
+def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+  let w := x1 - x0
+  let h := y1 - y0
+  let l := cancelDiag w h
+  let dx := min w (rule * l / (2 * h))
+  let dy := min h (rule * l / (2 * w))
+  if rising then
+    #[(x0, y0), (x0 + dx, y0), (x1, y1 - dy), (x1, y1), (x1 - dx, y1), (x0, y0 + dy)]
+  else
+    #[(x0, y1), (x0, y1 - dy), (x1 - dx, y0), (x1, y0), (x1, y0 + dy), (x0 + dx, y1)]
+
+/-- A strike runs corner to corner: its first and fourth points are the two
+corners of the box's diagonal, exactly — never a slope rounded to one the
+drawing vocabulary happens to have. -/
+theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
+    (cancelBand rising x0 y0 x1 y1 rule)[0]? = some (x0, if rising then y0 else y1) ∧
+    (cancelBand rising x0 y0 x1 y1 rule)[3]? = some (x1, if rising then y1 else y0) := by
+  cases rising <;> exact ⟨rfl, rfl⟩
+
+/-- A strike never leaves its box: every point of the band lies inside it,
+whatever the slope. With room reserved the box is the construct's own
+width, so a strike cannot overprint a neighbour. -/
+theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
+    (hr : 0 ≤ rule) (hw : x0 < x1) (hh : y0 < y1) :
+    ∀ p ∈ cancelBand rising x0 y0 x1 y1 rule,
+      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
+  intro p hp
+  simp only [cancelBand] at hp
+  have hl : 0 ≤ cancelDiag (x1 - x0) (y1 - y0) := Int.natCast_nonneg _
+  generalize cancelDiag (x1 - x0) (y1 - y0) = l at hl hp
+  have hq1 : 0 ≤ rule * l / (2 * (y1 - y0)) :=
+    Int.ediv_nonneg (Int.mul_nonneg hr hl) (by omega)
+  have hq2 : 0 ≤ rule * l / (2 * (x1 - x0)) :=
+    Int.ediv_nonneg (Int.mul_nonneg hr hl) (by omega)
+  generalize rule * l / (2 * (y1 - y0)) = q1 at hq1 hp
+  generalize rule * l / (2 * (x1 - x0)) = q2 at hq2 hp
+  cases rising <;> simp only [Bool.false_eq_true, ite_false, ite_true, List.mem_toArray,
+    List.mem_cons, List.not_mem_nil, or_false] at hp <;>
+    rcases hp with h | h | h | h | h | h <;> subst h <;> simp only <;> omega
+
+/-- Where a cancel mark's parts stand, from the construct's origin on the
+baseline: the struck subformula's start, the filled polygons the marks ink
+(each strike, or the arrow's shaft then its head), the value's baseline
+origin, and the construct's advance. -/
+structure CancelGeom where
+  shift : Int
+  polys : Array (Array (Int × Int))
+  valueX : Int := 0
+  valueY : Int := 0
+  advance : Int
+  deriving Repr, BEq, Inhabited
+
+/-- The arrowhead of `\cancelto`: four strokes long and three wide (the
+rule is the one length every mark counts in), its tip in the mark box's
+top-right corner and its axis on the diagonal; `(tip, one wing, the
+other)`. -/
+def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+  let w := x1 - x0
+  let h := y1 - y0
+  let l := max 1 (cancelDiag w h)
+  let bx := x1 - 4 * rule * w / l
+  let by_ := y1 - 4 * rule * h / l
+  #[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
+    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]
+
+/-- The arrow's shaft: the rising band from the mark box's bottom-left
+corner to the head's base, cut square there — or nothing, when the box is
+too small for a shaft to stand before the head. -/
+def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+  let w := x1 - x0
+  let h := y1 - y0
+  let l := max 1 (cancelDiag w h)
+  let dx := min w (rule * l / (2 * h))
+  let dy := min h (rule * l / (2 * w))
+  let bx := x1 - 4 * rule * w / l
+  let by_ := y1 - 4 * rule * h / l
+  let sx := rule * h / (2 * l)
+  let sy := rule * w / (2 * l)
+  if (l - 4 * rule) * l ≥ dx * w && (l - 4 * rule) * l ≥ dy * h then
+    #[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy), (x0, y0 + dy)]
+  else #[]
+
+/-- The value's baseline above the construct's, as TeX sets a superscript
+on a box (rule 18a, c): at least the superscript shift, at least the
+base's ink top less the largest drop, and high enough that the value's own
+depth clears the least superscript bottom. -/
+def CancelIn.valueRise (i : CancelIn) : Int :=
+  max (max i.supShift (i.top - i.supDrop)) (i.supBottom - min 0 i.vbot)
+
+/-- A cancel mark laid out by the conventions (PLAN, 2026-09-29 cancellation
+entry): the strikes corner to corner of the mark box; the arrow's head in
+its top-right corner; the value as the struck subformula's superscript,
+starting a clearance right of the head's rightmost point; and, with room,
+an advance that holds every mark and the value, so TeX's spacing between
+atoms is the spacing between their inks. Overlapping, the construct
+advances as its subformula does and the marks overprint as cancel.sty's. -/
+def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
+  let b := i.box room
+  let shift := if room then i.gap else 0
+  let band (rising : Bool) := cancelBand rising b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
+  match mark with
+  | .up => { shift, polys := #[band true], advance := if room then b.2.2.1 else i.w }
+  | .down => { shift, polys := #[band false], advance := if room then b.2.2.1 else i.w }
+  | .cross =>
+    { shift, polys := #[band true, band false], advance := if room then b.2.2.1 else i.w }
+  | .to =>
+    let head := cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
+    let shaft := cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
+    let valueX := head.foldl (fun m p => max m p.1) b.2.2.1 + i.gap
+    { shift, polys := if shaft.isEmpty then #[head] else #[shaft, head]
+      valueX, valueY := i.valueRise
+      advance := if room then valueX + i.vw + i.space else i.w }
+
+/-- The value is set as the struck subformula's superscript, by TeX's rule
+18: its baseline stands at least the superscript shift, at least the
+struck ink's top less the drop, and at least the bottom-min above its own
+depth — and at exactly the largest of the three, never higher. -/
+theorem cancelto_value_between (room : Bool) (i : CancelIn) :
+    i.supShift ≤ (cancelGeom .to room i).valueY ∧
+    i.top - i.supDrop ≤ (cancelGeom .to room i).valueY ∧
+    i.supBottom - min 0 i.vbot ≤ (cancelGeom .to room i).valueY ∧
+    (cancelGeom .to room i).valueY ≤
+      max (max i.supShift (i.top - i.supDrop)) (i.supBottom - min 0 i.vbot) := by
+  have hv : (cancelGeom .to room i).valueY = i.valueRise := rfl
+  rw [hv, CancelIn.valueRise]
+  omega
+
+/-- The value clears the arrow: it starts a clearance right of the mark
+box and of every point of the head, so an arrowhead never touches the
+value it points at, whatever the box's slope. -/
+theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
+    let b := i.box room
+    b.2.2.1 + i.gap ≤ (cancelGeom .to room i).valueX ∧
+    ∀ p ∈ cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
+      p.1 + i.gap ≤ (cancelGeom .to room i).valueX := by
+  intro b
+  have key : ∀ (xs : List (Int × Int)) (m : Int),
+      m ≤ xs.foldl (fun m p => max m p.1) m ∧
+        ∀ p ∈ xs, p.1 ≤ xs.foldl (fun m p => max m p.1) m := by
+    intro xs
+    induction xs with
+    | nil => intro m; simp
+    | cons q rest ih =>
+      intro m
+      obtain ⟨h1, h2⟩ := ih (max m q.1)
+      refine ⟨by simp only [List.foldl]; omega, ?_⟩
+      intro p hp
+      simp only [List.foldl]
+      rcases List.mem_cons.mp hp with rfl | hp
+      · omega
+      · exact h2 p hp
+  have hv : (cancelGeom .to room i).valueX =
+      (cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).foldl (fun m p => max m p.1) b.2.2.1
+        + i.gap := rfl
+  rw [hv, ← Array.foldl_toList]
+  obtain ⟨h1, h2⟩ := key (cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).toList b.2.2.1
+  exact ⟨by omega, fun p hp => by have := h2 p (Array.mem_toList_iff.mpr hp); omega⟩
+
 mutual
 
 /-- What an atom sets: one scalar, an upright word (a function name), a
@@ -843,6 +1108,12 @@ inductive MNucleus where
   from the overbar constants instead of a glyph (TeXbook Appendix G rule
   9): `\overline`'s stretch is then exact at any width. -/
   | accent (mark : Char) (stretch : Bool) (body : MList)
+  /-- A cancel.sty mark over `body`: the strike (or the arrow, for `to`)
+  spans the body's ink grown by the font's overbar clearance, and `value`
+  (`.nil` unless `to`) sets as the struck box's superscript. Laid out by
+  `Math.cancelGeom`, whose conventions are the ones stated for the user
+  (PLAN, 2026-09-29 cancellation entry). -/
+  | cancel (mark : CancelMark) (spec : CancelSpec) (value : MList) (body : MList)
   deriving Repr, BEq
 
 /-- One item of a math list: an atom with its class, nucleus, scripts, and
@@ -857,6 +1128,12 @@ inductive MItem where
   /-- Explicit space in mu (18ths of an em at the current size); negative
   for `\!`. -/
   | space (mu : Int)
+  /-- A colour switch (`\color{c}`; `\textcolor{c}{x}` is `{\color{c} x}`):
+  the rest of this list inks in `color`, resolved through the palette the
+  text path reads, `name` its palette entry when it was one. It is TeX's
+  colour whatsit — no atom, no class — so it never changes the space the
+  table puts between its neighbours. -/
+  | ink (color : Ir.Color) (name : Option String)
   deriving Repr, BEq
 
 inductive MList where
@@ -986,18 +1263,21 @@ theorem MRows.pad_rectangular (rs : MRows) :
   exact MRow.pad_length r0 _ (length_le_maxCols rs r0 hmem)
 
 /-- The class an item contributes to spacing. Spaces carry none — spacing
-is inserted only between directly adjacent atoms. -/
+is inserted only between directly adjacent atoms — and neither does a
+colour switch, which the spacing walk steps over. -/
 def MItem.classOf : MItem → Option MathClass
   | .atom cls _ _ _ _ => some cls
   | .space _ => none
+  | .ink _ _ => none
 
-/-- The classes of a list's atoms in order, spaces skipped: what `degrade`
-normalizes and the spacing walk consumes. Shallow — each sub-list is
-normalized independently, as TeX processes each mlist. -/
+/-- The classes of a list's atoms in order, spaces and colour switches
+skipped: what `degrade` normalizes and the spacing walk consumes. Shallow —
+each sub-list is normalized independently, as TeX processes each mlist. -/
 def MList.classes : MList → List MathClass
   | .nil => []
   | .cons (.atom cls _ _ _ _) rest => cls :: classes rest
   | .cons (.space _) rest => classes rest
+  | .cons (.ink _ _) rest => classes rest
 
 mutual
 
@@ -1007,6 +1287,7 @@ def MItem.scalars (acc : Array Char) : MItem → Array Char
   | .atom _ nuc sup sub _ =>
     MList.scalarsList (MList.scalarsList (nuc.scalars acc) sup) sub
   | .space _ => acc
+  | .ink _ _ => acc
 
 def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
@@ -1037,6 +1318,9 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
     let acc := if mark == '\u0305' then acc else acc.push mark
     MList.scalarsList acc body
   | .grid _ rows => MRows.scalarsRows acc rows
+  -- The struck subformula, then the value it cancels to: a superscript's
+  -- order, so the reading is the one `x^0` gets.
+  | .cancel _ _ value body => MList.scalarsList (MList.scalarsList acc body) value
 
 def MList.scalarsList (acc : Array Char) : MList → Array Char
   | .nil => acc
@@ -1068,6 +1352,7 @@ def MathAlphabet.remapItem (a : MathAlphabet) : MItem → MItem
   | .atom cls nuc sup sub lim =>
     .atom cls (a.remapNucleus nuc) (a.remapList sup) (a.remapList sub) lim
   | .space mu => .space mu
+  | .ink c n => .ink c n
 
 def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .sym c => .sym (a.apply c)
@@ -1078,6 +1363,8 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .delim l r body => .delim l r (a.remapList body)
   | .accent mark stretch body => .accent mark stretch (a.remapList body)
   | .grid kind rows => .grid kind (a.remapRows rows)
+  | .cancel mark spec value body =>
+    .cancel mark spec (a.remapList value) (a.remapList body)
 
 def MathAlphabet.remapRow (a : MathAlphabet) : MRow → MRow
   | .nil => .nil
@@ -1099,5 +1386,162 @@ theorem MathAlphabet.remapList_classes_id (a : MathAlphabet) :
     simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
   | .cons (.space _) rest => by
     simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
+  | .cons (.ink _ _) rest => by
+    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
+
+private def usedInk (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) : Array (Ir.Color × Option String) :=
+  match ink with
+  | some p => acc.push p
+  | none => acc
+
+mutual
+
+/-- Colours used by math atoms and generated marks, with their palette
+names. A switch changes the inherited ink but is not itself a use.
+Sublists, scripts and grid cells keep their enclosing ink on return. -/
+def MList.inks (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) :
+    MList → Array (Ir.Color × Option String)
+  | .nil => acc
+  | .cons (.ink c n) rest => MList.inks (some (c, n)) acc rest
+  | .cons x rest => MList.inks ink (MItem.inks ink acc x) rest
+
+def MItem.inks (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) :
+    MItem → Array (Ir.Color × Option String)
+  | .atom _ nuc sup sub _ =>
+    MList.inks ink (MList.inks ink (MNucleus.inks ink acc nuc) sup) sub
+  | .space _ | .ink _ _ => acc
+
+def MNucleus.inks (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) :
+    MNucleus → Array (Ir.Color × Option String)
+  | .sym c => if c.isWhitespace then acc else usedInk ink acc
+  | .word s => if s.toList.any (!·.isWhitespace) then usedInk ink acc else acc
+  | .list body => MList.inks ink acc body
+  | .frac spec num den =>
+    let acc := if spec.rule.all (· > 0) || spec.left.isSome || spec.right.isSome
+      then usedInk ink acc else acc
+    MList.inks ink (MList.inks ink acc num) den
+  | .rad deg body => MList.inks ink (MList.inks ink (usedInk ink acc) deg) body
+  | .delim l r body =>
+    MList.inks ink (if l.isSome || r.isSome then usedInk ink acc else acc) body
+  | .accent _ _ body => MList.inks ink (usedInk ink acc) body
+  | .grid _ rows => MRows.inks ink acc rows
+  | .cancel _ spec value body =>
+    let markInk := spec.color <|> ink
+    MList.inks markInk (MList.inks ink (usedInk markInk acc) body) value
+
+def MRow.inks (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) :
+    MRow → Array (Ir.Color × Option String)
+  | .nil => acc
+  | .cons c rest => MRow.inks ink (MList.inks ink acc c) rest
+
+def MRows.inks (ink : Option (Ir.Color × Option String))
+    (acc : Array (Ir.Color × Option String)) :
+    MRows → Array (Ir.Color × Option String)
+  | .nil => acc
+  | .cons r rest => MRows.inks ink (MRow.inks ink acc r) rest
+
+end
+
+mutual
+
+/-- Every colour of a math list replaced through `f`, with its palette
+name — the formula's share of contrast realization, the map
+`Ir.recolorRoles` applies to a text run's colour. Nothing else moves
+(`mapInk_scalars`). -/
+def MList.mapInk (f : Ir.Color → Option String → Ir.Color) : MList → MList
+  | .nil => .nil
+  | .cons x rest => .cons (MItem.mapInk f x) (MList.mapInk f rest)
+
+def MItem.mapInk (f : Ir.Color → Option String → Ir.Color) : MItem → MItem
+  | .atom cls nuc sup sub lim =>
+    .atom cls (MNucleus.mapInk f nuc) (MList.mapInk f sup) (MList.mapInk f sub) lim
+  | .space mu => .space mu
+  | .ink c n => .ink (f c n) n
+
+def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus → MNucleus
+  | .sym c => .sym c
+  | .word s => .word s
+  | .list body => .list (MList.mapInk f body)
+  | .frac spec num den => .frac spec (MList.mapInk f num) (MList.mapInk f den)
+  | .rad deg body => .rad (MList.mapInk f deg) (MList.mapInk f body)
+  | .delim l r body => .delim l r (MList.mapInk f body)
+  | .accent mark stretch body => .accent mark stretch (MList.mapInk f body)
+  | .grid kind rows => .grid kind (MRows.mapInk f rows)
+  | .cancel mark spec value body =>
+    .cancel mark { spec with color := spec.color.map fun (c, n) => (f c n, n) }
+      (MList.mapInk f value) (MList.mapInk f body)
+
+def MRow.mapInk (f : Ir.Color → Option String → Ir.Color) : MRow → MRow
+  | .nil => .nil
+  | .cons c rest => .cons (MList.mapInk f c) (MRow.mapInk f rest)
+
+def MRows.mapInk (f : Ir.Color → Option String → Ir.Color) : MRows → MRows
+  | .nil => .nil
+  | .cons r rest => .cons (MRow.mapInk f r) (MRows.mapInk f rest)
+
+end
+
+mutual
+
+/-- Recolouring a formula keeps every scalar in place, so its text census
+and every plain-text reading of it (`Ir.formulaFloor`) are the ones the
+page had before contrast realization. -/
+theorem MList.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (l : MList) (acc : Array Char), (MList.mapInk f l).scalarsList acc = l.scalarsList acc
+  | .nil, _ => rfl
+  | .cons x rest, acc => by
+    simp only [MList.mapInk, MList.scalarsList, MItem.mapInk_scalars f x,
+      MList.mapInk_scalars f rest]
+
+theorem MItem.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (x : MItem) (acc : Array Char), (MItem.mapInk f x).scalars acc = x.scalars acc
+  | .atom _ nuc sup sub _, acc => by
+    simp only [MItem.mapInk, MItem.scalars, MNucleus.mapInk_scalars f nuc,
+      MList.mapInk_scalars f sup, MList.mapInk_scalars f sub]
+  | .space _, _ => rfl
+  | .ink _ _, _ => rfl
+
+theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (n : MNucleus) (acc : Array Char), (MNucleus.mapInk f n).scalars acc = n.scalars acc
+  | .sym _, _ => rfl
+  | .word _, _ => rfl
+  | .list body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+  | .frac _ num den, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f num,
+      MList.mapInk_scalars f den]
+  | .rad deg body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f deg,
+      MList.mapInk_scalars f body]
+  | .delim _ _ body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+  | .accent _ _ body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+  | .grid _ rows, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MRows.mapInk_scalars f rows]
+  | .cancel _ _ value body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body,
+      MList.mapInk_scalars f value]
+
+theorem MRow.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (r : MRow) (acc : Array Char), (MRow.mapInk f r).scalarsRow acc = r.scalarsRow acc
+  | .nil, _ => rfl
+  | .cons c rest, acc => by
+    simp only [MRow.mapInk, MRow.scalarsRow, MList.mapInk_scalars f c,
+      MRow.mapInk_scalars f rest]
+
+theorem MRows.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (rs : MRows) (acc : Array Char), (MRows.mapInk f rs).scalarsRows acc = rs.scalarsRows acc
+  | .nil, _ => rfl
+  | .cons r rest, acc => by
+    simp only [MRows.mapInk, MRows.scalarsRows, MRow.mapInk_scalars f r,
+      MRows.mapInk_scalars f rest]
+
+end
 
 end LeanTex.Core.Math

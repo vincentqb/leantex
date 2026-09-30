@@ -353,7 +353,8 @@ entry — the bundle's slot wins where it declares one, the document's
 survives where it is silent. -/
 private def chromeApply (bc c : Chrome) : Chrome :=
   { footerLeft := bc.footerLeft <|> c.footerLeft
-    footerRight := bc.footerRight <|> c.footerRight }
+    footerRight := bc.footerRight <|> c.footerRight
+    standoutNote := bc.standoutNote <|> c.standoutNote }
 
 /-- The `\theme` install as a value: the bundle's entries fold onto the
 document's declarations through the same replace-on-redeclare doors the
@@ -828,7 +829,7 @@ private theorem paletteApply_idem (bp p : Palette) :
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by
   simp only [chromeApply]
-  rw [orElse_absorb, orElse_absorb]
+  rw [orElse_absorb, orElse_absorb, orElse_absorb]
 
 /-- T2, the palette half, in `Palette.declare_keeps_others`'s terms: a
 bundle changes only the keys it declares — a key the theme does not name

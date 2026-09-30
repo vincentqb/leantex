@@ -1,0 +1,30 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+meta title "Annotated Formulas"
+center
+  section* 0
+    text "Annotated Formulas"
+para
+  text "The three diagonal marks preserve their operands: "
+  formula inline "\\cancel {x} + \\bcancel {y} + \\xcancel {a+b}"
+    ord:cancel{ord:𝑥} bin:+ ord:bcancel{ord:𝑦} bin:+ ord:xcancel{ord:𝑎 bin:+ ord:𝑏}
+  text "."
+para
+  text "A value sits beside the arrow and above its operand:"
+center
+  para
+    formula display "\\cancelto {0}{\\frac {r}{s}} + t^2"
+      ord:cancelto{ord:frac{ord:𝑟}{ord:𝑠}}to{ord:0} bin:+ ord:𝑡^{ord:2}
+para
+  text "Colour stays inside its group, including the arrow and value:"
+center
+  para
+    formula display "a &= {\\@ink:red \\textcolor {blue}{\\cancelto {7}{z}}} + w^2"
+      ord:align[(|ord:𝑎|ord:{} rel:= ord:{ink:#FF0000 ord:{ink:#0000FF ord:cancelto{ord:𝑧}to{ord:7}}} bin:+ ord:𝑤^{ord:2})]
+-- diagnostics
+note[N0100] 5:1 '\usepackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 5:1 '\usepackage{xcolor}' → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage{cancel}' → the cancel marks, drawn from the math font's own rule constants
+note[N0100] 23:9 '\color{red}' → \red

@@ -1,4 +1,4 @@
-import LeanTex.Core.Oklab
+import LeanTex.Core.ContrastRatio
 import LeanTex.Core.Theme
 import LeanTex.Core.Layout
 import Std.Data.HashMap
@@ -51,41 +51,11 @@ the ones document-level diagnostics report.
 namespace LeanTex.Core.Contrast
 
 open LeanTex.Core.Ir LeanTex.Core.Dim
-open LeanTex.Core.Oklab (channelLinear)
-
-/-- WCAG relative luminance in units of 10⁻⁷ (0 = black, 10⁷ = white):
-0.2126·R + 0.7152·G + 0.0722·B over the linearised channels
-(`Oklab.channelLinear` — the one tabulation of the sRGB transfer function,
-declared beside its other consumer). The division
-truncates below 10⁻⁷ — three orders of magnitude finer than any threshold
-comparison made here. -/
-def luminance (c : Color) : Nat :=
-  (2126 * (channelLinear.getD c.r.toNat 0)
-    + 7152 * (channelLinear.getD c.g.toNat 0)
-    + 722 * (channelLinear.getD c.b.toNat 0)) / 10000
-
-/-- WCAG contrast ratio ×1000, truncated: (L₁ + 0.05)/(L₂ + 0.05) with the
-lighter luminance on top. `contrastMilli .black .white = 21000` — the 21:1
-the definition names as the maximum. Truncation misstates the real-valued
-ratio by less than 0.007 (channel rounding ≤ 1.5·10⁻⁷ per luminance, over
-the +0.05 floor); every claim proved here clears its threshold by margins
-a thousandfold wider. -/
-def contrastMilli (a b : Color) : Nat :=
-  let la := luminance a
-  let lb := luminance b
-  ((max la lb + 500000) * 1000) / (min la lb + 500000)
 
 /-- `4.62:1` from 4627: the human spelling of a milli ratio, for messages. -/
 def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
-
-/-- SC 1.4.3 (AA), normal text: 4.5:1. -/
-def aaText : Nat := 4500
-/-- SC 1.4.3 (AA), large-scale text (≥ 18pt, or ≥ 14pt bold): 3:1. -/
-def aaLargeText : Nat := 3000
-/-- SC 1.4.11 (AA), non-text UI information such as the focus indicator: 3:1. -/
-def aaNonText : Nat := 3000
 
 /-- The colour pairings one variant of the engine's own stylesheet creates:
 text inks over the two backgrounds it paints, and the focus indicator. A
@@ -556,6 +526,8 @@ private structure UseAcc where
   effective ink/page pair is judged beside epoch 0's. -/
   epochs : Array Palette := #[]
   titledPals : Array Palette := #[]
+  /-- Epochs of numbered frames whose chrome footer actually ships. -/
+  footPals : Array Palette := #[]
   /-- Epochs that shipped a titled block, per kind: the kind's resolved
   title pair is judged against the palette in force at the block. -/
   blockPals : Array (TitledKind × Palette) := #[]
@@ -597,6 +569,8 @@ here, so `\normalfont` can restore it), it does not compound. -/
 private structure UseCx where
   base : Sp
   size : Sp
+  slides : Bool := false
+  chromeFoot : Bool := false
   bold : Bool := false
   cur : Option (Option String × Color × Nat) := none
   /-- The local ground under this content, when it is not the page: the
@@ -621,6 +595,15 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
   | .size n => match sizeScale.lookup n with
     | some k => { cx with size := cx.base * k / 1000 }
     | none => cx
+  | .fontSize size _ =>
+    -- The contrast walk has no measured box or font face. An unresolved
+    -- relative size cannot inherit a preceding large-text exemption.
+    -- premise: contrastChecks — absolute sizes replace the named scale;
+    -- a font-relative size keeps the ordinary text threshold.
+    match size.resolve (fun _ => none) with
+    | .ok g =>
+      { cx with size := if g.width.em == 0 && g.width.ex == 0 then g.width.sp else 0 }
+    | .error _ => { cx with size := 0 }
   | _ => cx
 
 private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
@@ -691,10 +674,16 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
       else acc
     | none => acc
   -- a resolved reference is ink in the current colour, like a number
-  | .math _ _ | .formula _ _ _ | .pageNumber | .pageCount | .ref _ _ _ _ =>
+  | .math _ _ | .pageNumber | .pageCount | .ref _ _ _ _ =>
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
+  -- Judge only ink used by the formula; an inner switch may replace all
+  -- uses of its inherited colour.
+  | .formula _ _ body =>
+    let ink := cx.cur.map fun (nm, c, _) => (c, nm)
+    (Math.MList.inks ink #[] body).foldl (fun a (c, nm) =>
+      { a.use { cx with cur := some (nm, c, a.runs) } nm c with runs := a.runs + 1 }) acc
   -- an anchor ships no ink
   | .label _ => acc
   | .styled st body => usesInlines (cx.style st) acc body.toList
@@ -739,7 +728,14 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .equation number content =>
     usesInlines cx (usesInlines cx acc content.toList) number.toList
   | .section level _ _ title =>
-    usesInlines { headingCx cx.base level with cur := cx.cur } acc title.toList
+    let hc := { headingCx cx.base level with cur := cx.cur }
+    let (hc, acc) := if cx.slides && level == 1 then
+      match acc.pal.find? "sectiontitlefg" with
+      | some c => ({ hc with cur := some (some "sectiontitlefg", c, acc.runs) },
+          { acc with runs := acc.runs + 1 })
+      | none => (hc, acc)
+      else (hc, acc)
+    usesInlines hc acc title.toList
   | .list _ items => usesItems cx acc items.toList
   | .center body => usesBlocks cx acc body.toList
   | .ragged _ body => usesBlocks cx acc body.toList
@@ -777,6 +773,9 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     -- in force here, not the document's final one.
     let acc := if title.isEmpty then acc else
       { acc with titledPals := pushUnique acc.titledPals acc.pal }
+    let acc := if cx.chromeFoot && !standout && !(valign matches .golden) then
+      { acc with footPals := pushUnique acc.footPals acc.pal }
+      else acc
     let acc := if standout then
       { acc with standoutPals := pushUnique acc.standoutPals acc.pal }
       else acc
@@ -790,6 +789,13 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       ground := acc.pal.find? "frametitlebg"
       groundName := (acc.pal.find? "frametitlebg").map
         (fun _ => "the frame-title bar") }
+    -- A foreground-only title has no bar for `frameTitleStep` to judge.
+    let (titleCx, acc) := if titleCx.ground.isNone then
+      match acc.pal.find? "frametitlefg" with
+      | some c => ({ titleCx with cur := some (some "frametitlefg", c, acc.runs) },
+          { acc with runs := acc.runs + 1 })
+      | none => (titleCx, acc)
+      else (titleCx, acc)
     -- A standout frame's content sits on the inversion, never the page:
     -- the ground Layout paints (`standoutbg`, else the palette's `fg`).
     let bodyCx := if standout then
@@ -808,7 +814,11 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- A framefoot note lands as footer text on the page: its own declared
   -- colours are judged; its default colour is the muted key, judged once
   -- at the palette level.
-  | .framefoot content => usesInlines cx acc content.toList
+  | .framefoot content =>
+    usesInlines { cx with
+      ground := (Design.ofPalette acc.pal).footline.bar
+      groundName := (Design.ofPalette acc.pal).footline.bar.map (fun _ => "the footline") }
+      acc content.toList
   -- The epoch boundary: the palette in force changes here, in flow order,
   -- and every use after it is judged against the new state.
   | .setPalette p => { acc with pal := p, epochs := acc.epochs.push p }
@@ -831,17 +841,23 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- Each entry's content is page text at the body size, like a cell's.
   | .bibliography _ _ items =>
     items.foldl (fun o item => usesInlines cx o item.content.toList) acc
-  -- A note is a side channel, never page text; verbatim carries no
-  -- colour; a rule is decorative ink, not text, so the text-contrast
+  -- A note is a side channel, never page text; a rule is decorative ink,
+  -- not text, so the text-contrast
   -- contract does not judge it; a logo declaration is furniture, not
   -- page text. A picture's labels sit on the picture's own fills, not on
   -- the page, so judging them against the page surface would be judging
   -- the wrong pairing; the label-on-fill contract is still owed (recorded
   -- in the slice report).
-  | .verbatim _ _ spec =>
-    match spec.caption with
-    | some (_, cap) => usesInlines cx acc cap.toList
-    | none => acc
+  | .verbatim covered source spec =>
+    let acc := match spec.caption with
+      | some (_, cap) => usesInlines cx acc cap.toList
+      | none => acc
+    let ground := cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
+    let codeCx := { cx.style spec.fontSize with ground }
+    (spec.tokenLines source).foldl (fun acc line =>
+      usesInlines codeCx acc
+        (line.map (Listing.tokenInline acc.pal ground covered
+          (style := spec.style))).toList) acc
   | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 
@@ -862,20 +878,32 @@ epoch boundaries, and the design sites each epoch ships, read off
 `doc.body` once. One site, so the judge and the judged-pair census read
 the same walk and not two copies of it. -/
 private def docWalk (doc : Doc) : UseAcc :=
-  usesBlocks { base := doc.page.fontSize, size := doc.page.fontSize }
-    { pal := doc.palette } doc.body.toList
+  let hasFrameFoot := doc.body.any fun b => match b with
+    | .framefoot xs => !xs.isEmpty
+    | _ => false
+  let cx : UseCx :=
+    { base := doc.page.fontSize, size := doc.page.fontSize
+      slides := doc.docClass.record.model == .frame
+      chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
+        (doc.chrome.hasFooter || hasFrameFoot) }
+  usesBlocks cx { pal := doc.palette } doc.body.toList
 
 /-- Every use a document puts on a page: the body walk's, plus the page
-furniture's. Page furniture is document state, not flow content — the
-chrome footer's muted text and the running head and foot are judged
-against epoch 0, whatever the body declared later. One site, read by the
+furniture's. The chrome footer reads its frame's epoch and band ground;
+running heads and feet are document state and read epoch 0. One site, read by the
 per-use judge and by the judged-pair census. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
   let mut acc := { walk with pal := doc.palette }
-  if doc.docClass.record.chrome && doc.chrome.hasFooter && doc.foot.isNone then
-    if let some muted := doc.palette.find? "muted" then
-      acc := { acc.use base (some "muted") muted with runs := acc.runs + 1 }
+  for pal in walk.footPals do
+    let look := (Design.ofPalette pal).footline
+    let key := if (pal.find? "muted").isSome then "muted" else "fg"
+    let cx := { base with
+      size := Ir.scaleStep doc.page.fontSize Ir.footline.step
+      ground := look.bar, groundName := look.bar.map (fun _ => "the footline") }
+    acc := { acc with pal := pal }
+    acc := { acc.use cx (some key) look.fg with runs := acc.runs + 1 }
+  acc := { acc with pal := doc.palette }
   for run in [doc.head, doc.foot] do
     if let some content := run then
       acc := usesInlines base acc content.toList
@@ -1565,7 +1593,10 @@ def designContract (d : Design) : Bool :=
     && contrastMilli d.muted d.bg ≥ aaText
     && (match d.frametitle with
         | some p => contrastMilli p.fg p.bg ≥ aaText
-        | none => true)
+        | none => contrastMilli d.frameTitleFg d.bg ≥ aaText)
+    && contrastMilli d.framesubtitle ((d.frametitle.map (·.bg)).getD d.bg) ≥ aaText
+    && contrastMilli d.sectionTitle d.bg ≥ aaText
+    && contrastMilli d.footline.fg (d.footline.bar.getD d.bg) ≥ aaText
     -- The titled block's pairs, total as the standout's: the title sets
     -- bold at the body size (under WCAG's large-scale sizes, so 4.5:1)
     -- on the bar when the design has one, on the page otherwise.
@@ -1587,6 +1618,18 @@ def paletteContract (pal : Palette) : Bool :=
     | none => true
   text "alert" && text "example"
     && designContract (Design.ofDoc { palette := pal })
+
+/-- Every native lexical ink is text-AA on every listing ground of a bundle:
+the page, its standout inversion, and its title page when declared. The
+shared painter chooses undeclared defaults on that ground; declared colours
+are judged by `usesBlock`, through the usual bounded realization policy. -/
+def listingContract (pal : Palette) : Bool :=
+  let d := Design.ofPalette pal
+  ([ListingStyle.default, .friendly] : List ListingStyle).all fun style =>
+    Listing.contract pal none style && Listing.contract pal (some d.standout.bg) style
+      && (match d.titlepage with
+          | some p => Listing.contract pal (some p.bg) style
+          | none => true)
 
 def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
   paletteContract th.palette
