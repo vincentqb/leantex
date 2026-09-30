@@ -4,10 +4,12 @@
 # the evidence that the binding is read.
 pre inert:binds \NewDocumentCommand{\zz}{m}{#1}
 pre inert:binds \RenewDocumentCommand{\emph}{m}{#1}
-pre refuse:W0301 \ProvideDocumentCommand{\zz}{m}{#1}
+pre inert:binds \ProvideDocumentCommand{\zz}{m}{#1}
 pre inert:binds \DeclareDocumentCommand{\zz}{m}{#1}
 pre refuse:W0301 \NewDocumentEnvironment{zz}{}{a}{b}
 pre inert:binds \NewDocumentCommand{\zz}{m}{#1}\RenewDocumentCommand{\zz}{m}{x}
 body impl \NewDocumentCommand{\zz}{m}{[#1]}\zz{q}
+body impl \ProvideDocumentCommand{\zz}{m}{[#1]}\zz{q}
+body impl \NewDocumentCommand{\zz}{m}{[#1]}\ProvideDocumentCommand{\zz}{m}{unused}\zz{q}
 body impl \RenewDocumentCommand{\emph}{m}{[#1]}\emph{q}
 body impl \DeclareDocumentCommand{\zz}{m}{[#1]}\zz{q}
