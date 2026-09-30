@@ -1549,9 +1549,22 @@ private def pageSelectionKey : PdfRead.PageSelection → String
   | .last => "last"
   | .number n => s!"page:{n}"
 
+/-- The published href of one faced entry's primary and poster faces, read
+from the typed projection `HtmlDoc.imageAssets` — never a hand formula, so
+the key and the page agree by construction. -/
+def facedHrefs (name : String) (imgs : Image.Store) (k : Nat) : Option String × Option String :=
+  let assets := HtmlDoc.imageAssets imgs
+  let href (poster : Bool) : Option String :=
+    (assets.find? fun a => a.srcIndex == k && a.poster == poster).map fun a =>
+      s!"{name}.assets/{a.file}"
+  (href false, href true)
+
 /-- Hermetic inputs to the host-only browser-face conversion: exact vector
-source bytes, request/page identity, generated hrefs, optional companions,
-and the shared tool recipe. No converter runs here. -/
+source bytes, the shared plan and its deterministic stand-in output, the
+request/page identity, the hrefs read from `HtmlDoc.imageAssets`, optional
+companions, and the shared tool recipe. No converter runs here, and no
+whole source file is hashed — a behaviour-preserving edit to the driver
+leaves this key unmoved. -/
 def browserSourceBlobs (corpus : System.FilePath) (name : String) (doc : Ir.Doc)
     (store : Image.Store) (read : Array (String × ByteArray)) :
     IO (Array (String × ByteArray)) := do
@@ -1560,11 +1573,10 @@ def browserSourceBlobs (corpus : System.FilePath) (name : String) (doc : Ir.Doc)
     let some k := store.findRequest? req | continue
     let some en := store.get? k | continue
     let resolved := HtmlDoc.resolvedSrc en
-    let vector := Image.isSvg resolved || (en.info.map (·.form.isSome)).getD false
-    unless vector do continue
+    let plan := HtmlDoc.facePlan en
+    unless plan.converts do continue
     let some (_, bytes) := read.find? (fun input => input.1 == resolved) | continue
-    let faceSrc := ((System.FilePath.mk resolved).withExtension "svg").toString
-    let href := s!"{name}.assets/{HtmlDoc.imageAssetName k faceSrc}"
+    let (href?, poster?) := facedHrefs name store k
     let physicalPage := if Image.isSvg resolved then "none" else
       match PdfRead.pageNumber bytes req.page with
       | .ok n => toString n
@@ -1573,11 +1585,18 @@ def browserSourceBlobs (corpus : System.FilePath) (name : String) (doc : Ir.Doc)
     let companion := corpus / companionRel
     let hasCompanion ← if req.animated && !Image.isSvg resolved
       then companion.pathExists else pure false
-    let poster := if Image.isSvg resolved || hasCompanion
-      then s!"{name}.assets/{HtmlDoc.imagePosterName k en}" else "none"
-    let descriptor := s!"source={req.src}\nresolved={resolved}\npage={pageSelectionKey req.page}\nphysical-page={physicalPage}\nanimated={req.animated}\nhref={href}\nposter={poster}\ncompanion={if hasCompanion then companionRel.toString else "none"}"
+    let descriptor := s!"source={req.src}\nresolved={resolved}\nplan={plan.key}\n\
+page={pageSelectionKey req.page}\nphysical-page={physicalPage}\nanimated={req.animated}\n\
+href={href?.getD "none"}\nposter={poster?.getD "none"}\n\
+companion={if hasCompanion then companionRel.toString else "none"}"
     out := out.push (s!"{name}/{k}/request", descriptor.toUTF8)
     out := out.push (s!"{name}/{k}/source/{resolved}", bytes)
+    -- The plan's own deterministic output, so a changed decision moves the
+    -- key even where the request descriptor above would read the same.
+    let conv := match plan with
+      | .movingSvgWithPoster c | .convertedPrimary c | .animatedWithCompanion c => c
+      | .keep => .svgPoster
+    out := out.push (s!"{name}/{k}/standin", HtmlDoc.faceStandIn en plan conv)
     if hasCompanion then
       out := out.push (s!"{name}/{k}/companion/{companionRel}", ← IO.FS.readBinFile companion)
   return out
@@ -1647,11 +1666,6 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   let mut blobs : Array (String × ByteArray) := #[]
   let mut browserSources : Array (String × ByteArray) :=
     #[("conversion-contract", ImageAssets.browserFaceContract.toUTF8)]
-  for owner in ["LeanTex/Cli/ImageAssets.lean", "Main.lean"] do
-    if !(← System.FilePath.pathExists owner) then
-      return .error s!"browser-face implementation owner {owner} is missing"
-    browserSources := browserSources.push
-      ("implementation/" ++ owner, ← IO.FS.readBinFile owner)
   let mut unbuilt : Array String := #[]
   for e in (← corpus.readDir).qsort (·.fileName < ·.fileName) do
     if e.fileName.endsWith ".tex" then

@@ -36,6 +36,7 @@ ratchet question, "how much passes, and is it more than last time."
 import scripts.Board
 
 open Scoreboard
+open LeanTex.Core
 
 def matrixPath : String := "tests/oracles/html-reader-matrix.txt"
 
@@ -226,6 +227,34 @@ browser-face: figures missing-fields\n"
     (!(browserFaceFaults malformedFace "source").isEmpty)
   no "browser face: absent records and keys are faults"
     (!(browserFaceFaults "src-key: html\n" "source").isEmpty)
+  -- The behavioural source key: the shared plan's decision and its
+  -- deterministic stand-in output are hashed, and no whole driver source
+  -- file is, so each meaningful mutation moves the key while a
+  -- behaviour-preserving edit to Main.lean leaves it unmoved.
+  let p1 : HtmlDoc.FacePlan := .convertedPrimary (.pdfPage .first)
+  let p2 : HtmlDoc.FacePlan := .convertedPrimary (.pdfPage (.number 2))
+  let p3 : HtmlDoc.FacePlan := .animatedWithCompanion (.pdfPage .first)
+  let p4 : HtmlDoc.FacePlan := .movingSvgWithPoster .svgPoster
+  no "src key: the requested page moves the plan key" (p1.key != p2.key)
+  no "src key: the animation shape moves the plan key" (p1.key != p3.key)
+  no "src key: an SVG source's plan differs from a PDF's" (p1.key != p4.key)
+  no "src key: a resolved physical page moves the conversion key"
+    (HtmlDoc.FaceConv.key (.pdfPage (.number 1)) != HtmlDoc.FaceConv.key (.pdfPage (.number 2)))
+  let enA : Image.Loaded := { src := "a.pdf" }
+  let enB : Image.Loaded := { src := "b.pdf" }
+  no "src key: the resolved source moves the stand-in output"
+    (HtmlDoc.faceStandIn enA p1 (.pdfPage .first)
+      != HtmlDoc.faceStandIn enB p1 (.pdfPage .first))
+  no "src key: the plan decision moves the stand-in output"
+    (HtmlDoc.faceStandIn enA p1 (.pdfPage .first)
+      != HtmlDoc.faceStandIn enA p4 .svgPoster)
+  no "src key: the conversion contract is nonempty and hashed"
+    (!LeanTex.Cli.ImageAssets.browserFaceContract.isEmpty)
+  -- The src/poster hrefs and physical page ride in the per-request
+  -- descriptor blob; contentKey is byte-sensitive (proven above), so a
+  -- changed href, poster, or physical page moves the source key.
+  no "src key: a changed descriptor field (href/poster/physical page) moves it"
+    (contentKey #[("r", "href=x".toUTF8)] != contentKey #[("r", "href=y".toUTF8)])
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmlreader" (.pairs "pass" "rows") measureTier selftest args
