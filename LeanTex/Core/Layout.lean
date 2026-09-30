@@ -3091,7 +3091,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         -- A math alphabet's scalar uncovered everywhere: the base letter
         -- stands in — bold/italic from the text face where that is the
         -- alphabet's styling, the plain letter otherwise — and the
-        -- per-formula post-walk names the loss (N0018). Only when even
+        -- per-formula post-walk names the loss (W0016). Only when even
         -- the stand-in is uncovered does the scalar go missing (E0405).
         let synth : Option (Nat × (Nat × Char × Sp)) := do
           let (a, base) ← Math.MathAlphabet.unapply c
@@ -3283,7 +3283,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
 lost beside it. `dropped` is the never-silent ledger — a (face, char)
 pair no face covers lands here and nowhere else, and `itemsOfInlines`
 renders every entry as its E0405, so dropped ink is always named to the
-user. `substs` (W0009) and `unstyled` (N0018) are the reported
+user. `substs` (W0009) and `unstyled` (W0016) are the reported
 substitutions: set from another face, never lost. -/
 private structure ItemsAcc where
   items : Array Item := #[]
@@ -3468,7 +3468,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- assembly paths recorded missing was never substituted — a grown
       -- construction is one face — so `m` excludes it here. A math
       -- alphabet's scalar no face covers rendered as its stand-in base
-      -- letter (`layMathNucleus`): N0018 names the styling difference.
+      -- letter (`layMathNucleus`): W0016 names the styling difference.
       let acc := (Math.MList.scalarsList #[] body).foldl (fun acc c =>
         if (font.gid c).isNone && !m.contains (idx, c) then
           match fs.fallbackFor c with
@@ -3556,7 +3556,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 tokens, then every loss the fold ledgered rendered as its diagnostic —
 the never-silent contract: no character leaves this function silently,
 it is in the items, in a note body, or named by an E0405 (with W0009 and
-N0018 naming the substitutions that kept ink at the cost of its face).
+W0016 naming the substitutions that kept ink at the cost of its face).
 The fourth returned component maps the index of a forced-break penalty
 to extra vertical space the document asked for there (`\\[1ex]`); it
 rides beside the items because the line breaker has no use for it, and
@@ -3595,17 +3595,11 @@ with \\allow{E0405}"))
       s!"'{(fs.get idx).family}' has no glyph for '{c}' \
         (U+{hex c.toNat}); set from '{(fs.get fb).family}'")
   for (idx, c, a, base) in acc.unstyled do
-    let (bold, italic) := a.synthStyle
-    if bold || italic then
-      diags := diags.push (Diag.of .N0018
-        s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
-(U+{hex c.toNat}); set {a.styleLabel} from \
-'{(fs.get (fs.lookup 0 (if bold then 700 else 400) italic)).family}'")
-    else
-      diags := diags.push (Diag.of .N0018
-        s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
-(U+{hex c.toNat}); the plain letter stands in"
-        (help := "declare a math face that carries it: \\fonts{ math = ... }"))
+    diags := diags.push (Diag.of .W0016
+      s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
+(U+{hex c.toNat}); a stand-in keeps the letter"
+      (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
+      (subject := some ("math-alpha:" ++ a.name)))
   return (items, diags, acc.cache, acc.extras, acc.notes)
 where
   hex (n : Nat) : String := Id.run do

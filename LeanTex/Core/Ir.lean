@@ -13634,7 +13634,7 @@ subject (`math-alpha:<name>`). Since `missingMathAlphas` is derived from the
 same `remaps` the resolver keeps scalars by (`Math.missingCharAlpha_kept`),
 the census cannot drift from what rendered: the IR owner is the single
 subject-bearing owner of the whole-alphabet loss, and the per-character
-Layout path sees only remapped scalars this census never names. -/
+Layout path (W0016) sees only remapped scalars this census never names. -/
 theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     (resolveMathAlphas coverage family doc).2.map (·.subject) =

@@ -111,6 +111,9 @@ def registry : List AuditRow :=
    -- unicode-math leaves a missing symbol alphabet on its ordinary source;
    -- the one face-level resolution note names that visible difference.
    ⟨.N0018, .keep, .rewritten, check% mathChecks⟩,
+   -- A styled scalar in a covered range whose glyph is an isolated face
+   -- hole: the base letter stands in, the loss named once per alphabet.
+   ⟨.W0016, .keep, .degraded, check% isolatedHoleChecks⟩,
    -- The witness that the gap theorems' side condition was taken.
    ⟨.N0200, .keep, .rewritten, check% spacingChecks⟩,
    -- One element-style field closes it.

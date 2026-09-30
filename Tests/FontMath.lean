@@ -1862,9 +1862,11 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
   let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
   let bfOut := layoutOf noBoldSet (Elab.run "t" "$\\mathbf{A}$").1 geom
-  t "a bold letter the math face lacks synthesizes from the text face"
-    ((bfOut.diags.filter (·.code == "N0018")).map (·.message) ==
-      #["'Fira Math' has no bold 'A' (U+1D400); set bold from 'Source Serif Pro'"] &&
+  t "a bold letter in a covered range whose glyph is an isolated hole stands its base, named W0016"
+    ((bfOut.diags.filter (·.code == "W0016")).map (fun d => (d.message, d.subject)) ==
+      #[("'Fira Math' has no bold 'A' (U+1D400); a stand-in keeps the letter",
+         some "math-alpha:bf")] &&
+      !bfOut.diags.any (·.code == "N0018") &&
       ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
@@ -1993,6 +1995,57 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fonts math key fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\fonts{ math = \"Fira Math\" }" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
+
+
+/-- The isolated-glyph-hole owner (W0016), partitioned from the
+whole-alphabet owner (N0018) by the `remaps` bit. Two builds differing only
+in coverage-versus-glyph: when the selected face does not carry a range's
+anchor the resolver keeps the source scalar and the IR names the whole
+alphabet (N0018, `math-alpha:<name>`) with no W0016; when the face declares
+the range covered yet the specific glyph is filtered out, the resolver
+applies the alphabet, layout meets the hole, and the base letter stands in
+under W0016 (`math-alpha:<name>`) with no N0018. Disjoint by construction —
+`Math.missingCharAlpha_kept` proves the N0018 census names only kept source
+scalars, which the covered-hole path never leaves standing. -/
+def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (name : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"isolatedHole: {name} unparsable: {e}")
+  let serif ← load "SourceSerifPro-Regular.otf"
+  let fira ← load "FiraMath-Regular.otf"
+  let allSlots : Array ((Nat × Nat × Bool) × Nat) :=
+    ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 0),
+       ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
+  let mfs : Font.FontSet := {
+    fonts := #[serif, fira]
+    index := allSlots
+    math := some 1
+    mathAlphabets := fira.mathAlphabetCoverage {} }
+  let geom : Layout.Geom := {}
+  -- Coverage OMITS the calligraphic range: the resolver keeps the source
+  -- scalar and the IR names the whole alphabet once, no per-glyph W0016.
+  let calOut := layoutOf mfs (Elab.run "t" "$\\mathcal{L}$").1 geom
+  t "partition: an uncovered range keeps its source scalar, named N0018 alone"
+    ((calOut.diags.filter (·.code == "N0018")).map (·.subject) ==
+        #[some "math-alpha:cal"] &&
+      !calOut.diags.any (·.code == "W0016"))
+  -- Coverage COVERS the bold range (its anchor stands) but the specific
+  -- glyph is filtered: the resolver applies the alphabet, layout meets the
+  -- isolated hole, the base letter stands in under W0016, no N0018.
+  let noBoldFira : Font.Font := { fira with
+    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
+  let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
+  let bfOut := layoutOf noBoldSet (Elab.run "t" "$\\mathbf{A}$").1 geom
+  t "partition: a covered range with an isolated glyph hole is named W0016 alone, base stands"
+    ((bfOut.diags.filter (·.code == "W0016")).map (·.subject) ==
+        #[some "math-alpha:bf"] &&
+      !bfOut.diags.any (·.code == "N0018") &&
+      ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+        | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
+        | _ => false))
 
 
 

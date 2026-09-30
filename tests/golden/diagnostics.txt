@@ -222,6 +222,9 @@ warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
   help: '{align*}' spells the unnumbered form, which renders the same
+── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
+warning[W0016]: 'Fira Math' has no bold 'A' (U+1D400); a stand-in keeps the letter
+  help: declare a math face that carries this alphabet: \fonts{ math = ... }
 ── W0101 (config) preamble keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: voffset
 ── W0102 (degraded) unsupported colour model
