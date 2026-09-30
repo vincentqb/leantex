@@ -1559,6 +1559,16 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         (.cons (.atom .ord
           (.alpha .bf (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))
           .nil .nil false) .nil)).alphaFree)
+  -- (Item 2, defensive) The `.alpha` node is unreachable in the MathML
+  -- backend on every public path (the door above resolves it away). A
+  -- bypass call that hands `nucNode` an unresolved `.alpha` is LOUD — a
+  -- MathML `merror` naming its content — never a silent `mrow` that reads
+  -- as ordinary math; the content still renders inside.
+  t "an unresolved alphabet reaching MathML is a loud merror, never a silent mrow"
+    (match MathMl.nucNode {} false .ord
+        (Math.MNucleus.alpha .bf (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil)) with
+      | .elem tag _ kids => tag == "merror" && !kids.isEmpty
+      | _ => false)
 
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
