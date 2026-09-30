@@ -2240,4 +2240,121 @@ theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MLis
     (resolveMathAlphas coverage body).classes = body.classes :=
   resolveAlphaList_classes coverage [] body
 
+/-- An optional delimiter push preserves an accumulator-size equality. -/
+private theorem optPush_size_congr (o : Option Char) (acc₁ acc₂ : Array Char)
+    (h : acc₁.size = acc₂.size) :
+    (match o with | some c => acc₁.push c | none => acc₁).size
+      = (match o with | some c => acc₂.push c | none => acc₂).size := by
+  cases o <;> simp [Array.size_push, h]
+
+mutual
+
+/-- Resolving an alphabet stack preserves the scalar count: it rewrites each
+`.sym` glyph one-for-one and turns an `.alpha` scope into a `.list` — which
+`MNucleus.scalars` reads identically — while every word, delimiter, accent
+mark, and grid cell is carried through unchanged. Stated over equal-size
+accumulators so the walk's threading composes; the top-level corollary
+takes `#[]`. Glyphs change; the count does not. -/
+private theorem resolveAlphaList_scalars_size (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (l : MList) (acc₁ acc₂ : Array Char),
+      acc₁.size = acc₂.size →
+      ((resolveAlphaList coverage active l).scalarsList acc₁).size
+        = (MList.scalarsList acc₂ l).size
+  | _, .nil, _, _, hs => by simp [resolveAlphaList, MList.scalarsList, hs]
+  | active, .cons x rest, acc₁, acc₂, hs => by
+    simp only [resolveAlphaList, MList.scalarsList]
+    apply resolveAlphaList_scalars_size coverage active rest
+    exact resolveAlphaItem_scalars_size coverage active x acc₁ acc₂ hs
+
+private theorem resolveAlphaItem_scalars_size (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (item : MItem) (acc₁ acc₂ : Array Char),
+      acc₁.size = acc₂.size →
+      ((resolveAlphaItem coverage active item).scalars acc₁).size
+        = (MItem.scalars acc₂ item).size
+  | _, .space _, _, _, hs => by simp [resolveAlphaItem, MItem.scalars, hs]
+  | _, .ink _ _, _, _, hs => by simp [resolveAlphaItem, MItem.scalars, hs]
+  | active, .atom _ nuc sup sub _, acc₁, acc₂, hs => by
+    simp only [resolveAlphaItem, MItem.scalars]
+    apply resolveAlphaList_scalars_size coverage active sub
+    apply resolveAlphaList_scalars_size coverage active sup
+    exact resolveAlphaNucleus_scalars_size coverage active nuc acc₁ acc₂ hs
+
+private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (nuc : MNucleus) (acc₁ acc₂ : Array Char),
+      acc₁.size = acc₂.size →
+      ((resolveAlphaNucleus coverage active nuc).scalars acc₁).size
+        = (MNucleus.scalars acc₂ nuc).size
+  | _, .sym c, _, _, hs => by
+    simp [resolveAlphaNucleus, MNucleus.scalars, Array.size_push, hs]
+  | _, .word s, _, _, hs => by
+    simp [resolveAlphaNucleus, MNucleus.scalars, hs]
+  | active, .list body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    exact resolveAlphaList_scalars_size coverage active body acc₁ acc₂ hs
+  | active, .alpha a body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    exact resolveAlphaList_scalars_size coverage (a :: active) body acc₁ acc₂ hs
+  | active, .frac spec num den, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    apply optPush_size_congr spec.right
+    apply resolveAlphaList_scalars_size coverage active den
+    apply resolveAlphaList_scalars_size coverage active num
+    exact optPush_size_congr spec.left acc₁ acc₂ hs
+  | active, .rad deg body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    apply resolveAlphaList_scalars_size coverage active body
+    exact resolveAlphaList_scalars_size coverage active deg acc₁ acc₂ hs
+  | active, .delim l r body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    apply resolveAlphaList_scalars_size coverage active body
+    apply optPush_size_congr r
+    exact optPush_size_congr l acc₁ acc₂ hs
+  | active, .accent mark _ body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    apply resolveAlphaList_scalars_size coverage active body
+    by_cases hm : (mark == '\u0305') = true
+    · simp [hm, hs]
+    · simp [hm, Array.size_push, hs]
+  | active, .grid _ rows, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    exact resolveAlphaRows_scalars_size coverage active rows acc₁ acc₂ hs
+  | active, .cancel _ _ value body, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    apply resolveAlphaList_scalars_size coverage active value
+    exact resolveAlphaList_scalars_size coverage active body acc₁ acc₂ hs
+
+private theorem resolveAlphaRow_scalars_size (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (row : MRow) (acc₁ acc₂ : Array Char),
+      acc₁.size = acc₂.size →
+      ((resolveAlphaRow coverage active row).scalarsRow acc₁).size
+        = (MRow.scalarsRow acc₂ row).size
+  | _, .nil, _, _, hs => by simp [resolveAlphaRow, MRow.scalarsRow, hs]
+  | active, .cons cell rest, acc₁, acc₂, hs => by
+    simp only [resolveAlphaRow, MRow.scalarsRow]
+    apply resolveAlphaRow_scalars_size coverage active rest
+    exact resolveAlphaList_scalars_size coverage active cell acc₁ acc₂ hs
+
+private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (rows : MRows) (acc₁ acc₂ : Array Char),
+      acc₁.size = acc₂.size →
+      ((resolveAlphaRows coverage active rows).scalarsRows acc₁).size
+        = (MRows.scalarsRows acc₂ rows).size
+  | _, .nil, _, _, hs => by simp [resolveAlphaRows, MRows.scalarsRows, hs]
+  | active, .cons row rest, acc₁, acc₂, hs => by
+    simp only [resolveAlphaRows, MRows.scalarsRows]
+    apply resolveAlphaRows_scalars_size coverage active rest
+    exact resolveAlphaRow_scalars_size coverage active row acc₁ acc₂ hs
+
+end
+
+/-- The resolver preserves the document scalar count: the coverage check the
+driver runs before layout sees exactly as many scalars after resolution as
+before, so an alphabet changes which glyph each scalar asks the face for,
+never how many. The registry `_covers`/`_id` chain governs shape; this
+governs count. -/
+theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
+    ((resolveMathAlphas coverage body).scalarsList #[]).size
+      = (MList.scalarsList #[] body).size :=
+  resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
+
 end LeanTex.Core.Math
