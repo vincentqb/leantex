@@ -7,7 +7,7 @@ External math-alphabet differential. Run from the repository root:
 
 This is a report, never a hermetic gate. It writes only below
 `.lake/math-alphabet-diff`, sets each legacy alphabet explicitly to its
-unicode-math `sym` source, and compares LuaLaTeX with leantex over two math
+unicode-math `sym` source, and compares LuaLaTeX with leantex over four math
 faces and eight alphabets. Ghostscript reads each PDF's painted scalar,
 font, advance, and point size; no IR dump or source spelling is an
 observation.
@@ -163,15 +163,21 @@ def main (args : List String) : IO UInt32 := do
     | IO.eprintln "math-alphabet-diff: lualatex unavailable — untested"; return 2
   let some gsVersion ← version "gs" #["--version"] root
     | IO.eprintln "math-alphabet-diff: ghostscript unavailable — untested"; return 2
-  let lm ← runTool "kpsewhich" #["latinmodern-math.otf"] root
-  let lmPath := lm.stdout.trimAscii.toString
-  if lmPath.isEmpty then
-    IO.eprintln "math-alphabet-diff: latinmodern-math.otf unavailable — multi-face matrix untested"
-    return 2
   let fira ← IO.FS.realPath (root / "tests" / "corpus" / "fonts" / "FiraMath-Regular.otf")
-  let faces : List FaceCase :=
-    [{ label := "Fira Math", path := fira.toString },
-     { label := "Latin Modern Math", path := lmPath }]
+  let required : List (String × String) :=
+    [("Latin Modern Math", "latinmodern-math.otf"),
+     ("TeX Gyre Pagella Math", "texgyrepagella-math.otf"),
+     ("STIX Two Math", "STIXTwoMath-Regular.otf")]
+  let mut faces : Array FaceCase := #[{ label := "Fira Math", path := fira.toString }]
+  for (label, file) in required do
+    let found ← try
+      let out ← IO.Process.output { cmd := "kpsewhich", args := #[file], cwd := root }
+      if out.exitCode == 0 then pure out.stdout.trimAscii.toString else pure ""
+    catch _ => pure ""
+    if found.isEmpty then
+      IO.eprintln s!"math-alphabet-diff: {file} unavailable — four-face matrix untested"
+      return 2
+    faces := faces.push { label, path := found }
   let work := root / ".lake" / "math-alphabet-diff"
   if ← work.pathExists then IO.FS.removeDirAll work
   IO.FS.createDirAll work

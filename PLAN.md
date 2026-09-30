@@ -449,9 +449,10 @@ that alone carries U+1D4AA. Layout now sets U+1D442 from Fira at Fira's own
 advance, selects no synthetic run, and emits no W0009; the typed HTML tree
 carries the same U+1D442. Repeated script/fraktur uses produce one N0018 per
 alphabet. The external `scripts/math-alphabet-diff.lean` report compares
-Fira Math and Latin Modern Math across eight symbol-sourced alphabets by
-reading scalar, embedded font, advance, and point size from both PDFs with
-Ghostscript; all 16 rows agree with LuaLaTeX on this host.
+Fira Math, Latin Modern Math, TeX Gyre Pagella Math, and STIX Two Math
+across eight symbol-sourced alphabets by reading scalar, embedded font,
+advance, and point size from both PDFs with Ghostscript; all 32 rows agree
+with LuaLaTeX on this host.
 
 The unicode-math option audit found that `mathrm`, `mathit`, `mathbf`,
 `mathsf`, and `mathtt` default to `text` and independently accept `sym`.
