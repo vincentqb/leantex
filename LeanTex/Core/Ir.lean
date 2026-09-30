@@ -12693,25 +12693,86 @@ source is this prefix plus the request's content hash. The driver fulfils
 it from the boundary cache instead of the filesystem. -/
 def picSrcPrefix : String := "leantex-pic:"
 
+/-- The 16 lowercase hex digits a picture's content hash is spelled in. One
+definition, referenced wherever the hash's alphabet is needed (the boundary
+face classifier and its disjointness proof), so no site copies the
+alphabet. -/
+def hexAlphabet : List Char := "0123456789abcdef".toList
+
+/-- The hex digit for a nibble: the alphabet entry, or `'0'` for an
+out-of-range index. Either way a member of `hexAlphabet`. -/
+def hexDigitChar (n : Nat) : Char := hexAlphabet[n]?.getD '0'
+
+theorem hexDigitChar_mem (n : Nat) : hexDigitChar n ∈ hexAlphabet := by
+  unfold hexDigitChar
+  rcases h : hexAlphabet[n]? with _ | c
+  · decide
+  · exact List.mem_of_getElem? h
+
+/-- The 16 hex digits of a 64-bit value, most-significant first, accumulated
+by prepending: exactly the string the boundary hash built by an inline loop
+before, now a named structural recursion a theorem can read. -/
+def picHexAux : Nat → UInt64 → List Char → List Char
+  | 0, _, acc => acc
+  | k + 1, v, acc => picHexAux k (v / 16) (hexDigitChar (v % 16).toNat :: acc)
+
+/-- One 64-bit half of a picture's content hash, as 16 lowercase hex digits. -/
+def picHex (x : UInt64) : String := String.ofList (picHexAux 16 x [])
+
+theorem picHexAux_mem (k : Nat) (v : UInt64) (acc : List Char)
+    (hacc : ∀ c ∈ acc, c ∈ hexAlphabet) :
+    ∀ c ∈ picHexAux k v acc, c ∈ hexAlphabet := by
+  induction k generalizing v acc with
+  | zero => simpa [picHexAux] using hacc
+  | succ k ih =>
+    intro c hc
+    simp only [picHexAux] at hc
+    refine ih (v / 16) (hexDigitChar (v % 16).toNat :: acc) ?_ c hc
+    intro d hd
+    rcases List.mem_cons.mp hd with h | h
+    · subst h; exact hexDigitChar_mem _
+    · exact hacc d h
+
+/-- Every character of a `picHex` half is one of the 16 hex digits. -/
+theorem picHex_chars_mem (x : UInt64) : ∀ c ∈ (picHex x).toList, c ∈ hexAlphabet := by
+  intro c hc
+  simp only [picHex, String.toList_ofList] at hc
+  exact picHexAux_mem 16 x [] (by intro d hd; cases hd) c hc
+
 /-- FNV-1a, two seeds, 32 hex digits. Over a picture body it is the
 picture's identity (`pictureSrcs`, the image source); over the wrapped
 request it is the boundary cache key — a content hash, so an unchanged
-request never re-runs the tool and a changed one always does. -/
-def picHash (s : String) : String := Id.run do
-  let hex (x : UInt64) : String := Id.run do
-    let digits := "0123456789abcdef".toList
-    let mut out := ""
-    let mut v := x
-    for _ in [0:16] do
-      out := String.ofList [(digits[(v % 16).toNat]?.getD '0')] ++ out
-      v := v / 16
-    return out
-  let fnv (seed : UInt64) : UInt64 := Id.run do
+request never re-runs the tool and a changed one always does. Every
+character of the result is a hex digit (`picHash_chars_mem`). -/
+def picHash (s : String) : String :=
+  let fnv := fun (seed : UInt64) => Id.run do
     let mut h := seed
     for byte in s.toUTF8 do
       h := (h ^^^ byte.toUInt64) * 1099511628211
     return h
-  return hex (fnv 14695981039346656037) ++ hex (fnv 1099511628211)
+  picHex (fnv 14695981039346656037) ++ picHex (fnv 1099511628211)
+
+/-- Every character of a picture's content hash is one of the 16 lowercase
+hex digits (`hexAlphabet`): the hash is two `picHex` halves, each proved so
+by `picHex_chars_mem`. This is the fact the boundary-face classifier and its
+disjointness from converted-image-face names rest on — a boundary face's
+name is `picHash body ++ ".svg"`, so it begins with a hex digit, never `i`
+or `p`. -/
+theorem picHash_chars_mem (s : String) : ∀ c ∈ (picHash s).toList, c ∈ hexAlphabet := by
+  intro c hc
+  simp only [picHash, String.toList_append, List.mem_append] at hc
+  rcases hc with hc | hc
+  · exact picHex_chars_mem _ c hc
+  · exact picHex_chars_mem _ c hc
+
+/-- The file name a boundary picture's SVG face publishes under: its content
+hash and the `.svg` extension. `Main.picsToSvg` (the driver) and the
+scoreboard's expected-face derivation share this one formula rather than
+each spelling `hash ++ ".svg"`. The argument is the picture's source
+spelling (`picSrcPrefix ++ picHash body`); the prefix is dropped so the name
+is exactly the hash. -/
+def picFaceName (picSrc : String) : String :=
+  (picSrc.drop picSrcPrefix.length).toString ++ ".svg"
 
 /-- xcolor's name grammar: a colour name is a maximal run of ASCII letters
 and digits. Every such run of a picture body, deduplicated in first-seen

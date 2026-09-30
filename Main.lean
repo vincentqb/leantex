@@ -801,8 +801,7 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
   let mut pubs : Array Publication := #[]
   let mut unconverted : Array String := #[]
   for r in pics do
-    let hash := (r.src.drop Ir.picSrcPrefix.length).toString
-    let svgName := hash ++ ".svg"
+    let svgName := Ir.picFaceName r.src
     let svgPath := r.cached.withExtension "svg"
     let ok ← do
       if ← svgPath.pathExists then pure true
