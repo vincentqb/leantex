@@ -1881,7 +1881,7 @@ def compatUnknown (call : String) : String := Id.run do
   if st == 2 then out := out ++ "Zq"
   return out
 
-/-- The one predicate every `impl` row answers to: recognising this call
+/-- The effect predicate every `impl` row answers to: recognising this call
 changes the elaborated document. Both arms elaborate the same source; the
 baseline's control words are the same call with names the engine does not
 know, so a command that contributes nothing lands in the same `Ir.Doc` as
@@ -1892,9 +1892,11 @@ regressed to a no-op keeps that silence, which is how
 deferred anywhere. The claim is about the call as written: a call naming
 several commands is witnessed as a whole, so a row that wants one
 command's effect attributed to it writes a call with one command. -/
-def compatRowEffect (pkg place call : String) : Bool :=
-  (elabStr (compatRowSrc pkg place call)).1
-    != (elabStr (compatRowSrc pkg place (compatUnknown call))).1
+def compatRowEffect (pkg place call : String) : IO Bool := do
+  let (known, _) ← elabInputSrc "tests/compat-index/probe.tex" (compatRowSrc pkg place call)
+  let (unknown, _) ← elabInputSrc "tests/compat-index/probe.tex"
+    (compatRowSrc pkg place (compatUnknown call))
+  return known != unknown
 
 /-- The invariant whose absence left the hook inert: a hook is a DEFERRED
 declaration, so its body is not read where it stands but replayed at the
@@ -2040,13 +2042,52 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nolinkurl is recognised, not dropped"
     (warnCodes (dvDoc "" s!"\\nolinkurl\{{url}}") == [])
 
+private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
+    (row : IndexRow) : IO Unit := do
+  let place := row.place
+  let ann := row.verdict
+  let call := row.call
+  let line := s!"{place} {ann} {call}"
+  let src := compatRowSrc pkg place call
+  let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex" src
+  let codes := ds.map (·.code)
+  if row.implemented then
+    let errors := ds.filter (·.severity == .error)
+    check ref s!"compat index {pkg}: '{call}' is marked {ann} but its source \
+fails with {String.intercalate ", " (errors.map (·.code)).toList}"
+      errors.isEmpty
+  if place != "pre" && place != "body" && place != "frame" then
+    failures ref s!"compat index {pkg}: unreadable place in: {line}"
+  else if ann == "impl" then
+    check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
+      (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
+    check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
+is the same one the engine elaborates when it knows none of these commands — \
+say why with inert:<why>, or probe the command where its effect lands"
+      (← compatRowEffect pkg place call)
+  else if ann.startsWith "inert:" then
+    let why := (ann.drop "inert:".length).toString
+    check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
+      (!why.isEmpty)
+    check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
+      (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
+    check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
+changes the document — promote it to impl"
+      (!(← compatRowEffect pkg place call))
+  else
+    match row.refusalCode? with
+    | some code =>
+      check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
+        (codes.contains code)
+    | none => failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
+
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,
-place `pre` | `body` | `frame` (a `beamer` frame body, for the class's own
-surface — a class loads by `\documentclass`, never `\usepackage`),
+place `pre` | `body` | `frame` (a presentation frame body, with the package
+loaded in its preamble; a presentation class loads by `\documentclass`),
 annotation `impl` | `inert:<why>` | `refuse:<code>`. An `impl` call
-elaborates without W0301/W0302 — nor W0012, the math parser's answer to a
+elaborates without errors or W0301/W0302 — nor W0012, the math parser's answer to a
 name it does not know, under which a formula is its own source text and so
 differs from the renamed call by its spelling alone — *and* changes the
 document by being recognised (`compatRowEffect`); a `refuse:` call fires exactly its named
@@ -2064,8 +2105,68 @@ that needs it, never as an exception list here, which would drift from the
 directory the way a second list always does; and it is loud in both
 directions, as a corpus file's own exclusion is: an `inert` row whose
 command starts changing the document fails until someone promotes it. The
-`why` may not be empty — a row that moves no ink says why it does not. -/
+`why` may not be empty — a row that moves no ink says why it does not.
+It still owes an error-free source: a failed declaration cannot earn
+compatibility merely because recovery left the document unchanged. -/
 def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
+  -- A difference from unknown-command recovery is not proof of a valid
+  -- source. Exercise the index's own judge, including the file reader.
+  let judge (pkg : String) (row : IndexRow) : IO (List String) := do
+    let found ← IO.mkRef []
+    checkCompatRow found pkg row
+    found.get
+  IO.FS.withTempDir fun dir => do
+    let file := dir / "fragment.tex"
+    let row : IndexRow :=
+      { place := "body", verdict := "impl", call := s!"\\input\{{file}}" }
+    let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+      (compatRowSrc "xcolor" row.place row.call)
+    check ref "compat judge: the missing input counterexample reaches the file reader"
+      (ds.any (·.code == "E0502") && (← compatRowEffect "xcolor" row.place row.call))
+    check ref "compat judge: a missing input cannot earn impl from recovery's different text"
+      ((← judge "xcolor" row).any (fun s => hasStr s "E0502"))
+    IO.FS.writeFile file "\\emph{Included text}"
+    check ref "compat judge: restoring the input lets the identical source earn impl"
+      ((← judge "xcolor" row).isEmpty)
+  let invalid : IndexRow :=
+    { place := "pre", verdict := "impl"
+      call := "\\documentclass{UnregisteredCompatClass}\\title{Probe}" }
+  let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+    (compatRowSrc "xcolor" invalid.place invalid.call)
+  check ref "compat judge: the invalid class counterexample changes the document"
+    (ds.any (·.code == "E0309") &&
+      (← compatRowEffect "xcolor" invalid.place invalid.call))
+  check ref "compat judge: an invalid class cannot earn impl"
+    ((← judge "xcolor" invalid).any (fun s => hasStr s "E0309"))
+  check ref "compat judge: an explicit class refusal still earns its declared code"
+    ((← judge "xcolor" { invalid with verdict := "refuse:E0309" }).isEmpty)
+  let invalidInert : IndexRow :=
+    { place := "pre", verdict := "inert:class-declaration"
+      call := "\\documentclass{UnregisteredCompatClass}" }
+  check ref "compat judge: a failed no-op declaration cannot earn inert"
+    (!(← compatRowEffect "xcolor" invalidInert.place invalidInert.call) &&
+      (← judge "xcolor" invalidInert).any (fun s => hasStr s "E0309"))
+  for (call, code) in [
+      ("\\UnregisteredCompatCommand{Text}", "W0301"),
+      ("\\(\\UnregisteredCompatSymbol\\)", "W0012")] do
+    let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+      (compatRowSrc "xcolor" "body" call)
+    check ref s!"compat judge: {code} still prevents impl"
+      (ds.any (·.code == code) &&
+        !(← judge "xcolor" { place := "body", verdict := "impl", call }).isEmpty)
+  check ref "compat judge: a justified no-op still earns inert"
+    ((← judge "etoolbox"
+      { place := "pre", verdict := "inert:empty-hook", call := "\\AtBeginDocument{}" }).isEmpty)
+  for (pkg, loads) in [("xcolor", true), ("listings", true), ("beamer", false), ("slides", false)] do
+    let row : IndexRow := { place := "frame", verdict := "impl", call := "\\emph{Framed text}" }
+    let src := compatRowSrc pkg row.place row.call
+    let (doc, ds) ← elabInputSrc "tests/compat-index/probe.tex" src
+    check ref s!"compat scaffold: {pkg} has a valid slide class in a frame probe"
+      (doc.docClass == .slides && ds.all (·.severity != .error))
+    check ref s!"compat scaffold: {pkg} loads as a package only when it is one"
+      (hasStr src s!"\\usepackage\{{pkg}}" == loads)
+    check ref s!"compat judge: {pkg} accepts a working frame probe"
+      ((← judge pkg row).isEmpty)
   let dir : System.FilePath := "tests/compat-index"
   for pkg in Compat.nativePackages do
     let found ← (dir / (pkg ++ ".txt")).pathExists
@@ -2077,37 +2178,7 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
     for line in content.splitOn "\n" do
       match IndexRow.parse? line with
       | none => pure ()
-      | some row =>
-        let place := row.place
-        let ann := row.verdict
-        let call := row.call
-        let line := line.trimAscii.toString
-        let src := compatRowSrc pkg place call
-        let codes := (elabStr src).2.map (·.code)
-        if place != "pre" && place != "body" && place != "frame" then
-          failures ref s!"compat index {pkg}: unreadable place in: {line}"
-        else if ann == "impl" then
-          check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
-            (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
-          check ref s!"compat index {pkg}: '{call}' is marked impl but the document \
-is the same one the engine elaborates when it knows none of these commands — \
-say why with inert:<why>, or probe the command where its effect lands"
-            (compatRowEffect pkg place call)
-        else if ann.startsWith "inert:" then
-          let why := (ann.drop "inert:".length).toString
-          check ref s!"compat index {pkg}: '{call}' is marked inert but says no why"
-            (!why.isEmpty)
-          check ref s!"compat index {pkg}: '{call}' is marked inert but warns unknown"
-            (!codes.contains "W0301" && !codes.contains "W0302" && !codes.contains "W0012")
-          check ref s!"compat index {pkg}: '{call}' is marked inert:{why} yet now \
-changes the document — promote it to impl"
-            (!compatRowEffect pkg place call)
-        else
-          match row.refusalCode? with
-          | some code =>
-            check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
-              (codes.contains code)
-          | none => failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
+      | some row => checkCompatRow ref pkg row
 
 /-- The note is the rewrite: each arm's replacement elaborates to exactly
 the document its N0100 note names — whole-`Doc` equality between the LaTeX
