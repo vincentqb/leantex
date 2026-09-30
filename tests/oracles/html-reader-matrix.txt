@@ -2,13 +2,16 @@
 target: chromium
 tools: node v26.9.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-09-30
-src-key: 00f32113f3f2d614
-browser-face-src-key: cfa4bd6d71189904
-browser-face-key: d3f1714be96578a6
+src-key: 431d0e15607e02b1
+browser-face-src-key: 39532f7f79c4c0ef
+browser-face-key: 033b1d0e22ad6f5f
+browser-face: animation animation.assets/i0-multipage.svg ok:225:de6221450c7ed44220bf1c30608e526fab202b63e6ca8b6173e3256dba8e90d8
+browser-face: animation animation.assets/p0-multipage.svg ok:19306:76bd6a5122c75e82b01fb78db815195bf36f3cb7c55eebc7b819b31f1d5b7d30
 browser-face: diagram-boundary diagram-boundary.assets/b879431b028dc79f5172639f1e493745.svg ok:13063:328976cbf658118181147f45593c0ec33aa06f3e7e67863203ca47dabe30637f
 browser-face: figures figures.assets/i0-box.svg ok:12892:7386ea03b2e75c2fecc7f0105cc707fdf072837c24dee353eaf317f66c988c93
 browser-face: figures figures.assets/i1-box.svg ok:12892:7386ea03b2e75c2fecc7f0105cc707fdf072837c24dee353eaf317f66c988c93
-fixtures: 85 built, unbuilt: theme-modern
+browser-face: page-select page-select.assets/i0-multipage.svg ok:23427:a7fb039dda5f78ad7edd7b4f498f69a4a65b66d357b84a79389078f80f194ea2
+fixtures: 87 built, unbuilt: theme-modern
 
 [feature]
 # feature         chromium      firefox
@@ -34,6 +37,7 @@ no-script         pass          untested
 abstract          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 affine-lengths    pass          untested      load,fonts,lang,landmarks,affine-screen,affine-print,color-scheme,reduced-motion,print,no-script
 algorithm         pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
+animation         pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 bibliography      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 blocks            pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script
 box-sides         pass          untested      load,fonts,lang,landmarks,box-side,color-scheme,reduced-motion,print,no-script
@@ -92,6 +96,7 @@ outline           pass          untested      load,fonts,lang,landmarks,color-sc
 overlays-blocks   pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script
 overlays          pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script
 overprint         pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script
+page-select       pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 palette           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 paragraphs        pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 poster-headline   pass          untested      load,images,fonts,lang,landmarks,box-side,color-scheme,reduced-motion,print,no-script
