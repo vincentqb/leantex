@@ -2552,8 +2552,8 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
-      -- premise: none — xparseProvideChecks covers unused replacement texts;
-      -- its suite wiring lands with the parent integration.
+      -- premise: Tests.xparseProvideChecks — an unused provision's
+      -- signature and replacement text leave the existing meaning unchanged.
       if provide && bound.any (fun m => st.binds.contains m || st.provideKeeps.contains m) then
         if let some sh := definerShape raws i n then
           -- Keep the operands intact for the rewrite's no-op accounting.
@@ -6443,7 +6443,7 @@ skipped, and the length keeps its value" pos
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     let provide := name == "providecommand" || name == "ProvideDocumentCommand"
     let st ← get
-    -- premise: compatChecks — provision keeps existing user and builtin
+    -- premise: Tests.xparseProvideChecks — provision keeps existing user and builtin
     -- meanings. Decide before interpreting an unused signature or body:
     -- even a recognized heading/size idiom must remain inert.
     if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then

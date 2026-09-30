@@ -24713,3 +24713,125 @@ pass; its existing text-length and source-trace audit findings are unchanged.
 The standard benchmark also passes: median HTML builds over five runs are
 79 ms for the themed fixture and 127 ms for the paper fixture; these are
 measurements of this run, with no before/after performance claim.
+
+### 2026-09-30 — Included Markdown uses the shared surface reader
+
+`\markdownInput{fragment.md}` now reads a fragment into the same surface
+AST used by standalone Markdown. It renders inside articles and frames
+through the existing elaborator and both backends. No generated TeX text
+is parsed again; fenced code remains literal. The native `markdown` package
+row names this file-inclusion subset. Package and command options still
+raise W0110, and unsupported inline, environment and renderer interfaces
+retain their diagnostics.
+
+The file splice now shares source reading, UTF-8 validation and diagnostic
+provenance. LuaLaTeX probes establish the filename rules: ordinary input
+tries the default TeX suffix first, while Markdown inclusion honours an
+explicit extension. Both fall back to a bare filename when appropriate.
+Directory reads and malformed bytes return the existing diagnostics.
+
+R62 pins the included-page guards. On `db831892`, the final tests fail
+126 assertions covering missing content, literal code and its positioned
+spaces, empty fragments, filenames, options and source locations.
+The compat-index harness now fulfils input requests before comparing a
+command with its renamed control, so file-based commands are measured by
+their effect. This adds file inclusion to the existing Markdown dialect;
+it does not execute the package's Lua converter or arbitrary installed TeX.
+
+Review also reproduced a pre-existing input-expansion gap: a file input
+inside an unused macro is read, and a filename supplied by a macro argument
+is treated as literal source. Six additional artifact guards fail for
+the two input surfaces. Use-time file effects remain owed to the input
+expansion boundary; resolving them needs the elaborator's bound arguments
+and a typed request/answer path, not a second macro interpreter in the
+driver. The direct-inclusion contract above does not claim this case.
+
+### 2026-09-30 — PDF imports do not depend on object storage form
+
+Ordinary stream lengths resolve integers through the existing direct and
+compressed value reader. Object-stream bootstrap lengths remain direct,
+as ISO 32000-2 section 7.5.7 requires. Enumeration caches decoded objects
+before resolving ordinary stream bytes. Page content arrays are
+dereferenced while preserving their order, multiplicity and empty case;
+single streams retain their original reference.
+
+Five proofs over the reader establish those representation contracts.
+The implementation remains pure and total, without recursive object
+resolution or new fuel. `pdfReadObjectsChecks` exercises 111 invented
+storage variants and 24 complete emitted-PDF equivalences. The three
+newly accepted forms failed on `db831892`; strict pypdf, Ghostscript and
+Poppler accept the reference variants, and all 111 source/shipped drawing
+comparisons agree. The image-decoder fuzz oracle passes 92,871 inputs.
+
+### 2026-09-30 — SVG conversion failures name their recovery
+
+The existing process boundary distinguishes failure to launch an image
+tool from a converter rejecting its input. A missing or non-executable
+tool names its dependency and executable PATH recovery; genuine converter
+errors keep their original cause. W0602 no longer always recommends
+manual re-export. The README documents the SVG runtime dependencies and
+the automatic same-source retry after installation.
+
+R61 pins twelve diagnostic assertions that failed on `db831892`.
+The guard injects only process responses: file reads, conversion plans,
+PDF import and emitted image paint remain real. Restoring the runner
+retries the identical source and replaces the placeholder with the known
+drawing. The guard also passes with an empty executable PATH, so it does
+not mistake this host's installed tools for the user's environment.
+
+### 2026-09-30 — Numbered overlays preserve disconnected selections
+
+The overlay value carries a nonempty union of intervals. `<1,4>` selects
+steps 1 and 4; `<1-4>` selects every step from 1 through 4. Membership,
+first appearance and the deck's extent resolve on this one IR value,
+which the PDF layout and typed HTML both consume. No backend parses
+overlay syntax, and the existing covered-content policy is unchanged.
+
+R63 pins `overlaySetChecks`: 183 artifact assertions failed on `db831892`
+while the continuous-range controls passed. The corrected four-page
+native PDF and browser deck pass their page and step checks, with
+LuaLaTeX as the independent selection oracle. Union membership is also
+held by `OverlaySpec.selects_exact` and `union_selects_exact`.
+
+### 2026-09-30 — Provision keeps an existing command's meaning
+
+The xparse provision family shares the existing definition scanner.
+An existing meaning consumes the provision's operands before signature
+or replacement-body analysis, so an unused definition cannot change ink
+or raise a loss from syntax that never executes. A fresh provision follows
+the same resolver as a new definition.
+
+`xparseProvideChecks` compares PDF layout and typed HTML with the document
+without the unused provision, across user commands, builtins and nested
+conditionals. Fresh definitions have separate visible-effect controls.
+
+### 2026-09-30 — Compatibility claims require an error-free probe
+
+The command-index judge now rejects errors in `impl` and `inert` rows,
+alongside unknown-command and unrendered-math losses. Package probes use
+their declared document context and fulfil file requests through the
+shared test reader. Seven deliberately broken probes failed before this
+change and pass as tests of the stricter judge.
+
+The stronger judge exposed a starred algorithm-comment argument error:
+the parser supplies the optional star as a word token, while the handler
+looked for a symbol. The one-line correction keeps comment and following
+line ink in both artifacts across the documented inline placement forms.
+Twenty-one targeted assertions failed before the correction; the focused
+checks and full build and test suite pass after it.
+
+### 2026-09-30 — Included headings stay inside their frame
+
+A frame's reader now declares its scope. Explicit IR headings inside that
+scope keep the frame's page, ground, vertical distribution and footer;
+only headings outside frames open deck dividers. A local heading also
+leaves the enclosing section title in force for subsequent frame footers.
+This is the shared IR heading contract, including Markdown headings,
+not a claim that Beamer's metadata-only section commands paint headings.
+
+`frameHeadingScopeChecks` holds both artifacts to that boundary across
+levels 1–3, distribution choices and footer/progress configurations.
+Before the fix, 115 assertions failed and the short rendered fixture
+split into five native pages. After it, all assertions pass and the
+fixture occupies one page. Independent LuaLaTeX probes confirm that
+metadata-only section declarations retain the same one-page raster.

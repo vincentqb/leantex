@@ -11,6 +11,7 @@ import Tests.Markdown
 import Tests.MarkdownInput
 import Tests.XparseProvide
 import Tests.OverlaySets
+import Tests.FrameHeadingScope
 import Tests.Census
 import Tests.Backends
 import Tests.Images
@@ -306,6 +307,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   packageCodeChecks ref oneFace
   xparseProvideChecks ref oneFace
   overlaySetChecks ref oneFace
+  frameHeadingScopeChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref
