@@ -1514,6 +1514,36 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       alphaCoverage.faceCovers .it .latinUpper && alphaCoverage.remaps .it .latinUpper &&
       alphaCoverage.faceCovers .tt .latinUpper && alphaCoverage.remaps .tt .latinUpper)
 
+  -- Item 6: a text-projected `.styled` scalar is judged against its own text
+  -- face, never the math face. Here the math face is missing the base letter
+  -- 'R' and a fallback face carries it; the sans slot sets the scalar
+  -- cleanly, so the math-face substitution scan must not raise W0009 for a
+  -- glyph that was never asked of the math face.
+  let rc : UInt32 := (Char.toNat 'R').toUInt32
+  let noR : Font.Font := { fira with
+    cmap := fira.cmap.filter (fun r => !(r.1 ≤ rc && rc ≤ r.2.1)) }
+  t "the synthetic math face genuinely lacks R" ((noR.gid 'R').isNone)
+  let noRfs : Font.FontSet := {
+    fonts := #[serif, noR]
+    index := allSlots
+    math := some 1
+    mathAlphabets := alphaCoverage
+    fallback := #[('R', 0)] }
+  let styledRaw := (Elab.run "synthetic.tex" "$\\mathsf{R}$").1
+  let (styledDoc, _) := Ir.resolveMathAlphas alphaCoverage noR.family styledRaw
+  let styledOut := Layout.run geom noRfs none styledDoc
+  t "text-projected styled scalar raises no spurious W0009 against the math face"
+    (!styledOut.diags.any (·.code == "W0009"))
+  t "the styled scalar still reaches the page (set in its text face)"
+    ((Layout.docScalars styledDoc).contains 'R')
+  -- The invariant behind the fix, pinned directly: the math-face scalar
+  -- collector drops a `.styled` nucleus that `scalars` keeps.
+  let oneStyled : Math.MList :=
+    .cons (.atom .ord (.styled { slot := .sans } 'R') .nil .nil false) .nil
+  t "mathScalars excludes a styled nucleus that scalarsList keeps"
+    (Math.MList.mathScalarsList #[] oneStyled == #[] &&
+      Math.MList.scalarsList #[] oneStyled == #['R'])
+
   -- Phase 3 projection contract (Item 3): one IR `MathTextStyle` fact, its
   -- PDF face-selection projection, its MathML `mathvariant` projection, and
   -- the agreement that both backends read the SAME typed style. Plus the

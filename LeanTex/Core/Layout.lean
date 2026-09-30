@@ -3483,7 +3483,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- construction is one face — so `m` excludes it here. A math
       -- alphabet's scalar no face covers rendered as its stand-in base
       -- letter (`layMathNucleus`): W0016 names the styling difference.
-      let acc := (Math.MList.scalarsList #[] body).foldl (fun acc c =>
+      let acc := (Math.MList.mathScalarsList #[] body).foldl (fun acc c =>
         if (font.gid c).isNone && !m.contains (idx, c) then
           match fs.fallbackFor c with
           | some fb =>
