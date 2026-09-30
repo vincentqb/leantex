@@ -1816,26 +1816,39 @@ def browserAssetSrc (en : Image.Loaded) : String :=
   if en.webSvg.isSome then ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
   else resolvedSrc en
 
-/-- The copy's file name: the store index, then the source's basename. The
-index prefix makes the name collision-free whatever the sources are called
-(`imageAssetName_inj`: two plots named `plot.png` in two directories keep
-apart); the basename keeps it readable. -/
-def imageAssetName (k : Nat) (href : String) : String :=
+private def imageFileName (kind : String) (k : Nat) (href : String)
+    (data : Option ByteArray) : String :=
+  let assetPrefix := kind ++ ListMark.arabicN k ++ "-" ++
+    (data.map (fun bytes => Flate.contentKey bytes ++ "-")).getD ""
+  -- Linux NAME_MAX is 255 bytes. Keep the format extension and a readable
+  -- suffix when the content key would push a valid basename over that limit.
+  let budget := 255 - assetPrefix.utf8ByteSize
   let base := basename href
-  "i" ++ ListMark.arabicN k ++ "-" ++ base
+  let suffix := if base.utf8ByteSize ≤ budget then base else
+    (base.toList.foldr (fun c (used, tail) =>
+      let used := used + (String.singleton c).utf8ByteSize
+      (used, if used ≤ budget then String.singleton c ++ tail else tail)) (0, "")).2
+  assetPrefix ++ suffix
+
+/-- The index keeps distinct requests apart (`imageAssetName_inj`).
+Captured bytes add their content key so rebuilding an image changes its
+browser cache identity; the basename keeps the file readable. -/
+def imageAssetName (k : Nat) (href : String) (data : Option ByteArray := none) : String :=
+  imageFileName "i" k href data
 
 /-- The static face has its own namespace: the same entry's moving SVG and
 print poster must never overwrite each other. -/
 def imagePosterName (k : Nat) (en : Image.Loaded) : String :=
-  "p" ++ ListMark.arabicN k ++ "-" ++
-    basename ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
+  imageFileName "p" k ((System.FilePath.mk (resolvedSrc en)).withExtension "svg").toString
+    en.posterSvg
 
 /-- The copy requests of the page: primary faces in store order, followed
 by any static faces selected by print or reduced-motion media. -/
 def imageAssets (imgs : Image.Store) : Array ImageAsset :=
   ((Array.range imgs.entries.size).filterMap fun k =>
     (imgs.get? k).bind fun en =>
-      if imageShips en then some { file := imageAssetName k (browserAssetSrc en), srcIndex := k }
+      if imageShips en then
+        some { file := imageAssetName k (browserAssetSrc en) en.browserBytes, srcIndex := k }
       else none) ++
   ((Array.range imgs.entries.size).filterMap fun k =>
     (imgs.get? k).bind fun en =>
@@ -1859,7 +1872,8 @@ def imageRequestHref (assetsDir : String) (imgs : Image.Store) (req : Image.Requ
   | some k =>
     match imgs.get? k with
     | some en =>
-      if imageShips en then imageAssetHref assetsDir (imageAssetName k (browserAssetSrc en))
+      if imageShips en then
+        imageAssetHref assetsDir (imageAssetName k (browserAssetSrc en) en.browserBytes)
       else resolvedSrc en
     | none => req.src
   | none => req.src
@@ -1981,12 +1995,12 @@ private theorem dash_split (a a' r r' : List Char)
 prefix carries identity, so two sources with one basename in two
 directories never collide beside the page. Basenames need not be distinct
 and are not claimed to be. -/
-theorem imageAssetName_inj {k k' : Nat} {h h' : String}
-    (e : imageAssetName k h = imageAssetName k' h') : k = k' := by
+theorem imageAssetName_inj {k k' : Nat} {h h' : String} {data data' : Option ByteArray}
+    (e : imageAssetName k h data = imageAssetName k' h' data') : k = k' := by
   have hl := congrArg String.toList e
   have hi : "i".toList = ['i'] := rfl
   have hd : "-".toList = ['-'] := rfl
-  simp only [imageAssetName, String.toList_append, List.append_assoc, hi, hd,
+  simp only [imageAssetName, imageFileName, String.toList_append, List.append_assoc, hi, hd,
     List.singleton_append] at hl
   exact ListMark.arabicN_inj (String.ext
     (dash_split _ _ _ _ (arabicN_no_dash k) (arabicN_no_dash k') (List.cons.inj hl).2))
@@ -1997,7 +2011,8 @@ the `shipFaces_covers` shape. -/
 theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loaded}
     (hen : imgs.get? k = some en) (hr : imageShips en = true) :
     ∃ a ∈ imageAssets imgs, a.srcIndex = k := by
-  refine ⟨{ file := imageAssetName k (browserAssetSrc en), srcIndex := k }, ?_, rfl⟩
+  refine ⟨{ file := imageAssetName k (browserAssetSrc en) en.browserBytes, srcIndex := k },
+    ?_, rfl⟩
   apply Array.mem_append.mpr
   left
   simp only [Array.mem_filterMap]
@@ -2016,7 +2031,8 @@ theorem img_request_src_shipped (assetsDir : String) (imgs : Image.Store) (req :
     (hen : imgs.get? k = some en) (hr : imageShips en = true) :
     ∃ a ∈ imageAssets imgs, imageRequestHref assetsDir imgs req =
       imageAssetHref assetsDir a.file := by
-  refine ⟨{ file := imageAssetName k (browserAssetSrc en), srcIndex := k }, ?_, ?_⟩
+  refine ⟨{ file := imageAssetName k (browserAssetSrc en) en.browserBytes, srcIndex := k },
+    ?_, ?_⟩
   · apply Array.mem_append.mpr
     left
     simp only [Array.mem_filterMap]

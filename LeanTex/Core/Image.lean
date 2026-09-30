@@ -1998,6 +1998,11 @@ structure Loaded extends Request where
   companion : Option ByteArray := none
   deriving Inhabited
 
+/-- The captured face the browser receives; naming and publication read
+these same bytes, even if the source file changes during the build. -/
+def Loaded.browserBytes (en : Loaded) : Option ByteArray :=
+  en.webSvg.orElse fun _ => en.source
+
 /-- One intrinsic size for both backends: a successfully loaded image's
 animation canvas, or its own geometry for an ordinary include. -/
 def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=

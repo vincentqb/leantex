@@ -51,7 +51,7 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
-  animatedFacesChecks)
+  animatedFacesChecks imageContentUrlChecks)
 
 namespace Reports
 
@@ -379,7 +379,14 @@ def reports : List Report := [
     pins := [check% svgAssetChecks]
     accept := ["synthetic exporter-doctype inputs through the installed converters, with original browser bytes and painted native PDF pixels",
       "the private reference figure rendered from its original vector source"]
-    state := .guarded "1c668735" .before .author }
+    state := .guarded "1c668735" .before .author },
+  { id := "R58", date := "2026-09-30"
+    what := "a rebuilt browser figure retained the address of its cached blank response, so replaced image bytes did not reach the page"
+    pins := [check% imageContentUrlChecks, check% htmlAssetChecks,
+      thm% HtmlDoc.imageAssetName_inj, thm% HtmlDoc.img_request_src_shipped,
+      thm% HtmlDoc.imagePosterHref_covers]
+    accept := ["a controlled browser cache preserves a blank private figure after its asset changes, while the rebuilt content-keyed page draws it"]
+    state := .guarded "5e8c83c9" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

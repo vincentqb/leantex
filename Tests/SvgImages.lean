@@ -62,19 +62,73 @@ def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sources := elemAttrsList (· == "source") #[] tree.toList
   let assetPrefix := "output%20files/figures%231/"
   let encoded := "moving%20figure%2C%23%3F%2520%C3%A9.svg"
+  let key := Flate.contentKey "<svg/>".toUTF8 ++ "-"
   t "SVG primary URL encodes the asset directory and literal filename"
-    (images.any fun (_, attrs) => attrs.contains ("src", assetPrefix ++ "i0-" ++ encoded))
+    (images.any fun (_, attrs) => attrs.contains ("src", assetPrefix ++ "i0-" ++ key ++ encoded))
   t "SVG print and reduced-motion srcset is one encoded URL"
     (sources.any fun (_, attrs) =>
-      attrs.contains ("srcset", assetPrefix ++ "p0-" ++ encoded) &&
+      attrs.contains ("srcset", assetPrefix ++ "p0-" ++ key ++ encoded) &&
       attrs.contains ("media", "print, (prefers-reduced-motion: reduce)"))
   t "SVG URL encoding does not rename published files"
     ((HtmlDoc.imageAssets imgs).map (·.file) ==
-      #["i0-" ++ source, "p0-" ++ source])
+      #["i0-" ++ key ++ source, "p0-" ++ key ++ source])
   let facts := HtmlDoc.a11yFacts true false tree
   t "encoded SVG URLs retain the accessible image alternative"
     (images.size == 1 && facts.imgs == 1 && facts.imgsUnnamed == 0 &&
       facts.hiddenTabStops == 0)
+
+/-- A browser may retain a successful but blank image response across
+document builds. The typed page must change that URL when its published
+bytes change, including an independently selected print poster. Equal
+published bytes keep their URL; a clock or an unrelated source does not
+participate in the image's cache identity. -/
+def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let blank := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"/>".toUTF8
+  let drawn := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\">\
+    <rect width=\"20\" height=\"20\" fill=\"red\"/></svg>".toUTF8
+  let doc := (elabStr "\\includegraphics[alt={A square}]{chart.svg}").1
+  let links (en : Image.Loaded) : Array String × Array String :=
+    let (_, tree, _) := HtmlDoc.emitTree
+      { imgs := { entries := #[en] }, assetsDir := "assets" } doc
+    (tree.foldl HtmlDoc.imgSrcsOne #[],
+      (elemAttrsList (· == "source") #[] tree.toList).filterMap fun (_, attrs) =>
+        HtmlDoc.attrOf? attrs "srcset")
+  let captured : Image.Loaded :=
+    { src := "chart.svg", info := some { pxW := 20, pxH := 20 }, source := some blank }
+  t "image refresh: changed captured source changes the emitted image URL"
+    ((links captured).1 != (links { captured with source := some drawn }).1)
+  let converted := { captured with webSvg := some blank }
+  let updated := { converted with webSvg := some drawn }
+  t "image refresh: changed converted face changes the emitted image URL"
+    ((links converted).1 != (links updated).1)
+  t "image refresh: captured face wins over a changed original source"
+    (links updated == links { updated with source := some drawn })
+  let poster := { updated with posterSvg := some blank }
+  let posterUpdated := { poster with posterSvg := some drawn }
+  t "image refresh: changed poster changes its emitted media URL alone"
+    ((links poster).1 == (links posterUpdated).1 &&
+      (links poster).2 != (links posterUpdated).2)
+  t "image refresh: changed moving face keeps the unchanged poster URL"
+    ((links poster).1 != (links { poster with webSvg := some blank }).1 &&
+      (links poster).2 == (links { poster with webSvg := some blank }).2)
+  for en in [captured, converted, updated, poster, posterUpdated] do
+    let emitted := links en
+    let assets := HtmlDoc.imageAssets { entries := #[en] }
+    t "image refresh: every emitted URL names its literal published file"
+      ((emitted.1 ++ emitted.2) ==
+        assets.map (fun asset => HtmlDoc.imageAssetHref "assets" asset.file))
+    t "image refresh: rebuilding the same captured bytes preserves its URLs"
+      (links en == links { en with source := en.source.map (fun bytes => bytes.extract 0 bytes.size) })
+  for stem in [String.ofList (List.replicate 216 'a'),
+      String.ofList (List.replicate 110 'é'), String.ofList (List.replicate 60 '𝛼')] do
+    let en := { posterUpdated with href := stem ++ ".svg" }
+    let assets := HtmlDoc.imageAssets { entries := #[en] }
+    t "image refresh: long primary and poster names fit a 255-byte filesystem component"
+      (assets.all fun asset => asset.file.utf8ByteSize ≤ 255 && asset.file.endsWith ".svg")
+    t "image refresh: shortened names still match the typed page's links"
+      ((links en).1 ++ (links en).2 ==
+        assets.map (fun asset => HtmlDoc.imageAssetHref "assets" asset.file))
 
 /-- librsvg supplies a static drawing, not a selected SMIL frame. Reject
 non-first posters before invoking any converter. Empty input makes this
@@ -94,6 +148,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgDoctypeChecks ref
   svgSourcePrecedenceChecks ref
   svgAssetUrlChecks ref
+  imageContentUrlChecks ref
   svgPosterChecks ref
   let t := check ref
   t "extensionless image lookup includes SVG"

@@ -1550,8 +1550,9 @@ private def pageSelectionKey : PdfRead.PageSelection → String
   | .number n => s!"page:{n}"
 
 /-- Hermetic inputs to the host-only browser-face conversion: exact vector
-source bytes, request/page identity, generated hrefs, optional companions,
-and the shared tool recipe. No converter runs here. -/
+source bytes, request/page identity, unkeyed destination names, optional
+companions, and the shared tool recipe. Converted content keys are unavailable
+until the converter runs; no converter runs here. -/
 def browserSourceBlobs (corpus : System.FilePath) (name : String) (doc : Ir.Doc)
     (store : Image.Store) (read : Array (String × ByteArray)) :
     IO (Array (String × ByteArray)) := do

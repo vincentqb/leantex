@@ -101,6 +101,8 @@ PDF 2.0 does not play SVG animations natively.
 
 If browser conversion fails, HTML shows a labelled placeholder and reports
 the converter error; the native PDF image remains available.
+Published images and print posters carry content keys in their filenames,
+so rebuilding changed bytes gives the browser a new image URL.
 
 The converter oracle uses synthetic SVGs, including resources a converter
 would silently omit: build `leantex Tests.SvgValidation`, then run

@@ -4192,7 +4192,8 @@ under that directory exists before the assertion gate. A fact of the
 artifact, not the IR — file placement is where a page lives — so the
 in-memory half reads the typed tree (`imgSrcs`) and the on-disk half runs
 this tree's own binary, on a document that ships its face and its raster
-from the corpus. -/
+from the corpus. Replacing a raster at the same source path changes its
+published URL; rebuilding unchanged bytes preserves the page and URL. -/
 def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let png : Image.Plan := { pxW := 64, pxH := 40 }
@@ -4275,18 +4276,42 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let body := "\\begin{document}\nA box: \\includegraphics[alt={A box}]{rects.png}.\n\\end{document}\n"
     IO.FS.writeFile (dir / "doc.tex") (pre ++ body)
     IO.FS.createDirAll (dir / "out")
-    let r ← IO.Process.output {
+    let buildPage := IO.Process.output {
       cmd := ".lake/build/bin/leantex"
       args := #[(dir / "doc.tex").toString, "-o", (dir / "out" / "x.html").toString] }
+    let readImage (phase : String) (expected : ByteArray) : IO (String × String) := do
+      let page ← IO.FS.readFile (dir / "out" / "x.html")
+      let imgs := page.splitOn "<img "
+      let tag := ((imgs.getD 1 "").splitOn ">").headD ""
+      let attr := ((" " ++ tag).splitOn " src=\"").getD 1 ""
+      let url := (attr.splitOn "\"").headD ""
+      let beside := url.startsWith "x.assets/"
+      t s!"driver: {phase}: the page links one raster under <stem>.assets"
+        (imgs.length == 2 && beside && !hasStr page "src=\"rects.png\"")
+      let copy := dir / "out" / url
+      let copied ← if beside then copy.pathExists else pure false
+      t s!"driver: {phase}: the linked raster is published beside the page" copied
+      t s!"driver: {phase}: the linked raster is the source, byte for byte"
+        (copied && (← if copied then IO.FS.readBinFile copy else pure ByteArray.empty) == expected)
+      return (page, url)
+    let r ← buildPage
     t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
-    let copy := dir / "out" / "x.assets" / "i0-rects.png"
-    let copied ← copy.pathExists
-    t "driver: the raster is published beside the page under <stem>.assets" copied
-    t "driver: the published raster is the source, byte for byte"
-      (copied && (← if copied then IO.FS.readBinFile copy else pure ByteArray.empty) == rects)
-    let page ← IO.FS.readFile (dir / "out" / "x.html")
-    t "driver: the page links the copy, not the source spelling"
-      (hasStr page "src=\"x.assets/i0-rects.png\"" && !hasStr page "src=\"rects.png\"")
+    let (_, url) ← readImage "first build" rects
+    let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+    t "driver: the replacement raster has different source bytes" (alpha != rects)
+    IO.FS.writeBinFile (dir / "rects.png") alpha
+    let changed ← buildPage
+    t s!"driver: the same document and output rebuild after replacing the raster: \
+{changed.stdout}{changed.stderr}" (changed.exitCode == 0)
+    let (changedPage, changedUrl) ← readImage "replaced raster" alpha
+    t "driver: replacing bytes at the same source path changes the page's image URL"
+      (url != changedUrl)
+    let unchanged ← buildPage
+    t s!"driver: the same document and output rebuild with unchanged raster bytes: \
+{unchanged.stdout}{unchanged.stderr}" (unchanged.exitCode == 0)
+    let (unchangedPage, unchangedUrl) ← readImage "unchanged raster" alpha
+    t "driver: unchanged raster bytes preserve the page and its image URL"
+      (unchangedPage == changedPage && unchangedUrl == changedUrl)
     IO.FS.writeFile (dir / "fail.tex") (pre ++ "\\assert{ pages == 99 }\n" ++ body)
     let r2 ← IO.Process.output {
       cmd := ".lake/build/bin/leantex"

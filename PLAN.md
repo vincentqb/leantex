@@ -24610,3 +24610,37 @@ The full warning-as-failure build and test suite pass, as do the focused
 installed-converter checks. Chromium passes all 85 fixtures and 16 feature
 checks; the reader baseline records the new converter recipe with unchanged
 captured-face bytes. Image fuzzing passes all 92,871 inputs.
+
+### 2026-09-30 — Rebuilt browser images get content-specific addresses
+
+A cached successful image response can remain blank after the file behind
+its URL is replaced. Earlier browser acceptance used fresh profiles with
+caching disabled, so it could not reveal this failure. A controlled run
+with caching enabled retained the blank figure across a rebuild and drew
+the replacement when its URL changed. The reporting viewer has not been
+identified; the reproduction establishes the cache defect independently.
+
+Image publication now keys each primary face and static poster by its own
+captured bytes, using the existing content-key function. Naming and copying
+read `Image.Loaded.browserBytes`, so a native raster cannot be reread from
+a changed source after its name was decided. The store index still keeps
+different requests apart, and URL encoding still follows literal filename
+selection. No timestamp or browser script participates.
+
+R58 pins `imageContentUrlChecks` and the driver publication checks. Four
+typed-page assertions failed on `5e8c83c9` before the change: captured
+source, converted face, changed poster, and changed moving face. Equal
+published bytes retain their address; changing one face leaves the other
+face's address alone.
+
+Review found that adding the key could exceed the filesystem's 255-byte
+filename limit. Oversized basenames now retain a UTF-8 suffix and their
+extension within the remaining byte budget; ordinary names stay readable.
+Three boundary cases failed before the bound, including multibyte names.
+
+The focused guards, full warning-as-failure build, and full test suite pass.
+The real rebuilt page draws the replacement figure in the same browser
+session that retained the blank response; its final HTML matches the
+rendered acceptance artifact byte for byte. Chromium passes all 85 corpus
+fixtures and the feature probes. The regenerated reader baseline records
+the new image addresses without lowering a score.

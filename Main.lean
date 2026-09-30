@@ -830,17 +830,16 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
     else unconverted := unconverted.push r.src
   return ({ entries }, pubs, diags, unconverted)
 
-/-- An image publication: captured SVG bytes when converted, or the source
-file of a native raster. The file name is the typed page's asset request. -/
+/-- An image publication: captured browser bytes and their source path.
+The file name is the typed page's asset request. -/
 structure ImageCopy where
   source : System.FilePath
   name : String
   data : Option ByteArray
 
-/-- The image copies a page requests (`HtmlDoc.imageAssets`), each with the
-path its bytes are read from: the entry's resolved spelling against the
-document's directory — what `fetchImage` resolved, so the bytes copied are
-the bytes decoded. Pure: the plan of the copies, which `publish` performs
+/-- The image copies a page requests (`HtmlDoc.imageAssets`), carrying the
+same captured bytes its content keys name. The resolved source is a fallback
+for entries without captured bytes. Pure: `publish` performs the copies
 after the gate. -/
 def imageCopies (file : String) (imgs : Image.Store) : Array ImageCopy :=
   let dir := (System.FilePath.mk file).parent.getD "."
@@ -848,7 +847,7 @@ def imageCopies (file : String) (imgs : Image.Store) : Array ImageCopy :=
     (imgs.get? a.srcIndex).map fun en =>
       let p := System.FilePath.mk (HtmlDoc.resolvedSrc en)
       { source := if p.isAbsolute then p else dir / p, name := a.file
-        data := if a.poster then en.posterSvg else en.webSvg }
+        data := if a.poster then en.posterSvg else en.browserBytes }
 
 /-- Phase 3's single write site, after the assertion gate: the only code in
 the driver that brings an output location into existence — the `-o`
@@ -875,8 +874,7 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
       for pub in pubs do
         IO.FS.writeBinFile (dir / pub.name) (← IO.FS.readBinFile pub.cached)
       ui.phase "boundary-svg" s!"{pubs.size} pictures ({assetsDir})" (← since t)
-    -- Images publish under the names the typed page linked. SVG bytes
-    -- come from the captured source or conversion; native rasters copy.
+    -- Images publish the captured bytes their content keys name.
     unless rasters.isEmpty do
       let t ← IO.monoMsNow
       let dir := parent / assetsDir
