@@ -472,6 +472,69 @@ values, or location entered the repository.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-30 — the widened alphabet differential falsifies three claims the
+prior entry made, and names the fix. The narrow 32-row matrix (one letter
+`O`, sym source, no nesting) hid every blocking finding; widening
+`scripts/math-alphabet-diff.lean` to per-range anchors, Letterlike holes,
+nested stacks, `\boldsymbol`, and both source policies across the four faces
+produced 60 DIFF/MISSING rows against LuaLaTeX on this host. The oracle is
+the authority; each divergence below is measured, not reasoned.
+
+*Nesting is a single-slot replacement, not a stack.* `resolveAlphaList`
+threads `active : Option MathAlphabet`; a nested alphabet overwrites it, so
+when the inner alphabet does not cover a scalar's range nothing falls
+through to an outer one that does. `\mathbf{\mathcal{A}}` on Fira (no script
+range): LuaLaTeX paints bold 𝐀 — inner cal uncovered, outer bf wins — while
+the engine leaves plain italic 𝐴. `\mathbf{\mathcal{5}}` and
+`\mathbf{\mathfrak{5}}` diverge on every face (neither cal nor frak covers
+digits; bf does). On Latin Modern, TeX Gyre Pagella, and STIX Two, whose
+faces carry the script range, the same nested rows agree — the defect is
+exactly the missing outer fallthrough. The fix is a stack: `active` becomes
+a list innermost-first, and each scalar takes the first alphabet in it whose
+coverage remaps the scalar's range, else the source scalar. The prior
+entry's "a nested alphabet replaces its outer scope" is the bug.
+
+*Text-sourced legacy commands take a host glyph.* `\mathsf{R}` under
+unicode-math defaults (mathsf = text) paints `R` from `LMSans10` in
+LuaLaTeX; the engine remaps to U+1D5B1 and, Fira lacking it, sets it from
+the host `ArsenalMath-Sans` — the named finding. `\mathbf{x}`,
+`\mathit{y}`, `\mathtt{k}` diverge the same way. `MathAlphabetCoverage.remaps`
+returns `true` for a `text` source, which is backwards: until the text-slot
+projection exists, a text-sourced command must leave the source scalar in
+the selected math face and name one N0018, never remap into a range the
+face then misses.
+
+*`\boldsymbol`/`bfit` over-bolds.* With no bold math version declared,
+LuaLaTeX's `\boldsymbol` is near-identity here: `\boldsymbol{O}`→italic 𝑂,
+`\boldsymbol{5}`→plain 5, `\boldsymbol{\alpha}`→italic 𝛼,
+`\boldsymbol{\Gamma}`→plain Γ. The engine paints bold-italic/bold in all
+four. `\boldsymbol{5}`→plain 5 confirms bfit carries no digits: the
+`bfit` digit base (U+1D7CE) is to be removed, so an uncovered bfit digit
+keeps its source scalar. Under the stack fix a bfit that a face does not
+carry falls through to the source italic, which is what the first three
+rows want.
+
+*Declared ranges still missing.* `\mathit{\Gamma}` (it Greek upper) paints
+plain Γ, not 𝛤; `\symup{\Gamma}`, `\symbfup{\gamma}`, `\symbfup{\nabla}`
+produce no glyph at all (the commands are unhandled). These are the
+it Greek/misc, up Greek, and bfup lower-Greek/misc coverage rows owed.
+
+*Backends render an unresolved alphabet instead of refusing.*
+`Layout` and `MathMl` match `.alpha _ body` and render the body with the
+alphabet ignored. `resolveMathAlphas_covers` proves the resolved document
+is `alphaFree`, so those arms are unreachable — but an unreachable arm that
+silently renders the body is the finding-3 hazard; it must refuse loudly.
+
+The widened `scripts/math-alphabet-diff.lean` is the fail-first oracle for
+all of the above: 108 of 168 rows PASS today (the single-letter sym anchors,
+the holes, the covered-face nested rows, and `\mathrm` text), and the 60
+DIFF/MISSING rows are the contract the resolver rewrite must turn green.
+`--selftest` still passes (the Ghostscript glyph reader is unchanged). The
+report remains a report, never a hermetic gate. The fixes named here —
+stack resolution, the text-source leave-scalar policy with one N0018, the
+bfit-digit removal, the missing-range coverage, and the backend refusal —
+are owed and not yet applied.
+
 2026-09-25 — the last two places a key name was not read whole, found by
 asking the same question of the rest of the reader (M8b slice 4, the key-name
 entry's follow-through). Both are the entry above's defect in a different
