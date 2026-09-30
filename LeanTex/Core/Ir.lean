@@ -13628,6 +13628,20 @@ def resolveMathAlphas (coverage : Math.MathAlphabetCoverage) (family : String)
       (subject := some ("math-alpha:" ++ a.name))
   (resolved, diags)
 
+/-- The N0018 census is `_named`: `resolveMathAlphas` emits exactly one
+diagnostic per missing alphabet, each carrying that alphabet's key as its
+subject (`math-alpha:<name>`). Since `missingMathAlphas` is derived from the
+same `remaps` the resolver keeps scalars by (`Math.missingCharAlpha_kept`),
+the census cannot drift from what rendered: the IR owner is the single
+subject-bearing owner of the whole-alphabet loss, and the per-character
+Layout path sees only remapped scalars this census never names. -/
+theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc) :
+    (resolveMathAlphas coverage family doc).2.map (·.subject) =
+      (missingMathAlphas coverage doc).map
+        (fun a => some ("math-alpha:" ++ a.name)) := by
+  simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
+
 mutual
 
 /-- The census face of the map, per node: a leaf function that conserves

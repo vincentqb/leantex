@@ -1957,6 +1957,34 @@ def missingCharAlpha (coverage : MathAlphabetCoverage) :
       else none
     | none => missingCharAlpha coverage rest c
 
+/-- The census names only scalars the resolver left at their source: if
+`missingCharAlpha` blames an alphabet for `c`, the stack kept `c` rather
+than remapping it. So the whole-alphabet census (the N0018 owner) and the
+remapped scalars the per-character Layout path sees are over disjoint
+scalars — no glyph is accounted twice, and the census cannot drift from
+what the resolver rendered. -/
+theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
+    ∀ (active : List MathAlphabet) (c : Char),
+      (missingCharAlpha coverage active c).isSome →
+        resolveCharStack coverage active c = c
+  | [], c => by intro h; simp [missingCharAlpha] at h
+  | a :: rest, c => by
+    intro h
+    rw [missingCharAlpha] at h
+    rw [resolveCharStack]
+    cases hr : a.rangeOf c with
+    | none =>
+      simp only [hr] at h ⊢
+      exact missingCharAlpha_kept coverage rest c h
+    | some r =>
+      simp only [hr] at h ⊢
+      cases hc : coverage.remaps a r with
+      | true => simp [hc] at h
+      | false =>
+        cases hk : resolveCharStack coverage rest c == c with
+        | true => simp [eq_of_beq hk]
+        | false => simp [hc, hk, bne] at h
+
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
     (active : List MathAlphabet) (out : Array MathAlphabet) (c : Char) :
     Array MathAlphabet :=
