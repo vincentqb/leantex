@@ -245,6 +245,18 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
   | .N0016 => probed .N0016
   | .N0018 => dvL withMath "$\\mathcal{L} + \\mathsf{A}$"
+  -- A styled scalar whose range the math face declares covered, yet whose
+  -- glyph is an isolated hole: the bold range's anchor is present (coverage
+  -- keeps `remaps`), the specific glyph filtered out, so the resolver
+  -- applied the alphabet and layout meets the hole and stands the letter in.
+  | .W0016 =>
+    match withMath.fonts[1]? with
+    | some fira =>
+      let noBold : Font.Font := { fira with
+        cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
+      let fs : Font.FontSet := { withMath with fonts := #[withMath.fonts[0]!, noBold] }
+      dvL fs "$\\mathbf{A}$"
+    | none => #[]
   | .N0017 => (Elab.run "doc.tex" "A classless page, assumed article.").2
   | .N0019 => dvE (dvDoc "" "\\begin{ifbackend}{pdf}\nprint only\n\\end{ifbackend}")
   | .N0020 =>
