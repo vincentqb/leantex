@@ -47,7 +47,7 @@ def readers : List String := ["chromium", "firefox"]
 def features : List String :=
   ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
-   "print-sheets", "no-script"]
+   "print-sheets", "no-script", "code-height", "deck-links"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -191,6 +191,13 @@ const [lightInk, lightSurface, darkInk, darkSurface] = (process.env.LT_TOKENS ||
 // Every check runs inside the page and returns {ok, n, why}; n = 0 means
 // the fixture does not exercise the feature.
 const checks = {
+  'code-height': () => {
+    const boxes = [...document.querySelectorAll('section.slide pre')]
+      .filter(p => p.getBoundingClientRect().width > 0);
+    const bad = boxes.filter(p => p.scrollHeight > p.clientHeight + 1);
+    return { ok: bad.length === 0, n: boxes.length,
+      why: bad.length ? `${bad.length} code boxes hide lines inside the slide` : '' };
+  },
   images: () => {
     const imgs = [...document.images];
     const bad = imgs.filter(i => !(i.complete && i.naturalWidth > 0 && i.naturalHeight > 0
@@ -504,6 +511,108 @@ const printDeck = async (page, name, fx) => {
     why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` } };
 };
 
+const deckLinks = async (page, url) => {
+  const info = await page.evaluate(() => {
+    if (!document.documentElement.hasAttribute('data-deck-script')) return null;
+    const snaps = [...document.querySelectorAll('[data-snap]')];
+    const frames = [...document.querySelectorAll('[data-frame-number]')];
+    const unique = frames.filter((f, i) =>
+      frames.findIndex(g => g.dataset.frameNumber === f.dataset.frameNumber) === i);
+    const frame = f => ({ id: f.id, n: f.dataset.frameNumber });
+    const stepped = unique.find(f => f.querySelectorAll('[data-snap]').length > 1);
+    return { snaps: snaps.length,
+      next: snaps.findIndex(s => (s.closest('.slide-track') || s) === unique[0]) + 1,
+      frames: unique.map(frame), stepped: stepped ? frame(stepped) : null };
+  });
+  if (!info || info.snaps === 0) return { n: 0 };
+  const at = async id => page.waitForFunction(id => {
+    const stage = document.getElementById(id);
+    if (!stage) return false;
+    const snap = stage.querySelector('[data-snap]');
+    const el = snap && snap.getBoundingClientRect().width === 0
+      ? stage.querySelector('section.slide') : stage;
+    return el && Math.abs(el.getBoundingClientRect().left) < 1;
+  }, id, { timeout: 2500 });
+  const hash = async h => page.waitForFunction(h => location.hash === h, h, { timeout: 2500 });
+  const atSnap = async i => page.waitForFunction(i => {
+    const snap = document.querySelectorAll('[data-snap]')[i];
+    if (!snap) return false;
+    const el = snap.getBoundingClientRect().width > 0 ? snap
+      : snap.closest('.slide-track').querySelector('section.slide');
+    return Math.abs(el.getBoundingClientRect().left) < 1;
+  }, i, { timeout: 2500 });
+  let phase = 'initial fragment';
+  try {
+    if (!new URL(page.url()).hash) throw new Error('the initial slide has no fragment');
+    if (!info.frames.length) return { ok: true, n: 1 };
+    const first = info.frames[0];
+    phase = 'numbered link and reload';
+    await page.goto(url + '#' + first.n);
+    await at(first.id);
+    await page.reload();
+    await at(first.id);
+    await hash('#' + first.n);
+    // Authored title anchors still point to the same frame, in both directions.
+    const last = info.frames[info.frames.length - 1];
+    phase = 'title anchors';
+    await page.goto(url + '#' + last.id);
+    await at(last.id);
+    await page.goto(url + '#' + first.id);
+    await at(first.id);
+    await page.goto(url + '#' + first.n);
+    if (info.frames.length > 1 || info.stepped?.id === first.id) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForFunction(h => location.hash !== h, '#' + first.n, { timeout: 2500 });
+      await atSnap(info.next);
+      const nextHash = new URL(page.url()).hash;
+      phase = 'history back';
+      await page.goBack();
+      await hash('#' + first.n);
+      await at(first.id);
+      phase = 'history forward';
+      await page.goForward();
+      await hash(nextHash);
+      await atSnap(info.next);
+      await page.reload();
+      await hash(nextHash);
+      await atSnap(info.next);
+    }
+    if (info.stepped) {
+      phase = 'reveal fragment';
+      const f = info.stepped;
+      await page.goto(url + '#' + f.n + '.2');
+      await page.waitForFunction(id => {
+        const track = document.getElementById(id);
+        const snap = track.querySelectorAll('[data-snap]')[1];
+        const el = snap.getBoundingClientRect().width > 0 ? snap : track.querySelector('section.slide');
+        return track.dataset.snapped === '2' && Math.abs(el.getBoundingClientRect().left) < 1;
+      }, f.id, { timeout: 2500 });
+      phase = 'reduced-motion reveal';
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.reload();
+      await at(f.id);
+      await hash('#' + f.n + '.2');
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+    }
+    if (info.frames.length > 1) {
+      phase = 'native scroll';
+      await page.goto(url + '#' + first.n);
+      await at(first.id);
+      await page.evaluate(id => document.getElementById(id).scrollIntoView({
+        behavior: 'instant', inline: 'start', block: 'nearest' }), last.id);
+      await hash('#' + last.n);
+      await at(last.id);
+    }
+    return { ok: true, n: 1 };
+  } catch (e) {
+    return { ok: false, n: 1, why: phase + ': ' + clean(e.message) };
+  } finally {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto(url);
+    await page.evaluate(() => document.fonts.ready);
+  }
+};
+
 async function runReader(name) {
   let browser;
   try {
@@ -537,6 +646,7 @@ async function runReader(name) {
       for (const [feature, fn] of Object.entries(checks)) {
         out(fx, name, feature, cell(await page.evaluate(fn)));
       }
+      out(fx, name, 'deck-links', cell(await deckLinks(page, url)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
         light.bg === lightSurface && light.fg === lightInk ? 'tokens' : 'declared');

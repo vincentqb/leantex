@@ -393,7 +393,14 @@ def reports : List Report := [
       thm% Image.fulfilRequests_covers, thm% HtmlDoc.img_request_src_shipped]
     accept := ["synthetic source-only builds paint the final animation and static figure in the native PDF, publish the original browser sources and a painted print poster, and create no figure exports",
       "the private presentation builds directly from its vector sources without a preprocessing helper"]
-    state := .guarded "3fcf4348" .before .author }
+    state := .guarded "3fcf4348" .before .author },
+  { id := "R60", date := "2026-09-30"
+    what := "crowded browser slides shrank scrollable code boxes and hid trailing lines inside their backgrounds"
+    pins := [check% deckCssChecks, thm% HtmlDoc.deck_script_constant,
+      thm% HtmlDoc.deck_script_gated]
+    accept := ["the private presentation shows each code block at its content height and scrolls the crowded slide to expose its final lines",
+      "numbered browser fragments reach the visible frame number, retain reveal steps, follow navigation and survive reload and history traversal"]
+    state := .guarded "39fc3818" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

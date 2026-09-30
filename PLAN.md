@@ -24679,3 +24679,37 @@ browser sources are byte-identical to the authored files. The document's helper
 remains the separate producer of LuaLaTeX's multipage animation PDF.
 Chromium passes all 85 corpus fixtures and 16 feature checks; the regenerated
 reader baseline records the new conversion recipe with unchanged scores.
+
+### 2026-09-30 — Browser decks retain code height and numbered positions
+
+A scrollable code box is a flex item with no automatic minimum size, so a
+crowded slide could shrink the box and hide its final lines. Code boxes now
+keep their content height; the slide's existing vertical scroll exposes the
+whole frame. The typed HTML check pins the CSS declaration, and the browser
+oracle compares each code box's scroll height with its visible height.
+
+The constant deck script now writes a fragment for the current position.
+Numbered stages use the shared frame sequence already shown in the footer;
+subsequent reveal steps add a dotted suffix. Unnumbered stages and restarted
+numbers use distinct title slugs, and existing authored anchors still resolve.
+Keyboard moves push browser history, native scrolling replaces the current
+fragment, and initial links, reloads and Back/Forward restore the same snap.
+Reduced-motion tracking reads the visible stage when its snap spacers vanish.
+The script remains constant and class-gated under its existing theorem pins.
+
+R60 records the clipping report. Two assertions in `deckCssChecks` failed on
+`39fc3818` before the fix and pass afterwards: content height and the emitted
+shared frame-number attributes. Snap-count checks now read typed attributes
+without depending on serialization order. Browser acceptance covers numbered
+and title links, reveals, reloads, history, native scroll and reduced motion.
+The private presentation's reported frame exposes every line; its navigation
+also survives rapid key changes and malformed fragments without script errors.
+
+The full build and test suite pass. Chromium passes all 85 built corpus
+fixtures and 18 feature probes; the regenerated reader tier adds code-height
+and deck-link coverage without lowering a score. Firefox remains untested on
+this host. The private presentation's LuaLaTeX build and all 92 snippet checks
+pass; its existing text-length and source-trace audit findings are unchanged.
+The standard benchmark also passes: median HTML builds over five runs are
+79 ms for the themed fixture and 127 ms for the paper fixture; these are
+measurements of this run, with no before/after performance claim.

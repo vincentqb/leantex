@@ -1305,6 +1305,23 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deckPage := (HtmlDoc.emit {} deckDoc).1
   let has := hasStr
   t "deck css fixture elaborates clean" deckDs.isEmpty
+  let (deckHead, deckBody, _) := HtmlDoc.emitTree {} deckDoc
+  t "code boxes keep their content height when a deck column overflows"
+    ((artCssBlocks (treeCssList "" deckHead.toList)).any fun (sel, decls) =>
+      sel == "pre" && has decls "flex-shrink: 0")
+  let (linksDoc, linksDs) := elabStr (deck169 "\\theme{moloch}\\title{North}\\author{A}"
+    ("\\maketitle\\section{Route}" ++
+     "\\begin{frame}{First}A\\pause B\\end{frame}" ++
+     "\\begin{frame}{Second}C\\end{frame}" ++
+     "\\begin{frame}[standout]D\\end{frame}"))
+  let (_, linksBody, _) := HtmlDoc.emitTree {} linksDoc
+  let numbered := (elemAttrsList (fun tag => tag == "section" || tag == "div")
+    #[] linksBody.toList).filterMap fun (tag, attrs) =>
+      (attrs.find? (·.1 == "data-frame-number")).map fun (_, n) => (tag, n)
+  t "numbered-link fixture elaborates clean" linksDs.isEmpty
+  t "numbered links use the shared frame sequence once per stage, skipping unnumbered pages"
+    (numbered == #[("div", "1"), ("section", "2")] &&
+      linksDoc.frameNumbers.toList.filterMap id == [1, 2])
   t "the deck pages horizontally by scroll snap on the root, no scrollbar stealing width"
     (has deckPage "html { scroll-snap-type: x mandatory; overflow-y: clip; }" &&
      has deckPage "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }")
@@ -1355,7 +1372,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      !has deckPage "@supports not" && !has deckPage "position: sticky" &&
      !has deckPage "ltx-push" && !has deckPage "ltx-uncover" &&
      !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"" &&
-     has deckPage "data-snap>")
+     (elemAttrsList (· == "section") #[] deckBody.toList).any fun (_, attrs) =>
+       attrs.contains ("data-snap", ""))
   -- The constant keyboard script (`HtmlDoc.deckScript`), the slides
   -- class's own: it queries the same `[data-snap]` selector the door
   -- rule styles, marks `<html data-deck-script>`, and survives the

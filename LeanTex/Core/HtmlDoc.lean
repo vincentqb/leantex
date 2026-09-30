@@ -3706,7 +3706,7 @@ class (`deck_script_gated`), and the deck degrades to the pure-CSS pager
 when scripting is off (`floor_covered_script_gated`). The user chose
 this over the pure-CSS floor when Home/End did not move the deck. -/
 
-/-- The keyboard and floor-uncover script. It binds, on the deck's snap
+/-- The keyboard, fragment and floor-uncover script. It binds, on the deck's snap
 points: ArrowRight/ArrowDown/PageDown/Space → next; ArrowLeft/ArrowUp/
 PageUp/Shift+Space → previous; Home/End → first/last. It ignores key
 events whose target is editable or that carry modifiers other than
@@ -3722,18 +3722,49 @@ and writes `data-snapped="k"` on its track, which the floor's numeric
 uncover rules read (`stepSnappedRule`). At startup it marks
 `<html data-deck-script>`, the gate the floor's covered default rides
 (`stepFloorCovered`): without the script that covered state is never
-declared. -/
+declared. Fragments follow the shared frame number, with a dotted step
+suffix after the first reveal. Unnumbered stages and restarted frame
+numbers use unique title slugs; authored slug links still resolve. Keyboard
+moves push history, native scrolling replaces the current fragment, and
+hash navigation restores the snap without adding history. -/
 def deckScript : String :=
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
   const snaps = Array.from(document.querySelectorAll(\"[data-snap]\"));
   if (snaps.length === 0) return;
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
+  const stageOf = (el) => el.closest(\".slide-track\") || el;
+  const stages = [...new Set(snaps.map(stageOf))];
+  const reserved = new Set(stages.map(s => s.dataset.frameNumber).filter(Boolean));
+  const numbered = new Set();
+  const keys = new Map(stages.map((stage, i) => {
+    const n = stage.dataset.frameNumber;
+    let key;
+    if (n && !numbered.has(n)) {
+      key = n;
+      numbered.add(n);
+    } else {
+      key = stage.id || `page-${i + 1}`;
+      while (reserved.has(key)) key += \"-\";
+    }
+    reserved.add(key);
+    return [stage, { key, step: 0 }];
+  }));
+  const links = snaps.map(s => {
+    const entry = keys.get(stageOf(s));
+    entry.step += 1;
+    return entry.step === 1 ? entry.key : `${entry.key}.${entry.step}`;
+  });
+  const routes = new Map(links.map((key, i) => [key, i]));
   const box = (el) => {
     const r = el.getBoundingClientRect();
-    return r.width > 0 ? r : (el.closest(\".slide-track\") || el).getBoundingClientRect();
+    const stage = stageOf(el);
+    return r.width > 0 ? r : (stage.querySelector(\"section.slide\") || stage).getBoundingClientRect();
   };
   let cur = 0;
+  let destination = null;
+  let seenHash = location.hash;
+  if (\"scrollRestoration\" in history) history.scrollRestoration = \"manual\";
   const mark = () => {
     const track = snaps[cur].closest(\".slide-track\");
     if (!track) return;
@@ -3744,22 +3775,58 @@ def deckScript : String :=
     }
     track.dataset.snapped = String(k);
   };
-  const go = (i) => {
+  const writeHash = (mode) => {
+    const hash = \"#\" + encodeURIComponent(links[cur]);
+    if (location.hash !== hash)
+      history[mode === \"push\" ? \"pushState\" : \"replaceState\"](history.state, \"\", hash);
+    seenHash = location.hash;
+  };
+  const go = (i, mode, instant = false) => {
     cur = Math.min(Math.max(i, 0), snaps.length - 1);
+    destination = cur;
     mark();
+    if (mode) writeHash(mode);
     const el = snaps[cur].getBoundingClientRect().width > 0
-      ? snaps[cur] : (snaps[cur].closest(\".slide-track\") || snaps[cur]);
-    el.scrollIntoView({ behavior: reduce.matches ? \"auto\" : \"smooth\",
+      ? snaps[cur] : stageOf(snaps[cur]);
+    el.scrollIntoView({ behavior: instant || reduce.matches ? \"instant\" : \"smooth\",
       inline: \"start\", block: \"nearest\" });
+    if (Math.abs(box(snaps[cur]).left) < 1) destination = null;
   };
   const sync = () => {
+    if (location.hash !== seenHash) return;
+    if (destination !== null) {
+      if (Math.abs(box(snaps[destination]).left) >= 1) return;
+      destination = null;
+    }
     let best = cur;
     for (let i = 0; i < snaps.length; i += 1)
       if (Math.abs(box(snaps[i]).left) < Math.abs(box(snaps[best]).left)) best = i;
-    if (box(snaps[best]).left !== box(snaps[cur]).left) { cur = best; mark(); }
+    if (box(snaps[best]).left !== box(snaps[cur]).left) {
+      cur = best;
+      mark();
+      writeHash(\"replace\");
+    }
+  };
+  const readHash = () => {
+    seenHash = location.hash;
+    let key;
+    try { key = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
+    if (!key) { go(0, null, true); return; }
+    let i = routes.get(key);
+    if (i === undefined) {
+      const target = document.getElementById(key);
+      if (!target) return;
+      i = snaps.indexOf(target);
+      if (i < 0) i = snaps.findIndex(s => stageOf(s).contains(target));
+    }
+    if (i >= 0) go(i, null, true);
   };
   addEventListener(\"scroll\", sync, { passive: true });
-  sync();
+  addEventListener(\"hashchange\", readHash);
+  for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
+    addEventListener(event, () => { destination = null; }, { passive: true });
+  readHash();
+  if (!location.hash) { sync(); writeHash(\"replace\"); }
   const skip = (i, dir) => {
     while (reduce.matches && snaps[i] && snaps[i].getBoundingClientRect().width === 0)
       i += dir;
@@ -3779,7 +3846,7 @@ def deckScript : String :=
         e.key === \"ArrowDown\" || e.key === \"PageDown\") i = skip(cur + 1, 1);
     if (i === null) return;
     e.preventDefault();
-    go(i);
+    go(i, \"push\");
   });
 })();"
 
@@ -3795,11 +3862,38 @@ theorem deck_script_constant : deckScript =
   const snaps = Array.from(document.querySelectorAll(\"[data-snap]\"));
   if (snaps.length === 0) return;
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
+  const stageOf = (el) => el.closest(\".slide-track\") || el;
+  const stages = [...new Set(snaps.map(stageOf))];
+  const reserved = new Set(stages.map(s => s.dataset.frameNumber).filter(Boolean));
+  const numbered = new Set();
+  const keys = new Map(stages.map((stage, i) => {
+    const n = stage.dataset.frameNumber;
+    let key;
+    if (n && !numbered.has(n)) {
+      key = n;
+      numbered.add(n);
+    } else {
+      key = stage.id || `page-${i + 1}`;
+      while (reserved.has(key)) key += \"-\";
+    }
+    reserved.add(key);
+    return [stage, { key, step: 0 }];
+  }));
+  const links = snaps.map(s => {
+    const entry = keys.get(stageOf(s));
+    entry.step += 1;
+    return entry.step === 1 ? entry.key : `${entry.key}.${entry.step}`;
+  });
+  const routes = new Map(links.map((key, i) => [key, i]));
   const box = (el) => {
     const r = el.getBoundingClientRect();
-    return r.width > 0 ? r : (el.closest(\".slide-track\") || el).getBoundingClientRect();
+    const stage = stageOf(el);
+    return r.width > 0 ? r : (stage.querySelector(\"section.slide\") || stage).getBoundingClientRect();
   };
   let cur = 0;
+  let destination = null;
+  let seenHash = location.hash;
+  if (\"scrollRestoration\" in history) history.scrollRestoration = \"manual\";
   const mark = () => {
     const track = snaps[cur].closest(\".slide-track\");
     if (!track) return;
@@ -3810,22 +3904,58 @@ theorem deck_script_constant : deckScript =
     }
     track.dataset.snapped = String(k);
   };
-  const go = (i) => {
+  const writeHash = (mode) => {
+    const hash = \"#\" + encodeURIComponent(links[cur]);
+    if (location.hash !== hash)
+      history[mode === \"push\" ? \"pushState\" : \"replaceState\"](history.state, \"\", hash);
+    seenHash = location.hash;
+  };
+  const go = (i, mode, instant = false) => {
     cur = Math.min(Math.max(i, 0), snaps.length - 1);
+    destination = cur;
     mark();
+    if (mode) writeHash(mode);
     const el = snaps[cur].getBoundingClientRect().width > 0
-      ? snaps[cur] : (snaps[cur].closest(\".slide-track\") || snaps[cur]);
-    el.scrollIntoView({ behavior: reduce.matches ? \"auto\" : \"smooth\",
+      ? snaps[cur] : stageOf(snaps[cur]);
+    el.scrollIntoView({ behavior: instant || reduce.matches ? \"instant\" : \"smooth\",
       inline: \"start\", block: \"nearest\" });
+    if (Math.abs(box(snaps[cur]).left) < 1) destination = null;
   };
   const sync = () => {
+    if (location.hash !== seenHash) return;
+    if (destination !== null) {
+      if (Math.abs(box(snaps[destination]).left) >= 1) return;
+      destination = null;
+    }
     let best = cur;
     for (let i = 0; i < snaps.length; i += 1)
       if (Math.abs(box(snaps[i]).left) < Math.abs(box(snaps[best]).left)) best = i;
-    if (box(snaps[best]).left !== box(snaps[cur]).left) { cur = best; mark(); }
+    if (box(snaps[best]).left !== box(snaps[cur]).left) {
+      cur = best;
+      mark();
+      writeHash(\"replace\");
+    }
+  };
+  const readHash = () => {
+    seenHash = location.hash;
+    let key;
+    try { key = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
+    if (!key) { go(0, null, true); return; }
+    let i = routes.get(key);
+    if (i === undefined) {
+      const target = document.getElementById(key);
+      if (!target) return;
+      i = snaps.indexOf(target);
+      if (i < 0) i = snaps.findIndex(s => stageOf(s).contains(target));
+    }
+    if (i >= 0) go(i, null, true);
   };
   addEventListener(\"scroll\", sync, { passive: true });
-  sync();
+  addEventListener(\"hashchange\", readHash);
+  for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
+    addEventListener(event, () => { destination = null; }, { passive: true });
+  readHash();
+  if (!location.hash) { sync(); writeHash(\"replace\"); }
   const skip = (i, dir) => {
     while (reduce.matches && snaps[i] && snaps[i].getBoundingClientRect().width === 0)
       i += dir;
@@ -3845,7 +3975,7 @@ theorem deck_script_constant : deckScript =
         e.key === \"ArrowDown\" || e.key === \"PageDown\") i = skip(cur + 1, 1);
     if (i === null) return;
     e.preventDefault();
-    go(i);
+    go(i, \"push\");
   });
 })();" := rfl
 
@@ -4169,8 +4299,10 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   "pre > code { font-size: inherit; }\n" ++
+  -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
+  -- Keep code at its content height; a crowded stage owns vertical scrolling.
   s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
-  "      border-radius: 4px; }\n" ++
+  "      border-radius: 4px; flex-shrink: 0; }\n" ++
   -- A captioned listing wears the figure-caption shape, caption above
   -- (listings' captionpos default); declared line numbers are a CSS
   -- counter the stylesheet draws before each line — furniture, outside
@@ -6854,6 +6986,7 @@ omitted from HTML"
 via \\chrome is the sequence both backends share"))
         | .frame title standout _ _ fb =>
           let num := nums[i]?.getD none
+          let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*
           -- under the class-gated uncover rules (`deckStepCss`), so the
@@ -6938,11 +7071,11 @@ first; retitle one frame, or link to '#{id}'"))
           -- section carries the anchor and the door attribute directly.
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
-                #[("class", "slide-track"), ("style", s!"--steps: {steps}"),
-                  ("id", id)]
+                (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
+                  ("id", id)] ++ numberAttrs)
             else match node with
               | .elem tag attrs kids =>
-                Node.elem tag (attrs ++ #[("id", id), ("data-snap", "")]) kids
+                Node.elem tag (attrs ++ #[("id", id), ("data-snap", "")] ++ numberAttrs) kids
               | .text s => Node.text s
               | .style s => Node.style s
               | .script attrs s => Node.script attrs s

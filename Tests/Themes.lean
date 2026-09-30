@@ -2735,6 +2735,9 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "step deck elaborates clean" (ds.all fun d => d.severity == .note)
   let out := layoutOf oneFace doc
   let (html, _) := HtmlDoc.emit {} doc
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let snapCount := (elemAttrsList (fun _ => true) #[] body.toList).filter
+    (fun (_, attrs) => attrs.contains ("data-snap", "")) |>.size
   let count (s : String) : Nat := (html.splitOn s).length - 1
   let slideSections := count "<section class=\"slide\""
     + count "<section class=\"slide standout\""
@@ -2763,7 +2766,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count "--steps: 3" == 1 && count "--steps: 1" == 0 &&
      count "id=\"steps-1\"" == 1 && count "id=\"steps-2\"" == 1 &&
      count "id=\"steps-3\"" == 1 &&
-     count "data-snap>" == 6)
+     snapCount == 6)
   t "frame anchors keep unique ids, on the track or the section"
     (count "id=\"steps\"" == 1 && count "id=\"plain\" data-snap" == 1)
   t "no step control ships: the constant script is the navigation"
