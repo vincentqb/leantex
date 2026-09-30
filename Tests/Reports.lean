@@ -386,7 +386,14 @@ def reports : List Report := [
       thm% HtmlDoc.imageAssetName_inj, thm% HtmlDoc.img_request_src_shipped,
       thm% HtmlDoc.imagePosterHref_covers]
     accept := ["a controlled browser cache preserves a blank private figure after its asset changes, while the rebuilt content-keyed page draws it"]
-    state := .guarded "5e8c83c9" .before .author }
+    state := .guarded "5e8c83c9" .before .author },
+  { id := "R59", date := "2026-09-30"
+    what := "a direct build from vector sources lost both figures because a static include required an absent export and the final animation poster required a prebuilt frame sequence"
+    pins := [check% svgAssetChecks, check% animatedGraphicsChecks,
+      thm% Image.fulfilRequests_covers, thm% HtmlDoc.img_request_src_shipped]
+    accept := ["synthetic source-only builds paint the final animation and static figure in the native PDF, publish the original browser sources and a painted print poster, and create no figure exports",
+      "the private presentation builds directly from its vector sources without a preprocessing helper"]
+    state := .guarded "3fcf4348" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

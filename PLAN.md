@@ -24644,3 +24644,38 @@ session that retained the blank response; its final HTML matches the
 rendered acceptance artifact byte for byte. Chromium passes all 85 corpus
 fixtures and the feature probes. The regenerated reader baseline records
 the new image addresses without lowering a score.
+
+### 2026-09-30 — Direct SVG builds retain final animation posters
+
+A prepared document bundle concealed a direct-build failure: its helper had
+generated the PDF images that the source still required. The CLI now builds
+an SVG-only animation's last poster itself, and the private reference's static
+include resolves without a generated export. Explicit PDF requests continue
+to require their named file.
+
+Native PDF and HTML print use one constant XSLT projection of synchronized
+SVG attribute tracks onto their final values. The projection reads the end
+of one simple duration, before repeat and fill handling; librsvg then supplies
+the static vector face. The browser receives the captured original SVG bytes.
+Unsupported targets, timing, CSS and animation elements are refused rather
+than replaced by an unrelated base drawing. First-poster selection keeps the
+base drawing, and later numbered posters still require a PDF frame sequence.
+The conversion recipe participates in the browser oracle's freshness key.
+
+R59 records the direct-build report. The external SVG oracle now builds both
+outputs in a fresh directory containing only synthetic SVG sources: it checks
+the shipped PDF's coloured pixels, original browser bytes, painted print
+poster and absence of generated figure exports. Five assertions failed on
+`3fcf4348` and pass after the change. Review added unsupported-clock witnesses:
+four native and print assertions failed before rejecting exponent notation
+and whitespace before the duration unit, and pass afterwards. Shared SVG
+builders and emitted-asset lookup now live in `Tests.Support`.
+
+The full warning-as-failure build and test suite pass, as do the installed
+SVG converter oracle and all 92,871 image-fuzz inputs. The private presentation
+also builds directly from SVG sources without running its preprocessing helper;
+both native figure rasters match the inspected acceptance pages, and both
+browser sources are byte-identical to the authored files. The document's helper
+remains the separate producer of LuaLaTeX's multipage animation PDF.
+Chromium passes all 85 corpus fixtures and 16 feature checks; the regenerated
+reader baseline records the new conversion recipe with unchanged scores.

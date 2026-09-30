@@ -92,11 +92,11 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       attrs.contains ("alt", "Moving square"))
 
   let playback := ds.filter (·.subject == some "animategraphics:playback")
-  t "animation names the static PDF, optional SVG companion, rate and controls"
+  t "animation names the static PDF, source or companion SVG, rate and controls"
     (playback.size == 1 && playback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
       hasStr d.message "static PDF poster without PDF JavaScript" &&
-      hasStr d.message "HTML uses the companion SVG when present, otherwise the same static poster" &&
+      hasStr d.message "HTML uses the source or companion SVG when present, otherwise the same static poster" &&
       hasStr d.message "SVG owns timing" && hasStr d.message "frame rate '17'" &&
       hasStr d.message "playback controls are not applied")
   t "animation sizes and alternatives add no unsupported-option warning"

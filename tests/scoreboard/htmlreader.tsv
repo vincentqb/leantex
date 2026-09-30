@@ -2,7 +2,7 @@
 # encoding: pairs pass/rows
 # source: tests/oracles/html-reader-matrix.txt; target readers: chromium; 186 cells in non-target columns are data and gate nothing
 # src-key: a09ee0f3051edc80 — the HTML the browser saw, rebuilt and compared on every --check
-# browser-face-src-key: 313616c53085cb8c — hermetic vector inputs, hrefs and conversion recipe
+# browser-face-src-key: 745a3c04d80dace2 — hermetic vector inputs, hrefs and conversion recipe
 # browser-face-key: 36eea703cd4fd57e — exact converted hrefs and byte digests the browser run received
 feature.chromium.pass	16
 feature.chromium.rows	16

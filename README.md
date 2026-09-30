@@ -87,16 +87,32 @@ functions, escapes or at-rules are refused. A PDF image can select a page with
 requires Poppler's `pdftocairo` at document-build time to supply its SVG
 browser face.
 
+`\includegraphics{figure.svg}` converts the SVG during the build; no exported
+PDF is needed. Use `{figure}` to prefer an existing PDF or raster and fall
+back to SVG. An explicit `{figure.pdf}` still requires that file.
+
 `\animategraphics[poster=last]{10}{figure}{}{}` selects the last page of
-`figure.pdf` for the PDF poster. HTML uses `figure.svg` when present, preserving
-its authored animation; otherwise it shows the same static poster. Printing
-HTML or requesting reduced motion selects the static poster too. The first
-frame determines the figure's dimensions, even when the poster has a
-different size. The SVG owns playback timing: SMIL `repeatCount="1"` with
+`figure.pdf` when present. With only `figure.svg`, it creates a static vector
+poster from the end of one animation cycle, before repeat/fill handling.
+This projection also requires `xsltproc`. It supports synchronized plain
+`animate` tracks with finite durations in seconds, unitless decimal geometry
+and opacity, or absolute `M`/`L` comma-pair paths. Tracks use linear or discrete
+`values`; supplied `keyTimes` start at zero and strictly increase, ending at
+one for linear tracks and below one for discrete tracks. Linear paths must
+keep the same commands. Delays, CSS, referenced targets, other animation
+elements and unsupported timing are diagnosed; use a PDF frame sequence for
+those. `poster=first` and `poster=0` use the SVG's base drawing; later
+numbered posters require a PDF sequence.
+
+HTML publishes the original source or companion SVG unchanged, preserving
+its animation; otherwise it shows the same static poster. Printing HTML or
+requesting reduced motion selects the static poster too. For a PDF sequence,
+the first frame determines the figure's dimensions, even when the poster has
+a different size. The SVG owns playback timing: SMIL `repeatCount="1"` with
 `fill="freeze"` plays once and holds the end; `repeatCount="indefinite"`
 loops. An SVG embedded as an image has no standard pause control.
-PDF JavaScript, playback controls, numbered file sequences and animation
-timelines are not implemented and are diagnosed.
+PDF JavaScript, playback controls and numbered file sequences are not
+implemented and are diagnosed.
 PDF 2.0 does not play SVG animations natively.
 
 If browser conversion fails, HTML shows a labelled placeholder and reports
@@ -105,9 +121,11 @@ Published images and print posters carry content keys in their filenames,
 so rebuilding changed bytes gives the browser a new image URL.
 
 The converter oracle uses synthetic SVGs, including resources a converter
-would silently omit: build `leantex Tests.SvgValidation`, then run
-`lake env lean --run scripts/svg-check.lean` on a host with `xmllint` and
-`rsvg-convert`. It is separate from the hermetic test suite.
+would silently omit, and builds both outputs from SVG sources alone: build
+`leantex Tests.SvgValidation Tests.SvgTerminal`, then run
+`lake env lean --run scripts/svg-check.lean` on a host with `xmllint`,
+`xsltproc`, `rsvg-convert` and Poppler. It is separate from the hermetic test
+suite.
 
 `talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.

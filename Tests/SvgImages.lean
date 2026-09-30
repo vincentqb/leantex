@@ -130,15 +130,18 @@ def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((links en).1 ++ (links en).2 ==
         assets.map (fun asset => HtmlDoc.imageAssetHref "assets" asset.file))
 
-/-- librsvg supplies a static drawing, not a selected SMIL frame. Reject
-non-first posters before invoking any converter. Empty input makes this
-guard independent of host tools; a converter error cannot satisfy it. -/
+/-- The first poster keeps the base drawing, while the last asks the XML
+converter for the terminal pose. Later numbered frames need a PDF sequence. This
+selection contract is independent of the installed conversion tools. -/
 def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
-  for page in [PdfRead.PageSelection.last, .number 2] do
-    let result ← LeanTex.Cli.ImageAssets.svgPlan .default ByteArray.empty page
-    check ref s!"SVG poster {repr page} requires its PDF frame sequence"
-      (match result with
-        | .error err => hasStr err "selected poster requires a PDF frame sequence"
+  for (page, terminal) in [(PdfRead.PageSelection.first, false), (.number 1, false),
+      (.last, true)] do
+    check ref s!"SVG poster {repr page} selects its declared pose"
+      (LeanTex.Cli.ImageAssets.svgPosterAtEnd page == .ok terminal)
+  for page in [PdfRead.PageSelection.number 0, .number 2, .number 200] do
+    check ref s!"SVG poster {repr page} requires a PDF frame sequence"
+      (match LeanTex.Cli.ImageAssets.svgPosterAtEnd page with
+        | .error err => hasStr err "requires a PDF frame sequence"
         | .ok _ => false)
 
 /-- An SVG's PDF form is its print face, not evidence that the browser

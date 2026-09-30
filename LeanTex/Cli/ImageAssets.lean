@@ -1,4 +1,5 @@
 import LeanTex.Core.Image
+import LeanTex.Cli.SvgPoster
 
 /-! Vector image IO. Captured SVG bytes remain the browser source. Fresh
 conversions return bytes; only the driver decides when to publish them. -/
@@ -53,6 +54,10 @@ private def dropDtdArgs (input : System.FilePath) : Array String :=
 private def rsvgArgs (format : String) (input output : System.FilePath) : Array String :=
   #["--format=" ++ format, "--output", output.toString, input.toString]
 
+private def terminalArgs (style input : System.FilePath) : Array String :=
+  #["--nonet", "--novalid", "--nodtdattr", "--nowrite", "--nomkdir",
+    style.toString, input.toString]
+
 private def pdfSvgArgs (page : String) (input output : System.FilePath) : Array String :=
   #["-svg", "-f", page, "-l", page, input.toString, output.toString]
 
@@ -72,6 +77,8 @@ def browserFaceContract : String :=
     commandText "xmllint" (saxArgs input),
     commandText "xmllint" (xpathArgs input),
     commandText "xmllint" (dropDtdArgs input),
+    commandText "xsltproc" (terminalArgs "<stylesheet>" input),
+    SvgPoster.stylesheet,
     commandText "rsvg-convert" (rsvgArgs "pdf" input output),
     commandText "rsvg-convert" (rsvgArgs "svg" input output),
     commandText "pdftocairo" (pdfSvgArgs "<page>" input output),
@@ -123,7 +130,8 @@ private def checkSvgFile (input : System.FilePath) : IO Unit := do
 output is an error, including when a failed process left an output file.
 SVG inputs pass the support boundary before librsvg sees them. -/
 private def convert (tool inputExt outputExt : String)
-    (args : System.FilePath → System.FilePath → Array String) (bytes : ByteArray) :
+    (args : System.FilePath → System.FilePath → Array String) (bytes : ByteArray)
+    (terminal : Bool := false) :
     IO (Except String ByteArray) := do
   try
     IO.FS.withTempDir fun dir => do
@@ -131,6 +139,10 @@ private def convert (tool inputExt outputExt : String)
       let output := dir / ("face." ++ outputExt)
       IO.FS.writeBinFile input bytes
       if inputExt == "svg" then checkSvgFile input
+      if terminal then
+        let style := dir / "terminal.xsl"
+        IO.FS.writeFile style SvgPoster.stylesheet
+        IO.FS.writeFile input (← runChecked "xsltproc" (terminalArgs style input))
       discard <| runChecked tool (args input output)
       let result ← IO.FS.readBinFile output
       if result.isEmpty then throw <| IO.userError s!"{tool} produced an empty image"
@@ -147,20 +159,32 @@ def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .default) :
   let pdf ← convert "rsvg-convert" "svg" "pdf" (rsvgArgs "pdf") bytes
   return pdf >>= fun b => Image.probe b >>= Image.plan params
 
-/-- librsvg's static vector reading of a self-contained SVG. The caller
-keeps the captured SVG bytes for the browser, including SMIL animation. -/
+/-- First reads the authored base drawing; last projects the final declared
+values of one synchronized animation cycle. Later numbered frames need a sequence. -/
+def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
+  | .first | .number 1 => .ok false
+  | .last => .ok true
+  | .number _ => .error "a numbered SVG poster requires a PDF frame sequence"
+
+/-- librsvg's vector reading of a self-contained SVG, optionally after a
+terminal-value projection. The caller retains the captured SVG unchanged
+for the browser. Unsupported timelines fail rather than paint the base. -/
 def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first) :
     IO (Except String Image.Plan) := do
-  if page != .first && page != .number 1 then
-    return .error "SVG conversion supplies a static base drawing; the selected poster requires a PDF frame sequence"
-  validateSvg bytes params
+  match svgPosterAtEnd page with
+  | .error err => return .error err
+  | .ok terminal =>
+    let pdf ← convert "rsvg-convert" "svg" "pdf" (rsvgArgs "pdf") bytes terminal
+    return pdf >>= fun b => Image.probe b >>= Image.plan params
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on
 the selected page instead when a companion PDF supplies a chosen frame. -/
-def svgPoster (bytes : ByteArray) : IO (Except String ByteArray) := do
-  if let .error e := (← validateSvg bytes) then return .error e
-  convert "rsvg-convert" "svg" "svg" (rsvgArgs "svg") bytes
+def svgPoster (bytes : ByteArray) (page : PdfRead.PageSelection := .first) :
+    IO (Except String ByteArray) := do
+  match svgPosterAtEnd page with
+  | .error err => return .error err
+  | .ok terminal => convert "rsvg-convert" "svg" "svg" (rsvgArgs "svg") bytes terminal
 
 /-- Only the converter-owned root changes. The native PDF form stretches
 the selected page onto the first frame's canvas; SVG's default `meet`

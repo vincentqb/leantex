@@ -16,6 +16,58 @@ def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit := 
 
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
 
+def svgDocument (body : String) (width : Nat := 20) (height : Nat := 20) : ByteArray :=
+  (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\">" ++
+    body ++ "</svg>").toUTF8
+
+def svgBoundaryError (result : Except String α) : Bool :=
+  match result with
+  | .error err => (err.splitOn "SVG resource boundary").length > 1
+  | .ok _ => false
+
+/-- Publication follows the emitted reference, whose content key changes
+with the captured bytes. These synthetic pages have one image per role. -/
+def svgPublishedAsset (html : String) (output : System.FilePath)
+    (tag attr : String) : IO (String × ByteArray) := do
+  let [_, tail] := html.splitOn ("<" ++ tag ++ " ") |
+    throw <| IO.userError s!"expected exactly one <{tag}> in the emitted page"
+  let attrs :: _ :: _ := tail.splitOn ">" |
+    throw <| IO.userError s!"unclosed <{tag}> in the emitted page"
+  let [_, value] := (" " ++ attrs).splitOn (" " ++ attr ++ "=\"") |
+    throw <| IO.userError s!"expected exactly one {attr} on <{tag}>"
+  let href :: _ :: _ := value.splitOn "\"" |
+    throw <| IO.userError s!"unclosed {attr} on <{tag}>"
+  let ["figure.assets", file] := href.splitOn "/" |
+    throw <| IO.userError s!"expected a published SVG reference, got {href}"
+  unless file.endsWith ".svg" do
+    throw <| IO.userError s!"expected a published SVG reference, got {href}"
+  return (href, ← IO.FS.readBinFile (output / href))
+
+/-- A synthetic two-page sequence: a wide blue first frame and a tall red
+poster. No fonts or outside resources participate in its conversion. -/
+def svgCanvasPdf : ByteArray := Id.run do
+  let stream (ink : String) :=
+    s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
+  let objects := #[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 4 0 R >>",
+    stream "0 0 1 rg 0 0 120 80 re f",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 60 120] /Contents 6 0 R >>",
+    stream "1 0 0 rg 0 0 60 120 re f"]
+  let mut text := "%PDF-1.7\n"
+  let mut offsets : Array Nat := #[]
+  for (object, i) in objects.zipIdx do
+    offsets := offsets.push text.utf8ByteSize
+    text := text ++ s!"{i + 1} 0 obj\n{object}\nendobj\n"
+  let xref := text.utf8ByteSize
+  text := text ++ s!"xref\n0 {objects.size + 1}\n0000000000 65535 f \n"
+  for offset in offsets do
+    let digits := toString offset
+    text := text ++ "".pushn '0' (10 - digits.length) ++ digits ++ " 00000 n \n"
+  return (text ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R >>\n\
+    startxref\n{xref}\n%%EOF\n").toUTF8
+
 /-- The PNG row filters forward (ISO/IEC 15948 §9.2), one type per row via
 `ft`: the synthesizer that hands the engine's unfilter and residual split
 every filter, every geometry, so their statements can be exercised on

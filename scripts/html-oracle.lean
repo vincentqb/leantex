@@ -830,6 +830,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           let why := ((probe.unavailable.find? (·.1 == r)).map (·.2)).getD "no row from the probe"
           tools := tools ++ s!"  {r} untested ({why})"
     tools := tools ++ s!"  {← toolVersion "xmllint" #["--version"]}"
+    tools := tools ++ s!"  {← toolVersion "xsltproc" #["--version"]}"
     tools := tools ++ s!"  {← toolVersion "rsvg-convert" #["--version"]}"
     tools := tools ++ s!"  {← toolVersion "pdftocairo" #["-v"]}"
     tools := tools ++ s!"  {← pdftotextVersion}"

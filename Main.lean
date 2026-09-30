@@ -756,7 +756,7 @@ def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
     let some plan := en.info | return en
     if plan.form.isNone then return en
     if let some svg := en.webSvg then
-      match ← ImageAssets.svgPoster svg with
+      match ← ImageAssets.svgPoster svg en.page with
       | .ok poster => return { en with posterSvg := some poster, webError := none }
       | .error err => return { en with webError := some err }
     -- The PDF bytes `fetchImage` already read, reused without rereading the
