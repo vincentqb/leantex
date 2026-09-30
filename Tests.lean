@@ -8,13 +8,18 @@ import Tests.BeamerColors
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.Markdown
+import Tests.MarkdownInput
+import Tests.XparseProvide
+import Tests.OverlaySets
 import Tests.Census
 import Tests.Backends
 import Tests.Images
 import Tests.SvgImages
+import Tests.SvgTools
 import Tests.AnimatedGraphics
 import Tests.AnimatedFaces
 import Tests.PdfPageSelection
+import Tests.PdfReadObjects
 import Tests.RasterPages
 import Tests.Diag
 import Tests.Themes
@@ -46,8 +51,9 @@ import Tests.Reports
 import Tests.Natbib
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
-open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks
-  animatedGraphicsChecks animatedFacesChecks)
+open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
+  animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
+  overlaySetChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -72,6 +78,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mintedSettingsChecks ref
   listingHighlightChecks ref
   mdPreambleChecks ref
+  markdownInputChecks ref
   backendChecks ref
   landmarkChecks ref
   pinChecks ref
@@ -272,9 +279,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   measureChecks ref oneFace
   imageChecks ref oneFace
   svgAssetChecks ref
+  svgToolChecks ref oneFace
   animatedGraphicsChecks ref oneFace
   animatedFacesChecks ref oneFace
   pdfPageSelectionChecks ref
+  pdfReadObjectsChecks ref
   rasterPageChecks ref oneFace
   imageRowChecks ref oneFace
   colorKeyChecks ref oneFace
@@ -295,6 +304,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inlineAttributionChecks ref oneFace pats
   loadedTestChecks ref oneFace
   packageCodeChecks ref oneFace
+  xparseProvideChecks ref oneFace
+  overlaySetChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref

@@ -10,6 +10,7 @@ import Tests.Settings
 import Tests.Redefine
 import Tests.Images
 import Tests.SvgImages
+import Tests.SvgTools
 import Tests.AnimatedGraphics
 import Tests.AnimatedFaces
 import Tests.PdfPageSelection
@@ -22,6 +23,8 @@ import Tests.BeamerHooks
 import Tests.BeamerColors
 import Tests.MintedSettings
 import Tests.ListingHighlight
+import Tests.MarkdownInput
+import Tests.OverlaySets
 import scripts.LandCore
 
 /-!
@@ -51,7 +54,7 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
-  animatedFacesChecks imageContentUrlChecks)
+  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks)
 
 namespace Reports
 
@@ -400,7 +403,22 @@ def reports : List Report := [
       thm% HtmlDoc.deck_script_gated]
     accept := ["the private presentation shows each code block at its content height and scrolls the crowded slide to expose its final lines",
       "numbered browser fragments reach the visible frame number, retain reveal steps, follow navigation and survive reload and history traversal"]
-    state := .guarded "39fc3818" .before .author }
+    state := .guarded "39fc3818" .before .author },
+  { id := "R61", date := "2026-09-30"
+    what := "a vector image build with a missing conversion executable shipped a placeholder and suggested re-export instead of installation or PATH recovery"
+    pins := [check% svgToolChecks]
+    state := .guarded "db831892" .before .author },
+  { id := "R62", date := "2026-09-30"
+    what := "Markdown file inclusion in a TeX document printed the filename and skipped the fragment instead of rendering its content"
+    pins := [check% markdownInputChecks]
+    accept := ["invented article and slide fragments preserve content and code spacing in both artifacts, with file lookup compared against lualatex"]
+    state := .guarded "db831892" .before .author },
+  { id := "R63", date := "2026-09-30"
+    what := "a comma-separated overlay selection was treated as a continuous interval and showed content on steps the source excluded"
+    pins := [check% overlaySetChecks, thm% Ir.OverlaySpec.selects_exact,
+      thm% Ir.OverlaySpec.union_selects_exact]
+    accept := ["four-step native and browser slides select the first and fourth steps, with the interval spelling retained as an independent control"]
+    state := .guarded "db831892" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

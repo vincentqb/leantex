@@ -522,7 +522,6 @@ warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box hold
 warning[W0601]: cannot read image 'figures/plot.png': permission denied (error code: 13); a placeholder box holds its place
 ── W0602 (degraded) image format unusable; placeholder box placed
 warning[W0602]: cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
-  help: PNG, JPEG, and PDF embed natively: re-export the image as one
 ── W0603 (degraded) an image's embedded colour profile is dropped; the page reads it as device colour
 warning[W0603]: image 'figures/plot.png' carries an embedded colour profile; the page reads its samples as device colour
   help: re-export the image without the profile, or accept the device reading with \allow{W0603}

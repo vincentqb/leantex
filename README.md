@@ -33,6 +33,25 @@ or external syntax highlighters. Unsupported constructs produce diagnostics
 where they occur. The command-level contracts live in
 [`tests/compat-index`](tests/compat-index).
 
+Include a Markdown file in a TeX document with the standard package spelling:
+
+```tex
+\usepackage{markdown}
+\begin{document}
+Text before the fragment.
+\markdownInput{notes.md}
+Text after the fragment.
+\end{document}
+```
+
+The fragment renders in place in PDF and HTML, using the surrounding
+document's theme and layout. It uses the same Markdown dialect as a `.md`
+document: headings, emphasis, links, images, lists, quotes and fenced code.
+Paths resolve from the main document's directory, as for `\input`; errors
+inside the fragment name its `.md` file and line. Package-specific Markdown
+extensions, options, inline environments and renderer customizations are
+not implemented and remain diagnosed.
+
 ## Fonts
 
 A document names font families, as LaTeX does (`\fonts{ body = "Source Serif

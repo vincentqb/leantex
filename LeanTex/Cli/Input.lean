@@ -1,14 +1,16 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Compat
+import LeanTex.Core.MdDesugar
+import LeanTex.Core.Utf8
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
 
-/-! The driver's file-splicing frontend: `\input`/`\include` and the local
-`.sty` read (`\usepackage{p}` with `p.sty` beside the document) are one
-splice — both wrap a file's parsed text as its own input fragment — and
+/-! The driver's file-splicing frontend: `\input`/`\include`, `\markdownInput`
+and the local `.sty` read (`\usepackage{p}` with `p.sty` beside the document)
+are one splice — each wraps a file's parsed text as its own input fragment — and
 run to one fixpoint here. Reading a file is an effect, so it happens in
 the driver rather than in the core; the core sees one tree, as if the
 document had been written in one file. Lives beside the other Cli modules
@@ -49,22 +51,54 @@ def readSource (file : String) : IO (Except Diag ByteArray) := do
   | .ok bytes => return .ok bytes
   | .error e => return .error (DriverDiag.unreadableInput file (reasonLine (toString e)))
 
-def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
+/-- Every included surface uses the document reader's UTF-8 and IO error
+contract. The surface reader returns a fragment of the same AST; its bytes
+are never converted to TeX source and parsed again. -/
+private def readFragment (dir : System.FilePath) (file name preferred : String) (pos : Pos)
+    (command : String) (reader : String → String → Array Parse.Raw × Array Diag) :
     IO (Array Parse.Raw × Array Diag) := do
-  let name := if name.endsWith ".tex" then name else name ++ ".tex"
-  let path := dir / name
+  let candidate := dir / preferred
+  let path ← if ← candidate.pathExists then pure candidate else pure (dir / name)
   if ← path.pathExists then
-    let text ← IO.FS.readFile path
-    let (toks, lexDs) := Lex.lex path.toString text
-    let (sub, parseDs) := Parse.parse path.toString toks
-    -- Wrapped, not spliced flat: a diagnostic inside the file must name the
-    -- file, and the wrapper is what carries that name to the elaborator.
-    return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
+    match ← readSource path.toString with
+    | .error d => return (#[], #[d])
+    | .ok bytes =>
+      if let some err := Utf8.validate bytes then
+        return (#[], #[err.toDiag path.toString])
+      let (sub, ds) := reader path.toString (String.fromUTF8! bytes)
+      -- The wrapper carries the source filename to the elaborator.
+      return (#[.env (Parse.inputEnv path.toString) sub pos], ds)
   else
     -- The span names `file`, the file the `\input` sits in — the reader
     -- goes to that line to fix it, and a directory has no line 5.
-    let d := DriverDiag.inputMissing name (some ⟨file, pos⟩)
+    let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command
     return (#[], #[d])
+
+def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
+    IO (Array Parse.Raw × Array Diag) :=
+  -- TeX's input scanner tries the default `.tex` suffix before the literal
+  -- spelling, unless that spelling already ends in `.tex` (inputFileChecks).
+  readFragment dir file name (if name.endsWith ".tex" then name else name ++ ".tex") pos
+    "input" fun path text =>
+      let (toks, lexDs) := Lex.lex path text
+      let (raws, parseDs) := Parse.parse path toks
+      (raws, lexDs ++ parseDs)
+
+/-- Consuming a command's optional argument leaves a suffix of its input.
+This bound lets the ordinary structural splice walk read command signatures
+without introducing a second depth limit. -/
+private theorem drop_size_le (rs : List Parse.Raw) (n : Nat) :
+    sizeOf (rs.drop n) ≤ sizeOf rs := by
+  induction rs generalizing n with
+  | nil => simp
+  | cons r rs ih =>
+    cases n with
+    | zero => simp
+    | succ n =>
+      simp only [List.drop_succ_cons]
+      have := ih n
+      simp only [List.cons.sizeOf_spec]
+      omega
 
 mutual
 
@@ -81,9 +115,39 @@ def spliceList (dir : System.FilePath) (file : String)
   | .ctrl "include" pos :: .group nameRaws _ :: rest => do
     let (sub, ds') ← readInput dir file (Parse.rawSrc nameRaws) pos
     spliceList dir file (out ++ sub) (ds ++ ds') true rest
+  | .ctrl "markdownInput" pos :: rest => do
+    let raws := rest.toArray
+    let (opt, k) := Compat.takeOpt raws 0
+    let j := Parse.skipSpaces raws k
+    match raws[j]? with
+    | some (.group nameRaws _) =>
+      -- markdown.sty defines one optional setup argument and one filename.
+      -- Native Markdown has one dialect; legacy setup keys remain a named
+      -- loss, never literal option text in the output.
+      let name := Parse.rawSrc nameRaws
+      -- markdown.sty's file lookup honours an explicit extension; without
+      -- one it tries `.tex`, then the literal spelling (inputFileChecks).
+      let preferred := if (System.FilePath.mk name).extension.isSome then name
+        else name ++ ".tex"
+      let (sub, ds') ← readFragment dir file name preferred pos
+        "markdownInput" Md.read
+      let opts := (opt.getD "").trimAscii.toString
+      let ds' := if opts.isEmpty then ds' else ds'.push <|
+        Diag.of .W0110 s!"'\\markdownInput' options '{opts}' are not applied; \
+the file uses the Markdown document dialect" (some ⟨file, pos⟩)
+          (subject := some "markdownInput:options")
+      spliceList dir file (out ++ sub) (ds ++ ds') true (rest.drop (j + 1))
+    | _ =>
+      spliceList dir file (out.push (.ctrl "markdownInput" pos)) ds hit rest
   | r :: rest => do
     let (r', ds', hit') ← spliceOne dir file r
     spliceList dir file (out.push r') (ds ++ ds') (hit || hit') rest
+termination_by rs => sizeOf rs
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  have := drop_size_le rest (Parse.skipSpaces rest.toArray k + 1)
+  omega
 
 def spliceOne (dir : System.FilePath) (file : String) :
     Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
@@ -95,6 +159,10 @@ def spliceOne (dir : System.FilePath) (file : String) :
     let (body', ds, hit) ← spliceList dir file #[] #[] false body.toList
     return (.group body' p, ds, hit)
   | r => pure (r, #[], false)
+termination_by r => sizeOf r
+decreasing_by
+  all_goals simp_wf
+  all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
 end
 

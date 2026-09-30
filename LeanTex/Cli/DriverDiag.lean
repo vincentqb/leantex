@@ -195,9 +195,9 @@ artifact: {err}"
     (help := "install poppler's pdftocairo, or \\allow{W0378} accepts the \
 loss; the PDF artifact is unaffected")
 
-/-- E0502: an `\input` file is not there; its content is absent. -/
-def inputMissing (name : String) (span : Option Span) : Diag :=
-  Diag.of .E0502 s!"'\\input' file '{name}' is not there; its content is absent" span
+/-- E0502: an included source file is not there; its content is absent. -/
+def inputMissing (name : String) (span : Option Span) (command : String := "input") : Diag :=
+  Diag.of .E0502 s!"'\\{command}' file '{name}' is not there; its content is absent" span
     (help := "\\allow{E0502} accepts the loss")
 
 /-- E0503: a `.bib` file named by `\bibliography` is not there; the
