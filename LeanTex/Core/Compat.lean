@@ -2552,15 +2552,18 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
-      -- premise: none — xparseProvideChecks covers unused replacement texts;
-      -- its suite wiring lands with the parent integration.
-      if provide && bound.any (fun m => st.binds.contains m || st.provideKeeps.contains m) then
-        if let some sh := definerShape raws i n then
-          -- Keep the operands intact for the rewrite's no-op accounting.
-          -- Neither conditionals nor nested definitions in them are read.
-          return ← condList ex raws (out ++ raws.extract i sh.stop)
-            stack rest (i + 1) (sh.stop - (i + 1))
       if let some m := bound then
+        -- premise: none — xparseIgnoredOperandsChecks compares both artifacts;
+        -- its suite wiring lands with the parent integration.
+        if provide && (st.binds.contains m || st.provideKeeps.contains m) then
+          if let some sh := definerShape raws i n then
+            let why := if st.binds.contains m then
+                s!"'\\{m}' is already defined and the existing definition is kept"
+              else s!"'\\{m}' is built in and the built-in stands"
+            discard s!"\\{n}\{\\{m}}" why s!"{n}:{m}" (st.useSite.getD pos)
+            -- Consume every operand before later passes can collect a hook
+            -- from the ignored signature or replacement text.
+            return ← condList ex raws out stack rest (i + 1) (sh.stop - (i + 1))
         unless provide && st.binds.contains m do
           -- Inside a frame the pass cannot decide, the branch may not run:
           -- the name is bound (the flat reading), its value unread.
