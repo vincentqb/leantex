@@ -288,6 +288,14 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
     .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
         else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
+  | .styled style c =>
+    -- A resolved text-sourced alphabet scalar: the plain base letter styled
+    -- by the semantic `mathvariant` the typed style declares (the PDF's
+    -- family/weight/italic projection's MathML counterpart).
+    let tag := leafTag cls c
+    .elem tag (if tag == "mi" || tag == "mn" then #[("mathvariant", style.mathvariant)]
+        else if tag == "mo" then #[("stretchy", "false")] else #[])
+      #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ body => .elem "mrow" #[] (listNodes mk disp none #[] body)
@@ -426,6 +434,7 @@ def itemChars (acc : Array Char) : MItem → Array Char
 
 def nucChars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
+  | .styled _ c => acc.push c
   | .word s => pushChars acc s.toList
   | .list body => listChars acc body
   | .alpha _ body => listChars acc body
@@ -663,6 +672,9 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     ∀ (nuc : MNucleus) (c : Array Char),
       nodeChars c (nucNode mk disp cls nuc) = nucChars c nuc
   | .sym ch, c => by
+    show pushChars c (charText ch).toList = c.push ch
+    exact pushChars_charText c ch
+  | .styled _ ch, c => by
     show pushChars c (charText ch).toList = c.push ch
     exact pushChars_charText c ch
   | .word _, c => rfl

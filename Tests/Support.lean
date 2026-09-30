@@ -753,6 +753,30 @@ end
 
 mutual
 
+/-- The first `mathvariant` attribute an emitted tree declares, in document
+order: the MathML `.styled` arm sets `("mathvariant", style.mathvariant)` on
+the `mi`/`mn` leaf, so this pulls the semantic variant a resolved text-style
+scalar carries (the twin of the PDF face-slot selection). `none` when no node
+declares one. -/
+def mathvariantOne : Html.Node → Option String
+  | .text _ => none
+  | .style _ => none
+  | .script _ _ => none
+  | .elem _ attrs kids =>
+    match attrs.find? (fun (k, _) => k == "mathvariant") with
+    | some (_, v) => some v
+    | none => mathvariantList kids.toList
+
+def mathvariantList : List Html.Node → Option String
+  | [] => none
+  | k :: rest => match mathvariantOne k with
+    | some v => some v
+    | none => mathvariantList rest
+
+end
+
+mutual
+
 /-- The text an emitted page *shows*, as the artifact itself says it: the
 typed tree's characters with every `hidden` subtree dropped — what the UA
 stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of

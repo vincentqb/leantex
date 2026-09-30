@@ -1374,6 +1374,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mathXhAt mbase ≤ bodyXh && bodyXh ≤ mathXhAt mbase + 1)
   let upem : Int := fira.unitsPerEm
   let adv (size : Dim.Sp) (c : Char) : Dim.Sp := (fira.advance c : Int) * size / upem
+  let serifUpem : Int := serif.unitsPerEm
+  let serifAdv (size : Dim.Sp) (c : Char) : Dim.Sp :=
+    (serif.advance c : Int) * size / serifUpem
   let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
   let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
 
@@ -1461,7 +1464,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- default math-italic R (as `\mathcal{O}` keeps math-italic O above), which
   -- Fira's italic range covers. The synthetic host carries the sans-serif R
   -- the old text-source remap would have selected per-character.
-  let sfKept : Char := Char.ofNat 0x1D445
+  let sfKept : Char := 'R'
   let sansScalar : Char := Char.ofNat 0x1D5B1
   let sansR : UInt32 := UInt32.ofNat 0x1D5B1
   let sansGid : UInt32 := UInt32.ofNat ((serif.gid 'R').getD 0)
@@ -1469,31 +1472,37 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     family := "Synthetic Host Sans"
     psName := "SyntheticHostSans"
     cmap := (serif.cmap.push (sansR, sansR, sansGid)).qsort (fun a b => a.1 < b.1) }
+  -- The sans slot gets its own face (font 2); every other (slot,weight,italic)
+  -- still maps to font 0 through `allSlots`, so a run at font 2 witnesses the
+  -- `.styled` path (sans text family), not the math face. `lookup` takes the
+  -- first matching index entry, so the sans key is rewritten in place.
   let sfFs : Font.FontSet := { mfs with
     fonts := #[serif, fira, sansHost]
-    fallback := #[(sansScalar, 2)] }
+    index := mfs.index.map fun e => if e.1 == (1, 400, false) then (e.1, 2) else e }
+  let sansFace := sfFs.lookup 1 400 false
+  t "the sans text-family slot resolves to its own face, distinct from the body"
+    (sansFace == 2 && sansFace != sfFs.lookup 0 400 false)
   let sfRaw := (Elab.run "synthetic.tex" "$\\mathsf{R}$").1
   let (sfDoc, sfDiags) := Ir.resolveMathAlphas alphaCoverage fira.family sfRaw
   let sfOut := Layout.run geom sfFs none sfDoc
   let sfRuns := (bodyLines sfOut).flatMap (·.segs)
-  t "text-sourced mathsf keeps its source scalar in the selected math face"
+  t "text-sourced mathsf keeps its source scalar in the sans text family"
     (sfRuns.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == sfKept)
+      | .run f _ _ _ glyphs _ _ _ _ _ _ => f == sansFace && glyphs.any (·.2.1 == sfKept)
       | _ => false)
   t "text-sourced mathsf never remaps to a scalar an unrelated host face carries"
-    (!(Layout.docScalars sfDoc).contains sansScalar &&
-      (Layout.docScalars sfDoc).contains sfKept &&
+    ((Layout.docScalars sfDoc).contains sfKept &&
+      !(Layout.docScalars sfDoc).contains sansScalar &&
       !sfRuns.any (fun s => match s with
         | .run 2 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == sansScalar)
         | _ => false) &&
       !sfOut.diags.any (·.code == "W0009"))
   let sfTree := HtmlDoc.blockNode { fonts := some sfFs } sfDoc.body[0]!
   t "typed HTML carries the sans-serif source scalar, not the host remap"
-    (nodeTextOne "" sfTree == String.ofList [sfKept])
+    (nodeTextOne "" sfTree == String.ofList [sfKept] &&
+      mathvariantOne sfTree == some "sans-serif")
   t "the unavailable sans-serif alphabet is named once by the IR owner"
-    ((sfDiags.filter (·.code == "N0018")).map (fun d => (d.subject, d.message)) ==
-      #[(some "math-alpha:sf",
-        "'Fira Math' has no sans-serif alphabet for the characters used; ordinary math source glyphs stand")])
+    ((sfDiags.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).isEmpty)
   -- Phase 2 contract: `remaps = faceCovers`, so a text-sourced alphabet the
   -- face lacks no longer remaps, while the covered text-sourced alphabets
   -- (bf/it/tt) still remap in the selected face — no regression.
@@ -1637,11 +1646,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false))
   -- LaTeX's text-style commands inside math resolve to the math alphabets
   -- they mean, so a formula wrapped in one renders instead of degrading:
-  -- `\textbf{x}` is an upright bold roman x, which is `\mathbf{x}`.
+  -- `\textbf{x}` is `\mathbf{x}`, which under the default text source is the
+  -- plain base letter set in a text family (not a Bold Alphanumeric scalar),
+  -- carrying the semantic `mathvariant` a MathML consumer reads.
+  let bfvRaw := (Elab.run "synthetic.tex" "$\\textbf{v}$").1
+  let (bfvDoc, _) := Ir.resolveMathAlphas alphaCoverage fira.family bfvRaw
+  let bfvTree := HtmlDoc.blockNode { fonts := some mfs } bfvDoc.body[0]!
   t "the text-style commands render as their alphabets, no W0012"
-    (warnCodes "$\\textbf{v} + \\textit{w} + \\texttt{m} + \\textsf{s}$" == [] &&
-      glyphChars "$\\textbf{v}$" == #['𝐯'] &&
-      glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$")
+    (warnCodes "$\\textbf{v}+\\textit{w}+\\texttt{m}+\\textsf{s}$" == [] &&
+      glyphChars "$\\textbf{v}$" == #['v'] &&
+      glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$" &&
+      mathvariantOne bfvTree == some "bold")
   -- Colour declarations now travel in the math list; the shipped colour
   -- and its scope are held by cancelReportChecks.
   t "a colour inside math keeps its content without a presentation loss"
@@ -1746,9 +1761,20 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$\\mathbb{R}$" == #['ℝ'] && warnCodes "$\\mathbb{R}$" == [])
   t "mathrm recovers the upright letters"
     (glyphChars "$\\mathrm{Err}$" == #['E', 'r', 'r'])
+  -- Phase 3: `\mathbf{x+y}` sets its letters through the text-styled bold
+  -- body slot — plain 'x'/'y' boxed in the body text family (serif here),
+  -- not Bold Alphanumeric scalars in the math face — while '+' stays a math
+  -- symbol in the math face. The two medium spaces (the Ord-Bin-Ord classes)
+  -- must survive the styled letters, so the width is recomputed from serif
+  -- for the letters and fira for the operator.
   t "mathbf keeps the spacing classes: x+y bolds with its medium spaces"
     (widthOf "$\\mathbf{x+y}$" ==
-      adv mbase '𝐱' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝐲')
+      serifAdv mbase 'x' + mu mbase 4 + adv mbase '+' + mu mbase 4 + serifAdv mbase 'y')
+  t "mathbf's letters go through the styled bold body slot, not the math face"
+    ((lineOf "$\\mathbf{x+y}$").segs.any fun s => match s with
+      | .run f _ _ _ glyphs _ _ _ _ _ _ =>
+        f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == 'x')
+      | _ => false)
   -- \boldsymbol/\bm is near-identity here: with no bold math version
   -- declared, LuaLaTeX leaves \boldsymbol{\beta} the italic β (measured
   -- against four math faces in scripts/math-alphabet-diff.lean, `bsym`
@@ -1758,20 +1784,37 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$\\boldsymbol{\\beta}$" == #['𝛽'])
   -- \boldsymbol/\bm carry no digits: with no bold math version, LuaLaTeX
   -- leaves \boldsymbol{5} a plain 5 (measured against four math faces in
-  -- scripts/math-alphabet-diff.lean), while \mathbf still takes the bold
-  -- digit run. The bfit digit base was removed to hold this.
+  -- scripts/math-alphabet-diff.lean), and under the default text source
+  -- \mathbf{5} is ALSO a plain 5 — but set through the text-styled bold
+  -- body slot, not the math face. So the two do not differ by codepoint;
+  -- they differ by face: mathbf's 5 boxes at the bold body slot (font 0),
+  -- boldsymbol's stays a math symbol in the math face (font 1).
+  let mbFive := (lineOf "$\\mathbf{5}$").segs.findSome? fun s => match s with
+    | .run f _ _ _ glyphs _ _ _ _ _ _ => if glyphs.any (·.2.1 == '5') then some f else none
+    | _ => none
+  let bsFive := (lineOf "$\\boldsymbol{5}$").segs.findSome? fun s => match s with
+    | .run f _ _ _ glyphs _ _ _ _ _ _ => if glyphs.any (·.2.1 == '5') then some f else none
+    | _ => none
   t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
-    (glyphChars "$\\boldsymbol{5}$" == #['5'] &&
-      glyphChars "$\\mathbf{5}$" == #['𝟓'])
+    (mbFive == some (mfs.lookup 0 700 false) && bsFive == some 1 && mbFive != bsFive)
   -- Nesting is a stack, innermost-first: a scalar the inner alphabet does
   -- not cover falls through to an outer one that does (measured against
   -- four faces in scripts/math-alphabet-diff.lean). Fira carries neither
   -- calligraphic nor fraktur letters, so the inner scope yields and the
-  -- outer \mathbf takes the digit / the letter.
+  -- outer \mathbf takes the digit / the letter — under the text source, as
+  -- the plain base glyph set at the bold body slot.
   t "nested alphabets stack: mathbf takes a digit calligraphic cannot"
-    (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['𝟓'])
+    (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['5'] &&
+      (lineOf "$\\mathbf{\\mathcal{5}}$").segs.any fun s => match s with
+        | .run f _ _ _ glyphs _ _ _ _ _ _ =>
+          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == '5')
+        | _ => false)
   t "nested alphabets stack: mathbf takes a letter fraktur cannot cover here"
-    (glyphChars "$\\mathbf{\\mathfrak{Z}}$" == #['𝐙'])
+    (glyphChars "$\\mathbf{\\mathfrak{Z}}$" == #['Z'] &&
+      (lineOf "$\\mathbf{\\mathfrak{Z}}$").segs.any fun s => match s with
+        | .run f _ _ _ glyphs _ _ _ _ _ _ =>
+          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == 'Z')
+        | _ => false)
   -- Range completeness confirmed against the oracle: \mathit sets the
   -- italic uppercase Greek block (U+1D6E2), \boldsymbol is near-identity
   -- (bfit installs no range with no bold math version).
@@ -1858,17 +1901,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a covered alphabet stays silent"
     ((layoutOf mfs (Elab.run "t" "$\\mathbb{R}$").1 geom).diags.all
       (·.code != "N0018"))
-  let noBoldFira : Font.Font := { fira with
-    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
-  let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
-  let bfOut := layoutOf noBoldSet (Elab.run "t" "$\\mathbf{A}$").1 geom
+  let noBBFira : Font.Font := { fira with
+    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
+  let noBBSet : Font.FontSet := { mfs with fonts := #[serif, noBBFira] }
+  let bbOut := layoutOf noBBSet (Elab.run "t" "$\\mathbb{A}$").1 geom
   t "a bold letter in a covered range whose glyph is an isolated hole stands its base, named W0016"
-    ((bfOut.diags.filter (·.code == "W0016")).map (fun d => (d.message, d.subject)) ==
-      #[("'Fira Math' has no bold 'A' (U+1D400); a stand-in keeps the letter",
-         some "math-alpha:bf")] &&
-      !bfOut.diags.any (·.code == "N0018") &&
-      ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
+    ((bbOut.diags.filter (·.code == "W0016")).map (fun d => (d.message, d.subject)) ==
+      #[("'Fira Math' has no double-struck 'A' (U+1D538); a stand-in keeps the letter",
+         some "math-alpha:bb")] &&
+      !bbOut.diags.any (·.code == "N0018") &&
+      ((bbOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+        | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
@@ -2032,19 +2075,20 @@ def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((calOut.diags.filter (·.code == "N0018")).map (·.subject) ==
         #[some "math-alpha:cal"] &&
       !calOut.diags.any (·.code == "W0016"))
-  -- Coverage COVERS the bold range (its anchor stands) but the specific
-  -- glyph is filtered: the resolver applies the alphabet, layout meets the
-  -- isolated hole, the base letter stands in under W0016, no N0018.
-  let noBoldFira : Font.Font := { fira with
-    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
-  let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
-  let bfOut := layoutOf noBoldSet (Elab.run "t" "$\\mathbf{A}$").1 geom
+  -- Coverage COVERS the double-struck range (its anchor stands) but the
+  -- specific glyph is filtered: the resolver applies the alphabet, layout
+  -- meets the isolated hole, the base letter stands in under W0016, no
+  -- N0018. bb is sym-sourced, so this is the loss `\mathbf` no longer is.
+  let noBBFira2 : Font.Font := { fira with
+    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
+  let noBBSet2 : Font.FontSet := { mfs with fonts := #[serif, noBBFira2] }
+  let bbOut2 := layoutOf noBBSet2 (Elab.run "t" "$\\mathbb{A}$").1 geom
   t "partition: a covered range with an isolated glyph hole is named W0016 alone, base stands"
-    ((bfOut.diags.filter (·.code == "W0016")).map (·.subject) ==
-        #[some "math-alpha:bf"] &&
-      !bfOut.diags.any (·.code == "N0018") &&
-      ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
+    ((bbOut2.diags.filter (·.code == "W0016")).map (·.subject) ==
+        #[some "math-alpha:bb"] &&
+      !bbOut2.diags.any (·.code == "N0018") &&
+      ((bbOut2.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+        | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')
         | _ => false))
 
 

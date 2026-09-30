@@ -8615,6 +8615,7 @@ def dumpMathItem (acc : String) (x : Math.MItem) : String :=
 def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   match n with
   | .sym c => acc.push c
+  | .styled sty c => ((acc ++ s!"styled:{sty.mathvariant}\{").push c).push '}'
   | .word s => acc ++ s.quote
   | .list body => (dumpMathList (acc.push '{') body).push '}'
   | .alpha a body => (dumpMathList (acc ++ s!"alpha:{a.name}\{") body).push '}'

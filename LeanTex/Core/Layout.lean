@@ -3105,6 +3105,20 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         | none =>
           if acc.2.contains (e.idx, c) then acc
           else (acc.1, acc.2.push (e.idx, c))
+  | .styled style c =>
+    -- A resolved text-sourced alphabet scalar: the plain base letter set in
+    -- the projected text family slot (body/sans/mono) with the weight and
+    -- italic axes, through the same `FontSet.lookup` the text path uses.
+    -- No host per-scalar fallback — the projected family carries the base
+    -- letter, or the scalar is the never-silent coverage loss (E0405).
+    let size := e.sizeAt st
+    let fi := e.fs.lookup style.slot.toNat (if style.bold then 700 else 400) style.italic
+    match glyphOf size (e.fs.get fi) c with
+    | some g =>
+      ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.leading e.underline raise e.ground e.attr)), acc.2)
+    | none =>
+      if acc.2.contains (fi, c) then acc
+      else (acc.1, acc.2.push (fi, c))
   | .word s => Id.run do
     -- An upright word (a function name, `\text`): boxes in the math face,
     -- split only where the chain substitutes — a box carries one face.
