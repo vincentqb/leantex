@@ -1990,6 +1990,12 @@ structure Loaded extends Request where
   /-- A mandatory browser-face conversion failed. Keep the native plan,
   but publish a named placeholder rather than the uncooked source. -/
   webError : Option String := none
+  /-- The exact bytes the driver read for this source (`fetchImage`), kept
+  so the browser-face conversion uses them without rereading the file. -/
+  source : Option ByteArray := none
+  /-- The exact bytes of an animation's companion SVG, read once beside the
+  PDF, so preserving movement never rereads a second file. -/
+  companion : Option ByteArray := none
   deriving Inhabited
 
 /-- One intrinsic size for both backends: a successfully loaded image's
@@ -2095,7 +2101,8 @@ carrying the boundary's own diagnostic (E0382, W0379), whose subject
 `fulfil` sets so the refusal names the picture whatever words it chose. -/
 inductive Fetch where
   | decoded (href : String) (res : Except String Plan) (webSvg : Option ByteArray)
-      (canvasSize : Option (Dim.Sp × Dim.Sp))
+      (canvasSize : Option (Dim.Sp × Dim.Sp)) (source : Option ByteArray)
+      (companion : Option ByteArray)
   | missing (looked : String)
   | unreadable (err : String)
   | refused (why : Diag)
@@ -2104,9 +2111,9 @@ inductive Fetch where
 gap when there is one. Every arm that leaves `info := none` also returns
 a diagnostic whose subject is the source — `fulfilOne_named`. -/
 def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
-  | .decoded href (.ok info) webSvg canvasSize =>
-    ({ toRequest := req, href, info := some info, webSvg, canvasSize }, none)
-  | .decoded href (.error e) _ _ =>
+  | .decoded href (.ok info) webSvg canvasSize source companion =>
+    ({ toRequest := req, href, info := some info, webSvg, canvasSize, source, companion }, none)
+  | .decoded href (.error e) _ _ _ _ =>
     ({ toRequest := req, href }, some (imageUndecodable req.src e))
   | .missing looked => ({ toRequest := req }, some (imageMissing req.src looked))
   | .unreadable err => ({ toRequest := req }, some (imageUnreadable req.src err))
@@ -2133,7 +2140,7 @@ a diagnostic whose subject is the source. -/
 theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.info = none) :
     ∃ d, (fulfilOne req f).2 = some d ∧ d.subject = some req.src := by
   cases f with
-  | decoded href res webSvg canvasSize =>
+  | decoded href res webSvg canvasSize source companion =>
     cases res with
     | ok info => simp [fulfilOne] at h
     | error e => exact ⟨_, rfl, rfl⟩
@@ -2145,11 +2152,24 @@ theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.inf
 theorem fulfilOne_request (req : Request) (f : Fetch) :
     (fulfilOne req f).1.toRequest = req := by
   cases f with
-  | decoded href res webSvg canvasSize => cases res <;> rfl
+  | decoded href res webSvg canvasSize source companion => cases res <;> rfl
   | missing _ | unreadable _ | refused _ => rfl
 
 theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.src = req.src :=
   congrArg Request.src (fulfilOne_request req f)
+
+/-- **A decoded source's bytes reach its store entry unchanged.** When the
+driver decodes a source, the entry the store carries holds exactly the
+bytes `fetchImage` read — its `source` and animation `companion` — so the
+browser-face conversion converts those bytes and never rereads the file.
+Stated on the `.ok` arm, the only one that loads a plan and so the only one
+a browser face is planned for; a failed decode carries no bytes and needs
+none. -/
+theorem fulfilOne_bytes (req : Request) (href : String) (info : Plan)
+    (webSvg source companion : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp)) :
+    (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.source = source ∧
+    (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.companion
+      = companion := ⟨rfl, rfl⟩
 
 private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
     (hacc : ∀ en ∈ entries, en.info = none → ∃ d ∈ diags, d.subject = some en.src) :

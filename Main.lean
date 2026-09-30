@@ -674,7 +674,7 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
   let src := req.src
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
-    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none, false)
+    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none, false)
     | none =>
       match refused.find? (·.1 == src) with
       | some (_, why) => return (.refused why, false)
@@ -700,13 +700,19 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
       let href := if cand == src then "" else cand
       if Image.isSvg cand then
         let res ← ImageAssets.svgPlan params bytes req.page
-        return (.decoded href res (some bytes) none, false)
+        return (.decoded href res (some bytes) none (some bytes) none, false)
       else if req.page != .first || req.animated then
         let res := Image.decodeRequest params bytes req
-        return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2)), false)
+        -- An animation's companion SVG is read once, here, beside the PDF,
+        -- so preserving movement never rereads the file (`fulfilOne_bytes`).
+        let companion ← if req.animated then
+            Except.toOption <$> (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO
+          else pure none
+        return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
+          (some bytes) companion, false)
       else
         let (res, fromCache) ← decodeImageCached params bytes
-        return (.decoded href res none none, fromCache)
+        return (.decoded href res none none (some bytes) none, fromCache)
 
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
@@ -735,13 +741,13 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
       diags := diags ++ Image.lossDiags en.src pl
   return (store, diags, hits)
 
-/-- PDF sources receive a browser image of their selected page. A declared
+/-- PDF sources receive a browser image of their selected page, converted
+from the bytes `fetchImage` already read — never a reread. A declared
 animation also looks for a readable, self-contained SVG beside that PDF:
 its SMIL stays intact in an image context, while print and reduced motion
 select the static poster. An absent or unusable companion leaves the PDF
 poster as the browser face. No generated script or inline XML is needed. -/
-def imageBrowserFaces (file : String) (imgs : Image.Store) : IO Image.Store := do
-  let dir := (System.FilePath.mk file).parent.getD "."
+def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
   let entries ← imgs.entries.mapM fun en => do
     if en.src.startsWith Ir.picSrcPrefix then return en
     let some plan := en.info | return en
@@ -750,22 +756,19 @@ def imageBrowserFaces (file : String) (imgs : Image.Store) : IO Image.Store := d
       match ← ImageAssets.svgPoster svg with
       | .ok poster => return { en with posterSvg := some poster, webError := none }
       | .error err => return { en with webError := some err }
-    let src := System.FilePath.mk (HtmlDoc.resolvedSrc en)
-    let path := if src.isAbsolute then src else dir / src
-    try
-      let bytes ← IO.FS.readBinFile path
-      match ← ImageAssets.pdfSvg bytes en.page with
-      | .error err => return { en with webError := some err }
-      | .ok poster =>
-        let static := { en with webSvg := some poster, webError := none }
-        if en.animated then
-          try
-            let svg ← IO.FS.readBinFile (path.withExtension "svg")
-            if (← ImageAssets.validateSvg svg).isOk then
-              return { static with webSvg := some svg, posterSvg := some poster }
-          catch _ => pure ()
-        return static
-    catch err => return { en with webError := some (toString err) }
+    -- The PDF bytes `fetchImage` already read, reused without rereading the
+    -- file (`fulfilOne_bytes`): the browser face converts exactly the bytes
+    -- the freshness key measured.
+    let some bytes := en.source | return en
+    match ← ImageAssets.pdfSvg bytes en.page with
+    | .error err => return { en with webError := some err }
+    | .ok poster =>
+      let static := { en with webSvg := some poster, webError := none }
+      if en.animated then
+        if let some svg := en.companion then
+          if (← ImageAssets.validateSvg svg).isOk then
+            return { static with webSvg := some svg, posterSvg := some poster }
+      return static
   return { entries }
 
 def countErrors (diags : Array Diag) : Nat :=
@@ -1257,7 +1260,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
         let (imgs, pubs, svgDiags, unconverted) ← picsToSvg pics assetsDir imgs
-        let imgs ← imageBrowserFaces file imgs
+        let imgs ← imageBrowserFaces imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
         accepted := accepted ++ rS.accepted

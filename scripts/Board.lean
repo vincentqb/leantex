@@ -1536,7 +1536,7 @@ def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
         read := read.push (cand, bytes)
         let decoded := Image.decodeRequest .default bytes req
         f := .decoded (if cand == src then "" else cand)
-          (decoded.map (·.1)) none (decoded.toOption.bind (·.2))
+          (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) none
         break
     fetched := fetched.push (req, f)
   let (store, diags) := Image.fulfilRequests fetched
