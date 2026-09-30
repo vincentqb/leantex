@@ -34,6 +34,28 @@ private def cancelStyleDepth : MathStyle → Nat
   | .script _ => 1
   | .scriptscript _ => 2
 
+mutual
+
+/-- Every `style` attribute value in a subtree — the instrument for asking
+where a cancel mark's CSS paints and how much room it reserves. -/
+private def cancelStylesOne (acc : List String) : Html.Node → List String
+  | .elem _ attrs kids =>
+    let acc := match attrs.find? (·.1 == "style") with
+      | some (_, v) => v :: acc
+      | none => acc
+    cancelStylesList acc kids.toList
+  | _ => acc
+
+private def cancelStylesList (acc : List String) : List Html.Node → List String
+  | [] => acc
+  | n :: ns => cancelStylesList (cancelStylesOne acc n) ns
+
+end
+
+/-- Whether `hay` contains `needle`. -/
+private def cancelHasStr (hay needle : String) : Bool :=
+  (hay.splitOn needle).length > 1
+
 /-- Room allocation cannot change a cancellation target's font-size level.
 The expected level comes from the same IR style rule the PDF layout reads.
 Smaller targets still step down; `samesize` also preserves inherited script
@@ -64,3 +86,27 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"cancel HTML {allocation}+{label} keeps the IR target size in {repr st}"
           (cancelTargetDepths (some 0) false [] node ==
             [some (cancelStyleDepth (spec.size.style st))])
+
+  -- The HTML counterpart of Math.cancelGeom_polys_between, as far as the CSS
+  -- model allows: the band is a background on the padded box, so it is
+  -- clipped to the box and cannot paint outside it; makeroom reserves the
+  -- box (no negative margin) so a mark holds its room before the next atom,
+  -- and overlap gives the room back — cancel.sty's default.
+  let one' (c : Char) : MList := .cons (.atom .ord (.sym c) .nil .nil false) .nil
+  let stylesOf (mark : CancelMark) (room : Bool) : List String :=
+    cancelStylesOne [] (MathMl.nucNode {} false .ord
+      (.cancel mark { room } (if mark == .to then one' '7' else .nil) (one' 'x')))
+  for mark in [CancelMark.up, .down, .cross, .to] do
+    let room := stylesOf mark true
+    let over := stylesOf mark false
+    t s!"cancel HTML: {repr mark} band paints on the box, not outside it"
+      (room.any (cancelHasStr · "background-image:"))
+    t s!"cancel HTML: {repr mark} makeroom reserves the box, no negative margin"
+      (room.all (fun s => !cancelHasStr s "margin-left: -"))
+    t s!"cancel HTML: {repr mark} overlap gives the room back"
+      (over.any (cancelHasStr · "margin-left: -"))
+  let toRoom := stylesOf .to true
+  t "cancel HTML: cancelto head is a clipped element within the box"
+    (toRoom.any (cancelHasStr · "clip-path: polygon"))
+  t "cancel HTML: cancelto value clears the mark with left padding"
+    (toRoom.any (cancelHasStr · "padding-left:"))

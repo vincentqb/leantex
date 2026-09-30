@@ -321,7 +321,10 @@ def reports : List Report := [
   { id := "R48", date := "2026-09-29"
     what := "a cancellation's target disappeared and coloured cancellation inside an aligned formula fell back to source text"
     pins := [check% cancelReportChecks, check% cancelGeometryChecks,
-      check% cancelHtmlChecks, thm% Math.cancelBand_between,
+      check% cancelBoxChecks, check% cancelHtmlChecks,
+      thm% Math.cancelBand_between, thm% Math.cancelHead_between,
+      thm% Math.cancelShaft_between, thm% Math.cancelGeom_polys_between,
+      thm% Math.cancelGeom_to_polys_exact,
       thm% Math.cancelto_value_clears_between]
     accept := ["the private presentation's cancellation formulas in both artifacts",
       "the invented cancellation page in the browser and its printed output"]
