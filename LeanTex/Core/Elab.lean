@@ -3030,7 +3030,8 @@ groups and makes empty first/last groups the whole multipage PDF. A
 nonempty range also admits numbered files, reversed order and skipped
 frames: none of those may silently select a PDF page here. Playback is
 always named as degraded: PDF has no animation JavaScript, and HTML uses
-the companion SVG when present or the same static poster otherwise. -/
+the companion SVG only when it is present, readable and accepted, otherwise
+the static poster without motion. -/
 private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (pos : Pos) (animated : Bool) :
     EM (Option Inline × { j : Nat // i < j }) := do
@@ -3066,7 +3067,7 @@ private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let ignored := if opts.ignored.isEmpty then "" else
       "; these options are also ignored: " ++ String.intercalate ", " opts.ignored.toList
     warnOnce ctx "animategraphics:playback" .W0110
-      s!"'\\animategraphics' uses a static PDF poster without PDF JavaScript; HTML uses the companion SVG when present, otherwise the same static poster; the SVG owns timing, and frame rate '{fps}' and playback controls are not applied{ignored}" pos
+      s!"'\\animategraphics' uses a static PDF poster without PDF JavaScript; HTML uses the companion SVG only when it is present, readable and accepted, otherwise the same static poster without motion; the SVG owns timing, and frame rate '{fps}' and playback controls are not applied{ignored}" pos
       (help := "author timing and playback behavior in the companion SVG; the PDF contains only the selected poster")
   let src := argText ctx (args.getD (if animated then 1 else 0) #[])
   recordImageSpan ctx src pos

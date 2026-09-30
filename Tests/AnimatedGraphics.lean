@@ -96,7 +96,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (playback.size == 1 && playback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
       hasStr d.message "static PDF poster without PDF JavaScript" &&
-      hasStr d.message "HTML uses the companion SVG when present, otherwise the same static poster" &&
+      hasStr d.message "HTML uses the companion SVG only when it is present, readable and accepted, otherwise the same static poster without motion" &&
       hasStr d.message "SVG owns timing" && hasStr d.message "frame rate '17'" &&
       hasStr d.message "playback controls are not applied")
   t "animation sizes and alternatives add no unsupported-option warning"
