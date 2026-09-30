@@ -21,6 +21,9 @@ def writeStub (path : System.FilePath) (body : String) : IO Unit := do
   let r ← IO.Process.output { cmd := "chmod", args := #["+x", path.toString] }
   unless r.exitCode == 0 do throw <| IO.userError s!"chmod failed for {path}"
 
+private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
+  unless ok do ref.modify (name :: ·)
+
 /-- A stub `pdftocairo`: names the given version on `-v`, else sleeps
 briefly (to widen the fill race) and writes the given payload to its output
 argument. Version and payload are baked into the script text so that a
@@ -42,8 +45,114 @@ def defaultStub : String :=
   pdftocairoStub "pdftocairo 99.0 (leantex conv-cache-io stub)"
     "STUBSVG-0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
 
-private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (name :: ·)
+/-- A stub that records each real conversion (not the `-v` probe) by
+appending to `counter`, so a test can prove a warm serve starts no process.
+Its `tail` decides what the conversion does: write a payload, fail with a
+message, or fail silently. -/
+def recordingStub (counter version tail : String) : String :=
+  "#!/bin/sh\n\
+for a in \"$@\"; do\n\
+  if [ \"$a\" = \"-v\" ]; then echo \"" ++ version ++ "\"; exit 0; fi\n\
+done\n\
+echo x >> \"" ++ counter ++ "\"\n\
+out=\"\"\n\
+for a in \"$@\"; do out=\"$a\"; done\n" ++ tail
+
+/-- Conversion tails for `recordingStub`. -/
+def payloadTail (payload : String) : String := "printf '" ++ payload ++ "' > \"$out\"\nexit 0\n"
+def refusalTail (msg code : String) : String := "echo \"" ++ msg ++ "\" >&2\nexit " ++ code ++ "\n"
+def silentFailTail (code : String) : String := "exit " ++ code ++ "\n"
+
+/-- The count of recorded conversions (lines in `counter`). -/
+def convertCount (counter : System.FilePath) : IO Nat := do
+  match ← (IO.FS.readFile counter).toBaseIO with
+  | .ok s => return ((s.splitOn "\n").filter (·.length > 0)).length
+  | .error _ => return 0
+
+/-- The `.out`/`.fail` slot names in a cache's conversion directory. -/
+def slotNames (cache : System.FilePath) : IO (List String) := do
+  let convs := cache / "leantex" / "convs"
+  match ← (convs.readDir).toBaseIO with
+  | .ok es => return (es.toList.map (·.fileName)).filter fun n =>
+      n.endsWith ".out" || n.endsWith ".fail"
+  | .error _ => return []
+
+/-- **M3 — the runtime obeys the shared cache policy under real processes.**
+Warm success starts no tool; the tool's own refusal replays its exact text
+without re-running; a missing tool, a silent nonzero exit, and empty output
+each leave no valid slot and are retried. -/
+def stubPolicyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let probe ← probeBin
+  let path := (← IO.getEnv "PATH").getD ""
+  let runProbe (bin cache : System.FilePath) : IO IO.Process.Output := do
+    let env := #[("PATH", some (bin.toString ++ ":" ++ path)), ("XDG_CACHE_HOME", some cache.toString)]
+    IO.Process.output { cmd := probe.toString, env }
+  -- Warm success starts no process on the second build.
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"; IO.FS.createDirAll bin
+    let cache := dir / "cache"; IO.FS.createDirAll cache
+    let counter := dir / "count"
+    writeStub (bin / "pdftocairo") (recordingStub counter.toString "pdftocairo 1.0" (payloadTail "WARMFACE"))
+    let r1 ← runProbe bin cache
+    let c1 ← convertCount counter
+    let r2 ← runProbe bin cache
+    let c2 ← convertCount counter
+    check ref "warm: first run converts" (r1.stdout.trimAscii.toString.startsWith "OK ")
+    check ref "warm: a warmed slot serves without starting the tool" (c1 == 1 && c2 == 1)
+    check ref "warm: the warm serve returns the same bytes"
+      (r1.stdout.trimAscii.toString == r2.stdout.trimAscii.toString)
+  -- The tool's own refusal replays its exact text without re-running.
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"; IO.FS.createDirAll bin
+    let cache := dir / "cache"; IO.FS.createDirAll cache
+    let counter := dir / "count"
+    writeStub (bin / "pdftocairo")
+      (recordingStub counter.toString "pdftocairo 1.0" (refusalTail "cairo: unreadable input" "3"))
+    let r1 ← runProbe bin cache
+    let l1 := r1.stdout.trimAscii.toString
+    let c1 ← convertCount counter
+    let r2 ← runProbe bin cache
+    let l2 := r2.stdout.trimAscii.toString
+    let c2 ← convertCount counter
+    check ref "refusal: the tool's own no is returned"
+      (l1.startsWith "ERR " && (l1.splitOn "cairo: unreadable input").length == 2)
+    check ref "refusal: replays the exact text without re-running" (l1 == l2 && c1 == 1 && c2 == 1)
+  -- A missing tool leaves no slot.
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"; IO.FS.createDirAll bin
+    let cache := dir / "cache"; IO.FS.createDirAll cache
+    let env := #[("PATH", some bin.toString), ("XDG_CACHE_HOME", some cache.toString)]
+    let r1 ← IO.Process.output { cmd := probe.toString, env }
+    check ref "missing: an unavailable tool is an error"
+      (r1.stdout.trimAscii.toString.startsWith "ERR ")
+    check ref "missing: no slot is written for an unavailable tool"
+      ((← slotNames cache).isEmpty)
+  -- A silent nonzero exit is inconclusive: no slot, retried next build.
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"; IO.FS.createDirAll bin
+    let cache := dir / "cache"; IO.FS.createDirAll cache
+    let counter := dir / "count"
+    writeStub (bin / "pdftocairo") (recordingStub counter.toString "pdftocairo 1.0" (silentFailTail "5"))
+    let r1 ← runProbe bin cache
+    let c1 ← convertCount counter
+    let _ ← runProbe bin cache
+    let c2 ← convertCount counter
+    check ref "unlogged: a silent nonzero exit is an error" (r1.stdout.trimAscii.toString.startsWith "ERR ")
+    check ref "unlogged: it is not remembered, so the next build retries" (c1 == 1 && c2 == 2)
+    check ref "unlogged: no slot is written" ((← slotNames cache).isEmpty)
+  -- Empty output on a clean exit is inconclusive: no slot, retried.
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"; IO.FS.createDirAll bin
+    let cache := dir / "cache"; IO.FS.createDirAll cache
+    let counter := dir / "count"
+    writeStub (bin / "pdftocairo") (recordingStub counter.toString "pdftocairo 1.0" (payloadTail ""))
+    let r1 ← runProbe bin cache
+    let c1 ← convertCount counter
+    let _ ← runProbe bin cache
+    let c2 ← convertCount counter
+    check ref "empty: a clean exit with no bytes is an error" (r1.stdout.trimAscii.toString.startsWith "ERR ")
+    check ref "empty: empty output creates no valid slot and retries" (c1 == 1 && c2 == 2)
+    check ref "empty: no slot is written" ((← slotNames cache).isEmpty)
 
 /-- Spawn `n` probes concurrently, all sharing one cache and one stub
 `pdftocairo`, and hold the atomic-publish contract to what every writer was

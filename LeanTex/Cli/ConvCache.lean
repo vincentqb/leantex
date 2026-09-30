@@ -316,15 +316,4 @@ theorem seq_short_exact (first second : PicCache.Outcome) (h : first ≠ .drawn)
 theorem seq_drawn_exact (second : PicCache.Outcome) :
     seq .drawn second = second := rfl
 
-/-- **A tool upgrade names a different slot.** The variant carries the
-tool's version, so a changed version hashes to a different variant, and the
-same source under it is a different slot — every warmed conversion
-re-runs. Stated as the contrapositive that is checkable: equal slots force
-equal variants. -/
-theorem variant_only_key (op : Op) (v₁ v₂ engine : String)
-    (h : variant op v₁ engine = variant op v₂ engine) :
-    Flate.contentKey (String.intercalate "\u0000" [op.recipe, v₁, engine]).toUTF8
-      = Flate.contentKey (String.intercalate "\u0000" [op.recipe, v₂, engine]).toUTF8 := by
-  simpa [variant] using h
-
 end LeanTex.Cli.ConvCache
