@@ -872,8 +872,8 @@ def censusTable :
       hasStr (censusText c) "?=" && !hasStr (censusText c) "overset"),
     ("\\mathbb takes its Letterlike scalars", hasStr (censusText c) "ℝ"
       && hasStr (censusText c) "ℂ"),
-    ("the bold alphabets ship, variables kept italic",
-      hasStr (censusText c) "𝐯" && hasStr (censusText c) "𝜷"),
+    ("the bold alphabet ships, boldsymbol keeps the variable italic",
+      hasStr (censusText c) "𝐯" && hasStr (censusText c) "𝛽"),
     ("\\mathrm sets upright", hasStr (censusText c) "Err"),
     ("a document macro's expansion ships", hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),

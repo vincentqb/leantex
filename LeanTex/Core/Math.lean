@@ -431,10 +431,13 @@ def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
 /-- One letter or digit under an alphabet: the Letterlike hole when the
 block reserves the slot, else the base-offset scalar; a char the alphabet
 does not cover stays itself, so the map is total and `\mathbb{+}` keeps
-its plus. Greek: only the bold alphabets touch it — `bf` embolden the
-upright capitals (U+1D6A8 block), `bfit` also the italic lowercase
-(U+1D736 block, one uniform offset across the letters and their variant
-forms) and `∇` — LaTeX's `\mathbf`/`\bm` split. -/
+its plus. Greek: `bf` (upright bold) emboldens the upright capitals
+(U+1D6A8 block), the lowercase — read from their italic source block —
+into the upright-bold block (U+1D6C2), and `∇` (U+1D6C1); `it` sets the
+italic capitals (U+1D6E2 block), the lowercase already being italic at
+their source. `bfit` (`\bm`/`\boldsymbol`) has no installed range on this
+host — no bold math version is declared, so it maps nothing (`rangeOf`
+returns `none`); the base-offset entry it keeps only feeds `unapply`. -/
 def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
   let c := unItalic c0
   match a.hole c with
@@ -447,11 +450,13 @@ def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
       match digit with
       | some d => Char.ofNat (d + (c.toNat - '0'.toNat))
       | none => c
-    else if (a == .bf || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+    else if a == .bf && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
       Char.ofNat (0x1D6A8 + (c.toNat - 0x391))
-    else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
-      Char.ofNat (c.toNat + 0x3A)
-    else if a == .bfit && c == '\u2207' then Char.ofNat 0x1D6C1
+    else if a == .it && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+      Char.ofNat (0x1D6E2 + (c.toNat - 0x391))
+    else if a == .bf && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+      Char.ofNat (c.toNat - 0x3A)
+    else if a == .bf && c == '\u2207' then Char.ofNat 0x1D6C1
     else c0
 
 /-- A separately installed range of a math alphabet. unicode-math tests the
@@ -481,16 +486,18 @@ def MathAlphabetRange.anchor : MathAlphabetRange → Char
 input is the parser's ordinary math scalar: Latin variables are already
 italic, so `unItalic` recovers their source letter. -/
 def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
+  if a == .bfit then none
+  else
   let c := unItalic c0
   let (_, _, digit) := a.bases
   if 'A' ≤ c && c ≤ 'Z' then some .latinUpper
   else if 'a' ≤ c && c ≤ 'z' then some .latinLower
   else if '0' ≤ c && c ≤ '9' && digit.isSome then some .digits
-  else if (a == .bf || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+  else if (a == .bf || a == .it) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
     some .greekUpper
-  else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+  else if a == .bf && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
     some .greekLower
-  else if a == .bfit && c == '\u2207' then some .misc
+  else if a == .bf && c == '\u2207' then some .misc
   else none
 
 def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=

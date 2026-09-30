@@ -84,9 +84,12 @@ para
   formula inline "\\mathbb {C}"
     ord:alpha:bb{ord:𝐶}
   text " are double-struck, "
-  formula inline "\\mathbf {v} + \\boldsymbol {\\beta}"
-    ord:alpha:bf{ord:𝑣} bin:+ ord:alpha:bfit{ord:𝛽}
-  text " set bold, and "
+  formula inline "\\mathbf {v}"
+    ord:alpha:bf{ord:𝑣}
+  text " sets bold while "
+  formula inline "\\boldsymbol {\\beta}"
+    ord:alpha:bfit{ord:𝛽}
+  text " keeps its variable italic, and "
   formula inline "\\mathrm {Err}(p, q)"
     ord:alpha:rm{ord:𝐸 ord:𝑟 ord:𝑟} open:( ord:𝑝 punct:, ord:𝑞 close:)
   text " is upright. A construction stands as a script’s argument in "
