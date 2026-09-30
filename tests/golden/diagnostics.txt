@@ -152,8 +152,8 @@ note[N0017]: no '\documentclass'; the article page model is assumed
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 note[N0018]: 'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand
   help: write \fonts{ math = "..." } with a face that carries this alphabet
-note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
+note[N0018]: 'Fira Math' has no sans-serif alphabet for the characters used; ordinary math source glyphs stand
+  help: write \fonts{ math = "..." } with a face that carries this alphabet
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
 note[N0019]: content addressed per backend encodes a per-medium decision by hand
   help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
