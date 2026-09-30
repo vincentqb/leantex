@@ -1997,31 +1997,58 @@ identities and the page's `<img>`/`<picture>` links agree by construction. -/
 def browserFaceAssets (imgs : Image.Store) : Array ImageAsset :=
   (imageAssets imgs).filter fun a => a.file.endsWith ".svg"
 
-/-- Classify a published asset's file name as an image browser face — a
-converted primary (`imageAssetName`, `i` then the store index) or a static
-poster (`imagePosterName`, `p` then the index) — as opposed to a boundary
-picture's SVG, which `Main.picsToSvg` publishes as `Ir.picHash body ++ ".svg"`:
-32 hex digits whose first character is drawn from `0…9 a…f`. An image face's
-name is `i`/`p` immediately followed by a decimal digit (the index), which a
-boundary hash — starting with a hex digit, never `i` or `p` — can never be,
-so the classifier separates the two publication paths by construction and a
-boundary picture's SVG is never counted as a converted-image face nor falsely
-flagged as an extra. The classification is by these two leading characters,
-not an accidental prefix: `hexDigit_ne_ip` states the character-set
-disjointness, and `Tests.expectedFaceChecks` runs real
-`imageAssetName`/`imagePosterName`/`picHash` names through it. -/
+/-- Classify a published asset's file name as a converted-image browser
+face — a converted primary (`imageAssetName`, `i` then the store index) or a
+static poster (`imagePosterName`, `p` then the index), each ending in
+`.svg`. A raster ships its own bytes under its own extension (`i0-photo.png`)
+and is not a browser face: the `.svg` requirement rejects it, as the
+docstring's "converted `.svg`" promise requires. A boundary picture's SVG
+(`Ir.picHash body ++ ".svg"`) begins with a hex digit, never `i` or `p`, and
+is classified positively by `isBoundaryFaceName` instead; the two paths are
+disjoint by `isImageFaceName_boundary`, proved from `Ir.picHash_chars_mem`
+rather than assumed from a copied alphabet. -/
 def isImageFaceName (name : String) : Bool :=
+  name.endsWith ".svg" &&
   match name.toList with
   | c :: d :: _ => (c == 'i' || c == 'p') && d.isDigit
   | _ => false
 
-/-- No hexadecimal digit — the alphabet `Ir.picHash` draws every character of
-a boundary picture's SVG name from — is `i` or `p`. This is the stated
-disjointness property `isImageFaceName` relies on: an image face's name
-begins with `i` or `p`, a boundary picture's with a hex digit, so the
-classifier separates the two publication paths by construction. -/
-theorem hexDigit_ne_ip :
-    ∀ c ∈ "0123456789abcdef".toList, c ≠ 'i' ∧ c ≠ 'p' := by decide
+/-- Classify a published asset's file name as a boundary picture's SVG face:
+`.svg`, its stem the exact shape `Ir.picHash` produces — 32 characters, each
+one of `Ir.hexAlphabet`. The positive counterpart to `isImageFaceName`; a
+captured SVG matching neither is unclassified, which
+`Scoreboard.browserFaceFaults` faults rather than silently admits. -/
+def isBoundaryFaceName (name : String) : Bool :=
+  name.endsWith ".svg" &&
+  let stem := (name.dropEnd ".svg".length).toString
+  stem.length == 32 && stem.toList.all fun c => Ir.hexAlphabet.contains c
+
+/-- A genuine boundary face name — a picture's content hash with `.svg` — is
+never classified as a converted-image face: its first character is a hex
+digit (`Ir.picHash_chars_mem`) or the `.` of the extension, and a converted
+image face's name begins with `i` or `p`. This is the disjointness of the
+two publication paths that `Scoreboard.browserFaceFaults` rests on, proved
+rather than assumed from a copied alphabet. -/
+theorem isImageFaceName_boundary (body : String) :
+    isImageFaceName (Ir.picHash body ++ ".svg") = false := by
+  unfold isImageFaceName
+  cases hm : (Ir.picHash body ++ ".svg").toList with
+  | nil => simp
+  | cons a t =>
+    cases t with
+    | nil => simp
+    | cons b t' =>
+      have hmem : a ∈ (Ir.picHash body).toList ++ ".svg".toList := by
+        have : a ∈ (Ir.picHash body ++ ".svg").toList := by rw [hm]; exact List.mem_cons_self ..
+        rwa [String.toList_append] at this
+      have hne : a ≠ 'i' ∧ a ≠ 'p' := by
+        rcases List.mem_append.mp hmem with h | h
+        · have hx := Ir.picHash_chars_mem body a h
+          constructor <;> (rintro rfl; revert hx; decide)
+        · constructor <;> (rintro rfl; revert h; decide)
+      have hi : (a == 'i') = false := by simpa using hne.1
+      have hp : (a == 'p') = false := by simpa using hne.2
+      simp [hi, hp]
 
 /-- What an `<img>` for a request links: the copy under `assetsDir` when the
 entry ships, else the resolved spelling (the placeholder of an unloaded
