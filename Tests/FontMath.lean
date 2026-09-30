@@ -1701,6 +1701,13 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       adv mbase '𝐱' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝐲')
   t "boldsymbol bolds a Greek variable italic"
     (glyphChars "$\\boldsymbol{\\beta}$" == #['𝜷'])
+  -- \boldsymbol/\bm carry no digits: with no bold math version, LuaLaTeX
+  -- leaves \boldsymbol{5} a plain 5 (measured against four math faces in
+  -- scripts/math-alphabet-diff.lean), while \mathbf still takes the bold
+  -- digit run. The bfit digit base was removed to hold this.
+  t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
+    (glyphChars "$\\boldsymbol{5}$" == #['5'] &&
+      glyphChars "$\\mathbf{5}$" == #['𝟓'])
   -- The corpus math face's cmap, per mapped scalar: the alphabets it
   -- covers render from it; the ones it lacks take the diagnosed fallback
   -- path (per-scalar chain, N0018 synthesis where the chain is empty).
