@@ -372,6 +372,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   smartChecks ref
   boundaryChecks ref
   picCacheChecks ref
+  convCacheChecks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref

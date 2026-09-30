@@ -61,3 +61,4 @@ import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
+import LeanTex.Cli.ConvCache

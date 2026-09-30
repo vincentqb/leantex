@@ -8637,6 +8637,108 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
      !(PicCache.versionName v).endsWith ".pdf" &&
      !(PicCache.versionName v).endsWith ".fail")
 
+/-- The host-conversion cache's decision, stated as values
+(`LeanTex.Cli.ConvCache`). The browser SVG faces are drawn by external
+tools — `xmllint` guards the boundary, `rsvg-convert` and `pdftocairo`
+render the bytes — and before this cache each face was reconverted on every
+build, every unrenderable one paying a fresh tool startup forever, exactly
+as the picture boundary did before its own cache. The reuse is deliberate:
+the process vocabulary and the serve/replay/run decision are `PicCache`'s
+verbatim, so the two boundaries cannot drift in what counts as a verdict.
+The one reading that differs is this cache's own load-bearing fact — a
+converter can exit cleanly and still leave an empty or unreadable file, and
+that is truncated output, not a refusal, so it is retried where the TeX
+boundary would have remembered a "no". No tool runs here: the policy is
+pure, which is why it can be checked at all. -/
+def convCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The serve/replay/run decision is PicCache's, reused unchanged: the tool
+  -- runs exactly in the cold case (`ConvCache.step_cold_exact`).
+  t "nothing held: the tool runs"
+    (PicCache.step false none == .run)
+  t "converted bytes serve"
+    (PicCache.step true none == .serve)
+  t "a remembered refusal replays instead of running"
+    (PicCache.step false (some "unsupported SVG feature") == .replay "unsupported SVG feature")
+  -- What the conversion answered, read off the process ending and whether a
+  -- usable result came back. A clean exit with a usable result is the only
+  -- success; a clean exit with nothing usable is truncated output, not a no.
+  let says := "rsvg-convert: error reading SVG: unsupported feature"
+  t "a clean exit that produced usable bytes is the conversion"
+    (ConvCache.convOutcome (.exited 0) true .absent == .drawn)
+  t "a clean exit that produced nothing usable is inconclusive, not a refusal"
+    (ConvCache.convOutcome (.exited 0) false .absent == .inconclusive "no usable output was produced")
+  t "a failing exit carries the log's last words"
+    (ConvCache.convOutcome (.exited 1) false (.says says) == .refused says)
+  t "a failing exit whose log says nothing usable names the code"
+    (ConvCache.convOutcome (.exited 1) false (.says "") == .refused "exit code 1")
+  t "a failing exit that left no log at all is no answer about the request"
+    (ConvCache.convOutcome (.exited 127) false .absent == .inconclusive "exit code 127")
+  t "a budget overrun is no answer about the request"
+    (ConvCache.convOutcome (.overran 30) false .absent ==
+      .inconclusive "no result within 30 s; killed")
+  t "a spawn that raised is no answer about the request"
+    (ConvCache.convOutcome (.unstarted "no such file") false .absent ==
+      .inconclusive "no such file")
+  -- The boundary's own no lives in xmllint's stdout, not its exit code, so
+  -- it is fed in as an explicit refusal and remembered like any verdict.
+  t "the boundary's own refusal carries its words"
+    (ConvCache.boundaryRefusal "fragment-only references required" ==
+      .refused "fragment-only references required")
+  -- What the cache keeps: the tool's refusal, and nothing the machine did.
+  -- The unreadable-output case is this cache's own retry
+  -- (`ConvCache.unreadable_retried_exact`).
+  t "a refusal is remembered, in the tool's words"
+    (PicCache.remembers (ConvCache.convOutcome (.exited 1) false (.says says)) == some says)
+  t "converted bytes are not remembered as a refusal"
+    (PicCache.remembers (ConvCache.convOutcome (.exited 0) true .absent) == none)
+  t "a clean exit with no usable output is retried, not remembered"
+    (PicCache.remembers (ConvCache.convOutcome (.exited 0) false .absent) == none)
+  t "an overrun is not remembered, so the next build retries it"
+    (PicCache.remembers (ConvCache.convOutcome (.overran 30) false .absent) == none)
+  t "a failed spawn is not remembered, so the next build retries it"
+    (PicCache.remembers (ConvCache.convOutcome (.unstarted "boom") false .absent) == none)
+  t "a missing tool is not remembered, so installing it is enough"
+    (PicCache.remembers (ConvCache.convOutcome (.exited 127) false .absent) == none)
+  -- A two-stage operation (validate, then convert) short-circuits on the
+  -- first non-success and is its second stage otherwise (`seq_*_exact`).
+  t "a validation refusal is the whole answer; the converter never runs"
+    (ConvCache.seq (.refused "unsupported") .drawn == .refused "unsupported")
+  t "an inconclusive validation is the whole answer"
+    (ConvCache.seq (.inconclusive "killed") .drawn == .inconclusive "killed")
+  t "a validation that passed hands off to the conversion"
+    (ConvCache.seq .drawn (.refused "rsvg failed") == .refused "rsvg failed" &&
+     ConvCache.seq .drawn .drawn == .drawn)
+  -- The slot: the source's content key, the operation's recipe, the tool
+  -- version and the engine version, so an edit to any of them names a
+  -- different slot and is reconverted, and a match to all of them serves.
+  let srcA := Flate.contentKey "<svg>A</svg>".toUTF8
+  let srcB := Flate.contentKey "<svg>B</svg>".toUTF8
+  let varA := ConvCache.variant .svgPdf "rsvg 2.57" LeanTex.version
+  let varB := ConvCache.variant .svgPdf "rsvg 2.58" LeanTex.version
+  t "converted bytes and a remembered refusal share one slot"
+    (ConvCache.outName srcA varA == ConvCache.stem srcA varA ++ ".out" &&
+     ConvCache.failName srcA varA == ConvCache.stem srcA varA ++ ".fail" &&
+     ConvCache.outName srcA varA != ConvCache.failName srcA varA)
+  t "an edited source names a different slot"
+    (srcA != srcB && ConvCache.failName srcA varA != ConvCache.failName srcB varA)
+  t "an upgraded tool names a different slot"
+    (varA != varB && ConvCache.failName srcA varA != ConvCache.failName srcA varB)
+  t "a moved recipe names a different slot"
+    (ConvCache.variant .svgPdf "rsvg 2.57" LeanTex.version !=
+      ConvCache.variant .svgPoster "rsvg 2.57" LeanTex.version)
+  t "each PDF page is its own operation and slot"
+    (ConvCache.variant (.pdfPage 1) "pdftocairo 24" LeanTex.version !=
+      ConvCache.variant (.pdfPage 2) "pdftocairo 24" LeanTex.version)
+  t "the in-flight name never serves as output or refusal"
+    (!(ConvCache.partName srcA varA).endsWith ".out" &&
+     !(ConvCache.partName srcA varA).endsWith ".fail")
+  -- The recipes the cache keys on are the recipes the browser oracle
+  -- records: one source of truth, so a moved invocation moves both.
+  t "the contract names every tool the faces run"
+    (hasStr ConvCache.contract "xmllint" && hasStr ConvCache.contract "rsvg-convert" &&
+     hasStr ConvCache.contract "pdftocairo")
+
 /-- **A build whose pictures all replay starts no tool process.** The
 invariant this block holds, at the seam where the tool is asked who it is:
 the version string is part of every slot's name, so learning it was worth a
