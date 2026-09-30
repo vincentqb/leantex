@@ -1,0 +1,15 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Open Sans"
+section 1 number "1"
+  text "An animated figure"
+para
+  text "This figure animates in the browser through a companion vector, with a static poster on paper."
+role trivlist-env
+  center
+    para
+      image "figures/multipage" width 500/1000tw alt "A synthetic animated figure with a static poster"
+-- diagnostics
+note[N0100] 7:1 '\usepackage{graphicx}' → nothing: the engine does this itself
+warning[W0110] 16:1 '\animategraphics' uses a static PDF poster without PDF JavaScript; HTML uses the companion SVG only when it is present, readable and accepted, otherwise the same static poster without motion; the SVG owns timing, and frame rate '12' and playback controls are not applied | help: author timing and playback behavior in the companion SVG; the PDF contains only the selected poster

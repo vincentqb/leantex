@@ -1556,8 +1556,14 @@ def storeFor (dir : System.FilePath) (doc : Ir.Doc) :
         let bytes ← IO.FS.readBinFile p
         read := read.push (cand, bytes)
         let decoded := Image.decodeRequest .default bytes req
+        -- An animation's companion SVG is read beside the PDF, as the driver
+        -- reads it (`Main.fetchImage`), so the hermetic store carries the
+        -- animated-with-companion shape the real build does.
+        let companion ← if req.animated && !Image.isSvg cand then
+            Except.toOption <$> (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO
+          else pure none
         f := .decoded (if cand == src then "" else cand)
-          (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) none
+          (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) companion
         break
     fetched := fetched.push (req, f)
   let (store, diags) := Image.fulfilRequests fetched

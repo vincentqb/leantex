@@ -689,6 +689,11 @@ def censusTable :
     ("the heading ships", hasStr (censusText c) "A selected page"),
     ("the prose naming the selected page ships",
       hasStr (censusText c) "embeds the second page")]),
+  ("animation", fun _ c => [
+    ("one page", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "An animated figure"),
+    ("the prose describing the static poster ships",
+      hasStr (censusText c) "static poster on paper")]),
   ("webpage", fun _ c => [
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Doe"),

@@ -1,0 +1,19 @@
+% An animated figure: \animategraphics selects a static PDF poster from a
+% multi-page PDF and, for the browser, uses the companion SVG beside it
+% (figures/multipage.svg). The companion owns any timing; the PDF carries
+% only the poster frame, so paper and a reduced-motion reader see the static
+% poster. Synthetic, invented content; the fixtures live in figures/.
+\documentclass{article}
+\usepackage{graphicx}
+\fonts{ dir = "fonts", body = "Open Sans" }
+
+\begin{document}
+\section{An animated figure}
+This figure animates in the browser through a companion vector, with a
+static poster on paper.
+
+\begin{center}
+\animategraphics[poster=first, width=0.5\textwidth, alt={A synthetic
+animated figure with a static poster}]{12}{figures/multipage}{}{}
+\end{center}
+\end{document}
