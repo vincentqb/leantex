@@ -5295,6 +5295,18 @@ diffs a nested declaration makes. -/
 def Config.into (cfg : Config) : Config :=
   { cfg with epochStyle := "", epochGround := false }
 
+/-- Project the body's numbered extent into every part of its frame,
+including the title and furniture. -/
+def Config.inFrame (cfg : Config) (body : Array Block) : Config :=
+  { cfg with overlaySteps := Ir.maxStepBlocks body }
+
+/-- Frame context projects the IR selector without dropping any numbered
+step the body reaches. The same membership holds for title, body and furniture. -/
+theorem Config.inFrame_membership_agree (cfg : Config) (body : Array Block)
+    (spec : Ir.OverlaySpec) (k : Nat) (hk : 1 ≤ k) (hsteps : k ≤ Ir.maxStepBlocks body) :
+    (spec.selectedSteps (cfg.inFrame body).overlaySteps).contains k = spec.selects k :=
+  overlay_membership_agree spec (Ir.maxStepBlocks body) k hk hsteps
+
 private def joinStyles (a b : String) : String :=
   if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
 
@@ -6347,6 +6359,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- (`vdistShares`) — glue, exactly as the PDF page distributes its
     -- leftover; in block flow (the print handout, every other class) an
     -- empty div has no height and the declaration rides along inert.
+    let cfg := cfg.inFrame body
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout"
@@ -6355,7 +6368,6 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
     let bodyCfg := { cfg.into with
-      overlaySteps := Ir.maxStepBlocks body
       listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
     let kids := blockNodesInto bodyCfg #[] body.toList
     let kids := if cfg.deck then
@@ -7078,6 +7090,7 @@ omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
         | .frame title standout _ _ fb =>
+          let frameCfg := cfg.inFrame fb
           let num := nums[i]?.getD none
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
           done := num.getD done
@@ -7086,7 +7099,7 @@ via \\chrome is the sequence both backends share"))
           -- HTML section count is the frame count — the PDF's page count
           -- less its per-step duplicates (`frames_sections` in Tests;
           -- both counts are projections of `Ir.maxStepBlocks`).
-          let (node, named2) := claimStageName named (blockNode cfg b)
+          let (node, named2) := claimStageName named (blockNode frameCfg b)
           named := named2
           -- The frame's anchor: its title slug, unique among the deck's
           -- ids (`claimId`), so every slide is fragment-addressable — a
@@ -7116,7 +7129,7 @@ first; retitle one frame, or link to '#{id}'"))
           -- spacer carries the `[data-snap]` door, so deep links and the
           -- script's snap list name the same boxes. A stepless frame has
           -- no spacer: its section is its own snap page.
-          let steps := Ir.maxStepBlocks fb
+          let steps := frameCfg.overlaySteps
           let (spacers, taken2, diags2) :=
             if steps > 1 then
               snapWalk id text #[] taken walkDiags (stepList steps)
@@ -7138,7 +7151,7 @@ first; retitle one frame, or link to '#{id}'"))
                     [s!"color: {cssColor look.fg};", s!"background: {cssColor design.standout.bg};"]
                   else []
                 Node.elem tag attrs (kids.push (Html.elem "footer"
-                  (band.map fun s => Html.elem "span" (inlines cfg s.content)
+                  (band.map fun s => Html.elem "span" (inlines frameCfg s.content)
                     #[("class", match s.side with
                         | .left => "band-left"
                         | .right => "band-right"),
@@ -7153,7 +7166,7 @@ first; retitle one frame, or link to '#{id}'"))
           -- the shared fold — one strip inside the section, so a stepped
           -- frame's sticky stage carries it on every snap page, as the
           -- PDF's furniture pass repeats it on every page of the frame.
-          let node := attachLogo cfg node (Ir.logoInForce doc.logo logoSpans i)
+          let node := attachLogo frameCfg node (Ir.logoInForce doc.logo logoSpans i)
           -- A stepped frame rides a `.slide-track`: the sticky stage
           -- over its snap spacers (`track_snaps_exact` counts them). The
           -- spacers — static boxes, never the sticky stage — carry the
@@ -7555,7 +7568,7 @@ theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)
     (title : Array Inline) (standout : Bool) (valign : VAlign) (br : Bool)
     (body : Array Block) :
     scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
-  simp [blockNode, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
+  simp [blockNode, Config.inFrame, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
     frameName_contract]
 
 end LeanTex.Core.HtmlDoc

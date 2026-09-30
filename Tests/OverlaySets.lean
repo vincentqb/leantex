@@ -66,9 +66,8 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
      ("-2,4", [true, true, false, true]),
      ("1,4-", [true, false, false, true, true]),
      ("1,4", [true, false, false, true, false])]
-  let witness (label body : String) (active : List Bool) (alternative : Bool) := do
-    let (doc, ds) := elabStr (deck169Frame
-      (body ++ s!"\n\n\\uncover<{active.length}>" ++ "{ClockMarker}"))
+  let sourceWitness (label source : String) (active : List Bool) (alternative : Bool) := do
+    let (doc, ds) := elabStr source
     t (label ++ ": numbered spec") (ds.all fun d => d.severity == .note)
     let pages := censusOf (coveredColorsOf doc) (layoutOf fonts doc)
     let (_, tree, _) := HtmlDoc.emitTree {} doc
@@ -88,6 +87,9 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       t (label ++ suffix ++ " HTML selection")
         (overlayCount crisp "AmberMarker" == (if selected then 1 else 0) &&
           (!alternative || overlayCount shown "BlueMarker" == (if selected then 0 else 1)))
+  let witness (label body : String) (active : List Bool) (alternative : Bool) :=
+    sourceWitness label (deck169Frame
+      (body ++ s!"\n\n\\uncover<{active.length}>" ++ "{ClockMarker}")) active alternative
   for (spec, active) in cases do
     witness ("uncover " ++ spec) (s!"Lead \\uncover<{spec}>" ++ "{AmberMarker}") active false
     witness ("alt " ++ spec) (s!"Lead \\alt<{spec}>" ++ "{AmberMarker}{BlueMarker}") active true
@@ -107,5 +109,43 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     "\\onslide<2-3> BlueMarker\n\\end{overprint}") unionSteps true
   witness "nested selectors" "\\uncover<1,3-4>{\\uncover<1-2,4>{AmberMarker}}"
     unionSteps false
+  -- A frame's title and subtitle share the extent established by its body.
+  -- Each selected title reaches the shipped page once; both source branches
+  -- stand once in HTML while only the selected branch is shown at each snap.
+  for (spec, active) in
+      [("1,4", unionSteps), ("1-4", [true, true, true, true]),
+       ("2,4", [false, true, false, true]),
+       ("1,3-4", [true, false, true, true]),
+       ("1,4-", [true, false, false, true, true])] do
+    let title := s!"\\alt<{spec}>" ++ "{AmberMarker}{BlueMarker}"
+    witness ("frame title " ++ spec) ("\\frametitle{" ++ title ++ "}\nBodyMarker")
+      active true
+    witness ("frame subtitle " ++ spec)
+      ("\\frametitle{Header}\n\\framesubtitle{" ++ title ++ "}\nBodyMarker")
+      active true
+    sourceWitness ("frame title argument " ++ spec)
+      (deck169Body ("\\begin{frame}{" ++ title ++ "}\nBodyMarker\n\\uncover<" ++
+        toString active.length ++ ">{ClockMarker}\n\\end{frame}")) active true
+  -- HTML furniture inside the sticky stage uses the same finite extent.
+  -- Its source branches remain single nodes, including at an open range end.
+  for cmd in ["framefoot", "logo"] do
+    for (spec, active) in
+        [("1,4", unionSteps), ("1-4", [true, true, true, true]),
+         ("1,4-", [true, false, false, true, true])] do
+      let label := cmd ++ " HTML " ++ spec
+      let source := deck169Body
+        (s!"\\{cmd}" ++ "{\\alt<" ++ spec ++ ">{AmberMarker}{BlueMarker}}\n" ++
+          "\\begin{frame}\nBodyMarker\n\\uncover<" ++ toString active.length ++
+          ">{ClockMarker}\n\\end{frame}")
+      let (doc, ds) := elabStr source
+      t (label ++ ": numbered spec") (ds.all fun d => d.severity == .note)
+      let (_, tree, _) := HtmlDoc.emitTree {} doc
+      t (label ++ ": one source copy per branch")
+        (treeOccurs tree "AmberMarker" == 1 && treeOccurs tree "BlueMarker" == 1)
+      for (selected, i) in active.zipIdx do
+        let (shown, _) := overlayTextList (i + 1) false ("", "") tree.toList
+        t (label ++ s!": step {i + 1} selection")
+          (overlayCount shown "AmberMarker" == (if selected then 1 else 0) &&
+            overlayCount shown "BlueMarker" == (if selected then 0 else 1))
 
 end Tests
