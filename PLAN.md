@@ -24811,6 +24811,20 @@ the same resolver as a new definition.
 without the unused provision, across user commands, builtins and nested
 conditionals. Fresh definitions have separate visible-effect controls.
 
+Review found that preserving ignored operands for later accounting still
+let deferred-hook collection execute them. The early discard now consumes
+the complete operand shape and supplies the same N0100 accounting once.
+`xparseIgnoredOperandsChecks` compares emitted PDF bytes, typed HTML and
+diagnostics across existing meanings, provision definers and body/default
+hooks. Eighty assertions fail on `d67ad914` and pass after the correction;
+hooks outside ignored operands retain their visible effect.
+
+Nested installer definitions and group-local binding presence remain
+separate execution-state gaps: possible bindings are still conflated with
+executed bindings by compatibility preparation. Their source/control
+artifact comparisons remain failing and are not covered by the provision
+contract above.
+
 ### 2026-09-30 — Compatibility claims require an error-free probe
 
 The command-index judge now rejects errors in `impl` and `inert` rows,

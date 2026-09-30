@@ -10,6 +10,7 @@ import Tests.ListingHighlight
 import Tests.Markdown
 import Tests.MarkdownInput
 import Tests.XparseProvide
+import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
 import Tests.FrameHeadingScope
 import Tests.Census
@@ -54,6 +55,7 @@ import Tests.Natbib
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
+  xparseIgnoredOperandsChecks
   overlaySetChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -306,6 +308,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   loadedTestChecks ref oneFace
   packageCodeChecks ref oneFace
   xparseProvideChecks ref oneFace
+  xparseIgnoredOperandsChecks ref oneFace
   overlaySetChecks ref oneFace
   frameHeadingScopeChecks ref oneFace
   nestedStageChecks ref oneFace arts
