@@ -79,8 +79,10 @@ the HTML. Self-contained SVG images work too. Building one requires
 supported subset, librsvg supplies the static vector face, and HTML publishes
 the original SVG. Fragment references and plain CSS are supported; a paint
 server is exactly `url(#id)` — fallback syntax such as `url(#id) red` is
-refused. External resources, scripts, DTDs and CSS functions, escapes or
-at-rules are refused. A PDF image can select a page with
+refused. Exporter doctype identifiers are accepted without loading their
+DTD and removed from the temporary converter input. DTD declarations,
+non-predefined entity references, external resources, scripts and CSS
+functions, escapes or at-rules are refused. A PDF image can select a page with
 `\includegraphics[page=2]{figure.pdf}`; HTML output containing that PDF
 requires Poppler's `pdftocairo` at document-build time to supply its SVG
 browser face.
@@ -90,8 +92,11 @@ browser face.
 its authored animation; otherwise it shows the same static poster. Printing
 HTML or requesting reduced motion selects the static poster too. The first
 frame determines the figure's dimensions, even when the poster has a
-different size. The SVG owns playback timing. PDF JavaScript, playback controls, numbered file
-sequences and animation timelines are not implemented and are diagnosed.
+different size. The SVG owns playback timing: SMIL `repeatCount="1"` with
+`fill="freeze"` plays once and holds the end; `repeatCount="indefinite"`
+loops. An SVG embedded as an image has no standard pause control.
+PDF JavaScript, playback controls, numbered file sequences and animation
+timelines are not implemented and are diagnosed.
 PDF 2.0 does not play SVG animations natively.
 
 If browser conversion fails, HTML shows a labelled placeholder and reports

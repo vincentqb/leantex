@@ -373,7 +373,13 @@ def reports : List Report := [
     pins := [check% listingRoleEpochChecks, check% listingHighlightChecks,
       thm% Ir.recolorRoles_text]
     accept := ["invented title and standout frames paint the audited role ink after direct and nested palette declarations"]
-    state := .guarded "09e4aa72" .before .author }
+    state := .guarded "09e4aa72" .before .author },
+  { id := "R57", date := "2026-09-30"
+    what := "an exporter doctype identifier caused a self-contained vector drawing to become a placeholder in both artifacts"
+    pins := [check% svgAssetChecks]
+    accept := ["synthetic exporter-doctype inputs through the installed converters, with original browser bytes and painted native PDF pixels",
+      "the private reference figure rendered from its original vector source"]
+    state := .guarded "1c668735" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

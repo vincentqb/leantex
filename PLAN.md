@@ -24577,3 +24577,36 @@ The combined warning-as-failure build and full test suite pass. Chromium
 passes all 85 fixture and 16 feature checks; the reader baseline records the
 new converted-face bytes. The repository benchmark remains within its
 declared bibliography-growth bound.
+
+### 2026-09-30 — Exporter doctype identifiers retain vector drawings
+
+The SVG boundary mistook libxml's doctype-identification callbacks for
+declarations, so an ordinary exporter prolog replaced a self-contained
+drawing with a placeholder. The boundary now distinguishes those callbacks
+from entity, attribute, element and notation declarations. A successful
+complete parse is still required. The temporary converter input drops the
+inert doctype through libxml without loading it; the browser receives the
+captured original bytes. The converter recipe remains part of the reader
+oracle's freshness key.
+
+R57 pins the boundary guard and the installed-converter acceptance. Eight
+CLI and native-raster assertions failed on `1c668735` before this change
+and pass afterwards, covering the standard public identifier and a missing
+external DTD. Internal declarations and external resource dependencies
+remain refused. The private reference figure also renders directly from
+its original SVG in the native PDF.
+
+Independent review then found that SAX can report an unresolved general
+entity, or even a parser error, while exiting successfully. The boundary
+now refuses those callbacks too. Eight additional assertions failed before
+the correction and pass after it, including real text and attribute
+references with both missing and existing external DTDs. Predefined XML
+and numeric character references still pass. A paired raster check holds
+an external default's absence to the same black drawing with and without
+the doctype; changing that external default to green or blue changes
+nothing, while an explicitly green drawing differs.
+
+The full warning-as-failure build and test suite pass, as do the focused
+installed-converter checks. Chromium passes all 85 fixtures and 16 feature
+checks; the reader baseline records the new converter recipe with unchanged
+captured-face bytes. Image fuzzing passes all 92,871 inputs.

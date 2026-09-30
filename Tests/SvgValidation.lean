@@ -168,6 +168,99 @@ def svgValidationConverterChecks (ref : IO.Ref (List String)) : IO Unit := do
     let result ← LeanTex.Cli.ImageAssets.svgPlan .default (svgDocument body)
     svgCheck ref s!"SVG conversion refuses {name} before losing its ink" (boundaryError result)
 
+/-- An exporter's external doctype is an identifier, not a request to
+load its DTD. Adding it must retain the drawn figure in both artifacts.
+The actual driver and installed converters witness this boundary. -/
+def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let drawing := String.fromUTF8! <| svgDocument
+    "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
+  IO.FS.withTempDir fun dir => do
+    for (name, prolog) in [
+        ("public", "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \
+          \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">"),
+        ("missing", "<!DOCTYPE svg SYSTEM \"missing.dtd\">")] do
+      let input := dir / name
+      let output := input / "out"
+      IO.FS.createDirAll output
+      let bytes := (prolog ++ drawing).toUTF8
+      IO.FS.writeBinFile (input / "figure.svg") bytes
+      IO.FS.writeFile (input / "figure.tex")
+        "\\documentclass{article}\n\\begin{document}\n\
+        \\includegraphics[width=20pt,alt={Red square}]{figure.svg}\n\
+        \\end{document}\n"
+      for extension in ["html", "pdf"] do
+        let run ← IO.Process.output {
+          cmd := binary.toString, cwd := some input
+          args := #["figure.tex", "-o", (output / ("figure." ++ extension)).toString]
+          env := #[("LEANTEX_FONT", some font.toString),
+            ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+        let log := run.stdout ++ run.stderr
+        svgCheck ref s!"SVG doctype {name}: {extension} keeps the figure"
+          (run.exitCode == 0 && (log.splitOn "W0602").length == 1 &&
+            (log.splitOn "W0605").length == 1)
+      let asset := output / "figure.assets" / "i0-figure.svg"
+      svgCheck ref s!"SVG doctype {name}: original browser source publishes"
+        ((← asset.pathExists) && (← if ← asset.pathExists then
+          pure ((← IO.FS.readBinFile asset) == bytes) else pure false))
+      let html ← IO.FS.readFile (output / "figure.html")
+      svgCheck ref s!"SVG doctype {name}: the page links its visible figure"
+        ((html.splitOn "<img ").length == 2 &&
+          (html.splitOn "data-image-src=").length == 1)
+      let raster ← IO.Process.output {
+        cmd := "pdftoppm", args := #["-r", "72", "-singlefile", "-f", "1", "-l", "1",
+          (output / "figure.pdf").toString, (output / "page").toString] }
+      svgCheck ref s!"SVG doctype {name}: the PDF renders" (raster.exitCode == 0)
+      if raster.exitCode == 0 then
+        let pixels ← IO.FS.readBinFile (output / "page.ppm")
+        let mut red := 0
+        for i in [:pixels.size - 2] do
+          if pixels[i]! == 255 && pixels[i + 1]! == 0 && pixels[i + 2]! == 0 then
+            red := red + 1
+        -- A 20pt square at 72dpi contains 400 pixels; allow edge antialiasing.
+        svgCheck ref s!"SVG doctype {name}: the shipped PDF paints the red square"
+          (red > 200)
+      svgCheck ref s!"SVG doctype {name}: captured source remains unchanged"
+        ((← IO.FS.readBinFile (input / "figure.svg")) == bytes)
+
+/-- An external identifier must not supply missing entity values or paint
+defaults. Compare rendered pixels while the owned DTD's defaults change. -/
+def svgDtdDependencyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  IO.FS.withTempDir fun dir => do
+    let dtd := dir / "outside.dtd"
+    let prolog := s!"<!DOCTYPE svg SYSTEM \"{dtd}\">"
+    IO.FS.writeFile dtd "<!ENTITY outside 'green'>"
+    for id in [prolog, "<!DOCTYPE svg SYSTEM \"missing.dtd\">"] do
+      for body in ["<rect width=\"20\" height=\"20\" fill=\"&outside;\"/>",
+          "<text>&outside;</text>"] do
+        let result ← LeanTex.Cli.ImageAssets.validateSvg
+          (id ++ String.fromUTF8! (svgDocument body)).toUTF8
+        svgCheck ref "SVG named entities never silently lose their values" (boundaryError result)
+    let mut rasters : Array ByteArray := #[]
+    for (name, declaration, fill) in [
+        ("plain", "", ""), ("default-green", prolog, ""),
+        ("default-blue", prolog, ""), ("black", "", " fill=\"black\""),
+        ("green", "", " fill=\"green\"")] do
+      let color := if name == "default-blue" then "blue" else "green"
+      IO.FS.writeFile dtd s!"<!ATTLIST rect fill CDATA '{color}'>"
+      let source := (declaration ++ String.fromUTF8!
+        (svgDocument s!"<rect width=\"20\" height=\"20\"{fill}/>")).toUTF8
+      match ← LeanTex.Cli.ImageAssets.svgPoster source with
+      | .error err => svgCheck ref s!"SVG default comparison {name}: {err}" false
+      | .ok bytes =>
+        let input := dir / (name ++ ".svg")
+        let output := dir / (name ++ ".png")
+        IO.FS.writeBinFile input bytes
+        let run ← IO.Process.output {
+          cmd := "rsvg-convert"
+          args := #["--format=png", "--output", output.toString, input.toString] }
+        svgCheck ref s!"SVG default comparison {name} renders" (run.exitCode == 0)
+        if run.exitCode == 0 then rasters := rasters.push (← IO.FS.readBinFile output)
+    svgCheck ref "SVG external defaults never change the drawn pixels"
+      (rasters.size == 5 && !rasters[0]!.isEmpty &&
+        (rasters.toList.take 4).all (· == rasters[0]!) && rasters[4]! != rasters[0]!)
+
 /-- The narrow supported subset and its encoded counterexamples, through
 actual XML parsing and conversion. This oracle needs xmllint and librsvg;
 it must be invoked explicitly on a host providing those tools. -/
@@ -175,6 +268,8 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgPosterCanvasChecks ref
   svgCompanionDriverChecks ref
   svgValidationConverterChecks ref
+  svgDoctypeDriverChecks ref
+  svgDtdDependencyChecks ref
   let rect := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   let moving := "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
   for (name, body) in [
@@ -183,6 +278,7 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use href=\"#p\"/>"),
       ("fragment paint", "<defs><linearGradient id=\"paint\"><stop stop-color=\"red\"/></linearGradient></defs><rect width=\"20\" height=\"20\" fill=\"url(#paint)\"/>"),
       ("aliased fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"&#35;p\"/>"),
+      ("predefined and numeric references", "<title>&quot;&apos;&amp;&lt;&gt;&#65;&#x42;</title><rect aria-label=\"&quot;&apos;&amp;&lt;&gt;&#65;&#x42;\" width=\"20\" height=\"20\" fill=\"red\"/>"),
       ("plain style CDATA", "<style><![CDATA[rect { fill: red }]]></style>" ++ rect),
       ("XML comments and prose", "<!-- <image href=\"outside.png\"/> --><title>url(outside.png)</title>" ++ rect)] do
     let result ← LeanTex.Cli.ImageAssets.validateSvg (svgDocument body)
@@ -213,7 +309,10 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("truncated", "<svg href=\""), ("mismatched", "<svg><g></svg>"),
       ("extra root", "<svg/><svg/>"), ("unclosed", "<svg>"),
       ("unquoted attribute", "<svg width=20/>"),
-      ("DTD", "<!DOCTYPE svg SYSTEM \"missing.dtd\">" ++ String.fromUTF8! (svgDocument rect)),
+      ("DTD attribute", "<!DOCTYPE svg [<!ATTLIST rect fill CDATA 'green'>]>" ++
+        String.fromUTF8! (svgDocument rect)),
+      ("DTD element", "<!DOCTYPE svg [<!ELEMENT svg ANY>]>" ++
+        String.fromUTF8! (svgDocument rect)),
       ("entity declaration", "<!DOCTYPE svg [<!ENTITY x 'tile.png'>]>" ++
         String.fromUTF8! (svgDocument (rect ++ "<image href=\"&x;\"/>"))),
       ("stylesheet PI", "<?xml-stylesheet href=\"outside.css\"?>" ++ String.fromUTF8! (svgDocument rect))] do

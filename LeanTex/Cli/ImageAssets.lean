@@ -47,6 +47,9 @@ private def saxArgs (input : System.FilePath) : Array String :=
 private def xpathArgs (input : System.FilePath) : Array String :=
   #["--nonet", "--nocatalogs", "--xpath", supportedSvg, input.toString]
 
+private def dropDtdArgs (input : System.FilePath) : Array String :=
+  #["--nonet", "--nocatalogs", "--dropdtd", "--encode", "UTF-8", input.toString]
+
 private def rsvgArgs (format : String) (input output : System.FilePath) : Array String :=
   #["--format=" ++ format, "--output", output.toString, input.toString]
 
@@ -68,6 +71,7 @@ def browserFaceContract : String :=
   String.intercalate "\n" [
     commandText "xmllint" (saxArgs input),
     commandText "xmllint" (xpathArgs input),
+    commandText "xmllint" (dropDtdArgs input),
     commandText "rsvg-convert" (rsvgArgs "pdf" input output),
     commandText "rsvg-convert" (rsvgArgs "svg" input output),
     commandText "pdftocairo" (pdfSvgArgs "<page>" input output),
@@ -79,24 +83,41 @@ private def runChecked (tool : String) (args : Array String) : IO String := do
     throw <| IO.userError s!"{tool} exited {ran.exitCode}: {ran.stderr.trimAscii.toString}"
   return ran.stdout
 
-/-- SAX reports a DTD before any tree query can hide it. Do not enable
-entity substitution, external-DTD loading, XInclude or recovery. Both
-passes read the same captured file; namespace aliases and XML character
-references are resolved by libxml before the XPath boundary sees them. -/
+/-- SAX distinguishes an exporter's doctype identifier from declarations
+that can supply outside meaning. True requests removal of that inert
+identifier from the converter input; declarations and non-predefined
+entity references remain unsupported. Parser error callbacks also refuse.
+The caller must first require a successful parser exit. -/
+def svgSaxBoundary (sax : String) : Except String Bool := do
+  let events := (sax.splitOn "\n").map (·.trimAscii.toString)
+  let has := fun name => events.any (·.startsWith ("SAX." ++ name ++ "("))
+  if ["entityDecl", "attributeDecl", "elementDecl", "notationDecl",
+      "unparsedEntityDecl", "resolveEntity", "getParameterEntity",
+      "getEntity", "reference"].any has then
+    throw "SVG resource boundary refuses DTD declarations and external entities"
+  if events.any (fun event =>
+      event.startsWith "SAX.error:" || event.startsWith "SAX.fatalError:") then
+    throw "SVG validation received an XML parser error"
+  unless events.contains "SAX.startDocument()" && events.contains "SAX.endDocument()" do
+    throw "SVG validation received no complete XML parse"
+  return has "internalSubset" || has "externalSubset"
+
+/-- Do not enable entity substitution, external-DTD loading, XInclude or
+recovery. Both validation passes read the same captured file. Namespace
+aliases and character references reach XPath through libxml. An inert
+doctype is removed only from this temporary input, so the converter never
+receives it; the authored browser source stays byte-identical. -/
 private def checkSvgFile (input : System.FilePath) : IO Unit := do
   let sax ← runChecked "xmllint" (saxArgs input)
-  let dtdEvent := fun raw =>
-    let event := raw.trimAscii.toString
-    ["internalSubset(", "externalSubset(", "entityDecl("].any fun marker =>
-      (event.splitOn marker).length > 1
-  if (sax.splitOn "\n").any dtdEvent then
-    throw <| IO.userError "SVG resource boundary refuses DTDs and entity declarations"
-  unless (sax.splitOn "\n").any (·.trimAscii.toString == "SAX.startDocument()") &&
-      (sax.splitOn "\n").any (·.trimAscii.toString == "SAX.endDocument()") do
-    throw <| IO.userError "SVG validation received no complete XML parse"
+  -- premise: Tests.svgDoctypeChecks — identification events supply no declarations.
+  let hasDtd ← match svgSaxBoundary sax with
+    | .error err => throw <| IO.userError err
+    | .ok hasDtd => pure hasDtd
   let result ← runChecked "xmllint" (xpathArgs input)
   unless result.trimAscii.toString == "true" do
-    throw <| IO.userError "SVG resource boundary requires fragment-only references and plain CSS; paint servers must be exactly url(#id), without fallback syntax; DTDs, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
+    throw <| IO.userError "SVG resource boundary requires fragment-only references and plain CSS; paint servers must be exactly url(#id), without fallback syntax; DTD declarations, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
+  if hasDtd then
+    IO.FS.writeFile input (← runChecked "xmllint" (dropDtdArgs input))
 
 /-- Convert one captured input. A failed spawn, nonzero exit or absent
 output is an error, including when a failed process left an output file.
@@ -132,7 +153,7 @@ def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first) :
     IO (Except String Image.Plan) := do
   if page != .first && page != .number 1 then
-    return .error "SVG conversion supplies a static first frame; the selected poster requires a PDF frame sequence"
+    return .error "SVG conversion supplies a static base drawing; the selected poster requires a PDF frame sequence"
   validateSvg bytes params
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on

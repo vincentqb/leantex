@@ -5,6 +5,30 @@ open LeanTex.Core
 
 namespace Tests
 
+/-- Exporter doctype identifiers do not declare XML meaning. Actual DTD
+declarations, named entity dependencies and parser errors must still fail
+the same boundary. -/
+def svgDoctypeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let parsed (events : String) := "SAX.startDocument()\n" ++ events ++ "\nSAX.endDocument()\n"
+  let inert := "SAX.internalSubset(svg, -//W3C//DTD SVG 1.1//EN, missing.dtd)\n\
+    SAX.externalSubset(svg, -//W3C//DTD SVG 1.1//EN, missing.dtd)"
+  check ref "SVG doctype identity requests removal without refusing the drawing"
+    (LeanTex.Cli.ImageAssets.svgSaxBoundary (parsed inert) == .ok true)
+  check ref "SVG without a doctype needs no normalization"
+    (LeanTex.Cli.ImageAssets.svgSaxBoundary (parsed "") == .ok false)
+  for event in ["entityDecl", "attributeDecl", "elementDecl", "notationDecl",
+      "unparsedEntityDecl", "resolveEntity", "getParameterEntity", "getEntity", "reference"] do
+    check ref s!"SVG doctype still refuses {event}"
+      (LeanTex.Cli.ImageAssets.svgSaxBoundary
+        (parsed (inert ++ "\nSAX." ++ event ++ "(probe)"))).toOption.isNone
+  for event in ["SAX.error: Entity undefined", "SAX.fatalError: Invalid document"] do
+    check ref "SVG doctype never certifies a parser error between document callbacks"
+      (LeanTex.Cli.ImageAssets.svgSaxBoundary (parsed event)).toOption.isNone
+  for source in ["", inert, "SAX.startDocument()\n" ++ inert,
+      inert ++ "\nSAX.endDocument()"] do
+    check ref "SVG doctype never certifies an incomplete parse"
+      (LeanTex.Cli.ImageAssets.svgSaxBoundary source).toOption.isNone
+
 /-- Adding SVG candidates must not change which existing PDF or raster
 source wins an extensionless request. In particular a companion SVG must
 not shadow an uppercase PDF that can supply the selected poster. -/
@@ -67,6 +91,7 @@ def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
 should receive a PDF. The typed page must link a published SVG, with its
 text alternative, even though layout reads vector PDF geometry. -/
 def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  svgDoctypeChecks ref
   svgSourcePrecedenceChecks ref
   svgAssetUrlChecks ref
   svgPosterChecks ref
