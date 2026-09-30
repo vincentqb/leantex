@@ -1713,6 +1713,34 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
     (glyphChars "$\\boldsymbol{5}$" == #['5'] &&
       glyphChars "$\\mathbf{5}$" == #['𝟓'])
+  -- Nesting is a stack, innermost-first: a scalar the inner alphabet does
+  -- not cover falls through to an outer one that does (measured against
+  -- four faces in scripts/math-alphabet-diff.lean). Fira carries neither
+  -- calligraphic nor fraktur letters, so the inner scope yields and the
+  -- outer \mathbf takes the digit / the letter.
+  t "nested alphabets stack: mathbf takes a digit calligraphic cannot"
+    (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['𝟓'])
+  t "nested alphabets stack: mathbf takes a letter fraktur cannot cover here"
+    (glyphChars "$\\mathbf{\\mathfrak{Z}}$" == #['𝐙'])
+  -- Range completeness confirmed against the oracle: \mathit sets the
+  -- italic uppercase Greek block (U+1D6E2), \boldsymbol is near-identity
+  -- (bfit installs no range with no bold math version).
+  t "mathit sets the italic uppercase Greek block"
+    (glyphChars "$\\mathit{\\Gamma}$" == #['𝛤'])
+  t "boldsymbol leaves a Latin variable at its source italic"
+    (glyphChars "$\\boldsymbol{O}$" == #['𝑂'])
+  -- The unicode-math \sym… family maps onto the typed alphabets: \symbb
+  -- takes its Letterlike hole, \symbfup emboldens lowercase Greek upright,
+  -- \symup leaves the upright capital, and none of them warns any more.
+  t "symbb takes its Letterlike double-struck scalar"
+    (glyphChars "$\\symbb{R}$" == #['ℝ'])
+  t "symbfup emboldens lowercase Greek upright"
+    (glyphChars "$\\symbfup{\\gamma}$" == #['𝛄'])
+  t "symup leaves the upright Greek capital"
+    (glyphChars "$\\symup{\\Gamma}$" == #['Γ'])
+  t "the sym family no longer raises an unknown-command warning"
+    (warnCodes "$\\symbb{R}$" == [] && warnCodes "$\\symup{\\Gamma}$" == [] &&
+      warnCodes "$\\symbfup{\\gamma}$" == [])
   -- The corpus math face's cmap, per mapped scalar: the alphabets it
   -- covers render from it; the ones it lacks take the diagnosed fallback
   -- path (per-scalar chain, N0018 synthesis where the chain is empty).
