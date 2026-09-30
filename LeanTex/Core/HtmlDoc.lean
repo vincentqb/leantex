@@ -2519,7 +2519,7 @@ the stepped track's reverts live with the step rules (`stepFixed`). -/
 def deckReduce : List DeckRule := [deckGlideGuard]
 
 /-- The stepped track, gated on `view()` timelines: a frame with N
-overlay steps (`Ir.maxStepBlocks`) is one sticky stage over N snap
+overlay steps (`Ir.frameSteps`) is one sticky stage over N snap
 spacers. The `.slide-track` wrapper is `N × 100vw` wide — a flex row of
 its stage and N spacers — and declares the frame's named view progress
 timeline (`view-timeline: --frame x`, Scroll-driven Animations 1 §3.4;
@@ -3635,7 +3635,7 @@ theorem print_lifts_stage_bounds_covers (v pg : String) (cp ms : Nat) :
 
 /-- Every step of every stepped frame is reachable in the floor: for
 each step `n` of a deck whose maximum step count is `ms`
-(`Ir.maxStepBlocks`; step 1 is never covered), the emitted rules contain
+(`Ir.frameSteps`; step 1 is never covered), the emitted rules contain
 an uncover rule whose snap is a spacer `k ≥ n` uncovering `n` —
 concretely `k = n`, the `data-snapped` value the script writes when the
 reader's key lands that snap point. The uncover set `uncoveredBy k` is
@@ -5295,17 +5295,17 @@ diffs a nested declaration makes. -/
 def Config.into (cfg : Config) : Config :=
   { cfg with epochStyle := "", epochGround := false }
 
-/-- Project the body's numbered extent into every part of its frame,
-including the title and furniture. -/
-def Config.inFrame (cfg : Config) (body : Array Block) : Config :=
-  { cfg with overlaySteps := Ir.maxStepBlocks body }
+/-- Project the IR frame's numbered extent, including title and body
+endpoints, into every part of its HTML frame. -/
+def Config.inFrame (cfg : Config) (frame : Block) : Config :=
+  { cfg with overlaySteps := Ir.frameSteps frame }
 
 /-- Frame context projects the IR selector without dropping any numbered
-step the body reaches. The same membership holds for title, body and furniture. -/
-theorem Config.inFrame_membership_agree (cfg : Config) (body : Array Block)
-    (spec : Ir.OverlaySpec) (k : Nat) (hk : 1 ≤ k) (hsteps : k ≤ Ir.maxStepBlocks body) :
-    (spec.selectedSteps (cfg.inFrame body).overlaySteps).contains k = spec.selects k :=
-  overlay_membership_agree spec (Ir.maxStepBlocks body) k hk hsteps
+step the frame reaches. The same membership holds for title, body and furniture. -/
+theorem Config.inFrame_membership_agree (cfg : Config) (frame : Block)
+    (spec : Ir.OverlaySpec) (k : Nat) (hk : 1 ≤ k) (hsteps : k ≤ Ir.frameSteps frame) :
+    (spec.selectedSteps (cfg.inFrame frame).overlaySteps).contains k = spec.selects k :=
+  overlay_membership_agree spec (Ir.frameSteps frame) k hk hsteps
 
 private def joinStyles (a b : String) : String :=
   if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
@@ -6359,7 +6359,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- (`vdistShares`) — glue, exactly as the PDF page distributes its
     -- leftover; in block flow (the print handout, every other class) an
     -- empty div has no height and the declaration rides along inert.
-    let cfg := cfg.inFrame body
+    let cfg := cfg.inFrame b
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout"
@@ -6677,17 +6677,17 @@ private theorem snapWalk_count (id text : String) :
     omega
 
 /-- The step count the two backends agree on, HTML half, stated over
-`Ir.maxStepBlocks`: a stepped frame's track carries exactly
-`maxStepBlocks fb` snap spacers beside its one sticky stage — the count
+`Ir.frameSteps`: a stepped frame's track carries exactly
+`frameSteps frame` snap spacers beside its one sticky stage — the count
 `deckStepCss` reads back as `--steps` and the very count the PDF handout
 paginates the frame by (that half is the owed `pages_partition_frames`;
 there is no umbrella theorem over the two, one half being owed). -/
 private theorem track_snaps_exact (id text : String)
     (taken : Std.HashMap String String) (diags : Array Diag)
-    (fb : Array Ir.Block) :
+    (frame : Ir.Block) :
     (snapWalk id text #[] taken diags
-        (stepList (Ir.maxStepBlocks fb))).1.size
-      = Ir.maxStepBlocks fb := by
+        (stepList (Ir.frameSteps frame))).1.size
+      = Ir.frameSteps frame := by
   rw [snapWalk_count, stepList_length]
   simp
 
@@ -7089,8 +7089,8 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title standout _ _ fb =>
-          let frameCfg := cfg.inFrame fb
+        | .frame title standout _ _ _ =>
+          let frameCfg := cfg.inFrame b
           let num := nums[i]?.getD none
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
           done := num.getD done
@@ -7098,7 +7098,7 @@ via \\chrome is the sequence both backends share"))
           -- under the class-gated uncover rules (`deckStepCss`), so the
           -- HTML section count is the frame count — the PDF's page count
           -- less its per-step duplicates (`frames_sections` in Tests;
-          -- both counts are projections of `Ir.maxStepBlocks`).
+          -- both counts are projections of `Ir.frameSteps`).
           let (node, named2) := claimStageName named (blockNode frameCfg b)
           named := named2
           -- The frame's anchor: its title slug, unique among the deck's

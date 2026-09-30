@@ -45,6 +45,21 @@ private def overlayTextList (k : Nat) (covered : Bool)
 
 end
 
+mutual
+
+/-- Count the typed tree's actual paging destinations, including a stepless
+frame's own snap. A selector alone cannot create a reachable reveal step. -/
+private def overlaySnapsOne (acc : Nat) : Html.Node → Nat
+  | .text _ | .style _ | .script _ _ => acc
+  | .elem _ attrs kids =>
+    overlaySnapsList (acc + if attrs.any (·.1 == "data-snap") then 1 else 0) kids.toList
+
+private def overlaySnapsList (acc : Nat) : List Html.Node → Nat
+  | [] => acc
+  | n :: ns => overlaySnapsList (overlaySnapsOne acc n) ns
+
+end
+
 private def overlayCount (text needle : String) : Nat :=
   (text.splitOn needle).length - 1
 
@@ -72,6 +87,7 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     let pages := censusOf (coveredColorsOf doc) (layoutOf fonts doc)
     let (_, tree, _) := HtmlDoc.emitTree {} doc
     t (label ++ ": page count") (pages.size == active.length)
+    t (label ++ ": HTML snap count") (overlaySnapsList 0 tree.toList == active.length)
     t (label ++ ": HTML body declared once") (treeOccurs tree "AmberMarker" == 1)
     if alternative then
       t (label ++ ": HTML other declared once") (treeOccurs tree "BlueMarker" == 1)
@@ -126,6 +142,22 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     sourceWitness ("frame title argument " ++ spec)
       (deck169Body ("\\begin{frame}{" ++ title ++ "}\nBodyMarker\n\\uncover<" ++
         toString active.length ++ ">{ClockMarker}\n\\end{frame}")) active true
+  -- LuaLaTeX gives a title-only <1,4> four pages: the title's endpoints
+  -- create the frame's steps even when its body has no overlay.
+  for (spec, active) in
+      [("1,4", unionSteps), ("1-4", [true, true, true, true]),
+       ("2,4", [false, true, false, true]),
+       ("1,3-4", [true, false, true, true]),
+       ("1,4-", unionSteps), ("1-2,4", [true, true, false, true])] do
+    let title := s!"\\alt<{spec}>" ++ "{AmberMarker}{BlueMarker}"
+    sourceWitness ("title-only " ++ spec)
+      (deck169Frame ("\\frametitle{" ++ title ++ "}\nBodyMarker")) active true
+    sourceWitness ("subtitle-only " ++ spec)
+      (deck169Frame ("\\frametitle{Header}\n\\framesubtitle{" ++ title ++ "}\nBodyMarker"))
+      active true
+    sourceWitness ("title argument only " ++ spec)
+      (deck169Body ("\\begin{frame}{" ++ title ++ "}\nBodyMarker\n\\end{frame}"))
+      active true
   -- HTML furniture inside the sticky stage uses the same finite extent.
   -- Its source branches remain single nodes, including at an open range end.
   for cmd in ["framefoot", "logo"] do

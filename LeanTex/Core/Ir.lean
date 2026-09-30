@@ -9506,8 +9506,9 @@ theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
 
 mutual
 
-/-- The last step a frame's body reaches: how many pages the PDF handout
-gives the frame. A frame nested below another block keeps one page. -/
+/-- The last step a frame's body reaches. `frameSteps` also includes its
+title when counting handout pages. A frame nested below another block
+keeps one page. -/
 def maxStepBlocks (xs : Array Block) : Nat := maxStepBlockList xs.toList
 
 def maxStepBlockList : List Block → Nat
@@ -9527,8 +9528,8 @@ def maxStepBlock : Block → Nat
   | .ragged _ body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
   | .abstract body => maxStepBlockList body.toList
-  -- The title is furniture and does not multiply pages, as a frame
-  -- title does not; the body's own steps take theirs.
+  -- A titled block's title is furniture and does not multiply pages;
+  -- the body's own steps take theirs.
   | .titled _ _ body => maxStepBlockList body.toList
   | .role _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
@@ -9555,7 +9556,7 @@ def maxStepBlock : Block → Nat
   -- A picture is concrete ink with no overlay structure inside it.
   | .picture _ => 1
   -- A cell's content may step (an overlay reveal per row); the caption is
-  -- furniture and does not multiply pages, as a frame title does not.
+  -- furniture and does not multiply pages.
   | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
   | .float _ _ _ body _ => maxStepBlockList body.toList
   -- A reference list is furniture like a section title: no overlay inside.
@@ -9610,7 +9611,9 @@ def maxStepInline : Inline → Nat
 end
 
 /-- The handout pages one top-level block owes: one per overlay step of a
-frame, none for anything else. A frame projection, not a measure walk —
+frame's title or body, none for anything else. LuaLaTeX gives a frame with
+only `\frametitle{\alt<1,4>{Amber}{Blue}}` four pages; a subtitle is part of
+the same title inlines. A frame projection, not a measure walk —
 only a frame opens handout duplicates, whatever block kinds arrive later —
 and the `frames_sections` census (deckStepChecks) holds it to the shipped
 page count. The owed obligation `pages_partition_frames`
@@ -9618,7 +9621,25 @@ page count. The owed obligation `pages_partition_frames`
 is attributed to a frame, and frame k's pages number exactly its overlay
 steps — this count, summed over the body. -/
 def frameSteps (b : Block) : Nat :=
-  if let .frame _ _ _ _ body := b then max 1 (maxStepBlocks body) else 0
+  if let .frame title _ _ _ body := b then
+    max 1 (max (maxStepInlines title) (maxStepBlocks body))
+  else 0
+
+/-- Every numbered endpoint in a frame's title or body has a page in its
+shared extent. -/
+theorem frameSteps_covers (title : Array Inline) (standout : Bool)
+    (valign : VAlign) (breakable : Bool) (body : Array Block) :
+    maxStepInlines title ≤ frameSteps (.frame title standout valign breakable body) ∧
+    maxStepBlocks body ≤ frameSteps (.frame title standout valign breakable body) := by
+  simp only [frameSteps]
+  constructor <;> omega
+
+/-- A title whose endpoints fit within the body's extent adds no pages. -/
+theorem frameSteps_body_exact (title : Array Inline) (standout : Bool)
+    (valign : VAlign) (breakable : Bool) (body : Array Block)
+    (h : maxStepInlines title ≤ maxStepBlocks body) :
+    frameSteps (.frame title standout valign breakable body) = max 1 (maxStepBlocks body) := by
+  simp [frameSteps, Nat.max_eq_right h]
 
 /-- Alternation groups no step of their own frame inks, counted over the
 document's frames — block alternations and inline ones alike. **Zero is the
