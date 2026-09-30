@@ -1582,6 +1582,66 @@ end
 
 mutual
 
+/-- Every scalar a math list asks the *selected math face* for. Identical to
+`scalars` but a text-projected `.styled` nucleus contributes nothing: it is
+set in its text family by the `.styled` layout arm (`FontSet.lookup slot`)
+and its coverage is judged there — against the text face, as an E0405 when
+that face lacks it — never against the math face. The math-face substitution
+scan (W0009) reads this, so a scalar the sans/mono/body slot set cleanly is
+never blamed on the math face and never doubled with the styled arm's own
+E0405. -/
+def MItem.mathScalars (acc : Array Char) : MItem → Array Char
+  | .atom _ nuc sup sub _ =>
+    MList.mathScalarsList (MList.mathScalarsList (nuc.mathScalars acc) sup) sub
+  | .space _ => acc
+  | .ink _ _ => acc
+
+def MNucleus.mathScalars (acc : Array Char) : MNucleus → Array Char
+  | .sym c => acc.push c
+  | .styled _ _ => acc
+  | .word s => s.foldl (·.push ·) acc
+  | .list body => MList.mathScalarsList acc body
+  | .alpha _ body => MList.mathScalarsList acc body
+  | .frac spec num den =>
+    let acc := match spec.left with
+      | some c => acc.push c
+      | none => acc
+    let acc := MList.mathScalarsList (MList.mathScalarsList acc num) den
+    match spec.right with
+    | some c => acc.push c
+    | none => acc
+  | .rad deg body => MList.mathScalarsList (MList.mathScalarsList acc deg) body
+  | .delim l r body =>
+    let acc := match l with
+      | some c => acc.push c
+      | none => acc
+    let acc := match r with
+      | some c => acc.push c
+      | none => acc
+    MList.mathScalarsList acc body
+  | .accent mark _ body =>
+    let acc := if mark == '\u0305' then acc else acc.push mark
+    MList.mathScalarsList acc body
+  | .grid _ rows => MRows.mathScalarsRows acc rows
+  | .cancel _ _ value body =>
+    MList.mathScalarsList (MList.mathScalarsList acc body) value
+
+def MList.mathScalarsList (acc : Array Char) : MList → Array Char
+  | .nil => acc
+  | .cons x rest => MList.mathScalarsList (x.mathScalars acc) rest
+
+def MRow.mathScalarsRow (acc : Array Char) : MRow → Array Char
+  | .nil => acc
+  | .cons c rest => MRow.mathScalarsRow (MList.mathScalarsList acc c) rest
+
+def MRows.mathScalarsRows (acc : Array Char) : MRows → Array Char
+  | .nil => acc
+  | .cons r rest => MRows.mathScalarsRows (MRow.mathScalarsRow acc r) rest
+
+end
+
+mutual
+
 /-- An alphabet applied through a parsed math list: every `sym` scalar
 remaps (`MathAlphabet.apply`), a construction passes through with its
 contents remapped — `\mathbf{x^2}` bolds the script too, TeX's alphabet
