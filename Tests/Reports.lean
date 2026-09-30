@@ -317,7 +317,7 @@ def reports : List Report := [
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
     pins := [check% recipeTabularxChecks, thm% Layout.table_natural_width_exact]
     state := .guarded "8a9cf04a" .before .author },
-  { id := "R47", date := "2026-09-29"
+  { id := "R52", date := "2026-09-29"
     what := "strikeout was requested without a shared through-line geometry for both artifacts"
     pins := [check% recipeUlemRefusalChecks]
     state := .answered }

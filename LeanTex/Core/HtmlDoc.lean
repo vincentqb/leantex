@@ -4661,7 +4661,7 @@ def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat Ã
     | none => cols[j]?.getD { width := .natural, align := .left }
   let paragraph := match spec.width with
     | .natural => false
-    | .abs _ | .frac _ | .flex _ => true
+    | .sized _ | .flex _ => true
   let al := match spec.align with
     | .center => #[("style", "text-align: center")]
     | .right => #[("style", "text-align: right")]

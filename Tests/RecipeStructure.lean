@@ -207,7 +207,8 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
       | .table cols _ _ _ _ _ => acc.push cols
       | _ => acc) (fun acc _ => acc) #[] doc.body
   t "X reaches the shared table IR as a flexible target-width column"
-    ((tableCols[0]?.bind (·[1]?)).map (·.width) == some (.flex (.frac 1000)))
+    ((tableCols[0]?.bind (·[1]?)).map (·.width) ==
+      some (.flex (.sized (.ref .lineWidth))))
   let probeCols : Array Ir.ColSpec :=
     #[{ width := .natural, align := .left },
       { width := .flex (.frac 1000), align := .left }]
