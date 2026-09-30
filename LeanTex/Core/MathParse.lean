@@ -203,6 +203,14 @@ def alphaCtrl : List (String × Math.MathAlphabet) :=
    ("Bbb", .bb), ("bold", .bf),
    ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
    ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm),
+   -- unicode-math's `\sym…` family selects the math (`sym`) version of each
+   -- alphabet explicitly, mapping onto the same typed alphabets. `\symup`
+   -- and `\symrm` are the upright roman; `\symbf`/`\symbfup` the upright
+   -- bold; `\symbfit` the bold italic (`\bm`); the rest name their shape.
+   ("symup", .rm), ("symrm", .rm), ("symit", .it),
+   ("symbf", .bf), ("symbfup", .bf), ("symbfit", .bfit),
+   ("symsf", .sf), ("symtt", .tt), ("symbb", .bb),
+   ("symcal", .cal), ("symfrak", .frak),
    -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
    -- upright bold roman x, which is exactly what `\mathbf` does, so they
    -- resolve to the same alphabets rather than leaving the formula

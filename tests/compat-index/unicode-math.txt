@@ -2,11 +2,11 @@
 # alphabet commands).
 pre impl \setmathfont{Example Math}
 pre refuse:W0101 \unimathsetup{math-style=ISO}
-body refuse:W0012 $\symbf{A}$
-body refuse:W0012 $\symit{A}$
-body refuse:W0012 $\symup{A}$
-body refuse:W0012 $\symbb{R}$
-body refuse:W0012 $\symcal{L}$
-body refuse:W0012 $\symfrak{g}$
-body refuse:W0012 $\symsf{A}$
-body refuse:W0012 $\symtt{A}$
+body impl $\symbf{A}$
+body impl $\symit{A}$
+body impl $\symup{A}$
+body impl $\symbb{R}$
+body impl $\symcal{L}$
+body impl $\symfrak{g}$
+body impl $\symsf{A}$
+body impl $\symtt{A}$
