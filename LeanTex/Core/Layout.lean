@@ -5870,8 +5870,11 @@ private structure Rd where
   /-- The document's resolved main locale: what the class furniture the
   walk generates (the abstract heading, caption prefixes) is worded in. -/
   locale : Locale := Locale.en
-  /-- The `slides` class: frames and sections open fresh pages. -/
+  /-- The `slides` class: frames and out-of-frame sections open fresh pages. -/
   slides : Bool := false
+  /-- A frame body owns its headings: they neither open section dividers
+  nor replace the enclosing top-level section or its footer. -/
+  inFrame : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   lists : Ir.ListLineage := .sizeFile
   /-- The list or quote being collected opened inside an open paragraph
@@ -7305,12 +7308,11 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     -- so it opens no page of its own even in slides.
     collectTitle r a title indent false
   else
-  -- The section in force, for the footer's \sectiontitle slot — and its
-  -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML
-  -- page assigns), so the outline's in-document targets can resolve to
-  -- the page the heading lands on.
+  -- The top-level section in force, for the footer's \sectiontitle slot.
+  -- A local heading remains addressable (`Ir.slug`, the id the HTML page
+  -- assigns), but cannot change the section of a subsequent frame.
   let a := if level == 1 then
-      { a with curSection := title
+      { a with curSection := if r.inFrame then a.curSection else title
                ops := a.ops.push (.anchor (Ir.slug title)) }
     else a
   -- The heading's leaves are the title's alone: the number the walk sets
@@ -7318,7 +7320,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   let span := leafCount title
   let (a, leaf) := a.leafRange span
   let design := Ir.Design.ofPalette a.pal
-  if r.slides && level == 1 && design.sectionProgress.isSome then
+  let divider := r.slides && !r.inFrame
+  if divider && level == 1 && design.sectionProgress.isSome then
     -- The themed section page: its own page, vertically centred, the
     -- title ragged-left in a centred measure with the deck position
     -- drawn under it as a progress bar.
@@ -7364,10 +7367,10 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
       | none => a
     a.pageBreak
   else
-  -- In slides, a section is a divider: its own page between frames rather
-  -- than a heading dropped onto the bottom of the previous slide.
-  let a := if r.slides then a.pageBreak else a
-  let a := if a.footAllowed then
+  -- Only a section outside a frame opens a divider. A frame's headings
+  -- keep its page style, distribution and footline (`frameHeadingScopeChecks`).
+  let a := if divider then a.pageBreak else a
+  let a := if !r.inFrame && a.footAllowed then
       { a with ops := a.ops.push (.foot none none none) } else a
   let element := match level with
     | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
@@ -7417,7 +7420,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
   let a := { a.vskip after with afterHeading := true, fg := savedFg }
-  if r.slides then a.pageBreak else a
+  if divider then a.pageBreak else a
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
   -- The reference list is natbib's `thebibliography` list (`\NAT@bibsetnum`,
@@ -7872,11 +7875,13 @@ private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
     { a with ops := a.ops.push foot }
   else a
 
-/-- The reader a frame's body is walked with. Where the frame's pages carry
-the footline — the band `collectFrameOpen` opens — `\textheight` is
+/-- The reader a frame's body is walked with: headings belong to the frame,
+including a frame without a footer. Where the frame's pages carry the
+footline — the band `collectFrameOpen` opens — `\textheight` is
 beamer's there: the paper less `\footheight`, `footFloor` of the band's
 box, the floor the page builder stands the body on (`B.bottom`). -/
 private def frameReader (r : Rd) (a : Acc) (standout : Bool) : Rd :=
+  let r := { r with inFrame := true }
   match (if a.footAllowed then a.chromeFoot standout else none) with
   | some band =>
     let (h, d) := bandBox r.fs r.imgs r.geom r.xHeight 1 band
