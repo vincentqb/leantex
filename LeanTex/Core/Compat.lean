@@ -710,7 +710,7 @@ private structure St where
   it is evaluated from. -/
   lens : Array (String × String) := #[]
   /-- Command names the rewrite walk has bound so far, in document order:
-  what `\providecommand`'s keep-existing policy reads. Separate from
+  what `\providecommand` and `\ProvideDocumentCommand` read. Separate from
   `binds`, which the conditional pass fills for the whole document
   before any rewrite runs — a policy about "before this point" cannot
   read a whole-document set. -/
@@ -725,7 +725,7 @@ private structure St where
   preamble elaborator does not take it. -/
   bibStyle : Option String := none
   /-- Names the caller declares the engine renders or reserves: what
-  `\providecommand`'s keep-existing policy reads for commands this
+  the provision definers' keep-existing policy reads for commands this
   document did not bind — every one of them *is* defined, in LaTeX and
   here, so a provide of one is LaTeX's documented no-op. -/
   provideKeeps : List String := []
@@ -1633,6 +1633,8 @@ as `{\name}`. -/
 private def definesNext : List String :=
   ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
    "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
+   "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
+   "DeclareDocumentCommand",
    "define", "defineenv"]
 
 /-- Bind `n` to `v`, recording what it replaced on the save stack. -/
@@ -1984,12 +1986,10 @@ private def condNoExpand : List String :=
   ["noexpand", "string", "meaning", "show", "expandafter", "futurelet"]
 
 /-- The definers whose operands the pass reads as a definition rather than as
-content: `definesNext`, the environment definers, and xparse's command
-definers. A definition's replacement text is expanded where the definition
-is used, never where it is made. -/
+content: `definesNext` and the environment definers. A definition's replacement
+text is expanded where the definition is used, never where it is made. -/
 private def condDefiners : List String :=
-  definesNext ++ ["newenvironment", "renewenvironment", "NewDocumentCommand",
-    "RenewDocumentCommand", "ProvideDocumentCommand", "DeclareDocumentCommand"]
+  definesNext ++ ["newenvironment", "renewenvironment"]
 
 /-- Is `n` the setter of a declared flag (`\Xtrue`, `\Xfalse`)? -/
 private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :=
@@ -2551,8 +2551,17 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
       let bound := if definesNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
+      let provide := n == "providecommand" || n == "ProvideDocumentCommand"
+      -- premise: none — xparseProvideChecks covers unused replacement texts;
+      -- its suite wiring lands with the parent integration.
+      if provide && bound.any (fun m => st.binds.contains m || st.provideKeeps.contains m) then
+        if let some sh := definerShape raws i n then
+          -- Keep the operands intact for the rewrite's no-op accounting.
+          -- Neither conditionals nor nested definitions in them are read.
+          return ← condList ex raws (out ++ raws.extract i sh.stop)
+            stack rest (i + 1) (sh.stop - (i + 1))
       if let some m := bound then
-        unless n == "providecommand" && st.binds.contains m do
+        unless provide && st.binds.contains m do
           -- Inside a frame the pass cannot decide, the branch may not run:
           -- the name is bound (the flat reading), its value unread.
           let v := if stack.any (· matches .opaque) then none
@@ -6402,14 +6411,15 @@ skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
         return some (#[], k)
     | _ => return none
-  | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
+  | "NewDocumentCommand" | "ProvideDocumentCommand"
+  | "newcommand" | "providecommand" | "renewcommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
     -- One arm for the whole definer family. LaTeX's documented triple
     -- (usrguide, "Defining commands": new must not exist, renew must
     -- exist, provide keeps an existing definition) collapses here to the
     -- one policy that changes what a correct document *means*: a
-    -- `\providecommand` of a name this document already bound keeps the
-    -- first definition, so its body is consumed whole. The two error
+    -- provision of a name this document already bound keeps the first
+    -- definition, so its signature and body are consumed whole. The two error
     -- halves are LaTeX's to check — kernel and package names are
     -- invisible to this pass, so checking them would misfire on every
     -- `\renewcommand` of a kernel command. The native store stays
@@ -6418,6 +6428,21 @@ skipped, and the length keeps its value" pos
     let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+    let provide := name == "providecommand" || name == "ProvideDocumentCommand"
+    let st ← get
+    -- premise: compatChecks — provision keeps existing user and builtin
+    -- meanings. Decide before interpreting an unused signature or body:
+    -- even a recognized heading/size idiom must remain inert.
+    if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
+      let j := if xparse then (takeGroups raws j 1).2 else
+        let (_, j) := takeOpt raws j
+        (takeOpt raws j).2
+      let (_, k) := takeGroups raws j 1
+      let why := if st.bound.contains cmd then
+          s!"'\\{cmd}' is already defined and the existing definition is kept"
+        else s!"'\\{cmd}' is built in and the built-in stands"
+      discard s!"\\{name}\{\\{cmd}}" why s!"{name}:{cmd}" pos
+      return some (#[], k)
     if !xparse && cmd == "sectionlinesformat" then
       -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
       -- documents: the rule idiom, not a definition.
@@ -6473,22 +6498,6 @@ leading = {milliStr factor} }" ++
                 write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}" native pos
                 return some (← synthAt native pos, js + 1)
-    if name == "providecommand" && (← get).bound.contains cmd then
-      let (_, k) := takeGroups raws j 1
-      discard s!"\\providecommand\{\\{cmd}}"
-        s!"'\\{cmd}' is already defined and the existing definition is kept"
-        s!"providecommand:{cmd}" pos
-      return some (#[], k)
-    -- `\providecommand` of a name the engine itself defines: the command
-    -- exists, so LaTeX's provide keeps it (usrguide, "Defining commands").
-    -- Without this the venue shim `\providecommand{\section}{}` reached the
-    -- definition gate as an empty redefinition and earned a W0361 for a
-    -- construct LaTeX defines to be a no-op.
-    if name == "providecommand" && (← get).provideKeeps.contains cmd then
-      let (_, k) := takeGroups raws j 1
-      discard s!"\\providecommand\{\\{cmd}}"
-        s!"'\\{cmd}' is built in and the built-in stands" s!"providecommand:{cmd}" pos
-      return some (#[], k)
     write fun st => { st with
       bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
     let native := s!"\\define \\{cmd}({spec})"
