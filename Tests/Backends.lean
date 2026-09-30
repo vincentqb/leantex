@@ -2310,6 +2310,29 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((jump.splitOn "<li>").length - 1) == 3 && inOrder jump ["top;", "deep;"])
   t "algorithm html: a skipped level opens a list per level"
     (((jump.splitOn "<ol").length - 1) == 3)
+  -- The comment's optional star is a word token at the TeX surface. Every
+  -- documented inline placement option still owes the comment's ink in
+  -- both artifacts; accepting only a symbol token used to lose the group.
+  let some bytes ← findFont | failures ref "algorithm comments: missing fixture font"
+  let .ok font := Font.parse bytes |
+    failures ref "algorithm comments: invalid fixture font"
+  let fonts := oneFaceOf font
+  for command in ["tcp", "tcc"] do
+    for suffix in ["", "*", "*[r]", "*[l]", "*[f]", "*[h]"] do
+      for beforeText in ["", "Beforecomment"] do
+        let (doc, ds) := elabStr (dvDoc "\\usepackage{algorithm2e}\n"
+          ("\\begin{algorithm}\n" ++ beforeText ++ "\\" ++ command ++ suffix ++
+            "{Remarkword}\\;\nAftercomment\\;\n\\end{algorithm}"))
+        let (_, nodes, _) := HtmlDoc.emitTree {} doc
+        let shown := censusText (censusOf #[] (layoutOf fonts doc))
+        let label := s!"algorithm {command}{suffix}/{beforeText}"
+        t (label ++ ": comment arguments are consumed without errors")
+          (ds.all (·.severity != .error))
+        t (label ++ ": PDF ships the comment once and keeps its following line")
+          ((shown.splitOn "Remarkword").length == 2 && hasStr shown "Aftercomment")
+        t (label ++ ": HTML ships the comment once and keeps its following line")
+          (treeShownOccurs nodes "Remarkword" == 1 &&
+           treeShownOccurs nodes "Aftercomment" == 1)
 
 mutual
 

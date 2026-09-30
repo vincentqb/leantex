@@ -9154,7 +9154,7 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
           cur := #[]; curComment := none
           curKind := .ret
         else if !acx && (name == "tcc" || name == "tcp") then
-          if let some (.raw (.sym '*' _)) := stack.back? then
+          if let some (.raw (.word "*" _)) := stack.back? then
             stack := stack.pop
           if let some (.raw (.sym '[' _)) := stack.back? then
             for _ in [0:stack.size + 1] do
