@@ -414,14 +414,15 @@ def MathAlphabet.hole (a : MathAlphabet) (c : Char) : Option Char :=
 Alphanumeric block (Unicode ch. 22.2). `none` where the block has no such
 run: no script, fraktur, italic, or upright-beyond-ASCII digits — those
 digits stay as written, as unicode-math leaves them. `rm` is ASCII itself.
-`bfit` digits are the bold digits: Unicode encodes no italic digits, and
-bold is the half of `\bm`'s meaning a digit can carry. -/
+`bfit` (`\bm`/`\boldsymbol`) carries no digits: with no bold math version
+declared, LuaLaTeX leaves `\boldsymbol{5}` a plain 5, so a bfit digit keeps
+its source scalar rather than taking the bold digit run. -/
 def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
   | .bb => (0x1D538, 0x1D552, some 0x1D7D8)
   | .cal => (0x1D49C, 0x1D4B6, none)
   | .frak => (0x1D504, 0x1D51E, none)
   | .bf => (0x1D400, 0x1D41A, some 0x1D7CE)
-  | .bfit => (0x1D468, 0x1D482, some 0x1D7CE)
+  | .bfit => (0x1D468, 0x1D482, none)
   | .sf => (0x1D5A0, 0x1D5BA, some 0x1D7E2)
   | .tt => (0x1D670, 0x1D68A, some 0x1D7F6)
   | .rm => ('A'.toNat, 'a'.toNat, some '0'.toNat)
