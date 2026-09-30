@@ -7,9 +7,22 @@ network. It proves the properties that live in IO, not in a pure theorem:
   race to fill one slot through `picFace`; every one is served a whole,
   identical file, exactly one output slot lands, and no `.part` temp
   survives.
+* **empty-warmed — an emptied slot re-runs.** A warmed output that went
+  empty is not a hit; the next build re-runs the tool and republishes whole.
+* **M1 — a timeout kills a `SIGTERM`-ignoring descendant** that holds the
+  pipes open, and never hangs the build.
+* **M3 — the runtime obeys the shared serve/replay/retry policy** under real
+  processes: a warm success starts no tool, the tool's own refusal replays
+  its exact text, and a missing tool / silent nonzero exit / empty output
+  each leave no slot and are retried.
+* **M5 — a picture face is served from its tool-versioned slot,** never a
+  stale sibling: warming under one version then upgrading yields fresh bytes.
 
-Build the `conv-probe` and `conv-child` helpers first (they are ordinary
-`lake` executables); this oracle spawns them.
+Build the two spawned helpers first — they are ordinary `lake` executables:
+`lake build convProbe runBoundProbe` (targets `convProbe`, root
+`scripts.convprobe`, and `runBoundProbe`, root `scripts.runboundprobe`).
+Then run this oracle from a clean cache namespace:
+`lake env lean --run scripts/conv-cache-io.lean`.
 -/
 
 /-- The probe binary that calls the real `ImageAssets.picFace`. -/
@@ -314,6 +327,7 @@ def main : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
   concurrentWriteChecks ref
   emptyWarmedChecks ref
+  stubPolicyChecks ref
   timeoutKillChecks ref
   toolUpgradeChecks ref
   let failed ← ref.get

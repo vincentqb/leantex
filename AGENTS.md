@@ -45,7 +45,17 @@ in this repo; refer to the private reference corpus abstractly.
   pristine fixtures decoding to their known sizes), and
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
-  the file).
+  the file), and
+  `scripts/conv-cache-io.lean` when touching `LeanTex/Cli/ImageAssets.lean`,
+  `LeanTex/Cli/ConvCache.lean`, the process budget/kill, or the host
+  conversion cache — real processes over the real slot machinery, driven by
+  local executable stubs and a temporary cache, so it needs no installed
+  converter and no network (concurrent atomic publish, empty-warmed re-run,
+  the timeout group-kill of a `SIGTERM`-ignoring descendant, the
+  tool-version slot key, and the shared serve/replay/retry policy). Build
+  its spawned helpers first: `lake build convProbe runBoundProbe`, then
+  `lake env lean --run scripts/conv-cache-io.lean` from a clean cache
+  namespace (a fresh `XDG_CACHE_HOME`; the run makes its own temp caches).
 - `lake env lean --run scripts/owed.lean` — what does this engine not yet
   guarantee? Prints every owed obligation (a type-checked statement whose
   proof is open, staged under `Obligations/`) with owner, source, and
