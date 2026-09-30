@@ -306,6 +306,16 @@ def byteConv (op : ConvCache.Op) (bytes : ByteArray) : IO (Except String ByteArr
   match op.byteSpec with
   | none => return .error "internal: a validation op has no byte conversion"
   | some (tool, inExt, outExt, args) =>
+  -- The typed precondition, before any cache lookup or tool run: a PDF handed
+  -- to a host renderer must embed every font, or the host would substitute
+  -- glyphs from its own fonts and the face would depend on the machine. The
+  -- refusal is deterministic in the bytes, so it needs no tool and is never
+  -- cached, and it is what keeps the slot key free of a host-font fingerprint.
+  -- premise: LeanTex.Cli.ConvCache.pdfSelfContained_ok_exact — the verdict is
+  -- exactly the read-side census's font-embedding fact, a function of the bytes.
+  match (if op.readsPdf then ConvCache.pdfSelfContained bytes else .ok ()) with
+  | .error e => return .error e
+  | .ok () =>
   match ← convDir with
   | none =>
     -- No cache root: run uncached, still bounded.

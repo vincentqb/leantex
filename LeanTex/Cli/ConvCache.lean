@@ -1,5 +1,6 @@
 import LeanTex.Cli.PicCache
 import LeanTex.Core.Flate
+import LeanTex.Core.PdfCensus
 
 /-! The host-conversion cache's vocabulary, as values. The SVG browser
 faces are drawn by host tools — `xmllint` guards the support boundary,
@@ -183,6 +184,93 @@ def contract : String :=
     [Op.recipe .validate, Op.recipe .svgPdf, Op.recipe .svgPoster,
       Op.recipe (.pdfPage 0), Op.recipe .picFace]
 
+/-! ## The self-contained precondition
+
+A host PDF→vector conversion (`pdftocairo`) asks the machine's own fonts to
+stand in for any font the PDF does not embed — the standard-fourteen a
+viewer substitutes, or any subtype with no `FontFile*`. Its output would
+then depend on this machine's installed fonts, exactly the external glyph
+source the cache key cannot see. So a PDF-reading conversion is refused,
+deterministically and before the cache is even consulted, unless the file's
+own read-side census says every font is embedded. `PdfCensus.census` reads
+the file's bytes (never a writer's intent), so a copied foreign page's
+unembedded font is caught like any other; a Type 3 font's glyphs are content
+streams in the file, and a composite font's descendant CIDFont is a font
+entry judged on its own row (`PdfCensus.fontEmbedded`). This is what keeps
+the accepted PDF inputs — and, with the text/font refusal in `supportedSvg`,
+the accepted SVG inputs — free of any external glyph source, so no host-font
+fingerprint is owed in the key. -/
+
+/-- Whether this op hands a PDF to a host renderer that would let the
+machine's fonts substitute for any the PDF does not embed. Exactly the byte
+ops whose input extension is `pdf`; `readsPdf_iff_pdfInput` holds it to
+`byteSpec`, so a PDF-reading op added there cannot silently skip the
+precondition. -/
+def Op.readsPdf : Op → Bool
+  | .pdfPage _ => true
+  | .picFace => true
+  | .validate | .svgPdf | .svgPoster => false
+
+/-- The refusal a PDF-reading conversion returns for a file whose fonts are
+not all embedded, naming the exact loss: the host converter would substitute
+the missing glyphs from this machine's own fonts, so the browser face would
+not be a function of the input alone. One value, so the refusal reads
+identically wherever it surfaces (the image face's W0605, the boundary
+face's own diagnostic). -/
+def unembeddedFontReason : String :=
+  "the PDF does not embed every font, so a host converter would substitute \
+the missing glyphs from this machine's installed fonts and the browser face \
+would not depend on the input alone"
+
+/-- The typed precondition a PDF-reading conversion must meet before its tool
+runs — evaluated before any cache lookup, so a refusal is never cached under
+a slot and never depends on a warmed answer. The file's own read-side census
+(`PdfCensus.census`) must read the bytes and find every font dictionary
+embedding its program. A file the census cannot read is refused too:
+embedding cannot be shown, so the conversion would not be host-independent.
+Deterministic in the bytes; the host and the writer's intent never enter. -/
+def pdfSelfContained (bytes : ByteArray) : Except String Unit :=
+  match PdfCensus.census bytes with
+  | .error e =>
+    .error s!"the PDF could not be read to check that it embeds every font ({e})"
+  | .ok c => if c.fontsEmbedded then .ok () else .error unembeddedFontReason
+
+/-- **`readsPdf_iff_pdfInput`**: an op reads a PDF exactly when its byte spec
+declares a `"pdf"` input. A PDF-reading op added to `byteSpec` without adding
+it to `readsPdf` — or the reverse — is a build failure, so the precondition
+can never be skipped for a new PDF conversion nor misfire on an SVG one. -/
+theorem readsPdf_iff_pdfInput (op : Op) :
+    op.readsPdf = true ↔ (op.byteSpec.map (fun s => s.2.1)) = some "pdf" := by
+  cases op <;> simp [Op.readsPdf, Op.byteSpec]
+
+/-- **`pdfSelfContained_ok_exact`**: the precondition accepts a file exactly
+when its read-side census read it and found every font embedded — which, by
+`PdfCensus.census_fontsEmbedded_exact`, is exactly every font dictionary the
+file carries having its program in the file. The verdict is a function of the
+bytes alone. -/
+theorem pdfSelfContained_ok_exact (bytes : ByteArray) :
+    pdfSelfContained bytes = .ok () ↔
+      ∃ c, PdfCensus.census bytes = .ok c ∧ c.fontsEmbedded = true := by
+  unfold pdfSelfContained
+  cases h : PdfCensus.census bytes with
+  | error e => simp
+  | ok c =>
+    cases hf : c.fontsEmbedded with
+    | true => simp [hf]
+    | false => simp [hf]
+
+/-- **`pdfSelfContained_refused_exact`**: a readable file is refused exactly
+when its census read every font and found one unembedded — and the refusal is
+the single `unembeddedFontReason`, so the loss reads the same at every site. -/
+theorem pdfSelfContained_refused_exact (bytes : ByteArray) (c : PdfCensus.Census)
+    (h : PdfCensus.census bytes = .ok c) :
+    pdfSelfContained bytes = .error unembeddedFontReason ↔ c.fontsEmbedded = false := by
+  unfold pdfSelfContained
+  rw [h]
+  cases hf : c.fontsEmbedded with
+  | true => simp [hf]
+  | false => simp [hf]
+
 /-! ## The key
 
 A conversion's slot is named by everything that could change its bytes: the
@@ -191,7 +279,11 @@ does), the operation's recipe (a moved argument re-converts — req: recipe
 moves ⇒ key moves), the tool's own version string (an upgraded tool
 re-converts every slot), and the engine version (a changed converter policy
 re-converts). No document text or output path enters the key, so the same
-figure in two documents shares one warmed slot. -/
+figure in two documents shares one warmed slot. No host-font fingerprint
+enters it either: the accepted inputs carry no external glyph source — the
+SVG boundary refuses text and fonts (`supportedSvg`), and a PDF-reading
+conversion refuses a file with an unembedded font (`pdfSelfContained`) — so
+the machine's installed fonts can never change a conversion's bytes. -/
 
 /-- The operation-and-tool-and-engine half of the key: the recipe, the
 tool's version, and the engine version, hashed to a content key. The
