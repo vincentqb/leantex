@@ -1514,6 +1514,52 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       alphaCoverage.faceCovers .it .latinUpper && alphaCoverage.remaps .it .latinUpper &&
       alphaCoverage.faceCovers .tt .latinUpper && alphaCoverage.remaps .tt .latinUpper)
 
+  -- Phase 3 projection contract (Item 3): one IR `MathTextStyle` fact, its
+  -- PDF face-selection projection, its MathML `mathvariant` projection, and
+  -- the agreement that both backends read the SAME typed style. Plus the
+  -- Item 2 public-entry door: a body with an `.alpha` node resolves to an
+  -- alpha-free list, the guarantee `resolveMathAlphas_covers` proves for all.
+  -- (a) The IR fact: each text-sourced alphabet's typed style; the shape
+  -- alphabets carry none (they are sym-sourced).
+  t "IR: text-sourced alphabets carry their typed MathTextStyle"
+    (Math.MathAlphabet.textStyle? .rm == some { slot := .body, bold := false, italic := false } &&
+      Math.MathAlphabet.textStyle? .it == some { slot := .body, bold := false, italic := true } &&
+      Math.MathAlphabet.textStyle? .bf == some { slot := .body, bold := true, italic := false } &&
+      Math.MathAlphabet.textStyle? .sf == some { slot := .sans, bold := false, italic := false } &&
+      Math.MathAlphabet.textStyle? .tt == some { slot := .mono, bold := false, italic := false } &&
+      Math.MathAlphabet.textStyle? .bb == none &&
+      Math.MathAlphabet.textStyle? .cal == none &&
+      Math.MathAlphabet.textStyle? .frak == none &&
+      Math.MathAlphabet.textStyle? .bfit == none)
+  -- (c) The MathML projection: the semantic mathvariant each typed style
+  -- declares, the attribute the `.styled` MathML arm emits.
+  t "MathML: the mathvariant projection of each typed style"
+    ((({ slot := .body, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "normal") &&
+      (({ slot := .body, bold := true, italic := false } : Math.MathTextStyle).mathvariant == "bold") &&
+      (({ slot := .body, bold := false, italic := true } : Math.MathTextStyle).mathvariant == "italic") &&
+      (({ slot := .sans, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "sans-serif") &&
+      (({ slot := .mono, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "monospace"))
+  -- (b)+(d) The agreement: for `\mathbf`, the PDF face selection
+  -- (`FontSet.lookup slot.toNat (if bold then 700 else 400) italic`) and the
+  -- MathML `mathvariant` both flow from the ONE style `textStyle? .bf` — the
+  -- run-face witness is above ("mathbf's letters go through the styled bold
+  -- body slot"), the MathML witness in "a text-style command declares its
+  -- semantic mathvariant"; here both projections are tied to the IR fact.
+  let bfStyle := (Math.MathAlphabet.textStyle? .bf).getD default
+  t "PDF and MathML projections agree on the one typed style for mathbf"
+    (bfStyle == { slot := .body, bold := true, italic := false } &&
+      mfs.lookup bfStyle.slot.toNat (if bfStyle.bold then 700 else 400) bfStyle.italic
+        == mfs.lookup 0 700 false &&
+      bfStyle.mathvariant == "bold")
+  -- (Item 2 door) A body carrying an `.alpha` node — what a backend must
+  -- never see — resolves to an alpha-free list; the general fact is the
+  -- theorem `Math.resolveMathAlphas_covers`.
+  t "public-entry resolution eliminates every alphabet boundary"
+    ((Math.resolveMathAlphas alphaCoverage
+        (.cons (.atom .ord
+          (.alpha .bf (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))
+          .nil .nil false) .nil)).alphaFree)
+
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
   let lineOf (src : String) : Layout.LineOut :=
