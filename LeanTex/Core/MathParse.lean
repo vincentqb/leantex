@@ -881,7 +881,7 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
       arg := .cons (.atom .ord (.rad deg arg) .nil .nil false) .nil
       rest := more
     | .alpha a :: more =>
-      arg := .cons (.atom .ord (.list (a.remapList arg)) .nil .nil false) .nil
+      arg := .cons (.atom .ord (.alpha a arg) .nil .nil false) .nil
       rest := more
     | .accentBody mark stretch :: more =>
       arg := .cons (.atom .ord (.accent mark stretch arg) .nil .nil false) .nil

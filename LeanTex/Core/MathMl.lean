@@ -290,6 +290,7 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
       #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
+  | .alpha _ body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
       #[.elem "mrow" #[] (listNodes mk false none #[] num),
@@ -427,6 +428,7 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .word s => pushChars acc s.toList
   | .list body => listChars acc body
+  | .alpha _ body => listChars acc body
   | .frac spec num den =>
     let opened := match spec.left with
       | some c => acc.push c
@@ -668,6 +670,10 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
     rw [listNodes_chars mk disp none body #[] c]
     rfl
+  | .alpha _ body, c => by
+    show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
+    rw [listNodes_chars mk disp none body #[] c]
+    rfl
   | .frac ⟨l, r, rule, style⟩ num den, c => by
     have bar : ∀ c', nodeListChars (nodeListChars c' (listNodes mk false none #[] num).toList)
         (listNodes mk false none #[] den).toList = listChars (listChars c' num) den := by
@@ -800,5 +806,16 @@ theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
   simp only [formula, nodeChars]
   rw [listNodes_chars mk display none body #[] #[]]
   rfl
+
+/-- The HTML projection consumes the same resolved math list the PDF layout
+consumes: its typed MathML leaf text is exactly that list's glyph-text
+projection, after the one shared alphabet pass. -/
+theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverage)
+    (display : Bool) (extra : Array (String × String)) (body : MList)
+    (mk : Marks) :
+    nodeChars #[]
+      (formula display extra (Math.resolveMathAlphas coverage body) mk) =
+      listChars #[] (Math.resolveMathAlphas coverage body) :=
+  mathml_glyphs_agree display extra (Math.resolveMathAlphas coverage body) mk
 
 end LeanTex.Core.MathMl

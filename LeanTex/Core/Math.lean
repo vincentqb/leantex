@@ -306,6 +306,78 @@ inductive MathAlphabet where
 def allAlphabets : List MathAlphabet :=
   [.bb, .cal, .frak, .bf, .bfit, .sf, .tt, .rm, .it]
 
+/-- Whether a legacy math alphabet command takes glyphs from the selected
+math symbol face or from a text-family slot. unicode-math 0.8r defaults
+`mathrm`, `mathit`, `mathbf`, `mathsf`, and `mathtt` to `text`; each accepts
+`=sym`. The shape alphabets and `\bm` are always symbol sourced. -/
+inductive MathAlphabetSource where
+  | sym
+  | text
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def MathAlphabetSource.name : MathAlphabetSource → String
+  | .sym => "sym"
+  | .text => "text"
+
+def MathAlphabetSource.ofName? : String → Option MathAlphabetSource
+  | "sym" => some .sym
+  | "text" => some .text
+  | _ => none
+
+/-- unicode-math's five option-driven sources. Typed here even while text-slot
+projection remains a scoped compatibility follow-up, so an explicit
+`mathrm=sym` is not discarded and no future resolver has to recover policy
+from source strings. -/
+structure MathAlphabetSources where
+  rm : MathAlphabetSource := .text
+  it : MathAlphabetSource := .text
+  bf : MathAlphabetSource := .text
+  sf : MathAlphabetSource := .text
+  tt : MathAlphabetSource := .text
+  deriving Repr, BEq, Inhabited
+
+def MathAlphabet.sourceKey? : String → Option MathAlphabet
+  | "mathrm" => some .rm
+  | "mathit" => some .it
+  | "mathbf" => some .bf
+  | "mathsf" => some .sf
+  | "mathtt" => some .tt
+  | _ => none
+
+def MathAlphabet.sourceKey : MathAlphabet → Option String
+  | .rm => some "mathrm"
+  | .it => some "mathit"
+  | .bf => some "mathbf"
+  | .sf => some "mathsf"
+  | .tt => some "mathtt"
+  | .bb | .cal | .frak | .bfit => none
+
+def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlphabetSource
+  | .rm => s.rm
+  | .it => s.it
+  | .bf => s.bf
+  | .sf => s.sf
+  | .tt => s.tt
+  | .bb | .cal | .frak | .bfit => .sym
+
+def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
+    (source : MathAlphabetSource) : MathAlphabetSources :=
+  match a with
+  | .rm => { s with rm := source }
+  | .it => { s with it := source }
+  | .bf => { s with bf := source }
+  | .sf => { s with sf := source }
+  | .tt => { s with tt := source }
+  | .bb | .cal | .frak | .bfit => s
+
+/-- Non-default source options as unicode-math reads them. The boundary
+standalone receives the same typed policy as the page. -/
+def MathAlphabetSources.options (s : MathAlphabetSources) : Array String :=
+  [MathAlphabet.rm, .it, .bf, .sf, .tt].foldl (fun out a =>
+    let source := s.get a
+    if source == .text then out
+    else out.push s!"{a.sourceKey.getD ""}={source.name}") #[]
+
 /-- The plain letter behind a scalar the parser produces: a mathematical
 italic Latin letter returns to its ASCII base (including the U+210E Planck
 hole `italicVar` mapped `h` to); anything else stays. What lets one
@@ -381,6 +453,74 @@ def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
     else if a == .bfit && c == '\u2207' then Char.ofNat 0x1D6C1
     else c0
 
+/-- A separately installed range of a math alphabet. unicode-math tests the
+first scalar of each range before installing that range; an isolated glyph
+elsewhere in the range therefore does not make the alphabet available. -/
+inductive MathAlphabetRange where
+  | latinUpper
+  | latinLower
+  | digits
+  | greekUpper
+  | greekLower
+  | misc
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def allAlphabetRanges : List MathAlphabetRange :=
+  [.latinUpper, .latinLower, .digits, .greekUpper, .greekLower, .misc]
+
+def MathAlphabetRange.anchor : MathAlphabetRange → Char
+  | .latinUpper => 'A'
+  | .latinLower => 'a'
+  | .digits => '0'
+  | .greekUpper => 'Α'
+  | .greekLower => Char.ofNat 0x1D6FC
+  | .misc => '\u2207'
+
+/-- The range an input scalar asks this alphabet to remap, if any. The
+input is the parser's ordinary math scalar: Latin variables are already
+italic, so `unItalic` recovers their source letter. -/
+def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
+  let c := unItalic c0
+  let (_, _, digit) := a.bases
+  if 'A' ≤ c && c ≤ 'Z' then some .latinUpper
+  else if 'a' ≤ c && c ≤ 'z' then some .latinLower
+  else if '0' ≤ c && c ≤ '9' && digit.isSome then some .digits
+  else if (a == .bf || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+    some .greekUpper
+  else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+    some .greekLower
+  else if a == .bfit && c == '\u2207' then some .misc
+  else none
+
+def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
+  allAlphabetRanges.filter fun r => a.rangeOf r.anchor == some r
+
+/-- Range anchors the selected math face covers, derived once after that
+face is selected. `sources` is orthogonal policy: a text-sourced legacy
+command stays on its existing path until text-slot projection is modelled;
+symbol-sourced commands consult `covered`. -/
+structure MathAlphabetCoverage where
+  sources : MathAlphabetSources := {}
+  covered : Array (MathAlphabet × MathAlphabetRange) := #[]
+  deriving Repr, BEq, Inhabited
+
+def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
+    (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
+  c.covered.contains (a, r)
+
+/-- Whether the shared-IR resolver remaps this range. Text-sourced commands
+retain their pre-existing scalar semantics; symbol-sourced commands remap
+only when the selected math face carries the range anchor. -/
+def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
+    (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
+  c.sources.get a == .text || c.faceCovers a r
+
+def MathAlphabet.resolveChar (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (c : Char) : Char :=
+  match a.rangeOf c with
+  | some r => if coverage.remaps a r then a.apply c else c
+  | none => a.apply c
+
 /-- The Latin letters every alphabet maps. -/
 def latinLetters : List Char :=
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toList
@@ -416,6 +556,18 @@ distinct (alphabet, letter) pairs cannot map to one scalar. -/
 theorem alpha_apply_inj :
     (allAlphabets.all fun a => latinLetters.all fun c =>
       MathAlphabet.unapply (a.apply c) == some (a, c)) = true := by decide
+
+/-- Stable key for one alphabet in diagnostics and generated reports. -/
+def MathAlphabet.name : MathAlphabet → String
+  | .bb => "bb"
+  | .cal => "cal"
+  | .frak => "frak"
+  | .bf => "bf"
+  | .bfit => "bfit"
+  | .sf => "sf"
+  | .tt => "tt"
+  | .rm => "rm"
+  | .it => "it"
 
 /-- The styling an alphabet declares, for the note that names its loss. -/
 def MathAlphabet.styleLabel : MathAlphabet → String
@@ -1200,6 +1352,10 @@ inductive MNucleus where
   | sym (c : Char)
   | word (s : String)
   | list (body : MList)
+  /-- A math alphabet before the selected face has answered which ranges it
+  carries. The driver eliminates every such node with `resolveMathAlphas`
+  before scalar fallback, layout, or either backend. -/
+  | alpha (alphabet : MathAlphabet) (body : MList)
   /-- A generalized fraction: numerator over denominator, positioned from
   the MATH constants — the fraction constants under a rule, the stack
   constants under none — between the delimiters and in the style its spec
@@ -1404,6 +1560,7 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.scalarsList acc body
+  | .alpha _ body => MList.scalarsList acc body
   | .frac spec num den =>
     -- In reading order, delimiters around the parts: the formula floor reads
     -- this walk (`Ir.formulaFloor`), so `\binom{n}{k}` reads `(nk)`.
@@ -1469,6 +1626,7 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .sym c => .sym (a.apply c)
   | .word s => .word s
   | .list body => .list (a.remapList body)
+  | .alpha b body => .alpha b body
   | .frac spec num den => .frac spec (a.remapList num) (a.remapList den)
   | .rad deg body => .rad (a.remapList deg) (a.remapList body)
   | .delim l r body => .delim l r (a.remapList body)
@@ -1531,6 +1689,7 @@ def MNucleus.inks (ink : Option (Ir.Color × Option String))
   | .sym c => if c.isWhitespace then acc else usedInk ink acc
   | .word s => if s.toList.any (!·.isWhitespace) then usedInk ink acc else acc
   | .list body => MList.inks ink acc body
+  | .alpha _ body => MList.inks ink acc body
   | .frac spec num den =>
     let acc := if spec.rule.all (· > 0) || spec.left.isSome || spec.right.isSome
       then usedInk ink acc else acc
@@ -1578,6 +1737,7 @@ def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus →
   | .sym c => .sym c
   | .word s => .word s
   | .list body => .list (MList.mapInk f body)
+  | .alpha a body => .alpha a (MList.mapInk f body)
   | .frac spec num den => .frac spec (MList.mapInk f num) (MList.mapInk f den)
   | .rad deg body => .rad (MList.mapInk f deg) (MList.mapInk f body)
   | .delim l r body => .delim l r (MList.mapInk f body)
@@ -1623,6 +1783,8 @@ theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
   | .word _, _ => rfl
   | .list body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+  | .alpha _ body, acc => by
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
   | .frac _ num den, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f num,
       MList.mapInk_scalars f den]
@@ -1654,5 +1816,327 @@ theorem MRows.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
       MRows.mapInk_scalars f rest]
 
 end
+
+mutual
+
+/-- Resolve alphabet boundaries in one structural walk. `active` is the
+innermost alphabet in force; a nested command replaces its outer one, as a
+nested TeX group does. The public entry starts with no active alphabet. -/
+def resolveAlphaList (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) : MList → MList
+  | .nil => .nil
+  | .cons x rest =>
+    .cons (resolveAlphaItem coverage active x)
+      (resolveAlphaList coverage active rest)
+
+def resolveAlphaItem (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) : MItem → MItem
+  | .atom cls nuc sup sub lim =>
+    .atom cls (resolveAlphaNucleus coverage active nuc)
+      (resolveAlphaList coverage active sup)
+      (resolveAlphaList coverage active sub) lim
+  | .space mu => .space mu
+  | .ink c n => .ink c n
+
+def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) : MNucleus → MNucleus
+  | .sym c => .sym (active.map (·.resolveChar coverage c) |>.getD c)
+  | .word s => .word s
+  | .list body => .list (resolveAlphaList coverage active body)
+  | .alpha a body => .list (resolveAlphaList coverage (some a) body)
+  | .frac spec num den => .frac spec
+      (resolveAlphaList coverage active num)
+      (resolveAlphaList coverage active den)
+  | .rad deg body => .rad (resolveAlphaList coverage active deg)
+      (resolveAlphaList coverage active body)
+  | .delim l r body => .delim l r (resolveAlphaList coverage active body)
+  | .accent mark stretch body =>
+      .accent mark stretch (resolveAlphaList coverage active body)
+  | .grid kind rows => .grid kind (resolveAlphaRows coverage active rows)
+  | .cancel mark spec value body => .cancel mark spec
+      (resolveAlphaList coverage active value)
+      (resolveAlphaList coverage active body)
+
+def resolveAlphaRow (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) : MRow → MRow
+  | .nil => .nil
+  | .cons cell rest => .cons (resolveAlphaList coverage active cell)
+      (resolveAlphaRow coverage active rest)
+
+def resolveAlphaRows (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) : MRows → MRows
+  | .nil => .nil
+  | .cons row rest => .cons (resolveAlphaRow coverage active row)
+      (resolveAlphaRows coverage active rest)
+
+end
+
+/-- Resolve every typed alphabet boundary against one selected face's
+coverage. This runs before the document scalar census and both backends. -/
+def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :=
+  resolveAlphaList coverage none body
+
+private def noteMissingAlpha (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) (c : Char) :
+    Array MathAlphabet :=
+  match active with
+  | none => out
+  | some a =>
+    match a.rangeOf c with
+    | some r =>
+      if !coverage.remaps a r && a.apply c != c && !out.contains a then out.push a
+      else out
+    | none => out
+
+mutual
+
+/-- The diagnostic census accompanying `resolveAlphaList`: one entry per
+alphabet whose active range stayed at its source scalar. The accumulator
+makes repetition idempotent and keeps first-use order. -/
+private def missingAlphaList (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    MList → Array MathAlphabet
+  | .nil => out
+  | .cons x rest => missingAlphaList coverage active
+      (missingAlphaItem coverage active out x) rest
+
+private def missingAlphaItem (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    MItem → Array MathAlphabet
+  | .atom _ nuc sup sub _ =>
+    let out := missingAlphaNucleus coverage active out nuc
+    let out := missingAlphaList coverage active out sup
+    missingAlphaList coverage active out sub
+  | .space _ => out
+  | .ink _ _ => out
+
+private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    MNucleus → Array MathAlphabet
+  | .sym c => noteMissingAlpha coverage active out c
+  | .word _ => out
+  | .list body => missingAlphaList coverage active out body
+  | .alpha a body => missingAlphaList coverage (some a) out body
+  | .frac _ num den => missingAlphaList coverage active
+      (missingAlphaList coverage active out num) den
+  | .rad deg body => missingAlphaList coverage active
+      (missingAlphaList coverage active out deg) body
+  | .delim _ _ body => missingAlphaList coverage active out body
+  | .accent _ _ body => missingAlphaList coverage active out body
+  | .grid _ rows => missingAlphaRows coverage active out rows
+  | .cancel _ _ value body => missingAlphaList coverage active
+      (missingAlphaList coverage active out body) value
+
+private def missingAlphaRow (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    MRow → Array MathAlphabet
+  | .nil => out
+  | .cons cell rest => missingAlphaRow coverage active
+      (missingAlphaList coverage active out cell) rest
+
+private def missingAlphaRows (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) (out : Array MathAlphabet) :
+    MRows → Array MathAlphabet
+  | .nil => out
+  | .cons row rest => missingAlphaRows coverage active
+      (missingAlphaRow coverage active out row) rest
+
+end
+
+def missingMathAlphas (coverage : MathAlphabetCoverage)
+    (body : MList) : Array MathAlphabet :=
+  missingAlphaList coverage none #[] body
+
+mutual
+
+/-- No unresolved alphabet boundary remains in this math tree. -/
+def MList.alphaFree : MList → Bool
+  | .nil => true
+  | .cons x rest => x.alphaFree && rest.alphaFree
+
+def MItem.alphaFree : MItem → Bool
+  | .atom _ nuc sup sub _ => nuc.alphaFree && (sup.alphaFree && sub.alphaFree)
+  | .space _ | .ink _ _ => true
+
+def MNucleus.alphaFree : MNucleus → Bool
+  | .sym _ | .word _ => true
+  | .list body => body.alphaFree
+  | .alpha _ _ => false
+  | .frac _ num den => num.alphaFree && den.alphaFree
+  | .rad deg body => deg.alphaFree && body.alphaFree
+  | .delim _ _ body => body.alphaFree
+  | .accent _ _ body => body.alphaFree
+  | .grid _ rows => rows.alphaFree
+  | .cancel _ _ value body => value.alphaFree && body.alphaFree
+
+def MRow.alphaFree : MRow → Bool
+  | .nil => true
+  | .cons cell rest => cell.alphaFree && rest.alphaFree
+
+def MRows.alphaFree : MRows → Bool
+  | .nil => true
+  | .cons row rest => row.alphaFree && rest.alphaFree
+
+end
+
+mutual
+
+private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) :
+    ∀ body, (resolveAlphaList coverage active body).alphaFree = true
+  | .nil => rfl
+  | .cons x rest => by
+    simp [resolveAlphaList, MList.alphaFree,
+      resolveAlphaItem_covers coverage active x,
+      resolveAlphaList_covers coverage active rest]
+
+private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) :
+    ∀ item, (resolveAlphaItem coverage active item).alphaFree = true
+  | .space _ => rfl
+  | .ink _ _ => rfl
+  | .atom _ nuc sup sub _ => by
+    simp [resolveAlphaItem, MItem.alphaFree,
+      resolveAlphaNucleus_covers coverage active nuc,
+      resolveAlphaList_covers coverage active sup,
+      resolveAlphaList_covers coverage active sub]
+
+private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) :
+    ∀ nucleus, (resolveAlphaNucleus coverage active nucleus).alphaFree = true
+  | .sym _ => rfl
+  | .word _ => rfl
+  | .list body => by
+    simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
+      resolveAlphaList_covers coverage active body
+  | .alpha a body => by
+    simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
+      resolveAlphaList_covers coverage (some a) body
+  | .frac _ num den => by
+    simp [resolveAlphaNucleus, MNucleus.alphaFree,
+      resolveAlphaList_covers coverage active num,
+      resolveAlphaList_covers coverage active den]
+  | .rad deg body => by
+    simp [resolveAlphaNucleus, MNucleus.alphaFree,
+      resolveAlphaList_covers coverage active deg,
+      resolveAlphaList_covers coverage active body]
+  | .delim _ _ body => by
+    simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
+      resolveAlphaList_covers coverage active body
+  | .accent _ _ body => by
+    simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
+      resolveAlphaList_covers coverage active body
+  | .grid _ rows => by
+    simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
+      resolveAlphaRows_covers coverage active rows
+  | .cancel _ _ value body => by
+    simp [resolveAlphaNucleus, MNucleus.alphaFree,
+      resolveAlphaList_covers coverage active value,
+      resolveAlphaList_covers coverage active body]
+
+private theorem resolveAlphaRow_covers (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) :
+    ∀ row, (resolveAlphaRow coverage active row).alphaFree = true
+  | .nil => rfl
+  | .cons cell rest => by
+    simp [resolveAlphaRow, MRow.alphaFree,
+      resolveAlphaList_covers coverage active cell,
+      resolveAlphaRow_covers coverage active rest]
+
+private theorem resolveAlphaRows_covers (coverage : MathAlphabetCoverage)
+    (active : Option MathAlphabet) :
+    ∀ rows, (resolveAlphaRows coverage active rows).alphaFree = true
+  | .nil => rfl
+  | .cons row rest => by
+    simp [resolveAlphaRows, MRows.alphaFree,
+      resolveAlphaRow_covers coverage active row,
+      resolveAlphaRows_covers coverage active rest]
+
+end
+
+/-- Every alphabet boundary is eliminated before a backend can see it. -/
+theorem resolveMathAlphas_covers (coverage : MathAlphabetCoverage) (body : MList) :
+    (resolveMathAlphas coverage body).alphaFree = true :=
+  resolveAlphaList_covers coverage none body
+
+mutual
+
+private theorem resolveAlphaList_none_id (coverage : MathAlphabetCoverage) :
+    ∀ body, body.alphaFree = true → resolveAlphaList coverage none body = body
+  | .nil, _ => rfl
+  | .cons x rest, h => by
+    simp only [MList.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaList, resolveAlphaItem_none_id coverage x h.1,
+      resolveAlphaList_none_id coverage rest h.2]
+
+private theorem resolveAlphaItem_none_id (coverage : MathAlphabetCoverage) :
+    ∀ item, item.alphaFree = true → resolveAlphaItem coverage none item = item
+  | .space _, _ => rfl
+  | .ink _ _, _ => rfl
+  | .atom cls nuc sup sub lim, h => by
+    simp only [MItem.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaItem, resolveAlphaNucleus_none_id coverage nuc h.1,
+      resolveAlphaList_none_id coverage sup h.2.1,
+      resolveAlphaList_none_id coverage sub h.2.2]
+
+private theorem resolveAlphaNucleus_none_id (coverage : MathAlphabetCoverage) :
+    ∀ nucleus, nucleus.alphaFree = true →
+      resolveAlphaNucleus coverage none nucleus = nucleus
+  | .sym _, _ => rfl
+  | .word _, _ => rfl
+  | .list body, h => by
+    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+  | .alpha _ _, h => by simp [MNucleus.alphaFree] at h
+  | .frac spec num den, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaNucleus,
+      resolveAlphaList_none_id coverage num h.1,
+      resolveAlphaList_none_id coverage den h.2]
+  | .rad deg body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaNucleus,
+      resolveAlphaList_none_id coverage deg h.1,
+      resolveAlphaList_none_id coverage body h.2]
+  | .delim l r body, h => by
+    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+  | .accent mark stretch body, h => by
+    rw [resolveAlphaNucleus, resolveAlphaList_none_id coverage body h]
+  | .grid kind rows, h => by
+    rw [resolveAlphaNucleus, resolveAlphaRows_none_id coverage rows h]
+  | .cancel mark spec value body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaNucleus,
+      resolveAlphaList_none_id coverage value h.1,
+      resolveAlphaList_none_id coverage body h.2]
+
+private theorem resolveAlphaRow_none_id (coverage : MathAlphabetCoverage) :
+    ∀ row, row.alphaFree = true → resolveAlphaRow coverage none row = row
+  | .nil, _ => rfl
+  | .cons cell rest, h => by
+    simp only [MRow.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaRow, resolveAlphaList_none_id coverage cell h.1,
+      resolveAlphaRow_none_id coverage rest h.2]
+
+private theorem resolveAlphaRows_none_id (coverage : MathAlphabetCoverage) :
+    ∀ rows, rows.alphaFree = true → resolveAlphaRows coverage none rows = rows
+  | .nil, _ => rfl
+  | .cons row rest, h => by
+    simp only [MRows.alphaFree, Bool.and_eq_true] at h
+    rw [resolveAlphaRows, resolveAlphaRow_none_id coverage row h.1,
+      resolveAlphaRows_none_id coverage rest h.2]
+
+end
+
+/-- An already-resolved math list is unchanged. -/
+theorem resolveMathAlphas_id (coverage : MathAlphabetCoverage) (body : MList)
+    (h : body.alphaFree = true) :
+    resolveMathAlphas coverage body = body :=
+  resolveAlphaList_none_id coverage body h
+
+/-- Resolution is idempotent: its output is already the backend form. -/
+theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : MList) :
+    resolveMathAlphas coverage (resolveMathAlphas coverage body) =
+      resolveMathAlphas coverage body :=
+  resolveMathAlphas_id coverage _ (resolveMathAlphas_covers coverage body)
 
 end LeanTex.Core.Math

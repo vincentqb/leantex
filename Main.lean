@@ -256,7 +256,7 @@ now the scan's (`scanFaces`). Assembly is a function of the document, the
 faces in hand, the parses already made, and which assembly this is. -/
 def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (cache : FontEnv.Cache) (purpose : Purpose) :
-    IO (Except Diag (Font.FontSet × Array Diag × String)) := do
+    IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
     && spec.math.isNone
@@ -265,7 +265,13 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       match ← FontEnv.loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
+        let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
+        let doc := (Ir.resolveMathAlphas coverage f.family doc).1
+        let set : Font.FontSet := {
+          fonts := #[f]
+          index := singleFaceIndex
+          mathAlphabets := coverage }
+        return .ok (set, doc, #[], path)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
@@ -384,8 +390,27 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       match ← cache.parse face.path with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
-  -- Per-glyph fallback: map every scalar the document uses to the first
+        let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
+        let doc := (Ir.resolveMathAlphas coverage f.family doc).1
+        let set : Font.FontSet := {
+          fonts := #[f]
+          index := singleFaceIndex
+          mathAlphabets := coverage }
+        return .ok (set, doc, diags, face.path)
+  -- The math face answers its alphabet ranges once. Resolve the shared IR
+  -- before `docScalars`, so a wholly unavailable alphabet never becomes a
+  -- request the host fallback scan can answer by accident.
+  let (doc, mathAlphabets, alphaDiags) :=
+    match mathIdx.bind (fonts[·]?) with
+    | some f =>
+      let coverage := f.mathAlphabetCoverage spec.mathSources
+      let (resolved, ds) := Ir.resolveMathAlphas coverage f.family doc
+      (resolved, coverage, ds)
+    | none =>
+      let coverage : Math.MathAlphabetCoverage := { sources := spec.mathSources }
+      ((Ir.resolveMathAlphas coverage "math face" doc).1, coverage, #[])
+  diags := diags ++ alphaDiags
+  -- Per-glyph fallback: map every scalar the resolved document uses to the first
   -- declared face covering it; scalars none covers go to the scan.
   let mut fallback : Array (Char × Nat) := #[]
   let mut uncovered : Array Char := #[]
@@ -412,8 +437,9 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     fonts := fonts
     index := index
     fallback := fallback
-    math := mathIdx }
-  return .ok (set, diags, String.intercalate ", " paths.toList)
+    math := mathIdx
+    mathAlphabets := mathAlphabets }
+  return .ok (set, doc, diags, String.intercalate ", " paths.toList)
 
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
@@ -1037,7 +1063,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
           -- A provisional face that will not resolve is not an error here:
           -- the final assembly reports it, at the document's own spec.
           pure (some scan, none)
-        | .ok (fsPre, _, _) =>
+        | .ok (fsPre, _, _, _) =>
           let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
           ui.phase "provisional" s!"{fsPre.fonts.size} faces" (← since t)
           pure (some scan, some m)
@@ -1104,7 +1130,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.diag d
       ui.summary file 1 (← since t0)
       return 1
-    | .ok (fs, fontDiags, paths) =>
+    | .ok (fs, doc, fontDiags, paths) =>
       let r1 ← ui.resolve doc.allow allowAll fontDiags
       fired := fired ++ r1.fired
       accepted := accepted ++ r1.accepted
@@ -1142,7 +1168,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           elaborate ui file front.prepared front.earlier front.spliced metric
             (phases := false) (withdrawn := w.ids)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
-        pure doc2
+        let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
+        pure (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1
       let t ← IO.monoMsNow
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused
       -- The alt judge's picture face, after fulfilment: a picture the
@@ -1273,7 +1300,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
             (phases := false) (withdrawn := w.ids ++ htmlOnly)
           ui.phase "withdraw" s!"{htmlOnly.size} pictures drawn by the rendered subset \
 in the HTML" (← since t)
-          pure d
+          let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
+          pure (Ir.resolveMathAlphas fs.mathAlphabets family d).1
         let hcfg : HtmlDoc.Config := {
           css := cssMode
           mathBoundary := ui.cfg.mathBoundary
