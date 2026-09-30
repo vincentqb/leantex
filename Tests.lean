@@ -162,6 +162,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathContainChecks ref oneFace
   cancelReportChecks ref oneFace
   cancelGeometryChecks ref oneFace
+  cancelBoxChecks ref oneFace
   cancelHtmlChecks ref
   roleLayoutChecks ref geom oneFace
   navLayoutChecks ref geom oneFace

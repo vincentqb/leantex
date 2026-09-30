@@ -161,3 +161,55 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     #[.poly #[(0, -300), (100, 900), (200, 0)] (Ir.Design.ofDoc doc).fg]
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
     (box.above == 900 && box.below == 300 && box.inkAbove == 900 && box.inkBelow == 300)
+
+/-- The artifact realisation of `Math.cancelGeom_polys_between`: on the
+shipped page no cancel polygon leaves its reserved box, and under
+`makeroom` none crosses into the following atom. The clamp is load-bearing
+— before it, a strike far wider than tall put an arrowhead and shaft vertex
+above the box (`cancelHead 0 0 1000 100 20` reached `(919, 122)` over a
+100sp-tall box). The polygon coordinates are read off `Layout.Out`, the
+shipped page, not an IR dump. -/
+def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let fonts ← mathSetOf oneFace
+  -- Fail-first, now guarded: the raw geometry over a wide, short box. Every
+  -- vertex of the head and of a drawn shaft lies inside the box.
+  let inBox (p : Int × Int) : Bool := 0 ≤ p.1 && p.1 ≤ 1000 && 0 ≤ p.2 && p.2 ≤ 100
+  t "cancel box: arrowhead stays in a wide short box"
+    ((Math.cancelHead 0 0 1000 100 20).all inBox)
+  t "cancel box: arrow shaft stays in a wide short box"
+    ((Math.cancelShaft 0 0 1000 100 20).all inBox)
+  let build (body : String) : Layout.Out :=
+    layoutOf fonts (elabStr
+      (dvDoc "\\usepackage{xcolor}\\usepackage[makeroom]{cancel}" body)).1
+  let polyAbs (l : Layout.LineOut) : Array Dim.Sp :=
+    (l.segs.flatMap fun s => match s with
+      | .poly pts _ => pts
+      | _ => #[]).map fun (px, _) => l.x + px
+  let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
+    (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
+  -- A plain strike reserves exactly its box under makeroom: every vertex is
+  -- between the construct origin and the following atom, never past it.
+  for cmd in ["cancel", "bcancel", "xcancel"] do
+    let out := build s!"$\\{cmd}\{x}y$"
+    match (bodyLines out).find? (·.segs.any (· matches .poly ..)) with
+    | some l =>
+      match glyphX l "𝑦" with
+      | some yx =>
+        let ps := polyAbs l
+        t s!"cancel box: {cmd} strike stays in its box, clear of the neighbour"
+          (!ps.isEmpty && ps.all fun ax => l.x ≤ ax && ax ≤ yx)
+      | none => t s!"cancel box: {cmd} line carries the neighbour" false
+    | none => t s!"cancel box: {cmd} ships a strike polygon" false
+  -- `\cancelto`: the arrow's shaft and head sit left of the value it points
+  -- at, clear of the value and of the following atom.
+  let out := build "$\\cancelto{7}{x}y$"
+  match (bodyLines out).find? (·.segs.any (· matches .poly ..)) with
+  | some l =>
+    match glyphX l "7", glyphX l "𝑦" with
+    | some vx, some yx =>
+      let ps := polyAbs l
+      t "cancel box: cancelto arrow stays left of its value and the neighbour"
+        (!ps.isEmpty && ps.all fun ax => l.x ≤ ax && ax ≤ vx && ax < yx)
+    | _, _ => t "cancel box: cancelto ships its value and neighbour" false
+  | none => t "cancel box: cancelto ships an arrow polygon" false
