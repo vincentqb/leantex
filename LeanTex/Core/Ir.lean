@@ -1888,6 +1888,10 @@ structure FontSpec where
   resolved like any named face, and required to carry an OpenType MATH
   table to be used. -/
   math : Option String := none
+  /-- unicode-math's option-driven alphabet sources. The default is the
+  package's (`text` for roman, italic, bold, sans and mono); explicit
+  `=sym` values survive compatibility rewriting as typed policy. -/
+  mathSources : Math.MathAlphabetSources := {}
   dirs : Array String := #[]
   /-- Per-variant faces the document named (fontspec's `UprightFont=`,
   `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`, `FontFace={series}{shape}`):
@@ -8501,6 +8505,7 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .sym c => acc.push c
   | .word s => acc ++ s.quote
   | .list body => (dumpMathList (acc.push '{') body).push '}'
+  | .alpha a body => (dumpMathList (acc ++ s!"alpha:{a.name}\{") body).push '}'
   | .frac spec num den =>
     -- A generalized fraction shows what its spec declares beyond `\frac`'s:
     -- the delimiters, the rule in sp, and the style's rank (3 display).
@@ -12760,7 +12765,11 @@ def fontLines (fonts : FontSpec) : String :=
   let faces := role "setmainfont" fonts.body ++ role "setsansfont" fonts.sans ++
     role "setmonofont" fonts.mono
   let math := match named fonts.math with
-    | some fam => s!"\\usepackage\{unicode-math}\n\\setmathfont\{{fam}}\n"
+    | some fam =>
+      let opts := fonts.mathSources.options
+      let load := if opts.isEmpty then "\\usepackage{unicode-math}\n"
+        else s!"\\usepackage[{String.intercalate "," opts.toList}]\{unicode-math}\n"
+      load ++ s!"\\setmathfont\{{fam}}\n"
     | none => ""
   if faces.isEmpty && math.isEmpty then "" else "\\usepackage{fontspec}\n" ++ faces ++ math
 
@@ -13417,6 +13426,61 @@ def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     mapBlockCols gp f (out.push (w, mapBlockList gp f #[] body.toList)) rest
 
 end
+
+/-- Resolve one formula leaf; every wrapper is owned by `mapInlines`, so the
+leaf function cannot skip a title, caption, table cell, note, or furniture
+region. -/
+def resolveMathAlphaInline (coverage : Math.MathAlphabetCoverage) : Inline → Inline
+  | .formula display src body =>
+    .formula display src (Math.resolveMathAlphas coverage body)
+  | .styled st body => .styled st body
+  | .colored c n body => .colored c n body
+  | .role n body => .role n body
+  | .link u body => .link u body
+  | .underline body => .underline body
+  | .step n last body => .step n last body
+  | .alt n last active otherwise => .alt n last active otherwise
+  | .footnote n body => .footnote n body
+  | .text s => .text s
+  | .math display src => .math display src
+  | .image src size alt => .image src size alt
+  | .icon c label => .icon c label
+  | .label key => .label key
+  | .ref key form text target => .ref key form text target
+  | .cite text keys => .cite text keys
+  | .fill => .fill
+  | .hspace g keep => .hspace g keep
+  | .rule w h raise => .rule w h raise
+  | .strut g => .strut g
+  | .italicCorr maybe => .italicCorr maybe
+  | .pageNumber => .pageNumber
+  | .pageCount => .pageCount
+  | .linebreak extra => .linebreak extra
+
+/-- Every alphabet whose used range the selected symbol face lacks,
+deduplicated in first-use order across every formula region `foldDoc` reads. -/
+def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
+    (doc : Doc) : Array Math.MathAlphabet :=
+  foldDoc (fun out x => match x with
+    | .formula _ _ body =>
+      (Math.missingMathAlphas coverage body).foldl (fun out a =>
+        if out.contains a then out else out.push a) out
+    | _ => out) #[] doc
+
+/-- Resolve typed math-alphabet scopes in the shared IR before the scalar
+fallback census and both backends. The returned diagnostics are one per
+alphabet, never one per glyph; isolated holes in a supported range remain
+mapped and therefore keep the ordinary per-character fallback path. -/
+def resolveMathAlphas (coverage : Math.MathAlphabetCoverage) (family : String)
+    (doc : Doc) : Doc × Array Diag :=
+  let leaf := resolveMathAlphaInline coverage
+  let resolved := mapDoc (mapInlines leaf) (mapBlocks leaf) doc
+  let diags := (missingMathAlphas coverage doc).map fun a =>
+    Diag.of .N0018
+      s!"'{family}' has no {a.styleLabel} alphabet for the characters used; ordinary math source glyphs stand"
+      (help := some "write \\fonts{ math = \"...\" } with a face that carries this alphabet")
+      (subject := some ("math-alpha:" ++ a.name))
+  (resolved, diags)
 
 mutual
 

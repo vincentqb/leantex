@@ -1087,6 +1087,16 @@ def Font.inkAscent (f : Font) : Int :=
 def Font.gid (f : Font) (c : Char) : Option Nat :=
   gidIn f.cmap c
 
+/-- The selected math face's alphabet-range coverage. unicode-math installs
+a range only when its first mapped scalar exists; checking those typed
+anchors once preserves isolated holes for the per-character fallback path. -/
+def Font.mathAlphabetCoverage (f : Font)
+    (sources : Math.MathAlphabetSources) : Math.MathAlphabetCoverage :=
+  { sources
+    covered := (Math.allAlphabets.flatMap fun a =>
+      a.ranges.filterMap fun r =>
+        if (f.gid (a.apply r.anchor)).isSome then some (a, r) else none).toArray }
+
 /-- The small-caps form of glyph `g` under this face's `smcp`+`c2sc`
 substitutions, or `g` itself when the face maps it nowhere — a digit or a
 point of punctuation passes through unchanged. -/
@@ -1244,6 +1254,10 @@ structure FontSet where
   MATH table. `none` sets a formula as its glyph text (`Ir.formulaFloor`)
   with the W0003 warning. -/
   math : Option Nat := none
+  /-- Alphabet range anchors derived once from `math`, plus the document's
+  typed unicode-math source policy. The shared IR is resolved against this
+  before per-scalar fallback is built. -/
+  mathAlphabets : Math.MathAlphabetCoverage := {}
   /-- Per-face deflated program bytes, filled by the driver through its
   content-hash cache (`deflateCached` in the driver): `zdata[i]`, when
   present, is the compressed stream of the program the PDF embeds for face

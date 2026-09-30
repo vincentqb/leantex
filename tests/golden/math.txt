@@ -79,16 +79,16 @@ para
 para
   text "An alphabet remaps its letters through the Mathematical Alphanumeric block, Letterlike holes included: "
   formula inline "\\mathbb {R}^{d}"
-    ord:{ord:ℝ}^{ord:𝑑}
+    ord:alpha:bb{ord:𝑅}^{ord:𝑑}
   text " and "
   formula inline "\\mathbb {C}"
-    ord:{ord:ℂ}
+    ord:alpha:bb{ord:𝐶}
   text " are double-struck, "
   formula inline "\\mathbf {v} + \\boldsymbol {\\beta}"
-    ord:{ord:𝐯} bin:+ ord:{ord:𝜷}
+    ord:alpha:bf{ord:𝑣} bin:+ ord:alpha:bfit{ord:𝛽}
   text " set bold, and "
   formula inline "\\mathrm {Err}(p, q)"
-    ord:{ord:E ord:r ord:r} open:( ord:𝑝 punct:, ord:𝑞 close:)
+    ord:alpha:rm{ord:𝐸 ord:𝑟 ord:𝑟} open:( ord:𝑝 punct:, ord:𝑞 close:)
   text " is upright. A construction stands as a script’s argument in "
   formula inline "V^\\text {null}"
     ord:𝑉^{ord:"null"}
@@ -97,7 +97,7 @@ para
     ord:2^{ord:frac{ord:1}{ord:2}}
   text ", and a document-defined macro expands inside its formula: "
   formula inline "\\vecb {w}"
-    ord:{ord:𝐰}
+    ord:alpha:bf{ord:𝑤}
   text "."
 center
   para

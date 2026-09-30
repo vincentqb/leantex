@@ -7,16 +7,16 @@ section 1 number "1"
 para
   text "A text-style command resolves to the alphabet it means, so "
   formula inline "\\textbf {u}"
-    ord:{ord:𝐮}
+    ord:alpha:bf{ord:𝑢}
   text " is the upright bold letter and "
   formula inline "\\textit {v}"
-    ord:{ord:𝑣}
+    ord:alpha:it{ord:𝑣}
   text " the italic one, exactly as "
   formula inline "\\mathbf {u}"
-    ord:{ord:𝐮}
+    ord:alpha:bf{ord:𝑢}
   text " and "
   formula inline "\\mathit {v}"
-    ord:{ord:𝑣}
+    ord:alpha:it{ord:𝑣}
   text " set them. A colour travels with its subformula, so "
   formula inline "\\textcolor {blue}{w}"
     ord:{ink:#0000FF ord:𝑤}
@@ -35,7 +35,7 @@ para
 center
   para
     formula display "\\textcolor {blue}{\\textbf {\\sum _k}} a_k &= b \\\\  &= \\text {\\textbf {bound} above}"
-      ord:align[(|ord:{ink:#0000FF ord:{op:lim:∑_{ord:𝐤}}} ord:𝑎_{ord:𝑘}|ord:{} rel:= ord:𝑏)(||ord:{} rel:= ord:"bound above")]
+      ord:align[(|ord:{ink:#0000FF ord:alpha:bf{op:lim:∑_{ord:𝑘}}} ord:𝑎_{ord:𝑘}|ord:{} rel:= ord:𝑏)(||ord:{} rel:= ord:"bound above")]
 para
   text "What the engine still does not model degrades to content: "
   math inline "\\overset {?}{=}"

@@ -344,7 +344,15 @@ def reports : List Report := [
     pins := [check% beamerColorsChecks, check% titleTemplateColorChecks,
       thm% Ir.beamerColors_agree]
     accept := ["the private presentations' title, section and footer colours compared with their lualatex builds"]
-    state := .guarded "2bb0d181" .before .author }
+    state := .guarded "2bb0d181" .before .author },
+  { id := "R54", date := "2026-09-30"
+    what := "an unavailable calligraphic alphabet selected an unrelated host glyph instead of the math face's ordinary source glyph"
+    pins := [thm% Math.resolveMathAlphas_covers,
+      thm% Math.resolveMathAlphas_fixed_point,
+      thm% Layout.resolveMathAlphas_layout_agree,
+      thm% MathMl.resolveMathAlphas_html_agree,
+      check% mathChecks]
+    state := .guarded "236d3b06" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

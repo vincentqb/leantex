@@ -142,20 +142,6 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
             fonts := fonts.push f
             paths := paths.push face.path
   if fonts.isEmpty then return none
-  let mut fallback : Array (Char × Nat) := #[]
-  let mut uncovered : Array Char := #[]
-  for c in Layout.docScalars doc do
-    match (Array.range fonts.size).find? (fun k => ((fonts[k]!).gid c).isSome) with
-    | some k => fallback := fallback.push (c, k)
-    | none => uncovered := uncovered.push c
-  for (c, path) in ← FontDb.fallbackPicksPreferring (·.startsWith "tests/corpus") faces uncovered do
-    match paths.findIdx? (· == path) with
-    | some k => fallback := fallback.push (c, k)
-    | none =>
-      if let .ok f := Font.parse (← IO.FS.readBinFile path) then
-        fallback := fallback.push (c, fonts.size)
-        fonts := fonts.push f
-        paths := paths.push path
   let mut mathIdx : Option Nat := none
   let mathPick : Option FontDb.Face ← match spec.math with
     | some fam => pure ((FontDb.resolveVariant faces fam none {}).map (·.1))
@@ -171,7 +157,26 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
           mathIdx := some fonts.size
           fonts := fonts.push f
           paths := paths.push face.path
-  return some { fonts, index, fallback, math := mathIdx }
+  let mathAlphabets := match mathIdx.bind (fonts[·]?) with
+    | some f => f.mathAlphabetCoverage spec.mathSources
+    | none => { sources := spec.mathSources }
+  let familyName := mathIdx.bind (fonts[·]?) |>.map (·.family) |>.getD "math face"
+  let resolved := (Ir.resolveMathAlphas mathAlphabets familyName doc).1
+  let mut fallback : Array (Char × Nat) := #[]
+  let mut uncovered : Array Char := #[]
+  for c in Layout.docScalars resolved do
+    match (Array.range fonts.size).find? (fun k => ((fonts[k]!).gid c).isSome) with
+    | some k => fallback := fallback.push (c, k)
+    | none => uncovered := uncovered.push c
+  for (c, path) in ← FontDb.fallbackPicksPreferring (·.startsWith "tests/corpus") faces uncovered do
+    match paths.findIdx? (· == path) with
+    | some k => fallback := fallback.push (c, k)
+    | none =>
+      if let .ok f := Font.parse (← IO.FS.readBinFile path) then
+        fallback := fallback.push (c, fonts.size)
+        fonts := fonts.push f
+        paths := paths.push path
+  return some { fonts, index, fallback, math := mathIdx, mathAlphabets }
 
 /-- The ink a text carries, as a character multiset: what containment
 compares. Whitespace is layout, the hyphen is line breaking's (a word

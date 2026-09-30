@@ -149,9 +149,9 @@ note[N0016]: math is set in 'Fira Math', the first installed face with an OpenTy
 ── N0017 (info) no document class declared; the article page model is assumed
 note[N0017]: no '\documentclass'; the article page model is assumed
   help: declare \documentclass{article} (or slides, card, resume, webpage, poster) to choose it
-── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
-note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
+── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
+note[N0018]: 'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand
+  help: write \fonts{ math = "..." } with a face that carries this alphabet
 note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
   help: declare a math face that carries it: \fonts{ math = ... }
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand

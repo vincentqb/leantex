@@ -108,6 +108,9 @@ def registry : List AuditRow :=
    ⟨.W0345, .native, .native, check% contrastChecks⟩,
    -- A fallback face substitutes where lualatex substitutes silently.
    ⟨.W0009, .keep, .degraded, check% fallbackChecks⟩,
+   -- unicode-math leaves a missing symbol alphabet on its ordinary source;
+   -- the one face-level resolution note names that visible difference.
+   ⟨.N0018, .keep, .rewritten, check% mathChecks⟩,
    -- The witness that the gap theorems' side condition was taken.
    ⟨.N0200, .keep, .rewritten, check% spacingChecks⟩,
    -- One element-style field closes it.

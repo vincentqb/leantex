@@ -1451,6 +1451,32 @@ engine does not have; continuous numbers in the left margin stand" pos
     "usepackage:lineno" pos
   return out
 
+/-- unicode-math's option-driven legacy alphabets, carried into the typed
+font specification. Other options are named here rather than silently
+changing normal, bold, sans, or literal semantics. -/
+private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) := do
+  let mut sources : Array String := #[]
+  let mut dropped : Array String := #[]
+  for entry in Decl.splitEntries opt do
+    match Decl.splitEntry entry with
+    | some (key, value) =>
+      match Math.MathAlphabet.sourceKey? key,
+          Math.MathAlphabetSource.ofName? value.trimAscii.toString with
+      | some _, some source => sources := sources.push s!"{key} = {source.name}"
+      | _, _ => dropped := dropped.push entry
+    | none => dropped := dropped.push entry
+  unless dropped.isEmpty do
+    say .W0101
+      s!"unicode-math options without a model were dropped: {String.intercalate ", " dropped.toList}"
+      pos (subject := some "usepackage:unicode-math:options")
+  if sources.isEmpty then
+    discard what "the engine keeps its existing math-source policy"
+      "usepackage:unicode-math" pos
+    return #[]
+  let native := s!"\\fonts\{ {String.intercalate ", " sources.toList} }"
+  became what native pos
+  synthAt native pos
+
 /-- Carry natbib declarations to the document: the `@natbib` marker, one
 word per declaration, replayed at `\begin{document}` — where natbib reads
 the bibliography style back from the `.aux` — for the body elaborator to
@@ -5121,6 +5147,11 @@ were dropped: {dropped}" pos
     let native := s!"\\fonts\{ {dirPart}math = \"{family}\" }"
     became "\\setmathfont" native pos
     return some (← synthAt native pos, k)
+  | "unimathsetup" =>
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let opts := rawSrc (args.getD 0 #[])
+    return some (← unicodeMathOptions s!"\\unimathsetup\{{opts}}" opts pos, k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
     -- A deliberate refusal, not a gap: Lua is another engine's extension
@@ -5985,6 +6016,9 @@ dropped: {String.intercalate ", " unknown}" pos
           "the cancel marks, drawn from the math font's own rule constants" pos
         out := (out.push (.ctrl cancelOptionsMark pos)).push
           (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
+      else if p == "unicode-math" && opt.isSome then
+        out := out ++ (← unicodeMathOptions
+          s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then
