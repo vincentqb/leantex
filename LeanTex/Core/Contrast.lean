@@ -581,6 +581,16 @@ private structure UseCx where
   /-- What the diagnostic calls the ground ("the frame-title bar"); `none`
   reads "the page". -/
   groundName : Option String := none
+  /-- A frame-entry ground lasts only until the next palette declaration,
+  even when that declaration repeats the same palette. -/
+  groundEpoch : Option Nat := none
+
+private def UseCx.atEpoch (cx : UseCx) (epoch : Nat) : UseCx :=
+  -- premise: listingPaletteAuditChecks — a body declaration replaces the
+  -- entry ground; its colour equality cannot stand in for the boundary.
+  if cx.groundEpoch.any (· != epoch) then
+    { cx with ground := none, groundName := none, groundEpoch := none }
+  else cx
 
 private def UseCx.large (cx : UseCx) : Bool :=
   cx.size ≥ Dim.pt 18 || (cx.bold && cx.size ≥ Dim.pt 14)
@@ -721,7 +731,9 @@ private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
     UseAcc :=
   match xs with
   | [] => acc
-  | b :: rest => usesBlocks cx (usesBlock cx acc b) rest
+  | b :: rest =>
+    let cx := cx.atEpoch acc.epochs.size
+    usesBlocks cx (usesBlock cx acc b) rest
 
 private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .para content => usesInlines cx acc content.toList
@@ -801,14 +813,16 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let bodyCx := if standout then
         { cx with ground := some ((acc.pal.find? "standoutbg").getD
             ((acc.pal.find? "fg").getD Color.black))
-                  groundName := some "the standout frame" }
+                  groundName := some "the standout frame"
+                  groundEpoch := some acc.epochs.size }
       -- And a title page with a declared ground sits on that: the ground
       -- `Layout.titleGround` paints and the realization walk rewrites on
       -- (`Ir.titleGroundOf`, the one reading), so every use on the page is
       -- judged against the surface it really stands on.
       else match titleGroundOf acc.pal valign with
         | some ground =>
-          { cx with ground := some ground, groundName := some "the title page" }
+          { cx with ground := some ground, groundName := some "the title page"
+                    groundEpoch := some acc.epochs.size }
         | none => cx
     usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
   -- A framefoot note lands as footer text on the page: its own declared

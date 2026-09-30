@@ -49,8 +49,8 @@ promoted.
 
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
-open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks
-  animatedGraphicsChecks animatedFacesChecks)
+open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
+  listingPaletteAuditChecks svgAssetChecks animatedGraphicsChecks animatedFacesChecks)
 
 namespace Reports
 
@@ -360,7 +360,13 @@ def reports : List Report := [
       thm% HtmlDoc.imagePosterHref_covers]
     accept := ["the private presentation builds through both engines, with the selected poster in the native PDF and the original moving SVG in the browser",
       "synthetic SVG validation and static print and reduced-motion faces through the installed vector converters"]
-    state := .guarded "a9116a2f" .before .author }
+    state := .guarded "a9116a2f" .before .author },
+  { id := "R55", date := "2026-09-30"
+    what := "a palette declared inside a frame did not reach later browser frames, and the contrast audit retained the frame-entry ground after a body declaration"
+    pins := [check% listingPaletteContinuationChecks,
+      check% listingPaletteAuditChecks, check% listingHighlightChecks]
+    accept := ["the private presentations retain readable code across frame palette changes"]
+    state := .guarded "2eedd96b" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

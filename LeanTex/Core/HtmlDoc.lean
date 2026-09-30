@@ -5089,6 +5089,27 @@ def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
              epochStyle := joinStyles cfg.epochStyle diff.style
              epochGround := cfg.epochGround || diff.groundChanged }
 
+/-- A frame's outgoing palette continues into later frames, as in layout.
+The context fold excludes speaker notes: their declarations are side-channel
+content, while nested body declarations remain in flow order. -/
+private def Config.afterFrame (cfg : Config) : Block → Config
+  | .frame _ _ _ _ body =>
+    Ir.foldCtxBlocks {
+      openBlock := fun visible cfg b => match b with
+        | .note _ => (cfg, false)
+        | .setPalette p => (if visible then cfg.advancePalette p else cfg, visible)
+        | _ => (cfg, visible)
+      closeBlock := fun _ cfg _ => cfg
+      openInline := fun visible cfg _ => (cfg, visible)
+      closeInline := fun _ cfg _ => cfg
+    } true cfg body
+  | .para .. | .section .. | .list .. | .center .. | .ragged ..
+  | .spaced .. | .role .. | .quote .. | .abstract .. | .titled ..
+  | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .step ..
+  | .alt .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
+  | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. | .picture ..
+  | .table .. | .float .. | .bibliography .. => cfg
+
 /-- A flow epoch that changes the page ground paints each following
 continuous-flow box in that ground. This avoids a wrapper (which would break
 sibling rhythm and host selectors); deck stages already paint their own full
@@ -6184,7 +6205,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
 updates the state in force, and every following sibling carries the
 accumulated redefinitions on its style attribute (flow scope realized
 sibling-wise; past the enclosing element's close the properties no longer
-reach, the documented divergence from the PDF's whole-flow scope). -/
+reach, except a frame's outgoing palette, which continues into later
+frames as on the PDF path). -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | .logo _ :: rest => blockNodesInto cfg acc rest
@@ -6197,7 +6219,8 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
   -- medium has no page top and no interline glue.
   | b :: rest =>
     if Ir.pageMarkerBlock b then blockNodesInto cfg acc rest
-    else blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))) rest
+    else blockNodesInto (cfg.afterFrame b)
+      (acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -6460,6 +6483,7 @@ retitle one section, or link to '#{id}'"))
       cur := #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)]
     | _ =>
       unless Ir.pageMarkerBlock b do cur := cur.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))
+      cfg := cfg.afterFrame b
   return (close out cur openId, diags)
 
 /-- Does an element take keyboard focus in sequential navigation — a tab
@@ -6899,6 +6923,7 @@ first; retitle one frame, or link to '#{id}'"))
               | .style s => Node.style s
               | .script attrs s => Node.script attrs s
           acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround node)
+          cfg := cfg.afterFrame b
         | .section 1 starred num title =>
           curSection := title
           if (Design.ofPalette cfg.pal).sectionProgress.isSome then

@@ -24520,3 +24520,21 @@ source key. After regeneration, all 85 Chromium fixture cells and all three
 browser-face captures pass. `lake build`, `lake test`, the 92,871-input image
 fuzz run, the installed SVG converter oracle, HTML accessibility check and
 selftest, browser oracle/check/selftests, and every scoreboard tier pass.
+
+### 2026-09-30 — Frame palette continuation and contrast
+
+A frame's outgoing palette now continues into later HTML frames, matching
+native layout. The existing context fold reads nested body declarations in
+order and excludes speaker notes. All three HTML frame-emission paths use
+that one transition.
+
+The contrast audit records the epoch owning a frame-entry ground and releases
+that override at the next declaration. Repeating an identical palette is
+still a boundary: comparing colours cannot tell whether the frame's styled
+ground remains. Listing size, authored ink priority, bounded repairs and
+unrepairable-colour warnings keep their existing contracts.
+
+R55 pins the typed-page continuation and contrast guards. They failed 21
+assertions on `2eedd96b` before the fix and pass afterwards, including nested
+declarations, ignored note declarations, explicit ground removal and a real
+minted-source repair. Existing native continuation and spill guards remain.
