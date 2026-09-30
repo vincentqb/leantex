@@ -2017,8 +2017,8 @@ def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 same convention here, over the formats that embed — `.pdf` first past the
 name as written, graphicx's own order under pdfTeX. -/
 def sourceCandidates (src : String) : List String :=
-  [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg", src ++ ".svg",
-   src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".SVG"]
+  [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
+   src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".svg", src ++ ".SVG"]
 
 structure Store where
   entries : Array Loaded := #[]

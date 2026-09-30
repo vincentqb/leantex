@@ -53,6 +53,8 @@ private def rsvgArgs (format : String) (input output : System.FilePath) : Array 
 private def pdfSvgArgs (page : String) (input output : System.FilePath) : Array String :=
   #["-svg", "-f", page, "-l", page, input.toString, output.toString]
 
+private def pdfSvgRoot : String := "<svg preserveAspectRatio=\"none\" "
+
 private def commandText (tool : String) (args : Array String) : String :=
   tool ++ " " ++ String.intercalate " " args.toList
 
@@ -68,7 +70,8 @@ def browserFaceContract : String :=
     commandText "xmllint" (xpathArgs input),
     commandText "rsvg-convert" (rsvgArgs "pdf" input output),
     commandText "rsvg-convert" (rsvgArgs "svg" input output),
-    commandText "pdftocairo" (pdfSvgArgs "<page>" input output)]
+    commandText "pdftocairo" (pdfSvgArgs "<page>" input output),
+    "pdftocairo root " ++ pdfSvgRoot]
 
 private def runChecked (tool : String) (args : Array String) : IO String := do
   let ran ← IO.Process.output { cmd := tool, args }
@@ -138,6 +141,22 @@ def svgPoster (bytes : ByteArray) : IO (Except String ByteArray) := do
   if let .error e := (← validateSvg bytes) then return .error e
   convert "rsvg-convert" "svg" "svg" (rsvgArgs "svg") bytes
 
+/-- Only the converter-owned root changes. The native PDF form stretches
+the selected page onto the first frame's canvas; SVG's default `meet`
+would instead letterbox its ink inside the same image box. -/
+private def stretchPdfSvg (bytes : ByteArray) : Except String ByteArray := do
+  let some text := String.fromUTF8? bytes
+    | throw "pdftocairo produced non-UTF-8 SVG"
+  let [head, body] := text.splitOn "<svg "
+    | throw "pdftocairo produced an unexpected SVG root"
+  let prolog := head.trimAscii.toString
+  unless prolog.isEmpty || prolog == "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" do
+    throw "pdftocairo produced an unexpected SVG prolog"
+  let header := (body.splitOn ">").headD ""
+  unless header != body && (header.splitOn "preserveAspectRatio").length == 1 do
+    throw "pdftocairo produced unexpected SVG root attributes"
+  return (head ++ pdfSvgRoot ++ body).toUTF8
+
 /-- Poppler reads the physical page selected by the same page-tree
 traversal as the native importer, including `last`; `/Count` is never a
 substitute for that traversal. -/
@@ -146,6 +165,6 @@ def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
   match PdfRead.pageNumber bytes page with
   | .error e => return .error e
   | .ok n =>
-    convert "pdftocairo" "pdf" "svg" (pdfSvgArgs (toString n)) bytes
+    return (← convert "pdftocairo" "pdf" "svg" (pdfSvgArgs (toString n)) bytes) >>= stretchPdfSvg
 
 end LeanTex.Cli.ImageAssets

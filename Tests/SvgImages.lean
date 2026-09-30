@@ -5,6 +5,53 @@ open LeanTex.Core
 
 namespace Tests
 
+/-- Adding SVG candidates must not change which existing PDF or raster
+source wins an extensionless request. In particular a companion SVG must
+not shadow an uppercase PDF that can supply the selected poster. -/
+def svgSourcePrecedenceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let candidates := Image.sourceCandidates "sequence"
+  for ext in ["pdf", "png", "jpg", "jpeg", "PDF", "PNG", "JPG", "JPEG"] do
+    check ref s!"SVG lookup preserves the existing .{ext} source"
+      (candidates.find? (fun p => p == "sequence." ++ ext || p == "sequence.svg") ==
+        some ("sequence." ++ ext))
+  check ref "SVG lookup still accepts both SVG extensions after existing formats"
+    (candidates.filter (Image.isSvg ·) == ["sequence.svg", "sequence.SVG"])
+
+/-- Filenames are not URLs. Primary and media-selected image links encode
+each filename byte while publication keeps the literal filename. A space
+in `srcset` would otherwise be parsed as a descriptor, disabling fallback. -/
+def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let source := "moving figure,#?%20é.svg"
+  let imgs : Image.Store := { entries := #[
+    { src := source, info := some { pxW := 20, pxH := 20 },
+      webSvg := some "<svg/>".toUTF8, posterSvg := some "<svg/>".toUTF8 }] }
+  let assetsDir := "output files/figures#1"
+  let doc := (elabStr "\\includegraphics[alt={Moving square}]{image.svg}").1
+  -- Use the image's IR value: percent/hash in a filename is not TeX syntax.
+  let rename (i : Ir.Inline) : Ir.Inline := match i with
+    | .image _ size alt => .image source size alt
+    | i => i
+  let doc := { doc with body := Ir.mapBlocks rename doc.body }
+  let (_, tree, _) := HtmlDoc.emitTree { imgs, assetsDir } doc
+  let images := elemAttrsList (· == "img") #[] tree.toList
+  let sources := elemAttrsList (· == "source") #[] tree.toList
+  let assetPrefix := "output%20files/figures%231/"
+  let encoded := "moving%20figure%2C%23%3F%2520%C3%A9.svg"
+  t "SVG primary URL encodes the asset directory and literal filename"
+    (images.any fun (_, attrs) => attrs.contains ("src", assetPrefix ++ "i0-" ++ encoded))
+  t "SVG print and reduced-motion srcset is one encoded URL"
+    (sources.any fun (_, attrs) =>
+      attrs.contains ("srcset", assetPrefix ++ "p0-" ++ encoded) &&
+      attrs.contains ("media", "print, (prefers-reduced-motion: reduce)"))
+  t "SVG URL encoding does not rename published files"
+    ((HtmlDoc.imageAssets imgs).map (·.file) ==
+      #["i0-" ++ source, "p0-" ++ source])
+  let facts := HtmlDoc.a11yFacts true false tree
+  t "encoded SVG URLs retain the accessible image alternative"
+    (images.size == 1 && facts.imgs == 1 && facts.imgsUnnamed == 0 &&
+      facts.hiddenTabStops == 0)
+
 /-- librsvg supplies a static drawing, not a selected SMIL frame. Reject
 non-first posters before invoking any converter. Empty input makes this
 guard independent of host tools; a converter error cannot satisfy it. -/
@@ -20,6 +67,8 @@ def svgPosterChecks (ref : IO.Ref (List String)) : IO Unit := do
 should receive a PDF. The typed page must link a published SVG, with its
 text alternative, even though layout reads vector PDF geometry. -/
 def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  svgSourcePrecedenceChecks ref
+  svgAssetUrlChecks ref
   svgPosterChecks ref
   let t := check ref
   t "extensionless image lookup includes SVG"

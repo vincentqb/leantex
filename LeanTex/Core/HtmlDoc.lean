@@ -4,6 +4,7 @@ import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Contrast
 import LeanTex.Core.Font
+import Std.Http.Data.URI.Encoding
 
 namespace LeanTex.Core.HtmlDoc
 
@@ -1842,6 +1843,13 @@ def imageAssets (imgs : Image.Store) : Array ImageAsset :=
         some { file := imagePosterName k en, srcIndex := k, poster := true }
       else none)
 
+/-- File names remain literal on disk. URL path separators survive encoding,
+but spaces and commas must not split a `srcset` candidate. -/
+def imageAssetHref (assetsDir file : String) : String :=
+  toString (Std.Http.URI.EncodedString.encode
+    (r := fun c => Std.Http.Internal.Char.isUnreserved c || c == '/'.toUInt8)
+    (assetsDir ++ "/" ++ file))
+
 /-- What an `<img>` for a request links: the copy under `assetsDir` when the
 entry ships, else the resolved spelling (the placeholder of an unloaded
 entry, an unconverted PDF source, a boundary picture's SVG href). Selection
@@ -1851,7 +1859,7 @@ def imageRequestHref (assetsDir : String) (imgs : Image.Store) (req : Image.Requ
   | some k =>
     match imgs.get? k with
     | some en =>
-      if imageShips en then assetsDir ++ "/" ++ imageAssetName k (browserAssetSrc en)
+      if imageShips en then imageAssetHref assetsDir (imageAssetName k (browserAssetSrc en))
       else resolvedSrc en
     | none => req.src
   | none => req.src
@@ -1866,7 +1874,7 @@ def imagePosterHref (assetsDir : String) (imgs : Image.Store) (req : Image.Reque
   let k ← imgs.findRequest? req
   let en ← imgs.get? k
   if imageShips en && en.posterSvg.isSome then
-    some (assetsDir ++ "/" ++ imagePosterName k en)
+    some (imageAssetHref assetsDir (imagePosterName k en))
   else none
 
 /-- A length on the CSS ruler, in whole pixels, to nearest: CSS fixes
@@ -2007,7 +2015,7 @@ theorem img_request_src_shipped (assetsDir : String) (imgs : Image.Store) (req :
     {k : Nat} {en : Image.Loaded} (hk : imgs.findRequest? req = some k)
     (hen : imgs.get? k = some en) (hr : imageShips en = true) :
     ∃ a ∈ imageAssets imgs, imageRequestHref assetsDir imgs req =
-      assetsDir ++ "/" ++ a.file := by
+      imageAssetHref assetsDir a.file := by
   refine ⟨{ file := imageAssetName k (browserAssetSrc en), srcIndex := k }, ?_, ?_⟩
   · apply Array.mem_append.mpr
     left
@@ -2020,7 +2028,7 @@ theorem img_request_src_shipped (assetsDir : String) (imgs : Image.Store) (req :
 theorem img_src_shipped (assetsDir : String) (imgs : Image.Store) (src : String)
     {k : Nat} {en : Image.Loaded} (hk : imgs.find? src = some k)
     (hen : imgs.get? k = some en) (hr : imageShips en = true) :
-    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = assetsDir ++ "/" ++ a.file :=
+    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = imageAssetHref assetsDir a.file :=
   img_request_src_shipped assetsDir imgs { src } hk hen hr
 
 /-- Every static `<source>` names a captured asset, the publication half
@@ -2031,7 +2039,7 @@ theorem imagePosterHref_covers (assetsDir : String) (imgs : Image.Store) (req : 
     (hen : imgs.get? k = some en) (hr : imageShips en = true)
     (hp : en.posterSvg.isSome = true) :
     ∃ a ∈ imageAssets imgs, imagePosterHref assetsDir imgs req =
-      some (assetsDir ++ "/" ++ a.file) := by
+      some (imageAssetHref assetsDir a.file) := by
   refine ⟨{ file := imagePosterName k en, srcIndex := k, poster := true }, ?_, ?_⟩
   · apply Array.mem_append.mpr
     right

@@ -705,8 +705,11 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
         let res := Image.decodeRequest params bytes req
         -- An animation's companion SVG is read once, here, beside the PDF,
         -- so preserving movement never rereads the file (`fulfilOne_bytes`).
-        let companion ← if req.animated then
-            Except.toOption <$> (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO
+        let companion ← if req.animated then do
+            match ← (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO with
+            | .ok svg => pure (some svg)
+            | .error _ =>
+              Except.toOption <$> (IO.FS.readBinFile (p.withExtension "SVG")).toBaseIO
           else pure none
         return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
           (some bytes) companion, false)

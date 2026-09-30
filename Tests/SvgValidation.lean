@@ -14,6 +14,100 @@ private def boundaryError (result : Except String α) : Bool :=
   | .error err => (err.splitOn "SVG resource boundary").length > 1
   | .ok _ => false
 
+/-- A synthetic two-page sequence: a wide blue first frame and a tall red
+poster. No fonts or outside resources participate in its conversion. -/
+def svgCanvasPdf : ByteArray := Id.run do
+  let stream (ink : String) :=
+    s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
+  let objects := #[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 4 0 R >>",
+    stream "0 0 1 rg 0 0 120 80 re f",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 60 120] /Contents 6 0 R >>",
+    stream "1 0 0 rg 0 0 60 120 re f"]
+  let mut text := "%PDF-1.7\n"
+  let mut offsets : Array Nat := #[]
+  for (object, i) in objects.zipIdx do
+    offsets := offsets.push text.utf8ByteSize
+    text := text ++ s!"{i + 1} 0 obj\n{object}\nendobj\n"
+  let xref := text.utf8ByteSize
+  text := text ++ s!"xref\n0 {objects.size + 1}\n0000000000 65535 f \n"
+  for offset in offsets do
+    let digits := toString offset
+    text := text ++ "".pushn '0' (10 - digits.length) ++ digits ++ " 00000 n \n"
+  return (text ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R >>\n\
+    startxref\n{xref}\n%%EOF\n").toUTF8
+
+/-- Check the actual converter output, not the outer image box: a PDF
+poster must stretch its own viewBox when placed on the first-frame canvas,
+as the native PDF form does. Browser paint is the companion external oracle. -/
+def svgPosterCanvasChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let poster ← LeanTex.Cli.ImageAssets.pdfSvg svgCanvasPdf .last
+  match poster with
+  | .error err => svgCheck ref s!"PDF poster conversion: {err}" false
+  | .ok bytes =>
+    IO.FS.withTempDir fun dir => do
+      let file := dir / "poster.svg"
+      IO.FS.writeBinFile file bytes
+      let parsed ← IO.Process.output { cmd := "xmllint", args := #["--nonet", "--nocatalogs",
+        "--xpath", "boolean(/*[local-name()='svg' and @viewBox='0 0 60 120' and @preserveAspectRatio='none'])",
+        file.toString] }
+      svgCheck ref "converted PDF poster stretches the selected page to the animation canvas"
+        (parsed.exitCode == 0 && parsed.stdout.trimAscii.toString == "true")
+
+/-- Exercise extension lookup at the driver's one-read capture site.
+Accepted companions publish byte-for-byte; an unsafe or absent companion
+keeps the converted PDF poster. Lowercase retains precedence when both exist. -/
+def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let moving := svgDocument
+    "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
+  let lower := svgDocument
+    "<rect width=\"20\" height=\"20\" fill=\"blue\"><animate attributeName=\"opacity\" values=\"1;0;1\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
+  let unsupported := svgDocument "<image href=\"missing.png\" width=\"20\" height=\"20\"/>"
+  IO.FS.withTempDir fun dir => do
+    for (name, lowerBytes, upperBytes, expected) in [
+        ("uppercase", none, some moving, some moving),
+        ("both", some lower, some moving, some lower),
+        ("unsafe", none, some unsupported, none),
+        ("absent", none, none, none)] do
+      let input := dir / name
+      let output := input / "out"
+      IO.FS.createDirAll output
+      IO.FS.writeBinFile (input / "sequence.PDF") svgCanvasPdf
+      if let some bytes := lowerBytes then IO.FS.writeBinFile (input / "sequence.svg") bytes
+      if let some bytes := upperBytes then IO.FS.writeBinFile (input / "sequence.SVG") bytes
+      IO.FS.writeFile (input / "figure.tex")
+        "\\documentclass{article}\n\\begin{document}\n\
+        \\animategraphics[poster=last,alt={Moving square}]{10}{sequence.PDF}{}{}\n\
+        \\end{document}\n"
+      let run ← IO.Process.output {
+        cmd := binary.toString, cwd := some input
+        args := #["figure.tex", "-o", (output / "figure.html").toString]
+        env := #[("LEANTEX_FONT", some font.toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+      svgCheck ref s!"SVG companion {name}: the driver builds" (run.exitCode == 0)
+      let html ← IO.FS.readFile (output / "figure.html")
+      let primary ← IO.FS.readBinFile (output / "figure.assets" / "i0-sequence.svg")
+      let posterExists ← (output / "figure.assets" / "p0-sequence.svg").pathExists
+      match expected with
+      | some bytes =>
+        svgCheck ref s!"SVG companion {name}: original animation bytes publish"
+          (primary == bytes && posterExists)
+        svgCheck ref s!"SVG companion {name}: the static media fallback is reachable"
+          ((html.splitOn "srcset=\"figure.assets/p0-sequence.svg\"").length == 2)
+      | none =>
+        svgCheck ref s!"SVG companion {name}: the selected PDF still supplies a static face"
+          (!primary.isEmpty && primary != unsupported && !posterExists &&
+            (html.splitOn "<img ").length == 2 && (html.splitOn "<source ").length == 1)
+      svgCheck ref s!"SVG companion {name}: source bytes remain unchanged"
+        ((← IO.FS.readBinFile (input / "sequence.PDF")) == svgCanvasPdf &&
+          (← if let some bytes := upperBytes then
+            pure ((← IO.FS.readBinFile (input / "sequence.SVG")) == bytes)
+          else pure true))
+
 /-- Exercise the driver's second conversion after the native SVG decode
 succeeds. A converter failure must remove the moving browser asset, ship
 a named placeholder and retain the reason in its one diagnostic. This
@@ -78,6 +172,8 @@ def svgValidationConverterChecks (ref : IO.Ref (List String)) : IO Unit := do
 actual XML parsing and conversion. This oracle needs xmllint and librsvg;
 it must be invoked explicitly on a host providing those tools. -/
 def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  svgPosterCanvasChecks ref
+  svgCompanionDriverChecks ref
   svgValidationConverterChecks ref
   let rect := "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   let moving := "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
