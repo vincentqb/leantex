@@ -72,11 +72,11 @@ def facePlanChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The expected converted-image face identities the accounting matches
 against are read from the typed `HtmlDoc.browserFaceAssets` projection — the
-`.svg` assets of a store — and classified against boundary pictures by
-`HtmlDoc.isImageFaceName`. The two publication paths are disjoint by
-construction: an image face's name begins with `i` or `p`, a boundary
-picture's SVG (`Ir.picHash body ++ ".svg"`) with a hexadecimal digit, and no
-hex digit is `i` or `p` (`HtmlDoc.hexDigit_ne_ip`). -/
+`.svg` assets of a store. Converted image faces (`isImageFaceName`) and
+boundary picture SVGs (`isBoundaryFaceName`) are two disjoint publication
+paths: an image face's name is an `i`/`p` `.svg`, a boundary picture's SVG is
+`Ir.picHash body ++ ".svg"` — a hex-digit stem, never `i`/`p`, proved by
+`HtmlDoc.isImageFaceName_boundary` from `Ir.picHash_chars_mem`. -/
 def expectedFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let data ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
@@ -93,22 +93,34 @@ def expectedFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     { entries := #[{ pdfEn with animated := true, companion := some "<svg/>".toUTF8 }] }
   t "browserFaceAssets projects both faces of an animated companion"
     ((HtmlDoc.browserFaceAssets animated).map (·.file) == #["i0-box.svg", "p0-box.svg"])
-  -- A raster ships its own non-SVG bytes and is not an SVG browser face.
-  let raster : Image.Loaded := { src := "photo.png", info := (Image.decode data).toOption }
-  t "a decoded PDF under a raster name still only publishes SVG faces here"
-    ((HtmlDoc.browserFaceAssets (HtmlDoc.facedStore { entries := #[raster] })).all
-      fun a => a.file.endsWith ".svg")
-  -- The classifier separates image faces from boundary pictures by their
-  -- first character — the stated, tested disjointness property.
+  -- A real PNG raster ships its own bytes under its own name and publishes no
+  -- SVG browser face at all — the projection is empty.
+  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let pngInfo := (Image.decode pngData).toOption
+  t "the PNG fixture decodes to a raster (no vector form)"
+    (pngInfo.any (·.form.isNone))
+  let rasterEn : Image.Loaded :=
+    { src := "rects.png", info := pngInfo, source := some pngData }
+  let rasterStore := HtmlDoc.facedStore { entries := #[rasterEn] }
+  t "a raster publishes no SVG browser face"
+    (HtmlDoc.browserFaceAssets rasterStore).isEmpty
+  t "a raster still ships its own bytes under its own-extension name"
+    ((HtmlDoc.imageAssets rasterStore).map (·.file) == #["i0-rects.png"])
+  -- The classifier separates image faces from boundary pictures, and rejects
+  -- a non-.svg i/p asset name as its docstring promises.
   t "a converted primary name is classified as an image face"
-    (HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "box.pdf"))
+    (HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "box.svg"))
   t "a static poster name is classified as an image face"
     (HtmlDoc.isImageFaceName (HtmlDoc.imagePosterName 3 pdfEn))
-  t "a boundary picture's picHash SVG name is not an image face"
-    (!HtmlDoc.isImageFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
+  t "a non-.svg i/p asset name (a raster) is not an image face"
+    (!HtmlDoc.isImageFaceName (HtmlDoc.imageAssetName 0 "rects.png") &&
+      !HtmlDoc.isImageFaceName "i0-box.pdf" && !HtmlDoc.isImageFaceName "p0-box.png")
+  t "a boundary picture's picHash SVG name is a boundary face, not an image face"
+    (HtmlDoc.isBoundaryFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
+      !HtmlDoc.isImageFaceName (Ir.picHash "\\draw (0,0) -- (1,1);" ++ ".svg") &&
       !HtmlDoc.isImageFaceName (Ir.picHash "\\node {label};" ++ ".svg"))
-  t "a raster source name is not an image face"
-    (!HtmlDoc.isImageFaceName "photo.png")
+  t "a raster source name is neither an image nor a boundary face"
+    (!HtmlDoc.isImageFaceName "photo.png" && !HtmlDoc.isBoundaryFaceName "photo.png")
 
 /-- An SVG's PDF form is its print face, not evidence that the browser
 should receive a PDF. The typed page must link a published SVG, with its
