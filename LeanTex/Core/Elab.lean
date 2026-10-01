@@ -4836,7 +4836,7 @@ no extent is reserved for it" pos
                     (help := "links cannot nest; move the inner link outside the outer wrapper")
                   pure (acc ++ inner)
                 else
-                  pure (acc.push (.link ("#".append anchor) inner))
+                  pure (acc.push (.link ("#".append anchor) (ctx.styles.linkInk "link" inner)))
               else
                 pure ((acc.push (.label key)) ++ inner)
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=

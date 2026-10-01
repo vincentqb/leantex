@@ -14,7 +14,7 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
   let t := check ref
   let doc (pre : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n\\section{Alpha}\\label{a}\n" ++
-    "See \\ref{a}, \\url{https://example.org} and \\cite{k}.\n" ++
+    "See \\ref{a}, \\url{https://example.org}, \\hyperlink{a}{Zephyr} and \\cite{k}.\n" ++
     "\\begin{thebibliography}{9}\n\\bibitem{k} A. Person. A title. 2020.\n" ++
     "\\end{thebibliography}\n\\end{document}"
   -- The ink each glyph ships in, on the body line that holds the links.
@@ -34,12 +34,18 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
   let blue : Ir.Color := { r := 0, g := 0, b := 255 }
   let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
   let black := Ir.Color.black
-  -- The line reads "See 1, https://example.org and [1]." — the reference's
-  -- number and the citation's mark are both '1'; the URL owns every 'x'.
+  -- The line reads "See 1, https://example.org, Zephyr and [1]." — the
+  -- reference's number and the citation's mark are both '1'; the URL owns
+  -- every 'x'; the internal `\hyperlink`'s text owns 'Z'.
   let dflt := inks "\\usepackage[colorlinks]{hyperref}"
   t "colorlinks: the reference, then the citation, in red and green"
     (inkOf dflt '1' == [red, green])
   t "colorlinks: the URL in magenta" (!(inkOf dflt 'x').isEmpty && (inkOf dflt 'x').all (· == magenta))
+  -- An internal `\hyperlink` is a cross-reference, so colorlinks paints its
+  -- text in `linkcolor` (red by default), exactly as `\ref` — the same
+  -- `linkInk "link"` door, not a bare untinted body.
+  t "colorlinks: the internal \\hyperlink text in link ink (red)"
+    (!(inkOf dflt 'Z').isEmpty && (inkOf dflt 'Z').all (· == red))
   t "colorlinks: the citation's brackets and the words keep the running ink"
     ((inkOf dflt '[').all (· == black) && (inkOf dflt ']').all (· == black) &&
       (inkOf dflt 'S').all (· == black))
