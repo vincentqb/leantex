@@ -6373,32 +6373,34 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       picC)).1) "\\setmainfont")
   t "the set lines are the boundary's: no W0301 for them"
     (ds.all (·.code != "W0301"))
-  -- The document's own macros ride: the closed list was closed over the
-  -- commands the engine knows, so a `\newcommand` the picture spells was
-  -- undefined at the boundary and the tool drew nothing. The invariant is
-  -- `Ir.macroDecls_covers` — a control sequence the body spells that the
-  -- document defined is declared in the request — with `Ir.macroDecls_mem`
-  -- bounding what rides. Invented macros, invented palette.
-  -- Optional-default calls remain TeX's to bind at the boundary; required
-  -- arguments now expand at the picture's own site (checked below).
+  -- LaTeX macros execute at the picture's source site, including optional
+  -- defaults and transitive calls: the complete request must equal the
+  -- literal replacement's request. Calls that remain (the native spelling
+  -- below) still owe `Ir.macroDecls_covers`, bounded by `Ir.macroDecls_mem`;
+  -- their declarations retain the provide/renew guard against collisions.
+  -- Invented macros, invented palette.
   let mac := "\\newcommand{\\tint}[2][]{\\textcolor{ember}{#2}}\n" ++
     "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
     "\\newcommand{\\elsewhere}{only ever in prose}\n"
   let picM := "\\begin{tikzpicture}\\shade[\\badge{ok}] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let (mdoc, mds) := elabStr (dvDoc (pal ++ mac) picM)
-  t "a macro the picture spells is defined in the standalone"
-    (hasStr (reqOf mdoc) "\\renewcommand{\\badge}[2][]")
-  t "a definition the standalone reads can never fail on an existing name"
-    (hasStr (reqOf mdoc) "\\providecommand{\\badge}{}")
-  t "a macro reached only through another macro's body rides too"
-    (hasStr (reqOf mdoc) "\\renewcommand{\\tint}[2][]")
+  let (expandedDoc, expandedDs) := elabStr (dvDoc pal
+    ("\\begin{tikzpicture}\\shade[\\textcolor{ember}{[ok]}]" ++
+     " (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  t "optional-default and transitive macro calls produce the literal boundary request"
+    (!(reqOf expandedDoc).isEmpty &&
+      Ir.pictureRefs mdoc == Ir.pictureRefs expandedDoc)
+  t "an expanded macro's picture is accounted for under the literal request's key"
+    (let sites := (mds.filter (·.code == "N0023")).map (·.subject)
+     sites.size == 1 && sites.all (·.isSome) &&
+       sites == (expandedDs.filter (·.code == "N0023")).map (·.subject))
   t "a macro the picture never reaches stays home"
     (!hasStr (reqOf mdoc) "elsewhere")
-  t "a palette role only a carried macro spells is declared"
+  t "a palette role only an expanded macro spells is declared"
     ((mdoc.palette.find? "ember").any fun c => hasStr (reqOf mdoc) (Ir.colorDeclLine ("ember", c)))
-  t "carrying the document's macros costs the picture no diagnostic"
-    (mds.all (·.code != "E0382") && (Ir.pictureRefs mdoc).size == 1)
+  t "executing the document's macros costs the picture no loss"
+    (mds.all (·.severity == .note) && (Ir.pictureRefs mdoc).size == 1)
   -- Locality of the cache key, as an oracle (no theorem stands behind it):
   -- editing a macro no picture reaches leaves the request byte-identical,
   -- editing one it reaches moves it — so a warm slot is never served the
@@ -6418,27 +6420,25 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n"
   t "required arguments reach the boundary as their bound replacement text"
     (let req := reqOf (elabStr (dvDoc (pal ++ required) picM)).1
-     !req.isEmpty && req ==
-     reqOf (elabStr (dvDoc pal
-       ("\\begin{tikzpicture}\\shade[\\textcolor{ember}{[ok]}]" ++
-        " (0,0) rectangle (1,1);\\end{tikzpicture}"))).1)
-  -- The definer family and TeX's own `\def`, each with the arity and the
-  -- optional default the document wrote — the default is the one part a
-  -- native `UserCmd` cannot spell back, so the declaration is captured as
-  -- written rather than reconstructed.
-  let (fdoc2, _) := elabStr (dvDoc
-    ("\\newcommand{\\plain}{p}\n\\renewcommand{\\plain}{q}\n" ++
-     "\\providecommand{\\opt}[2][d]{#1#2}\n\\def\\raw#1{<#1>}\n")
-    ("\\begin{tikzpicture}\\shade[\\plain\\opt{a}\\raw{b}]" ++
-     " (0,0) rectangle (1,1);\\end{tikzpicture}"))
-  t "an optional argument's default travels with its definition"
-    (hasStr (reqOf fdoc2) "\\renewcommand{\\opt}[2][d]")
-  t "a redefinition in force at the picture rides in the picture as the site's text"
-    (hasStr (reqOf fdoc2) "[q\\opt" &&
-      !hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{p}" &&
-      !hasStr (reqOf fdoc2) "\\newcommand{\\plain}{p}")
-  t "TeX's required argument is bound at its use in the picture"
-    (hasStr (reqOf fdoc2) "\\opt {a}<b>]" && !hasStr (reqOf fdoc2) "\\raw")
+     !req.isEmpty && req == reqOf expandedDoc)
+  -- The active redefinition, optional argument and required argument are
+  -- bound together at the use. An explicit empty optional argument differs
+  -- from an omitted one; neither may leave a declaration or call behind.
+  let family := "\\newcommand{\\plain}{p}\n\\renewcommand{\\plain}{q}\n" ++
+    "\\providecommand{\\opt}[2][d]{#1#2}\n\\def\\raw#1{<#1>}\n"
+  for (choice, call, expanded) in [
+      ("omitted", "\\opt{a}", "qda<b>"),
+      ("explicit", "\\opt[e]{a}", "qea<b>"),
+      ("empty", "\\opt[]{a}", "qa<b>")] do
+    let (bound, boundDs) := elabStr (dvDoc family
+      ("\\begin{tikzpicture}\\shade[\\plain" ++ call ++ "\\raw{b}]" ++
+       " (0,0) rectangle (1,1);\\end{tikzpicture}"))
+    let literal := (elabStr (dvDoc ""
+      ("\\begin{tikzpicture}\\shade[" ++ expanded ++
+       "] (0,0) rectangle (1,1);\\end{tikzpicture}"))).1
+    t s!"the definer family's {choice} optional argument produces the literal boundary request"
+      (!(reqOf literal).isEmpty && Ir.pictureRefs bound == Ir.pictureRefs literal &&
+        boundDs.all (·.severity == .note))
   -- Both spellings declare the same macro. A remaining native call carries
   -- that declaration; a LaTeX call already expanded needs no declaration.
   -- Their standalone bytes need not agree to name the same drawing.
