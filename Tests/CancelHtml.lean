@@ -34,23 +34,15 @@ private def cancelStyleDepth : MathStyle → Nat
   | .script _ => 1
   | .scriptscript _ => 2
 
-mutual
+/-- Read only the named element's attribute. A descendant's triangle mask
+does not clip its containing box, nor reserve room for that box. -/
+private def cancelAttr (key : String) : Html.Node → String
+  | .elem _ attrs _ => (attrs.find? (·.1 == key)).map (·.2) |>.getD ""
+  | _ => ""
 
-/-- Every `style` attribute value in a subtree — the instrument for asking
-where a cancel mark's CSS paints and how much room it reserves. -/
-private def cancelStylesOne (acc : List String) : Html.Node → List String
-  | .elem _ attrs kids =>
-    let acc := match attrs.find? (·.1 == "style") with
-      | some (_, v) => v :: acc
-      | none => acc
-    cancelStylesList acc kids.toList
-  | _ => acc
-
-private def cancelStylesList (acc : List String) : List Html.Node → List String
-  | [] => acc
-  | n :: ns => cancelStylesList (cancelStylesOne acc n) ns
-
-end
+private def cancelKids : Html.Node → Array Html.Node
+  | .elem _ _ kids => kids
+  | _ => #[]
 
 /-- Whether `hay` contains `needle`. -/
 private def cancelHasStr (hay needle : String) : Bool :=
@@ -87,26 +79,48 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           (cancelTargetDepths (some 0) false [] node ==
             [some (cancelStyleDepth (spec.size.style st))])
 
-  -- The HTML counterpart of Math.cancelGeom_polys_between, as far as the CSS
-  -- model allows: the band is a background on the padded box, so it is
-  -- clipped to the box and cannot paint outside it; makeroom reserves the
-  -- box (no negative margin) so a mark holds its room before the next atom,
-  -- and overlap gives the room back — cancel.sty's default.
-  let one' (c : Char) : MList := .cons (.atom .ord (.sym c) .nil .nil false) .nil
-  let stylesOf (mark : CancelMark) (room : Bool) : List String :=
-    cancelStylesOne [] (MathMl.nucNode {} false .ord
-      (.cancel mark { room } (if mark == .to then one' '7' else .nil) (one' 'x')))
+  -- These are ownership facts about the emitted tree. A triangle's own
+  -- clip-path says nothing about containment in its parent: rendered
+  -- checks must establish the platform's motion-path placement and bounds.
+  let emit (mark : CancelMark) (room thick : Bool) : Html.Node :=
+    MathMl.nucNode {} false .ord
+      (.cancel mark { room, thick } (if mark == .to then one '7' else .nil) (one 'x'))
+  let boxOf (mark : CancelMark) (n : Html.Node) : Html.Node :=
+    if mark == .to then (cancelKids n).getD 0 (.text "") else n
+  let ownsBands (mark : CancelMark) (node : Html.Node) : Bool :=
+    let css := cancelAttr "style" (boxOf mark node)
+    cancelHasStr css "padding:" && cancelHasStr css "background-image:" &&
+      (css.splitOn "linear-gradient(").length == (if mark == .cross then 3 else 2) &&
+      cancelHasStr css (if mark == .down then "to top right" else "to top left") &&
+      (mark != .cross || cancelHasStr css "to top right")
   for mark in [CancelMark.up, .down, .cross, .to] do
-    let room := stylesOf mark true
-    let over := stylesOf mark false
-    t s!"cancel HTML: {repr mark} band paints on the box, not outside it"
-      (room.any (cancelHasStr · "background-image:"))
-    t s!"cancel HTML: {repr mark} makeroom reserves the box, no negative margin"
-      (room.all (fun s => !cancelHasStr s "margin-left: -"))
-    t s!"cancel HTML: {repr mark} overlap gives the room back"
-      (over.any (cancelHasStr · "margin-left: -"))
-  let toRoom := stylesOf .to true
-  t "cancel HTML: cancelto head is a clipped element within the box"
-    (toRoom.any (cancelHasStr · "clip-path: polygon"))
-  t "cancel HTML: cancelto value clears the mark with left padding"
-    (toRoom.any (cancelHasStr · "padding-left:"))
+    for room in [true, false] do
+      for thick in [true, false] do
+        let node := emit mark room thick
+        let box := boxOf mark node
+        let css := cancelAttr "style" box
+        let label := s!"{repr mark}/room={room}/thick={thick}"
+        t s!"cancel HTML: {label} padded operand owns every diagonal band"
+          (ownsBands mark node)
+        let misplacedBox := Html.Node.elem "mrow" #[] #[box]
+        let misplaced := if mark == .to then
+            Html.Node.elem "msup" #[] #[misplacedBox, (cancelKids node).getD 1 (.text "")]
+          else misplacedBox
+        t s!"cancel HTML: {label} band judge rejects paint owned by a descendant"
+          (!ownsBands mark misplaced)
+        t s!"cancel HTML: {label} room mode governs the operand's own margins"
+          (cancelHasStr css "margin-left: -" == !room &&
+            cancelHasStr css "margin-right: -" == !room)
+        if mark == .to then
+          let head := (cancelKids box).getD 1 (.text "")
+          let value := (cancelKids node).getD 1 (.text "")
+          let valueRow := if room then value else (cancelKids value).getD 0 (.text "")
+          t s!"cancel HTML: {label} arrowhead belongs to the struck row"
+            ((cancelKids box).size == 2 &&
+              cancelHasStr (cancelAttr "style" head) "clip-path: polygon")
+          t s!"cancel HTML: {label} target owns its clearance and room"
+            (cancelHasStr (cancelAttr "style" valueRow) "padding-left:" &&
+              cancelAttr "width" value == (if room then "" else "0"))
+      t s!"cancel HTML: {repr mark}/room={room} thicklines changes the painted band"
+        (cancelAttr "style" (boxOf mark (emit mark room true)) !=
+          cancelAttr "style" (boxOf mark (emit mark room false)))
