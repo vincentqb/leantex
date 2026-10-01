@@ -27,6 +27,18 @@ def InkBounds.union (a b : InkBounds) : InkBounds :=
   { left := min a.left b.left, bottom := min a.bottom b.bottom
     right := max a.right b.right, top := max a.top b.top }
 
+/-- Disjoint interiors of quantized outline hulls. This is a conservative
+ink-separation check, not a claim that intersecting hulls imply raster contact. -/
+def InkBounds.disjoint (a b : InkBounds) : Bool :=
+  a.right ≤ b.left || b.right ≤ a.left || a.top ≤ b.bottom || b.top ≤ a.bottom
+
+def InkBounds.inRoom (b : InkBounds) (left right : Dim.Sp) : Bool :=
+  left ≤ b.left && b.right ≤ right
+
+def polygonHull (points : Array (Dim.Sp × Dim.Sp)) : Option InkBounds := do
+  let (x, y) ← points[0]?
+  return points.foldl (fun b (px, py) => b.union ⟨px, py, px, py⟩) ⟨x, y, x, y⟩
+
 /-- Decode the shipped glyph independently of the layout's bounds helper.
 Every point uses its actual pen position, size and baseline. Missing
 outline evidence fails; an empty or zero-area hull contributes no ink. -/
@@ -151,13 +163,13 @@ def Witness.alongRay (w : Witness) : Bool :=
       (dx * cy - dy * cx).natAbs ≤ (max dx dy).natAbs
 
 /-- One near ink edge meets the positive font gap exactly; the other is
-no farther than that gap. This admits either attachment axis without
-reproducing the axis-selection algorithm. -/
+no farther than that gap, and its far edge reaches the tip's coordinate.
+This admits either attachment axis without reproducing axis selection. -/
 def Witness.clearsTip (w : Witness) : Bool :=
   let x := w.ink.left - w.tip.1
   let y := w.ink.bottom - w.tip.2
-  w.fontGap > 0 && ((x == w.fontGap && y ≤ w.fontGap) ||
-    (y == w.fontGap && x ≤ w.fontGap))
+  w.fontGap > 0 && ((x == w.fontGap && y ≤ w.fontGap && w.tip.2 ≤ w.ink.top) ||
+    (y == w.fontGap && x ≤ w.fontGap && w.tip.1 ≤ w.ink.right))
 
 /-- Read a one-line synthetic page. The `u` immediately before the
 construct witnesses its actual style size and math face, so the expected
@@ -219,6 +231,14 @@ def probes : Array Probe := Id.run do
             body := before ++ "u\\cancelto{" ++ value ++ "}{" ++ operand ++ "}v" ++ after
             ordinary := ordinaryBefore ++ "u" ++ value ++ "v" ++ ordinaryAfter
             target, options }
+          if name == "wide-label" then
+            let wide := "000000000000g"
+            result := result.push {
+              label := s!"{shape}/{style}/wide-neighbours/{options}"
+              body := before ++ "\\frac{\\frac{a}{a}}{a}u\\cancelto{" ++ wide ++
+                "}{" ++ operand ++ "}v\\frac{\\frac{b}{b}}{b}" ++ after
+              ordinary := ordinaryBefore ++ "u" ++ wide ++ "v" ++ ordinaryAfter
+              target := "000000000000𝑔", options }
   return result
 
 def layProbe (fonts : Font.FontSet) (p : Probe) : Layout.Out × Array Diag :=
@@ -278,6 +298,72 @@ def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
     throw "neighbours are on different lines"
   return after.x - before.x
 
+/-- Actual horizontal construct endpoints come from the adjacent ordinary
+source glyphs, never the target's first visible glyph or a polygon's pen. -/
+def constructEndpoints (out : Layout.Out) : Except String (Dim.Sp × Dim.Sp) := do
+  let all := shippedBodyGlyphs out
+  let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
+  let #[after] := all.filter (·.scalar == '𝑣') | throw "right neighbour is missing"
+  unless before.page == after.page && before.line == after.line do
+    throw "neighbours are on different lines"
+  return (before.x + before.advance, after.x)
+
+/-- Read painted rules at their shipped pens, independently of item bounds.
+The tall neighbours' fraction bars matter as well as their glyph outlines. -/
+def rulesAt (line : Layout.LineOut) : Array InkBounds := Id.run do
+  let mut pen := line.x
+  let mut result := #[]
+  for seg in line.segs do
+    match seg with
+    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .image _ w _ => pen := pen + w
+    | .rule w t raise _ =>
+      if w != 0 && t != 0 then
+        result := result.push ⟨min pen (pen + w), min raise (raise + t) - line.y,
+          max pen (pen + w), max raise (raise + t) - line.y⟩
+      pen := pen + w
+    | .poly _ _ => pure ()
+  return result
+
+structure RoomWitness where
+  left : Dim.Sp
+  right : Dim.Sp
+  assembly : Array InkBounds
+  before : Array InkBounds
+  after : Array InkBounds
+  deriving Repr
+
+def RoomWitness.containsInk (r : RoomWitness) : Bool :=
+  r.left ≤ r.right && !r.assembly.isEmpty &&
+    r.assembly.all (·.inRoom r.left r.right)
+
+def RoomWitness.clearsBefore (r : RoomWitness) : Bool :=
+  !r.before.isEmpty && r.assembly.all fun a => r.before.all a.disjoint
+
+def RoomWitness.clearsAfter (r : RoomWitness) : Bool :=
+  !r.after.isEmpty && r.assembly.all fun a => r.after.all a.disjoint
+
+/-- Decode the target, marks and neighbouring ink directly from the page.
+Neighbour letters are disjoint from the operand and target census. The
+fraction bars wholly outside the construct belong to the tall neighbours.
+Room is checked on both sides even when only the right neighbour moved. -/
+def roomWitness (fonts : Font.FontSet) (out : Layout.Out) (w : Witness) :
+    Except String RoomWitness := do
+  let #[line] := bodyLines out | throw "expected one body line"
+  let (left, right) ← constructEndpoints out
+  let marks := (polygonsAt line).filterMap polygonHull
+  if marks.isEmpty then throw "cancellation marks are missing"
+  let mut before := #[]
+  let mut after := #[]
+  for g in shippedBodyGlyphs out do
+    if g.scalar == '𝑎' || g.scalar == '𝑢' then
+      if let some ink ← glyphInk fonts g then before := before.push ink
+    if g.scalar == '𝑏' || g.scalar == '𝑣' then
+      if let some ink ← glyphInk fonts g then after := after.push ink
+  for b in rulesAt line do
+    if b.right ≤ left then before := before.push b
+    if right ≤ b.left then after := after.push b
+  return { left, right, assembly := #[w.ink] ++ marks, before, after }
+
 /-- Source geometry up to translation, including nonpainting glyphs and
 the actual advances used by the shipped pen. -/
 def relativeSource (glyphs : Array ShippedGlyph) :
@@ -303,18 +389,27 @@ def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       throw "ordinary target census differs"
     let some first := glyphs[0]? | throw "ordinary target is missing"
     let some placedFirst := w.glyphs[0]? | throw "placed target is missing"
+    let #[startGlyph] := all.filter (·.scalar == '𝑢') | throw "ordinary run start is missing"
     let #[endGlyph] := all.filter (·.scalar == '𝑣') | throw "ordinary run end is missing"
-    let #[next] := (shippedBodyGlyphs out).filter (·.scalar == '𝑣') |
-      throw "right neighbour is missing"
-    return (glyphs, placedFirst.x + endGlyph.x - first.x, next.x)
+    return (glyphs, placedFirst.x + startGlyph.x + startGlyph.advance - first.x,
+      placedFirst.x + endGlyph.x - first.x)
   match readings with
   | .error e => check ref s!"{name}: {e}" false
-  | .ok (glyphs, logicalEnd, neighbourX) =>
+  | .ok (glyphs, logicalStart, logicalEnd) =>
     check ref s!"{name} preserves relative glyph positions and source advances"
       (relativeSource w.glyphs == relativeSource glyphs)
     if p.options == "makeroom" then
-      check ref s!"{name} reserves the painted hull and logical run end"
-        (neighbourX ≥ max w.ink.right logicalEnd)
+      match roomWitness fonts out w with
+      | .error e => check ref s!"{name}: {e}" false
+      | .ok r =>
+        check ref s!"{name} reserves both logical target endpoints"
+          (r.left ≤ min logicalStart logicalEnd && max logicalStart logicalEnd ≤ r.right)
+        check ref s!"{name} contains target ink and marks between construct endpoints"
+          r.containsInk
+        check ref s!"{name} separates target and marks from preceding ink hulls"
+          r.clearsBefore
+        check ref s!"{name} separates target and marks from following ink hulls"
+          r.clearsAfter
 
 /-- Empty outlines and zero-width rules change source spacing, not the
 painted hull's attachment. An empty space before the empty fraction makes
@@ -438,6 +533,21 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   check ref "cancel alignment judge: the other edge may not exceed the gap by even one sp"
     (({ sample with ink := sample.ink.shift 0 (-1) } : Witness).clearsTip &&
       !({ sample with ink := sample.ink.shift 0 1 } : Witness).clearsTip)
+  for ink in [⟨2, -3, 6, -1⟩, ⟨-3, 2, -1, 6⟩] do
+    check ref "cancel alignment judge: a near-edge gap cannot hide a far edge behind the tip"
+      (!({ sample with ink } : Witness).clearsTip)
+  let room : RoomWitness := {
+    left := 0, right := 10, assembly := #[⟨0, 2, 10, 5⟩]
+    before := #[⟨-2, 1, 0, 6⟩], after := #[⟨10, 1, 12, 6⟩] }
+  check ref "cancel room judge: touching hull boundaries do not overlap interiors"
+    (room.containsInk && room.clearsBefore && room.clearsAfter)
+  for (dx, before) in [(-1, true), (1, false)] do
+    let moved : RoomWitness := { room with assembly := room.assembly.map (fun b => b.shift dx 0) }
+    check ref "cancel room judge: one-sp overhang and neighbouring intersection are detected"
+      (!moved.containsInk && if before then !moved.clearsBefore else !moved.clearsAfter)
+    let high : RoomWitness := { moved with assembly := moved.assembly.map (fun b => b.shift 0 4) }
+    check ref "cancel room judge: vertical separation clears neighbours but not overhang"
+      (!high.containsInk && high.clearsBefore && high.clearsAfter)
   check ref "cancel alignment judge: an absent head cannot certify alignment"
     (match arrowTip #[] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: a zero-area head cannot certify alignment"
