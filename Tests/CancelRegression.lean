@@ -162,54 +162,68 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
     (box.above == 900 && box.below == 300 && box.inkAbove == 900 && box.inkBelow == 300)
 
-/-- The artifact realisation of `Math.cancelGeom_polys_between`: on the
-shipped page no cancel polygon leaves its reserved box, and under
-`makeroom` none crosses into the following atom. The clamp is load-bearing
-— before it, a strike far wider than tall put an arrowhead and shaft vertex
-above the box (`cancelHead 0 0 1000 100 20` reached `(919, 122)` over a
-100sp-tall box). The polygon coordinates are read off `Layout.Out`, the
-shipped page, not an IR dump. -/
+/-- Every shipped mark stays inside the ordinary strike's corner-to-corner
+box, on both axes. The control is an actual `Layout.Out` band: its corner
+theorem determines the box independently of the arrow's clamp. Wide and
+tall arrows fail this check with the clamp removed. Zero-area operands,
+all four math sizes, both room modes and both rule weights share the same
+judge; `Math.cancelGeom_polys_between` supplies the universal bound. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
-  -- Fail-first, now guarded: the raw geometry over a wide, short box. Every
-  -- vertex of the head and of a drawn shaft lies inside the box.
-  let inBox (p : Int × Int) : Bool := 0 ≤ p.1 && p.1 ≤ 1000 && 0 ≤ p.2 && p.2 ≤ 100
-  t "cancel box: arrowhead stays in a wide short box"
-    ((Math.cancelHead 0 0 1000 100 20).all inBox)
-  t "cancel box: arrow shaft stays in a wide short box"
-    ((Math.cancelShaft 0 0 1000 100 20).all inBox)
-  let build (body : String) : Layout.Out :=
-    layoutOf fonts (elabStr
-      (dvDoc "\\usepackage{xcolor}\\usepackage[makeroom]{cancel}" body)).1
-  let polyAbs (l : Layout.LineOut) : Array Dim.Sp :=
-    (l.segs.flatMap fun s => match s with
-      | .poly pts _ => pts
-      | _ => #[]).map fun (px, _) => l.x + px
+  let polygons (l : Layout.LineOut) := l.segs.filterMap fun s => match s with
+    | .poly pts _ => some pts
+    | _ => none
   let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
     (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
-  -- A plain strike reserves exactly its box under makeroom: every vertex is
-  -- between the construct origin and the following atom, never past it.
-  for cmd in ["cancel", "bcancel", "xcancel"] do
-    let out := build s!"$\\{cmd}\{x}y$"
-    match (bodyLines out).find? (·.segs.any (· matches .poly ..)) with
-    | some l =>
-      match glyphX l "𝑦" with
-      | some yx =>
-        let ps := polyAbs l
-        t s!"cancel box: {cmd} strike stays in its box, clear of the neighbour"
-          (!ps.isEmpty && ps.all fun ax => l.x ≤ ax && ax ≤ yx)
-      | none => t s!"cancel box: {cmd} line carries the neighbour" false
-    | none => t s!"cancel box: {cmd} ships a strike polygon" false
-  -- `\cancelto`: the arrow's shaft and head sit left of the value it points
-  -- at, clear of the value and of the following atom.
-  let out := build "$\\cancelto{7}{x}y$"
-  match (bodyLines out).find? (·.segs.any (· matches .poly ..)) with
-  | some l =>
-    match glyphX l "7", glyphX l "𝑦" with
-    | some vx, some yx =>
-      let ps := polyAbs l
-      t "cancel box: cancelto arrow stays left of its value and the neighbour"
-        (!ps.isEmpty && ps.all fun ax => l.x ≤ ax && ax ≤ vx && ax < yx)
-    | _, _ => t "cancel box: cancelto ships its value and neighbour" false
-  | none => t "cancel box: cancelto ships an arrow polygon" false
+  let shapes := [("square", "x"), ("wide", "abcdefabcdef"), ("tall", "\\int"),
+    ("fraction", "\\frac{x}{\\frac{z}{w}}"), ("empty", "")]
+  let sizes := [("text", "$", "$"), ("display", "\\[", "\\]"),
+    ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")]
+  for (shape, struck) in shapes do
+    for (size, before, after) in sizes do
+      for opts in ["makeroom", "makeroom,thicklines", "overlap", "overlap,thicklines"] do
+        let build (cmd : String) :=
+          let (doc, ds) := elabStr (dvDoc s!"\\usepackage[{opts}]\{cancel}"
+            s!"{before}\\{cmd}\{{struck}}y{after}")
+          (bodyLines (layoutOf fonts doc), ds)
+        let label := s!"{shape}/{size}/{opts}"
+        let (control, _) := build "cancel"
+        let some band := control[0]?.bind (fun l => (polygons l)[0]?) |
+          t s!"cancel box: {label} ships the control band" false
+          continue
+        let some first := band[0]? |
+          t s!"cancel box: {label} control band has vertices" false
+          continue
+        let (x0, y0, x1, y1) := band.foldl
+          (fun (x0, y0, x1, y1) (x, y) => (min x0 x, min y0 y, max x1 x, max y1 y))
+          (first.1, first.2, first.1, first.2)
+        for cmd in ["cancel", "bcancel", "xcancel", "cancelto{7}"] do
+          let (lines, ds) := build cmd
+          t s!"cancel box: {label}/{cmd} sets one line without recovery"
+            (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
+          let some line := lines[0]? | continue
+          let polys := polygons line
+          let points := polys.flatten
+          t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
+            (!points.isEmpty && points.all fun (x, y) =>
+              x0 ≤ x && x ≤ x1 && y0 ≤ y && y ≤ y1)
+          t s!"cancel box: {label}/{cmd} keeps its marks and diagonal corners"
+            (if cmd == "cancelto{7}" then
+              (polys.size == 1 || polys.size == 2) && points.contains (x1, y1)
+            else if cmd == "xcancel" then
+              polys.size == 2 && points.contains (x0, y0) && points.contains (x1, y1) &&
+                points.contains (x0, y1) && points.contains (x1, y0)
+            else
+              polys.size == 1 && points.contains (x0, if cmd == "cancel" then y0 else y1) &&
+                points.contains (x1, if cmd == "cancel" then y1 else y0))
+          if cmd == "cancelto{7}" then
+            t s!"cancel box: {label} arrow clears its target"
+              (match glyphX line "7" with
+                | some vx => points.all fun (x, _) => line.x + x < vx
+                | none => false)
+          if hasStr opts "makeroom" then
+            t s!"cancel box: {label}/{cmd} holds every mark before the next atom"
+              (match glyphX line "𝑦" with
+                | some yx => points.all fun (x, _) => line.x ≤ line.x + x && line.x + x ≤ yx
+                | none => false)
