@@ -666,6 +666,17 @@ def MathTextSlot.toNat : MathTextSlot → Nat
   | .sans => 1
   | .mono => 2
 
+/-- The CSS custom property naming this slot's text family — the same
+`--font-{body,sans,mono}` the text path sets (`HtmlDoc.fontStyleDecls`,
+`:root`). The HTML projection of a math text slot names a family through
+this variable rather than the `FontSet` index, so the two encodings of one
+slot — the PDF's `toNat`, the browser's `fontVar` — partition the slots
+identically (`fontVar_toNat_agree`). -/
+def MathTextSlot.fontVar : MathTextSlot → String
+  | .body => "--font-body"
+  | .sans => "--font-sans"
+  | .mono => "--font-mono"
+
 /-- The typed style a text-sourced math alphabet resolves to: which text
 family slot, and the weight/shape axes both backends project — the PDF
 through `FontSet.lookup (slot, weight, italic)`, MathML through a
@@ -708,6 +719,39 @@ def MathTextStyle.mathvariant : MathTextStyle → String
     else if b then "bold"
     else if i then "italic"
     else "normal"
+
+/-- The CSS font weight this style selects — the single owner of the
+`bold → 700, else 400` mapping both backends read: the PDF passes it to
+`FontSet.lookup` (Layout's `.styled` arm), the browser emits it as
+`font-weight` (`MathTextStyle.css`). -/
+def MathTextStyle.weight (s : MathTextStyle) : Nat :=
+  if s.bold then 700 else 400
+
+/-- The CSS declarations a resolved text style projects — the
+browser-honoured counterpart of `mathvariant`. Chromium (and every WebKit
+build) implements only `mathvariant="normal"` of MathML Core §3.2.2 and
+ignores `bold`/`italic`/`sans-serif`/`monospace`, so the family, weight and
+shape ride on real CSS instead: `font-family` names the slot's text family
+through its `--font-*` variable, `font-weight` is set only when it departs
+from the inherited 400, and `font-style: italic` only when italic. These
+are exactly the axes `Layout` reads from the same style — `slot` through
+`FontSet.lookup`'s index, `weight`, and `italic` — so neither backend owns
+a second slot→family or bold→weight mapping (`fontVar_toNat_agree`,
+`MathTextStyle.weight`). -/
+def MathTextStyle.css (s : MathTextStyle) : String :=
+  let fam := s!"font-family: var({s.slot.fontVar})"
+  let wt := if s.bold then s!"; font-weight: {s.weight}" else ""
+  let it := if s.italic then "; font-style: italic" else ""
+  fam ++ wt ++ it
+
+/-- The CSS family partition and the `FontSet` slot partition agree: two
+slots share a `--font-*` family exactly when they share a `FontSet` index.
+So the browser can never set a styled scalar in a different family than the
+PDF selects for it — the two projections of one `MathTextSlot` draw the
+same boundaries. -/
+theorem fontVar_toNat_agree (s t : MathTextSlot) :
+    s.fontVar = t.fontVar ↔ s.toNat = t.toNat := by
+  cases s <;> cases t <;> decide
 
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
