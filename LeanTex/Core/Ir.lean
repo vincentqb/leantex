@@ -13856,7 +13856,7 @@ theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
 
-/-- Wrap every inline leaf of a block tree in one link destination while
+/-- Wrap every inline leaf of a block tree with the same link destination while
 preserving every block and inline wrapper. Block-shaped content wrappers use
 this generic map instead of inventing a parallel linked-block IR. -/
 def linkBlocks (url : String) (xs : Array Block) : Array Block :=

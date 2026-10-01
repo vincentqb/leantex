@@ -51,6 +51,16 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     (ids.contains "panel" && hrefs.contains "#panel")
   t "the typed HTML tree keeps both nested tables"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 2)
+  let (nestedDoc, nestedDs) := elabStr (dvDoc "\\usepackage{hyperref}\n"
+    ("\\hyperlink{outer}{\\begin{minipage}{.4\\textwidth}" ++
+      "Outer words and \\href{https://example.org}{inner words}.\\end{minipage}}"))
+  let nestedTrees := nestedDoc.body.map (HtmlDoc.blockNode {})
+  let nestedHrefs := nestedTrees.foldl
+    (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  t "a nested link keeps the inner link and truthfully refuses only the outer wrapper"
+    ((nestedDs.filter (·.code == "W0104")).size == 1 &&
+      nestedHrefs.contains "https://example.org" && !nestedHrefs.contains "#outer" &&
+      nestedTrees.foldl (fun n tree => n + treeShownOccurs #[tree] "Outer words") 0 == 1)
 
 /-- **Paracol's two flows are one typed columns row.** The installed package
 sets each column's width from `\columnratio`, gives the final column the
