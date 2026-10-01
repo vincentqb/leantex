@@ -180,7 +180,7 @@ note[N0105]: '\allow' names the retired code 'W0344'; the loss it named cannot o
 note[N0114]: '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
 note[N0114]: '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept
 note[N0114]: '\@ifpackageloaded': 'booktabs' is loaded here, so the first branch is kept
-note[N0114]: '\IfPackageLoadedF': no package 'wideframe' is loaded by the end of the preamble, so its branch is kept
+note[N0114]: '\IfPackageLoadedF': no package 'wideframe' is loaded here, so its branch is kept
 ── N0200 (info) page set short: its skips gave their shrink
 note[N0200]: page 1 set 6pt short: its skips gave 40% of their 16pt of shrink
 ── N0419 (info) a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it

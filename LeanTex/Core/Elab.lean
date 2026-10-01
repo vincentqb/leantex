@@ -159,6 +159,62 @@ structure PicCtx where
   must use. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
 
+/-- An expansion's open semantic role and the first emitted node it owns.
+The source tokens stay in their ordinary stream: a role is not a TeX group
+and cannot stop a primitive reading its next argument. -/
+private structure MacroRun where
+  origin : MacroOrigin
+  start : Nat
+  /-- The open paragraph began before this owner. Its own tokens receive
+  inline roles; only the next completed block can belong to this run.
+  State-only blocks emitted before that paragraph cannot settle this. -/
+  pendingPara : Bool := false
+
+/-- Semantic names carried by the compatibility pass's executed tokens.
+Each fresh content scope masks identities already owned by its caller;
+distinct occurrences of the same command remain distinct. -/
+private structure MacroRoles where
+  inherited : List MacroOrigin := []
+  inlines : Array MacroRun := #[]
+  blocks : Array MacroRun := #[]
+  blockKinds : List (MacroOrigin × Bool) := []
+
+private def MacroRoles.enter (roles : MacroRoles) : MacroRoles :=
+  { inherited := roles.inherited ++ roles.blocks.toList.map (·.origin)
+      ++ roles.inlines.toList.map (·.origin) }
+
+/-- A primitive can consume an argument from a different expansion.
+Remove identities already owned anywhere in that caller's ancestry; the
+argument's other identities retain their order. -/
+private def relativeOrigins (owned actual : List MacroOrigin) : List MacroOrigin :=
+  actual.filter (!owned.contains ·)
+
+private def commonOrigins : List MacroOrigin → List MacroOrigin → Nat
+  | a :: as, b :: bs => if a == b then 1 + commonOrigins as bs else 0
+  | _, _ => 0
+
+/-- Close inner roles first. Empty replacement text contributes no semantic
+node: metadata cannot invent a source token just to retain an empty role. -/
+private def closeMacroRuns (wrap : String → Array α → α)
+    (acc : Array α) : List MacroRun → Array α
+  | [] => acc
+  | run :: rest =>
+    let acc := if !run.pendingPara && run.start < acc.size then
+        (acc.extract 0 run.start).push (wrap run.origin.name (acc.extract run.start acc.size))
+      else acc
+    closeMacroRuns wrap acc rest
+
+private def moveMacroRuns (wrap : String → Array α → α)
+    (active : Array MacroRun) (desired : List MacroOrigin) (acc : Array α)
+    (pending : Bool := false) :
+    Array MacroRun × Array α :=
+  let keep := commonOrigins (active.toList.map (·.origin)) desired
+  let acc := closeMacroRuns wrap acc (active.toList.drop keep).reverse
+  let active := active.extract 0 keep ++
+    (desired.drop keep).toArray.map (fun origin =>
+      { origin, start := acc.size, pendingPara := pending })
+  (active, acc)
+
 /-- A user command sees only commands defined before it: `limit` bounds the
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
@@ -240,6 +296,9 @@ structure Ctx where
   and the call is where its arguments stand, so the trial must not read the
   body as package code. -/
   atUse : Bool := false
+  /-- The semantic ancestry of executed compatibility macros, independent
+  of command visibility and of the token scanner's argument boundaries. -/
+  macroRoles : MacroRoles := {}
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -1618,9 +1677,16 @@ private def malformedRun (raws : Array Raw) (i : Nat) (anchor : Pos)
 
 
 private def allText (xs : Array Inline) : Bool :=
-  xs.all fun x => match x with
-    | .text _ => true
-    | _ => false
+  Ir.foldInlines (fun ok x => ok && match x with
+    | .text _ | .role _ _ => true
+    | _ => false) true xs
+
+/-- A bare word consumed as an argument carries the same semantic owners
+as a braced word, without re-reading its source or inventing a group. -/
+private def wordInlines (ctx : Ctx) (s : String) (pos : Pos) : Array Inline :=
+  let text := if ctx.literalText then s else smartPunct s
+  (relativeOrigins ctx.macroRoles.enter.inherited pos.origins).foldr
+    (fun origin inner => #[.role origin.name inner]) #[.text text]
 
 /-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
 private def specWord? : Raw → Option String
@@ -1629,6 +1695,32 @@ private def specWord? : Raw → Option String
 
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
+
+/-- Positioned tokens carry their owners. A separator carries only the
+ancestry shared by its neighbours, so a following space cannot become part
+of a completed call. Pending text is flushed before its old owner closes. -/
+private def inlineMacroStep (roles : MacroRoles) (raw : Option Raw)
+    (acc : Array Inline) (sb : String) (following : List MacroOrigin := []) :
+    MacroRoles × Array Inline × String :=
+  let active := roles.inlines.toList.map (·.origin)
+  let desired := match raw with
+    | none => []
+    | some raw => match raw.origins? with
+      | none => active.take (commonOrigins active (relativeOrigins roles.inherited following))
+      | some origins => relativeOrigins roles.inherited origins
+  if desired == active then (roles, acc, sb)
+  else
+    let (active, acc) := moveMacroRuns Inline.role roles.inlines desired (flushText acc sb)
+    ({ roles with inlines := active }, acc, "")
+
+/-- Read the next positioned token only at a separator. This observes the
+existing stream without changing the argument boundaries it contains. -/
+private def inlineMacroAt (roles : MacroRoles) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) : MacroRoles × Array Inline × String :=
+  let following := if raws[i]? matches some .space then
+      ((raws[skipSpaces raws (i + 1)]?).bind Raw.origins?).getD []
+    else []
+  inlineMacroStep roles raws[i]? acc sb following
 
 /-- TeX's `\unskip` at a point of an inline run: the pending text, else the
 run's last text, without the space it ends with. -/
@@ -2695,10 +2787,25 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
     return (#[], ⟨j3, by omega⟩)
 
-/-- Applied to a level's own text only; nested bodies were processed by
-their own call, with their own literal-text setting. -/
-private def mapSmartText (x : Inline) : Inline :=
-  if let .text t := x then .text (smartPunct t) else x
+mutual
+/-- Roles annotate this level's own text. Other nested bodies were already
+processed by their own call, with their own literal-text setting, so this
+walk deliberately descends only through semantic roles. -/
+-- conserves: none — smart punctuation changes the text's scalar sequence.
+private def mapSmartText : Inline → Inline
+  | .text t => .text (smartPunct t)
+  | .role name inner => .role name (mapSmartTextList #[] inner.toList)
+  | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
+  | x@(.colored ..) | x@(.link ..) | x@(.label ..) | x@(.ref ..)
+  | x@(.underline ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
+  | x@(.pageNumber) | x@(.pageCount) | x@(.linebreak ..) | x@(.strut ..)
+  | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
+  | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => x
+
+private def mapSmartTextList (acc : Array Inline) : List Inline → Array Inline
+  | [] => acc
+  | x :: xs => mapSmartTextList (acc.push (mapSmartText x)) xs
+end
 
 /-- `\\[len]`'s declared extra space, read from the bracket's source. -/
 private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := do
@@ -4142,12 +4249,12 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
         let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
           pos (bindings.push (p.name, some v))
         return (bs, ⟨j2, by omega⟩)
-      | some (.word s _) =>
+      | some (.word s pword) =>
         have hjlt := getElem?_lt hj
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
           sliceWeight_lt raws (by omega) (by omega)
         let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
-          pos (bindings.push (p.name, some #[.text s]))
+          pos (bindings.push (p.name, some (wordInlines ctx s pword)))
         return (bs, ⟨j2, by omega⟩)
       | _ =>
         diag ctx .E0304 s!"missing argument '{p.name}' for '\\{name}'" pos
@@ -4194,7 +4301,7 @@ decreasing_by all_goals knot_dec
 
 /-- Elaborate raw items as inline content. -/
 def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
-  let out ← elabInlinesFrom ctx raws 0 #[] ""
+  let out ← elabInlinesFrom { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] ""
   return if ctx.literalText then out else out.map mapSmartText
 termination_by (ctx.envLimit, ctx.limit, rawWeightList raws.toList, 4)
 decreasing_by all_goals knot_dec
@@ -4207,6 +4314,8 @@ into a strictly lighter body, or expands under a strictly smaller
 visibility limit. -/
 def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) : EM (Array Inline) := do
+  let (roles, acc, sb) := inlineMacroAt ctx.macroRoles raws i acc sb
+  let ctx := { ctx with macroRoles := roles }
   if h : i < raws.size then
     have hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
       sliceWeight_lt raws h (Nat.lt_succ_self i)
@@ -4398,6 +4507,8 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               have hw : rawWeightList (raws.extract j raws.size).toList
                   < sliceWeight raws i :=
                 extract_lt_slice raws.size h (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) hj)
+              let (roles, acc, _) := inlineMacroStep ctx.macroRoles none acc ""
+              let ctx := { ctx with macroRoles := roles }
               let rest ← elabInlines ctx (raws.extract j raws.size)
               let acc := acc ++ decls.foldr (fun st inner => #[Ir.Inline.styled st inner]) rest
               have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
@@ -4514,7 +4625,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
               (fontCmdPush (flushText acc sb) style (fontCmdEdges [.word s p] raws[j + 1]?)
-                #[.text s]) ""
+                (wordInlines argCtx s p)) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -4532,12 +4643,12 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) (acc.push (.underline inner)) ""
-          | some (.word s _) =>
+          | some (.word s p) =>
             have hjlt := getElem?_lt hj
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.underline #[.text s])) ""
+              ((flushText acc sb).push (.underline (wordInlines ctx s p))) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -4923,8 +5034,10 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
           < sliceWeight raws i :=
         extract_lt_slice raws.size h (Nat.lt_succ_self i)
+      let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
+      let ctx := { ctx with macroRoles := roles }
       let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
-      let acc := (flushText acc sb).push (.colored c cssName rest)
+      let acc := acc.push (.colored c cssName rest)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
       elabInlinesFrom ctx raws raws.size acc ""
@@ -4938,21 +5051,25 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
         < sliceWeight raws i :=
       extract_lt_slice raws.size h (Nat.lt_succ_self i)
+    let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
+    let ctx := { ctx with macroRoles := roles }
     let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
     let acc := match style with
-      | some s => (flushText acc sb).push (.styled s rest)
-      | none => flushText acc sb ++ rest
+      | some s => acc.push (.styled s rest)
+      | none => acc ++ rest
     have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
       sliceWeight_lt raws h h
     elabInlinesFrom ctx raws raws.size acc ""
   else if let some style := declStyleOf source then
+    let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
+    let ctx := { ctx with macroRoles := roles }
     let declCtx := { ctx with
       literalText := style == Style.mono || ctx.literalText }
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
         < sliceWeight raws i :=
       extract_lt_slice raws.size h (Nat.lt_succ_self i)
     let rest ← elabInlines declCtx (raws.extract (i + 1) raws.size)
-    let acc := (flushText acc sb).push (.styled style rest)
+    let acc := acc.push (.styled style rest)
     have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
       sliceWeight_lt raws h h
     elabInlinesFrom ctx raws raws.size acc ""
@@ -5014,7 +5131,8 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
               < sliceWeight raws i :=
             extract_lt_slice raws.size h (by omega)
-          let acc := flushText acc sb
+          let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
+          let ctx := { ctx with macroRoles := roles }
           let inner ← elabInlines ctx (raws.extract (j + 1) raws.size)
           have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
             sliceWeight_lt raws h h
@@ -6077,6 +6195,45 @@ private theorem visPars_expand {ctx : Ctx} {name : String} {k : Nat}
   unfold visParsGo
   exact visGo_expand (f := fun cmd => rawParsList cmd.body.toList) h
 
+mutual
+/-- Paragraph edges see through semantic roles, which introduce no TeX
+group. Styled argument bodies remain opaque, as they were before a macro
+name annotated the paragraph. The boolean says the edge is still open. -/
+-- conserves: none — trims discarded paragraph-edge space and final breaks.
+private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
+  | .text s =>
+    let t := if leading then String.ofList (s.toList.dropWhile (· == ' '))
+      else if s.trimAscii.isEmpty then ""
+      else String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
+    (if t.isEmpty then #[] else #[.text t], t.isEmpty)
+  | .role name inner =>
+    let (inner, more) := trimParaList leading #[] inner.toList
+    (if inner.isEmpty then #[] else #[.role name inner], more)
+  | .label name => (#[.label name], leading)
+  | .linebreak g => if leading then (#[.linebreak g], false) else (#[], true)
+  | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
+  | x@(.colored ..) | x@(.link ..) | x@(.ref ..) | x@(.underline ..)
+  | x@(.fill) | x@(.hspace ..) | x@(.rule ..) | x@(.pageNumber)
+  | x@(.pageCount) | x@(.strut ..) | x@(.italicCorr ..)
+  | x@(.onSteps ..) | x@(.altSteps ..) | x@(.image ..)
+  | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => (#[x], false)
+
+private def trimParaList (leading : Bool) (acc : Array Inline) :
+    List Inline → Array Inline × Bool
+  | [] => (acc, true)
+  | x :: xs =>
+    if leading then
+      let (head, more) := trimParaOne leading x
+      if more then trimParaList leading (acc ++ head) xs
+      else (acc ++ head ++ xs.toArray, false)
+    else
+      let (tail, more) := trimParaList leading #[] xs
+      if more then
+        let (head, more) := trimParaOne leading x
+        (acc ++ head ++ tail, more)
+      else (acc.push x ++ tail, false)
+end
+
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
   repeat
@@ -6086,34 +6243,14 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
     | _ => break
   if cur.isEmpty then
     return none
-  let mut inlines ← elabInlines ctx cur
+  let inlines ← elabInlines ctx cur
   -- A spliced body can leave a leading space no raw-level skip saw; a
   -- paragraph never opens with a space glue. Leading label anchors ship
   -- no ink, so the paragraph's first text is judged past them.
-  let firstText := (inlines.toList.findIdx? fun x =>
-    !(x matches Inline.label _)).getD 0
-  if let some (Inline.text s) := inlines[firstText]? then
-    if s.startsWith " " then
-      let t := String.ofList (s.toList.dropWhile (· == ' '))
-      if t.isEmpty then
-        inlines := inlines.extract 0 firstText ++ inlines.extract (firstText + 1) inlines.size
-      else
-        inlines := inlines.modify firstText fun _ => .text t
+  let inlines := (trimParaList true #[] inlines.toList).1
   -- A forced break at the very end says what the paragraph end already
   -- says; kept, it is an empty line in the PDF and an empty row in HTML.
-  repeat
-    match inlines.back? with
-    | some (.linebreak _) => inlines := inlines.pop
-    | some (.text s) =>
-      if s.trimAscii.isEmpty then inlines := inlines.pop
-      else
-        -- ...and a spliced body's trailing space is the same edge case as
-        -- the leading one above.
-        if s.endsWith " " then
-          let t := String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
-          inlines := inlines.pop.push (.text t)
-        break
-    | _ => break
+  let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
   return some (paraUnder (← get).flowLang (Ir.wrapDecls (← get).blockDecls inlines))
 
@@ -8509,14 +8646,186 @@ private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
         (help := "declare the corner too: pin = bottom right")
   return spec
 
-/-- Flush the open paragraph, if any: the shared prelude of every
-boundary arm. -/
+/-- Empty groups and whitespace have not opened paragraph content. Keep
+the groups in the source stream, where argument readers may still need
+them; this predicate decides only whether a new owner starts mid-paragraph. -/
+private def pendingParaInput : List Raw → Bool
+  | [] => false
+  | .space :: rest | .par _ :: rest => pendingParaInput rest
+  | .group body _ :: rest => pendingParaInput body.toList || pendingParaInput rest
+  | _ :: _ => true
+termination_by raws => rawWeightList raws
+decreasing_by all_goals simp only [rawWeightList, rawWeight] <;> omega
+
+/-- Flush the open paragraph, if any, and settle owners that began inside
+it. A palette or other state-only block is not a paragraph: only this
+boundary advances a pending owner's start. -/
 private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
-    EM (Array Block) := do
-  if !cur.isEmpty then
-    if let some p ← mkPara ctx cur then
-      return blocks.push p
-  return blocks
+    EM (MCtx ctx × Array Block) := do
+  let paraCtx := { ctx with macroRoles := { ctx.macroRoles with
+    blocks := ctx.macroRoles.blocks.filter (!·.pendingPara) } }
+  let p ← if cur.isEmpty then pure none else mkPara paraCtx cur
+  let blocks := match p with
+    | some p => blocks.push p
+    | none => blocks
+  let roles := ctx.macroRoles.blocks.map fun run =>
+    if run.pendingPara then { run with start := blocks.size, pendingPara := false } else run
+  return (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := roles } },
+    rfl, rfl, rfl, rfl⟩, blocks)
+
+/-- A declaration or open overlay consumes the rest of the same source
+stream, not a nested content argument. Close the caller's completed roles
+before that continuation; its tokens reopen only the owners they carry. -/
+private def closeBlockMacros (ctx : Ctx) (blocks : Array Block) :
+    MCtx ctx × Array Block :=
+  let (_, blocks) := moveMacroRuns Block.role ctx.macroRoles.blocks [] blocks
+  (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := #[] } },
+    rfl, rfl, rfl, rfl⟩, blocks)
+
+/-- The open overlay arm consumes the whole tail exactly when its spec
+resolves and there is no content group. A malformed spec still takes the
+ordinary recovery arm; it cannot transfer the caller's ownership. -/
+private def openBlockOverlay (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) : Bool :=
+  if !overlayCtrls.contains n || (lookupUser ctx n).isSome then false
+  else
+    let j := skipSpaces raws (i + 1)
+    match raws[j]?.bind specWord? with
+    | none => false
+    | some spec =>
+      (Ir.overlayRange spec).isSome &&
+        !(raws[skipSpaces raws (j + 1)]? matches some (.group ..))
+
+/-- Grouped controls open a content scope; an open overlay consumes the
+current stream's tail. Only that latter arm closes completed ownership. -/
+private def blockControlContext (ctx : Ctx) (n : String) (raws : Array Raw)
+    (i : Nat) (blocks : Array Block) : MCtx ctx × Array Block :=
+  if openBlockOverlay ctx n raws i then closeBlockMacros ctx blocks
+  else (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks)
+
+/-- Classify each newly entered expansion once, using the same block
+predicate as native commands. The span is observed, never extracted into a
+separate elaboration: a final primitive still reads following source.
+Remembering the classification also keeps a role open past its last `\par`. -/
+private def blockMacroKinds (roles : MacroRoles) (raws : Array Raw) (i : Nat) :
+    List (MacroOrigin × Bool) :=
+  match raws[i]? with
+  | none => []
+  | some raw => match raw.origins? with
+    | none => roles.blockKinds
+    | some origins =>
+      (relativeOrigins roles.inherited origins).map fun origin =>
+        let isBlock := match roles.blockKinds.lookup origin with
+          | some isBlock => isBlock
+          | none =>
+            let span := (raws.extract i raws.size).toList.takeWhile fun raw =>
+              raw.origins?.all (·.contains origin)
+            bodyIsBlock span.toArray
+        (origin, isBlock)
+
+/-- Refresh flow state and block ownership without changing paragraph or
+argument boundaries. Only completed blocks close at an origin transition.
+At end of input the pending paragraph completes before its owner closes.
+The context's termination components are unchanged. -/
+private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
+    (raws : Array Raw) (i : Nat) (blocks : Array Block) (cur : Array Raw) :
+    EM (MCtx ctx × Array Block × Array Raw) := do
+  let fresh := flowCtx ctx st gen
+  let kinds := blockMacroKinds fresh.macroRoles raws i
+  let desired := kinds.filterMap fun (origin, isBlock) => if isBlock then some origin else none
+  let done := i ≥ raws.size
+  let (⟨ready, hm⟩, blocks) ← if done then flushPara fresh blocks cur
+    else pure (⟨fresh, rfl, rfl, rfl, rfl⟩, blocks)
+  let cur := if done then #[] else cur
+  let (active, blocks) := moveMacroRuns Block.role ready.macroRoles.blocks desired blocks
+    (pendingParaInput cur.toList)
+  let ctx' := { ready with macroRoles := { ready.macroRoles with
+    blocks := active, blockKinds := kinds } }
+  have hf := flowCtx_measure ctx st gen
+  return (⟨ctx', hm.1.trans hf.1, hm.2.1.trans hf.2.1,
+    hm.2.2.1.trans hf.2.2.1, hm.2.2.2.trans hf.2.2.2⟩, blocks, cur)
+
+/-- Declarations that change the flowing palette or spacing tokens. Their
+reader and state transition are independent of block recursion. -/
+private def flowStyleCtrl (n : String) : Bool :=
+  n.startsWith "@ink:" || n.startsWith Compat.pageColorMarkPrefix ||
+    n == Compat.pageColorResetMark || n == BeamerColor.marker ||
+    n == BeamerColor.starMarker || n == "palette" || n == "tokens"
+
+/-- Read a flow declaration after its command. Every arm carries its
+progress and unchanged termination components to the single continuation
+in the block knot. The declaration also rides the IR, so both backends
+replay the same epoch where it stands. -/
+private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
+    (start : Nat) (hstart : start ≤ raws.size) (pos : Pos) (blocks : Array Block) (gen : Nat) :
+    EM (MCtx ctx × { j : Nat // start ≤ j } × Array Block × Nat) := do
+  if n == "tokens" then
+    -- `\setlength` mid-document rewrites through this same door.
+    let j := skipSpaces raws start
+    have hj := skipSpaces_ge raws start
+    match raws[j]? with
+    | some (.group body _) =>
+      let tk ← applyTokens ctx ctx.tokens (rawSrc body) pos (engine := ctx.engineTokens)
+      modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
+      return (⟨{ ctx with tokens := tk }, rfl, rfl, rfl, rfl⟩,
+        ⟨j + 1, by omega⟩, blocks.push (.setTokens tk), (← get).flowGen)
+    | _ =>
+      diag ctx .E0304 "'\\tokens' needs a {...} block" pos
+      return (⟨ctx, rfl, rfl, rfl, rfl⟩, ⟨start, Nat.le_refl _⟩, blocks, gen)
+  let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // start ≤ t.2 } ←
+    if n.startsWith "@ink:" then do
+      -- xcolor's `\color` colours the enclosing flow (manual §2.6.4).
+      -- Its `fg` declaration reaches design resolution and contrast,
+      -- just as a native palette does; nested flow has no brace revert.
+      pure ⟨(← inkFlowDecl ctx n pos, start), Nat.le_refl _⟩
+    else if n.startsWith Compat.pageColorMarkPrefix then do
+      pure ⟨(← pageGroundDecl ctx n pos, start), Nat.le_refl _⟩
+    else if n == Compat.pageColorResetMark then
+      -- Restore only the opening ground, preserving every other role.
+      pure ⟨(some (ctx.palette.restore ctx.basePalette "bg"), start), Nat.le_refl _⟩
+    else if n == BeamerColor.marker || n == BeamerColor.starMarker then
+      beamerColorArm ctx raws start (n == BeamerColor.starMarker) pos
+    else do
+      -- The native palette door, also used by `\colorlet`.
+      let j0 := skipSpaces raws start
+      have hj0 := skipSpaces_ge raws start
+      let ⟨(decorative, skipBlock, jf), hjf⟩ :
+          { t : Bool × Bool × Nat // start ≤ t.2.2 } ←
+        if let some (.sym '[' _) := raws[j0]? then do
+          let ⟨(opt, k), hk⟩ : { t : Array Raw × Nat // start ≤ t.2 } :=
+            match hc : closeBracketFrom raws (j0 + 1) with
+            | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
+                have := closeBracketFrom_ge hc; omega⟩
+            | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
+          let (decorative, skipBlock) ← parsePaletteOpts ctx (rawSrc opt) pos
+          have hk2 : start ≤ k := hk
+          pure ⟨(decorative, skipBlock, skipSpaces raws k), by
+            have := skipSpaces_ge raws k
+            show start ≤ skipSpaces raws k
+            omega⟩
+        else pure ⟨(false, false, j0), hj0⟩
+      have hjf2 : start ≤ jf := hjf
+      match raws[jf]? with
+      | some (.group body _) =>
+        let pal? ← if skipBlock then pure none else
+          some <$> applyPalette ctx ctx.palette (rawSrc body) pos (decorative := decorative)
+        pure ⟨(pal?, jf + 1), by omega⟩
+      | _ =>
+        diag ctx .E0304 "'\\palette' needs a {...} block" pos
+        pure ⟨(none, start), Nat.le_refl _⟩
+  -- Ink and Beamer readers publish their own palette. Native palettes
+  -- and page-ground declarations publish here, once per declaration.
+  if n == "palette" || n.startsWith Compat.pageColorMarkPrefix ||
+      n == Compat.pageColorResetMark then
+    if let some pal := pal? then
+      modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+                                 flowGen := st.flowGen + 1 }
+  let currentGen := (← get).flowGen
+  let nextGen := if n == "palette" && pal?.isNone then gen else currentGen
+  let blocks := match pal? with
+    | some pal => blocks.push (.setPalette pal)
+    | none => blocks
+  return (⟨{ ctx with palette := pal?.getD ctx.palette }, rfl, rfl, rfl, rfl⟩,
+    ⟨j, hj⟩, blocks, nextGen)
 
 -- The well-founded translation whnf-reduces through the knot's body when
 -- it assembles the fixpoint and its equations; everything the arms call is
@@ -8527,6 +8836,9 @@ seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 seal takeArgs mkPara flushPara stripMathMeta
+seal blockMacroStep
+seal closeBlockMacros blockControlContext
+seal flowStyleCtrl flowStyleArm
 seal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
 seal titleBlocks Picture.elabPicture MathParse.parseMath
 seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
@@ -9657,7 +9969,7 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
         rw [slicePars_zero]; exact nestedParsList_le _
       have hw1 : sliceWeight cmd.body 0 = rawWeightList cmd.body.toList :=
         sliceWeight_zero _
-      let bs ← elabBlocksGo checkCtx cmd.body 0 #[] #[] (← get).flowGen
+      let bs ← elabBlockScope checkCtx cmd.body
       pure !bs.isEmpty
     else do
       let xs ← elabInlines checkCtx cmd.body
@@ -9704,7 +10016,7 @@ private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
     let ⟨noteCtx, _hnf⟩ : { c : Ctx // c.envLimit = ctx.envLimit
         ∧ noteFlag c = 0 } ←
       pure ⟨{ ctx with noteBody := true, notePos := some npos }, rfl, rfl⟩
-    let nblocks ← elabBlocksGo noteCtx nb 0 #[] #[] (← get).flowGen
+    let nblocks ← elabBlockScope noteCtx nb
     drainNotesGo ctx rest (inner.push (.note nblocks))
 termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
 decreasing_by all_goals blocks_dec
@@ -9729,7 +10041,7 @@ private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
     have hp1 : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
     let ⟨stepCtx, hm2⟩ : MCtx ctx ←
       pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
-    let inner ← elabBlocksGo stepCtx it 0 #[] #[] (← get).flowGen
+    let inner ← elabBlockScope stepCtx it
     let acc := acc.push (match st? with
       | some spec => #[.onSteps spec inner]
       | none =>
@@ -9826,7 +10138,7 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
               sliceWeight_zero _
             have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
               slicePars_zero _
-            let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+            let rb ← elabBlockScope ctx rest
             pure (innerBlocks ++ rb, (#[] : Array (BoxWidth × Array Block)))
           else pure (innerBlocks, cols)
         -- The minipage shape: `[pos]` is the point the box stands on its
@@ -9865,7 +10177,7 @@ text width; the box shares the leftover" spos
           sliceWeight_zero _
         have hs1 : slicePars sRest 0 = nestedParsList sRest.toList :=
           slicePars_zero _
-        let mut sInner ← elabBlocksGo ctx sRest 0 #[] #[] (← get).flowGen
+        let mut sInner ← elabBlockScope ctx sRest
         unless sCaption.isEmpty do
           sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
         figureGo ctx n kind body pos (j + 1) innerBlocks
@@ -9904,7 +10216,7 @@ text width; the box shares the leftover" spos
       sliceWeight_zero _
     have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
       slicePars_zero _
-    let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+    let rb ← elabBlockScope ctx rest
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
       inner := Ir.setAltBlocks (Ir.plainText caption) inner
@@ -9945,7 +10257,7 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
               = rawWeightList strayRaws.toList := sliceWeight_zero _
           have hs1 : slicePars strayRaws 0
               = nestedParsList strayRaws.toList := slicePars_zero _
-          let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
+          let sb ← elabBlockScope ctx strayRaws
           pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
         else pure (cols, blocks)
       -- beamer's `\begin{column}[pos]{width}`: its own point on the row's
@@ -9974,8 +10286,7 @@ the column shares the leftover" cpos
       have hc1 : slicePars (cbody.extract m2 cbody.size) 0
           = nestedParsList (cbody.extract m2 cbody.size).toList :=
         slicePars_zero _
-      let cinner ← elabBlocksGo ctx (cbody.extract m2 cbody.size) 0 #[] #[]
-        (← get).flowGen
+      let cinner ← elabBlockScope ctx (cbody.extract m2 cbody.size)
       columnsGo ctx body (j + 1) (cols.push ({ width with pos := colPos }, cinner)) #[]
         blocks
         (by
@@ -10000,7 +10311,7 @@ the column shares the leftover" cpos
         sliceWeight_zero _
       have hs1 : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
         slicePars_zero _
-      let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
+      let sb ← elabBlockScope ctx strayRaws
       return blocks ++ sb
     else
       return blocks
@@ -10026,7 +10337,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     -- diagnostic points at the file that holds the construct.
     let ⟨fileCtx, hm⟩ : MCtx ctx ←
       pure ⟨{ ctx with file := f }, rfl, rfl, rfl, rfl⟩
-    blocks := blocks ++ (← elabBlocksGo fileCtx body 0 #[] #[] (← get).flowGen)
+    blocks := blocks ++ (← elabBlockScope fileCtx body)
   else if let some numbered := displayMathEnvs.lookup n then
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
@@ -10069,7 +10380,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     -- and the stashed notes are refused, named at the note that
     -- encloses them (E0359; the noteFlag decision, PLAN).
     modify fun st => { st with pendingNotes := #[] }
-    let mut inner ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+    let mut inner ← elabBlockScope ctx rest
     let stash := (← get).pendingNotes
     modify fun st => { st with pendingNotes := #[] }
     if hnb : ctx.noteBody then
@@ -10134,7 +10445,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
       else pure elabItems
     blocks := blocks.push (.list (n == "enumerate") elabItems)
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
-    let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+    let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep` around its scope;
     -- the `\centering`/`\raggedright` declarations open the same scope and
     -- no space, so the environment's rides in the engine's trivlist role.
@@ -10174,8 +10485,7 @@ the text width; the box takes the whole measure" pos
     have hx1 : slicePars (body.extract m2 body.size) 0
         = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
     blocks := blocks.push
-      (.columns #[({ width with pos := boxPos }, ← elabBlocksGo ctx (body.extract m2 body.size) 0
-        #[] #[] (← get).flowGen)])
+      (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
   else if n == "block" || n == "alertblock" || n == "exampleblock" then
     -- beamer's titled blocks (user guide §12.3): the {title} group on
     -- the `\begin` line is the title — beamer's own mandatory argument,
@@ -10205,7 +10515,7 @@ the text width; the box takes the whole measure" pos
     have hx1 : slicePars (body.extract m body.size) 0
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
     blocks := blocks.push (.titled kind title
-      (← elabBlocksGo ctx (body.extract m body.size) 0 #[] #[] (← get).flowGen))
+      (← elabBlockScope ctx (body.extract m body.size)))
   else if thmEnv (← get).ctr.thm n then
     -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
     -- counter, the label target and the body font are the scope's own,
@@ -10219,7 +10529,7 @@ the text width; the box takes the whole measure" pos
         = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
     have hx1 : slicePars (body.extract k body.size) 0
         = nestedParsList (body.extract k body.size).toList := slicePars_zero _
-    let inner ← elabBlocksGo ctx (body.extract k body.size) 0 #[] #[] (← get).flowGen
+    let inner ← elabBlockScope ctx (body.extract k body.size)
     blocks := blocks ++ (← thmClose ctx n o inner pos)
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
@@ -10230,7 +10540,7 @@ the text width; the box takes the whole measure" pos
     -- scope — appendix.sty's `\appendix` scoped to the body, counters
     -- restored at `\end` (see `enterAppendicesIf`).
     let saved ← enterAppendicesIf (n == "appendices")
-    let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+    let inner ← elabBlockScope ctx body
     leaveAppendices saved
     blocks := wrapScopedEnv n blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
@@ -10345,13 +10655,12 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
       have hx1 : slicePars (body.extract (j + 1) body.size) 0
           = nestedParsList (body.extract (j + 1) body.size).toList :=
         slicePars_zero _
-      let inner ← elabBlocksGo backCtx (body.extract (j + 1) body.size) 0
-        #[] #[] (← get).flowGen
+      let inner ← elabBlockScope backCtx (body.extract (j + 1) body.size)
       blocks := blocks.push (.only targets inner)
     | _ =>
       diag ctx .E0304 "'\\begin{ifbackend}' needs a {backends} group" pos
         (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
-      blocks := blocks ++ (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen)
+      blocks := blocks ++ (← elabBlockScope ctx body)
   else if n == "nav" then
     -- `{nav}`: the navigation landmark — a group of links, content
     -- rather than a widget; the links inside are ordinary `\href`s.
@@ -10375,11 +10684,10 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
           = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
       have hx1 : slicePars (body.extract k body.size) 0
           = nestedParsList (body.extract k body.size).toList := slicePars_zero _
-      blocks := blocks.push (.nav spec (← elabBlocksGo ctx
-        (body.extract k body.size) 0 #[] #[] (← get).flowGen))
+      blocks := blocks.push (.nav spec (← elabBlockScope ctx (body.extract k body.size)))
     | _ =>
       blocks := blocks.push (.nav {}
-        (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+        (← elabBlockScope ctx body))
   else if hle : (lookupUserEnv ctx n).isSome then
     -- A defined wrapper at block level: the halves and the content
     -- each contribute their blocks, in order. An inline half becomes
@@ -10393,8 +10701,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     let ⟨envCtx, hke⟩ : { c : Ctx // c.envLimit = ke.1 } ←
       pure ⟨{ ctx with
         limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
-    blocks := blocks ++ (← elabBlocksGo envCtx env.beginBody 0 #[] #[]
-      (← get).flowGen)
+    blocks := blocks ++ (← elabBlockScope envCtx env.beginBody)
     have hxw : rawWeightList (body.extract j body.size).toList
         ≤ rawWeightList body.toList := extract_weight_le ..
     have hxp : nestedParsList (body.extract j body.size).toList
@@ -10403,10 +10710,8 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
         = rawWeightList (body.extract j body.size).toList := sliceWeight_zero _
     have hx1 : slicePars (body.extract j body.size) 0
         = nestedParsList (body.extract j body.size).toList := slicePars_zero _
-    blocks := blocks ++ (← elabBlocksGo ctx (body.extract j body.size) 0
-      #[] #[] (← get).flowGen)
-    blocks := blocks ++ (← elabBlocksGo envCtx env.endBody 0 #[] #[]
-      (← get).flowGen)
+    blocks := blocks ++ (← elabBlockScope ctx (body.extract j body.size))
+    blocks := blocks ++ (← elabBlockScope envCtx env.endBody)
   else if n == "tikzpicture" then
     blocks ← tikzArm ctx body pos blocks
   else if reservedEnv.contains n then
@@ -10428,7 +10733,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     warnDroppedArgs ctx n dropped pos
     have hx0 : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
     have hx1 : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
-    blocks := blocks ++ (← elabBlocksGo ctx kept 0 #[] #[] (← get).flowGen)
+    blocks := blocks ++ (← elabBlockScope ctx kept)
   return blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + rawParsList body.toList,
@@ -10498,7 +10803,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have := sliceWeight_here raws h
       have := rawWeight_pos raws[i]
       omega
-    let expanded ← elabBlocksGo callCtx cmd.body 0 #[] #[] (← get).flowGen
+    let expanded ← elabBlockScope callCtx cmd.body
     if cmd.params.isEmpty then
       blocks := blocks ++ expanded
     else
@@ -10565,8 +10870,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
-          let ia ← elabBlocksGo stepCtx ga 0 #[] #[] (← get).flowGen
-          let ib ← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen
+          let ia ← elabBlockScope stepCtx ga
+          let ib ← elabBlockScope ctx gb
           blocks := blocks.push
             (if spec.pending 1 then .altSteps spec ib ia else .altSteps spec ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
@@ -10576,7 +10881,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- it. W0105 accounts for the group that is not inked; it is the
           -- one already fired for the spec when there was one to read.
           warnAltSpec ctx pos
-          blocks := blocks ++ (← elabBlocksGo ctx ga 0 #[] #[] (← get).flowGen)
+          blocks := blocks ++ (← elabBlockScope ctx ga)
           return (blocks, ⟨j3 + 1, by omega⟩)
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
@@ -10607,13 +10912,12 @@ when it is empty — '{}'")
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
-          let inner ← elabBlocksGo stepCtx gbody 0 #[] #[] (← get).flowGen
+          let inner ← elabBlockScope stepCtx gbody
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
         | none =>
-          blocks := blocks ++ (← elabBlocksGo ctx gbody 0 #[] #[]
-            (← get).flowGen)
+          blocks := blocks ++ (← elabBlockScope ctx gbody)
           return (blocks, ⟨jg + 1, by omega⟩)
       | _ =>
         -- The open form: the rest of this scope steps. Bare
@@ -10637,8 +10941,7 @@ when it is empty — '{}'")
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
-          let inner ← elabBlocksGo stepCtx (raws.extract jg raws.size) 0
-            #[] #[] (← get).flowGen
+          let inner ← elabBlockScope stepCtx (raws.extract jg raws.size)
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨raws.size, by omega⟩)
@@ -10712,8 +11015,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (cur : Array Raw) (gen : Nat) :
     EM (Array Block) := do
   let stFlow ← get
-  let ⟨ctx', hfm⟩ : MCtx ctx ←
-    pure ⟨flowCtx ctx stFlow gen, flowCtx_measure ctx stFlow gen⟩
+  let (⟨ctx', hfm⟩, blocks, cur) ← blockMacroStep ctx stFlow gen raws i blocks cur
   let gen' ← pure stFlow.flowGen
   if h : i < raws.size then
     have hadv : sliceWeight raws (i + 1) < sliceWeight raws i :=
@@ -10757,19 +11059,19 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- declaration reaches exactly to the group's edge. An argument
         -- group is the command's, as in the par splice above; its own
         -- block sequence, so the declaration stops at the closing brace.
-        let blocks ← flushPara ctx' blocks cur
-        let inner ← elabBlocksGo ctx' body 0 #[] #[] (← get).flowGen
+        let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
+        let inner ← elabBlockScope ctx' body
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .par _ =>
-      let blocks ← flushPara ctx' blocks cur
+      let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb env s vpos =>
       if env == "verb" then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
-      let blocks ← flushPara ctx' blocks cur
+      let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       let b ← listingBlock ctx' env s vpos
       elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'
     | .math display body mpos =>
@@ -10778,7 +11080,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- `\DeclareRobustCommand{\[}{\begin{equation*}}`), so it takes that
         -- environment's one arm: unnumbered, a label binding to the flow's
         -- last number, and a `\tag` standing in the number's place.
-        let blocks ← flushPara ctx' blocks cur
+        let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
         let blocks ← displayMathArm ctx' false body mpos blocks
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
@@ -10810,7 +11112,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       if isB then
         pictureInSentence ctx' n cur raws i epos
         let k := blocks.size
-        let flushed ← flushPara ctx' blocks cur
+        let (⟨ctx', hm⟩, flushed) ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
         let blocks ← elabEnvArm ctx' n body epos flushed
         -- A list or quote opened inside an open paragraph (no blank line
@@ -10881,7 +11183,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
       macroPictureInSentence ctx' n cur raws i cpos
-      let blocks ← flushPara ctx' blocks cur
+      let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "centering" || (Ir.raggedSideOf? n).isSome
@@ -10910,9 +11212,9 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
+        let (⟨ctx', hrole⟩, blocks) := closeBlockMacros ctx' blocks
         let saved ← enterBlockDecl ctx' n raws i cur cpos
-        let inner ← elabBlocksGo ctx' (raws.extract (i + 1) raws.size) 0
-          #[] #[] (← get).flowGen
+        let inner ← elabBlockScope ctx' (raws.extract (i + 1) raws.size)
         leaveBlockDecl saved
         let blocks := blocks ++ declScopeWrap n inner
         have hend : sliceWeight raws raws.size = 0 :=
@@ -10937,10 +11239,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
+        let (⟨ctx', hrole⟩, blocks) := closeBlockMacros ctx' blocks
         let ⟨stepCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
-        let inner ← elabBlocksGo stepCtx (raws.extract (i + 1) raws.size) 0
-          #[] #[] (← get).flowGen
+        let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
         let blocks := if inner.isEmpty then blocks
           else blocks.push (.step (ctx'.stepBase + 2) none inner)
         have hend : sliceWeight raws raws.size = 0 :=
@@ -10991,7 +11293,7 @@ a side channel, never slide content" cpos
               ∧ visWeightGo c.user c.limit = visWeightGo ctx'.user ctx'.limit } ←
             pure ⟨{ ctx' with noteBody := true, notePos := some cpos },
               rfl, rfl, rfl, rfl⟩
-          let inner ← elabBlocksGo noteCtx nbody 0 #[] #[] (← get).flowGen
+          let inner ← elabBlockScope noteCtx nbody
           have ht1 : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           have ht2 : slicePars raws (j2 + 1) ≤ slicePars raws i :=
@@ -11022,140 +11324,14 @@ a side channel, never slide content" cpos
         | _ =>
           diag ctx' .E0304 "'\\framefoot' needs one group of inline content" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n.startsWith "@ink:" then
-        -- xcolor's `\color{n}` at block level colours to the end of the
-        -- enclosing group (xcolor manual §2.6.4), and at the flow's top
-        -- level that is the rest of the document — the default ink
-        -- itself. It routes through the palette's one resolving site:
-        -- the flow palette's `fg` is declared (`inkFlowDecl`), so the
-        -- resolved design, both backends, and the contrast judge all see
-        -- the declared body colour instead of a silently defaulted pure
-        -- black. (In a nested body the flow scope is the same
-        -- approximation `\palette` makes: no brace revert.) A bare
-        -- palette name keeps its documented reading — rest of the group —
-        -- and never reaches here.
-        let pal? ← inkFlowDecl ctx' n cpos
-        let ⟨palCtx, hm⟩ : MCtx ctx' ←
-          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
-        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
-        elabBlocksGo palCtx raws (i + 1)
-          (match pal? with
-            | some pal => blocks.push (.setPalette pal)
-            | none => blocks) #[] ((← get).flowGen)
-      else if n.startsWith Compat.pageColorMarkPrefix then
-        let pal? ← pageGroundDecl ctx' n cpos
-        let ⟨palCtx, hm⟩ : MCtx ctx' ←
-          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
-        match pal? with
-        | some pal => modify fun st =>
-          { st with flowPalette := { st.flowPalette with current := some pal },
-                    flowGen := st.flowGen + 1 }
-        | none => pure ()
-        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
-        elabBlocksGo palCtx raws (i + 1)
-          (match pal? with
-            | some pal => blocks.push (.setPalette pal)
-            | none => blocks) #[] ((← get).flowGen)
-      else if n == Compat.pageColorResetMark then
-        -- A reset is an epoch, not a textual colour: restore the opening
-        -- document/class ground and preserve every other body declaration.
-        let pal := ctx'.palette.restore ctx'.basePalette "bg"
-        modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
-                                   flowGen := st.flowGen + 1 }
-        let ⟨palCtx, hm⟩ : MCtx ctx' ←
-          pure ⟨{ ctx' with palette := pal }, rfl, rfl, rfl, rfl⟩
-        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
-        elabBlocksGo palCtx raws (i + 1) (blocks.push (.setPalette pal)) #[]
-          ((← get).flowGen)
-      else if n == BeamerColor.marker || n == BeamerColor.starMarker then
-        let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // i + 1 ≤ t.2 } ←
-          beamerColorArm ctx' raws (i + 1) (n == BeamerColor.starMarker) cpos
-        let ⟨palCtx, hm⟩ : MCtx ctx' ←
-          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
+      else if flowStyleCtrl n then
+        let (⟨styleCtx, hm⟩, ⟨j, hj⟩, blocks, nextGen) ←
+          flowStyleArm ctx' n raws (i + 1) (by omega) cpos blocks gen'
         have ht1 : sliceWeight raws j < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         have ht2 : slicePars raws j ≤ slicePars raws i :=
           slicePars_le raws (by omega)
-        elabBlocksGo palCtx raws j
-          (match pal? with
-            | some pal => blocks.push (.setPalette pal)
-            | none => blocks) #[] ((← get).flowGen)
-      else if n == "palette" then
-        -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
-        -- the entries apply from here on, and the document palette both
-        -- backends and the contrast checks read carries them.
-        let j0 := skipSpaces raws (i + 1)
-        have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
-        let ⟨(decorative, skipBlock, jf), hjf⟩ :
-            { t : Bool × Bool × Nat // i + 1 ≤ t.2.2 } ←
-          if let some (.sym '[' _) := raws[j0]? then do
-            let ⟨(opt, k), hk⟩ : { t : Array Raw × Nat // i + 1 ≤ t.2 } :=
-              match hc : closeBracketFrom raws (j0 + 1) with
-              | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
-                  have := closeBracketFrom_ge hc; omega⟩
-              | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
-            have hk2 : i + 1 ≤ k := hk
-            let (decorative, skipBlock) ← parsePaletteOpts ctx' (rawSrc opt) cpos
-            pure ⟨(decorative, skipBlock, skipSpaces raws k), by
-              have := skipSpaces_ge raws k
-              show i + 1 ≤ skipSpaces raws k
-              omega⟩
-          else
-            pure ⟨(false, false, j0), hj0⟩
-        have hjf2 : i + 1 ≤ jf := hjf
-        match raws[jf]? with
-        | some (.group gbody _) =>
-          have ht1 : sliceWeight raws (jf + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
-          if skipBlock then
-            elabBlocksGo ctx' raws (jf + 1) blocks #[] gen'
-          else
-            let pal ← applyPalette ctx' ctx'.palette (rawSrc gbody) cpos
-              (decorative := decorative)
-            let ⟨palCtx, hm⟩ : MCtx ctx' ←
-              pure ⟨{ ctx' with palette := pal }, rfl, rfl, rfl, rfl⟩
-            -- The declaration rides the IR in flow order: both backends
-            -- replay it where it stands, and the flow state carries it
-            -- past this scope's close (no brace revert).
-            modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
-                                       flowGen := st.flowGen + 1 }
-            elabBlocksGo palCtx raws (jf + 1)
-              (blocks.push (.setPalette pal)) #[] ((← get).flowGen)
-        | _ =>
-          diag ctx' .E0304 "'\\palette' needs a {...} block" cpos
-          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == "tokens" then
-        -- `\setlength` mid-document rewrites here; same door as above.
-        let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
-          pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
-        match raws[j]? with
-        | some (.group gbody _) =>
-          let tk ← applyTokens ctx' ctx'.tokens (rawSrc gbody) cpos
-            (engine := ctx'.engineTokens)
-          let ⟨tokCtx, hm⟩ : MCtx ctx' ←
-            pure ⟨{ ctx' with tokens := tk }, rfl, rfl, rfl, rfl⟩
-          modify fun st => { st with flowTokens := some tk
-                                     flowGen := st.flowGen + 1 }
-          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
-          elabBlocksGo tokCtx raws (j + 1)
-            (blocks.push (.setTokens tk)) #[] ((← get).flowGen)
-        | _ =>
-          diag ctx' .E0304 "'\\tokens' needs a {...} block" cpos
-          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+        elabBlocksGo styleCtx raws j blocks #[] nextGen
       else if n == "define" then
         -- A definition in the body, legal as in LaTeX (`\newcommand`
         -- rewrites here): it binds through the shared door the preamble
@@ -11319,7 +11495,7 @@ a side channel, never slide content" cpos
             sliceWeight_zero _
           have hb1 : slicePars body 0 = nestedParsList body.toList :=
             slicePars_zero _
-          let inner ← elabBlocksGo ctx' body 0 #[] #[] (← get).flowGen
+          let inner ← elabBlockScope ctx' body
           have ht1 : sliceWeight raws (jf + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
@@ -11330,6 +11506,7 @@ a side channel, never slide content" cpos
           diag ctx' .E0304 "'\\block' needs a {body}" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
+        let (⟨ctx', hrole⟩, blocks) := blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
         have ht1 : sliceWeight raws j < sliceWeight raws i :=
           sliceWeight_lt raws h hij
@@ -11342,17 +11519,28 @@ a side channel, never slide content" cpos
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
   else
-    flushPara ctx' blocks cur
+    return (← flushPara ctx' blocks cur).2
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws i,
   visWeightGo ctx.user ctx.limit + sliceWeight raws i, 2, 0)
+decreasing_by all_goals blocks_dec
+
+/-- A fresh block accumulator inherits its caller's semantic owners but
+never their accumulator offsets. Tokens retain any deeper ancestry. -/
+private def elabBlockScope (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+  let ⟨innerCtx, _hm⟩ : MCtx ctx ←
+    pure ⟨{ ctx with macroRoles := ctx.macroRoles.enter }, rfl, rfl, rfl, rfl⟩
+  elabBlocksGo innerCtx raws 0 #[] #[] (← get).flowGen
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + slicePars raws 0,
+  visWeightGo ctx.user ctx.limit + sliceWeight raws 0, 3, 0)
 decreasing_by all_goals blocks_dec
 
 end
 
 /-- Elaborate raw items as a block sequence. -/
 def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
-  elabBlocksGo ctx raws 0 #[] #[] (← get).flowGen
+  elabBlockScope ctx raws
 
 /-- Elaboration terminates — not a sentence in a plan: `takeArgs`,
 `elabInlines`, and `elabBlocks` are total functions of this file, so a
@@ -11372,6 +11560,9 @@ theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
   ⟨_, rfl⟩
 
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
+unseal blockMacroStep
+unseal closeBlockMacros blockControlContext
+unseal flowStyleCtrl flowStyleArm
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile

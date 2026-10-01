@@ -9,8 +9,10 @@ para
 para
   text "Unloaded branch ships."
 -- diagnostics
-note[N0114] 9:27 '\@ifpackageloaded': 'graphicx' is loaded by the end of the preamble, so the first branch is kept
-note[N0114] 10:29 '\@ifpackageloaded': no package 'tabularx' is loaded by the end of the preamble, so only the second branch is kept
+note[N0114] 9:27 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
+note[N0114] 10:29 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
+note[N0114] 14:1 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
+note[N0114] 16:1 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
 note[N0100] 7:1 '\usepackage{graphicx}' → nothing: the engine does this itself
 note[N0100] 8:1 '\makeatletter' → nothing: @-names are always readable here
 note[N0100] 9:1 '\newcommand{\probeloaded}' → \define \probeloaded() {...}

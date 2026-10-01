@@ -1322,10 +1322,7 @@ def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
             String.singleton c ++ "}$}\\end{document}")
         let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
         let out := layoutOf fs doc
-        let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
-          match seg with
-          | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
-          | _ => #[]
+        let glyphs := bodyGlyphs out
         let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
         let label := s!"math alphabet {command}({c}) in {ambient}"
         check ref (label ++ " reaches the artifacts without recovery")
@@ -1347,10 +1344,7 @@ def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
     let raw := (Elab.run "synthetic.tex" source).1
     let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
     let out := layoutOf fs doc
-    let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
-      match seg with
-      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
-      | _ => #[]
+    let glyphs := bodyGlyphs out
     let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
     check ref (source ++ " preserves digit source and inner alphabet in PDF/HTML")
       (glyphs == #[(expectedFace, '5')] &&
@@ -1390,10 +1384,7 @@ def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (raw, ds) := Elab.run "synthetic.tex" ("$" ++ source ++ "$")
     let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
     let out := layoutOf fs doc
-    let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
-      match seg with
-      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
-      | _ => #[]
+    let glyphs := bodyGlyphs out
     let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
     check ref (source ++ " reaches the artifacts without recovery")
       (!(ds ++ ads ++ out.diags).any fun d =>
@@ -1414,11 +1405,7 @@ def mathSymbolResetAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (raw, ds) := Elab.run "synthetic.tex" ("$" ++ source ++ "$")
     let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
     let out := layoutOf fs doc
-    let glyphs := (bodyLines out).flatMap fun (line : Layout.LineOut) =>
-      line.segs.flatMap fun seg =>
-      match seg with
-      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
-      | _ => #[]
+    let glyphs := bodyGlyphs out
     let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
     (glyphs, mathTextLeavesList #[] body.toList, ds ++ ads ++ out.diags)
   let bare := evidence "\\symsf{5}"
