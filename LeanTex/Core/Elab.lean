@@ -1722,6 +1722,23 @@ private def inlineMacroAt (roles : MacroRoles) (raws : Array Raw) (i : Nat)
     else []
   inlineMacroStep roles raws[i]? acc sb following
 
+/-- Scalar composition consumes the operand without visiting it again.
+Keep the accent's owners and enter any additional operand owners once;
+a group carries both its own ancestry and its composed child's ancestry.
+The existing run stack keeps an operand's following text in the same role. -/
+private def accentOperandStep (roles : MacroRoles) (operand : Option Raw)
+    (acc : Array Inline) (sb : String) : MacroRoles × Array Inline × String :=
+  let origins := match operand with
+    | some (.group body p) =>
+      p.origins ++ relativeOrigins p.origins ((body[0]?.bind Raw.origins?).getD [])
+    | _ => (operand.bind Raw.origins?).getD []
+  let extra := relativeOrigins roles.enter.inherited origins
+  if extra.isEmpty then (roles, acc, sb)
+  else
+    let desired := roles.inlines.toList.map (·.origin) ++ extra
+    let (active, acc) := moveMacroRuns Inline.role roles.inlines desired (flushText acc sb)
+    ({ roles with inlines := active }, acc, "")
+
 /-- TeX's `\unskip` at a point of an inline run: the pending text, else the
 run's last text, without the space it ends with. -/
 private def unskipText (acc : Array Inline) (sb : String) : Array Inline :=
@@ -4591,7 +4608,8 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- with Bib — the accent is content, never a droppable mark.
           have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
-          elabInlinesFrom ctx raws (i + 2) acc (sb ++ composed)
+          let (roles, acc, sb) := accentOperandStep ctx.macroRoles raws[i + 1]? acc sb
+          elabInlinesFrom { ctx with macroRoles := roles } raws (i + 2) acc (sb ++ composed)
         else if let some lit := escapeOf name then
           elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
         else if (Lex.textSymbols.lookup name).isSome then

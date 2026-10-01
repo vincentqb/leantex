@@ -25518,3 +25518,12 @@ package-load decisions say where they are evaluated and include their
 runtime uses. Both private reference decks build in PDF and HTML without
 image-loading failures. `scripts/bench.lean` passes at five runs per case;
 the reference-list growth is 4.1× for four times the entries (bound 8×).
+
+Accent composition enters the consumed operand's remaining ancestry in
+the same run stack. Grouped bases, distinct owners, repeated invocations
+of one name and following text retain their declared roles without
+changing scalar composition or token consumption. `macroAccentChecks`
+compares complete typed HTML and shipped glyphs against native role
+controls: sixty ownership failures before the fix become zero across
+seventy-two variants. Styled controls load distinct faces explicitly;
+both single-face and full-family callers pass.
