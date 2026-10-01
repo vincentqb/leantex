@@ -3,6 +3,7 @@ External math-alphabet differential. Run from the repository root:
 
   lake build leantex
   lake env lean --run scripts/math-alphabet-diff.lean
+  lake env lean --run scripts/math-alphabet-diff.lean --point-units
   lake env lean --run scripts/math-alphabet-diff.lean --selftest
 
 This is a report, never a hermetic gate. Work products stay below
@@ -25,6 +26,11 @@ matches the math x-height. LaTeX's size10.clo default is 10 TeX points
 inch. Leaving both defaults implicit compares different physical inputs.
 The explicit bp declaration controls the input, never the PDF observations:
 rounding differences in emitted sizes and boxes still count as DIFF.
+`--point-units` replays implicit defaults, explicit 10pt and explicit 10bp
+on a text-sourced `\mathrm{d}` followed by a math-sourced `\symup{x}`, for
+each face. These twelve controls use the same reader and exact comparator;
+the unmatched inputs and remaining rounding differences stay DIFF. Their
+work products stay separately below `.lake/math-alphabet-point-units`.
 
 The preamble deliberately assigns the shipped OpenSans family to all three
 text slots. That does not test distinct serif/sans/mono faces. Only the PDF's
@@ -340,13 +346,28 @@ def preambleFor (c : Case) : String :=
     "\\usepackage[mathrm=sym,mathit=sym,mathbf=sym,mathsf=sym,mathtt=sym]{unicode-math}\n"
   else "\\usepackage{unicode-math}\n"
 
+/-- The physical input shared by the matrix: see `texSource` for the
+LaTeX and LeanTex unit definitions that require this declaration. -/
+def matchedBodySize : String := "\\fontsize{10bp}{12bp}\\selectfont\n"
+
+/-- Negative controls replay the old implicit setup and explicitly name
+its TeX unit. The positive input control names the shared PDF unit; it
+does not predict equality of the artifacts' rounded font sizes. -/
+def pointUnitCases : List (Case × String) :=
+  [({ label := "implicit defaults", body := "\\mathrm{d}\\symup{x}", sym := false }, ""),
+   ({ label := "explicit 10pt", body := "\\mathrm{d}\\symup{x}", sym := false },
+     "\\fontsize{10pt}{12pt}\\selectfont\n"),
+   ({ label := "explicit 10bp", body := "\\mathrm{d}\\symup{x}", sym := false },
+     matchedBodySize)]
+
 /-- The same explicit input files and physical body size in both engines.
 `size10.clo` selects 10 TeX pt; `Dim.inch` and `Decl.unitScale_consistent`
 define LeanTex's pt as bp. LaTeX's `\set@fontsize` (latex.ltx) honours the
 explicit unit, so select 10bp in the body instead of comparing defaults.
 The text slots are aliased deliberately; this matrix does not exercise
 distinct slot faces. -/
-def texSource (bodyFontDir : String) (face : FaceCase) (c : Case) : String :=
+def texSource (bodyFontDir : String) (face : FaceCase) (c : Case)
+    (sizeSetup : String := matchedBodySize) : String :=
   let p := System.FilePath.mk face.path
   let dir := (p.parent.getD ".").toString
   let file := p.fileName.getD face.path
@@ -357,7 +378,7 @@ def texSource (bodyFontDir : String) (face : FaceCase) (c : Case) : String :=
   s!"\\setsansfont\{OpenSans-Regular.ttf}[Path={bodyFontDir}/,BoldFont=OpenSans-Bold.ttf,ItalicFont=OpenSans-Italic.ttf,BoldItalicFont=OpenSans-BoldItalic.ttf]\n" ++
   s!"\\setmonofont\{OpenSans-Regular.ttf}[Path={bodyFontDir}/]\n" ++
   s!"\\setmathfont[Scale=MatchLowercase]\{{file}}[Path={dir}/]\n" ++
-  "\\pagestyle{empty}\n\\begin{document}\n\\fontsize{10bp}{12bp}\\selectfont\n$" ++ c.body ++
+  "\\pagestyle{empty}\n\\begin{document}\n" ++ sizeSetup ++ "$" ++ c.body ++
   "$\n\\end{document}\n"
 
 /-- A filesystem-safe stem: letters and digits kept, everything else a dash. -/
@@ -415,6 +436,14 @@ def selftest : IO UInt32 := do
       cases.all fun c =>
         (texSource "fonts" { label := "Fira", path := "fonts/FiraMath-Regular.otf" } c).contains
           "\\begin{document}\n\\fontsize{10bp}{12bp}\\selectfont\n$"),
+    ("unit controls change only the size declaration",
+      pointUnitCases.length == 3 && pointUnitCases.all fun (c, setup) =>
+        c.body == "\\mathrm{d}\\symup{x}" && !c.sym &&
+        (texSource "fonts" { label := "Fira", path := "fonts/FiraMath-Regular.otf" } c setup).contains
+          ("\\begin{document}\n" ++ setup ++ "$\\mathrm{d}\\symup{x}$")),
+    ("unit controls retain implicit, TeX and PDF inputs",
+      pointUnitCases.map (·.2) ==
+        ["", "\\fontsize{10pt}{12pt}\\selectfont\n", "\\fontsize{10bp}{12bp}\\selectfont\n"]),
     ("BMP observation", (parseGlyphs (page bmp)).toOption == some #[r]),
     ("surrogate observation", (parseGlyphs (page sample)).toOption == some #[o]),
     ("scalar entity agrees with surrogate pair", (parseGlyphs (page (bmp.replace "&#x0052;" "&#x1d442;"))).toOption == some #[{ r with scalar := "𝑂" }]),
@@ -475,6 +504,8 @@ def mark (ok : Bool) : String := if ok then "SAME" else "DIFF"
 
 def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then return ← selftest
+  let pointUnits := args.contains "--point-units"
+  let inputs := if pointUnits then pointUnitCases else cases.map (·, matchedBodySize)
   let root ← IO.currentDir
   let bin := root / ".lake" / "build" / "bin" / "leantex"
   unless ← bin.pathExists do
@@ -499,13 +530,17 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln s!"math-alphabet-diff: {file} unavailable — four-face matrix untested"
       return 2
     faces := faces.push { label, path := found }
-  let work := root / ".lake" / "math-alphabet-diff"
+  let work := root / ".lake" /
+    (if pointUnits then "math-alphabet-point-units" else "math-alphabet-diff")
   if ← work.pathExists then IO.FS.removeDirAll work
   IO.FS.createDirAll work
   let bodyFontDir := (root / "tests" / "corpus" / "fonts").toString
   IO.println "math-alphabet-diff: LuaLaTeX/leantex alphabet matrix"
   IO.println s!"  lualatex: {luaVersion}"
   IO.println s!"  ghostscript: {gsVersion}"
+  IO.println (if pointUnits then
+    "  inputs: implicit defaults / explicit 10pt / explicit 10bp; text d then math x"
+    else "  input: explicit 10bp text, 12bp leading; math Scale=MatchLowercase")
   IO.println "  widths: character bbox at 720 dpi; sizes: thousandths of a PDF point"
   IO.println "face\tcase\tsrc\tref-scalars\tengine-scalars\tref-fonts\tengine-fonts\tref-widths\tengine-widths\tref-sizes\tengine-sizes\tface-axis\tsize-axis\twidth-axis\tresult"
   let mut rows := 0
@@ -517,14 +552,14 @@ def main (args : List String) : IO UInt32 := do
   let mut sizeDiffs := 0
   let mut widthDiffs := 0
   for face in faces do
-    for c in cases do
+    for (c, setup) in inputs do
       rows := rows + 1
       let stem := slug face.label ++ "-" ++ slug c.label
       let src := work / s!"{stem}.tex"
       let srcTag := if c.sym then "sym" else "text"
       let rowPrefix := s!"{face.label}\t{c.label}\t{srcTag}"
       try
-        IO.FS.writeFile src (texSource bodyFontDir face c)
+        IO.FS.writeFile src (texSource bodyFontDir face c setup)
         let _ ← runTool "lualatex"
           #["-halt-on-error", "-interaction=batchmode", s!"-output-directory={work}", src.toString] root
         let refPdf := work / s!"{stem}.pdf"
