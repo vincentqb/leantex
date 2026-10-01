@@ -19,10 +19,17 @@ character box at 720 dpi (0.1 pt per unit), not the PDF pen's advance. Its
 quantization can depend on placement. Equality of these observations proves
 neither font-program identity, glyph outlines nor full page-layout parity.
 
-The generated preamble deliberately assigns the shipped OpenSans family to
-all three text slots. That controls the inputs but does not test distinct
-serif/sans/mono faces. Only the PDF's six-uppercase-letter subset tag, exact
-Ghostscript CMap suffixes and documented aliases below are normalized.
+The generated input explicitly selects 10bp text with 12bp leading, then
+matches the math x-height. LaTeX's size10.clo default is 10 TeX points
+(72/72.27 PDF points each); LeanTex's Dim and Decl define a point as 1/72
+inch. Leaving both defaults implicit compares different physical inputs.
+The explicit bp declaration controls the input, never the PDF observations:
+rounding differences in emitted sizes and boxes still count as DIFF.
+
+The preamble deliberately assigns the shipped OpenSans family to all three
+text slots. That does not test distinct serif/sans/mono faces. Only the PDF's
+six-uppercase-letter subset tag, exact Ghostscript CMap suffixes and
+documented aliases below are normalized.
 
 The four-face matrix is bounded, not full unicode-math compatibility. It
 includes nested alphabets, fallback and both source policies. It omits bm's
@@ -333,8 +340,12 @@ def preambleFor (c : Case) : String :=
     "\\usepackage[mathrm=sym,mathit=sym,mathbf=sym,mathsf=sym,mathtt=sym]{unicode-math}\n"
   else "\\usepackage{unicode-math}\n"
 
-/-- The same explicit input files in both engines. The text slots are
-aliased deliberately; this matrix does not exercise distinct slot faces. -/
+/-- The same explicit input files and physical body size in both engines.
+`size10.clo` selects 10 TeX pt; `Dim.inch` and `Decl.unitScale_consistent`
+define LeanTex's pt as bp. LaTeX's `\set@fontsize` (latex.ltx) honours the
+explicit unit, so select 10bp in the body instead of comparing defaults.
+The text slots are aliased deliberately; this matrix does not exercise
+distinct slot faces. -/
 def texSource (bodyFontDir : String) (face : FaceCase) (c : Case) : String :=
   let p := System.FilePath.mk face.path
   let dir := (p.parent.getD ".").toString
@@ -346,7 +357,7 @@ def texSource (bodyFontDir : String) (face : FaceCase) (c : Case) : String :=
   s!"\\setsansfont\{OpenSans-Regular.ttf}[Path={bodyFontDir}/,BoldFont=OpenSans-Bold.ttf,ItalicFont=OpenSans-Italic.ttf,BoldItalicFont=OpenSans-BoldItalic.ttf]\n" ++
   s!"\\setmonofont\{OpenSans-Regular.ttf}[Path={bodyFontDir}/]\n" ++
   s!"\\setmathfont[Scale=MatchLowercase]\{{file}}[Path={dir}/]\n" ++
-  "\\pagestyle{empty}\n\\begin{document}\n$" ++ c.body ++
+  "\\pagestyle{empty}\n\\begin{document}\n\\fontsize{10bp}{12bp}\\selectfont\n$" ++ c.body ++
   "$\n\\end{document}\n"
 
 /-- A filesystem-safe stem: letters and digits kept, everything else a dash. -/
@@ -396,6 +407,14 @@ def selftest : IO UInt32 := do
     ("reject empty hex entity", (codeUnit "&#x;").isNone),
     ("full verdict detects width drift", !verdict #[r] #[wide]),
     ("full verdict detects size drift", !verdict #[r] #[large]),
+    ("one box unit still differs", !verdict #[r] #[{ r with width := r.width + 1 }]),
+    ("one size milli still differs", !verdict #[r] #[{ r with sizeMilli := r.sizeMilli - 1 }]),
+    ("TeX point conversion is not observation normalization",
+      !verdict #[r] #[{ r with sizeMilli := 9962 }]),
+    ("matrix declares the same physical body size in both engines",
+      cases.all fun c =>
+        (texSource "fonts" { label := "Fira", path := "fonts/FiraMath-Regular.otf" } c).contains
+          "\\begin{document}\n\\fontsize{10bp}{12bp}\\selectfont\n$"),
     ("BMP observation", (parseGlyphs (page bmp)).toOption == some #[r]),
     ("surrogate observation", (parseGlyphs (page sample)).toOption == some #[o]),
     ("scalar entity agrees with surrogate pair", (parseGlyphs (page (bmp.replace "&#x0052;" "&#x1d442;"))).toOption == some #[{ r with scalar := "𝑂" }]),
