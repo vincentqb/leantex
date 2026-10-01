@@ -46,8 +46,17 @@ an error, and a generic failed reference cannot satisfy an error pin.
 The hook-scope cases also pin deferred execution: hook registration does
 not execute its payload; begin-document and end-preamble payloads change
 the state the body reads. Actual braces, \begingroup and \bgroup restore
-local flags without inserting a paragraph break. Run just these eight
+local flags without inserting a paragraph break. End-preamble hooks run
+before begin-document hooks even when registered later. Run just these nine
 cases with --case hook-scope.
+
+The required-argument cases distinguish an argument's delimiting braces
+from an actual group in the substituted text. Flag setters and \let run
+only where the replacement uses the argument; an unused argument is inert,
+and a repeated argument executes again in the state its first use left.
+An extra pair of explicit braces remains a local scope. Run the seven cases
+for each of direct \def, direct \newcommand and their \let aliases with
+--case required-argument.
 -/
 
 namespace MacroDefaultsOracle
@@ -140,6 +149,11 @@ private def hookScopeCases : Array Probe := #[
   textCase "hook-scope-begin-hook-flag-read"
     r"\newif\ifprobeFlag\AtBeginDocument{\ifprobeFlag T\else F\fi}\probeFlagtrue"
     "/T" "T/T",
+  textCase "hook-scope-hook-phase-order"
+    (r"\usepackage{etoolbox}\newif\ifprobeFlag" ++
+      r"\AtBeginDocument{\ifprobeFlag T\else F\fi\probeFlagfalse}" ++
+      r"\AtEndPreamble{\probeFlagtrue}")
+    r"/\ifprobeFlag T\else F\fi" "T/F",
   textCase "hook-scope-brace-flag"
     r"\newif\ifprobeFlag"
     r"{\probeFlagtrue\ifprobeFlag T\else F\fi}/\ifprobeFlag T\else F\fi" "T/F",
@@ -152,7 +166,41 @@ private def hookScopeCases : Array Probe := #[
     r"\bgroup\probeFlagtrue\ifprobeFlag T\else F\fi\egroup/\ifprobeFlag T\else F\fi" "T/F"
 ]
 
+private def requiredArgumentFamily (kind : String) (alias : Bool) : Array Probe :=
+  let route := kind ++ if alias then "-alias" else ""
+  let call := if alias then r"\aliasprobe" else r"\passprobe"
+  let define (replacement : String) :=
+    r"\newif\ifchoiceprobe\def\wordprobe{Old}\def\newwordprobe{New}" ++
+    (if kind == "def" then r"\def\passprobe#1{" else r"\newcommand{\passprobe}[1]{") ++
+    replacement ++ "}" ++ (if alias then r"\let\aliasprobe\passprobe" else "")
+  let probe (label replacement body expected : String) :=
+    textCase ("required-argument-" ++ route ++ "-" ++ label) (define replacement) body expected
+  #[
+    probe "identity-flag" "#1"
+      (call ++ r"{\choiceprobetrue}\ifchoiceprobe Set\else Unset\fi") "Set",
+    probe "identity-let" "#1"
+      (call ++ r"{\let\wordprobe\newwordprobe}\wordprobe") "New",
+    probe "unused" "Kept"
+      (call ++ r"{\choiceprobetrue\let\wordprobe\newwordprobe" ++
+        r"\ifchoiceprobe WrongSet\else WrongUnset\fi}/" ++
+        r"\ifchoiceprobe Set\else Unset\fi/\wordprobe") "Kept/Unset/Old",
+    probe "repeated" "#1#1"
+      (r"\ifchoiceprobe Set\else Unset\fi/" ++ call ++
+        r"{\ifchoiceprobe B\else A\fi\choiceprobetrue}/" ++
+        r"\ifchoiceprobe Set\else Unset\fi") "Unset/AB/Set",
+    probe "repeated-order" r"\ifchoiceprobe Set\else Unset\fi/#1#1"
+      (call ++ r"{\ifchoiceprobe B\else A\fi\choiceprobetrue}/" ++
+        r"\ifchoiceprobe Set\else Unset\fi") "Unset/AB/Set",
+    probe "grouped-flag" "#1"
+      (call ++ r"{{\choiceprobetrue\ifchoiceprobe Set\else Unset\fi}}/" ++
+        r"\ifchoiceprobe Set\else Unset\fi") "Set/Unset",
+    probe "grouped-let" "#1"
+      (call ++ r"{{\let\wordprobe\newwordprobe\wordprobe}}/\wordprobe") "New/Old"
+  ]
+
 private def cases : Array Probe :=
+  requiredArgumentFamily "def" false ++ requiredArgumentFamily "def" true ++
+  requiredArgumentFamily "newcommand" false ++ requiredArgumentFamily "newcommand" true ++
   hookScopeCases ++ rawGroupCases ++ family "newcommand" ++
   family "renewcommand" ++ family "providecommand" ++ #[
     textCase "provide-existing-optional"
