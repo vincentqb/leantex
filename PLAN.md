@@ -25291,3 +25291,30 @@ record 310 failed assertions before the correction and none after, with
 advances. The alphabet guards also inspect the typed MathML tree and
 written PDF scalars, including nested aliases and deliberately missing
 ranges.
+
+### 2026-10-01 — Combined foundation validation
+
+The combined warning-free build passes all 307 jobs, the obligations
+build passes with its declared open proofs, and the full test suite
+passes. The focused macro and math artifact checks report zero failures.
+The package-option oracle passes 34 scheduling and 30 diagnostic and
+lifecycle cases; the declaration-composition oracle passes its synthetic
+cases and 87 corpus files. All 14 cancellation room comparisons remain
+within their declared bounds. Independent reviews find no remaining
+blocker in the token-identity and configured-bold corrections.
+
+Chromium passes 85 rendered fixtures and 19 feature checks, including
+screen and print; Firefox remains untested on this host. Two private
+reference decks compile to both artifacts with fresh caches and no image
+loading or conversion failures. The requested figures are visible in
+rasterized native PDF pages, including the animation's static poster.
+The browser and diagnostic audit records are regenerated through their
+producers.
+
+The four-font alphabet comparison completes all 304 observations with no
+missing observations or execution errors. All 304 remain strict DIFF
+rows: one face difference, 304 size differences and 32 width differences,
+down from 83 width differences in the frozen baseline. Its 60 selftests
+pass; no difference is exempted. This external report records the
+remaining visual parity boundary. Arbitrary installed-package execution
+also remains outside the implemented TeX subset.
