@@ -212,10 +212,16 @@ def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     same ("macro phase whitespace " ++ label) (article pre body) (article "" expected)
   -- The kernel's \space is an expandable, zero-argument space. It cannot
   -- claim a following bracket as an option, and its copied meaning scopes.
+  -- Declare the optional calls' roles through native identities, without
+  -- reproducing the TeX lookahead or moving the following space into a call.
+  same "macro kernel space optional lookahead"
+    (article
+      r"\newcommand{\probe}[1][D]{(#1)}\def\probeOption{[E]}\let\?\probe"
+      r"\probe\probeOption/\?   [X]/\probe\space[Y]")
+    (article
+      r"\define \probe(word: content){\word}\define \?(word: content){\word}"
+      r"\probe{(D)}[E]/\?{(X)}/\probe{(D)} [Y]")
   for (label, pre, body, expected) in #[
-      ("optional lookahead",
-        r"\newcommand{\probe}[1][D]{(#1)}\def\probeOption{[E]}\let\?\probe",
-        r"\probe\probeOption/\?   [X]/\probe\space[Y]", "(D)[E]/(X)/(D) [Y]"),
       ("following bracket", "", r"A\space[Y]B", "A [Y]B"),
       ("inside group", "", r"A{\space}[Y]B", "A [Y]B"),
       ("document meaning", r"\def\space{Q}", r"A\space[Y]B", "AQ[Y]B"),
