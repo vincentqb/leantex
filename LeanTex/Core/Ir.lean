@@ -8506,7 +8506,7 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .styled sty c => ((acc ++ s!"styled:{sty.mathvariant}\{").push c).push '}'
   | .word s => acc ++ s.quote
   | .list body => (dumpMathList (acc.push '{') body).push '}'
-  | .alpha a body => (dumpMathList (acc ++ s!"alpha:{a.name}\{") body).push '}'
+  | .alpha a _ body => (dumpMathList (acc ++ s!"alpha:{a.name}\{") body).push '}'
   | .frac spec num den =>
     -- A generalized fraction shows what its spec declares beyond `\frac`'s:
     -- the delimiters, the rule in sp, and the style's rank (3 display).

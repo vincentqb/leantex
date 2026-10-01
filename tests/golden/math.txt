@@ -88,7 +88,7 @@ para
     ord:alpha:bf{ord:𝑣}
   text " sets bold while "
   formula inline "\\boldsymbol {\\beta}"
-    ord:alpha:bfit{ord:𝛽}
+    ord:alpha:bm{ord:𝛽}
   text " keeps its variable italic, and "
   formula inline "\\mathrm {Err}(p, q)"
     ord:alpha:rm{ord:𝐸 ord:𝑟 ord:𝑟} open:( ord:𝑝 punct:, ord:𝑞 close:)
