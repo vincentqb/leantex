@@ -2499,6 +2499,8 @@ private structure MathEnv where
   underline : Bool
   leading : Option Sp
   base : Sp
+  /-- Ambient text size, before matching the math face's x-height. -/
+  textBase : Sp
   ground : Option Ir.Color := none
   /-- The formula's attribution: its one `Struct` leaf (the source), on
   every box the assembly builds. No default: the one construction site
@@ -2529,29 +2531,30 @@ private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
   .box w e.idx e.color e.link #[] size e.leading e.underline 0 e.ground e.attr
 
-/-- Width of assembled math items: boxes only ever enter the stream, so the
-advance of a math box is the sum of what it contains plus the kerns the
-spacing table put between them — `mathBoxChecks` holds the two ways of
-computing it equal in sp. -/
+/-- Width of assembled math items: glyph boxes, kerns and rules advance
+the pen. Include a nested construction's rule before its rewind kern,
+just as line placement does, so its enclosing bar spans the whole body. -/
 def mathItemsWidth (items : Array Item) : Sp :=
   items.foldl (fun w it => match it with
     | .box bw _ _ _ _ _ _ _ _ _ _ => w + bw
+    | .rule bw _ _ _ => w + bw
     | _ => w) 0
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
 
 /-- The vertical ink extent `(top, bottom)` of assembled math items,
-relative to the surrounding baseline: each glyph's outline extent scaled at
-its box's size and shifted by its raise; a rule spans `raise` to
-`raise + thickness`. Glyphless boxes — kerns, struts — carry no ink.
+relative to the surrounding baseline: each glyph's own face and units per em
+give its outline extent, scaled at its box's size and shifted by its raise;
+a rule spans `raise` to `raise + thickness`. Glyphless boxes — kerns, struts — carry no ink.
 `(0, 0)` when nothing has ink. -/
-private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.run do
+private def mathItemsExtent (fs : FontSet) (items : Array Item) : Sp × Sp := Id.run do
   let mut top : Sp := 0
   let mut bot : Sp := 0
-  let upem : Int := font.unitsPerEm
   for it in items do
     match it with
-    | .box _ _ _ _ glyphs size _ _ raise _ _ =>
+    | .box _ fi _ _ glyphs size _ _ raise _ _ =>
+      let font := fs.get fi
+      let upem : Int := font.unitsPerEm
       for (g, _, _) in glyphs do
         match font.yExtent g with
         | some (lo, hi) =>
@@ -2608,7 +2611,7 @@ private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
     (target : Sp) (nullKern : Bool) (bItems : Array Item)
     (missing0 : Array (Nat × Char)) : Array Item × Array (Nat × Char) := Id.run do
   let axis := e.constAt size e.consts.axisHeight
-  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let (bTop, bBot) := mathItemsExtent e.fs bItems
   let targetDu := target * (e.font.unitsPerEm : Int) / size
   let nd := if nullKern then size * 12 / 100 else 0
   let mut items : Array Item := #[]
@@ -2656,7 +2659,7 @@ private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
     (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) :=
   let axis := e.constAt size e.consts.axisHeight
-  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let (bTop, bBot) := mathItemsExtent e.fs bItems
   let δ := max (bTop - axis) (axis - bBot)
   delimAssembleTo e size raise l r (max (2 * δ * 901 / 1000) (2 * δ - size / 2)) true
     bItems missing0
@@ -2702,7 +2705,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
     | _ => bl
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
-      let (ct, cb) := mathItemsExtent e.font cell
+      let (ct, cb) := mathItemsExtent e.fs cell
       (max t ct, min b cb)) ((0 : Sp), (0 : Sp))
   let mut ys : Array Sp := #[]
   let mut y : Sp := 0
@@ -2746,8 +2749,8 @@ private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     (numItems denItems : Array Item) : Array Item :=
   let axis := e.constAt size e.consts.axisHeight
   let θ := max 0 (rule.getD (e.constAt size e.consts.fractionRuleThickness))
-  let (numTop, numBot) := mathItemsExtent e.font numItems
-  let (denTop, denBot) := mathItemsExtent e.font denItems
+  let (numTop, numBot) := mathItemsExtent e.fs numItems
+  let (denTop, denBot) := mathItemsExtent e.fs denItems
   let (u, v) :=
     if θ == 0 then
       let u0 := e.constAt size (if display then e.consts.stackTopDisplayStyleShiftUp
@@ -2797,7 +2800,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
   let θ := e.constAt size e.consts.radicalRuleThickness
   let ψ := e.constAt size (if display then e.consts.radicalDisplayStyleVerticalGap
     else e.consts.radicalVerticalGap)
-  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let (bTop, bBot) := mathItemsExtent e.fs bItems
   let ruleBot := bTop + ψ
   let ruleTop := ruleBot + θ
   let bodyW := mathItemsWidth bItems
@@ -2813,8 +2816,12 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
       ++ struts e (raise + ruleTop + extraAsc) (raise + bBot)
     (items, missing)
   | some (g, _, _) =>
-    let targetDu := (ruleTop - min 0 bBot) * (e.font.unitsPerEm : Int) / size
-    let (gv, _) := (Math.pickVariant targetDu (variantLadder e g)).getD (g, 0)
+    -- Compare scaled ink heights: a variant's advertised advance can
+    -- exceed its outline, and rounding the target down can lose depth.
+    let ladder := (variantLadder e g).map fun (gid, _) =>
+      let (top, bot) := e.glyphExtent size gid
+      (gid, top - bot)
+    let (gv, _) := (Math.pickVariant (ruleTop - min 0 bBot) ladder).getD (g, 0)
     let (vTop, vBot) := e.glyphExtent size gv
     let surdW := scaledAt size e.font (e.font.widths[gv]?.getD 0)
     let surdRaise := raise + ruleTop - vTop
@@ -2849,7 +2856,7 @@ E0405 path); the base still renders. -/
 private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
     (stretch : Bool) (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) := Id.run do
-  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let (bTop, bBot) := mathItemsExtent e.fs bItems
   let baseW := mathItemsWidth bItems
   let raisedBody := raiseItems raise bItems
   if mark == '\u0305' then
@@ -2908,8 +2915,8 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
   let size := e.sizeAt st
-  let (bTop, bBot) := mathItemsExtent e.font bItems
-  let (vTop, vBot) := mathItemsExtent e.font vItems
+  let (bTop, bBot) := mathItemsExtent e.fs bItems
+  let (vTop, vBot) := mathItemsExtent e.fs vItems
   let θ := e.constAt size e.consts.overbarRuleThickness
   let w := mathItemsWidth bItems
   let vw := mathItemsWidth vItems
@@ -2923,7 +2930,7 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       supBottom := e.constAt size e.consts.superscriptBottomMin
       space := e.constAt size e.consts.spaceAfterScript }
   let marks := g.polys.map fun pts => Item.poly (pts.map fun (x, y) => (x, y + raise)) ink
-  let (mTop, mBot) := mathItemsExtent e.font marks
+  let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
   let body := #[mathKern e size g.shift] ++ raised
   let value := if vItems.isEmpty then #[] else
@@ -3020,9 +3027,9 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         (Math.degrade sup.classes) none (#[], m0) sup
       let (subItems, m2) := layMathTail e st.sub 0
         (Math.degrade sub.classes) none (#[], m1) sub
-      let (opTop, opBot) := mathItemsExtent e.font nucItems
-      let (supTop, supBot) := mathItemsExtent e.font supItems
-      let (subTop, subBot) := mathItemsExtent e.font subItems
+      let (opTop, opBot) := mathItemsExtent e.fs nucItems
+      let (supTop, supBot) := mathItemsExtent e.fs supItems
+      let (subTop, subBot) := mathItemsExtent e.fs subItems
       let opW := mathItemsWidth nucItems
       let supW := mathItemsWidth supItems
       let subW := mathItemsWidth subItems
@@ -3111,7 +3118,8 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     -- italic axes, through the same `FontSet.lookup` the text path uses.
     -- No host per-scalar fallback — the projected family carries the base
     -- letter, or the scalar is the never-silent coverage loss (E0405).
-    let size := e.sizeAt st
+    -- Text faces retain the ambient size, with the same script ladder.
+    let size := Math.sizeFor e.consts.scales e.textBase st
     let fi := e.fs.lookup style.slot.toNat style.weight style.italic
     match glyphOf size (e.fs.get fi) c with
     | some g =>
@@ -3474,6 +3482,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         leading := leading
         ground := sty.ground
         attr := attr
+        textBase := runSize
         base := (Math.mathSize runSize.toNat around.xHeightOptical
           around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
       let (ms, m) := mathItems e display body acc.dropped
