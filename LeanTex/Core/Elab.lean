@@ -7978,8 +7978,17 @@ asking for what the engine does not draw, is named W0110 — never a
 silent drop. The caption is kept as its literal text: a listing caption
 is plain prose; markup inside one is out of the blind capture's reach. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
+  -- The size in force where the environment stands, resolved once through
+  -- the ordinary declaration scope (`blockDecls`), defaulting to the body
+  -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
+  -- `\verbatim@font` is `\normalfont\ttfamily`, which selects the mono family
+  -- and changes no size, so verbatim sets at the ambient size — never a fixed
+  -- `footnotesize`. A package's own size option overrides it below.
+  let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
+    | .style s@(.size _) | .style s@(.fontSize _ _) => s
+    | _ => size) (Ir.Style.size "normalsize")
   if env == "verbatim" then
-    return .verbatim none s {}
+    return .verbatim none s { fontSize := inherited }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -7987,9 +7996,6 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut numbers := false
   let mut language : Option Ir.ListingLang := none
   let mut style := Ir.ListingStyle.default
-  let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
-    | .style s@(.size _) | .style s@(.fontSize _ _) => s
-    | _ => size) (Ir.Style.size "normalsize")
   let mut fontSize := inherited
   let mut tabSize := 8
   let mut breakLines := false

@@ -64,9 +64,11 @@ end
 leading and tab settings, and a tab stop so a keyboard can reach and scroll it
 (`HtmlDoc.a11yFacts`). Named once, so a backend change fails the fence rows
 at this line rather than at four literals. The exact attribute check also
-rejects leaked language text or an attribute hiding the code. -/
+rejects leaked language text or an attribute hiding the code. A bare fence
+sets at the ambient size — the document base, `1em` — as LaTeX's `verbatim`
+does (it selects the mono family and changes no size). -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
-  #[("style", "font-size: 0.8em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
+  #[("style", "font-size: 1em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
 
 /-- The page's code blocks, in order, each as the one text its `<code>`
 holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`

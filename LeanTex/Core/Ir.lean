@@ -4745,9 +4745,12 @@ structure ListingSpec where
   `tokenLines` validates the text before either backend consumes this cache. -/
   highlight : Array (Array ListingHighlight.Token) := #[]
   /-- Resolved size declaration, using the ordinary size resolving sites.
-  Plain verbatim retains its code-frame step; minted/listings inherit the
-  current size unless their options select a named LaTeX step. -/
-  fontSize : Style := .size "footnotesize"
+  Bare `verbatim` inherits the ambient size in force (LaTeX's
+  `\verbatim@font` is `\normalfont\ttfamily`: mono family, no size change);
+  minted/listings inherit it too unless their options select a named LaTeX
+  step. The default is the body size — the neutral ambient — so a spec
+  built with no elaboration context never forces a size of its own. -/
+  fontSize : Style := .size "normalsize"
   /-- FancyVerb/listings default: eight columns between tab stops. -/
   tabSize : Nat := 8
   /-- FancyVerb/listings default: source lines do not wrap. -/
