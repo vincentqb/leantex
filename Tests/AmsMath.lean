@@ -8,7 +8,7 @@ def gridProbeBody (kind : Math.GridKind) : String :=
   let oneCol := match kind with
     | .gather => true
     | .array cols _ => cols.size == 1
-    | .align => false
+    | .align | .small => false
   if oneCol then "a \\\\ c" else "a & b \\\\ c & d"
 
 def gridProbeCall (env : String) (kind : Math.GridKind) : String :=
@@ -23,6 +23,14 @@ def restretch (s : Nat) : Math.MList → Math.MList
       sup sub lim) .nil)) sup' sub' lim') .nil =>
     .cons (.atom c (.delim l r (.cons (.atom c' (.grid (.array cols s) rows)
       sup sub lim) .nil)) sup' sub' lim') .nil
+  | l => l
+
+/-- The formula with its undelimited grid set as `smallmatrix`'s: how a
+reference spelled with `matrix`'s `array` states the cells `smallmatrix`
+sets in its own grid. -/
+def resmall : Math.MList → Math.MList
+  | .cons (.atom c (.grid (.array _ _) rows) sup sub lim) .nil =>
+    .cons (.atom c (.grid .small rows) sup sub lim) .nil
   | l => l
 
 /-- amsmath's grid environments are the grids their definitions build
@@ -41,19 +49,22 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   let t := check ref
   let cells := "a & b \\\\ c & d"
   let arr := s!"\\begin\{array}\{cccccccccc}{cells}\\end\{array}"
-  let expansions : List (String × String × Nat) := [
-    ("matrix", s!"${arr}$", 1000),
-    ("pmatrix", s!"$\\left({arr}\\right)$", 1000),
-    ("bmatrix", s!"$\\left[{arr}\\right]$", 1000),
-    ("Bmatrix", s!"$\\left\\\{{arr}\\right\\}$", 1000),
-    ("vmatrix", s!"$\\left|{arr}\\right|$", 1000),
-    ("Vmatrix", s!"$\\left\\|{arr}\\right\\|$", 1000),
+  let expansions : List (String × String × (Math.MList → Math.MList)) := [
+    ("matrix", s!"${arr}$", restretch 1000),
+    ("pmatrix", s!"$\\left({arr}\\right)$", restretch 1000),
+    ("bmatrix", s!"$\\left[{arr}\\right]$", restretch 1000),
+    ("Bmatrix", s!"$\\left\\\{{arr}\\right\\}$", restretch 1000),
+    ("vmatrix", s!"$\\left|{arr}\\right|$", restretch 1000),
+    ("Vmatrix", s!"$\\left\\|{arr}\\right\\|$", restretch 1000),
     -- `\env@cases` also sets `\def\arraystretch{1.2}`
-    ("cases", s!"$\\left\\\{\\begin\{array}\{ll}{cells}\\end\{array}\\right.$", 1200),
-    ("aligned", s!"\\begin\{align*}{cells}\\end\{align*}", 1000),
-    ("gathered", "\\begin{gather*}a \\\\ c\\end{gather*}", 1000),
-    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", 1000),
-    ("substack", "$\\begin{array}{c}a \\\\ c\\end{array}$", 1000)]
+    ("cases", s!"$\\left\\\{\\begin\{array}\{ll}{cells}\\end\{array}\\right.$",
+      restretch 1200),
+    ("aligned", s!"\\begin\{align*}{cells}\\end\{align*}", restretch 1000),
+    ("gathered", "\\begin{gather*}a \\\\ c\\end{gather*}", restretch 1000),
+    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", restretch 1000),
+    ("substack", "$\\begin{array}{c}a \\\\ c\\end{array}$", restretch 1000),
+    -- `smallmatrix` is its own grid: the matrix's cells, set as it sets them
+    ("smallmatrix", s!"${arr}$", resmall)]
   t "amsmath grids: every row has its reference expansion, and no other"
     (expansions.map (·.1) == MathParse.gridEnvs.map (·.1))
   let mathLetter (c : Char) : Char := MathParse.italicVar c
@@ -61,10 +72,10 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     let call := gridProbeCall env kind
     let (doc, ds) := elabStr (dvDoc "" call)
     t s!"amsmath grid {env}: no diagnostic" ds.isEmpty
-    let (reference, stretch) := (expansions.lookup env).getD ("", 1000)
+    let (reference, shape) := (expansions.lookup env).getD ("", id)
     t s!"amsmath grid {env}: the formula its definition expands to"
       ((firstFormula doc).isSome && firstFormula doc ==
-        (firstFormula (elabStr (dvDoc "" reference)).1).map (restretch stretch))
+        (firstFormula (elabStr (dvDoc "" reference)).1).map shape)
     let body := (gridProbeBody kind).toList.filter Char.isAlpha
     let expected := String.ofList <|
       (l.toList ++ body.map mathLetter ++ r.toList)
@@ -132,6 +143,38 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     (hasStr (HtmlDoc.emit {} (elabStr (dvDoc ""
       "$\\begin{cases} a & b \\\\ c & d \\end{cases}$")).1).1
       "padding-top: calc(0.5ex + 0.120em)")
+  -- `smallmatrix` against lualatex's \showbox of the same formulas under the
+  -- test face (FiraMath, unicode-math, 10pt; 2026-09-28), in thousandths of
+  -- the formula's size: cells at the face's script size (7.2 of 10), a thin
+  -- space each side and a thick one between columns (`a\\c` is 7.43 wide,
+  -- `a&b\\a&b` 14.38), rows `6\ex@` apart (`a\\c`) unless their boxes would
+  -- come within `1.5\ex@` (`a&b\\c&d`: 0.09 + 1.5 + 5.39). ±1 is \showbox's
+  -- rounding. Every row failed before smallmatrix was its own grid, where the
+  -- environment was the parser's decline (W0012).
+  let small (cells : String) : String :=
+    dvDoc "" s!"$\\begin\{smallmatrix}{cells}\\end\{smallmatrix}$"
+  let near (a b : Int) : Bool := (a - b).natAbs ≤ 1
+  let runsOf (src : String) : Array (Dim.Sp × Bool × Dim.Sp) :=
+    (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.filterMap fun s =>
+      match s with
+      | .run _ _ _ w glyphs sz _ _ _ _ _ => some (w, !glyphs.isEmpty, sz)
+      | _ => none
+  match (glyphSizes (dvDoc "" "$x$"))[0]? with
+  | none => t "amsmath smallmatrix: the formula size was read" false
+  | some size =>
+    let permille (x : Dim.Sp) : Int := x * 1000 / size
+    let width (src : String) : Int := permille ((runsOf src).foldl (· + ·.1) 0)
+    t "amsmath smallmatrix: its cells set at the script size"
+      ((elabStr (small "a&b\\\\c&d")).2.isEmpty &&
+       ((runsOf (small "a&b\\\\c&d")).filter (·.2.1)).all (near 720 <| permille ·.2.2))
+    t "amsmath smallmatrix: a thin space each side, a thick one between columns"
+      (near (width (small "a\\\\c")) 743 && near (width (small "a&b\\\\a&b")) 1438)
+    t "amsmath smallmatrix: rows stand 6\\ex@ apart, or 1.5\\ex@ clear"
+      (((pitchOf (small "a\\\\c")).map permille).any (near 600) &&
+       ((pitchOf (small "a&b\\\\c&d")).map permille).any (near 697))
+  t "amsmath smallmatrix: the HTML table sets its cells a script level down"
+    (hasStr (HtmlDoc.emit {} (elabStr (small "a&b\\\\c&d")).1).1
+      "<mtable scriptlevel=\"1\"")
 
 /-- `\tag{t}` stands in the number's place — `(t)`, or `t` under `\tag*` —
 and steps no counter; a label binds to the tag, so `\eqref` reads it

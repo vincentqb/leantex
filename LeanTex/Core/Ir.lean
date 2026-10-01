@@ -8675,6 +8675,7 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
           | .left => "l"
           | .center => "c"
           | .right => "r") ++ (if s == 1000 then "" else s!"*{s}")
+      | .small => "small"
     dumpMathRows (acc ++ tag ++ "[") rows ++ "]"
   | .cancel mark spec value body =>
     -- The mark, then what the spec declares beyond the defaults, then the

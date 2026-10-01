@@ -357,10 +357,14 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
   | .grid kind rows =>
     let cellDisp := match kind with
       | .array _ _ => false
+      | .small => false
       | .align => true
       | .gather => true
+    -- `smallmatrix` sets its cells in script style, a thin space each side:
+    -- 3 mu of the text size, in the script size's em at a 70% script scale.
     let attrs : Array (String × String) := match kind with
       | .array _ _ => #[]
+      | .small => #[("scriptlevel", "1"), ("style", "padding-inline: 0.238em")]
       | .align => #[("displaystyle", "true")]
       | .gather => #[("displaystyle", "true")]
     .elem "mtable" attrs (rowsNodes mk cellDisp kind #[] rows)
@@ -408,6 +412,11 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
         match [align, stretchPad s].filterMap id with
         | [] => #[]
         | parts => #[("style", "; ".intercalate parts)]
+      -- `\thickspace` before every column but the first (`GridKind.gapAfter`)
+      -- and half of `1.5\ex@` above and below each row, in the script size's
+      -- em at a 70% script scale.
+      | .small, _ =>
+        #[("style", if k == 0 then "padding: 0.107em 0" else "padding: 0.107em 0 0.107em 0.397em")]
     rowNodes mk disp kind (k + 1)
       (acc.push (.elem "mtd" attrs (listNodes mk disp none #[] cell))) rest
 

@@ -343,7 +343,8 @@ with `MaxMatrixCols` 10, the five delimited matrices wrap it in
 `\left…\right`; `\env@cases` is `\left\lbrace\array{@{}l@{\quad}l@{}}`
 closed by `\right.`, under `\def\arraystretch{1.2}`; `aligned`,
 `gathered` and `split` are the display alignments' own column models).
-`\substack` is `subarray{c}`, one centred column. -/
+`\substack` is `subarray{c}`, one centred column. `smallmatrix` is its own
+grid (`GridKind.small`), undelimited. -/
 def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
   let matrix : GridKind := .array (Array.replicate 10 .center) 1000
   [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),
@@ -352,7 +353,8 @@ def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
    ("Vmatrix", matrix, some '\u2016', some '\u2016'),
    ("cases", .array #[.left, .left] 1200, some '{', none),
    ("aligned", .align, none, none), ("gathered", .gather, none, none),
-   ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none)]
+   ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none),
+   ("smallmatrix", .small, none, none)]
 
 /-- amsmath's sized delimiters (amsmath.sty: `\big` is `\bBigg@\@ne`, `\Big`
 `\bBigg@{1.5}`, `\bigg` `\bBigg@\tw@`, `\Bigg` `\bBigg@{2.5}`), each in four

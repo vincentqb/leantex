@@ -1011,11 +1011,17 @@ alignments from the document's own column spec (`{lcr}`), text-style
 cells, `\arraycolsep` padding around every column (article.cls sets
 `\arraycolsep` to 5pt at the 10pt base — half an em a side), and rows
 `\arraystretch` baselines apart, in permille: 1000, LaTeX's default,
-unless the definition sets its own (amsmath's `\env@cases`: 1.2). -/
+unless the definition sets its own (amsmath's `\env@cases`: 1.2). `small`
+is amsmath's `smallmatrix`: script-style cells centred in their columns,
+`\thickspace` between columns, rows `6\ex@` apart unless their ink would
+come within `1.5\ex@` (its `\lineskip` and `\lineskiplimit`), and a thin
+space each side (amsmath.sty, `smallmatrix`; `\ex@` is 1 pt at the 10 pt
+base, amsgen.sty's `\compute@ex@`). -/
 inductive GridKind where
   | align
   | gather
   | array (cols : Array ColAlign) (stretch : Nat)
+  | small
   deriving Repr, BEq, Inhabited
 
 /-- The alignment of column `k` under a grid kind. An `array` column past
@@ -1024,6 +1030,7 @@ def GridKind.colAlign : GridKind → Nat → ColAlign
   | .align, k => if k % 2 == 0 then .right else .left
   | .gather, _ => .center
   | .array cols _, k => cols.getD k .center
+  | .small, _ => .center
 
 /-- The gap after column `k` of `n`, in mu (18ths of an em at the current
 size). `align`'s pair halves abut (the alignment point is exactly the
@@ -1031,11 +1038,13 @@ column boundary); between pairs it takes 2 em — amsmath stretches tabskip
 glue across the display width there, which a fixed-width box cannot, so
 this is a stated stand-in, not a sourced constant. `array` pays
 `\arraycolsep` each side of every column boundary: 5pt+5pt at the 10pt
-base is 18 mu (article.cls). -/
+base is 18 mu (article.cls). `small` pays `\thickspace` before every
+column but the first, amsmath's `.2777em`: 5 mu. -/
 def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .align, k, n => if k + 1 == n then 0 else if k % 2 == 0 then 0 else 36
   | .gather, _, _ => 0
   | .array _ _, k, n => if k + 1 == n then 0 else 18
+  | .small, k, n => if k + 1 == n then 0 else 5
 
 /-- Where column `k` starts, given each column's width and the gap that
 follows it: the sum of everything before it. One definition placed cells

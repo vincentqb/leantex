@@ -40,7 +40,7 @@ body impl $\begin{bmatrix}a & b\end{bmatrix}$
 body impl $\begin{Bmatrix}a & b\end{Bmatrix}$
 body impl $\begin{vmatrix}a & b\end{vmatrix}$
 body impl $\begin{Vmatrix}a & b\end{Vmatrix}$
-body refuse:W0012 $\begin{smallmatrix}a & b\end{smallmatrix}$
+body impl $\begin{smallmatrix}a & b\end{smallmatrix}$
 body refuse:W0302 \begin{subequations}\begin{equation}x\end{equation}\end{subequations}
 body impl \begin{equation}\label{e}x\end{equation}\eqref{e}
 body impl \begin{equation}x\tag{5}\end{equation}

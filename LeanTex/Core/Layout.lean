@@ -2691,18 +2691,23 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   -- `\lineskip` (1.0 pt) made size-relative — 1 pt at the 10 pt base. Its
   -- own name: the page-level `inkClearance` is a different, absolute
   -- quantity, and one name for two values is how a future reader fuses them.
-  let gridSkip := size / 10
+  -- A `smallmatrix` declares its own: `\lineskip` and `\lineskiplimit`
+  -- `1.5\ex@`, and rows `6\ex@` apart (`GridKind.small`).
+  let gridSkip := match kind with
+    | .small => size * 15 / 100
+    | .array _ _ | .align | .gather => size / 10
   -- LaTeX's `\jot` (latex.ltx: 3pt), the extra opening between display
   -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
   -- inline math's grid and takes none, as LaTeX's array does not.
   let jot := match kind with
-    | .array _ _ => 0
-    | _ => size * 3 / 10
+    | .array _ _ | .small => 0
+    | .align | .gather => size * 3 / 10
   -- An array's rows stand `\arraystretch` baselines apart: the stretch
   -- scales the strut every row carries (latex.ltx, `\@arstrutbox`).
   let pitch := match kind with
     | .array _ s => bl * (s : Int) / 1000
-    | _ => bl
+    | .small => size * 6 / 10
+    | .align | .gather => bl
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.fs cell
@@ -2733,7 +2738,11 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
     items := items.push (mathKern e size (-total))
   items := items.push (mathKern e size total)
   items := items ++ struts e (Δ + top) (Δ + bot)
-  return items
+  match kind with
+  | .small =>
+    let thin := mathKern e size (muAt size 3)
+    return (#[thin] ++ items).push thin
+  | .array _ _ | .align | .gather => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
 constants): numerator shifted up, denominator shifted down, and plain TeX's
@@ -3221,7 +3230,8 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     -- `gathered` in amsmath.sty: `$\m@th\displaystyle{##}$`).
     let cellSt : Math.MathStyle := match kind with
       | .array _ _ => if st.rank > 2 then .text st.cramped else st
-      | _ => .display false
+      | .small => .script false
+      | .align | .gather => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>
