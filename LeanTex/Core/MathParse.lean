@@ -3,6 +3,7 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Math
 import LeanTex.Core.MathSymData
 import LeanTex.Core.Ir
+import LeanTex.Core.Loop
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated
 into `Math.MList` atoms. Pure and total; the caller (the elaborator) owns
@@ -541,6 +542,53 @@ private def containPlan (toks : Array MTok) :
     | some _ => i := i + 1
     | none => break
   return (keep, names)
+
+/-- The one boundary that permits reducing a construct to its operand. -/
+private def ContainedName (w : String) : Prop :=
+  ∃ n, w = "\\" ++ n ∧ knownCtrl n = false ∧
+    (Ir.floorNamedArgs.lookup n).isSome
+
+/-- The existing fallible scan names only unknown, declared wrappers.
+Both inner loops leave this invariant alone; the sole push has the
+unknown-control and successful-lookup premises in scope. -/
+private theorem containPlan_accounts (toks : Array MTok) :
+    Loop.OnSuccess (fun plan => ∀ w ∈ plan.2, ContainedName w) (containPlan toks) := by
+  unfold containPlan
+  refine Loop.except_bind_of_inv
+    (fun (st : Array Bool × Array String × Nat) => ∀ w ∈ st.2.1, ContainedName w)
+    _ _ _ (Loop.except_forIn_range_inv _ _ _ _ _ (by simp) ?_) ?_
+  · intro _ _ _ st hst
+    dsimp only
+    split
+    · exact hst
+    · split
+      · rename_i n _
+        split
+        · exact hst
+        · rename_i hknown
+          split
+          · rename_i naming hlookup
+            have hname : ContainedName ("\\" ++ n) :=
+              ⟨n, rfl, by simpa using hknown, by simp [hlookup]⟩
+            have hpush : ∀ w ∈ st.2.1.push ("\\" ++ n), ContainedName w := by
+              intro w hw
+              rcases Array.mem_push.mp hw with hw | hw
+              · exact hst w hw
+              · simpa [hw] using hname
+            split <;>
+              refine Loop.except_bind_of_inv (fun _ => True) _ _ _
+                (Loop.onSuccess_true _) ?_
+            all_goals
+              intro j _
+              split
+              · trivial
+              · exact Loop.except_bind_of_inv (fun _ => True) _ _ _
+                  (Loop.onSuccess_true _) (fun _ _ => hpush)
+          · trivial
+      · exact hst
+      · exact hst
+  · intro st hst
+    exact hst
 
 /-- The tokens a plan keeps, in order. Factored out of `containUnknown` so
 that the salvage is a filter over the input with nothing else in the way,

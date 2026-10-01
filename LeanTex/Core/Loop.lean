@@ -27,6 +27,9 @@ to be read by it.
   one loop off the front: the invariant discharges the loop, and the rest of
   the block becomes the next goal with the loop's state replaced by an
   arbitrary value the invariant holds of. Applied n times for n loops.
+* `OnSuccess`, `except_forIn_inv`, `except_bind_of_inv` — the same reading
+  for a scan that can fail. An error propagates without a value; every
+  successful exit, including `break`, preserves the invariant.
 
 The discipline this supports is recorded in AGENTS.md's obligation table:
 a loop owes the invariant its statement will be read through, named beside
@@ -46,9 +49,8 @@ or stopped early: `ForInStep.value` reads the state out of `done` and
 `yield` alike, so the two exits are one channel as far as a safety property
 is concerned.
 
-The `Id` monad specifically, which is what every hot path here runs in; a
-general monad would need a postcondition calculus and the engine has no use
-for one yet. -/
+The `Id` reading is unconditional; `except_forIn_inv` gives the corresponding
+success postcondition for a scan that can also throw. -/
 theorem forIn_inv {α β : Type} (P : β → Prop) (f : α → β → Id (ForInStep β)) :
     ∀ (l : List α) (init : β), P init →
       (∀ a ∈ l, ∀ b, P b → P (f a b).run.value) →
@@ -107,5 +109,66 @@ unifier cannot recover it from the goal. -/
 theorem bind_of_inv {β γ : Type} (P : β → Prop) (Q : γ → Prop) (L : Id β) (k : β → Id γ)
     (hL : P L.run) (hk : ∀ b, P b → Q (k b).run) :
     Q (L >>= k : Id γ).run := hk _ hL
+
+/-- A successful result satisfies `P`. Failure supplies no value and makes
+no claim about one; in particular this is not a termination or success
+guarantee. -/
+def OnSuccess {ε α : Type} (P : α → Prop) : Except ε α → Prop
+  | .error _ => True
+  | .ok a => P a
+
+/-- No information is needed from a computation whose result is ignored
+by the invariant. Its failures still propagate through `except_bind_of_inv`. -/
+theorem onSuccess_true {ε α : Type} (x : Except ε α) :
+    OnSuccess (fun _ => True) x := by
+  cases x <;> trivial
+
+/-- **Peel a fallible computation off a block.** Only a successful value
+reaches the continuation. An error on either side remains an error. -/
+theorem except_bind_of_inv {ε β γ : Type} (P : β → Prop) (Q : γ → Prop)
+    (L : Except ε β) (k : β → Except ε γ)
+    (hL : OnSuccess P L) (hk : ∀ b, P b → OnSuccess Q (k b)) :
+    OnSuccess Q (L >>= k) := by
+  cases L with
+  | error e => trivial
+  | ok b => exact hk b hL
+
+/-- **Neither `break` nor a throw can invent a successful state.** The
+body's invariant covers `done` and `yield`; a thrown error bypasses both
+the tail of the loop and its continuation. -/
+theorem except_forIn_inv {ε α β : Type} (P : β → Prop)
+    (f : α → β → Except ε (ForInStep β)) :
+    ∀ (l : List α) (init : β), P init →
+      (∀ a ∈ l, ∀ b, P b → OnSuccess (fun s => P s.value) (f a b)) →
+      OnSuccess P (forIn l init f : Except ε β) := by
+  intro l
+  induction l with
+  | nil => intro init h0 _; exact h0
+  | cons a rest ih =>
+    intro init h0 hstep
+    have ha := hstep a (by simp) init h0
+    rw [List.forIn_cons]
+    cases hf : f a init with
+    | error e => trivial
+    | ok step =>
+      rw [hf] at ha
+      cases step with
+      | done b => exact ha
+      | yield b =>
+        exact ih b ha (fun x hx => hstep x (by simp [hx]))
+
+/-- `except_forIn_inv` over the index ranges used by fallible scanners. -/
+theorem except_forIn_range_inv {ε β : Type} (P : β → Prop)
+    (f : Nat → β → Except ε (ForInStep β))
+    (lo hi : Nat) (init : β) (h0 : P init)
+    (hstep : ∀ i, lo ≤ i → i < hi → ∀ b, P b →
+      OnSuccess (fun s => P s.value) (f i b)) :
+    OnSuccess P (forIn [lo:hi] init f : Except ε β) := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  refine except_forIn_inv P f _ init h0 ?_
+  intro a ha b hb
+  rw [List.mem_range'_1] at ha
+  exact hstep a (by simp at ha; omega)
+    (by simp [Std.Legacy.Range.size] at ha ⊢; omega) b hb
 
 end LeanTex.Core.Loop
