@@ -4,7 +4,7 @@ open LeanTex.Core
 
 namespace Tests
 
--- These eight expectations are pinned independently to LuaLaTeX's emitted
+-- These nine expectations are pinned independently to LuaLaTeX's emitted
 -- PDF text by scripts/macro-defaults-oracle.lean --case hook-scope.
 private def macroHookScopeCases : Array (String × String × String × String) := #[
   ("begin-hook-flag",
@@ -24,6 +24,11 @@ private def macroHookScopeCases : Array (String × String × String × String) :
   ("begin-hook-flag-read",
     r"\newif\ifprobeFlag\AtBeginDocument{\ifprobeFlag T\else F\fi}\probeFlagtrue",
     "/T", "T/T"),
+  ("hook-phase-order",
+    r"\usepackage{etoolbox}\newif\ifprobeFlag" ++
+      r"\AtBeginDocument{\ifprobeFlag T\else F\fi\probeFlagfalse}" ++
+      r"\AtEndPreamble{\probeFlagtrue}",
+    r"/\ifprobeFlag T\else F\fi", "T/F"),
   ("brace-flag",
     r"\newif\ifprobeFlag",
     r"{\probeFlagtrue\ifprobeFlag T\else F\fi}/\ifprobeFlag T\else F\fi", "T/F"),
@@ -36,8 +41,45 @@ private def macroHookScopeCases : Array (String × String × String × String) :
     r"\bgroup\probeFlagtrue\ifprobeFlag T\else F\fi\egroup/\ifprobeFlag T\else F\fi", "T/F")
 ]
 
+-- The argument delimiters do not execute as a group. Only an additional
+-- group in the replacement retains local scope. The external oracle pins
+-- these same seven expectations for all four direct/alias definition forms.
+private def requiredArgumentScopeCases : Array (String × String × String × String) :=
+  #["def", "newcommand"].flatMap fun kind => #[false, true].flatMap fun alias =>
+    let route := kind ++ if alias then "-alias" else ""
+    let call := if alias then r"\aliasprobe" else r"\passprobe"
+    let define (replacement : String) :=
+      r"\newif\ifchoiceprobe\def\wordprobe{Old}\def\newwordprobe{New}" ++
+      (if kind == "def" then r"\def\passprobe#1{" else r"\newcommand{\passprobe}[1]{") ++
+      replacement ++ "}" ++ (if alias then r"\let\aliasprobe\passprobe" else "")
+    let probe (label replacement body expected : String) :=
+      ("required-argument-" ++ route ++ "-" ++ label, define replacement, body, expected)
+    #[
+      probe "identity-flag" "#1"
+        (call ++ r"{\choiceprobetrue}\ifchoiceprobe Set\else Unset\fi") "Set",
+      probe "identity-let" "#1"
+        (call ++ r"{\let\wordprobe\newwordprobe}\wordprobe") "New",
+      probe "unused" "Kept"
+        (call ++ r"{\choiceprobetrue\let\wordprobe\newwordprobe" ++
+          r"\ifchoiceprobe WrongSet\else WrongUnset\fi}/" ++
+          r"\ifchoiceprobe Set\else Unset\fi/\wordprobe") "Kept/Unset/Old",
+      probe "repeated" "#1#1"
+        (r"\ifchoiceprobe Set\else Unset\fi/" ++ call ++
+          r"{\ifchoiceprobe B\else A\fi\choiceprobetrue}/" ++
+          r"\ifchoiceprobe Set\else Unset\fi") "Unset/AB/Set",
+      probe "repeated-order" r"\ifchoiceprobe Set\else Unset\fi/#1#1"
+        (call ++ r"{\ifchoiceprobe B\else A\fi\choiceprobetrue}/" ++
+          r"\ifchoiceprobe Set\else Unset\fi") "Unset/AB/Set",
+      probe "grouped-flag" "#1"
+        (call ++ r"{{\choiceprobetrue\ifchoiceprobe Set\else Unset\fi}}/" ++
+          r"\ifchoiceprobe Set\else Unset\fi") "Set/Unset",
+      probe "grouped-let" "#1"
+        (call ++ r"{{\let\wordprobe\newwordprobe\wordprobe}}/\wordprobe") "New/Old"
+    ]
+
 /-- Deferred hooks read and change the state at execution, while actual
 TeX groups restore local flags without splitting the surrounding paragraph.
+Required macro arguments execute after substitution, not during scanning.
 Compare complete laid-out pages and serialized typed HTML against literal
 documents: page/line boundaries, positioning, attributes and whitespace
 remain visible. Positive controls prevent matching two empty artifacts. -/
@@ -51,7 +93,8 @@ def macroHookScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     let (head, tree, hds) := HtmlDoc.emitTree {} doc
     (ds ++ out.diags ++ hds, out, Html.document "en" head tree,
       shownTextList "" tree.toList)
-  for (label, pre, body, expected) in macroHookScopeCases do
+  let probes := macroHookScopeCases ++ requiredArgumentScopeCases
+  for (label, pre, body, expected) in probes do
     let name := "macro hook scope " ++ label
     let (controlDs, controlOut, controlHtml, controlText) := artifacts (article "" expected)
     let (ds, out, html, _) := artifacts (article pre body)
