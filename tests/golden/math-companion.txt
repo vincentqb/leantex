@@ -9,10 +9,11 @@ para
   formula inline "f(x) = x^2 - 1"
     ord:𝑓 open:( ord:𝑥 close:) rel:= ord:𝑥^{ord:2} bin:− ord:1
   text " sits inline beside its sentence, its x at the sentence’s own optical size. A display formula takes the same face:"
-center
-  para
-    formula display "\\sum _{k=1}^{n} k = \\frac {n(n+1)}{2}"
-      op:lim:∑^{ord:𝑛}_{ord:𝑘 rel:= ord:1} ord:𝑘 rel:= ord:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2}
+role display-vef
+  center
+    para
+      formula display "\\sum _{k=1}^{n} k = \\frac {n(n+1)}{2}"
+        op:lim:∑^{ord:𝑛}_{ord:𝑘 rel:= ord:1} ord:𝑘 rel:= ord:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2}
 para
   text "The paragraph continues after the display, still in the body face."
 -- diagnostics

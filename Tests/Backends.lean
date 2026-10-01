@@ -541,16 +541,16 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn
       ":where(figure.float + *) { margin-top: var(--floatsep, 1.450rem); }").length == 2)
   -- The display formula's block owns both its boundaries through the two
-  -- display tokens the PDF walk reads, over the same rhythm row; the
-  -- formula element itself carries no margin, so the boundary has one
-  -- emitter. Typed-tree half: paragraph, display, paragraph emits the
-  -- `.display` element between two `<p>`s, and the numbered equation
-  -- joins the same class.
-  t "html display skips are the two tokens over the display row"
+  -- display tokens the PDF walk reads, over TeX's long skip as the screen's
+  -- multiple of its quantum (10 pt over 6 pt quanta); the formula element
+  -- itself carries no margin, so the boundary has one emitter. Typed-tree
+  -- half: paragraph, display, paragraph emits the `.display` element between
+  -- two `<p>`s, and the numbered equation joins the same class.
+  t "html display skips are the two tokens over TeX's long skip"
     ((plainPage.splitOn
-      ":where(* + .display) { margin-top: var(--abovedisplayskip, 1.450rem); }").length == 2 &&
+      ":where(* + .display) { margin-top: var(--abovedisplayskip, 1.208rem); }").length == 2 &&
      (plainPage.splitOn
-      ":where(.display + *) { margin-top: var(--belowdisplayskip, 1.450rem); }").length == 2 &&
+      ":where(.display + *) { margin-top: var(--belowdisplayskip, 1.208rem); }").length == 2 &&
      (plainPage.splitOn ".math-display { margin").length == 1)
   let (dispDoc, dispDs) := elabStr
     "\\documentclass{article}\\begin{document}a\n\n\\[ x = 1 \\]\n\nb\n\n\\begin{equation} y \\end{equation}\n\\end{document}"

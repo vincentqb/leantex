@@ -8268,7 +8268,9 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     recordLabel ctx key none pos
   let inl ← elabMathEnv ctx n kind (numbered || tag.isSome) cleaned pos
   let content := keys.map (Ir.Inline.label ·) |>.push inl
-  return blocks.push (.center #[.para content])
+  -- A display alignment: TeX spaces it with the long skips whatever line
+  -- stands before it (tex.web §1206), its rows on amsmath's strut.
+  return blocks.push (.role ({ align := true } : Ir.DisplayCtx).role #[.center #[.para content]])
 
 /-- **A picture inside a sentence is named where it stands.** LaTeX sets a
 `tikzpicture` as a box of its line, so the sentence runs on around it; the
@@ -8517,6 +8519,26 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
     if let some p ← mkPara ctx cur then
       return blocks.push p
   return blocks
+
+/-- Does a paragraph break follow position `i` — is the next raw past the
+spaces a blank line? What a display's `DisplayCtx.parEnd` records. The end
+of a body is none: what follows there is the enclosing scope's, a group's
+text running on as the group scopes nothing else. -/
+private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
+  match (raws.extract i raws.size).toList.dropWhile (· matches .space) with
+  | [] => false
+  | r :: _ => r matches .par _
+
+/-- A display formula met between words, outside the knot: the open
+paragraph flushed, the display's own arm, and where the display stands in
+its paragraph (`Ir.markDisplay`) — text before it, and whether a paragraph
+break follows (`after`). -/
+private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : Array Block)
+    (cur : Array Raw) (after : Bool) : EM (Array Block) := do
+  let k := blocks.size
+  let flushed ← flushPara ctx blocks cur
+  let out ← displayMathArm ctx false body pos flushed
+  return Ir.markDisplay (Ir.flushedText k flushed) after flushed.size out
 
 -- The well-founded translation whnf-reduces through the knot's body when
 -- it assembles the fixpoint and its equations; everything the arms call is
@@ -8875,7 +8897,7 @@ seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 seal isColumnStray
-seal Ir.markInParagraph Ir.flushedText
+seal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBlock
 
 -- ===== Pseudocode environments: algorithm2e and algorithmicx ============
 --
@@ -10778,8 +10800,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- `\DeclareRobustCommand{\[}{\begin{equation*}}`), so it takes that
         -- environment's one arm: unnumbered, a label binding to the flow's
         -- last number, and a `\tag` standing in the number's place.
-        let blocks ← flushPara ctx' blocks cur
-        let blocks ← displayMathArm ctx' false body mpos blocks
+        let blocks ← displayAtBlock ctx' body mpos blocks cur (parFollows raws (i + 1))
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
@@ -10816,7 +10837,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A list or quote opened inside an open paragraph (no blank line
         -- before it) rides in the in-paragraph role: `\@trivlist` finds
         -- horizontal mode there and adds no `\partopsep`.
-        elabBlocksGo ctx' raws (i + 1) (Ir.markInParagraph inPar flushed.size blocks) #[] gen'
+        elabBlocksGo ctx' raws (i + 1) (Ir.markDisplay inPar (parFollows raws (i + 1))
+          flushed.size (Ir.markInParagraph inPar flushed.size blocks)) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -11391,7 +11413,7 @@ unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
-unseal Ir.markInParagraph Ir.flushedText
+unseal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBlock
 unseal scanBracketArg Parse.inputEnvFile?
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems ownBibList

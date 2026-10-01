@@ -1915,6 +1915,13 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       disp[2]! - disp[1]! == leading + dispSkip.width)
   t "the display skip is not the peer gap"
     (dispSkip.width != (geom.parskip.resolve body 0).width)
+  -- Fail-first (the value-model port): the skip is the size file's own
+  -- (size10.clo `\abovedisplayskip` = 10pt), the accurate reading — not the
+  -- superseded two-quanta approximation (12pt at a 10pt body). Asserted on
+  -- the value and over `Layout.Out`; fails on the old model, passes now.
+  t "the display skip above is the size file's 10pt, not the old 12pt"
+    (dispSkip.width == Dim.pt 10 && dispSkip.width != Dim.pt 12 &&
+      disp.size == 3 && disp[1]! - disp[0]! == leading + Dim.pt 10)
   let eqn := ysOf geom "a\n\n\\begin{equation} x = 1 \\end{equation}\n\nb"
   t "a numbered equation opens the same display skips"
     (eqn.size == 3 && eqn[1]! - eqn[0]! == leading + dispSkip.width &&

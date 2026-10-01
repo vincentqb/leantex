@@ -1413,7 +1413,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- as text would shred the alignment; tables degrade to rows of cells and
   -- `&` never reaches inline elaboration as a reserved-character error.
   t "align* is one display-math grid, cells and rows intact"
-    (match (elabStr "\\begin{align*}1 &= 1 \\\\ 2 &= 4\\end{align*}").1.body with
+    (match (elabStr "\\begin{align*}1 &= 1 \\\\ 2 &= 4\\end{align*}").1.body.map unwrapDisplay with
      | #[.center #[.para #[.formula true src
          (.cons (.atom _ (.grid .align rows) _ _ _) .nil)]]] =>
        (src.splitOn "&").length == 3 &&

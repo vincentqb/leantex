@@ -52,9 +52,10 @@ para
   text "."
 para
   text "A display with both spellings side by side:"
-center
-  para
-    formula display "Φ(α, β) = α^2 + β_γ - λ \\cos ω"
-      ord:Φ open:( ord:𝛼 punct:, ord:𝛽 close:) rel:= ord:𝛼^{ord:2} bin:+ ord:𝛽_{ord:𝛾} bin:− ord:𝜆 op:"cos" ord:𝜔
+role display-vef
+  center
+    para
+      formula display "Φ(α, β) = α^2 + β_γ - λ \\cos ω"
+        ord:Φ open:( ord:𝛼 punct:, ord:𝛽 close:) rel:= ord:𝛼^{ord:2} bin:+ ord:𝛽_{ord:𝛾} bin:− ord:𝜆 op:"cos" ord:𝜔
 -- diagnostics
 (none)

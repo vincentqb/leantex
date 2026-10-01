@@ -158,8 +158,12 @@ def blockFormula (b : Ir.Block) : Option Math.MList :=
     | .formula _ _ body => some body
     | _ => none
 
+/-- A block with any display context it rides in (`Ir.DisplayCtx`) taken
+off: the display itself. -/
+def unwrapDisplay (b : Ir.Block) : Ir.Block := (Ir.displayCtxOf b).2
+
 def firstFormula (d : Ir.Doc) : Option Math.MList :=
-  d.body.findSome? fun b => match b with
+  d.body.findSome? fun b => match unwrapDisplay b with
     | .center bs => bs.findSome? blockFormula
     | b => blockFormula b
 

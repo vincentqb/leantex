@@ -21,10 +21,11 @@ para
   formula inline "2\\pi r"
     ord:2 ord:𝜋 ord:𝑟
   text " is the same inline math."
-center
-  para
-    formula display "\\sum _i \\alpha _i x^i \\le \\Gamma (n) \\cdot \\prod _j \\beta _j"
-      op:lim:∑_{ord:𝑖} ord:𝛼_{ord:𝑖} ord:𝑥^{ord:𝑖} rel:≤ ord:Γ open:( ord:𝑛 close:) bin:⋅ op:lim:∏_{ord:𝑗} ord:𝛽_{ord:𝑗}
+role display-vef
+  center
+    para
+      formula display "\\sum _i \\alpha _i x^i \\le \\Gamma (n) \\cdot \\prod _j \\beta _j"
+        op:lim:∑_{ord:𝑖} ord:𝛼_{ord:𝑖} ord:𝑥^{ord:𝑖} rel:≤ ord:Γ open:( ord:𝑛 close:) bin:⋅ op:lim:∏_{ord:𝑗} ord:𝛽_{ord:𝑗}
 para
   text "The paragraph continues after the display. Fractions nest as "
   formula inline "\\frac {1}{1 + \\frac {1}{n}}"
@@ -33,35 +34,40 @@ para
   formula inline "\\sqrt [3]{x + 1}"
     ord:sqrt[ord:3]{ord:𝑥 bin:+ ord:1}
   text ", and a grown pair covers a tall fraction:"
-center
-  para
-    formula display "\\left ( \\frac {a + b}{c} \\right )^2 = \\frac {a^2 + 2ab + b^2}{c^2}"
-      inner:left({ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}}right)^{ord:2} rel:= ord:frac{ord:𝑎^{ord:2} bin:+ ord:2 ord:𝑎 ord:𝑏 bin:+ ord:𝑏^{ord:2}}{ord:𝑐^{ord:2}}
+role display-vef
+  center
+    para
+      formula display "\\left ( \\frac {a + b}{c} \\right )^2 = \\frac {a^2 + 2ab + b^2}{c^2}"
+        inner:left({ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}}right)^{ord:2} rel:= ord:frac{ord:𝑎^{ord:2} bin:+ ord:2 ord:𝑎 ord:𝑏 bin:+ ord:𝑏^{ord:2}}{ord:𝑐^{ord:2}}
 para
   text "A big operator carries its limits below and above in display style,"
-center
-  para
-    formula display "\\sum _{i=1}^{n} i = \\frac {n(n+1)}{2}, \\qquad \\lim _{x \\to 0} \\frac {\\sin x}{x} = 1,"
-      op:lim:∑^{ord:𝑛}_{ord:𝑖 rel:= ord:1} ord:𝑖 rel:= ord:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2} punct:, mu:36 op:lim:"lim"_{ord:𝑥 rel:→ ord:0} ord:frac{op:"sin" ord:𝑥}{ord:𝑥} rel:= ord:1 punct:,
+role display-vef
+  center
+    para
+      formula display "\\sum _{i=1}^{n} i = \\frac {n(n+1)}{2}, \\qquad \\lim _{x \\to 0} \\frac {\\sin x}{x} = 1,"
+        op:lim:∑^{ord:𝑛}_{ord:𝑖 rel:= ord:1} ord:𝑖 rel:= ord:frac{ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:)}{ord:2} punct:, mu:36 op:lim:"lim"_{ord:𝑥 rel:→ ord:0} ord:frac{op:"sin" ord:𝑥}{ord:𝑥} rel:= ord:1 punct:,
 para
   text "while inline "
   formula inline "\\sum _{i=1}^{n} i"
     op:lim:∑^{ord:𝑛}_{ord:𝑖 rel:= ord:1} ord:𝑖
   text " keeps them beside. Alignment points share one x per column:"
-center
-  para
-    formula display "2 + 4 + \\cdots + 2n &= n(n+1) \\\\  f(x) &= x^2 - 1 \\\\  &= (x-1)(x+1)"
-      ord:align[(|ord:2 bin:+ ord:4 bin:+ inner:⋯ bin:+ ord:2 ord:𝑛|ord:{} rel:= ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:))(|ord:𝑓 open:( ord:𝑥 close:)|ord:{} rel:= ord:𝑥^{ord:2} bin:− ord:1)(||ord:{} rel:= open:( ord:𝑥 bin:− ord:1 close:) open:( ord:𝑥 bin:+ ord:1 close:))]
-center
-  para
-    formula display "a + b = c \\\\  x^2 + y^2 = z^2"
-      ord:gather[(|ord:𝑎 bin:+ ord:𝑏 rel:= ord:𝑐)(|ord:𝑥^{ord:2} bin:+ ord:𝑦^{ord:2} rel:= ord:𝑧^{ord:2})]
+role display-vea
+  center
+    para
+      formula display "2 + 4 + \\cdots + 2n &= n(n+1) \\\\  f(x) &= x^2 - 1 \\\\  &= (x-1)(x+1)"
+        ord:align[(|ord:2 bin:+ ord:4 bin:+ inner:⋯ bin:+ ord:2 ord:𝑛|ord:{} rel:= ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:))(|ord:𝑓 open:( ord:𝑥 close:)|ord:{} rel:= ord:𝑥^{ord:2} bin:− ord:1)(||ord:{} rel:= open:( ord:𝑥 bin:− ord:1 close:) open:( ord:𝑥 bin:+ ord:1 close:))]
+role display-vea
+  center
+    para
+      formula display "a + b = c \\\\  x^2 + y^2 = z^2"
+        ord:gather[(|ord:𝑎 bin:+ ord:𝑏 rel:= ord:𝑐)(|ord:𝑥^{ord:2} bin:+ ord:𝑦^{ord:2} rel:= ord:𝑧^{ord:2})]
 para
   text "A matrix is an array between grown delimiters, its cells in text style:"
-center
-  para
-    formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\  x' & \\frac {1}{2}\\end{array} \\right ]"
-      ord:𝑀 rel:= inner:left[{ord:array:cc[(|ord:1|ord:𝑥)(|ord:𝑥^{ord:′}|ord:frac{ord:1}{ord:2})]}right]
+role display-vef
+  center
+    para
+      formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\  x' & \\frac {1}{2}\\end{array} \\right ]"
+        ord:𝑀 rel:= inner:left[{ord:array:cc[(|ord:1|ord:𝑥)(|ord:𝑥^{ord:′}|ord:frac{ord:1}{ord:2})]}right]
 para
   text "Accents place by the face’s attachment points: "
   formula inline "\\hat {x} + \\bar {y} + \\vec {v} + \\tilde {a} + \\dot {p} + \\ddot {q}"
@@ -102,9 +108,10 @@ para
   formula inline "\\vecb {w}"
     ord:alpha:bf{ord:𝑤}
   text "."
-center
-  para
-    formula display "e^{i\\pi} + 1 = 0"
-      ord:𝑒^{ord:𝑖 ord:𝜋} bin:+ ord:1 rel:= ord:0
+role display-vef
+  center
+    para
+      formula display "e^{i\\pi} + 1 = 0"
+        ord:𝑒^{ord:𝑖 ord:𝜋} bin:+ ord:1 rel:= ord:0
 -- diagnostics
 warning[W0012] 51:1 math with \overset is not rendered yet; the formula sets as its text content

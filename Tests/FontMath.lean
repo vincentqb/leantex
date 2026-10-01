@@ -1938,7 +1938,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" "\\(y\\)").1.body ==
       #[.para #[.formula false "y" (.cons (.atom .ord (.sym '𝑦') .nil .nil false) .nil)]])
   t "equation* is display math"
-    ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
+    ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body.map unwrapDisplay ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
   -- A parsed formula's scalars are content by the parser's own decision, so
   -- `\backslash` and `\{` ship their glyphs: that is the author asking for
@@ -2010,7 +2010,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let src := "\\begin{align*} &P(A) \\\\ &= \
 \\textcolor{blue}{\\textbf{\\sum_z}} P(B) \\end{align*}"
      warnCodes src == [] &&
-       ((Elab.run "t" src).1.body.any fun b => match b with
+       ((Elab.run "t" src).1.body.any fun b => match unwrapDisplay b with
          | .center xs => xs.any fun bb => match bb with
            | .para ys => ys.any fun x => match x with
              | .formula _ _ _ => true
@@ -2241,7 +2241,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- W0013 and still renders padded.
   t "align renders as a grid; its numbers warn W0015"
     (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0015"] &&
-      ((Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body.any fun b => match b with
+      ((Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body.any fun b => match unwrapDisplay b with
         | .center bs => bs.any fun b2 => match b2 with
           | .para xs => xs.any fun x => match x with
             | .formula true _ _ => true

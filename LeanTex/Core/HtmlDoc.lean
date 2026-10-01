@@ -842,10 +842,13 @@ theorem single_owner_gap_exact (g : Int) (h : 0 ≤ g) :
 /-- Every gap rule's kind is a declared row of the table, with a positive
 multiple — no boundary silently falls to zero through a missing lookup.
 The float's rules stand outside `blockGapKinds` (they carry the
-`--floatsep` token), so its row is its own conjunct. -/
+`--floatsep` token), so its row is its own conjunct; the display's space is
+TeX's, not a row (`displayGapRem`), and positive. -/
 theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
-    0 < gapK "caption" ∧ 0 < gapK "display" ∧ 0 < gapK "trivlist" := by decide
+    0 < gapK "caption" ∧ 0 < gapK "trivlist" ∧
+    0 < screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp := by
+  decide
 
 /-- One rule of the block-boundary sheet. `reset` states an element's own
 vertical margins — zero, replacing the user agent's, or a heading's band
@@ -1023,6 +1026,13 @@ private def gapBeforeLists : List GapRule :=
    .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
    .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
 
+/-- The display's space, TeX's long `\abovedisplayskip` (`Ir.displaySkipsFor`)
+as the screen's multiple of its quantum (`screenMilli`) — the same multiple
+at every standard body, since the size files scale the skip with the type
+(10, 11 and 12 pt over quanta of 6, 6.6 and 7.2 pt). -/
+private def displayGapRem : String :=
+  milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp)
+
 /-- The boundaries the list levels stand before: the headings', the float's
 and the display's pairs, the float's caption seam, and the heading's
 follower, last. A level-1
@@ -1037,8 +1047,8 @@ private def gapAfterLists : List GapRule :=
   [.boundary s!"* + section[id] > h{Ir.headingRank 1}:first-child" (quantaRem (gapK "heading")),
    .boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
    .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
-   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")})",
-   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")})",
+   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {displayGapRem})",
+   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {displayGapRem})",
    -- The object under a caption above it: the skip facing it is the
    -- caption's own `margin-bottom`, the float's one internal seam, so the
    -- object's peer margin yields, as the page's float plan pays that skip
@@ -1183,7 +1193,6 @@ private def pdfGapSp : String → Dim.Sp
   | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
   | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
   | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.sp
-  | "display" => (Ir.displaySkipDefault Ir.baseFontSize).width.sp
   | "trivlist" => (Ir.parskipDefault Ir.baseFontSize).width.sp
       + (Ir.trivlistSkipDefault Ir.baseFontSize).width.sp
   | _ => 0
@@ -6191,6 +6200,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
         kids.toList with
     | true, [k] => withClass (roleClass n) k
+    -- A display's context (`Ir.DisplayCtx`) is the PDF's placement fact:
+    -- the page's element tree is the display's own.
+    | false, [k] =>
+      if (Ir.DisplayCtx.ofRole? n).isSome then k
+      else Html.elem "div" kids #[("class", roleClass n)]
     | _, _ => Html.elem "div" kids #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.

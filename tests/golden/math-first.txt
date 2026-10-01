@@ -9,10 +9,11 @@ para
   formula inline "x^2 + 2x + 1"
     ord:𝑥^{ord:2} bin:+ ord:2 ord:𝑥 bin:+ ord:1
   text " renders as glyphs, and so does the display"
-center
-  para
-    formula display "\\frac {a + b}{c}"
-      ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}
+role display-vef
+  center
+    para
+      formula display "\\frac {a + b}{c}"
+        ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}
 para
   text "with its bar from the resolved face’s own constants."
 -- diagnostics

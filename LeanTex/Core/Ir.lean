@@ -743,62 +743,6 @@ theorem footins_within_glue :
     (footinsDefault baseFontSize).width.sp ≤ Dim.pt 13 := by
   refine ⟨rfl, ?_, ?_⟩ <;> decide
 
-/-- The space a display formula opens against the text above and below
-it: LaTeX's `\abovedisplayskip` and `\belowdisplayskip` — one body size
-with rubber (size10.clo: 10pt plus 2pt minus 5pt; size11.clo: 11pt plus
-3pt minus 6pt; size12.clo: 12pt plus 3pt minus 7pt; `\belowdisplayskip`
-is `\abovedisplayskip` in all three) — quantized to the rhythm as the
-footnote skip is: two quanta, one full leading, inside the source glue's
-own range at the base (`display_between`). The rubber keeps the source's
-proportions of the body size (a fifth of stretch, half of shrink), so a
-page may take up the slack LaTeX's glue allows. Overridable as
-`\tokens{ abovedisplayskip = ... }` and `belowdisplayskip`, or
-`\setlength` on either. The short forms (`\abovedisplayshortskip`) are
-never selected: TeX chooses them by measuring the preceding line against
-the display's left edge, a fact the block walk does not measure, so the
-long skip is the one honest reading. -/
-def displaySkipDefault (size : Sp) : SymGlue :=
-  { width := { sp := 2 * rhythmQuantum size }
-    stretch := { sp := size / 5 }
-    shrink := { sp := size / 2 } }
-
-/-- The two display-skip token names, above and below, as `\tokens` and
-`\setlength` spell them. -/
-def displaySkipAbove : String := "abovedisplayskip"
-def displaySkipBelow : String := "belowdisplayskip"
-
-/-- The one resolving site for the skip above a display formula: the
-document's token where declared, else the rhythm default at the governing
-size. Both backends read it (`Layout`'s display arm; the HTML base sheet
-emits the same token with the same default as its `var()` fallback). -/
-def displayAbove (tokens : Tokens) (size : Sp) : SymGlue :=
-  (tokens.find? displaySkipAbove).getD (displaySkipDefault size)
-
-/-- The skip below a display formula; see `displayAbove`. -/
-def displayBelow (tokens : Tokens) (size : Sp) : SymGlue :=
-  (tokens.find? displaySkipBelow).getD (displaySkipDefault size)
-
-/-- The quantized display skip lies between LaTeX's own bounds at the base
-it was sourced at — the glue `10pt plus 2pt minus 5pt` can set any
-length in 5..12pt, and one full leading at the 10pt body is 12pt — and
-its rubber is the source's: a fifth of the body stretch, half of it
-shrink. An edit that moves the default off the rhythm or outside what
-LaTeX's glue could legally set fails the build here. -/
-theorem display_between :
-    (displaySkipDefault baseFontSize).width.sp = 2 * rhythmQuantum baseFontSize ∧
-    Dim.pt 5 ≤ (displaySkipDefault baseFontSize).width.sp ∧
-    (displaySkipDefault baseFontSize).width.sp ≤ Dim.pt 12 ∧
-    (displaySkipDefault baseFontSize).stretch.sp = Dim.pt 2 ∧
-    (displaySkipDefault baseFontSize).shrink.sp = Dim.pt 5 := by
-  refine ⟨rfl, ?_, ?_, ?_, ?_⟩ <;> decide
-
-/-- An undeclared document resolves both display skips to the default:
-the token layer adds nothing of its own, so a backend reading
-`displayAbove {}` reads exactly the sourced value. -/
-theorem displaySkips_default_exact (size : Sp) :
-    displayAbove {} size = displaySkipDefault size ∧
-    displayBelow {} size = displaySkipDefault size := ⟨rfl, rfl⟩
-
 /-- The space a trivlist environment — `{center}`, `{flushleft}`,
 `{flushright}` (ltlists.dtx: `\center` is `\trivlist\centering\item`) —
 opens against the text above and below it:
@@ -1037,6 +981,132 @@ def partopsepFor (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) :
   match (listSkips l size level).bind (·.partopsep) with
   | some g => g
   | none => (tokens.find? "partopsep").getD (partopsepDefault l size)
+
+/-- The four glues a size file's `\normalsize` sets around display math:
+`\abovedisplayskip` and `\belowdisplayskip`, and the short pair TeX takes
+instead when the line before the display ends left of the formula
+(TeXbook ch. 19; tex.web §1203). -/
+structure DisplaySkips where
+  above : SymGlue
+  below : SymGlue
+  aboveShort : SymGlue
+  belowShort : SymGlue
+  deriving Repr, BEq
+
+/-- The size files' display skips, verbatim, keyed by the class option's
+point size: size10.clo:49-52, size11.clo:49-52 and size12.clo:49-52 for
+the standard classes (KOMA's scrsize1Xpt.clo and memoir's mem1X.clo set the
+same rows), and extsizes' size8, size9, size14, size17 and size20.clo:13-16
+for beamer's other options (beamer.cls:155-166 inputs those files). Every
+file sets `\belowdisplayskip \abovedisplayskip`. -/
+def displaySkipsTable : Nat → DisplaySkips
+  | 8 | 9 => ⟨ptsGlue 800 400 400, ptsGlue 800 400 400, ptsGlue 0 300 0, ptsGlue 500 300 300⟩
+  | 10 => ⟨ptsGlue 1000 200 500, ptsGlue 1000 200 500, ptsGlue 0 300 0, ptsGlue 600 300 300⟩
+  | 11 => ⟨ptsGlue 1100 300 600, ptsGlue 1100 300 600, ptsGlue 0 300 0, ptsGlue 650 350 300⟩
+  | 12 => ⟨ptsGlue 1200 300 700, ptsGlue 1200 300 700, ptsGlue 0 300 0, ptsGlue 650 350 300⟩
+  | 14 => ⟨ptsGlue 1400 300 700, ptsGlue 1400 300 700, ptsGlue 0 400 0, ptsGlue 700 400 300⟩
+  | 17 => ⟨ptsGlue 1500 400 800, ptsGlue 1500 400 800, ptsGlue 0 400 0, ptsGlue 800 400 300⟩
+  | _ => ⟨ptsGlue 1700 500 800, ptsGlue 1700 500 800, ptsGlue 0 500 0, ptsGlue 1000 500 400⟩
+
+/-- The class options a display's size file is read from, each with the
+`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
+`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
+def displayOptions : List (Nat × Sp) :=
+  [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
+   (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
+
+/-- The option whose point size stands nearest a body size. -/
+def displaySizeFileOf (size : Sp) : Nat :=
+  (displayOptions.foldl (fun (best : Nat × Sp) (o : Nat × Sp) =>
+    if (size - Dim.pt o.1).natAbs < (size - Dim.pt best.1).natAbs then (o.1, o.2) else best)
+    (10, Dim.pt 10)).1
+
+/-- The display skips at a body size: the size file's own where the body is
+the option's point size or the `\normalsize` its file sets; otherwise the
+nearest file's, scaled with the type, as `listSkips` scales — LaTeX has no
+value there. -/
+def displaySkipsAt (size : Sp) : DisplaySkips :=
+  let f := displaySizeFileOf size
+  let s := displaySkipsTable f
+  let body := ((displayOptions.lookup f).getD (Dim.pt f))
+  if size == Dim.pt f || size == body then s
+  else
+    let base := (Dim.pt f).toNat
+    ⟨s.above.scale size base, s.below.scale size base, s.aboveShort.scale size base,
+     s.belowShort.scale size base⟩
+
+/-- `\abovedisplayskip` at a body size, the long skip. -/
+def displaySkipDefault (size : Sp) : SymGlue := (displaySkipsAt size).above
+
+/-- The four display-skip token names, as `\tokens` and `\setlength` spell
+them. -/
+def displaySkipAbove : String := "abovedisplayskip"
+def displaySkipBelow : String := "belowdisplayskip"
+def displaySkipAboveShort : String := "abovedisplayshortskip"
+def displaySkipBelowShort : String := "belowdisplayshortskip"
+
+/-- **The one resolving site for the display skips**: each of the four the
+document's token where declared, else the size file's at the governing
+size. Both backends read it (`Layout`'s display arm; the HTML base sheet
+emits the long pair's tokens with these defaults as their `var()`
+fallbacks). -/
+def displaySkipsFor (tokens : Tokens) (size : Sp) : DisplaySkips :=
+  let d := displaySkipsAt size
+  { above := (tokens.find? displaySkipAbove).getD d.above
+    below := (tokens.find? displaySkipBelow).getD d.below
+    aboveShort := (tokens.find? displaySkipAboveShort).getD d.aboveShort
+    belowShort := (tokens.find? displaySkipBelowShort).getD d.belowShort }
+
+/-- The long skip above a display; see `displaySkipsFor`. -/
+def displayAbove (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).above
+
+/-- The long skip below a display; see `displaySkipsFor`. -/
+def displayBelow (tokens : Tokens) (size : Sp) : SymGlue := (displaySkipsFor tokens size).below
+
+/-- **The display skips are the size file's** (`_exact`): an undeclared
+document at the standard classes' three bodies reads size10/11/12.clo's
+rows whole, the short pair included — the token layer adds nothing. -/
+theorem displaySkips_default_exact :
+    displaySkipsFor {} (Dim.pt 10) = displaySkipsTable 10 ∧
+    displaySkipsFor {} (Dim.pt 11) = displaySkipsTable 11 ∧
+    displaySkipsFor {} (Dim.pt 12) = displaySkipsTable 12 := ⟨rfl, rfl, rfl⟩
+
+/-- Where a display stands in its paragraph: the facts TeX's display
+placement reads (tex.web §1145-1146, §1199-1206) that the block's shape
+does not carry, recorded by elaboration from the source. `inPar`: text of
+the same paragraph precedes it, so `\predisplaysize` is measured on that
+paragraph's last line; otherwise amsmath's `$$` opens the paragraph and TeX
+sets an empty line first. `parEnd`: a paragraph break follows, so the next
+paragraph opens with its own separation; otherwise the text after the
+display continues the paragraph. `align`: a display alignment (`align`,
+`gather`), which §1206 always spaces with the long skips and whose rows
+amsmath sets on its strut. The default is the common case, a display
+inside a paragraph that runs on after it. -/
+structure DisplayCtx where
+  inPar : Bool := true
+  parEnd : Bool := false
+  align : Bool := false
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The role a display's context rides in: a name no document command can
+spell (it carries a hyphen, as `inParagraphRole` does). -/
+def DisplayCtx.role (c : DisplayCtx) : String :=
+  "display-" ++ (if c.inPar then "p" else "v") ++ (if c.parEnd then "e" else "c") ++
+    (if c.align then "a" else "f")
+
+/-- Every display context, for reading a role back. -/
+def DisplayCtx.all : List DisplayCtx :=
+  [false, true].flatMap fun p => [false, true].flatMap fun e => [false, true].map fun a =>
+    { inPar := p, parEnd := e, align := a }
+
+/-- The context a role names, if it is a display's. -/
+def DisplayCtx.ofRole? (n : String) : Option DisplayCtx :=
+  DisplayCtx.all.find? (·.role == n)
+
+/-- A display's role reads back as its context (`_exact`). -/
+theorem DisplayCtx.ofRole?_role_exact (c : DisplayCtx) : DisplayCtx.ofRole? c.role = some c := by
+  cases c with
+  | mk p e a => cases p <;> cases e <;> cases a <;> decide
 
 /-- A list opening a paragraph adds the class's `\partopsep` at the top
 level and its level-three reset below: 2, 3 and 3 pt at the three standard
@@ -1371,10 +1441,11 @@ walk's `2 × parskip`), and the HTML base stylesheet computes its margins
 from it — a backend that re-spelled a multiple would be a backend no
 theorem covers. The quantum differs per context (the print leading against
 the screen leading), which is exactly the statement: a boundary's multiple
-is declared once; each backend realizes it in its own context's unit. -/
+is declared once; each backend realizes it in its own context's unit.
+A display is not a row: its space is TeX's, measured from the baselines
+(`displaySkipsFor` and the page's interline rule), never a multiple. -/
 def rhythmGapQuanta : List (String × Nat) :=
-  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("display", 2),
-   ("trivlist", 2)]
+  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("trivlist", 2)]
 
 /-- The table and the tokens agree: each declared default gap is its row's
 multiple of the quantum, and the heading row is twice the peer row — the
@@ -1393,15 +1464,13 @@ theorem rhythm_table_exact (size : Sp) :
       = (floatSepDefault size).width.sp ∧
     ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum size
       = (headingBeforeDefault size).width.sp ∧
-    ((rhythmGapQuanta.lookup "display").getD 0 : Int) * rhythmQuantum size
-      = (displaySkipDefault size).width.sp ∧
     ((rhythmGapQuanta.lookup "trivlist").getD 0 : Int) * rhythmQuantum size
       = (parskipDefault size).width.sp + (trivlistSkipDefault size).width.sp ∧
     (rhythmGapQuanta.lookup "heading").getD 0
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
     simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
-      headingBeforeDefault, displaySkipDefault, trivlistSkipDefault, Dim.Length.ofSp,
+      headingBeforeDefault, trivlistSkipDefault, Dim.Length.ofSp,
       List.lookup] <;> omega
 
 /-- A role realized on a ground other than its palette's page: the role, the
@@ -5103,6 +5172,36 @@ theorem displayContent_projects (body : Array Block) (content : Array Inline)
     · simp only [Option.some.injEq] at h; subst h; exact heq
     · exact absurd h (by simp)
   · exact absurd h (by simp)
+
+/-- A display: the unnumbered shape (`displayContent?`) or a numbered
+equation. -/
+def Block.isDisplay : Block → Bool
+  | .center body => (displayContent? body).isSome
+  | .equation .. => true
+  | _ => false
+
+/-- The context a display block carries (`DisplayCtx.role`) with the display
+itself; an unwrapped display carries the default. -/
+def displayCtxOf (b : Block) : DisplayCtx × Block :=
+  match b with
+  | .role n body => match DisplayCtx.ofRole? n, body.toList with
+    | some c, [d] => (c, d)
+    | _, _ => ({}, b)
+  | _ => ({}, b)
+
+/-- Record where the display an arm pushed past `k` stands in its paragraph
+(`DisplayCtx`): whether the paragraph flushed just before it had text, and
+whether a paragraph break follows. A display in the default context stays
+unwrapped; anything else pushed stands as it is. -/
+def markDisplay (inPar parEnd : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
+  match blocks.size == k + 1, blocks.back? with
+  | true, some b =>
+    let (c, d) := displayCtxOf b
+    if !d.isDisplay then blocks else
+    let c := { c with inPar, parEnd }
+    blocks.pop.push (if c == {} then d else .role c.role #[d])
+  | _, _ => blocks
+
 /-- The frames the deck numbers: a `.frame` that is neither standout nor
 golden. Only `\maketitle` produces `.golden`, and moloch's `\maketitle` is
 `\frame[plain,noframenumbering]{\titlepage}` (beamerinnerthememoloch.dtx:314-320);
@@ -10230,6 +10329,32 @@ theorem markInParagraph_text (inPar : Bool) (k : Nat) :
     obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
     rw [Array.pop_push, blocksText_push, blocksText_push, inParagraph_text]
   · rfl
+  · rfl
+
+/-- A display's context is a name for its placement, never text: the
+display it wraps ships the census the wrapper does. -/
+private theorem displayCtxOf_text (acc : String) (b : Block) :
+    blockTextOne acc (displayCtxOf b).2 = blockTextOne acc b := by
+  unfold displayCtxOf
+  split
+  · split
+    · next hd => simp [blockTextOne, hd, blockTextList]
+    · rfl
+  · rfl
+
+/-- Marking a display keeps the sequence's census: whatever context it
+records, the block pushed is the display itself or that display in a role. -/
+theorem markDisplay_text (inPar parEnd : Bool) (k : Nat) :
+    Conserves blocksText (markDisplay inPar parEnd k) := fun xs => by
+  unfold markDisplay
+  split
+  · next b _ hb =>
+    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
+    dsimp only
+    split
+    · rfl
+    · rw [Array.pop_push, blocksText_push, blocksText_push]
+      split <;> simp [blockTextOne, blockTextList, displayCtxOf_text]
   · rfl
 
 private theorem blocksText_append_barSide (out : Array Block)
