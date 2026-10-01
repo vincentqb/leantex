@@ -1,4 +1,5 @@
 import Tests.Support
+import Tests.CancelAlignment
 
 open LeanTex.Core
 
@@ -185,12 +186,33 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let polygons (l : Layout.LineOut) := (polygonsAt l).map (·.2)
   let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
     (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
+  let glyphsAt (l : Layout.LineOut) :=
+    shippedBodyGlyphs { pages := #[{ lines := #[l] }], diags := #[] }
+  let targetGlyphs (l : Layout.LineOut) := (glyphsAt l).filter (·.scalar == '7')
+  -- Outline hulls conservatively enclose ink. Require a positive gap on
+  -- either axis against every mark; touching hulls do not count as clear.
+  let clearsInk (ink : CancelAlignment.InkBounds)
+      (placed : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+    !placed.isEmpty && placed.all fun pts =>
+      (CancelAlignment.polygonHull pts).any fun mark =>
+        mark.right < ink.left || ink.right < mark.left ||
+          mark.top < ink.bottom || ink.top < mark.bottom
   let arrowClearsTarget (l : Layout.LineOut) : Bool :=
-    let placed := polygonsAt l
-    match glyphX l "7" with
-    | some vx => !placed.isEmpty &&
-        placed.all fun (pen, pts) => pts.all fun (x, _) => pen + x < vx
-    | none => false
+    (targetGlyphs l).size == 1 &&
+      match CancelAlignment.targetInk fonts (targetGlyphs l) with
+      | .ok ink => clearsInk ink (CancelAlignment.polygonsAt l)
+      | .error _ => false
+  -- Compensated kerns preserve every other pen and the logical advance.
+  -- Increasing the run's raise moves its ink upward in the hull coordinates.
+  let moveTarget (l : Layout.LineOut) (dx dy : Dim.Sp) : Layout.LineOut :=
+    { l with segs := l.segs.flatMap fun seg => match seg with
+      | .run face color link w glyphs size leading underline raise ground attr =>
+        if String.ofList (glyphs.toList.map (·.2.1)) == "7" then
+          #[.gap dx false,
+            .run face color link w glyphs size leading underline (raise + dy) ground attr,
+            .gap (-dx) false]
+        else #[seg]
+      | _ => #[seg] }
   let shapes := [("square", "x"), ("wide", "abcdefabcdef"), ("tall", "\\int"),
     ("fraction", "\\frac{x}{\\frac{z}{w}}"), ("empty", "")]
   let sizes := [("text", "$", "$"), ("display", "\\[", "\\]"),
@@ -263,32 +285,79 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"cancel box: {label} ships a nonzero filled arrowhead"
         ((polygons line).back?.any fun pts => area2 pts != 0)
 
-  -- Move only the target origin one sp left of the painted arrow tip.
-  -- A script prefix makes the polygon's pen differ from the line origin;
-  -- reading the latter falsely certifies the moved target as clear.
-  let (doc, ds) := elabStr (dvDoc "\\usepackage[makeroom]{cancel}"
-    "$z^{\\cancelto{7}{x}y}$")
-  let lines := bodyLines (layoutOf fonts doc)
-  t "cancel box: clearance adversary sets one line without recovery"
-    (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
-  let some line := lines[0]? | return
-  let some vx := glyphX line "7" |
-    t "cancel box: clearance adversary ships its target" false
-    return
-  let placed := polygonsAt line
-  let tipX := placed.foldl
-    (fun m (pen, pts) => pts.foldl (fun m p => max m (pen + p.1)) m) line.x
-  t "cancel box: clearance adversary reaches a prefixed arrow"
-    (placed.any fun (pen, _) => pen > line.x)
-  let delta := tipX - 1 - vx
-  let moved := { line with segs := line.segs.flatMap fun seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
-      if String.ofList (glyphs.toList.map (·.2.1)) == "7" then
-        #[.gap delta false, seg, .gap (-delta) false]
-      else #[seg]
-    | _ => #[seg] }
-  t "cancel box: clearance adversary moves only the target"
-    (glyphX moved "7" == some (tipX - 1) && polygonsAt moved == placed &&
-      (metricRunsAt moved).filter (·.1 != "7") == (metricRunsAt line).filter (·.1 != "7"))
-  t "cancel box: clearance judge rejects a target inside the arrow's horizontal extent"
-    (arrowClearsTarget line && !arrowClearsTarget moved)
+  -- Move a decoded contour vertex strictly inside the actual arrowhead.
+  -- A single nonzero polygon outlines this fixture's 7: an interior head
+  -- neighbourhood around its contour vertex contains painted glyph ink,
+  -- unlike a hull-centre overlap which could sit in a glyph's empty region.
+  -- Two carrier glyphs expose a forgotten polygon pen even for a broad,
+  -- thick arrowhead; their actual advances determine the displacement.
+  for (shape, struck) in [("square", "x"), ("wide", "abcdefabcdef"),
+      ("steep", "\\frac{x}{\\frac{z}{w}}")] do
+    for opts in ["makeroom", "makeroom,thicklines", "overlap", "overlap,thicklines"] do
+      let label := s!"clearance adversary/{shape}/{opts}"
+      let (doc, ds) := elabStr (dvDoc s!"\\usepackage[{opts}]\{cancel}"
+        s!"$zz^\{\\cancelto\{7}\{{struck}}y}$")
+      let lines := bodyLines (layoutOf fonts doc)
+      t s!"cancel box: {label} sets one line without recovery"
+        (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
+      let some line := lines[0]? | continue
+      let #[g] := targetGlyphs line |
+        t s!"cancel box: {label} ships one target glyph" false
+        continue
+      let .ok ink := CancelAlignment.targetInk fonts #[g] |
+        t s!"cancel box: {label} has decoded target ink" false
+        continue
+      let some font := fonts.fonts[g.face]? | continue
+      let some cmds := font.inkSrc.get.cmdsAt g.glyph |
+        t s!"cancel box: {label} decodes its contour" false
+        continue
+      let some (Ink.Cmd.move gx gy) := cmds[0]? |
+        t s!"cancel box: {label} starts at a contour vertex" false
+        continue
+      let outline := cmds.flatMap CancelAlignment.outlinePoints
+      t s!"cancel box: {label} witnesses a single painted polygon"
+        (font.unitsPerEm > 0 && cmds.size ≥ 3 && area2 outline != 0 &&
+          (cmds.extract 1 cmds.size).all (fun cmd => match cmd with
+            | .line _ _ => true
+            | _ => false))
+      let placed := CancelAlignment.polygonsAt line
+      let #[head] := placed.filter (·.size == 3) |
+        t s!"cancel box: {label} ships one triangular head" false
+        continue
+      let some headInk := CancelAlignment.polygonHull head | continue
+      let (cx, cy) := head.foldl (fun (x, y) p => (x + p.1, y + p.2)) (0, 0)
+      let inside := (cx / 3, cy / 3)
+      let sides : Array Int := head.zipIdx.map fun (p, i) =>
+        let q := head[(i + 1) % head.size]!
+        (q.1 - p.1) * (inside.2 - p.2) - (q.2 - p.2) * (inside.1 - p.1)
+      t s!"cancel box: {label} chooses strict head interior"
+        (sides.all (· > 0) || sides.all (· < 0))
+      let dx := inside.1 - (g.x + gx * g.size / (font.unitsPerEm : Int))
+      let dy := inside.2 - (-g.y + gy * g.size / (font.unitsPerEm : Int))
+      let moved := moveTarget line dx dy
+      t s!"cancel box: {label} moves only target ink in both axes"
+        (dx != 0 && dy != 0 &&
+          targetGlyphs moved == #[{ g with x := g.x + dx, y := g.y - dy }] &&
+          CancelAlignment.targetInk fonts (targetGlyphs moved) == .ok (ink.shift dx dy) &&
+          CancelAlignment.polygonsAt moved == placed &&
+          (glyphsAt moved).filter (·.scalar != '7') == (glyphsAt line).filter (·.scalar != '7'))
+      let wrongOrigin := (polygons line).map fun pts =>
+        pts.map fun (x, y) => (line.x + x, y - line.y)
+      t s!"cancel box: {label} distinguishes polygon pen from line origin"
+        ((polygonsAt line).any (fun (pen, _) => pen > line.x) &&
+          clearsInk (ink.shift dx dy) wrongOrigin)
+      t s!"cancel box: {label} accepts clear ink and rejects painted overlap"
+        (arrowClearsTarget line && !arrowClearsTarget moved)
+
+      -- A vertically clear target need not clear the arrow horizontally.
+      -- The gap comes from the actual target face; zero gap must fail.
+      let gap := font.math.map (fun m =>
+        m.overbarVerticalGap * g.size / (font.unitsPerEm : Int)) |>.getD 0
+      let centredX := (headInk.left + headInk.right - ink.left - ink.right) / 2
+      let touching := moveTarget line centredX (headInk.top - ink.bottom)
+      let above := moveTarget line centredX (headInk.top + gap - ink.bottom)
+      t s!"cancel box: {label} accepts positive vertical clearance with horizontal overlap"
+        (gap > 0 && arrowClearsTarget above &&
+          ink.left + centredX < headInk.right && headInk.left < ink.right + centredX)
+      t s!"cancel box: {label} rejects touching ink hulls"
+        (!arrowClearsTarget touching)
