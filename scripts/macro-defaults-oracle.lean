@@ -42,6 +42,12 @@ case compares real PDF text from both CLIs, with the repository's Fira Sans
 and Fira Math faces. Wrapper \meaning pins and intentional paragraph-scan
 errors are explicitly reference-only: no PDF equivalence is claimed for
 an error, and a generic failed reference cannot satisfy an error pin.
+
+The hook-scope cases also pin deferred execution: hook registration does
+not execute its payload; begin-document and end-preamble payloads change
+the state the body reads. Actual braces, \begingroup and \bgroup restore
+local flags without inserting a paragraph break. Run just these eight
+cases with --case hook-scope.
 -/
 
 namespace MacroDefaultsOracle
@@ -114,8 +120,41 @@ private def rawGroupCases : Array Probe :=
         r"WRAPPER=macro:->\@protected@testopt \probe \\probe {" ++ captured ++ "}",
         "ARG-DEFAULT=" ++ captured, "ARG-EXPLICIT=" ++ captured] }
 
+-- Independently measured LuaLaTeX PDF text; the hermetic artifact guards
+-- in Tests.MacroHookScope use literal expected documents for these cases.
+private def hookScopeCases : Array Probe := #[
+  textCase "hook-scope-begin-hook-flag"
+    r"\newif\ifprobeFlag\AtBeginDocument{\probeFlagtrue}"
+    r"\ifprobeFlag T\else F\fi" "T",
+  textCase "hook-scope-begin-hook-flag-timing"
+    (r"\newif\ifprobeFlag\AtBeginDocument{\probeFlagtrue}" ++
+      r"\ifprobeFlag\def\probeBefore{BAD}\else\def\probeBefore{OK}\fi")
+    r"\probeBefore/\ifprobeFlag T\else F\fi" "OK/T",
+  textCase "hook-scope-end-hook-flag-timing"
+    (r"\usepackage{etoolbox}\newif\ifprobeFlag\AtEndPreamble{\probeFlagtrue}" ++
+      r"\ifprobeFlag\def\probeBefore{BAD}\else\def\probeBefore{OK}\fi")
+    r"\probeBefore/\ifprobeFlag T\else F\fi" "OK/T",
+  textCase "hook-scope-begin-hook-optional-binding"
+    r"\AtBeginDocument{\newcommand{\probe}[1][D]{(#1)}}"
+    r"\probe/\probe[E]/\probe[]" "(D)/(E)/()",
+  textCase "hook-scope-begin-hook-flag-read"
+    r"\newif\ifprobeFlag\AtBeginDocument{\ifprobeFlag T\else F\fi}\probeFlagtrue"
+    "/T" "T/T",
+  textCase "hook-scope-brace-flag"
+    r"\newif\ifprobeFlag"
+    r"{\probeFlagtrue\ifprobeFlag T\else F\fi}/\ifprobeFlag T\else F\fi" "T/F",
+  textCase "hook-scope-begingroup-flag"
+    r"\newif\ifprobeFlag"
+    (r"\begingroup\probeFlagtrue\ifprobeFlag T\else F\fi" ++
+      r"\endgroup/\ifprobeFlag T\else F\fi") "T/F",
+  textCase "hook-scope-bgroup-flag"
+    r"\newif\ifprobeFlag"
+    r"\bgroup\probeFlagtrue\ifprobeFlag T\else F\fi\egroup/\ifprobeFlag T\else F\fi" "T/F"
+]
+
 private def cases : Array Probe :=
-  rawGroupCases ++ family "newcommand" ++ family "renewcommand" ++ family "providecommand" ++ #[
+  hookScopeCases ++ rawGroupCases ++ family "newcommand" ++
+  family "renewcommand" ++ family "providecommand" ++ #[
     textCase "provide-existing-optional"
       (r"\newif\ifprobeFlag\probeFlagfalse\newcommand{\probe}[1][OLD]{(#1)}" ++
         r"\providecommand{\probe}[1][\probeFlagtrue]{BAD#1}")
