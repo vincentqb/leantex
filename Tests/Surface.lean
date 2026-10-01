@@ -1774,12 +1774,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Parse.parse file (Lex.lex file src).1).1
   let (inDoc, inDs) := Elab.runRaws "main.tex"
     #[Parse.Raw.env (Parse.inputEnv "sub.tex")
-        (sub "sub.tex" "\\begin{mystery}kept\\end{mystery}") ⟨1, 1⟩]
+        (sub "sub.tex" "\\begin{mystery}kept\\end{mystery}") { line := 1, col := 1 }]
   t "input body diagnostics name the included file"
     ((inDs.filterMap (·.span)).any (·.file == "sub.tex") &&
      inDoc.body == #[.para #[.text "kept"]])
   let (_, preDs) := Elab.runRaws "main.tex"
-    (#[Parse.Raw.env (Parse.inputEnv "pre.tex") (sub "pre.tex" "\\mystery{x}") ⟨1, 1⟩] ++
+    (#[Parse.Raw.env (Parse.inputEnv "pre.tex") (sub "pre.tex" "\\mystery{x}")
+      { line := 1, col := 1 }] ++
       sub "main.tex" "\\begin{document}y\\end{document}")
   t "input preamble diagnostics name the included file"
     ((preDs.filterMap (·.span)).any (·.file == "pre.tex") &&
@@ -5057,7 +5058,7 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- readers, so `decide` cannot).
   -- Every slot of the family, the whole family and nothing else.
   for (cn, pre) in Compat.themeAsking do
-    let pos : Pos := ⟨1, 1⟩
+    let pos : Pos := { line := 1, col := 1 }
     t s!"\\{cn} asks the input path for {pre}<name>.sty"
       (Compat.localStyCandidates
         #[.ctrl cn pos, .group #[.word "venue" pos] pos] == #[pre ++ "venue"])
@@ -6057,7 +6058,7 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dsN ← run "outer"
   t "a nested input's E0502 names the input file it sits in"
     (dsN.any fun d => d.code == "E0502" &&
-      d.span.any fun sp => sp.file.endsWith "inner.tex" && sp.pos == ⟨2, 1⟩)
+      d.span.any fun sp => sp.file.endsWith "inner.tex" && sp.pos == { line := 2, col := 1 })
   -- E0503's half: the marker's span is delivered beside the Doc
   -- (`Elab.ReqSpans`), so the driver's missing-file diagnostic can name
   -- the `\bibliography` line — and the Doc itself stays span-free (the
@@ -6078,7 +6079,7 @@ def citeNoBibChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ds := dvE (dvDoc "" "Hello \\cite{nokey}.")
   t "a cite with no bibliography fires W0351 at the cite"
     ((ds.filter (·.code == "W0351")).size == 1 &&
-     ds.any fun d => d.code == "W0351" && d.span == some ⟨"t", ⟨3, 7⟩⟩)
+     ds.any fun d => d.code == "W0351" && d.span == some ⟨"t", { line := 3, col := 7 }⟩)
   t "one diagnostic per distinct key, at its first cite"
     (((dvE (dvDoc "" "\\cite{a} and \\cite{a,b} again \\cite{b}")).filter
       (·.code == "W0351")).size == 2)
@@ -6702,7 +6703,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- The withdrawal decision: a refused request the subset can stand in for
   -- is withdrawn with one note at its span, in the tool's words where it
   -- ran; any other refusal stands.
-  let span : Span := ⟨"t", ⟨3, 1⟩⟩
+  let span : Span := ⟨"t", { line := 3, col := 1 }⟩
   let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
   let w := Boundary.withdraw "lualatex" #["aa"]

@@ -1488,7 +1488,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       !(Ir.altDiags bare).isEmpty)
   t "the judge names the image's own line"
     ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any fun d =>
-      d.code == "W0376" && d.span == some ⟨"t", ⟨3, 1⟩⟩)
+      d.code == "W0376" && d.span == some ⟨"t", { line := 3, col := 1 }⟩)
   -- The picture face: judged by the driver after fulfilment, in the
   -- author's words (the source spelling is the engine's cache key).
   let door := "\\pictures{ tool = lualatex }\n"

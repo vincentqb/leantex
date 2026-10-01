@@ -593,7 +593,7 @@ private structure St where
   defines it (fancyhdr manual §2: `\lhead` *redefines* the field). -/
   head : Array (Nat × String) := #[]
   foot : Array (Nat × String) := #[]
-  runPos : Pos := ⟨1, 1⟩
+  runPos : Pos := { line := 1, col := 1 }
   runFrom : Nat := 1
   /-- Upcoming groups that are macro bodies, where `#k` names a parameter:
   one for a `\define`/`\newcommand` body, two for `\newenvironment`'s begin
@@ -8355,7 +8355,7 @@ span. Its first line names options left unprocessed at the end of the load,
 even when `\endinput` or a false branch removes every process request. -/
 private def spliceStyOptions (pkg : String) (passed : List String) (raws : Array Raw) :
     Array Raw := Id.run do
-  let p : Pos := ⟨1, 1⟩
+  let p : Pos := { line := 1, col := 1 }
   let names := passed.map (·.replace " " "") |>.filter (!·.isEmpty)
   let mut out : Array Raw := #[]
   unless names.isEmpty do

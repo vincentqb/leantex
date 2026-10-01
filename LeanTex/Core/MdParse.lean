@@ -1265,7 +1265,7 @@ def charsOf (lines : Array (String × Pos)) : Chars := Id.run do
     let mut col := p.col
     for ch in s.toList do
       cs := cs.push ch
-      ps := ps.push ⟨p.line, col⟩
+      ps := ps.push { p with col }
       col := col + 1
   return ⟨cs, ps⟩
 
@@ -1406,7 +1406,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
   for li in [0:lines.size] do
     let some ln := lines[li]? | continue
     let cs := ln.cs
-    let lpos : Pos := ⟨ln.no, 1⟩
+    let lpos : Pos := { line := ln.no, col := 1 }
     -- One past the line's last character that is not a space or a tab: the
     -- line is blank from `i` exactly when `i ≥ inkEnd`.
     let inkEnd := Id.run do
@@ -1660,8 +1660,8 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       -- block start: `foo` then `    # bar` is one paragraph. Tested for
       -- block starts first, the indented line became an ATX heading.
       leaf := .para (match leaf with
-        | .para pls => pls.push (sliceStr cs j cs.size, ⟨ln.no, j + 1⟩)
-        | _ => #[(sliceStr cs j cs.size, ⟨ln.no, j + 1⟩)])
+        | .para pls => pls.push (sliceStr cs j cs.size, { line := ln.no, col := j + 1 })
+        | _ => #[(sliceStr cs j cs.size, { line := ln.no, col := j + 1 })])
     else if let some (level, k) := atxAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1675,7 +1675,8 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
         else if hashes > 0 && (rc.drop hashes).headD 'x' == ' ' then
           rstrip (String.ofList (raw.toList.take (raw.length - hashes)))
         else raw
-      let (inl, ds2) := inlines file (charsOfOne (body.trimAscii.toString) ⟨ln.no, k + 1⟩)
+      let (inl, ds2) := inlines file
+        (charsOfOne (body.trimAscii.toString) { line := ln.no, col := k + 1 })
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
     else if leaf.isPara && (setextAt cs j).isSome then
@@ -1707,7 +1708,7 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
       -- block inside a quote or an item starts after the container prefix,
       -- and a checker reading the refused text back from the source must
       -- land on the tag.
-      diags := diags.push (refuse file .rawHtml ⟨ln.no, j + 1⟩)
+      diags := diags.push (refuse file .rawHtml { line := ln.no, col := j + 1 })
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
@@ -1715,8 +1716,8 @@ def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run 
     else
       let text := sliceStr cs j cs.size
       match leaf with
-      | .para pls => leaf := .para (pls.push (text, ⟨ln.no, j + 1⟩))
-      | _ => leaf := .para #[(text, ⟨ln.no, j + 1⟩)]
+      | .para pls => leaf := .para (pls.push (text, { line := ln.no, col := j + 1 }))
+      | _ => leaf := .para #[(text, { line := ln.no, col := j + 1 })]
     sawBlank := false
   -- End of input: the leaf, then every frame.
   match leaf with
