@@ -1404,6 +1404,48 @@ def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (mathTextLeavesList #[] body.toList == expectedLeaves)
 
 
+/-- A discarded enclosing text family cannot suppress the unavailable
+symbol alphabet's note. Compare the shipped glyph and typed MathML pair,
+with an actually retained text family as the silent positive control. -/
+def mathSymbolResetAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let fs ← mathTextFaces
+  let evidence (source : String) :
+      Array (Nat × Char) × Array (String × String) × Array Diag :=
+    let (raw, ds) := Elab.run "synthetic.tex" ("$" ++ source ++ "$")
+    let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
+    let out := layoutOf fs doc
+    let glyphs := (bodyLines out).flatMap fun (line : Layout.LineOut) =>
+      line.segs.flatMap fun seg =>
+      match seg with
+      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
+      | _ => #[]
+    let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
+    (glyphs, mathTextLeavesList #[] body.toList, ds ++ ads ++ out.diags)
+  let bare := evidence "\\symsf{5}"
+  let nested := evidence "\\mathbf{\\symsf{5}}"
+  let styled := evidence "\\mathbf{5}"
+  let notes (ds : Array Diag) := (ds.filter (·.code == "N0018")).map (·.subject)
+  check ref "symbol reset accounting: sans digits are unavailable"
+    (!fs.mathAlphabets.remaps .sf .digits)
+  for (label, result) in [("bare", bare), ("nested", nested), ("styled", styled)] do
+    check ref s!"symbol reset accounting: {label} reaches the artifacts without recovery"
+      (!result.2.2.any fun d =>
+        d.severity == .error || d.code == "W0012" || d.code == "W0009")
+  check ref "symbol reset accounting: bare request ships ordinary math 5"
+    (bare.1 == #[(6, '5')] && bare.2.1 == #[("5", "")])
+  check ref "symbol reset accounting: nested request ships the identical face, scalar and MathML"
+    (nested.1 == bare.1 && nested.2.1 == bare.2.1)
+  check ref "symbol reset accounting: bare loss is named once"
+    (notes bare.2.2 == #[some "math-alpha:sf"])
+  check ref "symbol reset accounting: discarded outer style cannot silence the same loss"
+    (notes nested.2.2 == notes bare.2.2)
+  check ref "symbol reset accounting: retained style selects the real bold text face"
+    (styled.1 == #[(1, '5')] && styled.2.1 ==
+      #[("5", "font-family: var(--font-body); font-weight: 700")])
+  check ref "symbol reset accounting: retained style carries no missing alphabet note"
+    (notes styled.2.2 == #[])
+
+
 /-- M6's first slice, pinned end to end: the MATH constants read from the
 shipped face, the box-is-box widths in sp (a math box's advance is the sum
 of its atoms plus the spacing the table gives — recomputed here from the
@@ -1417,6 +1459,7 @@ survives — never its markup (`Ir.floorInk_mem`). -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathTextAmbientChecks ref
   mathSymbolResetChecks ref
+  mathSymbolResetAccountingChecks ref
   let t := check ref
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
