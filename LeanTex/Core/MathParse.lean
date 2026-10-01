@@ -652,6 +652,16 @@ private def containUnknown (toks : Array MTok) :
   | .error e => .error e
   | .ok (keep, names) => .ok (keptToks toks keep, names)
 
+private theorem containUnknown_accounts (toks : Array MTok) :
+    Loop.OnSuccess (fun r => ∀ w ∈ r.2, ContainedName w) (containUnknown toks) := by
+  unfold containUnknown
+  have hc := containPlan_accounts toks
+  cases h : containPlan toks with
+  | error _ => trivial
+  | ok r =>
+    rw [h] at hc
+    exact hc
+
 /-- `keptToks_mem` where the parser reads it: whatever plan `containPlan`
 made, the stream `parseToks` consumes is drawn from the author's own
 tokens. -/
@@ -954,6 +964,108 @@ private def skipNamedArg (toks : Array MTok) (i : Nat) (cmd : String) :
   let some .closeGrp := toks[j]? | throw "an unbalanced group"
   return (name, j + 1)
 
+/-- Parsing may name a presentation loss, but containment alone names a
+reduced construct. This safety invariant needs no consumed-prefix claim. -/
+private def ParserNotes (notes : Array Note) : Prop :=
+  ∀ w, Note.constructFloored w ∉ notes
+
+private theorem parserNotes_push (notes : Array Note) (note : Note)
+    (hn : ParserNotes notes) (hne : ∀ w, Note.constructFloored w ≠ note) :
+    ParserNotes (notes.push note) := by
+  intro w hw
+  rcases Array.mem_push.mp hw with hw | hw
+  · exact hn w hw
+  · exact hne w hw
+
+private theorem parserNotes_append (a b : Array Note)
+    (ha : ParserNotes a) (hb : ParserNotes b) : ParserNotes (a ++ b) := by
+  intro w hw
+  rcases Array.mem_append.mp hw with hw | hw
+  · exact ha w hw
+  · exact hb w hw
+
+/-- The four upright-text aliases share one scan. Nested braces group the
+word; symbols contribute their scalar, and styling contributes a loss note.
+The caller's note accumulator passes through without a second array. -/
+private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
+    (notes0 : Array Note) : Except String (String × Nat × Array Note) := do
+  let mut j := i + 1
+  if let some .ws := toks[j]? then j := j + 1
+  let some .openGrp := toks[j]? | throw s!"{tokName tok} without its group"
+  j := j + 1
+  let mut s := ""
+  let mut depth := 0
+  let mut notes := notes0
+  for _ in [j:toks.size + 1] do
+    match toks[j]? with
+    | some (.ch c) =>
+      s := s.push c
+      j := j + 1
+    | some .ws =>
+      s := s.push ' '
+      j := j + 1
+    | some .openGrp =>
+      depth := depth + 1
+      j := j + 1
+    | some .closeGrp =>
+      if depth == 0 then break
+      depth := depth - 1
+      j := j + 1
+    | some (.ctrl n) =>
+      -- A control word consumes its following space, as in LaTeX.
+      let afterCmd (k : Nat) : Nat := if toks[k]? == some .ws then k + 1 else k
+      if n == "textcolor" then
+        let (name, j') ← skipNamedArg toks (j + 1) n
+        notes := notes.push (.styleDropped s!"the colour '{name}'")
+        j := j'
+      else if textStyleCtrl.contains n then
+        notes := notes.push (.styleDropped s!"'\\{n}'")
+        j := afterCmd (j + 1)
+      else if textNeutralCtrl.contains n then
+        j := afterCmd (j + 1)
+      else
+        match ctrlAtom.lookup n with
+        | some (_, c) =>
+          s := s.push c
+          j := afterCmd (j + 1)
+        | none =>
+          match ctrlWord.lookup n with
+          | some w =>
+            s := s ++ w
+            j := afterCmd (j + 1)
+          | none => throw s!"\\{n} inside {tokName tok}"
+    | some t => throw s!"{tokName t} inside {tokName tok}"
+    | none => throw "an unbalanced group"
+  let some .closeGrp := toks[j]? | throw "an unbalanced group"
+  return (s, j + 1, notes)
+
+private theorem readTextGroup_notes (toks : Array MTok) (i : Nat) (tok : MTok)
+    (notes : Array Note) (hn : ParserNotes notes) :
+    Loop.OnSuccess (fun r => ParserNotes r.2.2) (readTextGroup toks i tok notes) := by
+  unfold readTextGroup
+  dsimp only
+  split <;> split
+  all_goals first
+    | trivial
+    | refine Loop.except_bind_of_inv
+        (fun (st : Nat × String × Nat × Array Note) => ParserNotes st.2.2.2)
+        _ _ _ (Loop.except_forIn_range_inv _ _ _ _ _ hn ?_) ?_
+  all_goals try
+    intro st hst
+    split
+    · exact hst
+    · trivial
+  all_goals
+    intro _ _ _ st hst
+    repeat' first
+      | exact hst
+      | exact True.intro
+      | exact parserNotes_push _ _ hst (by intro w h; cases h)
+      | (refine Loop.except_bind_of_inv (fun _ => True) _ _ _
+            (Loop.onSuccess_true _) ?_
+         intro r _)
+      | split
+
 /-- One atom joins the list: on its own when nothing is pending, otherwise
 through the pending chain's resolution. Every site that emits an atom goes
 through here, so a new one cannot land an atom past a pending script,
@@ -1000,6 +1112,23 @@ padded with empty cells")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
   return (.grid kind (rs.pad rs.maxCols), notes)
 
+private theorem buildGrid_notes (kind : GridKind) (rows : Array (Array MList)) :
+    ParserNotes (buildGrid kind rows).2 := by
+  unfold buildGrid
+  refine Loop.bind_of_inv ParserNotes (fun (r : MNucleus × Array Note) => ParserNotes r.2)
+    _ _ (Loop.forIn_range_inv _ _ _ _ _ (by simp [ParserNotes]) ?_) ?_
+  · intro _ _ _ notes hn
+    dsimp only
+    split
+    · exact parserNotes_push _ _ hn (by intro w h; cases h)
+    · exact hn
+  · intro notes hn
+    dsimp only
+    repeat' first
+      | exact hn
+      | exact parserNotes_push _ _ hn (by intro w h; cases h)
+      | split
+
 /-- One amsmath sized-delimiter atom: read its delimiter (as `\left` reads
 one), join the `.big` atom onto the running cell, and report the index past
 it. Lifted out of `parseToks` so the parse knot stays within its heartbeat
@@ -1023,13 +1152,13 @@ amsmath's `\if@display`, which picks the modulo commands' leading kerns. -/
 private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Bool)
     (env : Env) :
     Except String (MList × Array Note) := do
-  let mut stack : Array PFrame := #[]
+  let mut stack : Array PFrame := match top with
+    | some kind => #[{ acc := #[], overNum := none, dests := [.grid kind none #[] #[]] }]
+    | none => #[]
   let mut acc : Array MItem := #[]
   let mut overNum : Option (Array MItem) := none
   let mut pending : List Dest := []
   let mut notes : Array Note := #[]
-  if let some kind := top then
-    stack := stack.push { acc := #[], overNum := none, dests := [.grid kind none #[] #[]] }
   let mut i := 0
   for _ in [0:toks.size] do
     let some tok := toks[i]? | break
@@ -1249,66 +1378,14 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       -- \text sets its letters upright as an Ord atom; \operatorname is
       -- the same word as an Op atom, binding with a thin space like the
       -- built-in function names (TeXbook p. 162's class).
-      --
-      -- The body is one upright word, so a group inside it is grouping and
-      -- nothing more, a known symbol contributes its scalar, and a style or
-      -- colour command contributes its letters with the change named as
-      -- lost — the mathematics is what a reader needs, and a formula that
-      -- degraded whole over an inner `\textbf` gave them neither.
-      let mut j := i + 1
-      if let some .ws := toks[j]? then j := j + 1
-      let some .openGrp := toks[j]? | throw s!"{tokName tok} without its group"
-      j := j + 1
-      let mut s := ""
-      let mut depth := 0
-      for _ in [j:toks.size + 1] do
-        match toks[j]? with
-        | some (.ch c) =>
-          s := s.push c
-          j := j + 1
-        | some .ws =>
-          s := s.push ' '
-          j := j + 1
-        | some .openGrp =>
-          depth := depth + 1
-          j := j + 1
-        | some .closeGrp =>
-          if depth == 0 then break
-          depth := depth - 1
-          j := j + 1
-        | some (.ctrl n) =>
-          -- A space after a control word is the word's, as in LaTeX: the
-          -- token stream keeps it, so each arm below steps over it.
-          let afterCmd (k : Nat) : Nat := if toks[k]? == some .ws then k + 1 else k
-          if n == "textcolor" then
-            let (name, j') ← skipNamedArg toks (j + 1) n
-            notes := notes.push (.styleDropped s!"the colour '{name}'")
-            j := j'
-          else if textStyleCtrl.contains n then
-            notes := notes.push (.styleDropped s!"'\\{n}'")
-            j := afterCmd (j + 1)
-          else if textNeutralCtrl.contains n then
-            j := afterCmd (j + 1)
-          else
-            match ctrlAtom.lookup n with
-            | some (_, c) =>
-              s := s.push c
-              j := afterCmd (j + 1)
-            | none =>
-              match ctrlWord.lookup n with
-              | some w =>
-                s := s ++ w
-                j := afterCmd (j + 1)
-              | none => throw s!"\\{n} inside {tokName tok}"
-        | some t => throw s!"{tokName t} inside {tokName tok}"
-        | none => throw "an unbalanced group"
-      let some .closeGrp := toks[j]? | throw "an unbalanced group"
+      let (s, j, notes') ← readTextGroup toks i tok notes
+      notes := notes'
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
       let atom : MItem := .atom cls (.word s) .nil .nil false
       let (acc', pending') ← joinAtom acc pending atom
       acc := acc'
       pending := pending'
-      i := j + 1
+      i := j
     | .ctrl n =>
       if n == "textcolor" then
         -- `\textcolor{c}{body}`: the colour is a name, not content, so its
@@ -1427,6 +1504,37 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
     let (grid, gnotes) := buildGrid kind rows
     return (.cons (.atom .ord grid .nil .nil false) .nil, notes ++ gnotes)
 
+private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
+    (display : Bool) (env : Env) :
+    Loop.OnSuccess (fun r => ParserNotes r.2) (parseToks toks top display env) := by
+  unfold parseToks
+  dsimp only
+  refine Loop.except_bind_of_inv
+    (fun (st : Array PFrame × Array MItem × Option (Array MItem) × List Dest ×
+      Array Note × Nat) => ParserNotes st.2.2.2.2.1)
+    _ _ _ (Loop.except_forIn_range_inv _ _ _ _ _ (by simp [ParserNotes]) ?_) ?_
+  · intro _ _ _ st hn
+    repeat' first
+      | exact hn
+      | exact True.intro
+      | exact parserNotes_push _ _ hn (by intro w h; cases h)
+      | exact parserNotes_append _ _ hn (buildGrid_notes _ _)
+      | (refine Loop.except_bind_of_inv _ _ _ _
+            (readTextGroup_notes _ _ _ _ hn) ?_
+         intro r hr
+         exact Loop.except_bind_of_inv (fun _ => True) _ _ _
+           (Loop.onSuccess_true _) (fun _ _ => hr))
+      | (refine Loop.except_bind_of_inv (fun _ => True) _ _ _
+            (Loop.onSuccess_true _) ?_
+         intro r _)
+      | split
+  · intro st hn
+    repeat' first
+      | exact hn
+      | exact True.intro
+      | exact parserNotes_append _ _ hn (buildGrid_notes _ _)
+      | split
+
 /-- Parse a formula's raw body into a math list, or name the construct that
 puts it outside this slice. Notes name ragged alignment rows (an `array`
 inside the formula) and each construct contained rather than modelled.
@@ -1444,6 +1552,45 @@ def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
   if let some n := names[0]? then
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
+
+/-- Every contained construct named by a successful formula came through
+the containment policy: its control word is not modelled and its naming
+arguments have a declared count. Text scans, grids, and the parser loop
+preserve this provenance, for every document environment. -/
+theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
+    (l : MList) (notes : Array Note) {env : Env}
+    (h : parseMath display raws env = .ok (l, notes)) :
+    ∀ w, Note.constructFloored w ∈ notes →
+      ∃ n, w = "\\" ++ n ∧ knownCtrl n = false ∧
+        (Ir.floorNamedArgs.lookup n).isSome := by
+  have hp : Loop.OnSuccess
+      (fun r => ∀ w, Note.constructFloored w ∈ r.2 → ContainedName w)
+      (parseMath display raws env) := by
+    unfold parseMath
+    refine Loop.except_bind_of_inv (fun _ => True) _ _ _
+      (Loop.onSuccess_true _) ?_
+    intro toks _
+    refine Loop.except_bind_of_inv _ _ _ _ (containUnknown_accounts toks) ?_
+    intro contained hc
+    refine Loop.except_bind_of_inv _ _ _ _
+      (parseToks_notes contained.1 none display env) ?_
+    intro parsed hn
+    have hnotes : ∀ w,
+        Note.constructFloored w ∈ contained.2.map Note.constructFloored ++ parsed.2 →
+        ContainedName w := by
+      intro w hw
+      rcases Array.mem_append.mp hw with hw | hw
+      · rcases Array.mem_map.mp hw with ⟨n, hmem, heq⟩
+        cases Note.constructFloored.inj heq
+        exact hc _ hmem
+      · exact (hn w hw).elim
+    dsimp only
+    repeat' first
+      | exact hnotes
+      | exact True.intro
+      | split
+  rw [h] at hp
+  exact hp
 
 /-- Parse an alignment environment's body (`align`/`gather` rows split at
 `&` and `\\`) into one grid formula. Containment applies as it does to a
