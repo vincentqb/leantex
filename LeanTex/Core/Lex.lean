@@ -74,23 +74,19 @@ private def newlines (cs : Array Char) (a b : Nat) : Nat := Id.run do
       if cs[j] == '\n' then n := n + 1
   return n
 
-/-- What a whitespace run holding `n` end-of-lines means, by TeX's reading
-state when it begins (TeXbook ch. 8): mid-line (`M`), one end-of-line is
-a space and a blank line a paragraph; at the start of a line (`N`, where
-a comment leaves the reader once it has discarded its own end-of-line),
-indentation is skipped and one end-of-line is already a paragraph. -/
-def wsTok (lineStart : Bool) (n : Nat) : Option Tok :=
-  if lineStart then (if n ≥ 1 then some .par else none)
-  else (if n ≥ 2 then some .par else some .space)
+/-- TeXbook ch. 8: mid-line whitespace supplies one space, followed by a
+paragraph token for each blank line. At line start, indentation is skipped
+and every end-of-line is a paragraph. Keeping the whole token run matters
+inside definitions, where `\ifx` distinguishes spaces and repeated `\par`. -/
+def wsTokens (lineStart : Bool) (n : Nat) : List Tok :=
+  if lineStart then List.replicate n .par
+  else .space :: List.replicate (n - 1) .par
 
-/-- A blank line is a paragraph break in either state: the comment that
-put the reader at line start hid its own end-of-line, not the blank line
-after it — the run it leaves reads as the run the text would have seen,
-one end-of-line longer. -/
-theorem blank_line_par_agree (n : Nat) (h : 1 ≤ n) :
-    wsTok true n = wsTok false (n + 1) := by
-  have h' : n + 1 ≥ 2 := by omega
-  simp [wsTok, h, h']
+/-- A comment removes its own end-of-line, including the space mid-line
+text would have supplied, but preserves every subsequent paragraph token. -/
+theorem blank_line_par_agree (n : Nat) :
+    (wsTokens false (n + 1)).tail = wsTokens true n := by
+  simp [wsTokens]
 
 private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
   if i + ps.size > cs.size then
@@ -143,7 +139,7 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
       let here := pos
       if isWs c then
         let j := scanWhile cs i isWs
-        if let some tok := wsTok false (newlines cs i j) then
+        for tok in wsTokens false (newlines cs i j) do
           toks := toks.push ⟨tok, here⟩
         pos := posOver cs i j pos
         i := j
@@ -151,7 +147,7 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
         let j := scanWhile cs i (· != '\n')
         let j := min (j + 1) cs.size
         let k := scanWhile cs j isWs
-        if let some tok := wsTok true (newlines cs j k) then
+        for tok in wsTokens true (newlines cs j k) do
           toks := toks.push ⟨tok, posOver cs i j pos⟩
         pos := posOver cs i k pos
         i := k
@@ -211,9 +207,10 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
               -- so eating the space would turn `a \middot b` into "a ·b".
               unless (textSymbols.lookup name).isSome do
                 let k := scanWhile cs i isWs
-                if k > i && newlines cs i k < 2 then
-                  pos := posOver cs i k pos
-                  i := k
+                for tok in wsTokens true (newlines cs i k - 1) do
+                  toks := toks.push ⟨tok, pos⟩
+                pos := posOver cs i k pos
+                i := k
           else if c1 == '\n' || c1 == '\r' then
             -- `\` ending a line is `\^^M`, the control space (plain.tex and
             -- latex.ltx: `\def\^^M{\ }`); the next line starts at its first
@@ -221,7 +218,7 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
             toks := toks.push ⟨.ctrl " ", here⟩
             let e := if c1 == '\r' && cs[i + 2]? == some '\n' then i + 3 else i + 2
             let k := scanWhile cs e isWs
-            if let some tok := wsTok true (newlines cs e k) then
+            for tok in wsTokens true (newlines cs e k) do
               toks := toks.push ⟨tok, posOver cs i e pos⟩
             pos := posOver cs i k pos
             i := k

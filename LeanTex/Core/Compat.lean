@@ -1054,6 +1054,33 @@ end
 private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
   return (← synth s).map (rebase pos)
 
+mutual
+
+-- conserves: none — a surface token comparison key, not an IR rewrite.
+/-- Replacement-token identity for `\ifx` (TeXbook chapter 20). Positions
+and word chunk boundaries are parser details; spaces and groups are tokens.
+A blank line is the control sequence `\par`, also when written explicitly.
+Keep this key separate from source printing, which trims whitespace. -/
+private def macroTokens (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | .word s _ :: rest =>
+    macroTokens (s.toList.foldl
+      (fun acc c => acc.push (.word (String.singleton c) {})) out) rest
+  | r :: rest => macroTokens (out.push (macroToken r)) rest
+
+private def macroToken : Raw → Raw
+  | .word s _ => .word s {}
+  | .space => .space
+  | .par _ => .ctrl "par" {}
+  | .ctrl n _ => .ctrl n {}
+  | .sym c _ => .sym c {}
+  | .group body _ => .group (macroTokens #[] body.toList) {}
+  | .math d body _ => .math d (macroTokens #[] body.toList) {}
+  | .env n body _ => .env n (macroTokens #[] body.toList) {}
+  | .verb env s _ => .verb env s {}
+
+end
+
 /-- One optional `[...]` argument, as source text. -/
 def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
   let j := skipSpaces raws i
@@ -1129,9 +1156,11 @@ private def takeHookArgs (raws : Array Raw) (i : Nat) :
   takeRawArgs raws i 4
 
 /-- The canonical undelimited parameter text `#1` through `#9`
-(TeXbook chapter 20), shared by value reading and translation. -/
+(TeXbook chapter 20), shared by value reading and translation. Spaces
+inside this text are delimiters; the lexer already discards the space
+that merely ends a control word. -/
 private def undelimitedArity (params : Array Raw) : Option Nat :=
-  read (params.filter fun r => !(r matches .space)).toList 0
+  read params.toList 0
 where
   read : List Raw → Nat → Option Nat
     | [], n => some n
@@ -2054,7 +2083,8 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
       if a == b then return two true src "compares a name with itself" "same" 2 none
       match condValueOf st.binds a, condValueOf st.binds b with
       | some (some va), some (some vb) =>
-        let v := rawSrc va.raws == rawSrc vb.raws && va.arity == vb.arity &&
+        let v := macroTokens #[] va.raws.toList == macroTokens #[] vb.raws.toList &&
+          va.arity == vb.arity &&
           va.long == vb.long && va.prot == vb.prot
         return two v src
           (if v then "compares two equal definitions" else "compares two different definitions")
@@ -2665,6 +2695,9 @@ private def condList
         -- the text, at the preamble's end, so there it is settled.
         let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
         let settles := liveVal.any (·.arity == 0) && !st.condInDoc
+        let refused := (n == "def" || n == "gdef") &&
+          (undelimitedArity
+            (raws.extract (skipSpaces raws (i + 1) + 1) (sh.stop - 1))).isNone
         let flags := st.flags
         let site := st.useSite
         let file := st.file
@@ -2684,10 +2717,12 @@ private def condList
             for gp in texts do
               write fun st => { st with
                 pending := st.pending.push { name := m, serial := v.serial, file := file, pos := gp } }
-        if stripped && !(expands || settles) then
+        if stripped && !(expands || settles || refused) then
           -- premise: Tests.macroArgumentChecks — readable undelimited calls
           -- execute after binding; an unread definition keeps no program
           -- in a replacement text that the elaborator cannot execute.
+          -- A delimited definition is refused whole by W0357 below,
+          -- which also accounts for its replacement text.
           sayOnce ("cond:body:" ++ n ++ ":" ++ (bound.getD "")) .W0104
             (s!"'\\{n}' makes a definition whose text holds a conditional, a flag \
 setting or another definition, which TeX executes where it is used; this engine cannot \
@@ -5308,12 +5343,11 @@ were dropped: {dropped}" pos
         | some (.group _ _) => found := true; k := j2; break
         | some r => params := params.push r; k := j2 + 1
         | none => break
-    let ps := params.filter fun r => match r with | .space => false | _ => true
     let arity := undelimitedArity params
     match cmd? with
     | some cmd =>
       -- A class's list-level macro read as the parameters it assigns.
-      if found && !expanding && ps.isEmpty && (← docPreamble) then
+      if found && !expanding && arity == some 0 && (← docPreamble) then
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
             return some (#[], k + 1)

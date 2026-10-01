@@ -26,6 +26,8 @@ import Tests.RasterPages
 import Tests.Diag
 import Tests.Themes
 import Tests.FontMath
+import Tests.MathAlphaGeometry
+import Tests.MathAlphaSemantics
 import Tests.Struct
 import Tests.PdfConformance
 import Tests.Artifact
@@ -59,7 +61,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks packageOptionChecks
-  overlaySetChecks)
+  overlaySetChecks mathAlphaSemanticsChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -377,6 +379,8 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linenoChecks ref
   footnoteChecks ref
   mathChecks ref
+  mathAlphaGeometryChecks ref
+  mathAlphaSemanticsChecks ref
   isolatedHoleChecks ref
   mathSymChecks ref
   textSymChecks ref

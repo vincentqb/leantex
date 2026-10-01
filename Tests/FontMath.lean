@@ -2088,11 +2088,11 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- body slot — plain 'x'/'y' boxed in the body text family (serif here),
   -- not Bold Alphanumeric scalars in the math face — while '+' stays a math
   -- symbol in the math face. The two medium spaces (the Ord-Bin-Ord classes)
-  -- must survive the styled letters, so the width is recomputed from serif
-  -- for the letters and fira for the operator.
+  -- must survive the styled letters: text advances use the ambient size,
+  -- while the operator and medium spaces use the matched math size.
   t "mathbf keeps the spacing classes: x+y bolds with its medium spaces"
     (widthOf "$\\mathbf{x+y}$" ==
-      serifAdv mbase 'x' + mu mbase 4 + adv mbase '+' + mu mbase 4 + serifAdv mbase 'y')
+      serifAdv base 'x' + mu mbase 4 + adv mbase '+' + mu mbase 4 + serifAdv base 'y')
   t "mathbf's letters go through the styled bold body slot, not the math face"
     ((lineOf "$\\mathbf{x+y}$").segs.any fun s => match s with
       | .run f _ _ _ glyphs _ _ _ _ _ _ =>

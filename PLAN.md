@@ -25246,7 +25246,48 @@ do not prove font-program or outline identity.
 The stricter report on the frozen alphabet implementation records 304
 DIFF rows: one face difference, 304 size differences and 83 width
 differences. No mismatch is exempted. Earlier parity totals did not
-certify those axes. Forced text-command provenance, Greek aliases,
-nested missing ranges, ambient text sizing and browser fallback identity
-remain explicit compatibility boundaries until their own artifact
-guards close.
+certify those axes. This frozen report is the baseline for the
+corrections below; it does not certify the corrected implementation.
+Browser fallback identity remains a separate compatibility boundary.
+
+### 2026-10-01 — Macro identity preserves TeX tokens
+
+Replacement-text comparisons now use token identity instead of source
+printing. Positions and word chunk boundaries disappear from that key;
+spaces, groups and paragraph tokens remain. A blank line and an explicit
+`\par` name the same token, but the space before that token depends on
+TeX's reading state. The lexer retains every paragraph in a whitespace
+run rather than collapsing the run to one token.
+`blank_line_par_agree` states the full token-sequence relationship between
+mid-line text and a comment that discards its own end-of-line.
+
+Spaces in a TeX definition's parameter text are delimiters. They no
+longer disappear during undelimited-arity recognition. A refused
+delimited definition accounts for its whole replacement text, including
+nested definitions, through W0357 rather than a second loss at the same
+site. Artifact and diagnostic guards distinguish these cases from
+supported definitions; LuaLaTeX corroborates the paragraph-token
+comparisons. Nine direct lexer assertions fail before the token-run
+correction and pass after it.
+
+### 2026-10-01 — Math alphabets retain their selected semantics and metrics
+
+Default bold math keeps uppercase Greek upright and lowercase Greek
+italic, including the separately encoded variants. Explicit upright
+bold retains its own range. The legacy `\mathbf` command follows the
+same rule when its document declares `mathbf=sym`; default and explicit
+text policy continue to select the body's bold face. One
+`effectiveAlpha` pair feeds both resolution and missing-range
+accounting. Its universal contracts preserve forced symbol commands and
+text policy, and equate symbol-sourced legacy bold with forced default
+bold.
+
+Mixed-font math measures each glyph in its selected face. Text alphabet
+sizes derive from the ambient text size, while math operators and
+spacing keep the matched math size. Rule advances, root extents and
+script clearances use those actual metrics. The focused geometry guards
+record 310 failed assertions before the correction and none after, with
+22 native PDF documents exercising mixed-font roots, scripts, sizes and
+advances. The alphabet guards also inspect the typed MathML tree and
+written PDF scalars, including nested aliases and deliberately missing
+ranges.

@@ -2645,7 +2645,8 @@ def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- lex
   t "lex words and space" (toks "ab cd" == [.word "ab", .space, .word "cd"])
-  t "lex par" (toks "a\n\nb" == [.word "a", .par, .word "b"])
+  t "lex par keeps its preceding space"
+    (toks "a\n\nb" == [.word "a", .space, .par, .word "b"])
   t "lex newline is space" (toks "a\nb" == [.word "a", .space, .word "b"])
   t "lex comment joins lines" (toks "a%c\nb" == [.word "a", .word "b"])
   -- TeX: `%` discards the rest of its line, end-of-line included, and the
@@ -2662,6 +2663,17 @@ def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
     (toks "a\n% c\nb" == [.word "a", .space, .word "b"])
   t "lex ctrl word swallows space" (toks "\\emph  x" == [.ctrl "emph", .word "x"])
   t "lex ctrl word keeps blank line" (toks "\\par\n\nx" == [.ctrl "par", .par, .word "x"])
+  for n in [1:5] do
+    let lines := String.ofList (List.replicate n '\n')
+    t s!"lex {n} end-of-lines after text"
+      (toks ("a" ++ lines ++ "b") ==
+        [.word "a", .space] ++ List.replicate (n - 1) .par ++ [.word "b"])
+    t s!"lex {n} end-of-lines after a control word"
+      (toks ("\\tokenprobe" ++ lines ++ "b") ==
+        [.ctrl "tokenprobe"] ++ List.replicate (n - 1) .par ++ [.word "b"])
+    t s!"lex {n} end-of-lines after a comment"
+      (toks ("a% comment\n" ++ lines ++ "b") ==
+        [.word "a"] ++ List.replicate n .par ++ [.word "b"])
   t "lex ctrl symbol" (toks "\\%x" == [.ctrl "%", .word "x"])
   t "lex specials" (toks "{a}$m$[o]" ==
     [.lbrace, .word "a", .rbrace, .math, .word "m", .math, .sym '[', .word "o", .sym ']'])
