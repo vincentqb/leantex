@@ -57,6 +57,10 @@ and a repeated argument executes again in the state its first use left.
 An extra pair of explicit braces remains a local scope. Run the seven cases
 for each of direct \def, direct \newcommand and their \let aliases with
 --case required-argument.
+
+The opening-space cases pin LaTeX's final \ignorespaces expansion scan.
+A nonexpandable token stops it even when compatibility later removes that
+token as log-only. Run these eight cases with --case phase-space.
 -/
 
 namespace MacroDefaultsOracle
@@ -198,7 +202,40 @@ private def requiredArgumentFamily (kind : String) (alias : Bool) : Array Probe 
       (call ++ r"{{\let\wordprobe\newwordprobe\wordprobe}}/\wordprobe") "New/Old"
   ]
 
+private def phaseCases : Array Probe := #[
+  textCase "phase-space-opening-newline" r"\AtBeginDocument{T}" "/T" "T/T",
+  textCase "phase-space-hook-trailing" r"\AtBeginDocument{T }" "/T" "T /T",
+  textCase "phase-space-empty-group" r"\AtBeginDocument{T}" "{} /T" "T /T",
+  textCase "phase-space-log-barrier" r"\AtBeginDocument{T}"
+    r"\PackageInfo{probe}{log} /T" "T /T",
+  textCase "phase-space-warning-barrier" r"\AtBeginDocument{T}"
+    r"\PackageWarningNoLine{probe}{log} /T" "T /T",
+  textCase "phase-space-macro-space" r"\AtBeginDocument{T}\def\spaceprobe{ }"
+    r"\spaceprobe/T" "T/T",
+  textCase "phase-space-macro-barrier"
+    r"\AtBeginDocument{T}\def\barrierprobe{\PackageInfo{probe}{log} }"
+    r"\barrierprobe/T" "T /T",
+  textCase "phase-space-empty-selected-branch" r"\AtBeginDocument{T}"
+    r"\IfClassLoadedTF{article}{}{Hidden} /T" "T/T"
+]
+
+private def copiedHelperCases : Array Probe :=
+  #[false, true].flatMap fun optional => #[false, true].map fun grouped =>
+    let setup := r"\newif\ifprobeFlag\def\helperprobe#1{\probeFlagfalse#1}" ++
+      (if optional then r"\newcommand{\sourceprobe}[1][\helperprobe{}]{#1}"
+       else r"\def\sourceprobe#1{\helperprobe{#1}}") ++
+      r"\def\helperprobe#1{\probeFlagtrue#1}"
+    let call := if optional then r"\aliasprobe" else r"\aliasprobe{}"
+    let selected := r"\ifprobeFlag T\else F\fi"
+    textCase ("copied-helper-" ++ (if optional then "optional" else "required") ++
+        (if grouped then "-local" else "-top"))
+      (setup ++ (if grouped then r"\def\passprobe#1{#1}" else r"\let\aliasprobe\sourceprobe"))
+      (if grouped then r"\passprobe{{\let\aliasprobe\sourceprobe" ++ call ++ selected ++ "}}/" ++ selected
+       else call ++ selected)
+      (if grouped then "T/F" else "T")
+
 private def cases : Array Probe :=
+  phaseCases ++ copiedHelperCases ++
   requiredArgumentFamily "def" false ++ requiredArgumentFamily "def" true ++
   requiredArgumentFamily "newcommand" false ++ requiredArgumentFamily "newcommand" true ++
   hookScopeCases ++ rawGroupCases ++ family "newcommand" ++

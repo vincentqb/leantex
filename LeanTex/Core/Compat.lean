@@ -501,9 +501,10 @@ redefinitions of that inner text. `live`: the use must read a copied
 meaning, select an optional argument or execute a conditional, flag setting
 or definition, itself or through a macro it uses, so the pass expands it
 where it is used.
-`serial` orders definitions: a macro's text expands only macros defined
-before it, the elaborator's own visibility rule, which is what makes the
-expansion terminate. -/
+`serial` orders bindings, `textSerial` their replacement texts. A `\let`
+makes a new binding but copies the text's identity. Expansion descends
+these two orders: the copy can execute inside an older macro without
+hiding bindings that macro already sees. -/
 private structure CondVal where
   raws : Array Raw
   long : Bool
@@ -512,6 +513,7 @@ private structure CondVal where
   optional : Option (String × Array Raw) := none
   live : Bool := false
   serial : Nat := 0
+  textSerial : Nat := 0
 
 /-- One change the conditional pass made to its definition state, with what
 it replaced (`none`: the name was not bound, or the flag not declared). -/
@@ -2571,17 +2573,20 @@ private def condStripRaw (flags : Std.HashMap String Bool) : Raw → Raw × Bool
 end
 
 /-- Record a definition of `n` whose readable value is `v` (`none`: none
-the pass can read), globally when `global`. The value is stamped with the
-next serial and with whether its text is live, read against the state the
-definition is made in — what a macro it uses means is what that macro
-meant then, the elaborator's own rule. -/
-private def recordValue (n : String) (v : Option CondVal) (global : Bool) : M Unit := do
+the pass can read), globally when `global`. Each binding takes the next
+serial; a copied meaning keeps its text's serial. Whether the text is live
+is read against the state the binding is made in. -/
+private def recordValue (n : String) (v : Option CondVal) (global : Bool)
+    (copied : Bool := false) : M Unit := do
   let st ← get
   let s := st.serial + 1
   let v := v.map fun c =>
     { c with
       live := global || c.live || c.arity > 0 || c.optional.isSome || condLiveList st.flags st.binds c.raws.toList
-      serial := s }
+      serial := s
+      -- premise: Tests.macroHookScopeChecks — a local let inside a
+      -- substituted group executes its copied meaning before scope closes.
+      textSerial := if copied then c.textSerial else s }
   write fun st => { st with serial := s }
   setBind n v
   if global then write fun st => { st with globals := st.globals.push (n, v) }
@@ -3036,7 +3041,7 @@ private def condList
           if n != "let" then
             if let some (key, _) := value.bind (·.optional) then
               recordValue key (v.map fun c => { c with optional := none }) global
-          recordValue m v global
+          recordValue m v global (copied := n == "let")
       match definerShape raws i n with
       | none => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
@@ -3208,14 +3213,14 @@ content, when its optional argument or text needs the use's state
 macro at its own site: the text is walked where the use stands, against the
 state in force there, so its conditionals are decided — and its flags set,
 its definitions made — at the use, as TeX does, and the decisions are named
-at the use. `bound` is the serial below which a text may expand: a use in
-running text sees every definition made so far, a use inside a macro's text
-only those made before that macro, the elaborator's own visibility rule.
-An optional wrapper and its inner text use the later definition's serial,
-so a retained alias sees the current inner text and every nested expansion
-still strictly lowers the bound. A live use the bound rules
-out is refused by name; `none` leaves the name to the elaborator. -/
-private def condExpandAt (bound : Nat) (n : String) (pos : Pos)
+at the use. `bound` is the binding order the enclosing text sees. An older
+binding lowers it; a newer copy of an older text keeps it and lowers
+`textBound` instead. Both keep helpers the enclosing text already sees,
+while every nested expansion descends the lexicographic pair.
+An optional wrapper and its inner text use the later of their serials,
+so a retained alias sees the current inner text. A live use the orders
+rule out is refused by name; `none` leaves it to the elaborator. -/
+private def condExpandAt (bound textBound : Nat) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : M (Option (Array Raw × Nat)) := do
   let st ← get
   let site := st.useSite
@@ -3238,7 +3243,10 @@ on a conditional this engine cannot decide; the call is left unexpanded"
         (site.getD pos)
       return none
     let serial := max v.serial body.serial
-    if _h : serial < bound then
+    let textSerial := max v.textSerial body.textSerial
+    -- premise: Tests.macroHookScopeChecks — copied texts execute locally
+    -- while aliases keep helpers renewed before their enclosing use.
+    if _h : serial < bound ∨ textSerial < textBound then
       let call := (takeCondArgs raws start body.arity (v.optional.map (·.2))).filter
         fun (args, _, _) => args.size == body.arity
       let some (args, stop, tail) := call | do
@@ -3249,9 +3257,10 @@ the argument boundary is unread here, so its optional selection and state change
           (help := "close an optional argument with ']' and put each required argument in braces")
         return none
       let body := bindRawArgsList args #[] body.raws.toList
+      let nextBound := if serial < bound then serial else bound
       write fun s => { s with useSite := some (site.getD pos) }
       let top ← swapTop false
-      let out ← condList (fun m p rs k => condExpandAt serial m p rs k)
+      let out ← condList (fun m p rs k => condExpandAt nextBound textSerial m p rs k)
         [] body #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
@@ -3267,12 +3276,20 @@ without that selection or those changes")
       return none
     else return none
   | _ => return none
-termination_by bound
+termination_by (bound, textBound)
+decreasing_by
+  simp_wf
+  split
+  · apply Prod.Lex.left
+    assumption
+  · apply Prod.Lex.right
+    omega
 
 /-- The expander running text uses: every definition made so far is visible. -/
 private def condTopExpand (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
-  condExpandAt ((← get).serial + 1) n pos raws start
+  let bound := (← get).serial + 1
+  condExpandAt bound bound n pos raws start
 
 /-- Run `act` and put the definition state back as it was: a definition's
 text settled for the elaborator is read, not run, so nothing it binds, sets
@@ -3304,7 +3321,7 @@ private def condSettle : M (Array (String × Pos × Array Raw)) := do
         write fun st => { st with file := p.file, settling := some p.name }
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
-          (condList (fun m q rs k => condExpandAt v.serial m q rs k)
+          (condList (fun m q rs k => condExpandAt v.serial v.textSerial m q rs k)
             [] replacement #[] [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)

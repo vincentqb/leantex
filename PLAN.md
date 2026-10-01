@@ -25394,3 +25394,13 @@ the corrections and pass after. Delimiter recovery now shares one
 signature-and-call walk over preamble, replayed hooks and body, removing
 the redundant whole-tree definition scan. Refused delimited definitions
 remain W0357; their calls retain the artifact of their braced recovery.
+
+Copied macros now keep two identities: a fresh binding order and the
+replacement text's original order. The conditional expander descends their
+lexicographic pair, checked by Lean. This lets a local `\let` execute before
+its group closes without hiding a helper renewed before the call. Keeping
+only the original binding order fixed local copies but broke renewed
+helpers; four required/optional, top-level/local controls caught twelve
+artifact assertions in that attempted fix. The final guards pass alongside
+the original local-copy cases. LuaLaTeX PDF controls independently pin the
+copied-helper results and eight opening-space cases in the shared oracle.
