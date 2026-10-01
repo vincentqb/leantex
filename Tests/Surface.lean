@@ -975,13 +975,21 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
         d.span.any (·.file == "guide.sty")).size == 1)
   t "the read is named once, with the honoured, named, and refused counts"
     (spliced.toList.map (·.1) == ["guide.sty"] &&
-     Compat.styCounts "guide.sty" elabDs == (4, 0, 1))
+     -- The option list and ProcessOptions each account for their work too.
+     Compat.styCounts "guide.sty" elabDs == (6, 0, 1))
   t "a def-only local .sty is still read; its \\def is a definition — never W0103"
-    (let (raws3, spl3) := Compat.applyLocalSty docRaws
+    (let caller := parseRaws "t" (dvDoc "\\usepackage{guide}\n" "x")
+     let (raws3, spl3) := Compat.applyLocalSty caller
       #[("guide", parseRaws "guide.sty" "\\def\\x#1{#1}\n")]
      let ds3 := (Elab.runRaws "t" raws3).2
      spl3.size == 1 && ds3.all (·.code != "W0103") &&
      Compat.styCounts "guide.sty" ds3 == (1, 0, 0))
+  t "a def-only package cannot silently consume an option it never processes"
+    (let (raws3, _) := Compat.applyLocalSty docRaws
+      #[("guide", parseRaws "guide.sty" "\\def\\x#1{#1}\n")]
+     let ds3 := (Elab.runRaws "t" raws3).2
+     Compat.styCounts "guide.sty" ds3 == (1, 1, 0) &&
+     ds3.any (fun d => d.code == "W0110" && d.span.any (·.file == "guide.sty")))
   -- Monotone expansion visibility: a definition inside an expanded body
   -- binds at the visibility boundary and never re-exposes the command
   -- being expanded to its own body. The venue-style \maketitle — it
@@ -4866,7 +4874,7 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "N0020 names the theme file and what took"
     (dsL.any fun d => d.code == "N0020" &&
       (d.message.splitOn "beamerthemevenue.sty").length == 2 &&
-      Compat.styCounts "beamerthemevenue.sty" dsL == (4, 0, 0))
+      Compat.styCounts "beamerthemevenue.sty" dsL == (5, 0, 0))
   -- \usetheme[options]{name} passes its options to the file, as
   -- \usepackage[options]{} does: the option's body runs, and only then.
   let (docO, _, _) ← run "themeopt"
@@ -6241,18 +6249,20 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `Ir.macroDecls_covers` — a control sequence the body spells that the
   -- document defined is declared in the request — with `Ir.macroDecls_mem`
   -- bounding what rides. Invented macros, invented palette.
-  let mac := "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
-    "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+  -- Optional-default calls remain TeX's to bind at the boundary; required
+  -- arguments now expand at the picture's own site (checked below).
+  let mac := "\\newcommand{\\tint}[2][]{\\textcolor{ember}{#2}}\n" ++
+    "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
     "\\newcommand{\\elsewhere}{only ever in prose}\n"
   let picM := "\\begin{tikzpicture}\\shade[\\badge{ok}] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let (mdoc, mds) := elabStr (dvDoc (pal ++ mac) picM)
   t "a macro the picture spells is defined in the standalone"
-    (hasStr (reqOf mdoc) "\\renewcommand{\\badge}[1]")
+    (hasStr (reqOf mdoc) "\\renewcommand{\\badge}[2][]")
   t "a definition the standalone reads can never fail on an existing name"
     (hasStr (reqOf mdoc) "\\providecommand{\\badge}{}")
   t "a macro reached only through another macro's body rides too"
-    (hasStr (reqOf mdoc) "\\renewcommand{\\tint}[1]")
+    (hasStr (reqOf mdoc) "\\renewcommand{\\tint}[2][]")
   t "a macro the picture never reaches stays home"
     (!hasStr (reqOf mdoc) "elsewhere")
   t "a palette role only a carried macro spells is declared"
@@ -6265,14 +6275,23 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- wrong drawing, and never discarded for an unrelated edit.
   t "an unreached macro edit leaves the request untouched"
     (reqOf mdoc == reqOf (elabStr (dvDoc (pal ++
-      "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
-      "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+      "\\newcommand{\\tint}[2][]{\\textcolor{ember}{#2}}\n" ++
+      "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
       "\\newcommand{\\elsewhere}{quite another wording}\n") picM)).1)
   t "a reached macro edit moves the request"
     (reqOf mdoc != reqOf (elabStr (dvDoc (pal ++
-      "\\newcommand{\\tint}[1]{\\textcolor{ember}{\\itshape #1}}\n" ++
-      "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n" ++
+      "\\newcommand{\\tint}[2][]{\\textcolor{ember}{\\itshape #2}}\n" ++
+      "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
       "\\newcommand{\\elsewhere}{only ever in prose}\n") picM)).1)
+  let required :=
+    "\\newcommand{\\tint}[1]{\\textcolor{ember}{#1}}\n" ++
+    "\\newcommand{\\badge}[1]{\\tint{[#1]}}\n"
+  t "required arguments reach the boundary as their bound replacement text"
+    (let req := reqOf (elabStr (dvDoc (pal ++ required) picM)).1
+     !req.isEmpty && req ==
+     reqOf (elabStr (dvDoc pal
+       ("\\begin{tikzpicture}\\shade[\\textcolor{ember}{[ok]}]" ++
+        " (0,0) rectangle (1,1);\\end{tikzpicture}"))).1)
   -- The definer family and TeX's own `\def`, each with the arity and the
   -- optional default the document wrote — the default is the one part a
   -- native `UserCmd` cannot spell back, so the declaration is captured as
@@ -6288,17 +6307,23 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr (reqOf fdoc2) "[q\\opt" &&
       !hasStr (reqOf fdoc2) "\\renewcommand{\\plain}{p}" &&
       !hasStr (reqOf fdoc2) "\\newcommand{\\plain}{p}")
-  t "TeX's own def rides in its own spelling"
-    (hasStr (reqOf fdoc2) "\\def\\raw#1{<#1>}")
-  -- Conservation across the definer rewrite, with a picture in play: the
-  -- LaTeX spelling and the native one carry the same definition, so a
-  -- document that writes `\define` itself is not one whose pictures lose
-  -- their macros. An oracle, not a theorem.
+  t "TeX's required argument is bound at its use in the picture"
+    (hasStr (reqOf fdoc2) "\\opt {a}<b>]" && !hasStr (reqOf fdoc2) "\\raw")
+  -- Both spellings declare the same macro. A remaining native call carries
+  -- that declaration; a LaTeX call already expanded needs no declaration.
+  -- Their standalone bytes need not agree to name the same drawing.
   let picD := "\\begin{tikzpicture}\\shade[\\hue{x}] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
-  t "the native define spelling carries the same definition as newcommand"
-    (reqOf (elabStr (dvDoc "\\newcommand{\\hue}[1]{\\textbf{#1}}\n" picD)).1 ==
-      reqOf (elabStr (dvDoc "\\define \\hue(a1: content) {\\textbf{#1}}\n" picD)).1)
+  let latexDef := "\\newcommand{\\hue}[1]{\\textbf{#1}}\n"
+  let nativeDef := "\\define \\hue(a1: content) {\\textbf{#1}}\n"
+  let scan (s : String) := Elab.macroScan (Parse.parse "t" (Lex.lex "t" s).1).1
+  t "the native define spelling declares the same boundary macro as newcommand"
+    ((scan latexDef).size == 1 && scan latexDef == scan nativeDef)
+  t "a remaining native call carries its declaration into the standalone"
+    (let req := reqOf (elabStr (dvDoc nativeDef picD)).1
+     hasStr req "\\providecommand{\\hue}{}" &&
+     hasStr req "\\renewcommand{\\hue}[1]{\\textbf {#1}}" &&
+     hasStr req "\\shade [\\hue {x}]")
   t "a picture package's load rides too: no W0103 for it"
     (ds.all (·.code != "W0103"))
   -- Determinism by purity: two elaborations of one document state

@@ -13998,9 +13998,9 @@ picture reads a macro where the picture stands, and one table for the whole
 document cannot say which of several definitions is in force at a given
 picture: read that way, a label drew the last definition at every site.
 The conditional pass puts the site's own value into a picture for every
-parameterless macro it can read there; what is left here is the rest, so a
-name whose definitions all agree is the same at every site, and one whose
-definitions differ is not expanded at all — the walk names it where it
+macro whose required arguments it can bind there; what is left here is
+the rest, so a name whose definitions all agree is the same at every site,
+and one whose definitions differ is not expanded at all — the walk names it where it
 stands, and a boundary standalone that needs it fails in the tool, in the
 tool's words — rather than drawn with a definition that may not be its.
 
