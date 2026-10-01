@@ -395,9 +395,12 @@ structure Counters where
   and the section counter restarted — a from-here-forward flow state, the
   `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
   inAppendix : Bool := false
-  /-- The equation counter, per document (amsmath's `\numberwithin` is not
-  modelled; a document that declares it keeps the per-document numbers). -/
+  /-- The equation counter, per document unless `\numberwithin` declared a
+  heading counter it restarts under (`eqWithin`, the level; `eqSnap`, the
+  heading numbers it was last stepped under — `withinSnap`). -/
   eqNum : Nat := 0
+  eqWithin : Option Nat := none
+  eqSnap : String := ""
   /-- The listing counter, per document: every captioned listing takes the
   next number in flow order, exactly the equation counter's fold
   (listings steps `\thelstlisting` per captioned listing). -/
@@ -8172,6 +8175,38 @@ private def qedHereTag (ctx : Ctx) (p : Pos) : EM (Option (Array Inline)) := do
   modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with qedPlaced := true } } }
   return some (Ir.wrapDecls (← get).blockDecls mark)
 
+/-- The heading numbers a counter numbered within heading level `within`
+was stepped under, the appendix mark included, as one key: the counter
+restarts whenever the key moves (ltcounts.dtx `\@addtoreset`). Empty for a
+counter numbered per document. -/
+private def withinSnap (c : Counters) : Option Nat → String
+  | none => ""
+  | some lvl =>
+    let (s1, s2, s3) := c.secNums
+    let levels := match lvl with
+      | 1 => s!"{s1}"
+      | 2 => s!"{s1}.{s2}"
+      | _ => s!"{s1}.{s2}.{s3}"
+    (if c.inAppendix then "A" else "") ++ levels
+
+/-- A counter's number `v` as `\the<counter>` renders it: `\arabic`, after
+`\the<within>.` for one numbered within a heading counter. -/
+private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
+  match within with
+  | some lvl => s!"{renderSecLevel c.secFmts c.secNums c.inAppendix secFmtFuel lvl}.{v}"
+  | none => toString v
+
+/-- Step the equation counter and render `\theequation`, the theorem
+counters' rule for a counter numbered within a heading counter: amsmath's
+`\numberwithin{equation}{w}` is `\@addtoreset{equation}{w}` with
+`\theequation` redefined as `\thew.\arabic{equation}` (amsmath.sty). -/
+private def stepEquation : EM String := do
+  let st ← get
+  let snap := withinSnap st.ctr st.ctr.eqWithin
+  let v := if snap == st.ctr.eqSnap then st.ctr.eqNum + 1 else 1
+  modify fun st => { st with ctr := { st.ctr with eqNum := v, eqSnap := snap } }
+  return withinNumber st.ctr st.ctr.eqWithin v
+
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
@@ -8205,10 +8240,9 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     -- The display takes the next equation number (amsldoc §3);
     -- its labels bind to it, scoped to the environment as
     -- LaTeX's \refstepcounter group is.
-    let num := (← get).ctr.eqNum + 1
-    modify fun st => { st with ctr := { st.ctr with eqNum := num } }
+    let num ← stepEquation
     for key in keys do
-      recordLabel ctx key (some { kind := some .equation, num := toString num }) pos
+      recordLabel ctx key (some { kind := some .equation, num }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.equation #[.text s!"({num})"] content)
   else
@@ -8644,22 +8678,13 @@ the heading numbers it last stepped under, the appendix mark included). -/
 private def stepThmCounter (c : String) : EM String := do
   let st ← get
   let within := (st.ctr.thm.counters.find? (·.1 == c)).bind (·.2)
-  let (s1, s2, s3) := st.ctr.secNums
-  let mark := if st.ctr.inAppendix then "A" else ""
-  let levels := match within with
-    | some 1 => s!"{s1}"
-    | some 2 => s!"{s1}.{s2}"
-    | some _ => s!"{s1}.{s2}.{s3}"
-    | none => ""
-  let snap := mark ++ levels
+  let snap := withinSnap st.ctr within
   let v := match st.ctr.thm.nums.find? (·.1 == c) with
     | some (_, s, v) => if s == snap then v + 1 else 1
     | none => 1
   modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with
     nums := (st.ctr.thm.nums.filter (·.1 != c)).push (c, snap, v) } } }
-  return match within with
-    | some lvl => s!"{renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel lvl}.{v}"
-    | none => toString v
+  return withinNumber st.ctr within v
 
 /-- Open a theorem-like scope: read the optional `[note]`, step the counter
 and make its number the label target, push the style's body font
@@ -12410,6 +12435,10 @@ inductive PDecl where
   /-- amsthm's `\theoremstyle{s}`: the style the `\newtheorem`s after it
   take. -/
   | theoremstyle (name : Option String) (pos : Pos)
+  /-- amsmath's `\numberwithin[fmt]{counter}{within}`: the counter restarts
+  whenever the heading counter `within` moves, and renders after it. `none`
+  for the counter is a declaration missing its two groups. -/
+  | numberwithin (fmt : Option String) (counter : Option (String × String)) (pos : Pos)
   /-- A cancel package load's options (`Compat.cancelOptionsMark`), as
   written: the marks every formula after it draws. -/
   | cancelOpts (src : String) (pos : Pos)
@@ -12781,6 +12810,19 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.theoremstyle (some (rawSrc g).trimAscii.toString) pos)
           | _ =>
             out := out.push (.theoremstyle none pos)
+        else if name == "numberwithin" then
+          let (fmt, j0) := takeOptRun preamble (skipSpaces preamble i)
+          let fmt := fmt.map fun r => (rawSrc r).trimAscii.toString
+          let j1 := skipSpaces preamble j0
+          let j2 := skipSpaces preamble (j1 + 1)
+          match preamble[j1]?, preamble[j2]? with
+          | some (.group c _), some (.group w _) =>
+            i := j2 + 1
+            out := out.push (.numberwithin fmt
+              (some ((rawSrc c).trimAscii.toString, (rawSrc w).trimAscii.toString)) pos)
+          | _, _ =>
+            i := j0
+            out := out.push (.numberwithin fmt none pos)
         else if let some code := reservedCtrl.lookup name then
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
@@ -13507,6 +13549,36 @@ does not keep; the number stands alone" pos
         s!"'\\theoremstyle' names '{name.getD ""}', not one of plain, definition, \
 remark; plain applies, as amsthm sets it" pos
       modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with style := .plain } } }
+      return s
+  | .numberwithin fmt counter pos =>
+    match counter with
+    | none =>
+      warnOnce s.ctx "numberwithin:" .E0304
+        "'\\numberwithin' needs {counter}{within}" pos
+      return s
+    | some (c, w) =>
+      if let some f := fmt then
+        unless f == "\\arabic" do
+          warnOnce s.ctx ("numberwithin:" ++ c ++ ":fmt") .W0110
+            s!"'\\numberwithin[{f}]\{{c}}' formats the number as '{f}', which the engine \
+does not model; the number is arabic" pos
+      let thms := (← get).ctr.thm
+      match sectionLevel w with
+      | none =>
+        warnOnce s.ctx ("numberwithin:" ++ c) .W0110
+          s!"'\\numberwithin\{{c}}\{{w}}' numbers within '{w}', a counter the engine \
+does not keep; the number stands alone" pos
+      | some lvl =>
+        if c == "equation" then
+          modify fun e => { e with ctr := { e.ctr with eqWithin := some lvl } }
+        else if thms.counters.any (·.1 == c) then
+          modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with
+            counters := e.ctr.thm.counters.map fun p =>
+              if p.1 == c then (c, some lvl) else p } } }
+        else
+          warnOnce s.ctx ("numberwithin:" ++ c) .W0110
+            s!"'\\numberwithin\{{c}}' names a counter the engine does not number within \
+a heading; its numbers stand alone" pos
       return s
   | .cancelOpts src _ =>
     -- Compat named every option the package does not declare at the load.

@@ -419,6 +419,44 @@ def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
       ((dvE src).isEmpty && squash (pageTextOf fs src) ==
         String.ofList [MathParse.italicVar 'a', glyph, MathParse.italicVar 'b'])
 
+/-- amsmath's `\numberwithin{counter}{within}` (amsmath.sty:
+`\@addtoreset{counter}{within}` with `\the<counter>` redefined as
+`\the<within>.\arabic{counter}`): the counter restarts whenever the heading
+counter moves and renders after it — the equation counter and a theorem
+counter alike — and a counter numbered per document runs on across
+`\appendix`, which resets only the heading counters (article.cls). The page
+and the references read exactly as lualatex sets the same document. Before
+this feature `\numberwithin` was unknown (W0301) and a per-document theorem
+counter restarted at `\appendix`: every row failed. -/
+def amsNumberWithinChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
+  let v (c : Char) : String := String.ofList [MathParse.italicVar c]
+  let pre := "\\usepackage{amsmath}\n\\newtheorem{thm}{Theorem}\n\\newtheorem{lem}{Lemma}\n" ++
+    "\\numberwithin{equation}{section}\n\\numberwithin{lem}{section}\n"
+  let eq (x : String) : String := s!"\\begin\{equation}{x}\\end\{equation}\n"
+  let body := eq "w" ++ "\\section{Alpha}\n\\begin{thm}one\\end{thm}\n" ++
+    "\\begin{lem}two\\end{lem}\n" ++ eq "x\\label{a}" ++ eq "y" ++ "\\subsection{Sub}\n" ++
+    eq "u" ++ "\\section{Beta}\n" ++ eq "z\\label{b}" ++ "\\begin{lem}three\\end{lem}\n" ++
+    "\\appendix\n\\section{Gamma}\n\\begin{thm}four\\end{thm}\n" ++ eq "v" ++
+    "See \\eqref{a} and \\eqref{b}."
+  let src := dvDoc pre body
+  t "numberwithin: no warning" (warnCodes src).isEmpty
+  let page := squash (pageTextOf fs src)
+  let expected := v 'w' ++ "(0.1)1AlphaTheorem1oneLemma1.1two" ++ v 'x' ++ "(1.1)" ++
+    v 'y' ++ "(1.2)1.1Sub" ++ v 'u' ++ "(1.3)2Beta" ++ v 'z' ++ "(2.1)Lemma2.1three" ++
+    "AGammaTheorem2four" ++ v 'v' ++ "(A.1)See(1.1)and(2.1)."
+  t s!"numberwithin: equations and lemmas restart at each section, a theorem runs on \
+past the appendix (got '{page}')" (page == expected)
+  let html := (HtmlDoc.emit {} (elabStr src).1).1
+  t "numberwithin: the HTML number spans carry the section's numbers"
+    (hasStr html "<span class=\"eqnum\">(0.1)</span>" &&
+      hasStr html "<span class=\"eqnum\">(2.1)</span>" &&
+      hasStr html "<span class=\"eqnum\">(A.1)</span>")
+  t "numberwithin: a counter it does not number within a heading is named"
+    ((warnCodes (dvDoc "\\usepackage{amsmath}\n\\numberwithin{figure}{section}\n" "x")).contains
+      "W0110")
+
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
     | .ok f => pure f
@@ -426,6 +464,7 @@ def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathSetOf (oneFaceOf serif)
   amsGridChecks ref fs
   amsTagChecks ref fs
+  amsNumberWithinChecks ref fs
   amsTagTextChecks ref
   amsFracChecks ref fs
   amsModChecks ref fs

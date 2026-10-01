@@ -8,6 +8,9 @@
 # \DeclareMathOperator is a preamble declaration: it binds the operator name
 # and moves no ink where it stands (inert:binds). What it binds the name to
 # is \operatorname, whose own row below carries the drawn evidence.
+# \numberwithin (§3.11.1, the numbering hierarchy) binds a counter's
+# numbering the same way; the numbers it gives are witnessed on the page by
+# the equation checks.
 body impl $\frac{1}{2}$
 body impl $\dfrac{1}{2}$
 body impl $\tfrac{1}{2}$
@@ -44,7 +47,7 @@ body impl \[ a = b \tag{A} \]
 body impl \begin{equation}x\tag{$\ast$}\end{equation}
 body impl \begin{equation}x\tag{\textbf{C}}\end{equation}
 body refuse:W0015 \begin{align}x &= y\notag\end{align}
-pre refuse:W0301 \numberwithin{equation}{section}
+pre inert:binds \numberwithin{equation}{section}
 body refuse:W0012 \begin{align}a &= b\\ \intertext{so} c &= d\end{align}
 body impl $\text{ab}$
 body impl $\operatorname{foo}(x)$
