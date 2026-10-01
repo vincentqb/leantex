@@ -38,7 +38,7 @@ playback loss is W0110 at every use, unsupported source selection W0307,
 and package-wide defaults are named rather than silently discarded. -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
-   "beamerposter",
+   "beamerposter", "paracol",
    "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
@@ -602,6 +602,10 @@ private structure St where
   signature letters their arguments read: each use keeps its arguments
   and drops the body, which environ collects and discards. -/
   discardEnvs : Array (String × String) := #[]
+  /-- The first of paracol's two column shares, in per mille. The package's
+  `\columnratio` is global and its final column receives the remainder
+  (`paracol.sty`, `\pcol@setcolwidth@r`). -/
+  paracolRatio : Nat := 500
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
@@ -4957,6 +4961,20 @@ private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
           unhandledStyOption pkg option "was not processed" pos
   return some (#[], k)
 
+/-- The first share in a two-column `\\columnratio` declaration, in per
+mille. Paracol gives every listed ratio to its column and the remainder to
+the final column (`paracol.sty`, `\\pcol@setcolwidth@r`). -/
+private def paracolRatio? (src : String) : Option Nat := do
+  let first ← (src.splitOn ",").find? fun s => !s.trimAscii.toString.isEmpty
+  let (m, scale) ← Decl.parseDecimal first.trimAscii.toString
+  let p := m * 1000 / scale
+  guard (0 < p && p < 1000)
+  return p.toNat
+
+private def paracolFactor (p : Nat) : String :=
+  let digits := toString (p % 1000)
+  "0." ++ "".pushn '0' (3 - digits.length) ++ digits
+
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one
 logical dispatcher, two compilation units. `rewriteCtrl`'s own match
@@ -5756,6 +5774,28 @@ its value is skipped" pos
       became "\\tikz" "\\begin{tikzpicture}...\\end{tikzpicture}" pos
       return some (#[.env "tikzpicture" (opts ++ body) pos] ++ rest, k)
     | none => return none
+  | "columnratio" =>
+    let (args, j) := takeGroups raws start 1
+    let (right, k) := takeOpt raws j
+    if args.isEmpty then return none
+    let src := rawSrc (args.getD 0 #[])
+    if (paracolRatio? src).isNone then
+      sayOnce "paracol:ratio" .W0104
+        s!"cannot read two-column ratio '{src}'; the previous ratio stands" pos
+        (help := "write one fraction between zero and one, like \\columnratio{0.35}")
+    if right.isSome then
+      sayOnce "paracol:right-ratio" .W0104
+        "'\\columnratio{...}[...]' declares a paired-page ratio; the same-page ratio is used" pos
+    became "\\columnratio" "the widths of the next two-column flow" pos
+    return some (#[], k)
+  | "switchcolumn" =>
+    let (_, j) := takeOpt raws start
+    let js := skipSpaces raws j
+    let starred := raws[js]? matches some (.word "*" _)
+    let (_, k) := if starred then takeOpt raws (skipSpaces raws (js + 1)) else (none, j)
+    sayOnce "paracol:switch-outside" .W0104
+      "'\\switchcolumn' stands outside a supported two-column paracol flow; ignored" pos
+    return some (#[], k)
   | "parbox" =>
     -- `\parbox{w}{t}` and `{minipage}{w}` are the same box: latex.ltx builds
     -- both through `\@iiiparbox`, and the manual's own difference is what a
@@ -6900,6 +6940,113 @@ theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
     · rename_i hne
       exact absurd rfl hne
 
+/-- Split a two-column paracol body by its top-level switching commands.
+Bare switches toggle, `[n]` selects n, and repeated visits append to the
+same independent flow. The synchronized star form has no `.columns`
+semantics; it is consumed and refused at its own site. -/
+private def splitParacol (body : Array Raw) (start : Nat) :
+    M (Array Raw × Array Raw) := do
+  let mut left : Array Raw := #[]
+  let mut right : Array Raw := #[]
+  let mut current : Nat := 0
+  let mut i := start
+  for _ in [start:body.size + 1] do
+    match body[i]? with
+    | none => break
+    | some (.ctrl "switchcolumn" spos) =>
+      let (selected, k0) := takeOpt body (i + 1)
+      let ks := skipSpaces body k0
+      let starred := body[ks]? matches some (.word "*" _)
+      let afterStar := if starred then skipSpaces body (ks + 1) else k0
+      let (spanning, k) := if starred then takeOpt body afterStar else (none, k0)
+      if starred then
+        sayOnce "paracol:synchronized-switch" .W0104
+          ("'\\switchcolumn*' synchronization is not modelled" ++
+            if spanning.isSome then "; its spanning content stays in the selected column"
+            else "; the independent column flow stands") spos
+      let fallback := if current == 0 then 1 else 0
+      let next ← match selected.bind (·.trimAscii.toString.toNat?) with
+        | some n =>
+          if n < 2 then pure n
+          else do
+            sayOnce "paracol:switch-column" .W0104
+              s!"'\\switchcolumn[{n}]' names no column in a two-column flow; the next column is used" spos
+            pure fallback
+        | none => do
+          if selected.isSome then
+            sayOnce "paracol:switch-column" .W0104
+              "'\\switchcolumn[...]' needs column 0 or 1; the next column is used" spos
+          pure fallback
+      current := next
+      if let some text := spanning then
+        let kept ← synthAt text spos
+        if current == 0 then left := left ++ kept else right := right ++ kept
+      i := k
+    | some r =>
+      if current == 0 then left := left.push r else right := right.push r
+      i := i + 1
+  return (left, right)
+
+/-- Turn one paracol environment into the existing columns model, or keep
+its content in source order under one truthful refusal when it asks for a
+column family beyond the two-flow subset. -/
+private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos) : M Raw := do
+  let (leftCount, j) := takeOpt body 0
+  let (args, k) := takeGroups body j 1
+  let count := (rawSrc (args.getD 0 #[])).trimAscii.toString.toNat?
+  if leftCount.isSome then
+    sayOnce "paracol:left-count" .W0104
+      "'paracol' [left-column-count] asks for paired-page columns; both columns are set on one page" pos
+  if count != some 2 then
+    sayOnce "env:paracol:count" .W0104
+      "only the two-column 'paracol' form is modelled; its content stays in source order" pos
+      (help := "write \\begin{paracol}{2} for two independent columns")
+    return .group (body.extract k body.size) pos
+  let (left, right) ← splitParacol body k
+  let width (p : Nat) : Raw := .group #[.word (paracolFactor p) pos] pos
+  became "\\begin{paracol}{2}...\\switchcolumn..."
+    "\\begin{columns} with two independent column flows" pos
+  return .env "columns"
+    #[.env "column" (#[width ratio] ++ left) pos,
+      .env "column" (#[width (1000 - ratio)] ++ right) pos] pos
+
+mutual
+
+/-- Make paracol's global ratio and its two flow boundaries explicit before
+the ordinary compatibility rewrite. -/
+-- conserves: none — one environment becomes the existing columns tree; its
+-- text conservation is checked over the shipped page and typed HTML.
+private def paracolList (raws : Array Raw) (out : Array Raw) :
+    List Raw → Nat → Nat → M (Array Raw)
+  | [], _, _ => pure out
+  | _ :: rest, i, skip + 1 => paracolList raws out rest (i + 1) skip
+  | .ctrl "columnratio" _ :: rest, i, 0 => do
+    let (args, j) := takeGroups raws (i + 1) 1
+    let (_, k) := takeOpt raws j
+    if let some p := paracolRatio? (rawSrc (args.getD 0 #[])) then
+      write fun st => { st with paracolRatio := p }
+    paracolList raws (out ++ raws.extract i k) rest (i + 1) (k - (i + 1))
+  | r :: rest, i, 0 => do
+    paracolList raws (out.push (← paracolRaw r)) rest (i + 1) 0
+
+private def paracolRaw : Raw → M Raw
+  | .group body p => do
+    return .group (← paracolList body #[] body.toList 0 0) p
+  | .env n body p => do
+    let ratio := (← get).paracolRatio
+    let body' ← paracolList body #[] body.toList 0 0
+    if n == "paracol" then paracolEnv ratio body' p else return .env n body' p
+  | .math d body p => do
+    return .math d (← paracolList body #[] body.toList 0 0) p
+  | .word s p => pure (.word s p)
+  | .space => pure .space
+  | .par p => pure (.par p)
+  | .ctrl n p => pure (.ctrl n p)
+  | .sym c p => pure (.sym c p)
+  | .verb env s p => pure (.verb env s p)
+
+end
+
 /-- beamer's command form of a column: at the top level of a `{columns}`
 body, `\column{width}` starts a column where it stands, running to the
 next `\column` or the body's end (beamer user guide §12.7, `\column`) —
@@ -8040,6 +8187,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws ← resolveLoaded raws
     -- After the conditionals: only live hook bodies are collected.
     let raws ← collectDeferList #[] raws.toList 0
+    let raws ← paracolList raws #[] raws.toList 0 0
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[] 0
     let out ← rewriteList false raws #[] raws.toList 0 0
