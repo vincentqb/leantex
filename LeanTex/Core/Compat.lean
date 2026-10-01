@@ -7986,43 +7986,82 @@ theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toS
   all_goals exact localSty_theme _ _ nm pos rfl hne hnz (by decide) (by decide)
 
 
-/-- LaTeX's package option machinery, the minimum (ltclass.dtx):
-`\\DeclareOption{name}{body}` binds a body to an option name,
-`\\ExecuteOptions{list}` runs the named bodies (the defaults idiom), and
-`\\ProcessOptions` runs the bodies of the options the `\\usepackage`
-passed, in declaration order, after which the machinery is spent.
-`\\ProvidesPackage`/`\\NeedsTeXFormat` identify the file and produce
-nothing. A `\\DeclareOption*` (the catch-all) is dropped here and its
-absence named downstream only if an option needed it; option bodies are
-usually one flag-setter (`\\@xtrue`), which the conditional pass already
-resolves. -/
+/-- One slot per declared name, in first-declaration order. Redeclaring a
+name replaces its body without moving the slot (ltclass.dtx). `none` is a
+spent handler; `some #[]` is a defined, empty handler and suppresses the
+catch-all. `packageOptionChecks` observes both through repeated processing. -/
+private def declareStyOption (declared : Array (String × Option (Array Raw)))
+    (name : String) (body : Array Raw) : Array (String × Option (Array Raw)) :=
+  if declared.any (·.1 == name) then
+    declared.map fun (nm, old) => (nm, if nm == name then some body else old)
+  else declared.push (name, some body)
+
+private def styOptionBody (declared : Array (String × Option (Array Raw)))
+    (name : String) : Option (Array Raw) :=
+  (declared.find? (·.1 == name)).bind (·.2)
+
+/-- Literal package option scheduling (ltclass.dtx):
+`\\DeclareOption{name}{body}` binds a body; `\\DeclareOption*{body}` binds
+the catch-all. `\\ExecuteOptions{list}` runs known bodies in list order,
+without consuming them or invoking the catch-all. `\\ProcessOptions` runs
+known names once in declaration order, then unknowns in caller order;
+`\\ProcessOptions*` follows caller order, including duplicates. Processing
+spends the named handlers. LuaLaTeX probes in `scripts/package-options.lean`
+hold ordering, whitespace, empty items and handler lifetime to its kernel.
+
+Bodies enter the existing compatibility passes unchanged: this is not a
+TeX expansion runtime. Only the supplied package options are available here,
+not global class options or forwarded options. An unknown caller option
+without a catch-all still has no diagnostic channel in this array-only
+interface; it must not be claimed as supported. `\\ProvidesPackage` and
+`\\NeedsTeXFormat` identify the file and produce nothing. -/
 def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
-  let mut declared : Array (String × Array Raw) := #[]
+  let mut declared : Array (String × Option (Array Raw)) := #[]
+  let mut fallback : Array Raw := #[]
+  let passed := passed.map (·.replace " " "")
   let mut i := 0
   for _ in [0:raws.size] do
     if h : i < raws.size then
       match raws[i] with
       | .ctrl "DeclareOption" _ =>
-        let j := skipStar raws (i + 1)
-        let (args, k) := takeGroups raws j 2
-        if h2 : args.size = 2 then
-          declared := declared.push ((rawSrc args[0]).trimAscii.toString, args[1])
+        let j := skipSpaces raws (i + 1)
+        let k := skipStar raws j
+        let starred := k != j
+        let (args, k) := takeGroups raws k (if starred then 1 else 2)
+        if starred then
+          if h1 : args.size = 1 then fallback := args[0]
+        else if h2 : args.size = 2 then
+          declared := declareStyOption declared (rawSrc args[0]) args[1]
         i := max k (i + 1)
       | .ctrl "ExecuteOptions" _ =>
         let (args, k) := takeGroups raws (i + 1) 1
-        for o in (rawSrc (args.getD 0 #[])).splitOn "," do
-          if let some (_, body) := declared.find? (·.1 == o.trimAscii.toString) then
-            out := out ++ body
+        let opts := (rawSrc (args.getD 0 #[])).replace " " ""
+        -- TeX's @for skips an empty list, but retains empty items in a
+        -- nonempty list; an explicitly declared empty name can run here.
+        unless opts.isEmpty do
+          for nm in opts.splitOn "," do
+            if let some body := styOptionBody declared nm then out := out ++ body
         i := max k (i + 1)
       | .ctrl "ProcessOptions" _ =>
-        for (nm, body) in declared do
-          if passed.contains nm then
-            out := out ++ body
         let j := skipSpaces raws (i + 1)
-        i := match raws[j]? with
-          | some (.ctrl "relax" _) => j + 1
-          | _ => i + 1
+        let k := skipStar raws j
+        if k == j then
+          for (nm, body) in declared do
+            unless nm.isEmpty do
+              if passed.contains nm then
+                out := out ++ body.getD #[]
+                declared := declareStyOption declared nm #[]
+        -- ProcessOptions makes the empty-name handler empty before either
+        -- pass. Known names consumed above stay defined and bypass fallback.
+        for nm in passed do
+          unless nm.isEmpty do
+            out := out ++ (styOptionBody declared nm).getD fallback
+        declared := declared.map fun (nm, _) => (nm, none)
+        let k := skipSpaces raws k
+        i := match raws[k]? with
+          | some (.ctrl "relax" _) => k + 1
+          | _ => k
       | .ctrl "ProvidesPackage" _ | .ctrl "NeedsTeXFormat" _ =>
         let (_, k) := takeGroups raws (i + 1) 1
         let (_, k2) := takeOpt raws k
