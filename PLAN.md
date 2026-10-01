@@ -25627,3 +25627,13 @@ invisibility bound. Rendered checks remain necessary. The adjacent audit
 identified superscript clearance above a tall nucleus, radical-degree
 bottom attachment, and accent pen offsets as separate candidates; this
 change does not certify or tune them.
+
+Validation passes the warnings-as-errors build and full suite, including
+304 attachment cases. The older clearance judge now measures separation
+in both dimensions; its controls reject painted overlap, touching hulls
+and a forgotten polygon pen while accepting positive vertical clearance.
+All 14 LuaLaTeX cancellation comparisons pass with their existing bounds.
+The 160 Layout/PDF artifacts from 80 unrelated math cases remain byte
+identical, and all 12 scoreboard tiers pass without baseline changes.
+Rendered checks cover the four steep-arrow room/thickness combinations
+and the rebuilt private reference corpus's reported cancellation pages.
