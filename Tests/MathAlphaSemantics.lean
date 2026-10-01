@@ -102,6 +102,100 @@ private def mathAlphaLeafNormal : Html.Node → Bool
       (tag != "mi" || (attrs.find? (·.1 == "mathvariant")).map (·.2) == some "normal")
   | .text _ | .style _ | .script _ _ => false
 
+/-- Exercise the actual document-sourced command, including both sides of
+a nested upright/default-bold boundary. Reuse the independently observed
+inventory, not the production alphabet map. -/
+def mathAlphaLegacyAliasCases : Array MathAlphaSemanticCase :=
+  ((mathAlphaSemanticCases.filter fun row => row.name.startsWith "symbf-").map fun row =>
+    { row with
+      name := row.name.replace "symbf-" "mathbf-"
+      formula := row.formula.replace "\\symbf{" "\\mathbf{" }) ++ #[
+    ⟨"mathbf-symbfup", "\\mathbf{Γγ\\symbfup{Γγ\\partial}γ}",
+      "𝚪𝜸𝚪𝛄𝛛𝜸", none⟩,
+    ⟨"symbfup-mathbf", "\\symbfup{Γγ\\mathbf{Γγ\\partial}γ}",
+      "𝚪𝛄𝚪𝜸𝝏𝛄", none⟩,
+    ⟨"mathbf-symbf", "\\mathbf{Γγ\\symbf{Γγ\\partial}γ}",
+      "𝚪𝜸𝚪𝜸𝝏𝜸", none⟩,
+    ⟨"symbf-mathbf", "\\symbf{Γγ\\mathbf{Γγ\\partial}γ}",
+      "𝚪𝜸𝚪𝜸𝝏𝜸", none⟩]
+
+private structure MathAlphaArtifact where
+  glyphs : Array (Nat × Nat × Char)
+  pdf : Array (String × String × Int × Option Bool)
+  leaves : Array Html.Node
+
+private def mathAlphaArtifact (ref : IO.Ref (List String)) (fs : Font.FontSet)
+    (preamble formula : String) : IO MathAlphaArtifact := do
+  let (raw, ds) := elabStr ("\\documentclass{article}\n" ++ preamble ++
+    "\n\\pagestyle{empty}\\begin{document}$" ++ formula ++ "$\\end{document}")
+  let coverage := { fs.mathAlphabets with sources := raw.fonts.mathSources }
+  let (doc, ads) := Ir.resolveMathAlphas coverage "Fira Math" raw
+  let geom := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom fs none doc
+  let (_, body, hds) := HtmlDoc.emitTree { fonts := some fs } doc
+  check ref (formula ++ " has no recovery or missing alphabet")
+    (!(ds ++ ads ++ out.diags ++ hds).any fun d =>
+      d.severity == .error || d.code == "W0012" || d.code == "W0009" || d.code == "N0018")
+  let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun
+    | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.1, g.2.1)
+    | _ => #[]
+  let pdf ← match pdfFaceRuns (Pdf.write geom fs out.pages doc.info {} out.outline) with
+    | .ok runs => pure runs
+    | .error e => do
+      failures ref (formula ++ " PDF cannot be read: " ++ e)
+      pure #[]
+  return { glyphs, pdf, leaves := mathAlphaLeavesList #[] body.toList }
+
+/-- `mathbf=sym` must make the legacy and forced commands agree at all
+three artifact observations, while explicit/default text policy keeps the
+body's bold face for Latin letters and digits. Policy tests must use the
+legacy command itself: changing policy around forced commands alone cannot
+detect an alias divergence. -/
+private def mathAlphaLegacyAliasChecks (ref : IO.Ref (List String))
+    (fs : Font.FontSet) : IO Unit := do
+  for row in mathAlphaLegacyAliasCases do
+    let legacy ← mathAlphaArtifact ref fs
+      "\\usepackage[mathbf=sym]{unicode-math}" row.formula
+    let forced ← mathAlphaArtifact ref fs
+      "\\usepackage[mathbf=sym]{unicode-math}"
+      (row.formula.replace "\\mathbf{" "\\symbf{")
+    let wanted := row.expected.toList.toArray.map fun c =>
+      (4, ((fs.get 4).gid c).getD 0, c)
+    check ref (row.name ++ " aliases the forced Layout scalars and real glyph IDs")
+      (wanted.all (fun (_, gid, _) => gid != 0) &&
+        legacy.glyphs == wanted && legacy.glyphs == forced.glyphs)
+    check ref (row.name ++ " aliases the forced PDF scalars")
+      (legacy.pdf == forced.pdf && legacy.pdf.size == 1 &&
+        (legacy.pdf[0]?.map fun (_, text, _, _) => text) == some row.expected)
+    let text (a : MathAlphaArtifact) :=
+      a.leaves.foldl (fun s n => s ++ nodeTextOne "" n) ""
+    check ref (row.name ++ " aliases the literal typed MathML scalars")
+      (text legacy == row.htmlExpected.getD row.expected && text legacy == text forced &&
+        !legacy.leaves.isEmpty && legacy.leaves.all mathAlphaLeafNormal &&
+        forced.leaves.all mathAlphaLeafNormal)
+
+  for preamble in ["", "\\usepackage[mathbf=text]{unicode-math}"] do
+    for (formula, expected, face, css) in [
+        ("\\mathbf{Ax012}", "Ax012", 1,
+          "font-family: var(--font-body); font-weight: 700"),
+        ("\\symbf{\\mathbf{x}}", "x", 1,
+          "font-family: var(--font-body); font-weight: 700"),
+        ("\\mathbf{\\mathit{x5}}", "x5", 2,
+          "font-family: var(--font-body); font-style: italic"),
+        ("\\mathit{\\mathbf{x5}}", "x5", 1,
+          "font-family: var(--font-body); font-weight: 700")] do
+      let a ← mathAlphaArtifact ref fs preamble formula
+      let wanted := expected.toList.toArray.map fun c =>
+        (face, ((fs.get face).gid c).getD 0, c)
+      check ref (formula ++ " preserves default/explicit text Layout faces and glyph IDs")
+        (wanted.all (fun (_, gid, _) => gid != 0) && a.glyphs == wanted)
+      check ref (formula ++ " preserves default/explicit text PDF scalars")
+        (a.pdf.size == 1 &&
+          (a.pdf[0]?.map fun (_, text, _, _) => text) == some expected)
+      check ref (formula ++ " preserves default/explicit text MathML faces")
+        (mathTextLeavesList #[] a.leaves.toList ==
+          expected.toList.toArray.map fun c => (String.singleton c, css))
+
 /-- The real elaboration-to-artifact path: an alias must select the
 observed Greek range, the selected Fira face must paint those glyph IDs,
 the written PDF must decode to those scalars, and typed MathML must agree.
@@ -110,6 +204,7 @@ the forced `sym…` aliases invariant. -/
 def mathAlphaSemanticsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← serifFacesSet |
     failures ref "math alphabet semantics: shipped fonts must load"
+  mathAlphaLegacyAliasChecks ref fs
   for preamble in ["", "\\usepackage[mathrm=sym,mathit=sym,mathbf=sym]{unicode-math}"] do
     for row in mathAlphaSemanticCases do
       let label := "math alphabet " ++ row.name ++
@@ -148,17 +243,20 @@ def mathAlphaSemanticsChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- it. In particular, upright bold coverage cannot pay for default bold
   -- lowercase Greek; the existing N0018 loss must name that selection.
   for missing in [none, some Math.MathAlphabet.bfit, some Math.MathAlphabet.bf] do
-    let coverage := { fs.mathAlphabets with
+    let coverage : Math.MathAlphabetCoverage := { fs.mathAlphabets with
       covered := fs.mathAlphabets.covered.filter fun (a, r) =>
         missing != some a || r != .greekLower }
     for (command, canonical, subject, full) in [
         ("symbf", Math.MathAlphabet.bfit, "math-alpha:bf-default", "𝚪𝜸𝝏𝛁"),
+        ("mathbf", Math.MathAlphabet.bfit, "math-alpha:bf-default", "𝚪𝜸𝝏𝛁"),
         ("symbfup", Math.MathAlphabet.bf, "math-alpha:bf", "𝚪𝛄𝛛𝛁")] do
       let label := command ++ " with missing " ++
         (missing.map Math.MathAlphabet.name).getD "none"
       let expected := if missing == some canonical then "𝚪𝛾𝜕𝛁" else full
       let (raw, ds) := elabStr ("\\documentclass{article}\\pagestyle{empty}" ++
+        (if command == "mathbf" then "\\usepackage[mathbf=sym]{unicode-math}" else "") ++
         "\\begin{document}$\\" ++ command ++ "{Γγ\\partial\\nabla}$\\end{document}")
+      let coverage := { coverage with sources := raw.fonts.mathSources }
       let (doc, ads) := Ir.resolveMathAlphas coverage "Fira Math" raw
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs none doc
