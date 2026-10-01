@@ -7578,6 +7578,42 @@ private def opensPara (rs : Array Raw) (i : Nat) : Bool := Id.run do
       | _ => return false
   return k == 0
 
+/-- The minipage body a group holds, when the group is one minipage box
+alone (bar surrounding spaces). This is the one minipage a flow-transparent
+link wrapper may stand on, read through for the row the boxes form while the
+wrapper stays around the box's content. -/
+private def soleMinipage (g : Array Raw) : Option (Array Raw) :=
+  let a := skipSpaces g 0
+  match g[a]? with
+  | some (.env "minipage" mb _) =>
+    if skipSpaces g (a + 1) == g.size then some mb else none
+  | _ => none
+
+/-- A box at `i` that a row can hold: a bare `\begin{minipage}` box, or one
+inside a flow-transparent link wrapper (`\hyperlink`/`\href`, whose second
+group is one minipage). Returns the box's width group, the content the
+column carries (the wrapper kept around the minipage's own content for a
+linked box, so the column keeps one link identity), its `[pos]` bracket,
+whether a `[height]`/`[inner-pos]` option stood, the box's position, and the
+index past the whole box. `none` when `i` is not a box. -/
+private def boxAt (rs : Array Raw) (i : Nat) :
+    Option (Raw × Array Raw × Array Raw × Bool × Pos × Nat) :=
+  match rs[i]? with
+  | some (.env "minipage" b p) =>
+    (boxParts b).map fun (w, c, pos, o) => (w, c, pos, o, p, i + 1)
+  | some (.ctrl wrapper wp) =>
+    if wrapper == "hyperlink" || wrapper == "href" then
+      let j := skipSpaces rs (i + 1)
+      let j2 := skipSpaces rs (j + 1)
+      match rs[j]?, rs[j2]? with
+      | some (.group tgt tp), some (.group bodyG bp) =>
+        (soleMinipage bodyG).bind fun mb =>
+          (boxParts mb).map fun (w, c, pos, o) =>
+            (w, #[Raw.ctrl wrapper wp, Raw.group tgt tp, Raw.group c bp], pos, o, wp, j2 + 1)
+      | _, _ => none
+    else none
+  | _ => none
+
 /-- Each run of minipages at one level whose separators are row glue holding
 a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
 declare: LaTeX sets such boxes on one line with the fill between them
@@ -7597,66 +7633,69 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
   let mut rows : Array (Pos × Bool × Bool) := #[]
   let mut i := 0
   for _ in [0:rs.size + 1] do
-    match (rs[i]? : Option Raw) with
-    | none => break
-    | some (.env "minipage" b p) =>
-      match boxParts b with
-      | none =>
-        out := out.push (.env "minipage" b p)
+    match boxAt rs i with
+    | none =>
+      match (rs[i]? : Option Raw) with
+      | none => break
+      | some r =>
+        out := out.push r
         i := i + 1
-      | some (w0, c0, pos0, o0) =>
-        let pk := skipSpaces rs (i + 1)
-        let picLine := match rs[pk]? with
-          | some (.env "tikzpicture" _ _) =>
-            opensPara rs i && endsPara rs (pk + 1) && pos0.any (· matches .sym '[' _)
-          | _ => false
-        if picLine then
-          let pic := rs[pk]!
-          let pp := match pic with
-            | .env _ _ q => q
-            | _ => p
-          let picPos : Array Raw := #[.sym '[' pp, .word "t" pp, .sym ']' pp]
-          out := out.push (.env "columns"
-            #[Raw.env "column" (pos0 ++ #[w0] ++ c0) p, Raw.env "column" (picPos ++ #[pic]) pp] p)
-          rows := rows.push (p, o0, true)
-          i := pk + 1
-        else
-          let mut cols : Array (Raw × Array Raw × Array Raw × Pos) := #[(w0, c0, pos0, p)]
-          let mut opts := o0
-          let mut j := i + 1
-          for _ in [i + 1:rs.size + 1] do
-            let mut k := j
-            let mut fill := false
-            for _ in [j:rs.size + 1] do
-              match rs[k]? with
-              | some r =>
-                if rowGlue r then
-                  if !(r matches .space) then fill := true
-                  k := k + 1
-                else break
-              | none => break
+    | some (w0, c0, pos0, o0, cp0, next0) =>
+      -- The box-and-picture line is a bare minipage followed by a picture;
+      -- a wrapped box does not take that shape here.
+      let bare := match rs[i]? with | some (.env "minipage" _ _) => true | _ => false
+      let pk := skipSpaces rs next0
+      let picLine := bare && (match rs[pk]? with
+        | some (.env "tikzpicture" _ _) =>
+          opensPara rs i && endsPara rs (pk + 1) && pos0.any (· matches .sym '[' _)
+        | _ => false)
+      if picLine then
+        let pic := rs[pk]!
+        let pp := match pic with
+          | .env _ _ q => q
+          | _ => cp0
+        let picPos : Array Raw := #[.sym '[' pp, .word "t" pp, .sym ']' pp]
+        out := out.push (.env "columns"
+          #[Raw.env "column" (pos0 ++ #[w0] ++ c0) cp0, Raw.env "column" (picPos ++ #[pic]) pp] cp0)
+        rows := rows.push (cp0, o0, true)
+        i := pk + 1
+      else
+        let mut cols : Array (Raw × Array Raw × Array Raw × Pos) := #[(w0, c0, pos0, cp0)]
+        let mut opts := o0
+        let mut j := next0
+        for _ in [next0:rs.size + 1] do
+          let mut k := j
+          let mut fill := false
+          for _ in [j:rs.size + 1] do
             match rs[k]? with
-            | some (.env "minipage" b2 p2) =>
-              match boxParts b2 with
-              | some (w, c, ps, o) =>
-                if fill then
-                  cols := cols.push (w, c, ps, p2)
-                  opts := opts || o
-                  j := k + 1
-                else break
-              | none => break
-            | _ => break
-          if cols.size ≥ 2 then
-            out := out.push (.env "columns"
-              (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) p)
-            rows := rows.push (p, opts, false)
-            i := j
-          else
-            out := out.push (.env "minipage" b p)
+            | some r =>
+              if rowGlue r then
+                if !(r matches .space) then fill := true
+                k := k + 1
+              else break
+            | none => break
+          match boxAt rs k with
+          | some (w, c, ps, o, cp, nextk) =>
+            if fill then
+              cols := cols.push (w, c, ps, cp)
+              opts := opts || o
+              j := nextk
+            else break
+          | none => break
+        if cols.size ≥ 2 then
+          out := out.push (.env "columns"
+            (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) cp0)
+          rows := rows.push (cp0, opts, false)
+          i := j
+        else
+          -- A lone box is left as it stands: push its first token and
+          -- advance one, so any following groups (a wrapper's arguments)
+          -- flow back through the walk unchanged.
+          match (rs[i]? : Option Raw) with
+          | none => break
+          | some r =>
+            out := out.push r
             i := i + 1
-    | some r =>
-      out := out.push r
-      i := i + 1
   return (out, rows)
 
 /-- One level of rows, formed and named: each row is a translation onto the

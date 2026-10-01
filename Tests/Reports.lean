@@ -446,7 +446,8 @@ def reports : List Report := [
     state := .guarded "41c36677" .before .reviewer },
   { id := "R66", date := "2026-10-01"
     what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
-    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text]
+    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text,
+      thm% Ir.linkedBoxRow_text, thm% Ir.linkedBoxRow_links]
     state := .guarded "82e1e271" .before .author },
   { id := "R67", date := "2026-10-01"
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"

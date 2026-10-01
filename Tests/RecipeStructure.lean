@@ -172,6 +172,74 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     (rLinks == 0 && !rHrefs.contains "#dest" &&
       hasStr rText "Redefined lead:" && hasStr rText "Alpha words." && hasStr rText "Beta words." &&
       rds.all (fun d => !cascade.contains d.code))
+  -- A `\hfill` run of `\hyperlink`-wrapped minipages is ONE columns row: the
+  -- flow-transparent wrapper is read through for the row (width and row
+  -- participation from the minipage inside) while the wrapper stays around
+  -- the tile's content, so each column is one `.link` to its own target
+  -- (`Ir.linkedBoxRow_text`, `Ir.linkedBoxRow_links`). The row stands at the
+  -- same baseline and column origins as the unlinked three-minipage row, and
+  -- each tile gets one link rectangle over its OWN ink only — not the gutter
+  -- or a neighbour (`Layout.Out`), with one `<a>` per tile (typed HTML).
+  let linkTiles :=
+    "\\hyperlink{ta}{\\begin{minipage}{0.3\\textwidth}Tile Apple.\\begin{tabular}{ll}A&B\\\\C&D\\end{tabular}\\end{minipage}}\\hfill\n" ++
+    "\\hyperlink{tb}{\\begin{minipage}{0.3\\textwidth}Tile Berry.\\begin{tabular}{ll}E&F\\\\G&H\\end{tabular}\\end{minipage}}\\hfill\n" ++
+    "\\hyperlink{tc}{\\begin{minipage}{0.3\\textwidth}Tile Cherry.\\begin{tabular}{ll}I&J\\\\K&L\\end{tabular}\\end{minipage}}"
+  let bareTiles :=
+    "\\begin{minipage}{0.3\\textwidth}Tile Apple.\\begin{tabular}{ll}A&B\\\\C&D\\end{tabular}\\end{minipage}\\hfill\n" ++
+    "\\begin{minipage}{0.3\\textwidth}Tile Berry.\\begin{tabular}{ll}E&F\\\\G&H\\end{tabular}\\end{minipage}\\hfill\n" ++
+    "\\begin{minipage}{0.3\\textwidth}Tile Cherry.\\begin{tabular}{ll}I&J\\\\K&L\\end{tabular}\\end{minipage}"
+  let (ldoc, lds) := elabStr (dvDoc "\\usepackage{hyperref}\n" linkTiles)
+  let (bdoc, _) := elabStr (dvDoc "\\usepackage{hyperref}\n" bareTiles)
+  let lcols := ldoc.body.findSome? fun b => match b with | .columns cs => some cs | _ => none
+  t "a hfill run of linked minipages is one columns row of three linked columns"
+    (match lcols with
+     | some cs => cs.size == 3 &&
+         Ir.colLinkTargets cs.toList == [some "#ta", some "#tb", some "#tc"]
+     | none => false)
+  t "the linked row has three block links and no unknown-command cascade"
+    (lds.all (fun d => !cascade.contains d.code) &&
+      Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
+        (fun n _ => n) 0 ldoc.body == 3)
+  let lout := layoutOf oneFace ldoc
+  let bout := layoutOf oneFace bdoc
+  let lineY (o : Layout.Out) (needle : String) : Option Dim.Sp :=
+    (allLines o).findSome? fun l => if hasStr (lineText l) needle then some l.y else none
+  let lineX (o : Layout.Out) (needle : String) : Option Dim.Sp :=
+    (allLines o).findSome? fun l => if hasStr (lineText l) needle then some l.x else none
+  t "the three linked tiles stand on the unlinked row's one baseline"
+    (match lineY lout "Tile Apple.", lineY lout "Tile Berry.", lineY lout "Tile Cherry.",
+         lineY bout "Tile Apple." with
+     | some ya, some yb, some yc, some ybare => ya == yb && yb == yc && ya == ybare
+     | _, _, _, _ => false)
+  t "each linked tile keeps the unlinked row's column origin"
+    (lineX lout "Tile Apple." == lineX bout "Tile Apple." &&
+      lineX lout "Tile Berry." == lineX bout "Tile Berry." &&
+      lineX lout "Tile Cherry." == lineX bout "Tile Cherry.")
+  let rects := (lout.pages[0]?.map (·.links)).getD #[]
+  let sorted := rects.qsort (fun a b => decide (a.x < b.x))
+  let covers (r : Layout.LinkRect) (x : Dim.Sp) : Bool :=
+    decide (r.x ≤ x) && decide (x ≤ r.x + r.w)
+  t "the hfill linked row ships exactly three disjoint link rectangles with a gutter between"
+    (rects.size == 3 &&
+      (match sorted[0]?, sorted[1]?, sorted[2]? with
+       | some r0, some r1, some r2 =>
+         decide (r0.x + r0.w < r1.x) && decide (r1.x + r1.w < r2.x)
+       | _, _, _ => false))
+  t "each link rectangle covers its own tile's ink and neither the gutter nor a neighbour"
+    (match lineX lout "Tile Apple.", lineX lout "Tile Berry.", lineX lout "Tile Cherry.",
+         sorted[0]?, sorted[1]?, sorted[2]? with
+     | some xa, some xb, some xc, some r0, some r1, some r2 =>
+       covers r0 xa && !covers r0 xb && !covers r0 xc &&
+       covers r1 xb && !covers r1 xa && !covers r1 xc &&
+       covers r2 xc && !covers r2 xa && !covers r2 xb
+     | _, _, _, _, _, _ => false)
+  t "the three link rectangles carry the three distinct tile targets left to right"
+    (sorted.map (·.target) == #["#ta", "#tb", "#tc"])
+  let ltrees := ldoc.body.map (HtmlDoc.blockNode {})
+  let lhrefs := ltrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  t "the typed HTML row carries one anchor per tile with the three targets"
+    (lhrefs == #["#ta", "#tb", "#tc"] &&
+      ltrees.foldl (fun n tree => n + countTag "a" tree) 0 == 3)
 
 /-- **Paracol's two flows are one typed columns row.** The installed package
 sets each column's width from `\columnratio`, gives the final column the
