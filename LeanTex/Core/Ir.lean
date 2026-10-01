@@ -4925,6 +4925,13 @@ inductive Block where
   keeps its authored name the same way — `<div class="u-name">` in HTML,
   a transparent group everywhere else. -/
   | role (name : String) (body : Array Block)
+  /-- One hyperlink over block-shaped content. HTML's anchor has a
+  transparent content model and may wrap flow content, but may contain no
+  interactive descendant; elaboration refuses that nesting before this node
+  is built. The paged backend records one rectangle over the body's placed
+  ink on each page the body reaches, since a PDF annotation belongs to one
+  page. -/
+  | link (target : String) (body : Array Block)
   /-- `{quote}`/`{quotation}`: a quotation set off from the text by
   indenting both margins by the list indent — classes.dtx defines both as
   `\list{}{\rightmargin\leftmargin}`, so the right edge moves in exactly as
@@ -5481,6 +5488,9 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .role n body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .role n body2)
+  | .link target body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .link target body2)
   | .spaced g body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .spaced g body2)
@@ -5566,6 +5576,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .abstract body => floatNumsList k out body.toList
   | .titled _ _ body => floatNumsList k out body.toList
   | .role _ body => floatNumsList k out body.toList
+  | .link _ body => floatNumsList k out body.toList
   | .spaced _ body => floatNumsList k out body.toList
   | .columns cols => floatNumsCols k out cols.toList
   | .onSteps _ body => floatNumsList k out body.toList
@@ -5684,6 +5695,10 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
   | .role _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .link _ body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -8042,6 +8057,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .titled _ title body =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
   | .role _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .link _ body => foldBlockList fb fi (fb acc b) body.toList
   | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
   | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
   | .onSteps _ body => foldBlockList fb fi (fb acc b) body.toList
@@ -8213,6 +8229,9 @@ def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
     w.closeBlock ctx
       (foldCtxBlockList w r.2 (foldCtxInlineList w r.2 r.1 title.toList) body.toList) b
   | .role _ body =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+  | .link _ body =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
   | .spaced _ body =>
@@ -8440,6 +8459,10 @@ theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → �
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxBlockList_covers fb fi _ body.toList
+  | .link _ body =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBlockList_covers fb fi _ body.toList
   | .spaced _ body =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
@@ -8541,6 +8564,55 @@ fold — the trigger census the conditional-identity schema
 (`mapInlines_id`) and `hasPhysicalPage` read. -/
 def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
   foldInlines (fun b x => b || p x) false xs
+
+/-- An inline that emits an HTML anchor now or after reference/citation
+resolution. Conservatively counting citations keeps a later rewrite from
+creating an anchor inside an already-built block link. -/
+def Inline.anchorBearing : Inline → Bool
+  | .link _ _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => true
+  | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
+  | .role _ _ | .underline _ | .fill | .hspace _ _ | .rule _ _ _
+  | .strut _ | .italicCorr _
+  | .pageNumber | .pageCount | .linebreak _ | .onSteps _ _ | .altSteps _ _ _
+  | .image _ _ _ | .icon _ _ | .label _ => false
+
+/-- Whether a block body already contains an anchor-bearing construct. -/
+def hasBlockAnchor (xs : Array Block) : Bool :=
+  foldBlocks (fun found b => found || (b matches .link _ _))
+    (fun found x => found || x.anchorBearing) false xs
+
+
+/-- The accessible reading of a block link, from the same generic fold that
+censuses the block tree. Wrapper nodes contribute nothing twice; leaf text,
+listing text, reference entries, and non-text alternatives do. -/
+private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
+  match x with
+  | .styled _ _ | .colored _ _ _ | .role _ _ | .link _ _ | .underline _
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => acc
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .strut _ | .italicCorr _
+  | .pageNumber | .pageCount | .linebreak _ => String.append acc (plainTextOne x)
+
+private def blockLinkBlockReading (acc : String) (b : Block) : String :=
+  match b with
+  | .verbatim _ content spec =>
+    let caption := match spec.caption with
+      | some (_, cap) => plainText cap
+      | none => ""
+    String.append (String.append acc caption) content
+  | .picture pic => String.append acc pic.alternative.text
+  | .bibliography _ _ items =>
+    items.foldl (fun s item => String.append s (plainText item.content)) acc
+  | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _ | .spaced _ _
+  | .role _ _ | .link _ _ | .quote _ | .abstract _ | .titled _ _ _ | .equation _ _
+  | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
+  | .nav _ _ | .logo _ | .pagebreak | .frame _ _ _ _ _ | .framefoot _ | .setPalette _
+  | .setTokens _ | .rule _ _ _ | .table _ _ _ _ _ _ | .float _ _ _ _ _ => acc
+
+/-- What assistive technology can name a block link from. -/
+def blockLinkReading (body : Array Block) : String :=
+  foldBlocks blockLinkBlockReading blockLinkInlineReading "" body
 
 
 /-- Unicode `White_Space` (PropList.txt, maintained under UAX #44): the
@@ -8671,6 +8743,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .abstract body => navLinkList out body.toList
   | .titled _ title body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .role _ body => navLinkList out body.toList
+  | .link target body => out.push (blockLinkReading body, target)
   | .spaced _ body => navLinkList out body.toList
   | .columns cols => navLinkColumns out cols.toList
   | .onSteps _ body => navLinkList out body.toList
@@ -9085,6 +9158,8 @@ def dumpBlock (ind : String) (b : Block) : String :=
      else s!"{ind}  title\n" ++ dumpInlines (ind ++ "    ") title) ++
     dumpBlocks (ind ++ "  ") body
   | .role n body => s!"{ind}role {n}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .link target body =>
+    s!"{ind}block-link {target.quote}\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .onSteps spec body =>
     s!"{ind}{dumpOverlayRange "step" spec}\n" ++ dumpBlocks (ind ++ "  ") body
@@ -9712,6 +9787,7 @@ def maxStepBlock : Block → Nat
   -- the body's own steps take theirs.
   | .titled _ _ body => maxStepBlockList body.toList
   | .role _ body => maxStepBlockList body.toList
+  | .link _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .onSteps spec body => max (spec.maxStep) (maxStepBlockList body.toList)
@@ -9893,6 +9969,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
        else dimInlineList cover k false #[] title.toList)
       (dimBlockList cover k pending #[] body.toList)
   | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
+  | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
   -- The mode flip: a pending step's body covers, and inside a cover a
@@ -10077,6 +10154,7 @@ def unwrapItemStep : Block → Block
   | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
   | .titled kind title body => .titled kind title (unwrapItemStepList #[] body.toList)
   | .role n body => .role n (unwrapItemStepList #[] body.toList)
+  | .link target body => .link target (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .onSteps spec body => .onSteps spec (unwrapItemStepList #[] body.toList)
@@ -10237,6 +10315,7 @@ def blockTextOne (acc : String) : Block → String
   -- the bar and background are decorative ink and ship no characters.
   | .titled _ title body => blockTextList (acc ++ plainText title) body.toList
   | .role _ body => blockTextList acc body.toList
+  | .link _ body => blockTextList acc body.toList
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
   | .onSteps _ body => blockTextList acc body.toList
@@ -10473,6 +10552,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .abstract body => headingLevelList out body.toList
   | .titled _ _ body => headingLevelList out body.toList
   | .role _ body => headingLevelList out body.toList
+  | .link _ body => headingLevelList out body.toList
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
   | .onSteps _ body => headingLevelList out body.toList
@@ -10538,6 +10618,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .titled _ title body =>
     footnoteBlockList (footnoteInlineList out title.toList) body.toList
   | .role _ body => footnoteBlockList out body.toList
+  | .link _ body => footnoteBlockList out body.toList
   | .spaced _ body => footnoteBlockList out body.toList
   | .columns cols => footnoteColumns out cols.toList
   | .onSteps _ body => footnoteBlockList out body.toList
@@ -11067,6 +11148,9 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .role n body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+  | .link target body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -11239,6 +11323,10 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
+  | .link target body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
   | .spaced g body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -11362,6 +11450,9 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .role _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .link _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .spaced _ body =>
@@ -11497,6 +11588,9 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   | .role n body =>
     let r := recolorRolesList repal recolor cx #[] body.toList
     (.role n r.1, r.2)
+  | .link target body =>
+    let r := recolorRolesList repal recolor cx #[] body.toList
+    (.link target r.1, r.2)
   | .spaced g body =>
     let r := recolorRolesList repal recolor cx #[] body.toList
     (.spaced g r.1, r.2)
@@ -11869,6 +11963,10 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
     rw [recolorRolesBlock]
     simp [blockTextOne,
       recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
+  | .link target body =>
+    rw [recolorRolesBlock]
+    simp [blockTextOne,
+      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
@@ -11987,7 +12085,7 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
   | .quote _ | .abstract _
-  | .role _ _
+  | .role _ _ | .link _ _
   | .titled _ _ _
   | .spaced _ _
   | .verbatim _ _ _ | .columns _ | .onSteps _ _ | .note _ | .logo _
@@ -12014,6 +12112,7 @@ def keepForOne (t : String) : Block → Block
   | .abstract body => .abstract (keepForList t body.toList).toArray
   | .titled kind title body => .titled kind title (keepForList t body.toList).toArray
   | .role n body => .role n (keepForList t body.toList).toArray
+  | .link target body => .link target (keepForList t body.toList).toArray
   | .spaced g body => .spaced g (keepForList t body.toList).toArray
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
   | .onSteps spec body => .onSteps spec (keepForList t body.toList).toArray
@@ -12106,6 +12205,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .abstract body => textLeavesList acc body.toList
   | .titled _ title body => textLeavesList (plainText title :: acc) body.toList
   | .role _ body => textLeavesList acc body.toList
+  | .link _ body => textLeavesList acc body.toList
   | .spaced _ body => textLeavesList acc body.toList
   | .columns cols => textLeavesColumns acc cols.toList
   | .onSteps _ body => textLeavesList acc body.toList
@@ -12181,6 +12281,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .abstract body => orphanFreeList avail body.toList
   | .titled _ _ body => orphanFreeList avail body.toList
   | .role _ body => orphanFreeList avail body.toList
+  | .link _ body => orphanFreeList avail body.toList
   | .spaced _ body => orphanFreeList avail body.toList
   | .columns cols => orphanFreeColumns avail cols.toList
   | .onSteps _ body => orphanFreeList avail body.toList
@@ -12304,6 +12405,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
       textLeavesList_acc [plainText t] body.toList]
     simp
   | .role n body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .link target body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .spaced g body =>
@@ -12538,6 +12642,11 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .link target body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
   | .spaced g body =>
     intro s hs
     rw [textLeavesOne] at hs
@@ -12716,6 +12825,7 @@ def onlyFreeOne : Block → Bool
   | .abstract body => onlyFreeList body.toList
   | .titled _ _ body => onlyFreeList body.toList
   | .role _ body => onlyFreeList body.toList
+  | .link _ body => onlyFreeList body.toList
   | .spaced _ body => onlyFreeList body.toList
   | .columns cols => onlyFreeColumns cols.toList
   | .onSteps _ body => onlyFreeList body.toList
@@ -12793,6 +12903,9 @@ theorem keepForOne_id (t : String) (b : Block)
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .role n body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .link target body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .spaced g body =>
@@ -13605,12 +13718,24 @@ private def sansTextLinkStep (out : Array String)
     else out
   | _ => out
 
+private def sansTextBlockLinkStep (out : Array String)
+    (b : Block) : Array String :=
+  match b with
+  | .link target body =>
+    if (blockLinkReading body).isEmpty && !out.contains target then out.push target else out
+  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
+  | .spaced _ _ | .role _ _ | .quote _ | .abstract _ | .titled _ _ _ | .verbatim _ _ _
+  | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
+  | .nav _ _ | .logo _ | .pagebreak | .frame _ _ _ _ _ | .framefoot _ | .setPalette _
+  | .setTokens _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
+  | .bibliography _ _ _ => out
+
 /-- Every link the artifacts ship with no reading — no text, no icon
 label, no image alternative — deduplicated by target, in document order:
 the backends read the body, the running head and foot, and the logo, so
 the census reads the same regions (`imageRefs`' scope for shipped ink). -/
 def linksSansText (doc : Doc) : Array String :=
-  let out := foldBlocks (fun out _ => out) sansTextLinkStep #[] doc.body
+  let out := foldBlocks sansTextBlockLinkStep sansTextLinkStep #[] doc.body
   let out := match doc.head with | some h => foldInlines sansTextLinkStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansTextLinkStep out f | none => out
   match doc.logo with | some l => foldInlines sansTextLinkStep out l | none => out
@@ -13743,6 +13868,7 @@ def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) : Block 
   | .titled kind title body =>
     .titled kind (mapInlines f title) (mapBlockList gp f #[] body.toList)
   | .role n body => .role n (mapBlockList gp f #[] body.toList)
+  | .link target body => .link target (mapBlockList gp f #[] body.toList)
   | .spaced g body => .spaced g (mapBlockList gp f #[] body.toList)
   | .columns cols => .columns (mapBlockCols gp f #[] cols.toList)
   | .onSteps spec body => .onSteps spec (mapBlockList gp f #[] body.toList)
@@ -13856,11 +13982,14 @@ theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
 
-/-- Wrap every inline leaf of a block tree with the same link destination while
-preserving every block and inline wrapper. Block-shaped content wrappers use
-this generic map instead of inventing a parallel linked-block IR. -/
+/-- The List companion of `linkBlocks`: one block link owns the whole body,
+so an authored wrapper cannot multiply with its inline leaves. -/
+def linkBlockList (url : String) (body : List Block) : List Block :=
+  [Block.link url body.toArray]
+
+/-- Wrap a block sequence in one link destination. -/
 def linkBlocks (url : String) (xs : Array Block) : Array Block :=
-  mapBlocks (fun x => .link url #[x]) xs
+  (linkBlockList url xs.toList).toArray
 
 mutual
 
@@ -14161,6 +14290,10 @@ theorem mapBlock_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
     rw [mapBlockList_text gp f hf body.toList #[]]
     rfl
+  | .link target body =>
+    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
+    rw [mapBlockList_text gp f hf body.toList #[]]
+    rfl
   | .spaced g body =>
     show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
     rw [mapBlockList_text gp f hf body.toList #[]]
@@ -14282,12 +14415,15 @@ theorem mapBlocks_text (f : Inline → Inline)
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
 
-/-- Linking a block-shaped wrapper preserves its complete text census. The
-wrapper changes navigation, never content. -/
-theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) :=
-  mapBlocks_text (fun x => .link url #[x]) (by
-    intro x
-    simp [plainTextOne, plainTextList])
+/-- The List wrapper changes navigation, never content. -/
+theorem linkBlockList_text (url : String) (xs : List Block) (acc : String) :
+    blockTextList acc (linkBlockList url xs) = blockTextList acc xs := by
+  simp [linkBlockList, blockTextList, blockTextOne]
+
+/-- Linking a block-shaped wrapper preserves its complete text census. -/
+theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) := by
+  intro xs
+  simp [linkBlocks, blocksText, linkBlockList_text]
 
 /-- A caption fills only what was left undeclared: a described image keeps
 its own words, and `artifact` inside a captioned figure stays decoration. -/
@@ -15030,7 +15166,7 @@ def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option R
         | .table => some { kind := some .table, num := toString m }
         | .algorithm => some { kind := some .algorithm, num := toString m })
   | .para _ | .list _ _ | .center _ | .ragged _ _ | .quote _ | .abstract _
-  | .titled _ _ _ | .role _ _ | .spaced _ _ | .columns _ | .onSteps _ _
+  | .titled _ _ _ | .role _ _ | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _
   | .altSteps _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
   | .framefoot _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak

@@ -1,10 +1,44 @@
 import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
+open LeanTex.Core.PdfRead (Obj)
+
+private def pdfLinkTargets (pdf : ByteArray) : Except String (Array ByteArray) := do
+  let es ← PdfRead.objects pdf
+  let mut out : Array ByteArray := #[]
+  for e in es.val do
+    if PdfCensus.kindOf e.val == .page then
+      match PdfCensus.deref es.val ((e.val.get? "Annots").getD .null) with
+      | .arr annots =>
+        for raw in annots do
+          let annot := PdfCensus.deref es.val raw
+          if PdfCensus.kindOf annot == .annot "Link" then
+            let action := PdfCensus.deref es.val ((annot.get? "A").getD .null)
+            if let some (Obj.str target) := action.get? "URI" then
+              out := out.push target
+      | _ => pure ()
+  return out
 
 private def countTag (tag : String) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => 0
   | .elem t _ kids => (if t == tag then 1 else 0) + kids.foldl (fun n k => n + countTag tag k) 0
+
+/-- Count anchors nested inside another anchor. An `<a>` descending from an
+`<a>` is invalid interactive nesting and a keyboard trap (HTML content model;
+WCAG SC 4.1.2): a block link must never emit one, which is what refusing a
+nested wrapper secures. -/
+private def anchorInAnchor (inside : Bool) : Html.Node → Nat
+  | .text _ | .style _ | .script _ _ => 0
+  | .elem t _ kids =>
+    (if inside && t == "a" then 1 else 0)
+      + kids.foldl (fun n k => n + anchorInAnchor (inside || t == "a") k) 0
+
+/-- The text an anchor subtree contributes to its accessible name: every text
+leaf below an `<a>`. Content outside every anchor contributes nothing. -/
+private def anchorInnerText (inside : Bool) : Html.Node → String
+  | .text s => if inside then s else ""
+  | .style _ | .script _ _ => ""
+  | .elem t _ kids => kids.foldl (fun s k => s ++ anchorInnerText (inside || t == "a") k) ""
 
 /-- **A recognized content wrapper consumes its target and preserves a block body.**
 Hyperref defines `\hyperlink{target}{text}` and `\hypertarget{target}{text}` as
@@ -38,17 +72,25 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
       if l.segs.isEmpty || l.furniture then none else some (lineText l, l.x, l.y)
   t "a block target adds no page spacing or displacement"
     (placed ("\\hypertarget{spot}{" ++ anchorBody ++ "}") == placed anchorBody)
-  t "the linked block reaches Layout.Out as an internal link"
-    ((allLines out).any fun l => l.segs.any fun s => match s with
-      | .run _ _ (some "#panel") _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-      | _ => false)
+  t "the linked block reaches Layout.Out as one whole-block rectangle"
+    (match out.pages[0]?.bind (·.links[0]?) with
+     | some rect =>
+       (out.pages[0]?.map (·.links.size == 1)).getD false && rect.target == "#panel" &&
+         ((allLines out).filter (fun l =>
+           ["Linked panel.", "One", "Two", "Three", "Four"].any (hasStr (lineText l) ·))).all
+           fun l => rect.x ≤ l.x && l.x + l.setWidth ≤ rect.x + rect.w &&
+             rect.y ≤ l.y && l.y ≤ rect.y + rect.h
+     | none => false)
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let hrefs := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let ids := trees.foldl
     (fun acc n => acc ++ attrValuesOf (fun _ => true) "id" n) #[]
-  t "the typed HTML tree carries the matching target and internal link"
-    (ids.contains "panel" && hrefs.contains "#panel")
+  t "the typed HTML tree carries exactly one matching internal link"
+    (ids.contains "panel" && hrefs == #["#panel"])
+  let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
+  t "the PDF artifact carries exactly one matching block-link annotation"
+    (pdfLinkTargets pdf == .ok #["(#panel)".toUTF8])
   t "the typed HTML tree keeps both nested tables"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 2)
   let (nestedDoc, nestedDs) := elabStr (dvDoc "\\usepackage{hyperref}\n"
@@ -61,6 +103,52 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     ((nestedDs.filter (·.code == "W0104")).size == 1 &&
       nestedHrefs.contains "https://example.org" && !nestedHrefs.contains "#outer" &&
       nestedTrees.foldl (fun n tree => n + treeShownOccurs #[tree] "Outer words") 0 == 1)
+  -- A multi-paragraph wrapper with text on either side: one authored link
+  -- identity spans both paragraphs (never one wrapper per inline leaf), and
+  -- the surrounding siblings stay outside the one region, one annotation,
+  -- and the one anchor.
+  let msrc := dvDoc "\\usepackage{hyperref}\n" (
+    "Before the link.\n\n" ++
+    "\\hyperlink{multi}{First linked paragraph.\n\n" ++
+    "Second linked paragraph.}\n\n" ++
+    "After the link.")
+  let (mdoc, mds) := elabStr msrc
+  let linkBlocks := Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
+    (fun n _ => n) 0 mdoc.body
+  t "a multi-paragraph wrapper is one block link, no unknown-command cascade"
+    (mds.all (fun d => !cascade.contains d.code) && linkBlocks == 1)
+  let mout := layoutOf oneFace mdoc
+  let mLinks := (mout.pages[0]?.map (·.links)).getD #[]
+  let mInside (names : List String) (rect : Layout.LinkRect) : Bool :=
+    ((allLines mout).filter (fun l => names.any (hasStr (lineText l) ·))).all
+      fun l => rect.y ≤ l.y && l.y ≤ rect.y + rect.h
+  let mOutside (names : List String) (rect : Layout.LinkRect) : Bool :=
+    ((allLines mout).filter (fun l => names.any (hasStr (lineText l) ·))).all
+      fun l => l.y < rect.y || l.y > rect.y + rect.h
+  t "the multi-paragraph link is one region spanning both paragraphs, not its siblings"
+    (match mLinks[0]? with
+     | some rect =>
+       mLinks.size == 1 && rect.target == "#multi" &&
+         mInside ["First linked paragraph.", "Second linked paragraph."] rect &&
+         mOutside ["Before the link.", "After the link."] rect
+     | none => false)
+  let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) oneFace mout.pages mdoc.info
+  t "the multi-paragraph link is exactly one PDF annotation, siblings carry none"
+    (pdfLinkTargets mpdf == .ok #["(#multi)".toUTF8])
+  let mtrees := mdoc.body.map (HtmlDoc.blockNode {})
+  let mhrefs := mtrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  let mAnchorText := mtrees.foldl (fun s n => s ++ anchorInnerText false n) ""
+  t "one HTML anchor wraps both linked paragraphs and excludes the surrounding text"
+    (mhrefs == #["#multi"] &&
+      hasStr mAnchorText "First linked paragraph." && hasStr mAnchorText "Second linked paragraph." &&
+      !hasStr mAnchorText "Before the link." && !hasStr mAnchorText "After the link.")
+  -- Accessibility: a block link's anchor carries an accessible name (its own
+  -- text) and no anchor ever nests inside another — the invalid interactive
+  -- nesting the nested-wrapper refusal exists to prevent.
+  t "the block link is accessible: a named anchor with no nested interactive anchor"
+    (!mAnchorText.isEmpty &&
+      mtrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0 &&
+      nestedTrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0)
 
 /-- **Paracol's two flows are one typed columns row.** The installed package
 sets each column's width from `\columnratio`, gives the final column the

@@ -1034,9 +1034,19 @@ structure PathOut where
   leaf : Option Nat := none
   deriving Repr, Inhabited
 
+structure LinkRect where
+  x : Sp
+  y : Sp
+  w : Sp
+  h : Sp
+  target : String
+  deriving Repr, BEq, Inhabited
+
 structure PageOut where
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
+  /-- One placed rectangle per page segment of a block link. -/
+  links : Array LinkRect := #[]
   /-- Picture paths, painted after the fills and before the text, so a
   node's own fill sits under its label. -/
   paths : Array PathOut := #[]
@@ -2180,6 +2190,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- glyphs are asked for like a heading's.
   | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
   | .role _ body => scalarTextList out itemD enumD body.toList
+  | .link _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .onSteps _ body => scalarTextList out itemD enumD body.toList
@@ -2407,6 +2418,7 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .titled _ title body =>
     weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
   | .role _ body => weightKeysBlockList acc body.toList
+  | .link _ body => weightKeysBlockList acc body.toList
   | .spaced _ body => weightKeysBlockList acc body.toList
   | .columns cols => weightKeysBlockCols acc cols.toList
   | .onSteps _ body => weightKeysBlockList acc body.toList
@@ -4271,6 +4283,101 @@ private structure NoteBlock where
   height : Sp
   deriving Repr, Inhabited
 
+private structure LinkStart where
+  target : String
+  lines : Nat
+  fills : Nat
+  paths : Nat
+
+private structure LinkSpan where
+  target : String
+  lineStart : Nat
+  lineEnd : Nat
+  fillStart : Nat
+  fillEnd : Nat
+  pathStart : Nat
+  pathEnd : Nat
+
+private def LinkStart.close (s : LinkStart) (p : PageOut) : LinkSpan :=
+  { target := s.target
+    lineStart := s.lines, lineEnd := p.lines.size
+    fillStart := s.fills, fillEnd := p.fills.size
+    pathStart := s.paths, pathEnd := p.paths.size }
+
+private def LinkStart.nextPage (s : LinkStart) : LinkStart :=
+  { s with lines := 0, fills := 0, paths := 0 }
+
+private structure LinkBox where
+  x0 : Sp
+  y0 : Sp
+  x1 : Sp
+  y1 : Sp
+
+private def addLinkBox (box : Option LinkBox) (x0 y0 x1 y1 : Sp) : Option LinkBox :=
+  match box with
+  | none => some { x0 := min x0 x1, y0 := min y0 y1, x1 := max x0 x1, y1 := max y0 y1 }
+  | some b => some { x0 := min b.x0 (min x0 x1), y0 := min b.y0 (min y0 y1),
+                     x1 := max b.x1 (max x0 x1), y1 := max b.y1 (max y0 y1) }
+
+private def padLinkBox (box : Option LinkBox) (p : Sp) : Option LinkBox :=
+  box.map fun b => { x0 := b.x0 - p, y0 := b.y0 - p,
+                     x1 := b.x1 + p, y1 := b.y1 + p }
+
+private def lineLinkBox (box : Option LinkBox) (l : LineOut) : Option LinkBox := Id.run do
+  let mut out := box
+  let mut x := l.x
+  for seg in l.segs do
+    match seg with
+    | .run _ _ _ w glyphs size _ _ raise _ _ =>
+      unless glyphs.isEmpty do
+        let size := if size == 0 then l.size else size
+        out := addLinkBox out x (l.y - raise - size * 4 / 5) (x + w) (l.y - raise + size / 4)
+      x := x + w
+    | .gap w _ => x := x + w
+    | .rule w thickness raise _ =>
+      out := addLinkBox out x (l.y - raise - thickness) (x + w) (l.y - raise)
+      x := x + w
+    | .image _ w h =>
+      out := addLinkBox out x (l.y - h) (x + w) l.y
+      x := x + w
+    | .poly pts _ =>
+      -- A filled polygon (cancel strike, arrowhead) marks what the runs
+      -- around it place and advances no pen; its points sit at the pen x
+      -- and `py` up from the baseline (PDF's y-up), so bound each vertex.
+      for (px, py) in pts do
+        out := addLinkBox out (x + px) (l.y - py) (x + px) (l.y - py)
+  return out
+
+private def pathLinkBox (box : Option LinkBox) (p : PathOut) : Option LinkBox :=
+  let pad := (p.stroke.map (·.width / 2)).getD 0
+  match p.path with
+  | .circle x y r => addLinkBox box (x - r - pad) (y - r - pad) (x + r + pad) (y + r + pad)
+  | .rect x y w h => addLinkBox box (x - pad) (y - pad) (x + w + pad) (y + h + pad)
+  | .tri x1 y1 x2 y2 x3 y3 =>
+    padLinkBox (addLinkBox (addLinkBox box x1 y1 x2 y2) x3 y3 x3 y3) pad
+  | .segs segs =>
+    let points := segs.foldl (fun out seg => match seg with
+      | .line x1 y1 x2 y2 => addLinkBox out x1 y1 x2 y2
+      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+        addLinkBox (addLinkBox (addLinkBox out x1 y1 c1x c1y) c2x c2y c2x c2y)
+          x2 y2 x2 y2) none
+    match points with
+    | none => box
+    | some p => addLinkBox box (p.x0 - pad) (p.y0 - pad) (p.x1 + pad) (p.y1 + pad)
+
+private def LinkSpan.rect (s : LinkSpan) (lines : Array LineOut)
+    (fills : Array Fill) (paths : Array PathOut) : Option LinkRect := Id.run do
+  let mut box : Option LinkBox := none
+  for l in lines.extract s.lineStart s.lineEnd do
+    box := lineLinkBox box l
+  for f in fills.extract s.fillStart s.fillEnd do
+    box := addLinkBox box f.x f.y (f.x + f.w) (f.y + f.h)
+  for p in paths.extract s.pathStart s.pathEnd do
+    box := pathLinkBox box p
+  return box.map fun b =>
+    { x := b.x0, y := b.y0, w := max 0 (b.x1 - b.x0), h := max 0 (b.y1 - b.y0),
+      target := s.target }
+
 /-- The lowest y body ink may reach on a page carrying `h` of note ink:
 the note block and the `\skip\footins` gap above it come out of the text
 block's bottom; with no notes the floor is `bodyBottom` itself. Every
@@ -4439,6 +4546,10 @@ private structure B where
   not first-page content). Cleared at the deliberate frame boundary
   (`.brk`), so only mid-frame overflow repeats it. -/
   chrome : Option (Array LineOut × Array Fill × Sp × Sp × Sp) := none
+  /-- Block links open on the current page; closed spans wait for the page's
+  final vertical placement before their rectangles are measured. -/
+  openLinks : Array LinkStart := #[]
+  closedLinks : Array LinkSpan := #[]
   /-- Anchors owed to the next committed line: `commit` records each with
   the index of the page that line lands on. -/
   pendingAnchors : Array String := #[]
@@ -4779,7 +4890,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
       (if d == 0 then lines else
         lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + d },
        d)
-  let fills := if delta == 0 then b.cur.fills else
+  let bodyFills := if delta == 0 then b.cur.fills else
     b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
   -- The footer background occupies its measured band, including the
   -- template's closing skip, below the body floor. It is page furniture
@@ -4787,8 +4898,8 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   let fills := match b.curFoot, b.footBox, b.curFootLook.bind (·.bar) with
     | some _, some (h, d), some c =>
       let y := footBaseline b.geom.pageH d - h
-      fills.push { x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c }
-    | _, _, _ => fills
+      bodyFills.push { x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c }
+    | _, _, _ => bodyFills
   let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
     | none => fills
@@ -4806,11 +4917,14 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
                   x2 (y2 + delta))
           | .tri x1 y1 x2 y2 x3 y3 =>
             .tri x1 (y1 + delta) x2 (y2 + delta) x3 (y3 + delta) }
+  let openSpans := b.openLinks.map fun start => start.close b.cur
+  let links := (b.closedLinks ++ openSpans).filterMap fun span =>
+    span.rect lines bodyFills paths
   -- The bottom-anchored flush: the pending notes (and their rule) join
   -- the page after the vertical distribution moved the body lines, so
   -- the distribution can never move a note.
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
-                                   paths := paths, foot := b.curFoot,
+                                   links := links, paths := paths, foot := b.curFoot,
                                    footBox := b.footBox,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, band := b.curBand },
@@ -4819,6 +4933,7 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
            needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0, anchored := false,
+           openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
            pendingNotes := #[], notesH := 0, opened := false,
            diags := diags }
 
@@ -4881,6 +4996,8 @@ private def B.reopenChrome (b : B) : B :=
   match b.chrome with
   | some (lines, fills, y0, d0, bl0) =>
     { b with cur := { lines := lines, fills := fills }
+             openLinks := b.openLinks.map fun s =>
+               { s with lines := lines.size, fills := fills.size, paths := 0 }
              pinnedLines := lines.size
              pinnedFills := fills.size
              shrinkAbove := .replicate lines.size 0
@@ -5929,6 +6046,9 @@ private inductive Op where
   box, on a baseline, with the frame's own top skip pending. -/
   | bodyOpen (g : Glue)
   | para (job : ParaJob)
+  /-- The placed extent of one block link. -/
+  | linkOpen (target : String)
+  | linkClose
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
   /-- Column markers, kept flat so staging stays a map: `colOpen` saves the
@@ -8493,6 +8613,10 @@ private def collectBlock (r : Rd) (a : Acc)
     match st.after with
     | some g => a.addvspace (r.resolve g)
     | none => a
+  | .link target body =>
+    let a := { a with ops := a.ops.push (.linkOpen target) }
+    let a := collectBlocks r a body indent
+    { a with ops := a.ops.push .linkClose }
   | .quote body =>
     -- A quotation is set off by indenting both margins by its level's
     -- `\leftmargin` (`Rd.leftMargin`): classes.dtx defines quote and
@@ -9384,6 +9508,8 @@ private inductive StagedOp where
   | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
       (look : Option Ir.TitledLook)
   | para (j : ParaJob) (t : Task (Array Nat))
+  | linkOpen (target : String)
+  | linkClose
   | colOpen (pos : Array Ir.BoxPos)
   | colNext
   | colClose
@@ -9713,6 +9839,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   let mut prose := st.prose
   match s with
   | .floatOpen | .floatClose => pure ()
+  | .linkOpen target =>
+    let start : LinkStart :=
+      { target := target, lines := b.cur.lines.size,
+        fills := b.cur.fills.size, paths := b.cur.paths.size }
+    b := { b with openLinks := b.openLinks.push start }
+  | .linkClose =>
+    if let some start := b.openLinks.back? then
+      let span := start.close b.cur
+      let empty := span.lineStart == span.lineEnd && span.fillStart == span.fillEnd &&
+        span.pathStart == span.pathEnd
+      b := { b with openLinks := b.openLinks.pop,
+                    closedLinks := if empty then b.closedLinks else b.closedLinks.push span }
   | .setLogo c =>
     -- The page being built (index `pages.size`) and everything after
     -- carry this content; a later span overrides.
@@ -9746,6 +9884,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
+                    openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
                     frameBreak := none, spillWarned := false, opened := false }
   | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
@@ -10273,6 +10412,13 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     simp only [stepStaged, Id.run, Id, pure]
     repeat' split
     all_goals (refine pagesExtend_of_eq ?_; simp; done)
+  case linkOpen target =>
+    refine pagesExtend_of_eq ?_
+    simp [stepStaged]
+  case linkClose =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals (refine pagesExtend_of_eq ?_; simp; done)
   all_goals (simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split)
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
@@ -10295,6 +10441,12 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     (stepStaged fs imgs st s).b.noBreak = true := by
   cases s
   case skipAlt long short =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals (refine ⟨?_, ?_⟩ <;> simp [h]; done)
+  case linkOpen target =>
+    refine ⟨?_, ?_⟩ <;> simp [stepStaged, h]
+  case linkClose =>
     simp only [stepStaged, Id.run, Id, pure]
     repeat' split
     all_goals (refine ⟨?_, ?_⟩ <;> simp [h]; done)
@@ -10755,7 +10907,7 @@ private theorem furnishFrom_keeps {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (pages : Array PageOut) (s : σ) (i : Nat) :
     ∀ p ∈ (furnishFrom f pages s i).1, ∃ q ∈ pages,
-      p.fills = q.fills ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
         p.frame = q.frame := by
   induction pages, s, i using furnishFrom.induct f with
   | case1 pages s i h ls s' heq ih =>
@@ -10777,7 +10929,7 @@ private theorem furnishFrom_keeps {σ : Type}
     intro p hp
     rw [furnishFrom] at hp
     simp only [h, reduceDIte] at hp
-    exact ⟨p, hp, rfl, rfl, rfl, rfl⟩
+    exact ⟨p, hp, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
@@ -11086,7 +11238,7 @@ page the builder shipped — `furnishFrom_keeps` lifted over the whole
 postlude, the seam a builder invariant crosses into `Out` through. -/
 private theorem runPost_pages (sh : Shipped) :
     ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.b.pages,
-      p.fills = q.fills ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
         p.frame = q.frame := by
   intro p hp
   unfold runPost at hp
@@ -11321,6 +11473,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
+    | .linkOpen target => .linkOpen target
+    | .linkClose => .linkClose
     | .colOpen p => .colOpen p
     | .colNext => .colNext
     | .colClose => .colClose
@@ -11491,7 +11645,7 @@ private theorem runCore_bg
   unfold runCore withLayoutOps at hp
   unfold pageGroundsDeclared withLayoutOps at hepoch
   dsimp only [Id.run, bind, pure, Id] at hp hepoch
-  obtain ⟨q, hq, hfills, -, -, -⟩ := runPost_pages _ p hp
+  obtain ⟨q, hq, hfills, -, -, -, -⟩ := runPost_pages _ p hp
   have fin : ∀ (b0 : B), bgFilled b0.geom q →
       b0.geom.pageW = geom.pageW → b0.geom.pageH = geom.pageH →
       b0.geom.bleed = geom.bleed →
