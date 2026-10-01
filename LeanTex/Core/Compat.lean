@@ -7215,37 +7215,56 @@ private def definedCmd (xs : Array Raw) (i : Nat) : Option String :=
     | _ => none
   | _ => none
 
+private abbrev DelimShape := Array DelimAtom × Array (Array DelimAtom)
+
+/-- Global writes outlive a scope, including signature removals and writes
+shadowed by a later local definition. -/
+private structure DelimState where
+  sigs : Array (String × DelimShape) := #[]
+  globals : Array (String × Option DelimShape) := #[]
+
+private def setDelimSig (sigs : Array (String × DelimShape))
+    (n : String) (shape : Option DelimShape) : Array (String × DelimShape) :=
+  let kept := sigs.filter (·.1 != n)
+  match shape with
+  | some sh => kept.push (n, sh)
+  | none => kept
+
 /-- The signatures in force after the definer at `i`: its name's delimited
 parameter text when it is a delimited `\def` or `\gdef`, and none otherwise. -/
-private def sigsAfter (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom))))
-    (xs : Array Raw) (i : Nat) (d n : String) :
-    Array (String × (Array DelimAtom × Array (Array DelimAtom))) :=
-  let kept := sigs.filter (·.1 != n)
-  if d == "def" || d == "gdef" then
-    let params := ((xs.extract (i + 2) xs.size).toList.takeWhile
-      fun r => !(r matches .group _ _)).toArray
-    match delimShape params with
-    | some sh => kept.push (n, sh)
-    | none => kept
-  else kept
+private def sigsAfter (st : DelimState) (xs : Array Raw) (i : Nat) (d n : String) :
+    DelimState :=
+  let shape := if d == "def" || d == "gdef" then
+      let params := ((xs.extract (i + 2) xs.size).toList.takeWhile
+        fun r => !(r matches .group _ _)).toArray
+      delimShape params
+    else none
+  { sigs := setDelimSig st.sigs n shape
+    globals := if definesGlobally xs i d then st.globals.push (n, shape) else st.globals }
+
+/-- Restore the outer locals, replaying only global writes made since this
+scope opened. An earlier global must not overwrite a saved local shadow. -/
+private def delimClose (saved current : DelimState) : DelimState :=
+  let writes := current.globals.extract saved.globals.size current.globals.size
+  { current with
+    sigs := writes.foldl (fun sigs (n, shape) => setDelimSig sigs n shape) saved.sigs }
 
 mutual
 
 /-- Every use of a refused delimited definition spelled as its braced call
 (`delimCall`), whole tree, in document order, before the rewrite walk: the
 delimiter is the call's syntax, consumed as TeX consumes it, never ink. A
-use reads the signature in force where it stands — the last definition of
-its name met so far — so a later redefinition ends it. The definition's own
-head is not a use. -/
+use reads the signature in force where it stands. Real scopes restore locals
+and retain explicit global writes; input wrappers open no scope. The
+definition's own head is not a use. -/
 -- conserves: none — a use's delimiters are syntax, not text.
-private def delimCallsRaw (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom)))) :
-    Raw → Raw × Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+private def delimCallsRaw (sigs : DelimState) : Raw → Raw × DelimState
   | .group body p =>
-    let (b, sigs) := delimCallsList sigs body #[] body.toList 0 0
-    (.group b p, sigs)
+    let (b, next) := delimCallsList sigs body #[] body.toList 0 0
+    (.group b p, delimClose sigs next)
   | .env n body p =>
-    let (b, sigs) := delimCallsList sigs body #[] body.toList 0 0
-    (.env n b p, sigs)
+    let (b, next) := delimCallsList sigs body #[] body.toList 0 0
+    (.env n b p, if (Parse.inputEnvFile? n).isSome then next else delimClose sigs next)
   | .math d body p => (.math d body p, sigs)
   | .word s p => (.word s p, sigs)
   | .space => (.space, sigs)
@@ -7254,9 +7273,8 @@ private def delimCallsRaw (sigs : Array (String × (Array DelimAtom × Array (Ar
   | .sym c p => (.sym c p, sigs)
   | .verb env s p => (.verb env s p, sigs)
 
-private def delimCallsList (sigs : Array (String × (Array DelimAtom × Array (Array DelimAtom))))
-    (xs : Array Raw) (out : Array Raw) : List Raw → Nat → Nat →
-    Array Raw × Array (String × (Array DelimAtom × Array (Array DelimAtom)))
+private def delimCallsList (sigs : DelimState)
+    (xs : Array Raw) (out : Array Raw) : List Raw → Nat → Nat → Array Raw × DelimState
   | [], _, _ => (out, sigs)
   | _ :: rest, i, skip + 1 => delimCallsList sigs xs out rest (i + 1) skip
   | .ctrl "apptocmd" pos :: rest, i, 0 =>
@@ -7273,7 +7291,7 @@ private def delimCallsList (sigs : Array (String × (Array DelimAtom × Array (A
         delimCallsList sigs xs ((out.push (.ctrl d p)).push (.ctrl m q)) rest (i + 1) 1
       | _ => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
     | none =>
-      match (sigs.find? (·.1 == d)).bind fun (_, sh) => delimCall xs i d p sh with
+      match (sigs.sigs.find? (·.1 == d)).bind fun (_, sh) => delimCall xs i d p sh with
       | some (call, stop) => delimCallsList sigs xs (out ++ call) rest (i + 1) (stop - (i + 1))
       | none => delimCallsList sigs xs (out.push (.ctrl d p)) rest (i + 1) 0
   | r :: rest, i, 0 =>
@@ -7290,7 +7308,7 @@ private def delimDocument (raws : Array Raw) : M (Array Raw) := do
   let d := (raws.findIdx? (· matches .env "document" _ _)).getD raws.size
   let pre := raws.extract 0 d
   let post := raws.extract d raws.size
-  let (pre, sigs) := delimCallsList #[] pre #[] pre.toList 0 0
+  let (pre, sigs) := delimCallsList {} pre #[] pre.toList 0 0
   let mut sigs := sigs
   let mut hooks := #[]
   for (pt, file, pos, body) in (← get).deferred do
