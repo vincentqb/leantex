@@ -1,6 +1,7 @@
 # source: amsldoc (amsmath user's guide) — §3 displayed equations and their
 # environments, §4 miscellaneous math (fractions, matrices, \substack, dots,
-# mod spellings), §5 operator names, §7 \text; the command index is the row
+# mod spellings, the big-g-g delimiters of §4.14), §5 operator names, §7
+# \text; the command index is the row
 # list. The math slice renders the starred one-column displays, and the
 # grids amsmath builds inside a formula (cases, the matrices, aligned,
 # gathered, split, \substack) as those grids; numbered rows degrade W0015
@@ -68,6 +69,14 @@ body impl $a \pmod{b}$
 body impl $a \mod b$
 body impl $a \pod{b}$
 body impl $\genfrac{(}{)}{0pt}{}{a}{b}$
+body impl $\bigl( x$
+body impl $x \bigr)$
+body impl $\Bigl( x$
+body impl $x \Bigr)$
+body impl $\biggl( x$
+body impl $x \biggr)$
+body impl $\Biggl( x$
+body impl $x \Biggr)$
 body refuse:W0012 $\xleftarrow{f} \xrightarrow{g}$
 pre refuse:W0301 \allowdisplaybreaks
 body impl $\mathbb{R}$

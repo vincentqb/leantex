@@ -3194,6 +3194,19 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       (Math.degrade body.classes) none (#[], acc.2) body
     let (items, missing) := delimAssemble e (e.sizeAt st) raise l r bItems m1
     (acc.1 ++ items, missing)
+  | .big d step =>
+    -- amsmath's `\bBigg@`: `\left d \vcenter{…}\right.` with
+    -- `\nulldelimiterspace` zero, the `\vcenter` the box's least reach; set
+    -- at the text size in every style, as lualatex sets it in a script.
+    let size := e.base
+    let paren : Sp := match glyphOf size e.font '(' with
+      | some (g, _, _) => let (t, b) := e.glyphExtent size g; t - b
+      | none => size
+    let axis := e.constAt size e.consts.axisHeight
+    let half := Math.bigVcenter paren step / 2
+    let (items, missing) := delimAssembleTo e size raise d none
+      (Math.bigTarget paren size step) false (struts e (axis + half) (axis - half)) acc.2
+    (acc.1 ++ items, missing)
   | .accent mark stretch body =>
     -- The base sets in the cramped current style (TeXbook Appendix G
     -- rule 12), which keeps its size: cramping preserves rank.

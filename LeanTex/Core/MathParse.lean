@@ -299,6 +299,7 @@ def delimChar : Char → Option (Option Char)
   | '[' => some (some '[')
   | ']' => some (some ']')
   | '|' => some (some '|')
+  | '/' => some (some '/')
   | '<' => some (some '\u27E8')
   | '>' => some (some '\u27E9')
   | _ => none
@@ -353,10 +354,20 @@ def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
    ("aligned", .align, none, none), ("gathered", .gather, none, none),
    ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none)]
 
+/-- amsmath's sized delimiters (amsmath.sty: `\big` is `\bBigg@\@ne`, `\Big`
+`\bBigg@{1.5}`, `\bigg` `\bBigg@\tw@`, `\Bigg` `\bBigg@{2.5}`), each in four
+classes: `\bigl` is `\mathopen\big`, `\bigr` `\mathclose\big`, `\bigm`
+`\mathrel\big`, and `\big` itself sets an ordinary atom. The step is the
+size in halves of `\big@size`. -/
+def bigCtrl : List (String × MathClass × Nat) :=
+  [("big", 2), ("Big", 3), ("bigg", 4), ("Bigg", 5)].flatMap fun (n, s) =>
+    [(n, .ord, s), (n ++ "l", .opening, s), (n ++ "r", .closing, s), (n ++ "m", .rel, s)]
+
 /-- Does this slice model the control word at all? -/
 def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
     || (cancelCtrl.lookup n).isSome
+    || (bigCtrl.lookup n).isSome
     || (fracCmds.lookup n).isSome
     || (alphaCtrl.lookup n).isSome
     || (accentCtrl.lookup n).isSome
@@ -987,6 +998,17 @@ padded with empty cells")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
   return (.grid kind (rs.pad rs.maxCols), notes)
 
+/-- One amsmath sized-delimiter atom: read its delimiter (as `\left` reads
+one), join the `.big` atom onto the running cell, and report the index past
+it. Lifted out of `parseToks` so the parse knot stays within its heartbeat
+budget: the loop's arm is one call here. -/
+private def bigAtomStep (toks : Array MTok) (i : Nat) (n : String) (cls : MathClass) (step : Nat)
+    (acc : Array MItem) (pending : List Dest) :
+    Except String (Array MItem × List Dest × Nat) := do
+  let (d, j) ← readDelim toks (i + 1) n
+  let (acc', pending') ← joinAtom acc pending (.atom cls (.big d step) .nil .nil false)
+  return (acc', pending', j)
+
 /-- Parse flattened tokens into a math list, or name the construct that
 puts the formula outside this slice. One forward pass with an explicit
 frame stack; every iteration consumes at least one token, so the loop
@@ -1338,6 +1360,13 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       | some spec =>
         pending := .fracNum spec :: pending
         i := i + 1
+      | none =>
+      match bigCtrl.lookup n with
+      | some (cls, step) =>
+        let (a, p, j) ← bigAtomStep toks i n cls step acc pending
+        acc := a
+        pending := p
+        i := j
       | none =>
       match alphaCtrl.lookup n with
       | some (a, src) =>

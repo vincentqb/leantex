@@ -54,6 +54,7 @@ import Tests.TextSym
 import Tests.InlineVerb
 import Tests.VerbatimAmbient
 import Tests.OwnBib
+import Tests.BigDelim
 import Tests.Regress
 import Tests.Reports
 import Tests.Natbib
@@ -391,6 +392,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   verbatimAmbientChecks ref
   ownBibChecks ref
   amsmathChecks ref
+  bigDelimChecks ref
   bibChecks ref
   bibStyleChecks ref
   bibIrChecks ref

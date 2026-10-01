@@ -78,6 +78,16 @@ def sizedMo (c : Char) (size : String) : Html.Node :=
   .elem "mo" #[("stretchy", "true"), ("symmetric", "true"), ("minsize", size),
     ("maxsize", size)] #[.text (charText c)]
 
+/-- The size an amsmath sized delimiter stretches to, in em: the PDF's own
+target (`Math.bigTarget`) for a face whose `(` is one em tall and deep, to
+the thousandth. The `\vcenter` itself (1.2 em at `\big`) is not the target:
+Chromium stretches to the variant nearest it, one step past TeX's at
+`\big` (1.195 em against 1.094 em in Latin Modern Math). -/
+def bigMoSize (step : Nat) : String :=
+  let t := (Math.bigTarget 1000 1000 step).toNat
+  let frac := ((toString (1000 + t % 1000)).drop 1).toString
+  s!"{t / 1000}.{frac}em"
+
 /-- A fraction's declared rule as `mfrac`'s `linethickness` (MathML Core
 §3.3.2), in points to the thousandth; nothing for the face's own. -/
 def ruleAttrs : Option Int → Array (String × String)
@@ -329,6 +339,10 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
       | some c => withBody.push (delimMo c)
       | none => withBody
     .elem "mrow" #[] closed
+  | .big d step =>
+    match d with
+    | some c => sizedMo c (bigMoSize step)
+    | none => .elem "mrow" #[] #[]
   | .accent mark stretch body =>
     let base := Html.Node.elem "mrow" #[] (listNodes mk disp none #[] body)
     match mark == '\u0305' with
@@ -468,6 +482,10 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
     match r with
     | some c => withBody.push c
     | none => withBody
+  | .big d _ =>
+    match d with
+    | some c => acc.push c
+    | none => acc
   | .accent mark _ body =>
     (listChars acc body).push
       (match mark == '\u0305' with
@@ -749,6 +767,10 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
         show nodeChars (listChars (nodeChars c (delimMo cl)) body)
             (delimMo cr) = _
         rw [delimMo_chars, delimMo_chars]
+  | .big d step, c => by
+    cases d with
+    | none => rfl
+    | some ch => exact moLeaf_chars "mo" _ ch c
   | .accent mark stretch body, c => by
     cases h : mark == '\u0305' <;> simp only [nucNode, nucChars, h]
     · show nodeChars

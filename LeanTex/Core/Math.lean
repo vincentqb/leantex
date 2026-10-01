@@ -1090,6 +1090,22 @@ def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
   | [v] => some v
   | v :: rest@(_ :: _) => if target ≤ v.2 then some v else pickVariant target rest
 
+/-- An amsmath sized delimiter's `\vcenter` (amsmath.sty, `\bBigg@`):
+`step`⁄2 times `\big@size`, which is 1.2 times `paren`, the height and
+depth of the current `(`. -/
+def bigVcenter (paren : Int) (step : Nat) : Int :=
+  paren * 12 / 10 * (step : Int) / 2
+
+/-- The least size a sized delimiter grows to over its `\vcenter`, by
+TeXbook Appendix G rule 19: `\delimiterfactor` 901‰ of it, or all of it but
+`\delimitershortfall` (plain TeX's 5 pt, half the 10 pt `size`); `paren`
+and `size` in one unit. The PDF picks its variant by this target, and
+MathML's stretch clamp is the same target in em, so both artifacts reach
+the same variant. -/
+def bigTarget (paren size : Int) (step : Nat) : Int :=
+  let v := bigVcenter paren step
+  max (v * 901 / 1000) (v - size / 2)
+
 /-- The variant a horizontal accent stretches to: the widest in the ladder
 not exceeding `target` — an accent may not overhang its base, the reverse
 of a delimiter's "at least as tall" — else the first, the narrowest the
@@ -1653,6 +1669,11 @@ inductive MNucleus where
   | rad (deg : MList) (body : MList)
   /-- `\left l body \right r`: `none` is the empty `.` delimiter. -/
   | delim (l : Option Char) (r : Option Char) (body : MList)
+  /-- A delimiter at one of amsmath's fixed sizes (`\bigl(`, `\Bigm|`):
+  `\left d \vcenter to s\big@size{} \right.` with `s` = `step`⁄2, and
+  `\big@size` 1.2 times the height and depth of the current `(`
+  (amsmath.sty, `\bBigg@`); `none` is the empty `.`, which sets nothing. -/
+  | big (d : Option Char) (step : Nat)
   /-- An alignment: `align`/`gather`/`array` rows, rectangular by the time
   layout sees them (`MRows.pad`; a ragged source row was diagnosed). -/
   | grid (kind : GridKind) (rows : MRows)
@@ -1869,6 +1890,10 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
       | some c => acc.push c
       | none => acc
     MList.scalarsList acc body
+  | .big d _ =>
+    match d with
+    | some c => acc.push c
+    | none => acc
   | .accent mark _ body =>
     -- U+0305 draws as a rule, never asked of the face; every other mark is
     -- a glyph the coverage check must see.
@@ -1932,6 +1957,10 @@ def MNucleus.mathScalars (acc : Array Char) : MNucleus → Array Char
       | some c => acc.push c
       | none => acc
     MList.mathScalarsList acc body
+  | .big d _ =>
+    match d with
+    | some c => acc.push c
+    | none => acc
   | .accent mark _ body =>
     let acc := if mark == '\u0305' then acc else acc.push mark
     MList.mathScalarsList acc body
@@ -1980,6 +2009,7 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .frac spec num den => .frac spec (a.remapList num) (a.remapList den)
   | .rad deg body => .rad (a.remapList deg) (a.remapList body)
   | .delim l r body => .delim l r (a.remapList body)
+  | .big d step => .big d step
   | .accent mark stretch body => .accent mark stretch (a.remapList body)
   | .grid kind rows => .grid kind (a.remapRows rows)
   | .cancel mark spec value body =>
@@ -2048,6 +2078,7 @@ def MNucleus.inks (ink : Option (Ir.Color × Option String))
   | .rad deg body => MList.inks ink (MList.inks ink (usedInk ink acc) deg) body
   | .delim l r body =>
     MList.inks ink (if l.isSome || r.isSome then usedInk ink acc else acc) body
+  | .big d _ => if d.isSome then usedInk ink acc else acc
   | .accent _ _ body => MList.inks ink (usedInk ink acc) body
   | .grid _ rows => MRows.inks ink acc rows
   | .cancel _ spec value body =>
@@ -2093,6 +2124,7 @@ def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus →
   | .frac spec num den => .frac spec (MList.mapInk f num) (MList.mapInk f den)
   | .rad deg body => .rad (MList.mapInk f deg) (MList.mapInk f body)
   | .delim l r body => .delim l r (MList.mapInk f body)
+  | .big d step => .big d step
   | .accent mark stretch body => .accent mark stretch (MList.mapInk f body)
   | .grid kind rows => .grid kind (MRows.mapInk f rows)
   | .cancel mark spec value body =>
@@ -2146,6 +2178,7 @@ theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
       MList.mapInk_scalars f body]
   | .delim _ _ body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+  | .big _ _, _ => rfl
   | .accent _ _ body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
   | .grid _ rows, acc => by
@@ -2277,6 +2310,7 @@ def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
   | .rad deg body => .rad (resolveAlphaList coverage active deg)
       (resolveAlphaList coverage active body)
   | .delim l r body => .delim l r (resolveAlphaList coverage active body)
+  | .big d step => .big d step
   | .accent mark stretch body =>
       .accent mark stretch (resolveAlphaList coverage active body)
   | .grid kind rows => .grid kind (resolveAlphaRows coverage active rows)
@@ -2428,6 +2462,7 @@ private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
   | .rad deg body => missingAlphaList coverage active
       (missingAlphaList coverage active out deg) body
   | .delim _ _ body => missingAlphaList coverage active out body
+  | .big _ _ => out
   | .accent _ _ body => missingAlphaList coverage active out body
   | .grid _ rows => missingAlphaRows coverage active out rows
   | .cancel _ _ value body => missingAlphaList coverage active
@@ -2472,6 +2507,7 @@ def MNucleus.alphaFree : MNucleus → Bool
   | .frac _ num den => num.alphaFree && den.alphaFree
   | .rad deg body => deg.alphaFree && body.alphaFree
   | .delim _ _ body => body.alphaFree
+  | .big _ _ => true
   | .accent _ _ body => body.alphaFree
   | .grid _ rows => rows.alphaFree
   | .cancel _ _ value body => value.alphaFree && body.alphaFree
@@ -2533,6 +2569,7 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
   | .delim _ _ body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
       resolveAlphaList_covers coverage active body
+  | .big _ _ => rfl
   | .accent _ _ body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
       resolveAlphaList_covers coverage active body
@@ -2610,6 +2647,7 @@ private theorem resolveAlphaNucleus_nil_id (coverage : MathAlphabetCoverage) :
       resolveAlphaList_nil_id coverage body h.2]
   | .delim l r body, h => by
     rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
+  | .big _ _, _ => rfl
   | .accent mark stretch body, h => by
     rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
   | .grid kind rows, h => by
@@ -2748,6 +2786,9 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
     apply resolveAlphaList_scalars_size coverage active body
     apply optPush_size_congr r
     exact optPush_size_congr l acc₁ acc₂ hs
+  | _, .big d _, acc₁, acc₂, hs => by
+    simp only [resolveAlphaNucleus, MNucleus.scalars]
+    cases d <;> simp [Array.size_push, hs]
   | active, .accent mark _ body, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
     apply resolveAlphaList_scalars_size coverage active body

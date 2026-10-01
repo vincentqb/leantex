@@ -8659,6 +8659,8 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
       | some c => String.ofList [c]
       | none => "."
     (dumpMathList (acc ++ s!"left{name l}\{") body) ++ s!"}right{name r}"
+  | .big d step =>
+    acc ++ s!"big{step}:" ++ (match d with | some c => String.ofList [c] | none => ".")
   | .accent mark stretch body =>
     -- The combining mark by scalar value: pushed bare it would combine
     -- with the golden's own text.
