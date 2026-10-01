@@ -23,16 +23,28 @@ def glyphInk (fonts : Font.FontSet) (g : ShippedGlyph) : Except String InkBounds
   return { bottom := -g.y + lo * g.size / upem
            top := -g.y + hi * g.size / upem }
 
-/-- Union only the target glyphs' ink. Starting from the first glyph is
-essential for an annotation whose entire contents are raised. -/
+/-- Whether a shipped glyph has outline commands. Empty-outline spaces
+still belong to the source census and advance the pen, but paint no ink.
+An undecodable outline is a failed measurement rather than an empty one. -/
+def glyphPaints (fonts : Font.FontSet) (g : ShippedGlyph) : Except String Bool := do
+  let some font := fonts.fonts[g.face]? | throw "target face is missing"
+  let some cmds := font.inkSrc.get.cmdsAt g.glyph | throw "target outline is missing"
+  return !cmds.isEmpty
+
+/-- Union only the target glyphs' ink, ignoring decoded empty outlines.
+Starting from the first painted glyph is essential for an annotation whose
+entire visible contents are raised; a space's baseline must not join it. -/
 def targetInk (fonts : Font.FontSet) (glyphs : Array ShippedGlyph) :
     Except String InkBounds := do
-  let some first := glyphs[0]? | throw "target has no painted glyphs"
-  let mut bounds ← glyphInk fonts first
-  for g in glyphs.extract 1 glyphs.size do
-    let b ← glyphInk fonts g
-    bounds := { bottom := min bounds.bottom b.bottom, top := max bounds.top b.top }
-  return bounds
+  let mut bounds : Option InkBounds := none
+  for g in glyphs do
+    if ← glyphPaints fonts g then
+      let b ← glyphInk fonts g
+      bounds := some (match bounds with
+        | none => b
+        | some old => { bottom := min old.bottom b.bottom, top := max old.top b.top })
+  let some ink := bounds | throw "target has no painted glyphs"
+  return ink
 
 /-- Shipped polygons in the same upward page coordinates as `glyphInk`.
 The pen advances through every width-bearing segment, including rules. -/
@@ -100,7 +112,9 @@ def Witness.originGapped (w : Witness) : Bool := w.originGap == w.fontGap
 construct witnesses its actual style size and math face, so the expected
 gap is scaled from that font's MATH table rather than guessed from text
 size or copied from cancellation geometry. Target scalars are disjoint
-from every operand and carrier in `probes`. -/
+from every operand and carrier in `probes`. The first source glyph, including
+an empty-outline space, supplies the origin; a target with a glyphless
+prefix needs a separate advance check instead of `Witness.originGapped`. -/
 def measure (fonts : Font.FontSet) (out : Layout.Out) (target : String) :
     Except String Witness := do
   let #[line] := bodyLines out | throw "expected one body line"
@@ -151,6 +165,112 @@ def probes : Array Probe := Id.run do
 def layProbe (fonts : Font.FontSet) (p : Probe) : Layout.Out × Array Diag :=
   let (doc, ds) := elabStr (dvDoc ("\\usepackage[" ++ p.options ++ "]{cancel}") p.body)
   (layoutOf fonts doc, ds)
+
+inductive NonpaintingItem where
+  | leadingSpace | trailingSpace | emptyRule
+  deriving BEq, Repr
+
+structure NonpaintingProbe where
+  item : NonpaintingItem
+  probe : Probe
+  reference : Probe
+  deriving Repr
+
+/-- Each altered target has exactly the raised zero of its reference.
+The added space has source and advance but no outline; the empty fraction
+has logical width but its zero-width bar never reaches the shipped page.
+Wide and tall operands exercise shallow and steep arrows in every style. -/
+def nonpaintingProbes : Array NonpaintingProbe := Id.run do
+  let shapes := [("wide", "x+x+x+x+x+x"), ("tall", "\\frac{x}{\\frac{x}{x}}")]
+  let styles := [("text", "$", "$"), ("display", "\\[", "\\]"),
+    ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")]
+  let variants : List (NonpaintingItem × String × String × String) := [
+    (.leadingSpace, "leading-space", "\\text{ }{}^{0}", " 0"),
+    (.trailingSpace, "trailing-space", "{}^{0}\\text{ }", "0 "),
+    (.emptyRule, "zero-width-rule", "\\frac{}{}{}^{0}", "0")]
+  let mut result := #[]
+  for (shape, operand) in shapes do
+    for (style, before, after) in styles do
+      for options in ["makeroom", "overlap"] do
+        let body (value : String) :=
+          before ++ "u\\cancelto{" ++ value ++ "}{" ++ operand ++ "}v" ++ after
+        let reference : Probe := {
+          label := s!"{shape}/{style}/raised-zero/{options}"
+          body := body "{}^{0}", target := "0", options }
+        for (item, name, value, target) in variants do
+          result := result.push {
+            item, reference
+            probe := { label := s!"{shape}/{style}/{name}/{options}"
+                       body := body value, target, options } }
+  return result
+
+/-- Distance between the two source neighbours. Relative positions remove
+display centring and page placement from the construct's advance check. -/
+def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
+  let all := shippedBodyGlyphs out
+  let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
+  let #[after] := all.filter (·.scalar == '𝑣') | throw "right neighbour is missing"
+  unless before.page == after.page && before.line == after.line do
+    throw "neighbours are on different lines"
+  return after.x - before.x
+
+/-- Visible-ink regressions with independent source and advance assertions.
+Spaces retain their own logical origin and font advance. A glyphless empty
+fraction is witnessed by its positive prefix advance and the absence of an
+additional shipped rule; the zero after it is not called the target origin.
+Reservation grows by the added advance, while overlap leaves neighbours put. -/
+def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let fonts ← mathSetOf oneFace
+  for p in nonpaintingProbes do
+    let (out, ds) := layProbe fonts p.probe
+    let (control, cds) := layProbe fonts p.reference
+    let name := s!"cancel visible ink: {p.probe.label}"
+    check ref s!"{name} needs no recovery"
+      (!(ds ++ out.diags ++ cds ++ control.diags).any fun d =>
+        d.code == "W0012" || d.code == "W0389")
+    let readings : Except String (Witness × Witness × Dim.Sp × ShippedGlyph × ShippedGlyph) := do
+      let w ← measure fonts out p.probe.target
+      let c ← measure fonts control p.reference.target
+      let span ← neighbourSpan out
+      let controlSpan ← neighbourSpan control
+      let #[zero] := w.glyphs.filter (·.scalar == '0') | throw "visible target is missing"
+      let #[controlZero] := c.glyphs | throw "reference target is missing"
+      return (w, c, span - controlSpan, zero, controlZero)
+    match readings with
+    | .error e => check ref s!"{name}: {e}" false
+    | .ok (w, c, growth, zero, controlZero) =>
+      check ref s!"{name} centres visible target ink at the arrow tip" w.centred
+      check ref s!"{name} preserves the visible target glyph and size"
+        (zero.face == controlZero.face && zero.glyph == controlZero.glyph &&
+          zero.size == controlZero.size && zero.advance == controlZero.advance)
+      let all := shippedBodyGlyphs out
+      check ref s!"{name} preserves the remaining source census"
+        ((all.filter (·.scalar != ' ')).map ShippedGlyph.scalar ==
+          (shippedBodyGlyphs control).map ShippedGlyph.scalar)
+      check ref s!"{name} ships no added rule"
+        ((metricRuleSegs out).map (fun (width, height, _, _) => (width, height)) ==
+          (metricRuleSegs control).map (fun (width, height, _, _) => (width, height)))
+      match p.item with
+      | .leadingSpace | .trailingSpace =>
+        match w.glyphs.filter (·.scalar == ' ') with
+        | #[space] =>
+          check ref s!"{name} retains a nonpainting space with positive advance"
+            (glyphPaints fonts space == .ok false && space.advance > 0)
+          check ref s!"{name} does not measure the space baseline as ink"
+            (targetInk fonts #[space] == .error "target has no painted glyphs")
+          check ref s!"{name} preserves the logical origin gap" w.originGapped
+          check ref s!"{name} places visible ink after the source prefix"
+            (zero.x - w.originX ==
+              if p.item == .leadingSpace then space.advance else 0)
+          check ref s!"{name} preserves neighbour advance separately from ink"
+            (growth == if p.probe.options == "makeroom" then space.advance else 0)
+        | _ => check ref s!"{name} retains exactly one source space" false
+      | .emptyRule =>
+        let prefixAdvance := (zero.x - w.tip.1) - (controlZero.x - c.tip.1)
+        check ref s!"{name} retains the glyphless fraction prefix advance"
+          (prefixAdvance > 0)
+        check ref s!"{name} preserves neighbour advance separately from ink"
+          (growth == if p.probe.options == "makeroom" then prefixAdvance else 0)
 
 /-- Deliberately translate only the target runs in an already shipped
 probe. This supplies positive controls and broken pages for the judge;
@@ -203,10 +323,14 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   check ref "cancel alignment judge: an absent target cannot certify alignment"
     (match targetInk fonts #[] with | .error _ => true | .ok _ => false)
 
+end CancelAlignment
+
+open CancelAlignment in
 /-- Public suite entry point. Judged entirely on the shipped page and
 font outlines; no expected offset comes from `Math.cancelGeom`. -/
-def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def CancelAlignment.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   judgeChecks ref oneFace
+  nonpaintingChecks ref oneFace
   let fonts ← mathSetOf oneFace
   for p in probes do
     let (out, ds) := layProbe fonts p
@@ -219,5 +343,3 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
         w.centred
       check ref s!"cancel alignment: {p.label} preserves the font-derived origin gap"
         w.originGapped
-
-end CancelAlignment
