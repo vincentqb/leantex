@@ -298,7 +298,7 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
       #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
-  | .alpha _ body =>
+  | .alpha _ _ body =>
     -- Unreachable on every public path: `resolveMathAlphas` eliminates each
     -- `.alpha` node before either backend (`resolveMathAlphas_covers`), and
     -- the driver and `HtmlDoc.emit` resolve first. A `.alpha` reaching here
@@ -444,7 +444,7 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
   | .styled _ c => acc.push c
   | .word s => pushChars acc s.toList
   | .list body => listChars acc body
-  | .alpha _ body => listChars acc body
+  | .alpha _ _ body => listChars acc body
   | .frac spec num den =>
     let opened := match spec.left with
       | some c => acc.push c
@@ -689,7 +689,7 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
     rw [listNodes_chars mk disp none body #[] c]
     rfl
-  | .alpha _ body, c => by
+  | .alpha _ _ body, c => by
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
     rw [listNodes_chars mk disp none body #[] c]
     rfl

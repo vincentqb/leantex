@@ -3,6 +3,7 @@
 pre impl \setmathfont{Example Math}
 pre refuse:W0101 \unimathsetup{math-style=ISO}
 body impl $\symbf{A}$
+body impl $\symbfit{A}$
 body impl $\symit{A}$
 body impl $\symup{A}$
 body impl $\symbb{R}$

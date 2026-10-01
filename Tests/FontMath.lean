@@ -1587,7 +1587,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "public-entry resolution eliminates every alphabet boundary"
     ((Math.resolveMathAlphas alphaCoverage
         (.cons (.atom .ord
-          (.alpha .bf (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))
+          (.alpha .bf .doc (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))
           .nil .nil false) .nil)).alphaFree)
   -- (Item 2, defensive) The `.alpha` node is unreachable in the MathML
   -- backend on every public path (the door above resolves it away). A
@@ -1596,9 +1596,77 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- as ordinary math; the content still renders inside.
   t "an unresolved alphabet reaching MathML is a loud merror, never a silent mrow"
     (match MathMl.nucNode {} false .ord
-        (Math.MNucleus.alpha .bf (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil)) with
+        (Math.MNucleus.alpha .bf .doc (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil)) with
       | .elem tag _ kids => tag == "merror" && !kids.isEmpty
       | _ => false)
+
+  -- Blocker 1, Part A: source provenance decides the source, not just the
+  -- alphabet. On a face that carries the math sans range, `\symsf` (forced
+  -- sym) remaps into that range, while `\mathsf` (document-sourced, default
+  -- text) projects to the sans text slot — the same alphabet, two sources.
+  let sfCov : Math.MathAlphabetCoverage := { covered := #[(.sf, .latinUpper)] }
+  let itR : Char := Char.ofNat 0x1D445   -- the parser's italic R
+  let sansR' : Char := Char.ofNat 0x1D5B1 -- MATHEMATICAL SANS-SERIF CAPITAL R
+  t "symsf forces the symbol source; mathsf consults the document policy"
+    (sfCov.effectiveSource .sym .sf == .sym && sfCov.effectiveSource .doc .sf == .text)
+  t "symsf remaps into the math sans range on a covering face (not a text slot)"
+    (Math.resolveCharStack sfCov [(.sf, sfCov.effectiveSource .sym .sf)] itR
+      == .sym sansR')
+  t "mathsf under the default policy projects to the sans text slot"
+    (Math.resolveCharStack sfCov [(.sf, sfCov.effectiveSource .doc .sf)] itR
+      == (.styled { slot := .sans } 'R' : Math.Resolved))
+  -- `\mathsf` under `\unimathsetup{mathsf=sym}` is byte-for-byte `\symsf`.
+  let sfSymCov : Math.MathAlphabetCoverage := { sfCov with sources := sfCov.sources.set .sf .sym }
+  t "mathsf under mathsf=sym behaves exactly like symsf"
+    (sfSymCov.effectiveSource .doc .sf == .sym &&
+      Math.resolveCharStack sfSymCov [(.sf, sfSymCov.effectiveSource .doc .sf)] itR
+        == .sym sansR')
+  -- End-to-end (Layout.Out + typed HTML, never Ir.dump): on the Fira face
+  -- (no sans range) `\mathsf{R}` still projects to the sans text slot with
+  -- no loss, while `\symsf{R}` keeps its source scalar and is named once.
+  let e2eMathsf := (Ir.resolveMathAlphas alphaCoverage fira.family
+    (Elab.run "synthetic.tex" "$\\mathsf{R}$").1)
+  let e2eMathsfTree := HtmlDoc.blockNode { fonts := some alphaFs } e2eMathsf.1.body[0]!
+  t "mathsf (default text) is a styled sans text slot, no N0018"
+    (mathvariantOne e2eMathsfTree == some "sans-serif" &&
+      (e2eMathsf.2.filter (·.code == "N0018")).isEmpty)
+  let e2eSymsf := (Ir.resolveMathAlphas alphaCoverage fira.family
+    (Elab.run "synthetic.tex" "$\\symsf{R}$").1)
+  t "symsf keeps its source scalar in the math face and is named once"
+    ((Layout.docScalars e2eSymsf.1).contains itR &&
+      !(Layout.docScalars e2eSymsf.1).contains sansR' &&
+      (e2eSymsf.2.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).size == 1)
+
+  -- Blocker 1, Part B: `.bfit` is now the genuine bold-italic alphabet
+  -- (`\symbfit`), `.bm` (`\bm`/`\boldsymbol`) the near-identity. Scalars
+  -- anchored to the Mathematical Alphanumeric block (unicode-math): bold
+  -- italic Latin U+1D468/U+1D482, bold italic Greek U+1D71C upper /
+  -- U+1D736 lower / U+1D735 nabla.
+  let bfitCov : Math.MathAlphabetCoverage := { covered :=
+    #[(.bfit, .latinUpper), (.bfit, .latinLower), (.bfit, .greekUpper),
+      (.bfit, .greekLower), (.bfit, .misc)] }
+  t "symbfit maps A to bold-italic 𝑨 (U+1D468) on a covering face"
+    (Math.resolveCharStack bfitCov [(.bfit, .sym)] (Char.ofNat 0x1D434)
+      == .sym (Char.ofNat 0x1D468))
+  t "symbfit maps gamma to bold-italic gamma (U+1D738)"
+    (Math.resolveCharStack bfitCov [(.bfit, .sym)] (Char.ofNat 0x1D6FE)
+      == .sym (Char.ofNat 0x1D738))
+  t "symbfit maps nabla to bold-italic nabla (U+1D735)"
+    (Math.resolveCharStack bfitCov [(.bfit, .sym)] '\u2207'
+      == .sym (Char.ofNat 0x1D735))
+  t "bfit's ranges are the four bold-italic ranges (no digits)"
+    (Math.MathAlphabet.ranges .bfit == [.latinUpper, .latinLower, .greekUpper, .greekLower, .misc])
+  -- `.bm` is near-identity: rangeOf is always none, so every scalar falls
+  -- through to its source — italic 𝐴, plain 5, italic 𝛼 — with no over-bold
+  -- and no spurious N0018, and `.bm` is not one of the census alphabets.
+  let bmSrc := bfitCov.effectiveSource .doc .bm
+  t "bm leaves Latin, digit, and Greek variables at their source scalars"
+    (Math.resolveCharStack bfitCov [(.bm, bmSrc)] (Char.ofNat 0x1D434) == .sym (Char.ofNat 0x1D434) &&
+      Math.resolveCharStack bfitCov [(.bm, bmSrc)] '5' == .sym '5' &&
+      Math.resolveCharStack bfitCov [(.bm, bmSrc)] (Char.ofNat 0x1D6FC) == .sym (Char.ofNat 0x1D6FC))
+  t "bm names no missing alphabet and carries no range"
+    (Math.missingCharAlpha bfitCov [(.bm, bmSrc)] (Char.ofNat 0x1D434) == none &&
+      Math.MathAlphabet.ranges .bm == [] && !Math.allAlphabets.contains .bm)
 
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
