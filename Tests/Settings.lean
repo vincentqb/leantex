@@ -178,7 +178,8 @@ def paramDemoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let head := sub "main.tex" "\\documentclass{article}\n"
   let tail := sub "main.tex" "\\begin{document}\nAlpha words.\\footnote{Bravo note.}\n\\end{document}"
   let (dSty, dsSty) := Elab.runRaws "main.tex"
-    (head ++ #[Parse.Raw.env (Parse.inputEnv "venue.sty") (sub "venue.sty" setting) ⟨2, 1⟩] ++ tail)
+    (head ++ #[Parse.Raw.env (Parse.inputEnv "venue.sty") (sub "venue.sty" setting)
+      { line := 2, col := 1 }] ++ tail)
   let (dOwn, dsOwn) := Elab.runRaws "main.tex" (head ++ sub "main.tex" setting ++ tail)
   let named (ds : Array Diag) := ds.filter (·.subject == some "ctrl:setlength:footnotesep")
   t "a parameter set in a style file ships the page it ships from the document"

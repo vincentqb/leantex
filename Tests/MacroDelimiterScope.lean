@@ -100,15 +100,16 @@ def macroDelimiterScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   for (label, raws, expected) in #[
       ("input definition persists",
         sub (r"\documentclass{article}\pagestyle{empty}" ++ outer) ++
-          #[Parse.Raw.env (Parse.inputEnv "probe.tex") (sub inner) ⟨1, 1⟩] ++
+          #[Parse.Raw.env (Parse.inputEnv "probe.tex") (sub inner) { line := 1, col := 1 }] ++
           sub (r"\begin{document}" ++ periodBody ++ r"\end{document}"),
         article inner periodBody),
       ("input respects enclosing group",
         sub (r"\documentclass{article}\pagestyle{empty}" ++ outer) ++
           #[Parse.Raw.env "document"
             (#[Parse.Raw.group
-              #[Parse.Raw.env (Parse.inputEnv "probe.tex") (sub inner) ⟨1, 1⟩] ⟨1, 1⟩] ++
-              sub semicolonBody ++ #[.space]) ⟨1, 1⟩],
+              #[Parse.Raw.env (Parse.inputEnv "probe.tex") (sub inner) { line := 1, col := 1 }]
+                { line := 1, col := 1 }] ++
+              sub semicolonBody ++ #[.space]) { line := 1, col := 1 }],
         article outer ("{}" ++ semicolonBody))] do
     let (doc, ds) := Elab.runRaws "t" raws
     let out := layoutOf fonts doc

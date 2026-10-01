@@ -1923,7 +1923,8 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
        | none => false))
   t "the pairing warning points at its first run's source"
     ((dvE (dvDoc "\\palette{ alpha = #C4C4C4 }\n" "\\textcolor{alpha!60}{a}")).any fun d =>
-      d.code == "W0315" && d.severity == .warning && d.span == some ⟨"t", ⟨4, 1⟩⟩)
+      d.code == "W0315" && d.severity == .warning &&
+        d.span == some ⟨"t", { line := 4, col := 1 }⟩)
   t "distinct pairings are reported separately"
     ((pairing ("\\textcolor{alpha!60}{a} \\textcolor{alpha!50}{b} " ++
       "\\textcolor{alpha!40}{c} \\textcolor{alpha!60}{d}")).size == 3)

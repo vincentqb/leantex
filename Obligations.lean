@@ -223,10 +223,12 @@ What is still owed is this, the content half. The shipped-page witness is
 `recoveryChecks` in Tests/Layout.lean. -/
 theorem elab_inlines_option_run_dropped (w kept : String) (st : Elab.ESt) :
     ((Elab.elabInlines { file := "d" }
-        #[.ctrl "zzz" ⟨1, 1⟩, .sym '[' ⟨1, 5⟩, .word w ⟨1, 6⟩, .sym ']' ⟨1, 7⟩,
-          .group #[.word kept ⟨1, 9⟩] ⟨1, 8⟩]).run st).1
+        #[.ctrl "zzz" { line := 1, col := 1 }, .sym '[' { line := 1, col := 5 },
+          .word w { line := 1, col := 6 }, .sym ']' { line := 1, col := 7 },
+          .group #[.word kept { line := 1, col := 9 }] { line := 1, col := 8 }]).run st).1
     = ((Elab.elabInlines { file := "d" }
-        #[.ctrl "zzz" ⟨1, 1⟩, .group #[.word kept ⟨1, 9⟩] ⟨1, 8⟩]).run st).1 := by
+        #[.ctrl "zzz" { line := 1, col := 1 },
+          .group #[.word kept { line := 1, col := 9 }] { line := 1, col := 8 }]).run st).1 := by
   sorry
 
 /-- Every (colour, ground) pair a page's glyph runs ship, the ground the

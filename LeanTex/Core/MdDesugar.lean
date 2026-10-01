@@ -103,7 +103,7 @@ def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
   for ch in s.toList do
     if ch == ' ' || ch == '\t' then
       unless cur.isEmpty do
-        out := out.push (.word cur ⟨pos.line, wordCol⟩)
+        out := out.push (.word cur { pos with col := wordCol })
         cur := ""
       out := out.push .space
       col := col + 1
@@ -112,7 +112,7 @@ def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
       if cur.isEmpty then wordCol := col
       cur := cur.push ch
       col := col + 1
-  unless cur.isEmpty do out := out.push (.word cur ⟨pos.line, wordCol⟩)
+  unless cur.isEmpty do out := out.push (.word cur { pos with col := wordCol })
   return out
 
 /-- The control name a heading level takes. Levels beyond the third are

@@ -80,7 +80,7 @@ def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
             hasStr d.message s!"'\\{command}' file '{preferred}'" &&
               d.span.any fun sp =>
                 sp.file == (if nested then nestedFile else file) &&
-                sp.pos == ⟨if nested then 3 else 4, 1⟩)
+                sp.pos == { line := if nested then 3 else 4, col := 1 })
     IO.FS.writeFile (dir / "strict fragment.md") "paragraph\n\n<div>unsupported</div>\n"
     let (_, ds) ← elabInputSrc file
       (dvDoc pre "\\markdownInput{ \"strict fragment.md\" }")
@@ -200,7 +200,7 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "markdown input: missing file names the command and including file"
       (missingDs.any fun d => d.kind == .E0502 &&
         hasStr d.message "\\markdownInput" &&
-        d.span.any fun sp => sp.file == file && sp.pos == ⟨4, 1⟩)
+        d.span.any fun sp => sp.file == file && sp.pos == { line := 4, col := 1 })
     IO.FS.writeFile (dir / "strict.md") "paragraph\n\n<div>unsupported</div>\n"
     let (_, strictDs) ← elabInputSrc file (dvDoc pre "\\markdownInput{strict.md}")
     t "markdown input: dialect errors retain the fragment's own position"

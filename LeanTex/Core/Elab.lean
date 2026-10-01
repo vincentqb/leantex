@@ -14801,8 +14801,8 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
     | .env "document" _ _ => true
     | _ => false
   let raws := match docIdx with
-    | some idx => (p.raws.extract 0 idx).push (.env "document" #[] ⟨0, 0⟩)
-    | none => #[.env "document" #[] ⟨0, 0⟩]
+    | some idx => (p.raws.extract 0 idx).push (.env "document" #[] { line := 0, col := 0 })
+    | none => #[.env "document" #[] { line := 0, col := 0 }]
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 

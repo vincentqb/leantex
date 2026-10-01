@@ -84,11 +84,11 @@ private def posFrom (cs : Array Char) (start : Nat) (p : Pos) (i : Nat) : Pos :=
         col := 1
       else
         col := col + 1
-  return ⟨line, col⟩
+  return { p with line, col }
 
 /-- Line and column of an index, counted from the file's start: what an
 error position reads, errors being rare. -/
-private def posOf (cs : Array Char) (i : Nat) : Pos := posFrom cs 0 ⟨1, 1⟩ i
+private def posOf (cs : Array Char) (i : Nat) : Pos := posFrom cs 0 { line := 1, col := 1 } i
 
 private def skipWs (cs : Array Char) (start : Nat) : Nat := Id.run do
   let mut j := start
@@ -268,7 +268,7 @@ def parse (src : String)
   let mut out : Parsed := {}
   let mut macros := macros0
   let mut i := 0
-  let mut mark : Nat × Pos := (0, ⟨1, 1⟩)
+  let mut mark : Nat × Pos := (0, { line := 1, col := 1 })
   for _ in [0:cs.size + 1] do
     i := nextAt cs i
     if i ≥ cs.size then break

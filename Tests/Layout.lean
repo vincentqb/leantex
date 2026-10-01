@@ -1013,8 +1013,8 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let half : Decl.ColorComponent := { num := 1, scale := 2 }
   let rgbHalf := Ir.Color.ofRgbUnit half half half
   let grayHalf := Ir.Color.ofGray half
-  let rgbSpan : Span := ⟨"rgb.tex", ⟨1, 1⟩⟩
-  let graySpan : Span := ⟨"gray.tex", ⟨2, 1⟩⟩
+  let rgbSpan : Span := ⟨"rgb.tex", { line := 1, col := 1 }⟩
+  let graySpan : Span := ⟨"gray.tex", { line := 2, col := 1 }⟩
   let sites : Array (String × Ir.Color × Bool × Span) :=
     #[("rgb(.5,.5,.5)", rgbHalf, false, rgbSpan),
       ("gray(.5)", grayHalf, false, graySpan)]
