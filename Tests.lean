@@ -65,7 +65,7 @@ import Tests.LinkColor
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
-  xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks
+  xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroHookScopeChecks packageOptionChecks
   overlaySetChecks mathAlphaSemanticsChecks)
 
@@ -260,6 +260,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   macroBindingChecks ref oneFace
   macroArgumentChecks ref oneFace
   macroDefaultChecks ref oneFace
+  macroPhaseChecks ref oneFace
   macroHookScopeChecks ref oneFace
   packageOptionChecks ref oneFace
   picSiteChecks ref oneFace

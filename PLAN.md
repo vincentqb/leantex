@@ -25372,10 +25372,12 @@ Package-loaded queries and deferred hooks now share the conditional
 execution pass. A query reads the loads in force when it executes.
 End-preamble hooks run before begin-document hooks, and registering a
 hook does not execute its payload. This removes the separate loaded-query
-and hook-collection walks. An opening document newline is consumed after
-hook replay, as LaTeX's final `\ignorespaces` requires.
+and hook-collection walks. The opening document space scan expands readable
+macros and stops at the first nonexpandable token, as LaTeX's final
+`\ignorespaces` requires. A command later removed as log-only still stops
+that scan; its following space remains.
 
-`macroDefaultChecks`, `macroArgumentChecks` and `macroHookScopeChecks`
+`macroDefaultChecks`, `macroArgumentChecks`, `macroPhaseChecks` and `macroHookScopeChecks`
 exercise selected arguments, copied meanings, scope and hook timing over
 both artifacts. The hook checks compare complete `Layout.Out` pages and
 typed HTML with literal controls; they reject paragraph and interior-space
@@ -25383,3 +25385,12 @@ changes even when concatenated text agrees. The external
 `macro-defaults-oracle.lean` pins expectations to LuaLaTeX PDFs and kernel
 source independently of the compatibility reader. These are extensions
 of the native TeX subset, not an arbitrary package interpreter.
+
+Independent review found four phase gaps: stored builtins with only a
+loaded-package query were not settled, refused hook recovery erased its
+group, deferred delimiter recovery missed hook state, and a late whitespace
+trim crossed discarded commands. The new guards fail 37 assertions before
+the corrections and pass after. Delimiter recovery now shares one
+signature-and-call walk over preamble, replayed hooks and body, removing
+the redundant whole-tree definition scan. Refused delimited definitions
+remain W0357; their calls retain the artifact of their braced recovery.

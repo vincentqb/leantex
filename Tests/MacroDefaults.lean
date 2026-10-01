@@ -132,4 +132,83 @@ def macroDefaultChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       "\\newcommand\\textprobe[1][\\choiceprobetrue]{\\ifchoiceprobe T\\else F\\fi#1\\ifchoiceprobe T\\else F\\fi}")
     "\\textprobe" "FT"
 
+/-- A deferred call observes the state at its execution phase. Settlement,
+refusal recovery and delimiter recovery must preserve that same boundary.
+LaTeX's opening ignore-space scan stops at a nonexpandable command, even
+when compatibility later removes that command. These guards compare both
+complete artifacts with controls, including their internal whitespace. -/
+def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let article (pre body : String) := dvDoc (r"\pagestyle{empty}" ++ pre) body
+  let same (label source control : String) (losses : List String := []) : IO Unit := do
+    let (ds, out, html, _) := sourceArtifacts fonts source
+    let (cds, cout, chtml, ctext) := sourceArtifacts fonts control
+    let named (ds : Array Diag) :=
+      ds.all (fun d => d.severity == .note || losses.contains d.code)
+    t (label ++ ": source has only the declared losses") (named ds)
+    t (label ++ ": control has only the declared losses") (named cds)
+    for code in losses do
+      t (label ++ ": names " ++ code) (ds.any (·.code == code))
+    t (label ++ ": control ships visible content")
+      (!(bodyLines cout).isEmpty && !ctext.trimAscii.isEmpty)
+    t (label ++ ": complete PDF layout agrees") (reprStr out.pages == reprStr cout.pages)
+    t (label ++ ": complete typed HTML agrees") (html == chtml)
+  for (label, test, after, expected) in #[
+      ("class true", r"\IfClassLoadedTF{article}{Chosen}{Other}", "", "Chosen"),
+      ("class false", r"\IfClassLoadedTF{book}{Chosen}{Other}", "", "Other"),
+      ("class false-only", r"\IfClassLoadedF{book}{Chosen}", "", "Chosen"),
+      ("package later", r"\IfPackageLoadedTF{amsmath}{Chosen}{Other}",
+        r"\usepackage{amsmath}", "Chosen"),
+      ("package absent", r"\IfPackageLoadedTF{amsmath}{Chosen}{Other}", "", "Other")] do
+    let pre (body : String) := r"\title{Fallback}\renewcommand{\maketitle}{" ++ body ++ "}" ++ after
+    same ("macro phase builtin " ++ label)
+      (article (pre test) r"\maketitle Tail") (article (pre expected) r"\maketitle Tail")
+  for hook in ["AtBeginDocument", "AtEndPreamble"] do
+    let flag := r"\newif\ifscopeprobe"
+    let read := r"\ifscopeprobe Leaked\else Scoped\fi{} Tail"
+    same ("macro phase refused body " ++ hook)
+      (article flag ("\\" ++ hook ++ r"{\scopeprobetrue}" ++ read))
+      (article flag (r"{\scopeprobetrue}" ++ read)) ["W0340"]
+    same ("macro phase refused nested " ++ hook)
+      (article (flag ++ r"\AtBeginDocument{\" ++ hook ++ r"{\scopeprobetrue}" ++ read ++ "}") "/End")
+      (article (flag ++ r"\AtBeginDocument{{\scopeprobetrue}" ++ read ++ "}") "/End") ["W0340"]
+  let pair := r"\def\pairprobe#1,#2\relax{#1}"
+  same "macro phase deferred delimited call"
+    (article (pair ++ r"\AtBeginDocument{Lead \pairprobe A,B\relax{} Tail.}") "End.")
+    (article (pair ++ r"\AtBeginDocument{Lead \pairprobe{A}{B}{} Tail.}") "End.")
+    ["W0357", "W0301"]
+  let first := r"\def\scanprobe#1.{#1}"
+  let later := r"\def\scanprobe#1;{#1}"
+  same "macro phase deferred last preamble signature"
+    (article (first ++ r"\AtBeginDocument{Lead \scanprobe A; Tail.}" ++ later) "End.")
+    (article (first ++ r"\AtBeginDocument{Lead \scanprobe{A} Tail.}" ++ later) "End.")
+    ["W0357", "W0301"]
+  let endDef := r"\usepackage{etoolbox}\AtEndPreamble{" ++ later ++ "}"
+  same "macro phase signature defined in end hook"
+    (article (endDef ++ r"\AtBeginDocument{Lead \scanprobe A; Tail.}") "End.")
+    (article (endDef ++ r"\AtBeginDocument{Lead \scanprobe{A} Tail.}") "End.")
+    ["W0357", "W0301"]
+  same "macro phase later body signature stays later"
+    (article (later ++ r"\AtBeginDocument{Lead \scanprobe A; Tail.}") (first ++ "End."))
+    (article (later ++ r"\AtBeginDocument{Lead \scanprobe{A} Tail.}") (first ++ "End."))
+    ["W0357", "W0301"]
+  for (label, pre, body, expected) in #[
+      ("opening newline", r"\AtBeginDocument{T}", "/T", "T/T"),
+      ("hook owns trailing space", r"\AtBeginDocument{T }", "/T", "T /T"),
+      ("empty group stops scan", r"\AtBeginDocument{T}", "{} /T", "T /T"),
+      ("logging command stops scan", r"\AtBeginDocument{T}",
+        r"\PackageInfo{probe}{log} /T", "T /T"),
+      ("logging warning stops scan", r"\AtBeginDocument{T}",
+        r"\PackageWarningNoLine{probe}{log} /T", "T /T"),
+      ("macro expands to space", r"\AtBeginDocument{T}\def\spaceprobe{ }",
+        r"\spaceprobe/T", "T/T"),
+      ("macro expands to barrier",
+        r"\AtBeginDocument{T}\def\barrierprobe{\PackageInfo{probe}{log} }",
+        r"\barrierprobe/T", "T /T"),
+      ("selected empty branch stays transparent", r"\AtBeginDocument{T}",
+        r"\IfClassLoadedTF{article}{}{Hidden} /T", "T/T"),
+      ("paragraph stops scan", r"\AtBeginDocument{T}", r"\par/T", "T\\par/T")] do
+    same ("macro phase whitespace " ++ label) (article pre body) (article "" expected)
+
 end Tests

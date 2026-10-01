@@ -1178,6 +1178,17 @@ def allTextOf (fonts : Font.FontSet) (src : String)
   String.join ((allLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
     (lineText ·))
 
+/-- Both complete artifacts of a synthetic source, with their diagnostics
+and visible HTML text. Comparing the pages and serialized typed tree keeps
+positions, paragraph boundaries, attributes and whitespace observable. -/
+def sourceArtifacts (fonts : Font.FontSet) (source : String) :
+    Array Diag × Layout.Out × String × String :=
+  let (doc, ds) := elabStr source
+  let out := layoutOf fonts doc
+  let (head, tree, hds) := HtmlDoc.emitTree {} doc
+  (ds ++ out.diags ++ hds, out, Html.document "en" head tree,
+    shownTextList "" tree.toList)
+
 /-- A source and its literal control must ship the same visible text in
 both artifacts, without losing a construct. Whitespace is ignored here:
 these checks judge argument and branch selection, not line breaking. -/
