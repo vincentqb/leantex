@@ -70,12 +70,16 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   -- source whitespace and whitespace ending a control word do not count.
   -- Read the chosen branch from both artifacts: trimming their whitespace
   -- cannot hide a wrong comparison of whitespace in the stored definitions.
+  -- A blank line after a control word equals explicit \par; after a
+  -- character its first end-of-line also supplies a space before \par.
   for (label, left, right, expected) in #[
       ("ifx leading space", " #1", "#1", "Different"),
       ("ifx trailing space", "#1 ", "#1", "Different"),
       ("ifx group leading space", "{ #1}", "{#1}", "Different"),
       ("ifx group trailing space", "{#1 }", "{#1}", "Different"),
       ("ifx paragraph versus space", "#1\n\nX", "#1 X", "Different"),
+      ("ifx paragraph control equality", "#1\\tokenprobe\n\nX", "#1\\tokenprobe\\par X", "Same"),
+      ("ifx paragraph control preceding space", "#1\n\nX", "#1\\par X", "Different"),
       ("ifx equal tokens at different positions", "#1", "#1", "Same"),
       ("ifx equal space runs", " #1 ", "   #1   ", "Same"),
       ("ifx ignored control word space", "\\tokenprobe #1", "\\tokenprobe#1", "Same"),
