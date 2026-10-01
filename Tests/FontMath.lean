@@ -1262,6 +1262,102 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 
 
+/-- Distinct real text slots and body variants, so a face-selection check
+cannot pass by aliasing every request to one font. -/
+def mathTextFaces : IO Font.FontSet := do
+  let names : Array String := #["OpenSans-Regular.ttf", "OpenSans-Bold.ttf",
+    "OpenSans-Italic.ttf", "OpenSans-BoldItalic.ttf", "FiraSans-Regular.otf",
+    "SourceCodePro-Regular.otf", "FiraMath-Regular.otf"]
+  let fonts ← names.mapM fun name => do
+    match Font.parse (← IO.FS.readBinFile (System.FilePath.mk (testFonts ++ "/" ++ name))) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"math text face {name}: {e}")
+  return {
+    fonts := fonts
+    index := #[((0, 400, false), 0), ((0, 700, false), 1),
+      ((0, 400, true), 2), ((0, 700, true), 3),
+      ((1, 400, false), 4), ((2, 400, false), 5)]
+    math := some 6
+    mathAlphabets := fonts[6]!.mathAlphabetCoverage {} }
+
+mutual
+
+/-- Read emitted MathML text leaves and their declared text-face styles.
+This checks the typed artifact; computed browser styles are a separate
+rendered probe. -/
+def mathTextLeaves (acc : Array (String × String)) : Html.Node →
+    Array (String × String)
+  | .elem tag attrs kids =>
+    if tag == "mi" || tag == "mn" then
+      acc.push (nodeTextOne "" (.elem tag attrs kids),
+        ((attrs.find? (·.1 == "style")).map (·.2)).getD "")
+    else mathTextLeavesList acc kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+def mathTextLeavesList (acc : Array (String × String)) :
+    List Html.Node → Array (String × String)
+  | [] => acc
+  | n :: ns => mathTextLeavesList (mathTextLeaves acc n) ns
+
+end
+
+/-- LuaLaTeX with fontspec/unicode-math selects regular, bold, italic,
+sans regular and mono regular respectively for these commands, on letters
+AND digits and even inside bold/italic prose. The italic digit is a text
+face choice despite Unicode having no mathematical italic digit range.
+Independent expectations judge shipped glyph faces and MathML leaves. -/
+def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let fs ← mathTextFaces
+  let rows : Array (String × Nat × String) := #[
+    ("mathrm", 0, "font-family: var(--font-body)"),
+    ("mathbf", 1, "font-family: var(--font-body); font-weight: 700"),
+    ("mathit", 2, "font-family: var(--font-body); font-style: italic"),
+    ("mathsf", 4, "font-family: var(--font-sans)"),
+    ("mathtt", 5, "font-family: var(--font-mono)")]
+  for ambient in ["", "\\bfseries ", "\\itshape ", "\\bfseries\\itshape "] do
+    for (command, face, css) in rows do
+      for c in "x0123456789".toList do
+        let (raw, ds) := Elab.run "synthetic.tex"
+          ("\\begin{document}{" ++ ambient ++ "$\\" ++ command ++ "{" ++
+            String.singleton c ++ "}$}\\end{document}")
+        let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
+        let out := layoutOf fs doc
+        let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
+          match seg with
+          | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
+          | _ => #[]
+        let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
+        let label := s!"math alphabet {command}({c}) in {ambient}"
+        check ref (label ++ " reaches the artifacts without recovery")
+          (!(ds ++ ads ++ out.diags).any fun d =>
+            d.severity == .error || d.code == "W0012" || d.code == "W0009" ||
+              d.code == "N0018")
+        check ref (label ++ " selects its real PDF text face")
+          (glyphs == #[(face, c)])
+        check ref (label ++ " selects its real HTML text face")
+          (mathTextLeavesList #[] body.toList == #[(String.singleton c, css)])
+
+
+  for (source, expectedFace, expectedCss) in [
+      ("$\\symit{5}$", 6, ""),
+      ("$\\mathbf{\\mathit{5}}$", 2,
+        "font-family: var(--font-body); font-style: italic"),
+      ("$\\mathit{\\mathbf{5}}$", 1,
+        "font-family: var(--font-body); font-weight: 700")] do
+    let raw := (Elab.run "synthetic.tex" source).1
+    let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
+    let out := layoutOf fs doc
+    let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
+      match seg with
+      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
+      | _ => #[]
+    let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
+    check ref (source ++ " preserves digit source and inner alphabet in PDF/HTML")
+      (glyphs == #[(expectedFace, '5')] &&
+        mathTextLeavesList #[] body.toList == #[("5", expectedCss)] && ads.isEmpty)
+
+
+
 /-- M6's first slice, pinned end to end: the MATH constants read from the
 shipped face, the box-is-box widths in sp (a math box's advance is the sum
 of its atoms plus the spacing the table gives — recomputed here from the
@@ -1273,6 +1369,7 @@ no math face earns one W0003 and its formulas set as their glyph text, and
 every out-of-scope construct earns a code naming it while its text content
 survives — never its markup (`Ir.floorInk_mem`). -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
+  mathTextAmbientChecks ref
   let t := check ref
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
