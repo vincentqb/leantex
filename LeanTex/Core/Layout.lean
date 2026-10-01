@@ -9398,6 +9398,58 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
     | .poly _ _ => pure ()
   return out
 
+/-- The drawn-decoration riders of a placed line: one overlay line per
+active decoration kind — underline first, then line-through — each sharing
+the line's origin (`x`, `y`, `size`) and carrying only `.decoration`/`.gap`
+segs at the line's own x positions, so it paints over the text without
+advancing any pen of its own. Empty unless the line's segs carry a
+decoration, so an undecorated line — the common case, and every line a path
+that cannot carry decoration emits — allocates nothing.
+
+This is the one owner that turns a line's decoration source into paint:
+`underlineSegs`/`lineThroughSegs` build the only `.decoration` segs the PDF
+backend lowers (`PdfContent.stepSeg`), and this is the only site that calls
+them, applied once per finalized line in `furnishPage`. So every
+line-emitting path — body paragraphs, footnotes, picture labels, running
+head/foot, band and chrome slots, the logo — rides its riders exactly once,
+and PDF paints the decoration on every path, matching the HTML backend and
+the IR, which paint it from the tree independently.
+
+A rider inherits its base line's `note`/`furniture` banding so the census
+classifies the decoration ink with the line it decorates (a note's strike is
+note ink, a slot's underline is furniture); it keeps the neutral `counted`,
+`leaf`, `hang`, and `expand` of a run-less overlay — `counted := false` so a
+rider is never a numbered line, `expand := 0` because the segment widths are
+read off already-expanded runs and must not scale a second time. -/
+def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
+  #[underlineSegs fs l.size l.segs, lineThroughSegs l.segs].filterMap fun paint =>
+    if paint.isEmpty then none
+    else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
+                note := l.note, furniture := l.furniture }
+
+/-- A rider is never a counted line: decoration overlays do not attract
+margin line numbers, whatever the line they ride. -/
+@[simp] theorem decorationRiders_uncounted (fs : FontSet) (l : LineOut) :
+    ∀ r ∈ decorationRiders fs l, r.counted = false := by
+  intro r hr
+  simp only [decorationRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+/-- A rider stays in its base line's band: it is furniture exactly when the
+line it rides is, and a note exactly when that line is, so the census reads
+a strike or underline as the same kind of ink as the text under it. -/
+@[simp] theorem decorationRiders_band (fs : FontSet) (l : LineOut) :
+    ∀ r ∈ decorationRiders fs l, r.furniture = l.furniture ∧ r.note = l.note := by
+  intro r hr
+  simp only [decorationRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
 /-- The geometry of one paragraph line: its segs, x, set width, whether
 the break was overfull, the protrusion hang its x was shifted left by,
 and its expansion factor. Pure in the builder — it reads only the page
@@ -9496,24 +9548,17 @@ private def B.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x : Sp) (segs 
     (segs : Array Seg) : (b.openDisplayAt j f x segs).docBg = b.docBg := by
   unfold B.openDisplayAt; split <;> rfl
 
-/-- What follows a placed paragraph line: its underline siblings (pushed
-after `placeLine`, so a page break has already decided where the text
-landed; the rules land beside it, adding no vertical space) and the
-extra skip a break owes. Neither ships a page. -/
-private def placeParaTrailer (fs : FontSet) (j : ParaJob) (brk : Nat)
-    (segs : Array Seg) (b : B) : B :=
-  let anchor := b.cur.lines.back?
-  let push (b : B) (paint : Array Seg) : B :=
-    if paint.isEmpty then b
-    else match anchor with
-      | some last => b.pushSibling (some
-          { x := last.x, y := last.y, size := last.size, segs := paint, setWidth := 0 })
-      | none => b
-  let b2 := push b (underlineSegs fs j.size segs)
-  let b3 := push b2 (lineThroughSegs segs)
+/-- What follows a placed paragraph line: the extra skip a forced break
+owes. Drawn decoration is no longer emitted here — every page line, body
+and furniture alike, takes its `.decoration` riders in one place at the
+furniture pass (`decorationRiders`, applied in `furnishPage`), so this
+trailer only carries the forced-break skip forward and a decoration paints
+exactly once. -/
+private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
+    (_segs : Array Seg) (b : B) : B :=
   match j.extras[brk]? with
-  | some extra => { b3 with skip := { b3.skip with width := b3.skip.width + extra } }
-  | none => b3
+  | some extra => { b with skip := { b.skip with width := b.skip.width + extra } }
+  | none => b
 
 @[simp] private theorem placeParaTrailer_pages (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
@@ -9529,9 +9574,11 @@ private def placeParaTrailer (fs : FontSet) (j : ParaJob) (brk : Nat)
   repeat' split
   all_goals first | rfl | simp
 
-/-- Decoration rules ride sibling lines at the text baseline and feed
-nothing back into placement. The trailer therefore preserves the complete
-vertical state exactly for every decoration combination. -/
+/-- The trailer only carries the forced-break skip, which touches
+`skip.width` alone, so it preserves the complete vertical state exactly:
+the drawn decoration that once rode here as a sibling now paints at the
+page furniture pass (`decorationRiders`) and never feeds back into
+placement. -/
 private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).y = b.y ∧
@@ -11439,7 +11486,21 @@ slot yields in place: shorten the content or drop a slot"))
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
-    return (lines, diags, cache, count)
+    -- One owner for drawn decoration on the page: every finalized line —
+    -- body, footnote, picture label, and the furniture set above — is
+    -- followed by its `.decoration` riders, so a strike or underline
+    -- reaches the PDF on every path, matching the HTML and the IR. An
+    -- undecorated line rides nothing (`decorationRiders` is empty), so the
+    -- common page allocates only its own lines, and a decorated line paints
+    -- exactly once.
+    let painted : Array LineOut := Id.run do
+      let mut out : Array LineOut := Array.mkEmpty lines.size
+      for l in lines do
+        out := out.push l
+        for r in decorationRiders fs l do
+          out := out.push r
+      return out
+    return (painted, diags, cache, count)
   let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
