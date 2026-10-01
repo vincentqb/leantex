@@ -227,3 +227,23 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
               (match glyphX line "𝑦" with
                 | some yx => points.all fun (x, _) => line.x ≤ line.x + x && line.x + x ≤ yx
                 | none => false)
+
+  -- The operand still inks x after negative kerns make its advance negative.
+  -- Nonempty vertices alone do not witness the filled arrowhead's ink.
+  let area2 (pts : Array (Dim.Sp × Dim.Sp)) : Int :=
+    pts.zipIdx.foldl (fun acc (p, n) =>
+      let q := pts[(n + 1) % pts.size]!
+      acc + p.1 * q.2 - p.2 * q.1) 0
+  for (size, before, after) in sizes do
+    for opts in ["makeroom", "makeroom,thicklines", "overlap", "overlap,thicklines"] do
+      let label := s!"negative advance/{size}/{opts}"
+      let (doc, ds) := elabStr (dvDoc s!"\\usepackage[{opts}]\{cancel}"
+        s!"{before}\\cancelto\{7}\{x\\!\\!\\!\\!\\!\\!}y{after}")
+      let lines := bodyLines (layoutOf fonts doc)
+      t s!"cancel box: {label} sets one line without recovery"
+        (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
+      let some line := lines[0]? | continue
+      t s!"cancel box: {label} preserves the operand and target"
+        ((glyphX line "𝑥").isSome && (glyphX line "7").isSome)
+      t s!"cancel box: {label} ships a nonzero filled arrowhead"
+        ((polygons line).back?.any fun pts => area2 pts != 0)
