@@ -2401,11 +2401,12 @@ def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :
 /-- The alphabet a stack blames for a scalar left at its source glyph, if
 any: walking innermost-first, the first alphabet that classifies `c` into a
 range decides. A `text`-sourced alphabet on a range it serves is never a
-loss — it projects to a text family (`.styled`), so it is stepped past. A
-`sym`-sourced range the face covers remaps — no loss. A `sym`-sourced range
-the face does not carry, with no outer alphabet taking `c` either, is the
-loss — provided the alphabet would in fact have changed the glyph
-(`apply c ≠ c`), so an identity remap is not named. Mirrors
+loss — it projects to a text family (`.styled`). A range the face covers
+remaps — no loss. For an unavailable range, inspect the enclosing answer
+after this boundary's `inAlphabet` reset: a discarded text family cannot
+account for the request. Name the loss only when that answer keeps `c`
+and the alphabet would have changed it (`apply c ≠ c`), so an identity
+remap is not named. Mirrors
 `resolveCharStack` exactly, so the N0018 census reports the alphabet the
 reader asked for and could not get. -/
 def missingCharAlpha (coverage : MathAlphabetCoverage) :
@@ -2419,13 +2420,13 @@ def missingCharAlpha (coverage : MathAlphabetCoverage) :
         if src == .text && r.textServed then none
         else if coverage.remaps a r then none
         else
-          match resolveCharStack coverage rest c with
+          match (resolveCharStack coverage rest c).inAlphabet a src with
           | .sym c' => if c' == c && a.apply c != c then some a else none
           | .styled _ _ => none
       | none =>
         if coverage.remaps a r then none
         else
-          match resolveCharStack coverage rest c with
+          match (resolveCharStack coverage rest c).inAlphabet a src with
           | .sym c' => if c' == c && a.apply c != c then some a else none
           | .styled _ _ => none
     | none => missingCharAlpha coverage rest c
@@ -2457,14 +2458,15 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
         cases hcov : coverage.remaps a r with
         | true => exact absurd h (by simp [hcov])
         | false =>
-          cases hrc : resolveCharStack coverage rest c with
-          | styled s d => exact absurd h (by simp [hcov, hrc])
+          simp only [hcov, Bool.false_eq_true, ↓reduceIte] at h ⊢
+          cases hrc : (resolveCharStack coverage rest c).inAlphabet a src with
+          | styled s d => exact absurd h (by simp [hrc])
           | sym c' =>
             by_cases hcc : (c' == c && (a.apply c != c)) = true
             · have hcceq : c' = c := by
                 simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-              simp [hcceq, Resolved.inAlphabet]
-            · exact absurd h (by simp [hcov, hrc, hcc])
+              simp [hcceq]
+            · exact absurd h (by simp [hrc, hcc])
       | some sty =>
         simp only [hst] at h ⊢
         cases htext : (src == .text && r.textServed) with
@@ -2473,14 +2475,31 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
           cases hcov : coverage.remaps a r with
           | true => exact absurd h (by simp [htext, hcov])
           | false =>
-            cases hrc : resolveCharStack coverage rest c with
-            | styled s d => exact absurd h (by simp [htext, hcov, hrc])
+            simp only [htext, hcov, Bool.false_eq_true, ↓reduceIte] at h ⊢
+            cases hrc : (resolveCharStack coverage rest c).inAlphabet a src with
+            | styled s d => exact absurd h (by simp [hrc])
             | sym c' =>
               by_cases hcc : (c' == c && (a.apply c != c)) = true
               · have hcceq : c' = c := by
                   simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-                simp [hcceq, Resolved.inAlphabet]
-              · exact absurd h (by simp [htext, hcov, hrc, hcc])
+                simp [hcceq]
+              · exact absurd h (by simp [hrc, hcc])
+
+/-- An unavailable, nonidentity symbol request whose resolver keeps the
+source scalar is named, including when its boundary discards an enclosing
+text family. This is the converse accounting fact for a classified range. -/
+theorem missingCharAlpha_sym_named (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))
+    (c : Char) (r : MathAlphabetRange)
+    (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = false)
+    (happly : a.apply c ≠ c)
+    (hkeep : resolveCharStack coverage ((a, .sym) :: rest) c = .sym c) :
+    missingCharAlpha coverage ((a, .sym) :: rest) c = some a := by
+  have hsrc : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
+  cases hsty : a.textStyle? <;>
+    simp [resolveCharStack, MathAlphabet.sourceRangeOf_sym_exact, hr, hsty, hcov, hsrc] at hkeep <;>
+    simp [missingCharAlpha, MathAlphabet.sourceRangeOf_sym_exact, hr, hsty, hcov, hsrc,
+      hkeep, happly]
 
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
     (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) (c : Char) :
