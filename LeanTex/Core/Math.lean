@@ -595,15 +595,47 @@ def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
 
 /-- The source in force for an alphabet node, given its provenance. A
 `\sym…` node forces the symbol source; a legacy node consults the document
-policy. This is what the resolver carries on its active stack, computed
-once when the node is pushed, so `\symsf` maps into the math sans range
-even under a default `mathsf=text` while a legacy `\mathsf` still honours
-the document policy. -/
+policy. `effectiveAlpha` pairs this with the alphabet selected by that
+policy before the resolver or missing-range census pushes its stack. -/
 def MathAlphabetCoverage.effectiveSource (c : MathAlphabetCoverage)
     (src : AlphaSource) (a : MathAlphabet) : MathAlphabetSource :=
   match src with
   | .sym => .sym
   | .doc => c.sources.get a
+
+/-- Resolve provenance and document policy together. `mathbf=sym` selects
+the same default TeX bold as `symbf`, including italic lowercase Greek.
+Text-sourced legacy bold retains its body-face style, while explicit
+`symbfup` remains upright bold. Both the artifact resolver and its loss
+census consume this pair, so their canonical range selection agrees. -/
+def MathAlphabetCoverage.effectiveAlpha (c : MathAlphabetCoverage)
+    (src : AlphaSource) (a : MathAlphabet) : MathAlphabet × MathAlphabetSource :=
+  match src, a with
+  | .doc, .bf =>
+    match c.sources.bf with
+    | .text => (.bf, .text)
+    | .sym => (.bfDefault, .sym)
+  | _, _ => (a, c.effectiveSource src a)
+
+/-- Explicit symbol alphabets retain their shape under every document
+policy; upright bold cannot become default bold through a source option. -/
+theorem MathAlphabetCoverage.effectiveAlpha_sym_exact (c : MathAlphabetCoverage)
+    (a : MathAlphabet) : c.effectiveAlpha .sym a = (a, .sym) := by
+  cases a <;> rfl
+
+/-- Every text-sourced legacy alphabet retains its original alphabet and
+source pair, including the existing body-face projection of bold. -/
+theorem MathAlphabetCoverage.effectiveAlpha_text_exact (c : MathAlphabetCoverage)
+    (a : MathAlphabet) (h : c.sources.get a = .text) :
+    c.effectiveAlpha .doc a = (a, .text) := by
+  cases a <;> simp_all [effectiveAlpha, effectiveSource, MathAlphabetSources.get]
+
+/-- Symbol-sourced legacy bold and forced default bold select exactly the
+same active pair, for all ranges and all enclosing alphabet stacks. -/
+theorem MathAlphabetCoverage.effectiveAlpha_bf_sym_exact (c : MathAlphabetCoverage)
+    (h : c.sources.bf = .sym) :
+    c.effectiveAlpha .doc .bf = c.effectiveAlpha .sym .bfDefault := by
+  simp [effectiveAlpha, effectiveSource, h]
 
 /-- The Latin letters every alphabet maps. -/
 def latinLetters : List Char :=
@@ -2238,7 +2270,7 @@ def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
   | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (resolveAlphaList coverage active body)
-  | .alpha a src body => .list (resolveAlphaList coverage ((a, coverage.effectiveSource src a) :: active) body)
+  | .alpha a src body => .list (resolveAlphaList coverage (coverage.effectiveAlpha src a :: active) body)
   | .frac spec num den => .frac spec
       (resolveAlphaList coverage active num)
       (resolveAlphaList coverage active den)
@@ -2390,7 +2422,7 @@ private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
   | .styled _ _ => out
   | .word _ => out
   | .list body => missingAlphaList coverage active out body
-  | .alpha a src body => missingAlphaList coverage ((a, coverage.effectiveSource src a) :: active) out body
+  | .alpha a src body => missingAlphaList coverage (coverage.effectiveAlpha src a :: active) out body
   | .frac _ num den => missingAlphaList coverage active
       (missingAlphaList coverage active out num) den
   | .rad deg body => missingAlphaList coverage active
@@ -2489,7 +2521,7 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active body
   | .alpha a src body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
-      resolveAlphaList_covers coverage ((a, coverage.effectiveSource src a) :: active) body
+      resolveAlphaList_covers coverage (coverage.effectiveAlpha src a :: active) body
   | .frac _ num den => by
     simp [resolveAlphaNucleus, MNucleus.alphaFree,
       resolveAlphaList_covers coverage active num,
@@ -2700,7 +2732,7 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
     exact resolveAlphaList_scalars_size coverage active body acc₁ acc₂ hs
   | active, .alpha a src body, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
-    exact resolveAlphaList_scalars_size coverage ((a, coverage.effectiveSource src a) :: active) body acc₁ acc₂ hs
+    exact resolveAlphaList_scalars_size coverage (coverage.effectiveAlpha src a :: active) body acc₁ acc₂ hs
   | active, .frac spec num den, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
     apply optPush_size_congr spec.right
