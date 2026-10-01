@@ -87,7 +87,8 @@ def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Sp × Dim.Sp)) := Id.
   let mut polys := #[]
   for seg in line.segs do
     match seg with
-    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .rule w _ _ _ | .image _ w _ =>
+    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
+    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ =>
       pen := pen + w
     | .poly points _ =>
       polys := polys.push (points.map fun (x, y) => (pen + x, y - line.y))
@@ -315,8 +316,9 @@ def rulesAt (line : Layout.LineOut) : Array InkBounds := Id.run do
   let mut result := #[]
   for seg in line.segs do
     match seg with
-    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .image _ w _ => pen := pen + w
-    | .rule w t raise _ =>
+    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
+    | .image _ w _ => pen := pen + w
+    | .rule w t raise _ | .decoration _ w t raise _ =>
       if w != 0 && t != 0 then
         result := result.push ⟨min pen (pen + w), min raise (raise + t) - line.y,
           max pen (pen + w), max raise (raise + t) - line.y⟩
@@ -574,14 +576,15 @@ private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Sp) : 
       { page with lines := page.lines.map fun line =>
           { line with segs := line.segs.flatMap fun seg =>
               match seg with
-              | .run face color link width glyphs size leading underline raise ground attr =>
+              | .run face color link width glyphs size leading decorations raise ground attr =>
                 if !glyphs.isEmpty && glyphs.all (fun (_, scalar, _) =>
                     target.toList.contains scalar) then
                   #[.gap dx false,
-                    .run face color link width glyphs size leading underline (raise + dy) ground attr,
+                    .run face color link width glyphs size leading decorations (raise + dy) ground attr,
                     .gap (-dx) false]
                 else #[seg]
-              | .gap _ _ | .rule _ _ _ _ | .image _ _ _ | .poly _ _ => #[seg] } } }
+              | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _
+                | .decoration _ _ _ _ _ | .image _ _ _ | .poly _ _ => #[seg] } } }
 
 /-- Real outline translations test all four bounds and the shipped pen
 measurement. Small integral witnesses then exercise the exact rounding

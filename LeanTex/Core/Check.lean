@@ -72,14 +72,14 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
       let mut x := l.x
       for seg in l.segs do
         match seg with
-        | .gap w _ => x := x + w
+        | .gap w _ | .decoratedGap w _ _ => x := x + w
         | .image _ w h =>
           -- The image box is ink: its full rectangle must respect the area.
           unless l.furniture do
             worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
               x (x + w) (l.y - h) l.y worstAt
           x := x + w
-        | .rule w thickness raise _ =>
+        | .rule w thickness raise _ | .decoration _ w thickness raise _ =>
           unless l.furniture do
             worstAt := worstOvershoot geom.hmargin right geom.vmargin bottom
               x (x + w) (l.y - raise - thickness) (l.y - raise) worstAt

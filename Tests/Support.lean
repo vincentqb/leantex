@@ -449,6 +449,9 @@ structure CensusPage where
   baseline and its thickness — what the title-bar facts read (a bar at its
   declared weight, above or below the title's line). -/
   ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
+  /-- Typed decoration segments in line order: kind, baseline, width,
+  thickness, raise, and colour. -/
+  decorations : Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
   fills : Nat
   /-- Every fill rectangle shipped on the page, in paint order — what the
   cut-mark facts read (marks inside the bleed strip, none in the gap,
@@ -510,6 +513,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     let mut covered := ""
     let mut rules := 0
     let mut ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
+    let mut decorations :
+        Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
     let mut images := 0
     let mut polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
     for l in p.lines do
@@ -531,7 +536,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
             for (_, c, _) in glyphs do
               chars := chars.push c
             covered := covered.push ' '
-        | .gap w _ =>
+        | .gap w _ | .decoratedGap w _ _ =>
           px := px + w
           chars := chars.push ' '
           covered := covered.push ' '
@@ -539,6 +544,11 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
           px := px + w
           rules := rules + 1
           ruleSegs := ruleSegs.push (l.y, th)
+        | .decoration kind w th raise color =>
+          px := px + w
+          rules := rules + 1
+          ruleSegs := ruleSegs.push (l.y, th)
+          decorations := decorations.push (kind, l.y, w, th, raise, color)
         -- an image is decorative ink to the text census, like a rule
         | .image _ w _ =>
           px := px + w
@@ -556,6 +566,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           covered := covered
                           rules := rules
                           ruleSegs := ruleSegs
+                          decorations := decorations
                           polys := polys
                           fills := p.fills.size
                           fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
@@ -691,7 +702,7 @@ number's centring gaps are not its text). -/
 def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
   l.segs.foldl (fun s seg => match seg with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
-    | .gap _ _ => if gapAsSpace then s.push ' ' else s
+    | .gap _ _ | .decoratedGap _ _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
 /-- A shipped line's runs, left to right: the face index, the glyphs, and the
@@ -704,8 +715,8 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .run idx _ _ w gs _ _ _ _ _ _ =>
       out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
       x := x + w
-    | .gap w _ => x := x + w
-    | .rule w _ _ _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ => x := x + w
+    | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
     | .image _ w _ => x := x + w
   return out
@@ -1125,8 +1136,8 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
       unless glyphs.isEmpty do
         out := out.push (String.ofList (glyphs.toList.map (·.2.1)), x)
       x := x + w
-    | .gap w _ => x := x + w
-    | .rule w _ _ _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ => x := x + w
+    | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
     | .image _ w _ => x := x + w
   return out
@@ -1149,7 +1160,7 @@ structure ShippedGlyph where
   color : Ir.Color
   link : Option String
   leading : Option Dim.Sp
-  underline : Bool
+  decorations : Layout.Decorations
   ground : Option Ir.Color
   deriving BEq, Repr
 
@@ -1163,17 +1174,18 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
       let mut x := line.x
       for seg in line.segs do
         match seg with
-        | .run face color link width gs size leading underline raise ground _ =>
+        | .run face color link width gs size leading decorations raise ground _ =>
           let mut dx := 0
           for (glyph, scalar, advance) in gs do
             acc := acc.push {
               page := p, line := l, face, glyph, scalar
               x := x + dx * (1000 + line.expand) / 1000
               y := line.y - raise, advance, size, expand := line.expand
-              color, link, leading, underline, ground }
+              color, link, leading, decorations, ground }
             dx := dx + advance
           x := x + width
-        | .gap width _ | .rule width _ _ _ | .image _ width _ => x := x + width
+        | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _
+          | .decoration _ width _ _ _ | .image _ width _ => x := x + width
         | .poly _ _ => pure ()
   return acc
 
@@ -1183,18 +1195,24 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
   let mut pending : Array Dim.Sp := #[]
   for s in l.segs do
     match s with
-    | .gap w _ => pending := pending.push w
+    | .gap w _ | .decoratedGap w _ _ => pending := pending.push w
     | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
       unless glyphs.isEmpty do
         out := out ++ pending
         pending := #[]
-    | .rule _ _ _ _ | .poly _ _ | .image _ _ _ => pure ()
+    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ => pure ()
   return out
 
 /-- Painted inline rules on shipped body pages. -/
 def metricRuleSegs (out : Layout.Out) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .rule w h raise color => some (w, h, raise, color)
+    | _ => none
+
+def metricDecorationSegs (out : Layout.Out) :
+    Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+  (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .decoration kind w h raise color => some (kind, w, h, raise, color)
     | _ => none
 
 /-- Sizes of glyph runs on shipped body pages. -/

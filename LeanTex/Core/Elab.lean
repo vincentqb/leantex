@@ -1014,11 +1014,14 @@ takes two groups and is handled beside them. -/
 def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
 
+def decorationCtrls : List (String × Ir.Decoration) :=
+  [("underline", .underline), ("uline", .underline), ("sout", .lineThrough)]
+
 def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
-   -- Underline is native; a document's own \varul (soul-style) is ignored.
-   "underline", "uline", "ul", "varul",
-   -- The phantom family, spelled out rather than spliced from
+   -- `ul` and `varul` rewrite through the native decoration family.
+   "ul", "varul"] ++ (decorationCtrls.map (·.1)) ++ [
+   -- The phantom family is spelled out rather than derived from
    -- `Picture.phantomCtrl`: a registry that derived itself from the family
    -- could not witness a member missing from it, which is what
    -- `phantom_rendered_covers` is for.
@@ -1037,8 +1040,9 @@ refusal is the recorded divergence (`builtinNames`' comment). Redefining one wou
 `renderedBuiltins`, where rule (b) judges the body instead. -/
 def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
-   "underline", "uline", "ul", "varul", "tabularxcolumn",
+   "ul", "varul", "tabularxcolumn",
    "item", "defineenv", "block", "framefoot", "pagebreak"] ++
+  (decorationCtrls.map (·.1)) ++
   (escapes.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl
 
 /-- Built-ins the engine renders that a document may nonetheless redefine,
@@ -2827,7 +2831,7 @@ private def mapSmartText : Inline → Inline
   | .role name inner => .role name (mapSmartTextList #[] inner.toList)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
   | x@(.colored ..) | x@(.link ..) | x@(.label ..) | x@(.ref ..)
-  | x@(.underline ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
+  | x@(.decorated ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
   | x@(.pageNumber) | x@(.pageCount) | x@(.linebreak ..) | x@(.strut ..)
   | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
   | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => x
@@ -4660,8 +4664,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
-        else if name == "underline" || name == "uline" then
-          -- Drawn, not a face change, so not a Style: one group, like \textbf.
+        else if let some decoration := decorationCtrls.lookup name then
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
@@ -4673,13 +4676,13 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let inner ← elabInlines ctx body
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1) (acc.push (.underline inner)) ""
+            elabInlinesFrom ctx raws (j + 1) (acc.push (.decorated decoration inner)) ""
           | some (.word s p) =>
             have hjlt := getElem?_lt hj
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.underline (wordInlines ctx s p))) ""
+              ((flushText acc sb).push (.decorated decoration (wordInlines ctx s p))) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -6293,7 +6296,7 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | .label name => (#[.label name], leading)
   | .linebreak g => if leading then (#[.linebreak g], false) else (#[], true)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
-  | x@(.colored ..) | x@(.link ..) | x@(.ref ..) | x@(.underline ..)
+  | x@(.colored ..) | x@(.link ..) | x@(.ref ..) | x@(.decorated ..)
   | x@(.fill) | x@(.hspace ..) | x@(.rule ..) | x@(.pageNumber)
   | x@(.pageCount) | x@(.strut ..) | x@(.italicCorr ..)
   | x@(.onSteps ..) | x@(.altSteps ..) | x@(.image ..)

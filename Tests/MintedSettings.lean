@@ -54,7 +54,8 @@ def pageSettings (out : Layout.Out) :=
     (l.x, l.y, metricRunsAt l, l.segs.filterMap fun s => match s with
       | .run f _ _ w glyphs size _ _ _ _ _ =>
         if glyphs.isEmpty then none else some (f, w, size)
-      | .gap _ _ | .rule _ _ _ _ | .poly _ _ | .image _ _ _ => none)
+      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
+      | .rule _ _ _ _ | .poly _ _ | .image _ _ _ => none)
 
 def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
   let mut x := l.x
@@ -66,7 +67,8 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
         if c == wanted then return some pen
         pen := pen + advance
       x := x + w
-    | .gap w _ | .rule w _ _ _ | .image _ w _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
+    | .rule w _ _ _ | .image _ w _ => x := x + w
     | .poly _ _ => pure ()
   return none
 

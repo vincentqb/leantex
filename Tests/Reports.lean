@@ -452,14 +452,15 @@ def reports : List Report := [
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
     pins := [check% recipeParacolChecks, thm% Ir.boxWidth_tracks_agree]
     state := .guarded "b91c2555" .before .author },
-  { id := "R67", date := "2026-10-01"
+  { id := "R68", date := "2026-10-01"
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
     pins := [check% recipeTabularxChecks, thm% Layout.table_natural_width_exact]
     state := .guarded "8a9cf04a" .before .author },
-  { id := "R68", date := "2026-10-01"
+  { id := "R69", date := "2026-10-01"
     what := "strikeout was requested without a shared through-line geometry for both artifacts"
-    pins := [check% recipeUlemRefusalChecks]
-    state := .answered }
+    pins := [check% recipeUlemChecks, thm% Ir.decorated_text,
+      thm% Layout.lineThroughRaise_exact]
+    state := .guarded "b2a4a435" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

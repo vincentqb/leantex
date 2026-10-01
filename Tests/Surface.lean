@@ -1248,10 +1248,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\link{https://example.org}{here}\\end{document}")
   t "a defined link wins over the built-in"
     (ownDs.isEmpty && own.body ==
-      #[.para #[.role "link" #[.link "https://example.org" #[.underline #[.text "here"]]]]])
+      #[.para #[.role "link" #[.link "https://example.org" #[.decorated .underline #[.text "here"]]]]])
   t "a parameter inside a URL is the caller's text"
     (own.body == #[.para #[.role "link"
-      #[.link "https://example.org" #[.underline #[.text "here"]]]]])
+      #[.link "https://example.org" #[.decorated .underline #[.text "here"]]]]])
   t "a structural built-in cannot be redefined"
     ((warnCodes ("\\documentclass{article}\\define \\underline(x: content) {\\emph{\\x}}" ++
       "\\begin{document}\\underline{a}\\end{document}")) == ["W0303"])
@@ -2045,9 +2045,9 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       call ++ " here\n\\end{document}")).1
     let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
     segs.filterMap fun s => match s with
-      | .run fi _ link w gs sz _ ul _ _ _ =>
+      | .run fi _ link w gs sz _ decorations _ _ _ =>
         if String.ofList (gs.map (·.2.1)).toList == url then
-          some ((fi, w, gs, sz), link.isSome, ul)
+          some ((fi, w, gs, sz), link.isSome, decorations.underline)
         else none
       | _ => none
   let linked := runsOf s!"\\url\{{url}}"
@@ -4496,8 +4496,8 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
     out := out.push (x, s)
     x := x + match s with
       | .run _ _ _ w _ _ _ _ _ _ _ => w
-      | .gap w _ => w
-      | .rule w _ _ _ => w
+      | .gap w _ | .decoratedGap w _ _ => w
+      | .rule w _ _ _ | .decoration _ w _ _ _ => w
       | .image _ w _ => w
       | .poly _ _ => 0
   return out

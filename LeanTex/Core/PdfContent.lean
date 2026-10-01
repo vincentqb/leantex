@@ -585,7 +585,7 @@ def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
 
 def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
     (og : Origin) (st : TextSt) : Seg → TextSt
-  | .rule w thickness raise color =>
+  | .rule w thickness raise color | .decoration _ w thickness raise color =>
     { st with rules := st.rules.push (color, st.x, ypdf + raise, w, thickness), x := st.x + w }
   | .poly pts color =>
     { st with polys := st.polys.push (color, pts.map fun (px, py) => (st.x + px, ypdf + py)) }
@@ -594,7 +594,7 @@ def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : S
                                          res := idx.bind fun k => imgMap[k]?.getD none,
                                          origin := og },
               x := st.x + w }
-  | .gap w _ => { st with x := st.x + w }
+  | .gap w _ | .decoratedGap w _ _ => { st with x := st.x + w }
   | .run idx color _ w glyphs segSize _ _ raise _ _ =>
     stepRun remap lineSize ypdf st idx color w glyphs segSize raise
 
@@ -1062,8 +1062,8 @@ def ContentOp.decoration : ContentOp → Bool
 kern is a run with none, and paints nothing). -/
 def segRuns : Seg → List (Array Nat)
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
-  | .gap _ _ => []
-  | .rule _ _ _ _ => []
+  | .gap _ _ | .decoratedGap _ _ _ => []
+  | .rule _ _ _ _ | .decoration _ _ _ _ _ => []
   | .image _ _ _ => []
   | .poly _ _ => []
 
@@ -1236,9 +1236,9 @@ theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (
 theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp) (og : Origin)
     (st : TextSt) (seg : Seg) : (stepSeg remap imgMap ls y og st seg).runs = st.runs ++ segRuns seg := by
   cases seg with
-  | rule => simp [stepSeg, TextSt.runs, segRuns]
+  | rule | decoration => simp [stepSeg, TextSt.runs, segRuns]
   | image => simp [stepSeg, TextSt.runs, segRuns]
-  | gap => simp [stepSeg, TextSt.runs, segRuns]
+  | gap | decoratedGap => simp [stepSeg, TextSt.runs, segRuns]
   | poly => simp [stepSeg, TextSt.runs, segRuns]
   | run => exact stepRun_runs ..
 
@@ -2036,9 +2036,9 @@ theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y
     (og : Origin) (st : TextSt) (seg : Seg) (h : inkText st.ops = st.ops) :
     inkText (stepSeg remap imgMap ls y og st seg).ops = (stepSeg remap imgMap ls y og st seg).ops := by
   cases seg with
-  | rule => exact h
+  | rule | decoration => exact h
   | image => exact h
-  | gap => exact h
+  | gap | decoratedGap => exact h
   | poly => exact h
   | run => exact stepRun_plainOps _ _ _ _ _ _ _ _ _ _ h
 

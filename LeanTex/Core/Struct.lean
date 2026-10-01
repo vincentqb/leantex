@@ -189,7 +189,7 @@ def inlineRaw (out : Array Node) : Inline → Array Node
   | .link url body => out.push (.node (.link url) (inlinesRaw #[] body.toList))
   | .label _ => out
   | .ref _ _ text target => out.push (.node (.reference target) #[.leaf 0 (.text text)])
-  | .underline body => inlinesRaw out body.toList
+  | .decorated _ body => inlinesRaw out body.toList
   | .fill => out
   | .hspace _ _ => out
   | .rule _ _ _ => out.push (.node .artifact #[])
@@ -764,7 +764,7 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
   | .ref key form text target =>
     simp [inlineRaw, leafTextList_snoc, leafTextOne_leaf_exact, leafTextOne_node_exact,
       leafTextList_nil_exact, leafTextList_cons_exact, Leaf.census, plainTextOne]
-  | .underline body =>
+  | .decorated kind body =>
     simp only [inlineRaw, plainTextOne]
     exact inlinesRaw_text acc out body.toList
   | .fill => simp [inlineRaw, plainTextOne]
@@ -1097,7 +1097,7 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
   | .ref key form text target => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact,
     headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit, headingsList_nil_exact,
     headingsList_cons_exact]
-  | .underline body =>
+  | .decorated kind body =>
     simp only [inlineRaw]
     exact inlinesRaw_headings hs out body.toList
   | .fill => rfl
@@ -1420,7 +1420,7 @@ theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x
   | .ref key form text target =>
     simp [inlineRaw, altsList_snoc, altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus,
       altsList_nil_exact, altsList_cons_exact, foldInline, altPush]
-  | .underline body =>
+  | .decorated kind body =>
     simp only [inlineRaw, foldInline, altPush]
     exact inlinesRaw_alts is out body.toList
   | .fill => simp [inlineRaw, foldInline, altPush]
@@ -1818,7 +1818,7 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
   | .link url body => simp [inlineRaw]
   | .label key => simp [inlineRaw]
   | .ref key form text target => simp [inlineRaw]
-  | .underline body =>
+  | .decorated kind body =>
     simp only [inlineRaw]
     exact inlinesRaw_acc out body.toList
   | .fill => simp [inlineRaw]
