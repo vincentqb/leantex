@@ -307,12 +307,10 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
-    -- Unreachable on every public path: `resolveMathAlphas` eliminates each
-    -- `.alpha` node before either backend (`resolveMathAlphas_covers`), and
-    -- the driver and `HtmlDoc.emit` resolve first. A `.alpha` reaching here
-    -- is a bypass of that door, so it is loud — a MathML `merror` naming the
-    -- unresolved alphabet's content — never a silent `mrow` that would pass
-    -- as ordinary math. The body still renders inside, so no content is lost.
+    -- The driver resolves alphabets before emission; direct callers owe
+    -- that same pass (`resolveMathAlphas_covers`). An unresolved `.alpha`
+    -- is a MathML `merror` naming its content, never an ordinary `mrow`.
+    -- The body still renders inside, so no content is lost.
     .elem "merror" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)

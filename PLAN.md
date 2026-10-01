@@ -385,16 +385,15 @@ list.
   already made instead of inventing one. The boundary is not decorative:
   `$a \xleftarrow{f} b$` has one operand and no table row, and reducing it
   to `𝑎𝑓𝑏` is `formulaFloor_separates`'s falsity one construct further out,
-  so a single operand is not sufficient and the table row is. Blocked on a
-  monad gap rather than a census: the walk runs in `Except String` and
-  `LeanTex.Core.Loop` reads a `forIn` in `Id`, so neither `forIn_range_inv`
-  nor `bind_eq_of_inv` types against steps that may `throw`. The refactor
-  that closes it is named in the record — split the walk into a pure refusal
-  test and a pure mask, after which `floorMask_id`'s proof shape transfers —
-  and was declined here because it would put LaTeX's positional argument
-  scan in two places, which is the drift `Ir.floorMask`'s own comment
-  records as having once deleted a formula's only ink. `keptToks_mem` is the
-  proved upper bound beside it.
+  so a single operand is not sufficient and the table row is. The fallible
+  loop now has a direct invariant in `LeanTex.Core.Loop`, and
+  `MathParse.containPlan_accounts` closes the existing scanner's
+  name-accounting step without duplicating its positional argument scan.
+  The remaining bridge is parser-note provenance: successful `parseToks`
+  must not introduce `constructFloored` notes of its own. Its repeated
+  text-group scan needs one named helper and a successful-result invariant
+  before the outer parser's proof can compose. `Obligations.lean` records
+  that factorization; `keptToks_mem` remains the proved token upper bound.
 - `nameRefusals_asked` — the general form: a declaration the engine refuses
   as unknown-by-name asked the input path first, so no refusal outlives a
   file beside the document that would have defined it. Waits on a declared
@@ -25159,3 +25158,95 @@ The proof modules and successful nonempty loop probes pass, and an
 independent review found no proof blocker. This closes the scanner's
 name-accounting step, not the enclosing parser's provenance obligation;
 `mathContain_accounts` remains recorded under `Obligations/`.
+
+### 2026-10-01 — Package options that do not execute are accounted for
+
+The package loader retains literal option requests until conditionals and
+file termination have selected the live body. A caller option with no
+handler, or one whose file never executes option processing, now receives
+W0110 at that request's source. An explicitly empty catch-all remains a
+handler. Nested package files keep their own accounting boundary.
+
+Thirty additional artifact and diagnostic cases distinguish unknown,
+duplicate, skipped and unprocessed options from accepted empty handlers.
+Thirty-six assertions fail on the scheduling-only correction and pass
+with this accounting. The external oracle compares the scheduling,
+diagnostic and refusal cases with LuaLaTeX. This completes the unhandled
+option follow-up above; class-option forwarding, expanded option names
+and a general TeX runtime remain separate work.
+
+### 2026-10-01 — Cancellation bounds include degenerate operands
+
+The mark geometry now stays inside every non-inverted integer box,
+including zero width and zero height. One clamp owns the bounds;
+`clampBox_id` holds already-contained vertices unchanged.
+`cancelGeom_polys_between` composes the universal head, shaft and band
+contracts for all four marks. Target separation retains its explicit
+positive-clearance premise.
+
+The shipped-layout guard covers 320 combinations of operand shape, math
+context, room mode, rule weight and mark. It records 44 failures before
+the clamp and none after. The LuaLaTeX oracle checks 14 comparisons and
+distinguishes the reference's zero extra room from positive room.
+Typed HTML ownership checks do not certify browser paint: independent
+raster inspection found a misplaced CSS arrowhead. The replacement
+positions a bounded triangle directly inside the operand, without a
+motion path. Eight of ten Chromium screen/print raster probes failed
+before that correction and all ten pass after it; 32 degenerate probes
+also pass. This is Chromium evidence, not a Firefox or macOS check.
+
+Signed advance endpoints are ordered before clamping, so negative
+spacing cannot invert the cancellation envelope. The universal envelope
+contract bounds the advance geometry rather than claiming a glyph-ink
+box. Target-clearance guards accumulate the actual pen position of each
+polygon; a prefixed formula with a deliberately displaced target
+falsifies that judge.
+
+### 2026-10-01 — Boundary requests follow the macro execution boundary
+
+Required arguments now reach a picture request as bound replacement text.
+The closure, declaration and cache-locality checks retain optional-default
+macros, which still need their declarations in the standalone request.
+A native definition and its LaTeX spelling declare the same macro even
+when one invocation has already expanded, so their request bytes need not
+match.
+
+The eight old package-count and declaration-carrying expectations are
+reconciled with the new execution path. A separate guard requires W0110
+when a def-only package receives an option it never processes. The
+focused package, theme and boundary checks pass. Five valid synthetic
+standalones compare explicit replacement text with required LaTeX, TeX,
+native and optional-default definitions: LuaLaTeX produces identical
+extracted text and identical 144-dpi page rasters for all five.
+
+### 2026-10-01 — Math alphabet resolution and its measured boundary
+
+The integrated alphabet resolver carries command provenance and a stack
+of scopes through one shared math IR walk. Text-sourced alphabet commands
+select declared body, sans or mono slots; symbol-sourced commands read
+the selected math face's range coverage. Both backends consume that
+resolved value. The conservation and fixed-point statements concern
+scalars and scopes; the projection statements concern slot selection,
+not universal identity between browser and native fallback fonts.
+
+A review correction lets text-sourced italic digits select the body
+italic face even though Unicode has no italic digit alphabet. Eight
+artifact assertions fail before that correction and pass after, with
+220 observations across distinct text faces, ambient styles and digits,
+plus 48 rendered screen and print probes. This supersedes the earlier
+phase entries that left real text slots unimplemented.
+
+The external alphabet comparison now retains every extracted character
+across spans and pages, rejects malformed observations, and compares
+font names, sizes and character-box widths separately. Its 60 selftests
+pass; independent XML and decimal readers agree on 608 saved observations.
+Widths are quantized bounding boxes, not pen advances, and font names
+do not prove font-program or outline identity.
+
+The stricter report on the frozen alphabet implementation records 304
+DIFF rows: one face difference, 304 size differences and 83 width
+differences. No mismatch is exempted. Earlier parity totals did not
+certify those axes. Forced text-command provenance, Greek aliases,
+nested missing ranges, ambient text sizing and browser fallback identity
+remain explicit compatibility boundaries until their own artifact
+guards close.
