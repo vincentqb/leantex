@@ -1,4 +1,4 @@
-import Tests.Support
+import Tests.Artifact
 
 open LeanTex.Core
 
@@ -58,6 +58,19 @@ also hold each leaf's ink to its own census so joining words cannot erase
 the attribution that tagged PDF reads. Styled controls keep their faces. -/
 def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
+  let artifact (label : String) (doc : Ir.Doc) (out : Layout.Out)
+      (geom : Layout.Geom) : IO Unit := do
+    let laid := out.pages.flatMap fun p =>
+      artLaidGlyphs geom { p with lines := p.lines.filter (!·.furniture) }
+    t (label ++ ": exact artifact-model coordinates")
+      ((roleGlyphs out).map (fun g => g.x + geom.bleed) == laid)
+    match readArtifact (driverPdf fonts geom doc out) with
+    | .error e => t s!"{label}: PDF reads back: {e}" false
+    | .ok pages =>
+      let offences := artGlyphPlacementOffences
+        (out.pages.flatMap (artLaidGlyphs geom)) (pages.flatMap artPaintedGlyphs)
+      t s!"{label}: emitted PDF pen agrees: {offences.toList.take 3}"
+        (!laid.isEmpty && pages.size == out.pages.size && offences.isEmpty)
   for (name, xs, text) in (#[
       ("word remainder", #[.role "wordrole" #[.text "A"], .text "B Tail"], "AB Tail"),
       ("adjacent roles", #[.role "one" #[.text "A"], .role "two" #[.text "B"],
@@ -70,9 +83,12 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     ] : Array (String × Array Ir.Inline × String)) do
     let doc : Ir.Doc := { body := #[.para xs] }
     let out := layoutOf fonts doc
-    let plain := layoutOf fonts { doc with body := #[.para #[.text text]] }
+    let control := { doc with body := #[.para #[.text text]] }
+    let plain := layoutOf fonts control
     t s!"role shaping {name}: exact shipped glyphs" (roleGlyphs out == roleGlyphs plain)
     t s!"role shaping {name}: no layout loss" (out.diags.isEmpty && plain.diags.isEmpty)
+    artifact s!"role shaping {name}" doc out (Layout.Geom.ofPage doc.page)
+    artifact s!"role shaping {name} control" control plain (Layout.Geom.ofPage control.page)
     for (id, leaf) in (Struct.ofDoc doc).leaves do
       t s!"role shaping {name}: leaf {id} keeps its ink"
         (roleLeafGlyphText out id == leaf.census.replace " " "")
@@ -88,6 +104,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (roleGlyphs out != roleGlyphs (layoutOf fonts bare))
   t "role shaping: distinct faces remain distinct"
     (bodyGlyphs out == #[(1, 'A'), (0, 'V')])
+  artifact "role shaping styled" styled out (Layout.Geom.ofPage styled.page)
   let hyphenated : Ir.Doc := { body := #[.para #[
     .role "one" #[.text "al"], .role "two" #[.text "gorithm"]]] }
   let joined := { hyphenated with body := #[.para #[.text "algorithm"]] }
@@ -101,5 +118,43 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       (bodyGlyphs joinedOut).any (fun (_, c) => c == '-'))
   t "role shaping: hyphenation crosses semantic boundaries"
     (roleGlyphs splitOut == roleGlyphs joinedOut)
+  artifact "role shaping hyphenated" hyphenated splitOut geom
+  artifact "role shaping hyphenated control" joined joinedOut geom
+  -- Expansion rounds whole-word coordinates. Changing the structure leaves
+  -- must not restart that rounding, even inside a leaf with several glyphs.
+  for (name, parts) in (#[
+      ("scalar leaves", #["A", "B", "T", "a", "i", "l"]),
+      ("long leaves", #["AB", "Tail"]),
+      ("no kern", #["M", "MMMM"])
+    ] : Array (String × Array String)) do
+    let mut xs : Array Ir.Inline := #[]
+    let mut text := ""
+    for _ in [0:20] do
+      for part in parts do
+        xs := xs.push (.role "semantic" #[.text part])
+        text := text ++ part
+      xs := xs.push (.text " ")
+      text := text ++ " "
+    for measure in [300, 400] do
+      let doc : Ir.Doc := {
+        page := { width := Dim.pt (measure + 40), hmargin := Dim.pt 20,
+                  expand := some true, protrude := some false }
+        body := #[.para xs] }
+      let out := layoutOf fonts doc
+      let control := { doc with body := #[.para #[.text text]] }
+      let plain := layoutOf fonts control
+      let label := s!"role shaping {name}, measure {measure}"
+      t (label ++ ": control really expands")
+        ((bodyLines plain).any (·.expand != 0))
+      t (label ++ ": exact expanded glyphs") (roleGlyphs out == roleGlyphs plain)
+      t (label ++ ": exact line extents")
+        ((bodyLines out).map (fun l => (l.x, l.y, l.setWidth, l.expand)) ==
+          (bodyLines plain).map (fun l => (l.x, l.y, l.setWidth, l.expand)))
+      t (label ++ ": no layout loss") (out.diags.isEmpty && plain.diags.isEmpty)
+      artifact label doc out (Layout.Geom.ofPage doc.page)
+      artifact (label ++ " control") control plain (Layout.Geom.ofPage control.page)
+      for (id, leaf) in (Struct.ofDoc doc).leaves do
+        t s!"{label}: leaf {id} keeps its ink"
+          (roleLeafGlyphText out id == leaf.census.replace " " "")
 
 end Tests

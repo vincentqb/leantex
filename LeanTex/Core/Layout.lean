@@ -1905,7 +1905,10 @@ through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
 only when the styled face has one, synthesis having already rewritten the
 word otherwise. `owners` carries the original leaf of each scalar when a
 word crosses transparent inline boundaries: shape and hyphenate first,
-then split boxes by owner without losing the kern at a leaf boundary. -/
+then split boxes by owner without losing the kern at a leaf boundary.
+The last result maps each owner fragment to its natural offset in the
+original box: expansion must round from that same origin. Hyphenation,
+fallback faces and fixed spaces still start fresh boxes. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
@@ -1914,35 +1917,44 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (Array Nat) := Id.run do
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp := Id.run do
   let mut missing := missing
   let mut substs := substs
   let mut cache := cache
   let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
   let mut items : Array Item := #[]
+  let mut wordOffsets : Std.HashMap Nat Sp := {}
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxOwners : Array Attribution := #[]
   let mut boxW : Sp := 0
-  let flush (items : Array Item) (box : Array (Nat × Char × Sp))
-      (boxOwners : Array Attribution) (w : Sp) : Array Item := Id.run do
-    if box.isEmpty then return items
+  let flush (items : Array Item) (offsets : Std.HashMap Nat Sp)
+      (box : Array (Nat × Char × Sp)) (boxOwners : Array Attribution) (w : Sp) :
+      Array Item × Std.HashMap Nat Sp := Id.run do
+    if box.isEmpty then return (items, offsets)
     let first := boxOwners[0]?.getD attr
     if boxOwners.all (· == first) then
-      return items.push (.box w fontIdx color link box size leading underline 0 ground first)
+      return (items.push (.box w fontIdx color link box size leading underline 0 ground first),
+        offsets)
     let mut items := items
+    let mut offsets := offsets
+    let mut offset := 0
     let mut run := #[]
     let mut runW := 0
     let mut owner := first
     for (g, k) in box.zipIdx do
       let next := boxOwners[k]?.getD attr
       if next != owner then
+        if offset != 0 then offsets := offsets.insert items.size offset
         items := items.push (.box runW fontIdx color link run size leading underline 0 ground owner)
+        offset := offset + runW
         run := #[]
         runW := 0
         owner := next
       run := run.push g
       runW := runW + g.2.2
-    return items.push (.box runW fontIdx color link run size leading underline 0 ground owner)
+    if offset != 0 then offsets := offsets.insert items.size offset
+    return (items.push (.box runW fontIdx color link run size leading underline 0 ground owner),
+      offsets)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -1977,7 +1989,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | none => pure ()
         for (c', k) in run.zipIdx do
           if breaks.contains k then
-            items := flush items box boxOwners boxW
+            let (out, offsets) := flush items wordOffsets box boxOwners boxW
+            items := out
+            wordOffsets := offsets
             box := #[]
             boxOwners := #[]
             boxW := 0
@@ -1993,7 +2007,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             match fs.fallbackFor c' |>.bind fun fb =>
                 (glyphOfSc smallcaps size (fs.get fb) c').map (fb, ·) with
             | some (fb, g) =>
-              items := flush items box boxOwners boxW
+              let (out, offsets) := flush items wordOffsets box boxOwners boxW
+              items := out
+              wordOffsets := offsets
               box := #[]
               boxOwners := #[]
               boxW := 0
@@ -2010,7 +2026,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | some (num, den) =>
           -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
           -- become a place to end a line.
-          items := flush items box boxOwners boxW
+          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          items := out
+          wordOffsets := offsets
           box := #[]
           boxOwners := #[]
           boxW := 0
@@ -2021,7 +2039,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | none =>
         if c == '\u00a0' then
           -- A no-break space is an interword space that is not glue.
-          items := flush items box boxOwners boxW
+          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          items := out
+          wordOffsets := offsets
           box := #[]
           boxOwners := #[]
           boxW := 0
@@ -2040,7 +2060,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           match fs.fallbackFor c |>.bind fun fb =>
               (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
           | some (fb, g) =>
-            items := flush items box boxOwners boxW
+            let (out, offsets) := flush items wordOffsets box boxOwners boxW
+            items := out
+            wordOffsets := offsets
             box := #[]
             boxOwners := #[]
             boxW := 0
@@ -2053,15 +2075,17 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               missing := missing.push (fontIdx, c)
         i := i + 1
         if c == '-' then
-          items := flush items box boxOwners boxW
+          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          items := out
+          wordOffsets := offsets
           box := #[]
           boxOwners := #[]
           boxW := 0
           items := items.push (.pen 0 hyphenPenalty false fontIdx color #[])
     else
       break
-  items := flush items box boxOwners boxW
-  return (items, missing, substs, cache)
+  let (out, offsets) := flush items wordOffsets box boxOwners boxW
+  return (out, missing, substs, cache, offsets)
 
 /-- Interword glue: the face's space advance, stretching by half and
 shrinking by a third. The proportions are TeX's plain-font fontdimens
@@ -3371,6 +3395,10 @@ private structure ItemsAcc where
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
   extras : Std.HashMap Nat Sp := {}
+  /-- Natural offsets of owner fragments within their original shaped
+  boxes, keyed by item index. Only semantic splits carry these offsets;
+  authored style changes and every other box keep their own origin. -/
+  wordOffsets : Std.HashMap Nat Sp := {}
   cache : Std.HashMap String (Array Nat) := {}
   /-- The item count just after the last word's items: a space kerns
   against the glyph before it only while nothing has been set since, so a
@@ -3477,7 +3505,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         smallCapSynth (smallCapScaleFor font) sty chars
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
-    let (ws, m, s, c') :=
+    let (ws, m, s, c', offsets) :=
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link sty.underline useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners
@@ -3489,6 +3517,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       | _ => 0
     let n := acc.items.size
     { acc with items := widenLast acc.items rk ++ ws, dropped := m, substs := s, cache := c'
+               wordOffsets := offsets.fold (fun os k v => os.insert (n + k) v) acc.wordOffsets
                wordEnd := if ws.isEmpty then acc.wordEnd else n + ws.size }
   | .icon sty c attr =>
     -- The styled face first (an icon font declared as the body face is
@@ -3675,7 +3704,8 @@ The fourth returned component maps the index of a forced-break penalty
 to extra vertical space the document asked for there (`\\[1ex]`); it
 rides beside the items because the line breaker has no use for it, and
 putting it in `Item` would make every pattern carry a field only the
-page builder reads. -/
+page builder reads. The last component carries the original shaping
+offset of a word box split only for semantic ownership. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
@@ -3683,7 +3713,8 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
     (roleMetrics : List (String × (Sp × Option Sp)) := []) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) := Id.run do
+      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) ×
+      Std.HashMap Nat Sp := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
   let acc := itemsOfToks pats size xHeight fs imgs textW textH { cache := cache } st.toks
@@ -3713,7 +3744,7 @@ with \\allow{E0405}"))
 (U+{hex c.toNat}); a stand-in keeps the letter"
       (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
       (subject := some ("math-alpha:" ++ a.name)))
-  return (items, diags, acc.cache, acc.extras, acc.notes)
+  return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -4192,6 +4223,55 @@ theorem expandFactor_bounded (delta boxW : Int) :
   unfold expandFactor expandLimit
   split <;> omega
 
+/-- A font box's coordinate under the line's per-mille expansion. -/
+private def expandCoord (f x : Int) : Int := x + x * f / 1000
+
+/-- Expansion of a fragment measured from its original shaping origin.
+Rounding each fragment's width independently would lose fractional sp at
+semantic boundaries. -/
+def expandSpan (f offset width : Int) : Int :=
+  expandCoord f (offset + width) - expandCoord f offset
+
+/-- Dividing a shaped box into adjacent ownership fragments preserves its
+expanded width exactly. This is the integer arithmetic contract; the
+shipped-glyph guards also check the offsets carried through line setting. -/
+theorem expandSpan_add_exact (f offset a b : Int) :
+    expandSpan f offset a + expandSpan f (offset + a) b =
+      expandSpan f offset (a + b) := by
+  unfold expandSpan
+  simp only [Int.add_assoc]
+  omega
+
+/-- A run's glyph coordinates start at zero in both consumers. Split only
+where that local rounding would differ from the original shaping origin;
+each piece retains its glyph advances, paint and structure owner. -/
+private def setWordBox (segs : Array Seg) (f offset w : Sp)
+    (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (underline : Bool) (raise : Sp) (ground : Option Ir.Color)
+    (attr : Attribution) : Array Seg := Id.run do
+  let width := expandSpan f offset w
+  if f == 0 || offset == 0 || glyphs.isEmpty then
+    return segs.push
+      (.run fontIdx color link width glyphs size leading underline raise ground attr)
+  let mut segs := segs
+  let mut run := #[]
+  let mut dx := 0
+  let mut startDx := 0
+  let mut startX := 0
+  for g in glyphs do
+    let x := expandCoord f (offset + dx) - expandCoord f offset
+    if !run.isEmpty && startX + expandCoord f (dx - startDx) != x then
+      segs := segs.push
+        (.run fontIdx color link (x - startX) run size leading underline raise ground attr)
+      run := #[]
+      startDx := dx
+      startX := x
+    run := run.push g
+    dx := dx + g.2.2
+  return segs.push
+    (.run fontIdx color link (width - startX) run size leading underline raise ground attr)
+
 /-- Does a paragraph line set to its measure? Justified text does. So does
 any line carrying an author's fill, however the paragraph is set: TeX's
 glue orders give a line's slack to its highest-order stretch, and
@@ -4208,7 +4288,8 @@ private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bo
   return false
 
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
-    (justify : Bool) (protrude : Bool := false) (expand : Bool := false) :
+    (justify : Bool) (protrude : Bool := false) (expand : Bool := false)
+    (wordOffsets : Std.HashMap Nat Sp := {}) :
     Array Seg × Sp × Bool × Sp × Int := Id.run do
   let m := measure items a j
   -- Protrusion (stage 1): boundary glyphs hang into the margin by the
@@ -4230,7 +4311,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   if f != 0 then
     for k in [a:j] do
       if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
-        boxTaken := boxTaken + w * f / 1000
+        boxTaken := boxTaken + expandSpan f (wordOffsets[k]?.getD 0) w - w
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
   let delta := delta - boxTaken
@@ -4258,10 +4339,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- advances would silently set it to zero. Expansion rescales the box
       -- by the line's one factor; the PDF writer paints the run's glyphs
       -- under the same horizontal scale.
-      let w := w + w * f / 1000
-      segs := segs.push
-        (.run fontIdx color link w glyphs size leading underline raise ground attr)
-      width := width + w
+      let offset := wordOffsets[k]?.getD 0
+      segs := setWordBox segs f offset w fontIdx color link glyphs size leading
+        underline raise ground attr
+      width := width + expandSpan f offset w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
       width := width + w
@@ -5770,6 +5851,7 @@ happen in parallel between the walk and placement. -/
 private structure ParaJob where
   items : Array Item
   extras : Std.HashMap Nat Sp
+  wordOffsets : Std.HashMap Nat Sp := {}
   diags : Array Diag
   target : Sp
   indent : Sp
@@ -6453,7 +6535,7 @@ private def collectPara (r : Rd) (a : Acc)
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground }
-  let (items, ds, cache, extras, rawNotes) :=
+  let (items, ds, cache, extras, rawNotes, wordOffsets) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
@@ -6543,15 +6625,16 @@ private def collectPara (r : Rd) (a : Acc)
   -- A hanging indent opens the items with its kern; what is indexed by
   -- item position (a forced break's extra space, a footnote mark) moves
   -- with them.
-  let (items, extras, noteBlocks) :=
-    if hangIndent == 0 then (items, extras, noteBlocks)
+  let (items, extras, noteBlocks, wordOffsets) :=
+    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets)
     else (#[Item.box (-hangIndent) 0 a.fg none #[] size none false 0 a.ground .unattributed] ++ items,
       extras.fold (fun m k v => m.insert (k + 1) v) {},
-      noteBlocks.map fun (i, nb) => (i + 1, nb))
+      noteBlocks.map (fun (i, nb) => (i + 1, nb)),
+      wordOffsets.fold (fun m k v => m.insert (k + 1) v) {})
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
-      items := items, extras := extras, diags := ds
+      items := items, extras := extras, wordOffsets := wordOffsets, diags := ds
       target := measure
       indent := indent, center := center, size := size
       firstBaseline := firstBaseline
@@ -7383,13 +7466,13 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
   -- Image fractions resolve against the current measure, as collectPara's.
   let target := (a.measure.getD r.geom.textWidth) - indent
-  let (citems, ds1, cache1, extras, _) :=
+  let (citems, ds1, cache1, extras, _, cOffsets) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
       r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
   -- the number's leaves follow the content's
   let numLeaf := leaf.map (· + leafCount content)
-  let (nitems, ds2, cache2, _, _) :=
+  let (nitems, ds2, cache2, _, _, nOffsets) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
       cache1 (LeafCtr.of numLeaf (leafCount num) num) r.imgs target r.geom.textHeight
       (ladder := r.geom.scale)
@@ -7399,6 +7482,9 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
     if xs.size ≥ 2 then xs.extract 0 (xs.size - 2) else xs
   let citems := strip citems
   let nitems := strip nitems
+  let wordOffsets := cOffsets.fold (fun m k v => m.insert (k + 2) v) {}
+  let wordOffsets := nOffsets.fold
+    (fun m k v => m.insert (k + citems.size + 3) v) wordOffsets
   let numW := (measure nitems 0 nitems.size).natural
   -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
@@ -7412,7 +7498,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   return ({ a with
     hyphCache := cache2
     ops := a.ops.push (.para {
-      items := items, extras := extras, diags := ds1 ++ ds2
+      items := items, extras := extras, wordOffsets := wordOffsets, diags := ds1 ++ ds2
       target := target
       indent := indent, center := false, size := r.geom.fontSize
       justify := true
@@ -8949,7 +9035,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   let (segs0, w0, overfull, hang, exf) :=
     setLine j.items a brk width
       (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk)
-      j.protrude j.expand
+      j.protrude j.expand j.wordOffsets
   -- Three horizontal origins, and the right one is the line's own natural
   -- width measured back from the far edge — the same arithmetic centring
   -- halves. It cannot be a justified line: filling the measure would put the
