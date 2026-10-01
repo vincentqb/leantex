@@ -25550,3 +25550,14 @@ after retaining that provenance. Empty and unreadable builtin replacements
 still raise W0361 and keep their native artifacts. The new check block
 runs in the full suite; nine independent LuaLaTeX oracle cases also cover
 forwarded stateful arguments and an incomplete call.
+
+Combined validation passes the warnings-as-errors build, full suite,
+300 line-breaking probes and declaration commutation over synthetic inputs
+and 87 corpus files. The optional-default oracle observes 118 reference
+cases without a reference failure and 105 engine comparisons without an
+observation fault: 99 match, while six retain their recorded line-break
+differences. All eight forwarded-argument comparisons match. Fresh-cache
+reference-deck builds pass in both formats without image-loading failures.
+The five-run benchmark report passes, including 4.1× reference-list growth
+for four times the entries against its 8× bound. These checks enlarge the
+native subset; they do not establish arbitrary installed-package execution.
