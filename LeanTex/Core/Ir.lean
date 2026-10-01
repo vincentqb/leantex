@@ -13497,6 +13497,20 @@ theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
 
+/-- The leaf resolver is idempotent (`_fixed_point`): resolving a formula
+whose body is already alpha-free is a fixed point of the math pass
+(`Math.resolveMathAlphas_fixed_point`), and every non-formula inline it
+returns unchanged. This is the mechanism that lets a document be resolved
+twice — once by the driver's `buildFontSet`, again at the public backend
+entry — without a second N0018 or any further rewrite: the second pass
+finds each formula body already settled. -/
+theorem resolveMathAlphaInline_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (x : Inline) :
+    resolveMathAlphaInline coverage (resolveMathAlphaInline coverage x)
+      = resolveMathAlphaInline coverage x := by
+  cases x <;>
+    simp only [resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
+
 mutual
 
 /-- The census face of the map, per node: a leaf function that conserves
