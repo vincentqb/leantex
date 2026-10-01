@@ -1,0 +1,26 @@
+% Synthetic math-alphabet fixture: every formula invented. Ships its own
+% faces (beside this file in fonts/) so the checkout renders as a function
+% of the checkout. Exercises the text-sourced math alphabets whose MathML
+% projection rides on real CSS (font-family/weight/style), the browser
+% honouring no non-normal mathvariant: normal, bold, italic, sans, mono, a
+% styled digit, and a styled scalar nested in a subscript.
+\documentclass{article}
+\fonts{
+  dir = "fonts",
+  body = "Source Serif Pro",
+  sans = "Open Sans",
+  mono = "Source Code Pro",
+  math = "Fira Math",
+}
+
+\begin{document}
+
+\section{Alphabet Styles}
+
+The text-sourced alphabets each set the plain base letter in a text family:
+upright $\mathrm{A}$, bold $\mathbf{B}$, italic $\mathit{C}$, sans
+$\mathsf{D}$, and mono $\mathtt{E}$ sit inline. A styled digit keeps its
+family too, as in $\mathbf{7}$, and a styled scalar nests inside a script
+in $x_{\mathsf{k}} + y^{\mathbf{2}}$.
+
+\end{document}
