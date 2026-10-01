@@ -12,17 +12,9 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let ink (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
-  let page (label pre body expected : String) : IO Unit := do
-    let source := dvDoc pre body
-    let (doc, ds) := elabStr source
-    let (_, tree, hds) := HtmlDoc.emitTree {} doc
-    let control := dvDoc "" expected
-    let (_, expectedTree, _) := HtmlDoc.emitTree {} (elabStr control).1
-    t s!"macro arguments {label}: no loss" ((ds ++ hds).all (·.severity == .note))
-    t s!"macro arguments {label}: shipped layout"
-      (ink (allTextOf fonts source) == ink (allTextOf fonts control))
-    t s!"macro arguments {label}: typed HTML"
-      (ink (shownTextList "" tree.toList) == ink (shownTextList "" expectedTree.toList))
+  let page (label pre body expected : String) : IO Unit :=
+    sourceTextChecks ref fonts s!"macro arguments {label}"
+      (dvDoc pre body) (dvDoc "" expected)
   for (label, definer) in #[
       ("def", "\\def\\installerprobe#1"),
       ("gdef", "\\gdef\\installerprobe#1"),

@@ -21,9 +21,9 @@ def styPageText (fonts : Font.FontSet) (name : String) : IO (String × Array Dia
 
 /-- **The package-loaded test family is answered from the document's own
 loads, and only the branch it picks reaches the page.** latex.ltx's
-`\@ifl@aded` holds from the `\usepackage` line on and never before; a test
-inside a group — a hook's body, a definition — runs after the preamble, so it
-is read against every load the preamble writes; the option forms read the
+`\@ifl@aded` holds from the `\usepackage` line on and never before. A hook's
+test runs at replay; a macro's test runs at its use, and an ordinary group
+runs where it stands. The option forms read the
 list the package itself was passed, never the class's global options. Each
 row was the whole argument list set as text before the family was read. -/
 def loadedTestChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -70,7 +70,7 @@ def loadedTestChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "a preamble test after the load reads loaded"
     (page ("\\usepackage{booktabs}\n\\@ifpackageloaded{booktabs}" ++
       "{\\newcommand{\\probe}{early}}{\\newcommand{\\probe}{late}}\n") "\\probe" == "early")
-  t "a definition's test is read against the whole preamble"
+  t "a definition used after the preamble sees its completed loads"
     (page "\\newcommand{\\probe}{\\@ifpackageloaded{booktabs}{yes}{no}}\n\\usepackage{booktabs}\n"
       "\\probe" == "yes")
   t "a test inside a kept branch is answered too"

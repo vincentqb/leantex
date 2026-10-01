@@ -1178,6 +1178,21 @@ def allTextOf (fonts : Font.FontSet) (src : String)
   String.join ((allLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
     (lineText ·))
 
+/-- A source and its literal control must ship the same visible text in
+both artifacts, without losing a construct. Whitespace is ignored here:
+these checks judge argument and branch selection, not line breaking. -/
+def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
+    (label source control : String) : IO Unit := do
+  let ink (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
+  let (doc, ds) := elabStr source
+  let (_, tree, hds) := HtmlDoc.emitTree {} doc
+  let (_, expectedTree, _) := HtmlDoc.emitTree {} (elabStr control).1
+  check ref (label ++ ": no loss") ((ds ++ hds).all (·.severity == .note))
+  check ref (label ++ ": shipped layout")
+    (ink (allTextOf fonts source) == ink (allTextOf fonts control))
+  check ref (label ++ ": typed HTML")
+    (ink (shownTextList "" tree.toList) == ink (shownTextList "" expectedTree.toList))
+
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
 
