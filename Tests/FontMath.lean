@@ -1739,6 +1739,59 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Math.missingCharAlpha bfitCov [(.bm, bmSrc)] (Char.ofNat 0x1D434) == none &&
       Math.MathAlphabet.ranges .bm == [] && !Math.allAlphabets.contains .bm)
 
+  -- Nested blocking: an inner symbol-only alphabet the selected face does not
+  -- carry pins the character to the math face, so an OUTER text alphabet can
+  -- no longer project it to a text family. On the Fira face (`alphaCoverage`,
+  -- no script range) `\mathbf{\mathcal{A}}` keeps the upright base letter in
+  -- the math face — never OpenSans-Bold — which is what LuaLaTeX paints
+  -- (confirmed by the widened math-alphabet differential across four faces).
+  -- The pin is blind to which text alphabet encloses it and to whether the
+  -- inner classifies the character (a digit under `\mathcal` stays math too),
+  -- yet an outer *sym* alphabet the face covers still remaps — the ordinary
+  -- fall-through, so the two are distinguished rather than conflated.
+  let itA : Char := Char.ofNat 0x1D434   -- the parser's italic A
+  let scriptA : Char := Char.ofNat 0x1D49C -- MATHEMATICAL SCRIPT CAPITAL A
+  let bfA : Char := Char.ofNat 0x1D400   -- MATHEMATICAL BOLD CAPITAL A
+  -- not pinned: a lone outer text `\mathbf` projects to the bold body slot
+  t "a lone text mathbf projects A to the bold body text slot"
+    (Math.resolveCharStack alphaCoverage [(.bf, .text)] itA
+      == (.styled { slot := .body, bold := true } 'A' : Math.Resolved))
+  -- pinned: an inner uncovered \mathcal blocks that projection, upright base
+  t "an inner uncovered mathcal blocks the outer text projection (upright math base)"
+    (Math.resolveCharStack alphaCoverage [(.cal, .text), (.bf, .text)] itA
+      == (.sym 'A' : Math.Resolved))
+  t "the block holds whatever text alphabet encloses the inner mathcal"
+    (Math.resolveCharStack alphaCoverage [(.cal, .text), (.it, .text)] itA == (.sym 'A' : Math.Resolved) &&
+      Math.resolveCharStack alphaCoverage [(.cal, .text), (.sf, .text)] itA == (.sym 'A' : Math.Resolved) &&
+      Math.resolveCharStack alphaCoverage [(.cal, .text), (.rm, .text)] itA == (.sym 'A' : Math.Resolved))
+  -- a digit under \mathcal (outside cal's ranges) still pins to the math face
+  t "a digit under an inner mathcal stays a plain math scalar, not outer bold"
+    (Math.resolveCharStack alphaCoverage [(.cal, .text), (.bf, .text)] '5'
+      == (.sym '5' : Math.Resolved))
+  -- a bare uncovered \mathcal (no text alphabet) keeps the italic source letter
+  t "a bare uncovered mathcal keeps the italic math source letter"
+    (Math.resolveCharStack alphaCoverage [(.cal, .text)] itA == (.sym itA : Math.Resolved))
+  -- ordinary fall-through survives: an outer *sym* alphabet the face covers remaps
+  let bfCov : Math.MathAlphabetCoverage := { covered := #[(.bf, .latinUpper)] }
+  t "an inner uncovered mathcal still falls through to an outer covered sym alphabet"
+    (Math.resolveCharStack bfCov [(.cal, .text), (.bf, .sym)] itA == (.sym bfA : Math.Resolved))
+  -- the N0018 census blames the inner mathcal (its styling loss), named once;
+  -- a lone text bf is no loss, and a digit under mathcal is no loss
+  t "the inner uncovered mathcal is the blamed alphabet; text bf and digits are no loss"
+    (Math.missingCharAlpha alphaCoverage [(.cal, .text), (.bf, .text)] itA == some .cal &&
+      Math.missingCharAlpha alphaCoverage [(.bf, .text)] itA == none &&
+      Math.missingCharAlpha alphaCoverage [(.cal, .text), (.bf, .text)] '5' == none)
+  -- End-to-end (Layout.Out + diagnostics, never Ir.dump): the kept scalar is
+  -- the upright A in the math face, no script A, no host fallback, and N0018
+  -- names cal exactly once while the outer bf raises nothing.
+  let e2eBlock := Ir.resolveMathAlphas alphaCoverage fira.family
+    (Elab.run "synthetic.tex" "$\\mathbf{\\mathcal{A}}$").1
+  t "mathbf-mathcal keeps upright A in the math face; N0018 names cal once, bf none"
+    ((Layout.docScalars e2eBlock.1).contains 'A' &&
+      !(Layout.docScalars e2eBlock.1).contains scriptA &&
+      (e2eBlock.2.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:cal")).size == 1 &&
+      (e2eBlock.2.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:bf")).isEmpty)
+
   let scriptSize := mbase * 72 / 100
   let ssSize := mbase * 58 / 100
   let lineOf (src : String) : Layout.LineOut :=
@@ -2023,23 +2076,24 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => none
   t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
     (mbFive == some (mfs.lookup 0 700 false) && bsFive == some 1 && mbFive != bsFive)
-  -- Nesting is a stack, innermost-first: a scalar the inner alphabet does
-  -- not cover falls through to an outer one that does (measured against
-  -- four faces in scripts/math-alphabet-diff.lean). Fira carries neither
-  -- calligraphic nor fraktur letters, so the inner scope yields and the
-  -- outer \mathbf takes the digit / the letter — under the text source, as
-  -- the plain base glyph set at the bold body slot.
-  t "nested alphabets stack: mathbf takes a digit calligraphic cannot"
+  -- Nesting is a stack, innermost-first. An inner symbol-only alphabet the
+  -- face does not carry PINS the character to the math face: an outer text
+  -- `\mathbf` can no longer project it to the bold body slot, so the digit /
+  -- letter stays a plain math scalar in the math face (font 1) — which is
+  -- what LuaLaTeX paints (scripts/math-alphabet-diff.lean, four faces). Fira
+  -- carries neither calligraphic nor fraktur letters, so `\mathcal`/`\mathfrak`
+  -- yield to the base scalar rather than reaching the outer `\mathbf`.
+  t "nested alphabets stack: an inner uncovered mathcal pins the digit to the math face"
     (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['5'] &&
       (lineOf "$\\mathbf{\\mathcal{5}}$").segs.any fun s => match s with
         | .run f _ _ _ glyphs _ _ _ _ _ _ =>
-          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == '5')
+          f == 1 && glyphs.any (·.2.1 == '5')
         | _ => false)
-  t "nested alphabets stack: mathbf takes a letter fraktur cannot cover here"
+  t "nested alphabets stack: an inner uncovered mathfrak pins the letter to the math face"
     (glyphChars "$\\mathbf{\\mathfrak{Z}}$" == #['Z'] &&
       (lineOf "$\\mathbf{\\mathfrak{Z}}$").segs.any fun s => match s with
         | .run f _ _ _ glyphs _ _ _ _ _ _ =>
-          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == 'Z')
+          f == 1 && glyphs.any (·.2.1 == 'Z')
         | _ => false)
   -- Range completeness confirmed against the oracle: \mathit sets the
   -- italic uppercase Greek block (U+1D6E2), \boldsymbol is near-identity

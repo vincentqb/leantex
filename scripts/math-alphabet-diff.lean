@@ -115,20 +115,40 @@ def cases : List Case :=
     { label := "bf(frak Z)", body := "\\mathbf{\\mathfrak{Z}}" },
     { label := "cal(bf A)", body := "\\mathcal{\\mathbf{A}}" },
     -- nesting across policies: a text-sourced inner wins its own range, and
-    -- the policy decides whether `\mathrm`/`\mathbf` are text or sym. The
-    -- `bf(cal A) text` row is the one surfaced engine divergence: when the
-    -- inner `\mathcal` is uncovered (a face lacking script A, e.g. Fira) the
-    -- engine falls the character through to the OUTER text `\mathbf` and
-    -- projects it to a text family, while LuaLaTeX keeps it in the math face.
-    -- On a face that carries script A (STIX/LM/Pagella) the inner wins on
-    -- both sides and the row passes. Matching Fira exactly needs unicode-math
-    -- uncovered-fallback semantics (LuaLaTeX paints a plain upright base, not
-    -- the engine's bold or the source italic) — a dedicated follow-up; the
-    -- row is kept so the oracle reports the divergence rather than hiding it.
+    -- the policy decides whether `\mathrm`/`\mathbf` are text or sym. Under
+    -- the text policy an inner symbol-only alphabet (`\mathcal`/`\mathfrak`/
+    -- `\mathbb`) that the selected face does not carry *blocks* projection
+    -- through an outer text alphabet: LuaLaTeX keeps the upright base scalar
+    -- in the math face (never the outer text family), whatever the outer text
+    -- command is. The `… text` nested rows below exercise that generalized
+    -- rule across the four outer text alphabets, Latin upper/lower/digits, and
+    -- cal/frak/bb holes; on a face that carries the inner range (STIX/LM/
+    -- Pagella) the inner wins on both sides. Under the sym policy an available
+    -- outer symbol alphabet still remaps (the `… sym` rows), so the two
+    -- behaviours are distinguished rather than conflated. The pure sizing axis
+    -- (text-in-math scale) stays ungated, as the header notes.
     { label := "bb(rm x) text", body := "\\mathbb{\\mathrm{x}}", sym := false },
     { label := "rm(bb x) text", body := "\\mathrm{\\mathbb{x}}", sym := false },
     { label := "bf(cal A) text", body := "\\mathbf{\\mathcal{A}}", sym := false },
     { label := "cal(bf A) text", body := "\\mathcal{\\mathbf{A}}", sym := false },
+    -- widened: an inner uncovered symbol-only alphabet blocks the outer text
+    -- projection regardless of which text alphabet encloses it, across the
+    -- Latin ranges and cal/frak/bb holes
+    { label := "it(cal A) text", body := "\\mathit{\\mathcal{A}}", sym := false },
+    { label := "sf(cal A) text", body := "\\mathsf{\\mathcal{A}}", sym := false },
+    { label := "tt(cal A) text", body := "\\mathtt{\\mathcal{A}}", sym := false },
+    { label := "rm(cal A) text", body := "\\mathrm{\\mathcal{A}}", sym := false },
+    { label := "bf(cal a) text", body := "\\mathbf{\\mathcal{a}}", sym := false },
+    { label := "bf(cal R) text", body := "\\mathbf{\\mathcal{R}}", sym := false },
+    { label := "bf(frak Z) text", body := "\\mathbf{\\mathfrak{Z}}", sym := false },
+    { label := "it(frak H) text", body := "\\mathit{\\mathfrak{H}}", sym := false },
+    { label := "bf(frak z) text", body := "\\mathbf{\\mathfrak{z}}", sym := false },
+    -- a digit under an inner symbol-only alphabet stays in the math face too:
+    -- `\mathcal` does not cover digits (so it never classifies, yet still
+    -- pins), and `\mathbb` does cover them (base-kept only where uncovered)
+    { label := "bf(cal 5) text", body := "\\mathbf{\\mathcal{5}}", sym := false },
+    { label := "bf(frak 5) text", body := "\\mathbf{\\mathfrak{5}}", sym := false },
+    { label := "rm(bb 5) text", body := "\\mathrm{\\mathbb{5}}", sym := false },
     { label := "bb(rm x) sym", body := "\\mathbb{\\mathrm{x}}" },
     { label := "rm(bb x) sym", body := "\\mathrm{\\mathbb{x}}" },
     -- \boldsymbol: bold, variables staying italic

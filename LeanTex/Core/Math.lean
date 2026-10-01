@@ -1951,49 +1951,97 @@ inductive Resolved where
   | styled (style : MathTextStyle) (c : Char)
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- Whether an active alphabet node is a *math-font* alphabet: a symbol-only
+shape (`bb`/`cal`/`frak`/`bfit`/`bm`, `textStyle? = none`) or any node whose
+source is `sym` (`\sym…`, or a legacy command under a `mathX=sym` policy).
+Such a node sets the math font: the character it governs is a math-face
+scalar, never a text-family glyph. Its complement is a *text* node — a
+`text`-sourced legacy alphabet — which alone projects to a text family. -/
+def mathFontNode (a : MathAlphabet) (src : MathAlphabetSource) : Bool :=
+  a.textStyle? == none || src == .sym
+
 /-- Resolve one scalar under a stack of active alphabets, innermost first.
-The first alphabet that classifies `c` into one of its ranges decides:
+`pinned` records that an inner math-font alphabet has already fixed the
+character to the selected math face; `sawText` records that a text node was
+passed (so the kept base is set upright, as LuaLaTeX paints a text alphabet's
+math-face fallback). The innermost alphabet that classifies `c` decides, with
+one correction LuaLaTeX forces (the matrix across cal/frak/bb holes, Latin
+upper/lower/digits, four faces, both policies derives it):
 
 * a `text`-sourced legacy alphabet (`\mathrm`/`\mathit`/`\mathbf`/`\mathsf`/
-  `\mathtt` under unicode-math's default) wins on the Latin/digit ranges a
-  text family serves — the plain base letter (`unItalic c`) under that
-  alphabet's typed style, projected to a text family by the backends;
-* a `sym`-sourced range the selected face carries remaps
-  (`MathAlphabet.apply`);
-* a `sym`-sourced range the face does not carry is stepped over, so an outer
-  alphabet can still apply — LuaLaTeX falls a nested uncovered alphabet
-  through to the enclosing one.
+  `\mathtt` under unicode-math's default) projects to a text family — the
+  plain base letter (`unItalic c`) under its typed style — on the Latin/digit
+  ranges a text family serves, ONLY when it is not `pinned`; on a non-served
+  range it may still *remap* in the math face (uppercase Greek under
+  `\mathit`/`\mathbf` takes the math italic/bold Greek block). Inside a
+  math-font alphabet (`pinned`) it can do neither — it cannot escape to a
+  text font — and the base scalar stands;
+* a math-font alphabet (symbol-only, or `sym`-sourced) remaps when the face
+  carries the range (`MathAlphabet.apply`), and otherwise *pins* and steps
+  outward: an outer math-font alphabet the face covers may still remap (the
+  `mathX=sym` fall-through LuaLaTeX keeps), but an outer text alphabet is
+  now suppressed — the character stays a math-face scalar;
+* a non-classifying node pins iff it is itself a math-font node, so a digit
+  under an inner `\mathcal` (which does not cover digits) still stays in the
+  math face rather than reaching an outer text alphabet's projection.
 
-With the stack exhausted the source scalar stands (`.sym c`). Structural
-recursion on the list, so total by construction. -/
-def resolveCharStack (coverage : MathAlphabetCoverage) :
-    List (MathAlphabet × MathAlphabetSource) → Char → Resolved
-  | [], c => .sym c
-  | (a, src) :: rest, c =>
+With the stack exhausted the base scalar stands in the math face: `unItalic c`
+when a text node was passed (upright, matching LuaLaTeX), else the source `c`
+(a bare uncovered symbol-only alphabet keeps the italic math letter).
+Structural recursion on the list, so total by construction. -/
+def resolveCharStackGo (coverage : MathAlphabetCoverage) :
+    List (MathAlphabet × MathAlphabetSource) → Bool → Bool → Char → Resolved
+  | [], _pinned, sawText, c => .sym (if sawText then unItalic c else c)
+  | (a, src) :: rest, pinned, sawText, c =>
     match a.rangeOf c with
     | some r =>
       match a.textStyle? with
       | some sty =>
-        if src == .text && r.textServed then .styled sty (unItalic c)
+        if src == .text then
+          if !pinned then
+            if r.textServed then .styled sty (unItalic c)
+            else if coverage.remaps a r then .sym (a.apply c)
+            else resolveCharStackGo coverage rest pinned true c
+          else resolveCharStackGo coverage rest pinned true c
         else if coverage.remaps a r then .sym (a.apply c)
-        else resolveCharStack coverage rest c
+        else resolveCharStackGo coverage rest true sawText c
       | none =>
         if coverage.remaps a r then .sym (a.apply c)
-        else resolveCharStack coverage rest c
-    | none => resolveCharStack coverage rest c
+        else resolveCharStackGo coverage rest true sawText c
+    | none =>
+      if mathFontNode a src then resolveCharStackGo coverage rest true sawText c
+      else resolveCharStackGo coverage rest pinned true c
+
+/-- Resolve one scalar under a stack of active alphabets, innermost first,
+from a fresh (unpinned, no text seen) context. The public entry both backends
+and the census consult. -/
+def resolveCharStack (coverage : MathAlphabetCoverage)
+    (active : List (MathAlphabet × MathAlphabetSource)) (c : Char) : Resolved :=
+  resolveCharStackGo coverage active false false c
 
 /-- A `text`-sourced alphabet wins the Latin/digit ranges it serves: the
 resolved scalar is the plain base letter under its typed style, ahead of any
-outer alphabet — the innermost-first order the resolver rests on. -/
+outer alphabet — the innermost-first order the resolver rests on. The fresh
+context is unpinned, so an outermost text alphabet projects. -/
 theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (src : MathAlphabetSource)
     (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
     (sty : MathTextStyle) (hr : a.rangeOf c = some r) (hst : a.textStyle? = some sty)
     (hsrc : src = .text) (hserved : r.textServed = true) :
     resolveCharStack coverage ((a, src) :: rest) c = .styled sty (unItalic c) := by
-  have hcond : (src == .text && r.textServed) = true := by
-    rw [hsrc, hserved]; rfl
-  simp [resolveCharStack, hr, hst, hcond]
+  have hsrceq : (src == .text) = true := by rw [hsrc]; rfl
+  simp [resolveCharStack, resolveCharStackGo, hr, hst, hsrceq, hserved]
+
+/-- A math-font (symbol-only) range the selected face carries remaps to the
+alphabet's mathematical-alphanumeric scalar, at any pin/sawText state. -/
+theorem resolveCharStackGo_sym_cover (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (src : MathAlphabetSource)
+    (rest : List (MathAlphabet × MathAlphabetSource)) (p s : Bool) (c : Char)
+    (r : MathAlphabetRange)
+    (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
+    (hcov : coverage.remaps a r = true) :
+    resolveCharStackGo coverage ((a, src) :: rest) p s c = .sym (a.apply c) := by
+  simp [resolveCharStackGo, hr, hst, hcov]
 
 /-- A `sym`-sourced range the selected face carries remaps to the alphabet's
 mathematical-alphanumeric scalar. -/
@@ -2002,11 +2050,31 @@ theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
     (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
     (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
     (hcov : coverage.remaps a r = true) :
-    resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) := by
-  simp [resolveCharStack, hr, hst, hcov]
+    resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) :=
+  resolveCharStackGo_sym_cover coverage a src rest false false c r hr hst hcov
 
-/-- The empty stack leaves the source scalar untouched: only an active
-alphabet can change a glyph. The base fact the resolver rests on. -/
+/-- The core generalization, stated as the contrast LuaLaTeX draws. An inner
+symbol-only alphabet that classifies `c` into a range the face does NOT carry
+*blocks* projection through an outer text alphabet: the character stays an
+upright math-face scalar (`.sym (unItalic c)`), never the outer text family.
+This is the behaviour that distinguishes a blocking inner unavailable-symbol
+request from the ordinary `sym`-policy fall-through, which `_sym_cover`
+covers (an available outer math-font alphabet still remaps). -/
+theorem resolveCharStack_inner_blocks_text (coverage : MathAlphabetCoverage)
+    (inner outer : MathAlphabet) (isrc osrc : MathAlphabetSource) (c : Char)
+    (ri ro : MathAlphabetRange) (osty : MathTextStyle)
+    (hri : inner.rangeOf c = some ri) (histi : inner.textStyle? = none)
+    (hinner : coverage.remaps inner ri = false)
+    (hro : outer.rangeOf c = some ro) (hosty : outer.textStyle? = some osty)
+    (hosrc : osrc = .text) :
+    resolveCharStack coverage [(inner, isrc), (outer, osrc)] c
+      = .sym (unItalic c) := by
+  have hsrceq : (osrc == .text) = true := by rw [hosrc]; rfl
+  simp [resolveCharStack, resolveCharStackGo, hri, histi, hinner, hro, hosty, hsrceq]
+
+/-- The empty stack leaves the source scalar untouched from a fresh context:
+only an active alphabet can change a glyph. The base fact the resolver rests
+on. -/
 theorem resolveCharStack_nil (coverage : MathAlphabetCoverage) (c : Char) :
     resolveCharStack coverage [] c = .sym c := rfl
 
@@ -2075,58 +2143,83 @@ coverage. This runs before the document scalar census and both backends. -/
 def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :=
   resolveAlphaList coverage [] body
 
-/-- The alphabet a stack blames for a scalar left at its source glyph, if
-any: walking innermost-first, the first alphabet that classifies `c` into a
-range decides. A `text`-sourced alphabet on a range it serves is never a
-loss — it projects to a text family (`.styled`), so it is stepped past. A
-`sym`-sourced range the face covers remaps — no loss. A `sym`-sourced range
-the face does not carry, with no outer alphabet taking `c` either, is the
-loss — provided the alphabet would in fact have changed the glyph
-(`apply c ≠ c`), so an identity remap is not named. Mirrors
-`resolveCharStack` exactly, so the N0018 census reports the alphabet the
-reader asked for and could not get. -/
-def missingCharAlpha (coverage : MathAlphabetCoverage) :
-    List (MathAlphabet × MathAlphabetSource) → Char → Option MathAlphabet
-  | [], _ => none
-  | (a, src) :: rest, c =>
+/-- The alphabet a stack blames for a scalar left at a base glyph, if any,
+threading the resolver's `pinned`/`sawText` state so it mirrors
+`resolveCharStackGo` exactly. Walking innermost-first: a `text`-sourced
+alphabet that projects (unpinned, served range) is no loss; a math-font range
+the face covers remaps, no loss; a math-font range the face does not carry,
+with no outer math-font alphabet remapping `c` either, is the loss — provided
+the alphabet would in fact have changed the glyph (`apply c ≠ c`), so an
+identity remap is not named, and provided the resolver kept a base scalar
+(`c` or its upright `unItalic c`). A pinned inner symbol-only alphabet is thus
+blamed even when an outer text alphabet shadows it, naming the styling loss
+once; the N0018 census reports the alphabet the reader asked for and could
+not get. -/
+def missingCharAlphaGo (coverage : MathAlphabetCoverage) :
+    List (MathAlphabet × MathAlphabetSource) → Bool → Bool → Char → Option MathAlphabet
+  | [], _, _, _ => none
+  | (a, src) :: rest, pinned, sawText, c =>
     match a.rangeOf c with
     | some r =>
       match a.textStyle? with
       | some _ =>
-        if src == .text && r.textServed then none
+        if src == .text then
+          if !pinned then
+            if r.textServed then none
+            else if coverage.remaps a r then none
+            else missingCharAlphaGo coverage rest pinned true c
+          else missingCharAlphaGo coverage rest pinned true c
         else if coverage.remaps a r then none
         else
-          match resolveCharStack coverage rest c with
-          | .sym c' => if c' == c && a.apply c != c then some a else none
+          match resolveCharStackGo coverage rest true sawText c with
+          | .sym c' =>
+            if (c' == c || c' == unItalic c) && a.apply c != c then some a else none
           | .styled _ _ => none
       | none =>
         if coverage.remaps a r then none
         else
-          match resolveCharStack coverage rest c with
-          | .sym c' => if c' == c && a.apply c != c then some a else none
+          match resolveCharStackGo coverage rest true sawText c with
+          | .sym c' =>
+            if (c' == c || c' == unItalic c) && a.apply c != c then some a else none
           | .styled _ _ => none
-    | none => missingCharAlpha coverage rest c
+    | none =>
+      if mathFontNode a src then missingCharAlphaGo coverage rest true sawText c
+      else missingCharAlphaGo coverage rest pinned true c
 
-/-- The census names only scalars the resolver left at their source: if
-`missingCharAlpha` blames an alphabet for `c`, the stack kept `c` as a plain
-math scalar rather than remapping or text-styling it. So the whole-alphabet
-census (the N0018 owner) and the remapped scalars the per-character Layout
-path (W0016, an isolated glyph hole in a covered range) sees are over
-disjoint scalars — no glyph is accounted twice, and the census cannot drift
-from what the resolver rendered. -/
-theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
-    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (c : Char),
-      (missingCharAlpha coverage active c).isSome →
-        resolveCharStack coverage active c = .sym c
-  | [], c => by simp [missingCharAlpha]
-  | (a, src) :: rest, c => by
+/-- The alphabet a stack blames for a scalar left at its source glyph, from a
+fresh (unpinned, no text seen) context. Mirrors `resolveCharStack`. -/
+def missingCharAlpha (coverage : MathAlphabetCoverage)
+    (active : List (MathAlphabet × MathAlphabetSource)) (c : Char) : Option MathAlphabet :=
+  missingCharAlphaGo coverage active false false c
+
+/-- The census names only scalars the resolver left at a base glyph: if
+`missingCharAlphaGo` blames an alphabet for `c`, the stack kept `c` as a plain
+math scalar — the source italic `c` or its upright `unItalic c`, never the
+alphabet's mathematical-alphanumeric remap and never a text projection. So the
+whole-alphabet census (the N0018 owner) and the remapped scalars the
+per-character Layout path (W0016, an isolated glyph hole in a covered range)
+sees are over disjoint scalars — no glyph is accounted twice, and the census
+cannot drift from what the resolver rendered. -/
+theorem missingCharAlphaGo_kept (coverage : MathAlphabetCoverage) :
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (p s : Bool) (c : Char),
+      (missingCharAlphaGo coverage active p s c).isSome →
+        resolveCharStackGo coverage active p s c = .sym c
+          ∨ resolveCharStackGo coverage active p s c = .sym (unItalic c)
+  | [], p, s, c => by simp [missingCharAlphaGo]
+  | (a, src) :: rest, p, s, c => by
     intro h
-    rw [missingCharAlpha] at h
-    rw [resolveCharStack]
+    rw [missingCharAlphaGo] at h
+    rw [resolveCharStackGo]
     cases hr : a.rangeOf c with
     | none =>
       simp only [hr] at h ⊢
-      exact missingCharAlpha_kept coverage rest c h
+      cases hmf : mathFontNode a src with
+      | true =>
+        simp only [hmf] at h ⊢
+        exact missingCharAlphaGo_kept coverage rest true s c h
+      | false =>
+        simp only [hmf] at h ⊢
+        exact missingCharAlphaGo_kept coverage rest p true c h
     | some r =>
       simp only [hr] at h ⊢
       cases hst : a.textStyle? with
@@ -2135,30 +2228,69 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
         cases hcov : coverage.remaps a r with
         | true => exact absurd h (by simp [hcov])
         | false =>
-          cases hrc : resolveCharStack coverage rest c with
-          | styled s d => exact absurd h (by simp [hcov, hrc])
+          simp only [hcov, Bool.false_eq_true, ite_false] at h ⊢
+          revert h
+          cases hrc : resolveCharStackGo coverage rest true s c with
+          | styled sd d => intro h; simp at h
           | sym c' =>
-            by_cases hcc : (c' == c && (a.apply c != c)) = true
-            · have hcceq : c' = c := by
-                simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-              simp [hcceq]
-            · exact absurd h (by simp [hcov, hrc, hcc])
+            intro h
+            dsimp only at h
+            cases hcnd : ((c' == c || c' == unItalic c) && (a.apply c != c)) with
+            | false => rw [hcnd] at h; simp at h
+            | true =>
+              rw [Bool.and_eq_true, Bool.or_eq_true] at hcnd
+              rcases hcnd.1 with h1 | h1
+              · exact Or.inl (congrArg Resolved.sym (beq_iff_eq.mp h1))
+              · exact Or.inr (congrArg Resolved.sym (beq_iff_eq.mp h1))
       | some sty =>
         simp only [hst] at h ⊢
-        cases htext : (src == .text && r.textServed) with
-        | true => exact absurd h (by simp [htext])
-        | false =>
-          cases hcov : coverage.remaps a r with
-          | true => exact absurd h (by simp [htext, hcov])
+        cases hsrc : (src == .text) with
+        | true =>
+          simp only [hsrc] at h ⊢
+          cases hp : (!p) with
           | false =>
-            cases hrc : resolveCharStack coverage rest c with
-            | styled s d => exact absurd h (by simp [htext, hcov, hrc])
+            simp only [hp, Bool.false_eq_true, ite_false] at h ⊢
+            exact missingCharAlphaGo_kept coverage rest p true c h
+          | true =>
+            simp only [hp] at h ⊢
+            cases hts : r.textServed with
+            | true => simp only [hts] at h; simp at h
+            | false =>
+              simp only [hts, Bool.false_eq_true, ite_false] at h ⊢
+              cases hrm : coverage.remaps a r with
+              | true => simp only [hrm] at h; simp at h
+              | false =>
+                simp only [hrm, Bool.false_eq_true, ite_false] at h ⊢
+                exact missingCharAlphaGo_kept coverage rest p true c h
+        | false =>
+          simp only [hsrc] at h ⊢
+          cases hcov : coverage.remaps a r with
+          | true => exact absurd h (by simp [hcov])
+          | false =>
+            simp only [hcov, Bool.false_eq_true, ite_false] at h ⊢
+            revert h
+            cases hrc : resolveCharStackGo coverage rest true s c with
+            | styled sd d => intro h; simp at h
             | sym c' =>
-              by_cases hcc : (c' == c && (a.apply c != c)) = true
-              · have hcceq : c' = c := by
-                  simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-                simp [hcceq]
-              · exact absurd h (by simp [htext, hcov, hrc, hcc])
+              intro h
+              dsimp only at h
+              cases hcnd : ((c' == c || c' == unItalic c) && (a.apply c != c)) with
+              | false => rw [hcnd] at h; simp at h
+              | true =>
+                rw [Bool.and_eq_true, Bool.or_eq_true] at hcnd
+                rcases hcnd.1 with h1 | h1
+                · exact Or.inl (congrArg Resolved.sym (beq_iff_eq.mp h1))
+                · exact Or.inr (congrArg Resolved.sym (beq_iff_eq.mp h1))
+
+/-- The N0018 census blames only base-kept scalars (from a fresh context): a
+blamed glyph renders as the source `c` or its upright `unItalic c` in the math
+face, never remapped or text-projected. -/
+theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage)
+    (active : List (MathAlphabet × MathAlphabetSource)) (c : Char)
+    (h : (missingCharAlpha coverage active c).isSome) :
+    resolveCharStack coverage active c = .sym c
+      ∨ resolveCharStack coverage active c = .sym (unItalic c) :=
+  missingCharAlphaGo_kept coverage active false false c h
 
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
     (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) (c : Char) :
@@ -2584,8 +2716,8 @@ theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
     resolveCharStack coverage ((a, coverage.effectiveSource .sym a) :: rest) c
       = .sym (a.apply c) := by
   show resolveCharStack coverage ((a, .sym) :: rest) c = .sym (a.apply c)
-  simp only [resolveCharStack, hr]
   have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
+  simp only [resolveCharStack, resolveCharStackGo, hr]
   cases a.textStyle? <;> simp [hcov, hne]
 
 end LeanTex.Core.Math
