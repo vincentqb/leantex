@@ -645,13 +645,13 @@ structure Font where
   in design units from the glyph origin. A glyph outside the coverage
   attaches at half its advance, the spec's own default. -/
   mathTopAccent : Array (Nat × Int)
-  /-- Per-gid, lazily: the glyph's vertical ink extent `(minY, maxY)` in
+  /-- Per-gid, lazily: the glyph's rectangular ink hull in
   font units, from its own outline — control-point hull, so the true ink is
   inside it. `none` where the outline could not be decoded; the consumer
   falls back to nominal metrics. Memoized like `underlineInk` (only math
   layout asks, so a text face never builds the array), and only
   glyphs math actually measures ever decode. -/
-  inkExtent : Thunk (Array (Thunk (Option (Int × Int))))
+  inkExtent : Thunk (Array (Thunk (Option Ink.Bounds)))
   /-- The face's outline source, prepared once and lazily (`Ink.Src.make`):
   the source `underlineInk` and `inkExtent` decode from, and the one a
   subset reads its CFF structure from (`FontSubset.program`), so a face
@@ -1017,10 +1017,10 @@ def parse (data : ByteArray) : Except String Font := do
         | some iv => iv
         | none => #[(0, (widths[g]?.getD 0 : Int))])
     return ink
-  let inkExtent : Thunk (Array (Thunk (Option (Int × Int)))) := Thunk.mk fun _ => Id.run do
-    let mut ext : Array (Thunk (Option (Int × Int))) := Array.mkEmpty numGlyphs
+  let inkExtent : Thunk (Array (Thunk (Option Ink.Bounds))) := Thunk.mk fun _ => Id.run do
+    let mut ext : Array (Thunk (Option Ink.Bounds)) := Array.mkEmpty numGlyphs
     for g in [0:numGlyphs] do
-      ext := ext.push (Thunk.mk fun _ => src.get.yExtentAt g)
+      ext := ext.push (Thunk.mk fun _ => src.get.boundsAt g)
     return ext
   let sc := parseGsubSmallCaps data
   let kernData : Thunk (Array KernSub × Array (Nat × Int)) := Thunk.mk fun _ =>
@@ -1163,11 +1163,15 @@ def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
   | some t => t.get
   | none => #[]
 
-/-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units, from
+/-- The rectangular ink hull of glyph `g` in font units, from
 its own outline. `none` for an undecodable outline or a gid past the table;
 the consumer falls back to nominal metrics. Memoized in the font. -/
-def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
+def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
   (f.inkExtent.get[g]?).bind (·.get)
+
+/-- A vertical consumer reads the same memoized hull as a horizontal one. -/
+def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
+  (f.bounds g).map fun b => (b.bottom, b.top)
 
 /-- The x-height optical size matching trusts, in font units: the measured
 ink top of the face's own 'x' when its outline decodes — OS/2 sxHeight lies

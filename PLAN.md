@@ -25561,3 +25561,69 @@ reference-deck builds pass in both formats without image-loading failures.
 The five-run benchmark report passes, including 4.1× reference-list growth
 for four times the entries against its 8× bound. These checks enlarge the
 native subset; they do not establish arbitrary installed-package execution.
+
+### 2026-10-01 — Attachments follow measured anchors
+
+An annotation's baseline is not its attachment point. Native PDF cancellation
+places the centre of the target's measured ink hull on the arrow's forward
+ray. Its baseline follows from that direction and a clearance derived from
+the math font's overbar gap. One near edge of the target hull is exactly
+that gap from the tip; the other never exceeds it. A shallow arrow puts
+the target to its right, a steep arrow above it. Three unrelated superscript
+placement constants no longer decide the attachment. The package's size and
+room choices still apply. Room reserves the completed assembly's ink and
+logical endpoints on both sides: a wide label above a steep arrow can
+extend left of the operand, so the whole assembly moves together when
+that side needs space.
+
+Attachment bounds start with the first painted item, never with baseline
+zero. The font's cached outline hull now carries both axes. Decoded
+zero-area glyph outlines, rules and collinear filled marks contribute
+advance without moving the attachment's ink centre. Each signed rectangle
+is ordered before union; ordinary line extents keep their previous baseline
+and spacing contributions. Outline control-point hulls enclose the ink but
+need not equal the raster's exact extrema.
+
+`inkRayOrigin_between` bounds perpendicular alignment error by half an sp,
+using a cross product of doubled coordinates. `inkRayOrigin_translation_exact`
+makes placement independent of the target's local coordinate origin.
+`inkRayOrigin_clears_between` proves the nearest-axis clearance;
+`inkRayOrigin_forward_between` keeps the centre on the forward half and
+bounds excess separation. `cancelto_room_covers` holds the local right
+end, while `inkRoom_covers` encloses the completed assembly and signed
+logical endpoints. These are geometry and rounding statements over
+quantized hulls, not perceptual thresholds.
+`CancelAlignment.checks` reads the shipped arrow and independently decoded
+glyph outlines, including ordinary, deep, raised and nonpainting targets.
+The report records the failing base at `41c36677`; extending the checks to
+the forward ray also rejects merely centring the target at the tip's height.
+Adding a zero-thickness nested cancellation moved the same painted target
+in all 48 paired cases before the collinear-mark correction. The guard
+reads the nested polygons and independently checks every vertex triple,
+including duplicate initial vertices, rather than borrowing the production
+area test.
+
+HTML retains native MathML placement. Browser layout boxes do not expose
+arbitrary compound targets' tight ink bounds: centring the box of a
+raised-only target still leaves its ink displaced. A transformed target
+also needs its protrusion reserved in the surrounding line. No portable,
+duplicate-free construction satisfying both was established by the browser
+probes, so this change claims no exact browser-ink attachment contract.
+
+The broader rule is constraint-based typography: choose the relationship
+first (centre along the tip's ray, accent to attachment point, degree bottom to surd),
+read its dimensions from the resolved font and ink, then reserve the
+resulting reach. OpenType's [MATH table](https://learn.microsoft.com/en-us/typography/opentype/spec/math)
+already supplies font-specific clearances, accent anchors and corner
+kerning. [Optical centring](https://learn.microsoft.com/en-us/typography/develop/character-design-standards/lowercase)
+is the visual aim; an ink bounding-box centre is an explicit geometric
+proxy for it, not proof of perceived balance. Baseline rhythm governs
+successive lines and is a different relation.
+
+A tolerance must name what it measures: integer rounding, renderer
+quantisation or an observed visual difference at a stated viewing size.
+Neither a CSS pixel nor an arm's-length reading supplies a universal
+invisibility bound. Rendered checks remain necessary. The adjacent audit
+identified superscript clearance above a tall nucleus, radical-degree
+bottom attachment, and accent pen offsets as separate candidates; this
+change does not certify or tune them.

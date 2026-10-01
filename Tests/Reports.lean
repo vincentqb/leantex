@@ -18,6 +18,7 @@ import Tests.RasterPages
 import Tests.FontSize
 import Tests.CancelRegression
 import Tests.CancelHtml
+import Tests.CancelAlignment
 import Tests.MathSym
 import Tests.BeamerHooks
 import Tests.BeamerColors
@@ -429,7 +430,19 @@ def reports : List Report := [
       thm% Layout.resolveMathAlphas_layout_agree,
       thm% MathMl.resolveMathAlphas_html_agree,
       check% mathChecks]
-    state := .guarded "236d3b06" .before .author }
+    state := .guarded "236d3b06" .before .author },
+  { id := "R65", date := "2026-10-01"
+    what := "a native PDF cancellation target followed a superscript baseline instead of the arrow's direction and left no measured clearance from its tip"
+    pins := [check% CancelAlignment.checks,
+      thm% Math.inkRayOrigin_between,
+      thm% Math.inkRayOrigin_forward_between,
+      thm% Math.inkRayOrigin_translation_exact,
+      thm% Math.inkRayOrigin_clears_between,
+      thm% Math.inkRoom_covers,
+      thm% Math.cancelto_value_between,
+      thm% Math.cancelto_room_covers]
+    accept := ["native PDF renders of narrow, wide and tall arrows with ordinary and raised targets"]
+    state := .guarded "41c36677" .before .reviewer }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

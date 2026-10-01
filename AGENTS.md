@@ -52,9 +52,9 @@ in this repo; refer to the private reference corpus abstractly.
   invented matrix of widths/heights/styles/thickness/room/value cases,
   needing TeX so never in `lake test`; it gates the reserved-room advance to
   a cross-engine band and the value direction exactly, and prints the value
-  placement as evidence (leantex sets the value as a superscript, cancel.sty
-  at the arrow tip). `--report` prints without gating, `--selftest` checks
-  the parsers.
+  placement as evidence (leantex centres measured target ink along the
+  arrow's forward ray; cancel.sty places the value at the arrow tip).
+  `--report` prints without gating, `--selftest` checks the parsers.
 - `lake env lean --run scripts/owed.lean` — what does this engine not yet
   guarantee? Prints every owed obligation (a type-checked statement whose
   proof is open, staged under `Obligations/`) with owner, source, and
@@ -122,6 +122,16 @@ in this repo; refer to the private reference corpus abstractly.
   | a breakage the user reports | a `Reports.reports` row (`Tests/Reports.lean`): its date, the report in abstract words — the construct, never the document — and pins to its guards that resolve or do not compile (`thm%`, `check%`, a tier item; an out-of-repo acceptance run in abstract words), closed only as `guarded`: the tree its guards failed on (the broken commit, or the fix reverted) and whose record says so, before the fix lands. A report with no guard yet is `owed` to a named owner under its guard's name, and the suite fails once that name lands until the row is promoted; the `unwitnessed` and `owed` counts are baselines held in both directions (`reportChecks`). A green check asserting the reported behaviour keeps the defect: two rows once pinned the user's false W0104 as expected |
 
 - TeX package/class warning and info controls are log-only compatibility rows: consume their exact groups in `Compat.meaningFree`, require N0100 accounting through a deferred-hook test, and never let those groups enter body recovery. Arbitrary unknown commands must still preserve their arguments.
+
+- A typographic attachment names its anchors, direction and the bounds it
+  reads: measured ink, advance or baseline-inclusive line box. Derive
+  displacement from those constraints and the resolved font, and reserve the resulting
+  reach. Nonpainting spacing contributes advance, not attachment ink.
+  Geometry tolerances come from the coordinate arithmetic;
+  perceptual tolerances need rendered evidence at a stated viewing size.
+  `inkRayOrigin_between` and `CancelAlignment.checks` pin the cancellation
+  example: matching tip height alone never guaranteed alignment with the
+  arrow's direction.
 
 - Theorems are stated on the IR first. A fact both artifacts must honour
   (structure, numbering, census, palette, language, alternatives) is one

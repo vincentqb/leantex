@@ -38,10 +38,11 @@ v2.2). A zero engine effect against a positive reference still fails;
 zero reference effects never divide by zero or escape a bound.
 
 The value's rise and rightward offset are printed as evidence, NOT gated on
-magnitude: leantex sets the `\cancelto` value as the struck subformula's
-superscript (TeX's rule 18, `Math.cancelto_value_between`), while cancel.sty
-sets it at the arrow tip, so the two agree in direction (G2, G3) but not in
-scale by design — leantex's value sits lower and closer than cancel.sty's.
+magnitude: leantex centres the `\cancelto` value's measured ink along the
+arrow's forward ray (`Math.cancelto_value_between`). cancel.sty also attaches to its tip,
+but chooses the arrow's slope and reach from discrete cases. The two
+agree in direction (G2, G3); the font-derived clearance and continuous
+operand geometry need not reproduce the package's point offsets.
 Poppler word boxes read each writer's font descriptor differently; the raw
 boxes are evidence, not an identity. No private fixtures: the fonts are the
 repository's own corpus faces and every struck symbol is invented.
@@ -362,8 +363,8 @@ def main (args : List String) : IO UInt32 := do
         | none => s!"{pointMicro e} pt [0, 2]"
       IO.println s!"    room agreement: {comparison} [{if ok then "PASS" else "FAIL"}]"
     | _, _ => pure ()
-    -- Value rise and dx are evidence: the native target is a superscript,
-    -- while cancel.sty positions it at the arrow tip.
+    -- Value rise and dx are evidence: both targets follow the tip, but
+    -- the two engines choose different arrow slopes and clearances.
     let ratioLine (name : String) (m : List (String × Int)) : IO Unit := do
       match m.lookup "lualatex", m.lookup "leantex" with
       | some l, some e =>

@@ -2599,36 +2599,70 @@ def mathItemsWidth (items : Array Item) : Sp :=
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
 
-/-- The vertical ink extent `(top, bottom)` of assembled math items,
-relative to the surrounding baseline: each glyph's own face and units per em
-give its outline extent, scaled at its box's size and shifted by its raise;
-a rule spans `raise` to `raise + thickness`. Glyphless boxes — kerns, struts — carry no ink.
-`(0, 0)` when nothing has ink. -/
-private def mathItemsExtent (fs : FontSet) (items : Array Item) : Sp × Sp := Id.run do
-  let mut top : Sp := 0
-  let mut bot : Sp := 0
+/-- Ink bounds relative to the stream's origin and surrounding baseline.
+Each glyph uses its own face's outline hull, scaled at its box's size and
+shifted by its pen position and raise; an undecodable outline keeps the
+nominal fallback. `paintOnly` orders each signed rectangle before union
+and excludes zero-area hulls, rules and collinear filled polygons:
+they contribute spacing, but no filled ink to an attachment's anchor.
+The ordinary line extent keeps those contributions, as before.
+Absence stays separate from baseline zero, so wholly raised ink can anchor
+an attachment without the empty space below it moving the centre. -/
+private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Bool) :
+    Option Ink.Bounds := Id.run do
+  let mut bounds : Option Ink.Bounds := none
+  let mut pen : Sp := 0
+  let add (bounds : Option Ink.Bounds) (b : Ink.Bounds) :=
+    let b := if paintOnly then
+        { left := min b.left b.right, bottom := min b.bottom b.top,
+          right := max b.left b.right, top := max b.bottom b.top : Ink.Bounds }
+      else b
+    some (bounds.map (·.union b) |>.getD b)
   for it in items do
     match it with
-    | .box _ fi _ _ glyphs size _ _ raise _ _ =>
+    | .box w fi _ _ glyphs size _ _ raise _ _ =>
       let font := fs.get fi
       let upem : Int := font.unitsPerEm
-      for (g, _, _) in glyphs do
-        match font.yExtent g with
-        | some (lo, hi) =>
-          top := max top (raise + hi * size / upem)
-          bot := min bot (raise + lo * size / upem)
+      let mut gx := pen
+      for (g, _, adv) in glyphs do
+        match font.bounds g with
+        | some b =>
+          if !paintOnly || (b.left != b.right && b.bottom != b.top) then
+            bounds := add bounds
+              ⟨gx + b.left * size / upem, raise + b.bottom * size / upem,
+                gx + b.right * size / upem, raise + b.top * size / upem⟩
         | none =>
-          top := max top (raise + font.capHeight * size / upem)
-          bot := min bot raise
-    | .rule _ t r _ =>
-      top := max top (r + t)
-      bot := min bot r
+          bounds := add bounds ⟨gx, raise, gx + adv, raise + font.capHeight * size / upem⟩
+        gx := gx + adv
+      pen := pen + w
+    | .rule w t r _ =>
+      if !paintOnly || (w != 0 && t != 0) then
+        bounds := add bounds ⟨min pen (pen + w), r, max pen (pen + w), r + t⟩
+      pen := pen + w
     | .poly pts _ =>
-      for (_, y) in pts do
-        top := max top y
-        bot := min bot y
+      -- Math bands/heads are filled, not stroked. A clipped polygon may
+      -- repeat its first vertex; choose a distinct one to judge its area.
+      let paints := pts[0]?.any fun a =>
+        (pts.find? (· != a)).any fun b =>
+          pts.any fun p =>
+            (b.1 - a.1) * (p.2 - a.2) != (b.2 - a.2) * (p.1 - a.1)
+      if !paintOnly || paints then
+        for (x, y) in pts do
+          bounds := add bounds ⟨pen + x, y, pen + x, y⟩
     | .glue _ | .pen _ _ _ _ _ _ | .img _ _ _ => pure ()
-  return (top, bot)
+  return bounds
+
+/-- Measured attachment ink, without baseline zero or nonpainting spacing
+items. Glyph bounds are outline hulls, not exact raster extrema. -/
+private def mathItemsInk (fs : FontSet) (items : Array Item) : Option Ink.Bounds :=
+  mathItemsBounds fs items (paintOnly := true)
+
+/-- The surrounding math line includes its baseline and spacing items.
+Attachments instead read `mathItemsInk`, whose empty value is explicit. -/
+private def mathItemsExtent (fs : FontSet) (items : Array Item) : Sp × Sp :=
+  match mathItemsBounds fs items (paintOnly := false) with
+  | some b => (max 0 b.top, min 0 b.bottom)
+  | none => (0, 0)
 
 /-- The same items shifted vertically: every raise moves, no width does. -/
 private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
@@ -2971,29 +3005,28 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
 /-- Assemble a laid cancel mark — cancel.sty's four commands — by the
 stated conventions (`Math.cancelGeom`; PLAN, 2026-09-29 cancellation entry): the
 marks from the math font's overbar rule, doubled under `thicklines`, and
-its overbar clearance, both at the style's size; the value as the struck
-subformula's superscript, by TeX's rule 18 over the style's superscript
-constants; room for all of it only when the document asks for cancel.sty's
+its overbar clearance, both at the style's size; the value's measured ink
+centre along the forward arrow ray (`Math.inkRayOrigin`), with a font gap
+to its nearest horizontal or vertical ink edge, independent of the
+baseline from which that ink was measured; room for all of it only when
+the document asks for cancel.sty's
 `makeroom`. The polygons stand at the construct's origin, the struck
 subformula after them, and struts give the line the marks' and the
-value's reach, so no line ever collides with them. -/
+value's reach for interline clearance. -/
 private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
   let size := e.sizeAt st
   let (bTop, bBot) := mathItemsExtent e.fs bItems
-  let (vTop, vBot) := mathItemsExtent e.fs vItems
+  let vInk := (mathItemsInk e.fs vItems).getD {}
   let θ := e.constAt size e.consts.overbarRuleThickness
   let w := mathItemsWidth bItems
   let vw := mathItemsWidth vItems
   let g := Math.cancelGeom mark spec.room
     { rule := if spec.thick then 2 * θ else θ
       gap := e.constAt size e.consts.overbarVerticalGap
-      w, top := bTop, bot := bBot, vw, vbot := vBot
-      supShift := e.constAt size (if st.cramped then e.consts.superscriptShiftUpCramped
-        else e.consts.superscriptShiftUp)
-      supDrop := e.constAt size e.consts.superscriptBaselineDropMax
-      supBottom := e.constAt size e.consts.superscriptBottomMin
+      w, top := bTop, bot := bBot, vw, vtop := vInk.top, vbot := vInk.bottom
+      vleft := vInk.left, vright := vInk.right
       space := e.constAt size e.consts.spaceAfterScript }
   let marks := g.polys.map fun pts => Item.poly (pts.map fun (x, y) => (x, y + raise)) ink
   let (mTop, mBot) := mathItemsExtent e.fs marks
@@ -3003,10 +3036,21 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     #[mathKern e size (g.valueX - g.shift - w)] ++ raiseItems (raise + g.valueY) vItems
   let reached := if vItems.isEmpty then g.shift + w else g.valueX + vw
   let vRaise := raise + g.valueY
-  let top := max mTop (max (raise + bTop) (if vItems.isEmpty then raise else vRaise + vTop))
-  let bot := min mBot (min (raise + bBot) (if vItems.isEmpty then raise else vRaise + vBot))
+  let top := max mTop (max (raise + bTop) (if vItems.isEmpty then raise else vRaise + vInk.top))
+  let bot := min mBot (min (raise + bBot) (if vItems.isEmpty then raise else vRaise + vInk.bottom))
   let reach := struts e top bot
-  ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
+  let assembled := ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
+  if !spec.room then assembled else
+  -- A wide target on a steep ray can reach left of the construct. Reserve
+  -- both sides by translating the entire assembly, never its target alone.
+  let bounds := (mathItemsInk e.fs assembled).getD {}
+  let left := min bounds.left (min g.shift (g.shift + w))
+  let right := max bounds.right (max g.shift (g.shift + w))
+  let left := if vItems.isEmpty then left else min left (min g.valueX (g.valueX + vw))
+  let right := if vItems.isEmpty then right else max right (max g.valueX (g.valueX + vw))
+  let (pad, width) := Math.inkRoom left right g.advance
+  if pad == 0 && width == g.advance then assembled else
+    #[mathKern e size pad] ++ assembled ++ #[mathKern e size (width - pad - g.advance)]
 
 mutual
 

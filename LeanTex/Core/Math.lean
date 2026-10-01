@@ -1298,10 +1298,10 @@ subformula sets at: `rule` the stroke (the math font's
 clearance (`OverbarVerticalGap`) — the two quantities TeX's rule 9 lays
 `\overline` with, a mark drawn over a subformula — then the struck box (`w`
 its advance, `top`/`bot` its ink from the baseline) and, for `\cancelto`,
-the value's advance and ink bottom with the superscript constants of the
-struck subformula's style: TeX's rule 18 (`SuperscriptShiftUp` or its
-cramped twin, `SuperscriptBaselineDropMax`, `SuperscriptBottomMin`) and
-the `SpaceAfterScript` every superscript is followed by. -/
+the value's advance and measured ink bounds (not its baseline-inclusive
+line box). `SpaceAfterScript` supplies the trailing space when room is
+requested. The target's size still follows the package's style table;
+its position is an attachment to the arrow tip, not a superscript. -/
 structure CancelIn where
   rule : Int
   gap : Int
@@ -1309,10 +1309,10 @@ structure CancelIn where
   top : Int
   bot : Int
   vw : Int := 0
+  vleft : Int := 0
+  vright : Int := 0
+  vtop : Int := 0
   vbot : Int := 0
-  supShift : Int := 0
-  supDrop : Int := 0
-  supBottom : Int := 0
   space : Int := 0
   deriving Repr, BEq, Inhabited
 
@@ -1496,19 +1496,249 @@ theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 �
   · exact mem_map_clampBox_between x0 y0 x1 y1 hw hh _ p hp
   · simp only [Array.not_mem_empty] at hp
 
-/-- The value's baseline above the construct's, as TeX sets a superscript
-on a box (rule 18a, c): at least the superscript shift, at least the
-base's ink top less the largest drop, and high enough that the value's own
-depth clears the least superscript bottom. -/
-def CancelIn.valueRise (i : CancelIn) : Int :=
-  max (max i.supShift (i.top - i.supDrop)) (i.supBottom - min 0 i.vbot)
+/-- Nearest integer to `n / (2 * step)`. The factor two keeps measured
+ink centres exact until the final integer-coordinate rounding. -/
+private def roundRay (n step : Int) : Int := (n + step) / (2 * step)
+
+/-- Nearest-coordinate rounding leaves at most half a coordinate unit
+of perpendicular error, expressed without division. -/
+private theorem roundRay_between (n step : Int) (h : 0 < step) :
+    -step ≤ 2 * step * roundRay n step - n ∧
+    2 * step * roundRay n step - n ≤ step := by
+  have hmod := Int.emod_nonneg (n + step) (show 2 * step ≠ 0 by omega)
+  have hlt := Int.emod_lt_of_pos (n + step) (show 0 < 2 * step by omega)
+  have he := Int.emod_add_mul_ediv (n + step) (2 * step)
+  unfold roundRay
+  omega
+
+/-- The origin of a measured ink rectangle beyond a ray's tip (the local
+origin), with its centre on the forward ray. Intersect that ray with the
+rectangle expanded by the font's clearance: the near x edge fixes shallow
+rays, the near y edge steep ones. The remaining coordinate is derived,
+rounded once. A zero direction uses horizontal attachment. No slope or
+glyph-specific offset is chosen. Bounds are outline hulls, not raster
+centres of mass. -/
+def inkRayOrigin (dx dy gap left bottom right top : Int) : Int × Int :=
+  let g := max 0 gap
+  if dy ≤ 0 ∨ (0 < dx ∧ (right - left + 2 * g) * dy ≤ (top - bottom + 2 * g) * dx) then
+    let step := max 1 dx
+    (g - left, roundRay ((right - left + 2 * g) * dy - step * (top + bottom)) step)
+  else
+    let step := max 1 dy
+    (roundRay ((top - bottom + 2 * g) * dx - step * (right + left)) step, g - bottom)
+
+/-- One near ink edge is exactly a nonnegative clearance beyond the tip.
+This separates the target from every mark point behind the tip on that axis. -/
+theorem inkRayOrigin_axis_exact (dx dy gap left bottom right top : Int) :
+    let o := inkRayOrigin dx dy gap left bottom right top;
+    o.1 + left = max 0 gap ∨ o.2 + bottom = max 0 gap := by
+  dsimp [inkRayOrigin]
+  split <;> simp
+
+/-- The doubled ink centre is on the ray up to integer rounding: its
+cross product with the direction is bounded by the larger direction
+component. Thus perpendicular distance is at most half a coordinate unit.
+This is geometric attachment, not a claim about perceived beauty. -/
+theorem inkRayOrigin_between (dx dy gap left bottom right top : Int)
+    (hx : 0 ≤ dx) (hy : 0 ≤ dy) :
+    let o := inkRayOrigin dx dy gap left bottom right top;
+    -(max dx dy) ≤ dx * (2 * o.2 + top + bottom) - dy * (2 * o.1 + right + left) ∧
+    dx * (2 * o.2 + top + bottom) - dy * (2 * o.1 + right + left) ≤ max dx dy := by
+  dsimp [inkRayOrigin]
+  split
+  next h =>
+    by_cases hz : dx = 0
+    · have hyz : dy = 0 := by omega
+      simp [hz, hyz]
+    · have hpos : 0 < dx := by omega
+      have hm : max 1 dx = dx := by omega
+      rw [hm]
+      have key := roundRay_between
+        ((right - left + 2 * max 0 gap) * dy - dx * (top + bottom)) dx hpos
+      simp only [Int.mul_add, Int.mul_sub, Int.add_mul, Int.sub_mul,
+        Int.mul_comm right dy, Int.mul_comm left dy, Int.mul_comm (max 0 gap) dy,
+        Int.mul_assoc, Int.mul_left_comm dy 2, Int.mul_left_comm dx 2] at *
+      omega
+  next h =>
+    have hpos : 0 < dy := by omega
+    have hm : max 1 dy = dy := by omega
+    rw [hm]
+    have key := roundRay_between
+      ((top - bottom + 2 * max 0 gap) * dx - dy * (right + left)) dy hpos
+    simp only [Int.mul_add, Int.mul_sub, Int.add_mul, Int.sub_mul,
+      Int.mul_comm top dx, Int.mul_comm bottom dx, Int.mul_comm (max 0 gap) dx,
+      Int.mul_assoc, Int.mul_left_comm dy 2, Int.mul_left_comm dx 2] at *
+    omega
+
+/-- A rounded projection does not cross an integer upper bound. -/
+private theorem roundRay_le (n step k : Int) (hs : 0 < step) (hn : n ≤ 2 * step * k) :
+    roundRay n step ≤ k := by
+  rw [roundRay, Int.ediv_le_iff_le_mul (by omega)]
+  simp only [Int.mul_comm k (2 * step), Int.mul_assoc] at *
+  omega
+
+/-- Rounding a nonnegative centre cannot move it behind the origin,
+including a half-coordinate tie. -/
+private theorem roundRay_center_nonneg (n d s : Int) (hd : 0 < d)
+    (hn : 0 ≤ n + d * s) : 0 ≤ 2 * roundRay n d + s := by
+  have hm := Int.emod_nonneg (n + d) (by omega : 2 * d ≠ 0)
+  have hl := Int.emod_lt_of_pos (n + d) (by omega : 0 < 2 * d)
+  have he := Int.emod_add_mul_ediv (n + d) (2 * d)
+  have hr : -d < 2 * d * roundRay n d - n := by
+    unfold roundRay
+    omega
+  by_cases hc : 0 ≤ 2 * roundRay n d + s
+  · exact hc
+  have hc' : 2 * roundRay n d + s ≤ -1 := by omega
+  have ht := Int.mul_le_mul_of_nonneg_left hc' (show 0 ≤ d by omega)
+  simp only [Int.mul_add, Int.mul_neg, Int.mul_one, ← Int.mul_assoc, Int.mul_comm d 2] at ht
+  omega
+
+/-- Translating by an integer commutes with nearest-coordinate rounding. -/
+private theorem roundRay_translation_exact (n step k : Int) (hs : 0 < step) :
+    roundRay (n - 2 * step * k) step = roundRay n step - k := by
+  unfold roundRay
+  have he : n - 2 * step * k + step = n + step - (2 * step) * k := by omega
+  rw [he, Int.sub_mul_ediv_left _ _ (by omega)]
+
+/-- Re-expressing the target in another local coordinate system changes
+only its origin. Invisible prefixes and raised baselines cannot change
+where the measured ink attaches. -/
+theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top sx sy : Int) :
+    inkRayOrigin dx dy gap (left + sx) (bottom + sy) (right + sx) (top + sy) =
+      let o := inkRayOrigin dx dy gap left bottom right top;
+      (o.1 - sx, o.2 - sy) := by
+  have hw : right + sx - (left + sx) = right - left := by omega
+  have hh : top + sy - (bottom + sy) = top - bottom := by omega
+  dsimp [inkRayOrigin]
+  rw [hw, hh]
+  split
+  · have he : (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + sy + (bottom + sy)) =
+        (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom) - 2 * max 1 dx * sy := by
+      simp only [Int.mul_add, Int.mul_assoc]
+      omega
+    rw [he, roundRay_translation_exact _ _ _ (by omega)]
+    apply Prod.ext <;> dsimp <;> omega
+  · have he : (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + sx + (left + sx)) =
+        (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + left) - 2 * max 1 dy * sx := by
+      simp only [Int.mul_add, Int.mul_assoc]
+      omega
+    rw [he, roundRay_translation_exact _ _ _ (by omega)]
+    apply Prod.ext <;> dsimp <;> omega
+
+/-- For an ordered ink rectangle and a nonnegative direction, one near
+edge clears the tip by exactly the font gap, while the other clears by no
+more than that gap. This bounds both separation and excess distance: the
+tip-to-hull distance lies between the gap and its diagonal. -/
+theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
+    (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
+    let o := inkRayOrigin dx dy gap left bottom right top;
+    (o.1 + left = max 0 gap ∧ o.2 + bottom ≤ max 0 gap) ∨
+    (o.2 + bottom = max 0 gap ∧ o.1 + left ≤ max 0 gap) := by
+  dsimp [inkRayOrigin]
+  split
+  next h =>
+    apply Or.inl
+    refine ⟨by omega, ?_⟩
+    have hs : 0 < max 1 dx := by omega
+    have hi : (right - left + 2 * max 0 gap) * dy ≤ (top - bottom + 2 * max 0 gap) * max 1 dx := by
+      rcases h with hz | ⟨hp, hc⟩
+      · have hd : dy = 0 := by omega
+        rw [hd, Int.mul_zero]
+        exact Int.mul_nonneg (by omega) (by omega)
+      · have hm : max 1 dx = dx := by omega
+        rwa [hm]
+    have hn : (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom) ≤
+        2 * max 1 dx * (max 0 gap - bottom) := by
+      simp only [Int.add_mul, Int.sub_mul, Int.mul_add, Int.mul_sub,
+        Int.mul_comm top (max 1 dx), Int.mul_comm bottom (max 1 dx),
+        Int.mul_comm (max 0 gap) (max 1 dx), Int.mul_assoc] at *
+      omega
+    have := roundRay_le _ _ _ hs hn
+    omega
+  next h =>
+    apply Or.inr
+    refine ⟨by omega, ?_⟩
+    have hp : 0 < dy := by omega
+    have hm : max 1 dy = dy := by omega
+    rw [hm]
+    have hi : (top - bottom + 2 * max 0 gap) * dx ≤ (right - left + 2 * max 0 gap) * dy := by
+      by_cases hx0 : dx = 0
+      · rw [hx0, Int.mul_zero]
+        exact Int.mul_nonneg (by omega) hy
+      · omega
+    have hn : (top - bottom + 2 * max 0 gap) * dx - dy * (right + left) ≤
+        2 * dy * (max 0 gap - left) := by
+      simp only [Int.add_mul, Int.sub_mul, Int.mul_add, Int.mul_sub,
+        Int.mul_comm right dy, Int.mul_comm left dy, Int.mul_comm (max 0 gap) dy,
+        Int.mul_assoc] at *
+      omega
+    have := roundRay_le _ _ _ hp hn
+    omega
+
+/-- The measured centre is on the forward half of the ray, bounded by the
+expanded target dimensions on both axes. This also keeps the far ink edges
+beyond the tip, completing the tip-to-hull clearance bound. These are
+bounds on quantized outline hulls, not raster centres or contour distances. -/
+theorem inkRayOrigin_forward_between (dx dy gap left bottom right top : Int)
+    (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
+    let o := inkRayOrigin dx dy gap left bottom right top;
+    0 ≤ 2 * o.1 + left + right ∧
+    2 * o.1 + left + right ≤ right - left + 2 * max 0 gap ∧
+    0 ≤ 2 * o.2 + bottom + top ∧
+    2 * o.2 + bottom + top ≤ top - bottom + 2 * max 0 gap := by
+  have hc := inkRayOrigin_clears_between dx dy gap left bottom right top hx hy hw hh
+  have hnonneg :
+      0 ≤ 2 * (inkRayOrigin dx dy gap left bottom right top).1 + left + right ∧
+      0 ≤ 2 * (inkRayOrigin dx dy gap left bottom right top).2 + bottom + top := by
+    dsimp [inkRayOrigin]
+    split
+    · have hp : 0 ≤ (right - left + 2 * max 0 gap) * dy :=
+        Int.mul_nonneg (by omega) hy
+      have key := roundRay_center_nonneg
+        ((right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom))
+        (max 1 dx) (top + bottom) (by omega) (by omega)
+      constructor <;> omega
+    · have hp : 0 ≤ (top - bottom + 2 * max 0 gap) * dx :=
+        Int.mul_nonneg (by omega) hx
+      have key := roundRay_center_nonneg
+        ((top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + left))
+        (max 1 dy) (right + left) (by omega) (by omega)
+      constructor <;> omega
+  dsimp only at hc ⊢
+  rcases hc with h | h <;> omega
+
+/-- Reserve a measured horizontal interval and both logical endpoints.
+The first result is a common translation; the second is the total width.
+It adds only missing room, without changing any relative attachment. -/
+def inkRoom (left right advance : Int) : Int × Int :=
+  let pad := max 0 (-min left advance)
+  (pad, pad + max 0 (max right advance))
+
+/-- Both ink edges and the logical endpoints fit in their reservation,
+including a negative advance. This is interval containment, not a spacing
+preference; callers supply the measured ink and any declared clearance. -/
+theorem inkRoom_covers (left right advance : Int) :
+    let r := inkRoom left right advance;
+    0 ≤ r.1 ∧ 0 ≤ r.1 + left ∧ r.1 + right ≤ r.2 ∧
+    0 ≤ r.1 + advance ∧ r.1 + advance ≤ r.2 ∧ 0 ≤ r.2 := by
+  dsimp [inkRoom]
+  omega
+
+/-- Project the ray-relative attachment into the mark's coordinate system.
+Only measured target ink anchors the target; its advance is reserved later. -/
+def CancelIn.valueOrigin (i : CancelIn) (room : Bool) : Int × Int :=
+  let b := i.box room
+  let o := inkRayOrigin (b.2.2.1 - b.1) (b.2.2.2 - b.2.1) i.gap
+    i.vleft i.vbot i.vright i.vtop
+  (b.2.2.1 + o.1, b.2.2.2 + o.2)
 
 /-- A cancel mark laid out by the conventions (PLAN, 2026-09-29 cancellation
 entry): the strikes corner to corner of the mark box; the arrow's head in
-its top-right corner; the value as the struck subformula's superscript,
-starting a clearance right of the head's rightmost point; and, with room,
-an advance that holds every mark and the value, so TeX's spacing between
-atoms is the spacing between their inks. Overlapping, the construct
+its top-right corner; the value's ink centre along the forward diagonal,
+with font-derived clearance from the tip; and, with room, an advance that
+includes both the mark box and the target's ink and logical advance before
+ordinary inter-atom spacing. Overlapping, the construct
 advances as its subformula does and the marks overprint as cancel.sty's. -/
 def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
   let b := i.box room
@@ -1522,59 +1752,64 @@ def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
   | .to =>
     let head := cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
     let shaft := cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
-    let valueX := head.foldl (fun m p => max m p.1) b.2.2.1 + i.gap
+    let o := i.valueOrigin room
     { shift, polys := if shaft.isEmpty then #[head] else #[shaft, head]
-      valueX, valueY := i.valueRise
-      advance := if room then valueX + i.vw + i.space else i.w }
+      valueX := o.1, valueY := o.2
+      advance := if room then max b.2.2.1 (o.1 + max i.vw i.vright) + max 0 i.space else i.w }
 
-/-- The value is set as the struck subformula's superscript, by TeX's rule
-18: its baseline stands at least the superscript shift, at least the
-struck ink's top less the drop, and at least the bottom-min above its own
-depth — and at exactly the largest of the three, never higher. -/
+/-- The target's measured ink centre follows the arrow's forward diagonal
+to within half an sp of perpendicular rounding, independent of aspect
+ratio, target depth or local baseline. The error is a cross product of
+doubled coordinates, avoiding a lossy square root in the contract. -/
 theorem cancelto_value_between (room : Bool) (i : CancelIn) :
-    i.supShift ≤ (cancelGeom .to room i).valueY ∧
-    i.top - i.supDrop ≤ (cancelGeom .to room i).valueY ∧
-    i.supBottom - min 0 i.vbot ≤ (cancelGeom .to room i).valueY ∧
-    (cancelGeom .to room i).valueY ≤
-      max (max i.supShift (i.top - i.supDrop)) (i.supBottom - min 0 i.vbot) := by
-  have hv : (cancelGeom .to room i).valueY = i.valueRise := rfl
-  rw [hv, CancelIn.valueRise]
-  omega
+    let b := i.box room
+    let dx := b.2.2.1 - b.1
+    let dy := b.2.2.2 - b.2.1
+    let g := cancelGeom .to room i
+  let error := dx * (2 * g.valueY + i.vtop + i.vbot - 2 * b.2.2.2) -
+      dy * (2 * g.valueX + i.vright + i.vleft - 2 * b.2.2.1);
+    -(max dx dy) ≤ error ∧ error ≤ max dx dy := by
+  dsimp only
+  let b := i.box room
+  let o := inkRayOrigin (b.2.2.1 - b.1) (b.2.2.2 - b.2.1) i.gap
+    i.vleft i.vbot i.vright i.vtop
+  have hx := (i.box_bounds_contract room).1
+  have hy := (i.box_bounds_contract room).2
+  have ex : 2 * (cancelGeom .to room i).valueX + i.vright + i.vleft - 2 * b.2.2.1 =
+      2 * o.1 + i.vright + i.vleft := by
+    dsimp [cancelGeom, CancelIn.valueOrigin, o, b]; omega
+  have ey : 2 * (cancelGeom .to room i).valueY + i.vtop + i.vbot - 2 * b.2.2.2 =
+      2 * o.2 + i.vtop + i.vbot := by
+    dsimp [cancelGeom, CancelIn.valueOrigin, o, b]; omega
+  rw [ex, ey]
+  exact inkRayOrigin_between _ _ _ _ _ _ _ (by omega) (by omega)
 
-/-- The value clears the arrow: it starts a clearance right of the mark
-box and of every point of the head, whatever the box's slope. A strictly
-positive clearance separates the head and target origins. -/
+/-- The target's ink clears the entire arrow on at least one axis: its
+left edge is a font gap right of every arrow point, or its bottom edge is
+a font gap above every point. Positive gaps imply no ink collision. -/
 theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
     let b := i.box room
-    b.2.2.1 + i.gap ≤ (cancelGeom .to room i).valueX ∧
-    ∀ p ∈ cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
-      p.1 + i.gap ≤ (cancelGeom .to room i).valueX := by
-  intro b
-  have key : ∀ (xs : List (Int × Int)) (m : Int),
-      m ≤ xs.foldl (fun m p => max m p.1) m ∧
-        ∀ p ∈ xs, p.1 ≤ xs.foldl (fun m p => max m p.1) m := by
-    intro xs
-    induction xs with
-    | nil => intro m; simp
-    | cons q rest ih =>
-      intro m
-      obtain ⟨h1, h2⟩ := ih (max m q.1)
-      refine ⟨by simp only [List.foldl]; omega, ?_⟩
-      intro p hp
-      simp only [List.foldl]
-      rcases List.mem_cons.mp hp with rfl | hp
-      · omega
-      · exact h2 p hp
-  have hv : (cancelGeom .to room i).valueX =
-      (cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).foldl (fun m p => max m p.1) b.2.2.1
-        + i.gap := rfl
-  rw [hv, ← Array.foldl_toList]
-  obtain ⟨h1, h2⟩ := key (cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).toList b.2.2.1
-  exact ⟨by omega, fun p hp => by have := h2 p (Array.mem_toList_iff.mpr hp); omega⟩
+    let g := cancelGeom .to room i
+    g.valueX + i.vleft = b.2.2.1 + max 0 i.gap ∨
+    g.valueY + i.vbot = b.2.2.2 + max 0 i.gap := by
+  have key := inkRayOrigin_axis_exact
+    ((i.box room).2.2.1 - (i.box room).1) ((i.box room).2.2.2 - (i.box room).2.1)
+    i.gap i.vleft i.vbot i.vright i.vtop
+  dsimp only [cancelGeom, CancelIn.valueOrigin] at *
+  omega
 
-/-- `\cancelto` inks exactly the arrow — its shaft then its head when the
-box holds a shaft, its head alone when it does not — and the value starts a
-clearance right of the mark box. -/
+/-- The local right end reserves the mark box, placed target ink and logical
+advance, followed by nonnegative script spacing. The completed assembly
+also passes through `inkRoom`: an above-tip target may extend left of its
+origin, requiring a common translation to reserve that side. -/
+theorem cancelto_room_covers (i : CancelIn) :
+    (i.box true).2.2.1 ≤ (cancelGeom .to true i).advance ∧
+    (cancelGeom .to true i).valueX + i.vright ≤ (cancelGeom .to true i).advance ∧
+    (cancelGeom .to true i).valueX + i.vw ≤ (cancelGeom .to true i).advance := by
+  dsimp [cancelGeom]; omega
+
+/-- `\cancelto` inks exactly its arrow: shaft then head when the box holds
+a shaft, the head alone when it does not. Target placement adds no mark. -/
 theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
     let b := i.box room
     (cancelGeom .to room i).polys =
@@ -1582,9 +1817,7 @@ theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
           #[cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]
         else
           #[cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
-            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) ∧
-      b.2.2.1 + i.gap ≤ (cancelGeom .to room i).valueX :=
-  ⟨rfl, (cancelto_value_clears_between room i).1⟩
+            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) := rfl
 
 /-- No cancel mark paints outside its box: every vertex of every polygon
 `cancelGeom` lays — each strike, or the arrow's shaft and head — lies inside
