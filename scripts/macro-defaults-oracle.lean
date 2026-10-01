@@ -58,6 +58,12 @@ An extra pair of explicit braces remains a local scope. Run the seven cases
 for each of direct \def, direct \newcommand and their \let aliases with
 --case required-argument.
 
+The forwarded-argument cases require a replacement's trailing call to read
+its caller's operand, through direct, \let, zero-argument and chained calls.
+Repeated stateful substitution pins the order before, during and after the
+call. An incomplete grouped call is reference-only, pinned to its exact
+argument-scan error. Run these nine cases with --case forwarded-argument.
+
 The opening-space cases pin LaTeX's final \ignorespaces expansion scan.
 A nonexpandable token stops it even when compatibility later removes that
 token as log-only. Run these eight cases with --case phase-space.
@@ -202,6 +208,30 @@ private def requiredArgumentFamily (kind : String) (alias : Bool) : Array Probe 
       (call ++ r"{{\let\wordprobe\newwordprobe\wordprobe}}/\wordprobe") "New/Old"
   ]
 
+private def forwardedArgumentCases : Array Probe :=
+  let define (replacement : String) :=
+    r"\newif\ifchoiceprobe\newcommand\wordprobe[1]{" ++ replacement ++ "}"
+  let variants := (#[
+    ("direct", "", r"\wordprobe"),
+    ("let", r"\let\aliasprobe\wordprobe", r"\aliasprobe"),
+    ("zero", r"\def\zeroprobe{\wordprobe}", r"\zeroprobe"),
+    ("chain", r"\def\zeroprobe{\wordprobe}\def\outerprobe{\zeroprobe}", r"\outerprobe")
+  ] : Array (String × String × String)).flatMap fun (route, forwarding, call) => #[
+    textCase ("forwarded-argument-" ++ route ++ "-state")
+      (define r"#1\choiceprobetrue" ++ forwarding)
+      ("A" ++ call ++ r"{X}/\ifchoiceprobe T\else F\fi/Z") "AX/T/Z",
+    textCase ("forwarded-argument-" ++ route ++ "-source-order")
+      (define r"\ifchoiceprobe Set\else Unset\fi/#1#1" ++ forwarding)
+      ("A" ++ call ++ r"{\ifchoiceprobe B\else A\fi\choiceprobetrue}/" ++
+        r"\ifchoiceprobe T\else F\fi/Z") "AUnset/AB/T/Z"
+  ]
+  variants.push {
+    name := "forwarded-argument-incomplete-rejected"
+    setup := define r"#1\choiceprobetrue" ++ r"\def\zeroprobe{\wordprobe}"
+    body := r"A{\zeroprobe}/Z"
+    expected := .reject r"Argument of \wordprobe has an extra }."
+    engine := false }
+
 private def phaseCases : Array Probe := #[
   textCase "phase-space-opening-newline" r"\AtBeginDocument{T}" "/T" "T/T",
   textCase "phase-space-hook-trailing" r"\AtBeginDocument{T }" "/T" "T /T",
@@ -235,7 +265,7 @@ private def copiedHelperCases : Array Probe :=
       (if grouped then "T/F" else "T")
 
 private def cases : Array Probe :=
-  phaseCases ++ copiedHelperCases ++
+  phaseCases ++ copiedHelperCases ++ forwardedArgumentCases ++
   requiredArgumentFamily "def" false ++ requiredArgumentFamily "def" true ++
   requiredArgumentFamily "newcommand" false ++ requiredArgumentFamily "newcommand" true ++
   hookScopeCases ++ rawGroupCases ++ family "newcommand" ++
