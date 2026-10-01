@@ -899,14 +899,40 @@ structure CancelIn where
   space : Int := 0
   deriving Repr, BEq, Inhabited
 
-/-- The mark box: the struck ink grown by the clearance on every side, as
-`(x0, y0, x1, y1)` from the construct's origin on the baseline. With room
-the struck subformula stands `gap` in from the construct's left edge, so
-the box starts at 0; overlapping (cancel.sty's `overlap`), the subformula
-starts at 0 and the box `gap` left of it. -/
+/-- The mark box, as `(x0, y0, x1, y1)` from the construct's origin:
+horizontal advance and vertical ink grown by the clearance. With room
+the operand starts at `gap`; overlapping, it starts at 0. Negative kerns
+can reverse the nominal horizontal endpoints, so both axes are ordered
+before marks are drawn or clamped. This bounds the signed endpoints, not
+the operand's horizontal glyph ink. -/
 def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
   let x0 := if room then 0 else -i.gap
-  (x0, i.bot - i.gap, x0 + i.w + 2 * i.gap, i.top + i.gap)
+  let x1 := x0 + i.w + 2 * i.gap
+  let y0 := i.bot - i.gap
+  let y1 := i.top + i.gap
+  (min x0 x1, min y0 y1, max x0 x1, max y0 y1)
+
+/-- Every cancellation input supplies ordered bounds, including signed
+advances and clearances. -/
+theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
+    (i.box room).1 ≤ (i.box room).2.2.1 ∧
+    (i.box room).2.1 ≤ (i.box room).2.2.2 := by
+  simp only [box]
+  omega
+
+/-- Ordering changes neither endpoint when the original bounds already
+stand in order, including a zero width or height. -/
+theorem CancelIn.box_of_ordered_exact (i : CancelIn) (room : Bool)
+    (hw : 0 ≤ i.w + 2 * i.gap) (hh : i.bot - i.gap ≤ i.top + i.gap) :
+    i.box room =
+      (let x0 := if room then 0 else -i.gap
+       (x0, i.bot - i.gap, x0 + i.w + 2 * i.gap, i.top + i.gap)) := by
+  dsimp [box]
+  apply Prod.ext
+  · dsimp; omega
+  apply Prod.ext
+  · dsimp; omega
+  apply Prod.ext <;> dsimp <;> omega
 
 /-- A diagonal's length, to the sp below. -/
 def cancelDiag (w h : Int) : Int :=
@@ -1186,6 +1212,17 @@ theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn
       rcases hpoly with rfl | rfl
       · exact shaft p hp
       · exact head p hp
+
+/-- Every mark stays in its ordered envelope even when signed input
+endpoints were reversed. This is containment only: a zero-area envelope
+need not yield visible ink. -/
+theorem cancelGeom_envelope_between (mark : CancelMark) (room : Bool) (i : CancelIn)
+    (hr : 0 ≤ i.rule) :
+    ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
+      (i.box room).1 ≤ p.1 ∧ p.1 ≤ (i.box room).2.2.1 ∧
+      (i.box room).2.1 ≤ p.2 ∧ p.2 ≤ (i.box room).2.2.2 :=
+  cancelGeom_polys_between mark room i hr
+    (i.box_bounds_contract room).1 (i.box_bounds_contract room).2
 
 mutual
 
