@@ -469,6 +469,103 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         | _ => check ref s!"{name} retains exactly one source space" false
       | .emptyRule => pure ()
 
+/-- Every triangle from these vertices has zero area. Unlike a signed
+polygon-area sum this cannot hide cancellation between opposite windings,
+and duplicate initial vertices do not conceal a later noncollinear one. -/
+def collinear (points : Array (Dim.Sp × Dim.Sp)) : Bool :=
+  points.all fun a => points.all fun b => points.all fun c =>
+    (b.1 - a.1) * (c.2 - a.2) == (b.2 - a.2) * (c.1 - a.1)
+
+/-- Mutate only the fixture's MATH rule constant. A zero-thickness
+cancellation still ships its polygon vertices but fills no area. -/
+def zeroRuleFonts (fonts : Font.FontSet) : Font.FontSet :=
+  { fonts with fonts := fonts.fonts.map fun f =>
+      { f with math := f.math.map fun m => { m with overbarRuleThickness := 0 } } }
+
+structure NestedMarkProbe where
+  probe : Probe
+  reference : Probe
+  deriving Repr
+
+/-- The added nested mark is collinear, including when its diagonal hull
+has positive width and height. Raised and descender targets keep actual
+paint away from the invisible mark's corners. -/
+def nestedMarkProbes : Array NestedMarkProbe := Id.run do
+  let shapes := [("narrow", "i"), ("wide", "x+x+x+x+x+x"),
+    ("tall", "\\frac{x}{\\frac{x}{x}}")]
+  let styles := [("text", "$", "$"), ("display", "\\[", "\\]"),
+    ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")]
+  let targets := [("raised-zero", "{}^{0}", "0"), ("descender", "0g", "0𝑔")]
+  let mut result := #[]
+  for (shape, operand) in shapes do
+    for (style, before, after) in styles do
+      for (name, value, target) in targets do
+        for options in ["makeroom", "overlap"] do
+          let body (v : String) :=
+            before ++ "u\\cancelto{" ++ v ++ "}{" ++ operand ++ "}v" ++ after
+          let reference : Probe := {
+            label := s!"{shape}/{style}/{name}/{options}"
+            body := body value, ordinary := "", target, options }
+          result := result.push {
+            reference
+            probe := { reference with body := body ("\\cancel{" ++ value ++ "}") } }
+  return result
+
+/-- The painted target's placement relative to an actual operand glyph.
+Using the operand removes page centring and common room padding. With the
+zero-rule fixture the outer arrow also has no fill: this paired witness
+tests whether invisible marks move ink, not whether that arrow paints. -/
+def operandRelativeInk (fonts : Font.FontSet) (out : Layout.Out) (target : String) :
+    Except String (InkBounds × Array ShippedGlyph) := do
+  let #[line] := bodyLines out | throw "expected one body line"
+  if line.expand != 0 then throw "probe unexpectedly expands its glyphs"
+  let all := shippedBodyGlyphs out
+  let glyphs := all.filter fun g => target.toList.contains g.scalar
+  unless String.ofList (glyphs.toList.map (·.scalar)) == target do
+    throw "target glyph census differs from the probe"
+  let ink ← targetInk fonts glyphs
+  let some origin := all.find? (fun g => g.scalar == '𝑖' || g.scalar == '𝑥')
+    | throw "operand anchor is missing"
+  return (ink.shift (-origin.x) origin.y, glyphs)
+
+/-- Adding a known nonpainting polygon must not move the same painted
+target. Source advances remain a separate assertion; no expected placement
+comes from a bounds or attachment helper in production. -/
+def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let fonts := zeroRuleFonts (← mathSetOf oneFace)
+  for p in nestedMarkProbes do
+    let (out, ds) := layProbe fonts p.probe
+    let (control, cds) := layProbe fonts p.reference
+    let name := s!"cancel nonpainting polygon: {p.probe.label}"
+    check ref s!"{name} needs no recovery"
+      (!(ds ++ out.diags ++ cds ++ control.diags).any fun d =>
+        d.code == "W0012" || d.code == "W0389" || d.severity == .error)
+    let polys := (bodyLines out).flatMap polygonsAt
+    let controls := (bodyLines control).flatMap polygonsAt
+    let diagonal (ps : Array (Dim.Sp × Dim.Sp)) : Bool :=
+      (polygonHull ps).any fun b => b.left < b.right && b.bottom < b.top
+    check ref s!"{name} adds exactly one nonpainting diagonal with a nonempty hull"
+      (controls.size == 2 && polys.size == 3 &&
+        controls.all collinear && polys.all collinear &&
+        (polys.filter diagonal).size == (controls.filter diagonal).size + 1)
+    check ref s!"{name} preserves source and rule census"
+      ((shippedBodyGlyphs out).map ShippedGlyph.scalar ==
+        (shippedBodyGlyphs control).map ShippedGlyph.scalar &&
+        (metricRuleSegs out).map (fun (w, t, _, _) => (w, t)) ==
+        (metricRuleSegs control).map (fun (w, t, _, _) => (w, t)))
+    match operandRelativeInk fonts out p.probe.target,
+        operandRelativeInk fonts control p.reference.target with
+    | .ok (ink, glyphs), .ok (reference, source) =>
+      check ref s!"{name} preserves relative source positions and advances"
+        (relativeSource glyphs == relativeSource source)
+      check ref s!"{name} leaves painted target attachment unchanged" (ink == reference)
+    | .error e, _ | _, .error e => check ref s!"{name}: {e}" false
+    if p.probe.options == "overlap" then
+      match neighbourSpan out, neighbourSpan control with
+      | .ok span, .ok other =>
+        check ref s!"{name} preserves overlapping neighbour advance" (span == other)
+      | .error e, _ | _, .error e => check ref s!"{name}: {e}" false
+
 /-- Deliberately translate only target runs on a shipped page. Balanced
 gaps leave every other segment's pen position unchanged. Used solely to
 test the measurement, never to repair a page before a regression check. -/
@@ -554,6 +651,11 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match arrowTip #[#[(0, 0), (1, 1), (2, 2)]] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: an absent target cannot certify alignment"
     (match targetInk fonts #[] with | .error _ => true | .ok _ => false)
+  check ref "cancel polygon judge: a diagonal can have a hull but no filled area"
+    (collinear #[(0, 0), (0, 0), (3, 4), (6, 8), (0, 0)] &&
+      polygonHull #[(0, 0), (3, 4), (6, 8)] == some ⟨0, 0, 6, 8⟩)
+  check ref "cancel polygon judge: duplicate vertices cannot hide a painted triangle"
+    (!collinear #[(0, 0), (0, 0), (3, 4), (6, 7)])
 
 end CancelAlignment
 
@@ -563,6 +665,7 @@ font outlines; no expected offset comes from `Math.cancelGeom`. -/
 def CancelAlignment.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   judgeChecks ref oneFace
   nonpaintingChecks ref oneFace
+  nestedMarkChecks ref oneFace
   let fonts ← mathSetOf oneFace
   for p in probes do
     let (out, ds) := layProbe fonts p
