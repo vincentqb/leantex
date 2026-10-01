@@ -14,10 +14,10 @@ expectations, never against an answer produced by the resolver. TeX needs
 only its kernel/article class; all package files and caches are temporary.
 
 This checks literal scheduling, not arbitrary TeX expansion, CurrentOption,
-global class options or PassOptionsToPackage. Unknown caller options with
-no catch-all are a measured API gap: LuaLaTeX errors, but the current
-array-only resolver cannot return a diagnostic. The negative reference
-probe below records that boundary without certifying silent omission.
+global class options or PassOptionsToPackage. Unknown caller options without
+a handler, or left unprocessed, must raise W0110 in the engine. LuaLaTeX
+rejects those sources; the engine ships the independently specified control
+page with that loss named, rather than claiming an error-free TeX build.
 -/
 
 open LeanTex.Core
@@ -32,49 +32,57 @@ private def referenceChecks (ref : IO.Ref (List String)) : IO Unit := do
     let cache := root / "cache"
     IO.FS.createDirAll cache
     let env := #[("TEXMFCACHE", some cache.toString), ("TEXMFVAR", some cache.toString)]
-    let build (name style passed body : String) := do
+    let buildSource (name style source : String) := do
       let dir := root / name
       IO.FS.createDirAll dir
       IO.FS.writeFile (dir / "pkgoptionsprobe.sty") (Tests.packageOptionStyle style)
-      IO.FS.writeFile (dir / "host.tex") (Tests.packageOptionSource passed body)
+      IO.FS.writeFile (dir / "pkgoptionschild.sty") Tests.packageOptionChildStyle
+      IO.FS.writeFile (dir / "host.tex") source
       let result ← IO.Process.output {
         cmd := "lualatex"
         args := #["-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "host.tex"]
         cwd := some dir
         env }
       return (dir, result)
+    let build (name style passed body : String) :=
+      buildSource name style (Tests.packageOptionSource passed body)
+    let checkText (name expected : String) (dir : System.FilePath) := do
+      let text ← IO.Process.output {
+        cmd := "pdftotext"
+        args := #["-enc", "UTF-8", (dir / "host.pdf").toString, "-"] }
+      -- Remove only the extractor's page separator and trailing newline;
+      -- spaces within the rendered text remain significant.
+      let actual := (text.stdout.replace "\x0c" "").trimAscii.toString
+      t s!"LuaLaTeX {name}: PDF text '{actual}' = '{expected}'"
+        (text.exitCode == 0 && actual == expected)
     for c in Tests.packageOptionCases do
       let (dir, result) ← build c.name c.style c.passed c.body
       t s!"LuaLaTeX {c.name}: builds" (result.exitCode == 0)
       if result.exitCode == 0 then
-        let text ← IO.Process.output {
-          cmd := "pdftotext"
-          args := #["-enc", "UTF-8", (dir / "host.pdf").toString, "-"] }
-        -- Remove only the extractor's page separator and trailing newline;
-        -- spaces within the rendered text remain significant.
-        let actual := (text.stdout.replace "\x0c" "").trimAscii.toString
-        t s!"LuaLaTeX {c.name}: PDF text '{actual}' = '{c.expected}'"
-          (text.exitCode == 0 && actual == c.expected)
+        checkText c.name c.expected dir
       else
         IO.eprintln result.stdout
-    let (_, result) ← build "unknown-without-catch-all"
-      (Tests.packageOptionDeclare "a" "A" ++ "\\ProcessOptions\\relax") "u" "Tail"
-    t "LuaLaTeX unknown option without catch-all: error"
-      (result.exitCode != 0 && hasStr result.stdout "Unknown option")
-    IO.println s!"LuaLaTeX: {Tests.packageOptionCases.size} positive cases; \
-1 unknown-option error boundary"
+    for c in Tests.packageOptionDiagCases do
+      let (dir, result) ← buildSource ("diag-" ++ c.name) c.style (Tests.packageOptionDiagSource c)
+      if c.unhandled.isEmpty then
+        t s!"LuaLaTeX {c.name}: no unknown-option error" (result.exitCode == 0)
+        if result.exitCode == 0 then checkText c.name c.expected dir
+        else IO.eprintln result.stdout
+      else
+        t s!"LuaLaTeX {c.name}: unknown option is rejected"
+          (result.exitCode != 0 && hasStr result.stdout "Unknown option")
+    IO.println s!"LuaLaTeX: {Tests.packageOptionCases.size} scheduling cases; \
+{Tests.packageOptionDiagCases.size} diagnostic/lifecycle cases"
 
 def main (args : List String) : IO UInt32 := do
   unless args.isEmpty || args == ["--engine-only"] do
     IO.eprintln "usage: lake env lean --run scripts/package-options.lean [--engine-only]"
     return 2
-  let some bytes ← findFont | throw <| IO.userError "shipped fixture font is missing"
-  let .ok font := Font.parse bytes | throw <| IO.userError "shipped fixture font is invalid"
-  let ref ← IO.mkRef ([] : List String)
-  Tests.packageOptionChecks ref (oneFaceOf font)
+  let ref ← IO.mkRef (← Tests.packageOptionFailures)
   let engineFailures := (← ref.get).length
   IO.println s!"Layout/HTML: {Tests.packageOptionCases.size} scheduling cases, \
-3 selected and 3 unselected refusal cases; {engineFailures} failed assertions"
+3 selected and 3 unselected refusal cases, \
+{Tests.packageOptionDiagCases.size} diagnostic/lifecycle cases; {engineFailures} failed assertions"
   unless args.contains "--engine-only" do referenceChecks ref
   let failed := (← ref.get).reverse
   for failure in failed do IO.eprintln failure

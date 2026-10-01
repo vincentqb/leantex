@@ -4744,12 +4744,53 @@ and elaboration removes the spelling before any IR value exists. -/
 def fontSizeMark : String := "@fontsize:"
 def fontSizeSep : String := "\u0000"
 
+/-- Local option diagnostics travel with the spliced file until conditionals
+and `\endinput` have selected its live text. A space is in no control word:
+these requests cannot be written by a document. The load request checks for
+a live process request at its own file level, never in a nested package. -/
+private def styOptionsLoadMark : String := "package options load"
+private def styOptionsProcessedMark : String := "package options processed"
+private def styOptionsUnhandledMark : String := "package options unhandled"
+
+private def unhandledStyOption (pkg option why : String) (pos : Pos) : M Unit :=
+  sayOnce ("package-option:" ++ pkg ++ ":" ++ option) .W0110
+    s!"option '{option}' for local package '{pkg}' {why}; ignored" pos
+    (help := "remove the option or declare and process its handler in the local style")
+
+/-- Settle only diagnostic requests, through the same accounting door as
+other ignored options. No style is opened here and no TeX is evaluated.
+`packageOptionChecks` holds the loss, source span, inactive branches,
+unprocessed loads and nested file boundaries to the actual CLI splice. -/
+private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
+  if name == styOptionsProcessedMark then
+    became "\\ProcessOptions" "the selected local package option bodies" pos
+    return some (#[], start)
+  if name != styOptionsLoadMark && name != styOptionsUnhandledMark then return none
+  let (args, k) := takeGroups raws start 2
+  if args.size != 2 then return none
+  let pkg := rawSrc (args.getD 0 #[])
+  if name == styOptionsUnhandledMark then
+    unhandledStyOption pkg (rawSrc (args.getD 1 #[])) "has no handler" pos
+  else
+    -- premise: packageOptionChecks — only a process in this live file
+    -- discharges its options; an inactive or nested process cannot do so.
+    if raws.any (fun r => r matches .ctrl "package options processed" _) then
+      discard s!"option list for local package '{pkg}'"
+        "its options are checked by '\\ProcessOptions'" ("package-options:" ++ pkg) pos
+    else
+      for r in args.getD 1 #[] do
+        if let .word option _ := r then
+          unhandledStyOption pkg option "was not processed" pos
+  return some (#[], k)
+
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one
 logical dispatcher, two compilation units. `rewriteCtrl`'s own match
 falls through to here for every name it does not claim. -/
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
+  if let some result ← styOptionsRequest name pos raws start then return some result
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
@@ -8016,6 +8057,16 @@ theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toS
   all_goals exact localSty_theme _ _ nm pos rfl hne hnz (by decide) (by decide)
 
 
+/-- The option scheduler emits content and diagnostic requests in source
+order. Requests must cross conditional selection with that content: reporting
+while reading the file would warn about an unselected load.
+`processed` also distinguishes a live, empty process from no process at all. -/
+inductive StyOptionStep where
+  | raw (value : Raw)
+  | processed (pos : Pos)
+  | unhandled (option : String) (pos : Pos)
+  deriving Repr, BEq
+
 /-- One slot per declared name, in first-declaration order. Redeclaring a
 name replaces its body without moving the slot (ltclass.dtx). `none` is a
 spent handler; `some #[]` is a defined, empty handler and suppresses the
@@ -8042,13 +8093,13 @@ hold ordering, whitespace, empty items and handler lifetime to its kernel.
 Bodies enter the existing compatibility passes unchanged: this is not a
 TeX expansion runtime. Only the supplied package options are available here,
 not global class options or forwarded options. An unknown caller option
-without a catch-all still has no diagnostic channel in this array-only
-interface; it must not be claimed as supported. `\\ProvidesPackage` and
-`\\NeedsTeXFormat` identify the file and produce nothing. -/
-def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := Id.run do
-  let mut out : Array Raw := #[]
+without a catch-all emits an explicit request, settled as W0110 only when
+its site is live. `\\ProvidesPackage` and `\\NeedsTeXFormat` identify the
+file and produce nothing. -/
+def resolveStyOptions (passed : List String) (raws : Array Raw) : Array StyOptionStep := Id.run do
+  let mut out : Array StyOptionStep := #[]
   let mut declared : Array (String × Option (Array Raw)) := #[]
-  let mut fallback : Array Raw := #[]
+  let mut fallback : Option (Array Raw) := none
   let passed := passed.map (·.replace " " "")
   let mut i := 0
   for _ in [0:raws.size] do
@@ -8060,7 +8111,7 @@ def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := I
         let starred := k != j
         let (args, k) := takeGroups raws k (if starred then 1 else 2)
         if starred then
-          if h1 : args.size = 1 then fallback := args[0]
+          if h1 : args.size = 1 then fallback := some args[0]
         else if h2 : args.size = 2 then
           declared := declareStyOption declared (rawSrc args[0]) args[1]
         i := max k (i + 1)
@@ -8071,22 +8122,26 @@ def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := I
         -- nonempty list; an explicitly declared empty name can run here.
         unless opts.isEmpty do
           for nm in opts.splitOn "," do
-            if let some body := styOptionBody declared nm then out := out ++ body
+            if let some body := styOptionBody declared nm then
+              out := out ++ body.map StyOptionStep.raw
         i := max k (i + 1)
-      | .ctrl "ProcessOptions" _ =>
+      | .ctrl "ProcessOptions" pos =>
+        out := out.push (.processed pos)
         let j := skipSpaces raws (i + 1)
         let k := skipStar raws j
         if k == j then
           for (nm, body) in declared do
             unless nm.isEmpty do
               if passed.contains nm then
-                out := out ++ body.getD #[]
+                out := out ++ (body.getD #[]).map StyOptionStep.raw
                 declared := declareStyOption declared nm #[]
         -- ProcessOptions makes the empty-name handler empty before either
         -- pass. Known names consumed above stay defined and bypass fallback.
         for nm in passed do
           unless nm.isEmpty do
-            out := out ++ (styOptionBody declared nm).getD fallback
+            match (styOptionBody declared nm).orElse (fun _ => fallback) with
+            | some body => out := out ++ body.map StyOptionStep.raw
+            | none => out := out.push (.unhandled nm pos)
         declared := declared.map fun (nm, _) => (nm, none)
         let k := skipSpaces raws k
         i := match raws[k]? with
@@ -8097,9 +8152,30 @@ def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := I
         let (_, k2) := takeOpt raws k
         i := max k2 (i + 1)
       | r =>
-        out := out.push r
+        out := out.push (.raw r)
         i := i + 1
-  return (out : Array Raw)
+  return out
+
+/-- Encode the scheduler's requests in the existing raw stream, without
+re-parsing option text. The enclosing input wrapper supplies the style-file
+span. Its first line names options left unprocessed at the end of the load,
+even when `\endinput` or a false branch removes every process request. -/
+private def spliceStyOptions (pkg : String) (passed : List String) (raws : Array Raw) :
+    Array Raw := Id.run do
+  let p : Pos := ⟨1, 1⟩
+  let names := passed.map (·.replace " " "") |>.filter (!·.isEmpty)
+  let mut out : Array Raw := #[]
+  unless names.isEmpty do
+    out := #[.ctrl styOptionsLoadMark p, .group #[.word pkg p] p,
+      .group (names.toArray.map fun nm => .word nm p) p]
+  for step in resolveStyOptions passed raws do
+    match step with
+    | .raw r => out := out.push r
+    | .processed pos => out := out.push (.ctrl styOptionsProcessedMark pos)
+    | .unhandled nm pos =>
+      out := out ++ #[.ctrl styOptionsUnhandledMark pos,
+        .group #[.word pkg pos] pos, .group #[.word nm pos] pos]
+  return out
 
 /-- The shipped bundle a theme file stands on, as the raws that install it
 before the file's own content. **Precedence is composition, not a contest**
@@ -8140,7 +8216,7 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
       if let some (_, pre, nm) := themeSlotOfPackage? p then
         splice := splice ++ bundleFloor pre nm pos
       splice := splice.push
-        (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos)
+        (.env (Parse.inputEnv (p ++ ".sty")) (spliceStyOptions p passed sraws) pos)
       recs := recs.push (p ++ ".sty", none, pos)
     | none => keep := keep.push p
   if recs.isEmpty then return none
@@ -8186,7 +8262,7 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
     let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
     let floor := bundleFloor pre nm pos
     return some (floor.push
-      (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos),
+      (.env (Parse.inputEnv (p ++ ".sty")) (spliceStyOptions p passed sraws) pos),
       #[(p ++ ".sty", none, pos)], k)
   | none => return none
 
