@@ -98,6 +98,92 @@ def packageOptionSource (passed body : String) : String :=
   "\\documentclass{article}\n\\usepackage[" ++ passed ++ "]{pkgoptionsprobe}\n" ++
     "\\pagestyle{empty}\n\\begin{document}" ++ body ++ "\\end{document}\n"
 
+/-- Unknown caller options are losses, including options left unprocessed
+at the end of a package. The expected diagnostics name the package, option
+and source line; line 1 names an unprocessed load, other lines its process
+site. LuaLaTeX must independently reject every case with a live loss.
+An absent catch-all differs from an explicitly declared empty one. -/
+structure PackageOptionDiagCase where
+  name : String
+  passed : String := "u"
+  style : String := "\\ProcessOptions*\\relax\n"
+  expected : String := "Tail"
+  unhandled : Array (String × String × Nat) := #[]
+  beforeLoad : String := ""
+  afterLoad : String := ""
+
+def packageOptionDiagCases : Array PackageOptionDiagCase := Id.run do
+  let a := packageOptionDeclare "a" "A"
+  let plain := "\\ProcessOptions\\relax\n"
+  let star := "\\ProcessOptions*\\relax\n"
+  let issue (option : String) (line : Nat) := #[( "pkgoptionsprobe", option, line)]
+  return #[
+    { name := "unknown-plain", style := plain, unhandled := issue "u" 3 },
+    { name := "unknown-star", unhandled := issue "u" 3 },
+    { name := "mixed-unhandled", passed := "u,a,v", style := a ++ plain,
+      expected := "ATail",
+      unhandled := #[("pkgoptionsprobe", "u", 4), ("pkgoptionsprobe", "v", 4)] },
+    { name := "normalised-unhandled", passed := " key = value ",
+      unhandled := issue "key=value" 3 },
+    { name := "duplicate-unhandled", passed := "u,u",
+      unhandled := issue "u" 3 ++ issue "u" 3 },
+    { name := "empty-items-unhandled", passed := ",u,,",
+      unhandled := issue "u" 3 },
+    { name := "no-options", passed := ",," },
+    { name := "unknown-default-is-inert", passed := "",
+      style := "\\ExecuteOptions{u}\n" ++ plain },
+    { name := "unused-handler-is-inert", style :=
+        "\\DeclareOption{unused}{\\directlua{error('unused')}}\n" ++ star,
+      unhandled := issue "u" 4 },
+    { name := "catch-all-handles", style := packageOptionDefault "U" ++ star,
+      expected := "UTail" },
+    { name := "empty-catch-all-handles", style := "\\DeclareOption*{}\n" ++ star },
+    { name := "catch-all-is-not-retroactive", style := star ++ packageOptionDefault "U",
+      unhandled := issue "u" 3 },
+    { name := "declaration-is-not-retroactive", style := star ++ packageOptionDeclare "u" "U",
+      unhandled := issue "u" 3 },
+    { name := "spent-star-is-unhandled", passed := "a", style := a ++ star ++ star,
+      expected := "ATail", unhandled := issue "a" 5 },
+    { name := "spent-plain-stays-empty", passed := "a", style := a ++ plain ++ plain,
+      expected := "ATail" },
+    { name := "spent-default-is-inert", passed := "a",
+      style := a ++ star ++ "\\ExecuteOptions{a,u}", expected := "ATail" },
+    { name := "redeclared-handler-is-live", passed := "a",
+      style := a ++ star ++ packageOptionDeclare "a" "B" ++ star, expected := "ABTail" },
+    { name := "no-process", style := "", unhandled := issue "u" 1 },
+    { name := "declared-but-unprocessed", passed := "a", style := a,
+      unhandled := issue "a" 1 },
+    { name := "catch-all-but-unprocessed", style := packageOptionDefault "U",
+      unhandled := issue "u" 1 },
+    { name := "false-load", beforeLoad := "\\iffalse\n", afterLoad := "\\fi\n" },
+    { name := "true-load", beforeLoad := "\\iftrue\n", afterLoad := "\\fi\n",
+      unhandled := issue "u" 3 },
+    { name := "false-process", style := "\\iffalse\n" ++ star ++ "\\fi\n",
+      unhandled := issue "u" 1 },
+    { name := "true-process", style := "\\iftrue\n" ++ star ++ "\\fi\n",
+      unhandled := issue "u" 4 },
+    { name := "endinput-before-process", style := "\\endinput\n" ++ star,
+      unhandled := issue "u" 1 },
+    { name := "endinput-after-process", passed := "a",
+      style := a ++ star ++ "\\endinput\n" ++ star, expected := "ATail" },
+    { name := "nested-load", passed := "",
+      style := "\\RequirePackage[u]{pkgoptionschild}\n" ++ star,
+      unhandled := #[("pkgoptionschild", "u", 2)] },
+    { name := "nested-process-does-not-discharge-parent",
+      style := "\\RequirePackage{pkgoptionschild}\n", unhandled := issue "u" 1 },
+    { name := "nested-false-load", passed := "",
+      style := "\\iffalse\n\\RequirePackage[u]{pkgoptionschild}\n\\fi\n" ++ star },
+    { name := "unselected-nested-load", passed := "", style :=
+      "\\DeclareOption{unused}{\\RequirePackage[u]{pkgoptionschild}}\n" ++ star }]
+
+def packageOptionDiagSource (c : PackageOptionDiagCase) : String :=
+  "\\documentclass{article}\n" ++ c.beforeLoad ++
+    "\\usepackage[" ++ c.passed ++ "]{pkgoptionsprobe}\n" ++ c.afterLoad ++
+    "\\pagestyle{empty}\n\\begin{document}Tail\\end{document}\n"
+
+def packageOptionChildStyle : String :=
+  "\\ProvidesPackage{pkgoptionschild}\n\\ProcessOptions*\\relax\n"
+
 /-- The option resolver must preserve the actual local-style splice's
 execution order, multiplicity and body boundaries on Layout.Out and the
 typed HTML tree. An unselected body stays inert; a selected unsupported
@@ -109,9 +195,9 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let t := check ref
   IO.FS.withTempDir fun dir => do
     let file := (dir / "host.tex").toString
-    let samePage (name style passed body expected : String) : IO (Array Diag) := do
+    let sameSourcePage (name style source expected : String) : IO (Array Diag) := do
       IO.FS.writeFile (dir / "pkgoptionsprobe.sty") (packageOptionStyle style)
-      let (doc, ds) ← elabInputSrc file (packageOptionSource passed body)
+      let (doc, ds) ← elabInputSrc file source
       let (control, controlDs) := elabStr
         ("\\documentclass{article}\\pagestyle{empty}\\begin{document}" ++
           expected ++ "\\end{document}")
@@ -130,6 +216,8 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       t s!"package options {name}: layout witness reaches the reader"
         ((bodyLines out).any fun line => hasStr (lineText line) expected)
       return ds
+    let samePage (name style passed body expected : String) :=
+      sameSourcePage name style (packageOptionSource passed body) expected
     for c in packageOptionCases do
       let ds ← samePage c.name c.style c.passed c.body c.expected
       t s!"package options {c.name}: no error or unsupported command"
@@ -151,5 +239,38 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       let ds ← samePage (name ++ "-unselected") unused "" "Tail" "Tail"
       t s!"package options {name}: unselected refusal stays inert"
         (ds.all fun d => d.severity == .note && d.code != code)
+
+    IO.FS.writeFile (dir / "pkgoptionschild.sty") packageOptionChildStyle
+    for c in packageOptionDiagCases do
+      let ds ← sameSourcePage c.name c.style (packageOptionDiagSource c) c.expected
+      let losses := ds.filter (·.code == "W0110")
+      let actual := losses.map fun d =>
+        (d.subject.getD "", d.span.map (·.file), d.span.map (·.pos))
+      let expected := c.unhandled.map fun (pkg, option, line) =>
+        ("package-option:" ++ pkg ++ ":" ++ option, some (pkg ++ ".sty"),
+          some ({ line, col := 1 } : Pos))
+      t s!"package options {c.name}: exactly the live losses, keyed and source-located"
+        (actual == expected)
+      t s!"package options {c.name}: only W0110 names ignored options"
+        (ds.all fun d => d.severity == .note || d.code == "W0110")
+      t s!"package options {c.name}: loss is degraded, never an error"
+        (losses.all fun d => d.kind.loss == .degraded && d.severity != .error)
+      t s!"package options {c.name}: one warning per option, every site counted"
+        (losses.foldl (fun n d => n + d.sites) 0 == c.unhandled.size &&
+          (losses.filter (·.severity != .note)).size ==
+            (c.unhandled.toList.map fun (pkg, option, _) => (pkg, option)).eraseDups.length)
+      t s!"package options {c.name}: diagnostic names the package and the option"
+        ((losses.zip c.unhandled).all fun (d, pkg, option, _) =>
+          hasStr d.message pkg && hasStr d.message option)
+
+/-- Standalone engine entry used by the synthetic comparison script.
+The parent suite can supply its shared fonts to `packageOptionChecks`;
+this entry needs only the shipped fixture face. -/
+def packageOptionFailures : IO (List String) := do
+  let some bytes ← findFont | throw <| IO.userError "shipped fixture font is missing"
+  let .ok font := Font.parse bytes | throw <| IO.userError "shipped fixture font is invalid"
+  let ref ← IO.mkRef ([] : List String)
+  packageOptionChecks ref (oneFaceOf font)
+  ref.get
 
 end Tests
