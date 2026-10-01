@@ -13511,6 +13511,409 @@ theorem resolveMathAlphaInline_fixed_point (coverage : Math.MathAlphabetCoverage
   cases x <;>
     simp only [resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
 
+/-- Normal form of the inline list walk: the accumulator in front, then each
+element rewritten by `mapInline f`. Every idempotence proof below reads the
+accumulator-threading walk through this `List.map` shape. -/
+theorem mapInlineList_toList (f : Inline → Inline) :
+    ∀ (out : Array Inline) (xs : List Inline),
+      (mapInlineList f out xs).toList = out.toList ++ xs.map (mapInline f)
+  | _, [] => by simp [mapInlineList]
+  | out, x :: rest => by
+    rw [mapInlineList, mapInlineList_toList f (out.push (mapInline f x)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- The empty-accumulator inline walk as a plain `List.map`. -/
+theorem mapInlineList_nil_eq (f : Inline → Inline) (L : List Inline) :
+    mapInlineList f #[] L = (L.map (mapInline f)).toArray := by
+  apply Array.toList_inj.mp
+  simp [mapInlineList_toList]
+
+mutual
+
+/-- The generic inline map specialised to the math-alphabet leaf is
+idempotent (`_fixed_point` propagated node by node): a wrapper's body is
+settled once by the mutual walk, a formula leaf by `resolveMathAlphaInline`,
+whose own fixed point (`resolveMathAlphaInline_fixed_point`) closes the leaf
+arms. This — not `rfl` — is why the public backend entry may resolve a
+document already resolved by the driver and rewrite nothing. -/
+theorem mapInline_idem (coverage : Math.MathAlphabetCoverage) (x : Inline) :
+    mapInline (resolveMathAlphaInline coverage) (mapInline (resolveMathAlphaInline coverage) x)
+      = mapInline (resolveMathAlphaInline coverage) x := by
+  match x with
+  | .styled st body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .colored c n body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .role n body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .link u body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .underline body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .step n l body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .footnote n body =>
+    simp only [mapInline]; congr 1; apply Array.toList_inj.mp
+    simp [mapInlineList_toList, mapInlineElems_idem coverage body.toList]
+  | .alt n l firstPage otherPage =>
+    simp only [mapInline]
+    congr 1 <;>
+      · apply Array.toList_inj.mp
+        simp [mapInlineList_toList, mapInlineElems_idem coverage firstPage.toList,
+          mapInlineElems_idem coverage otherPage.toList]
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+    simp only [mapInline, resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
+
+/-- The elementwise face: mapping the leaf twice over a list equals mapping
+it once, from the per-node fixed point. -/
+theorem mapInlineElems_idem (coverage : Math.MathAlphabetCoverage) :
+    ∀ xs : List Inline,
+      ((xs.map (mapInline (resolveMathAlphaInline coverage))).map
+        (mapInline (resolveMathAlphaInline coverage)))
+        = xs.map (mapInline (resolveMathAlphaInline coverage))
+  | [] => rfl
+  | y :: rest => by
+    simp only [List.map_cons]
+    rw [mapInline_idem coverage y, mapInlineElems_idem coverage rest]
+
+end
+
+/-- The array face of inline-walk idempotence (`_fixed_point`). -/
+theorem mapInlines_idem (coverage : Math.MathAlphabetCoverage) (xs : Array Inline) :
+    mapInlines (resolveMathAlphaInline coverage)
+        (mapInlines (resolveMathAlphaInline coverage) xs)
+      = mapInlines (resolveMathAlphaInline coverage) xs := by
+  apply Array.toList_inj.mp
+  simp [mapInlines, mapInlineList_toList, mapInlineElems_idem coverage xs.toList]
+
+/-- Mapping an idempotent leaf twice over a list is mapping it once. -/
+private theorem map_map_idem {α : Type _} (f : α → α) (h : ∀ a, f (f a) = f a)
+    (l : List α) : (l.map f).map f = l.map f := by
+  rw [List.map_map]
+  exact List.map_congr_left (fun a _ => h a)
+
+/-- Normal form of the block list walk. -/
+theorem mapBlockList_toList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) :
+    ∀ (out : Array Block) (bs : List Block),
+      (mapBlockList gp f out bs).toList = out.toList ++ bs.map (mapBlock gp f)
+  | _, [] => by simp [mapBlockList]
+  | out, b :: rest => by
+    rw [mapBlockList, mapBlockList_toList gp f (out.push (mapBlock gp f b)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the list-of-items walk. -/
+theorem mapBlockItems_toList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) :
+    ∀ (out : Array (Array Block)) (items : List (Array Block)),
+      (mapBlockItems gp f out items).toList
+        = out.toList ++ items.map (fun it => mapBlockList gp f #[] it.toList)
+  | _, [] => by simp [mapBlockItems]
+  | out, it :: rest => by
+    rw [mapBlockItems,
+      mapBlockItems_toList gp f (out.push (mapBlockList gp f #[] it.toList)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the columns walk. -/
+theorem mapBlockCols_toList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) :
+    ∀ (out : Array (BoxWidth × Array Block)) (cols : List (BoxWidth × Array Block)),
+      (mapBlockCols gp f out cols).toList
+        = out.toList ++ cols.map (fun c => (c.1, mapBlockList gp f #[] c.2.toList))
+  | _, [] => by simp [mapBlockCols]
+  | out, (w, body) :: rest => by
+    rw [mapBlockCols,
+      mapBlockCols_toList gp f (out.push (w, mapBlockList gp f #[] body.toList)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the table-cell walk. -/
+theorem mapTableCells_toList (f : Inline → Inline) :
+    ∀ (out : Array (Array Inline)) (cells : List (Array Inline)),
+      (mapTableCells f out cells).toList = out.toList ++ cells.map (mapInlines f)
+  | _, [] => by simp [mapTableCells]
+  | out, cell :: rest => by
+    rw [mapTableCells, mapTableCells_toList f (out.push (mapInlines f cell)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the table-row walk. -/
+theorem mapTableRows_toList (f : Inline → Inline) :
+    ∀ (out : Array (Array (Array Inline))) (rows : List (Array (Array Inline))),
+      (mapTableRows f out rows).toList
+        = out.toList ++ rows.map (fun row => mapTableCells f #[] row.toList)
+  | _, [] => by simp [mapTableRows]
+  | out, row :: rest => by
+    rw [mapTableRows, mapTableRows_toList f (out.push (mapTableCells f #[] row.toList)) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the algorithm-line walk. -/
+theorem mapAlgLines_toList (f : Inline → Inline) :
+    ∀ (out : Array AlgLine) (ls : List AlgLine),
+      (mapAlgLines f out ls).toList
+        = out.toList ++ ls.map (fun l => ({ depth := l.depth, kind := l.kind, content := mapInlines f l.content, comment := l.comment.map (mapInlines f) } : AlgLine))
+  | _, [] => by simp [mapAlgLines]
+  | out, l :: rest => by
+    rw [mapAlgLines, mapAlgLines_toList f (out.push { depth := l.depth, kind := l.kind, content := mapInlines f l.content, comment := l.comment.map (mapInlines f) }) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Normal form of the bibliography-item walk. -/
+theorem mapBibItems_toList (f : Inline → Inline) :
+    ∀ (out : Array BibItem) (items : List BibItem),
+      (mapBibItems f out items).toList
+        = out.toList ++ items.map (fun i => { i with content := mapInlines f i.content })
+  | _, [] => by simp [mapBibItems]
+  | out, i :: rest => by
+    rw [mapBibItems, mapBibItems_toList f (out.push { i with content := mapInlines f i.content }) rest]
+    simp [Array.toList_push, List.append_assoc]
+
+/-- Table-cell idempotence: the inline leaf settles each cell once. -/
+theorem mapTableCells_double (coverage : Math.MathAlphabetCoverage)
+    (cells : List (Array Inline)) :
+    mapTableCells (resolveMathAlphaInline coverage) #[]
+        (mapTableCells (resolveMathAlphaInline coverage) #[] cells).toList
+      = mapTableCells (resolveMathAlphaInline coverage) #[] cells := by
+  apply Array.toList_inj.mp
+  simp only [mapTableCells_toList, List.nil_append]
+  exact map_map_idem (mapInlines (resolveMathAlphaInline coverage)) (mapInlines_idem coverage) _
+
+/-- Table-row idempotence, through the cell level. -/
+theorem mapTableRows_double (coverage : Math.MathAlphabetCoverage)
+    (rows : List (Array (Array Inline))) :
+    mapTableRows (resolveMathAlphaInline coverage) #[]
+        (mapTableRows (resolveMathAlphaInline coverage) #[] rows).toList
+      = mapTableRows (resolveMathAlphaInline coverage) #[] rows := by
+  apply Array.toList_inj.mp
+  simp only [mapTableRows_toList, List.nil_append]
+  refine map_map_idem (fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList)
+    (fun row => ?_) _
+  exact mapTableCells_double coverage row.toList
+
+/-- Algorithm-line idempotence (content and comment through the leaf). -/
+theorem mapAlgLines_double (coverage : Math.MathAlphabetCoverage) (ls : List AlgLine) :
+    mapAlgLines (resolveMathAlphaInline coverage) #[]
+        (mapAlgLines (resolveMathAlphaInline coverage) #[] ls).toList
+      = mapAlgLines (resolveMathAlphaInline coverage) #[] ls := by
+  apply Array.toList_inj.mp
+  simp only [mapAlgLines_toList, List.nil_append]
+  apply map_map_idem
+  intro l
+  have hcomment : (l.comment.map (mapInlines (resolveMathAlphaInline coverage))).map
+      (mapInlines (resolveMathAlphaInline coverage))
+      = l.comment.map (mapInlines (resolveMathAlphaInline coverage)) := by
+    cases l.comment with
+    | none => rfl
+    | some c => simp [mapInlines_idem coverage]
+  simp only [mapInlines_idem coverage, hcomment]
+
+/-- Bibliography-item idempotence. -/
+theorem mapBibItems_double (coverage : Math.MathAlphabetCoverage) (items : List BibItem) :
+    mapBibItems (resolveMathAlphaInline coverage) #[]
+        (mapBibItems (resolveMathAlphaInline coverage) #[] items).toList
+      = mapBibItems (resolveMathAlphaInline coverage) #[] items := by
+  apply Array.toList_inj.mp
+  simp only [mapBibItems_toList, List.nil_append]
+  apply map_map_idem
+  intro i
+  simp [mapInlines_idem coverage]
+
+mutual
+
+/-- The block map specialised to the math-alphabet leaf is idempotent, node
+by node: every inline region is settled by `mapInlines_idem`, every nested
+block body by the elementwise partner, and the table/algorithm/bibliography
+leaves by their `_double` lemmas. The block face of `_fixed_point`. -/
+theorem mapBlock_idem (coverage : Math.MathAlphabetCoverage) (b : Block) :
+    mapBlock id (resolveMathAlphaInline coverage)
+        (mapBlock id (resolveMathAlphaInline coverage) b)
+      = mapBlock id (resolveMathAlphaInline coverage) b := by
+  match b with
+  | .para content => simp only [mapBlock, mapInlines_idem coverage]
+  | .equation n content => simp only [mapBlock, mapInlines_idem coverage]
+  | .section l st n title => simp only [mapBlock, mapInlines_idem coverage]
+  | .framefoot content => simp only [mapBlock, mapInlines_idem coverage]
+  | .logo content => simp only [mapBlock, mapInlines_idem coverage]
+  | .list o items =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockItems_toList, List.nil_append]
+    exact mapBlockItemsElems_idem coverage items.toList
+  | .columns cols =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockCols_toList, List.nil_append]
+    exact mapBlockColsElems_idem coverage cols.toList
+  | .center body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .ragged s body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .quote body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .abstract body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .role n body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .spaced g body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .step n l body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .only targets body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .nav spec body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .note body =>
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .titled kind title body =>
+    simp only [mapBlock, mapInlines_idem coverage]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .frame title st v br body =>
+    simp only [mapBlock, mapInlines_idem coverage]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .float k num ca body caption =>
+    simp only [mapBlock, mapInlines_idem coverage]; congr 1; apply Array.toList_inj.mp
+    simp only [mapBlockList_toList, List.nil_append]
+    exact mapBlockElems_idem coverage body.toList
+  | .alt n l firstPage otherPage =>
+    simp only [mapBlock]
+    congr 1 <;>
+      · apply Array.toList_inj.mp
+        simp only [mapBlockList_toList, List.nil_append]
+        first
+          | exact mapBlockElems_idem coverage firstPage.toList
+          | exact mapBlockElems_idem coverage otherPage.toList
+  | .table c pl pr rows rules spans =>
+    simp only [mapBlock]
+    rw [mapTableRows_double coverage rows.toList]
+  | .algorithm n sm lines =>
+    simp only [mapBlock]
+    rw [mapAlgLines_double coverage lines.toList]
+  | .bibliography src style items =>
+    simp only [mapBlock]
+    rw [mapBibItems_double coverage items.toList]
+  | .verbatim c s spec =>
+    cases hc : spec.caption with
+    | none => simp [mapBlock, hc]
+    | some pr => simp [mapBlock, hc, mapInlines_idem coverage]
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _ =>
+    simp only [mapBlock, id_eq]
+
+/-- The elementwise face over a block list. -/
+theorem mapBlockElems_idem (coverage : Math.MathAlphabetCoverage) :
+    ∀ bs : List Block,
+      ((bs.map (mapBlock id (resolveMathAlphaInline coverage))).map
+        (mapBlock id (resolveMathAlphaInline coverage)))
+        = bs.map (mapBlock id (resolveMathAlphaInline coverage))
+  | [] => rfl
+  | b :: rest => by
+    simp only [List.map_cons]
+    rw [mapBlock_idem coverage b, mapBlockElems_idem coverage rest]
+
+/-- The elementwise face over a list of block items (list levels). -/
+theorem mapBlockItemsElems_idem (coverage : Math.MathAlphabetCoverage) :
+    ∀ its : List (Array Block),
+      ((its.map (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList)).map
+        (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList))
+        = its.map (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList)
+  | [] => rfl
+  | it :: rest => by
+    have h : mapBlockList id (resolveMathAlphaInline coverage) #[]
+        (mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList).toList
+        = mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList := by
+      apply Array.toList_inj.mp
+      simp only [mapBlockList_toList, List.nil_append]
+      exact mapBlockElems_idem coverage it.toList
+    simp only [List.map_cons]
+    rw [h, mapBlockItemsElems_idem coverage rest]
+
+/-- The elementwise face over columns. -/
+theorem mapBlockColsElems_idem (coverage : Math.MathAlphabetCoverage) :
+    ∀ cols : List (BoxWidth × Array Block),
+      ((cols.map (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList))).map
+        (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList)))
+        = cols.map (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList))
+  | [] => rfl
+  | c :: rest => by
+    have h : mapBlockList id (resolveMathAlphaInline coverage) #[]
+        (mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList).toList
+        = mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList := by
+      apply Array.toList_inj.mp
+      simp only [mapBlockList_toList, List.nil_append]
+      exact mapBlockElems_idem coverage c.2.toList
+    simp only [List.map_cons]
+    rw [h, mapBlockColsElems_idem coverage rest]
+
+end
+
+/-- The array face of block-walk idempotence. -/
+theorem mapBlocks_idem (coverage : Math.MathAlphabetCoverage) (xs : Array Block) :
+    mapBlocks (resolveMathAlphaInline coverage) (mapBlocks (resolveMathAlphaInline coverage) xs)
+      = mapBlocks (resolveMathAlphaInline coverage) xs := by
+  apply Array.toList_inj.mp
+  simp only [mapBlocks, mapBlocksPic, mapBlockList_toList, List.nil_append]
+  exact mapBlockElems_idem coverage xs.toList
+
+/-- The document map is a functor on its two leaf arguments: composing two
+`mapDoc` passes composes the inline and block rewrites region by region. -/
+theorem mapDoc_comp (fi fi' : Array Inline → Array Inline)
+    (fb fb' : Array Block → Array Block) (doc : Doc) :
+    mapDoc fi fb (mapDoc fi' fb' doc) = mapDoc (fi ∘ fi') (fb ∘ fb') doc := by
+  simp [mapDoc, Option.map_map, Function.comp]
+  congr 1
+
+/-- The document-level walk is idempotent (`_fixed_point`): resolving an
+already-resolved document rewrites nothing, in body and every furniture
+region alike. Built from the inline and block idempotences through the
+`mapDoc` functor law — not `rfl`. -/
+theorem mapDoc_idem (coverage : Math.MathAlphabetCoverage) (doc : Doc) :
+    mapDoc (mapInlines (resolveMathAlphaInline coverage))
+        (mapBlocks (resolveMathAlphaInline coverage))
+        (mapDoc (mapInlines (resolveMathAlphaInline coverage))
+          (mapBlocks (resolveMathAlphaInline coverage)) doc)
+      = mapDoc (mapInlines (resolveMathAlphaInline coverage))
+          (mapBlocks (resolveMathAlphaInline coverage)) doc := by
+  have hfi : (mapInlines (resolveMathAlphaInline coverage))
+      ∘ (mapInlines (resolveMathAlphaInline coverage))
+      = mapInlines (resolveMathAlphaInline coverage) := funext (mapInlines_idem coverage)
+  have hfb : (mapBlocks (resolveMathAlphaInline coverage))
+      ∘ (mapBlocks (resolveMathAlphaInline coverage))
+      = mapBlocks (resolveMathAlphaInline coverage) := funext (mapBlocks_idem coverage)
+  rw [mapDoc_comp, hfi, hfb]
+
+/-- The IR math-alphabet resolution is idempotent at the document level
+(`_fixed_point`): its resolved body is a fixed point of a second pass. This
+is why the public backend entry (`Layout.run`, `HtmlDoc.emitTree`) may
+resolve a document the driver already resolved and get the same body — no
+second rewrite — the fact its entry-idempotence corollary rests on. -/
+theorem resolveMathAlphas_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc) :
+    (resolveMathAlphas coverage family (resolveMathAlphas coverage family doc).1).1
+      = (resolveMathAlphas coverage family doc).1 := by
+  simp only [resolveMathAlphas]
+  exact mapDoc_idem coverage doc
+
 mutual
 
 /-- The census face of the map, per node: a leaf function that conserves
