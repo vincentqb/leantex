@@ -369,3 +369,53 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   t "underline and line-through compose as two typed decoration kinds"
     (both.any (fun (kind, _, _, _, _) => kind == .underline) &&
       both.any (fun (kind, _, _, _, _) => kind == .lineThrough))
+
+  -- Drawn decoration must reach every finalized line path, not only body
+  -- paragraphs: a strike inside a footnote (body ink on a note-flagged
+  -- line) and inside a running foot (furniture) each paints its
+  -- through-line from the one owner (`Layout.decorationRiders`, applied in
+  -- `furnishPage`). HTML strikes the same IR node on the note (agreement);
+  -- furniture has no HTML counterpart, so its agreement is Layout.Out + PDF.
+  let throughOf (ls : Array Layout.LineOut) :
+      Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+    ls.flatMap fun l => l.segs.filterMap fun s => match s with
+      | .decoration .lineThrough w thickness raise color => some (w, thickness, raise, color)
+      | _ => none
+  let paintedInPdf (doc2 : Ir.Doc) (o : Layout.Out) : Bool :=
+    let tree := Struct.ofDoc (Layout.pdfView doc2)
+    let fills := (Pdf.pageOps (Layout.Geom.ofPage doc2.page) oneFace o.pages {} tree).flatMap
+      fun ops => pdfFillsList #[] ops.toList
+    let through := throughOf (allLines o)
+    !through.isEmpty && through.all fun (w, thickness, _, color) => fills.contains (color, w, thickness)
+
+  let fnSrc := dvDoc load "Body claim.\\footnote{Note with \\sout{crossed} words.}"
+  let (fnDoc, fnDs) := elabStr fnSrc
+  let fnOut := layoutOf oneFace fnDoc
+  let fnNoteStrike := throughOf (fnOut.pages.flatMap (·.lines.filter (·.note)))
+  t "a strike inside a footnote paints a through-line on the note line"
+    (!fnNoteStrike.isEmpty &&
+      fnNoteStrike.all (fun (w, _, raise, _) => w > 0 && raise > 0) &&
+      fnDs.all (·.severity != .error))
+  t "the footnote through-line becomes a PDF fill" (paintedInPdf fnDoc fnOut)
+  let (fnHtml, _) := HtmlDoc.emit {} fnDoc
+  t "HTML strikes the same footnote text, kept accessible (PDF and HTML agree)"
+    (hasStr fnHtml "<s>" && hasStr fnHtml "crossed")
+
+  let rfSrc := dvDoc "\\runningfoot{p. \\sout{draft} \\pagenumber}" "Body text stands here."
+  let (rfDoc, rfDs) := elabStr rfSrc
+  let rfOut := layoutOf oneFace rfDoc
+  let rfFurnStrike := throughOf (rfOut.pages.flatMap (·.lines.filter (·.furniture)))
+  t "a strike inside a running foot paints a through-line on the furniture line"
+    (!rfFurnStrike.isEmpty &&
+      rfFurnStrike.all (fun (w, _, raise, _) => w > 0 && raise > 0) &&
+      rfDs.all (·.severity != .error))
+  t "the running-foot through-line becomes a PDF fill" (paintedInPdf rfDoc rfOut)
+
+  -- No double paint: the one owner replaced the body paragraph's own
+  -- sibling, so the single-line body strike paints exactly one through-line
+  -- overlay — a second finalized line carrying the decoration would mean a
+  -- duplicate.
+  let bodyThrough := (bodyLines out).filter fun l =>
+    l.segs.any (· matches .decoration .lineThrough ..)
+  t "the body strike paints exactly one through-line overlay (no double paint)"
+    (bodyThrough.size == 1)
