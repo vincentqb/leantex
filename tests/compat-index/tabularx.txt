@@ -1,0 +1,8 @@
+# source: installed tabularx.sty 2.12a — the tabularx environment,
+# X column declaration, tracing command, tabularxcolumn customization,
+# and arraybackslash helper.
+body impl \begin{tabularx}{\linewidth}{lX}Key & Value words.\end{tabularx}
+body impl \begin{tabularx}{8cm}{XX}Left & Right.\end{tabularx}
+pre refuse:W0301 \tracingtabularx
+pre refuse:W0303 \renewcommand\tabularxcolumn[1]{m{#1}}
+body refuse:W0301 \arraybackslash

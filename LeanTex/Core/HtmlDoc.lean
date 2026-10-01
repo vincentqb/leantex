@@ -5145,6 +5145,7 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     match c.width with
     | .sized e => some (Html.elem "col" #[] #[
         ("style", s!"width: {Ir.Track.css (.affine e)}")])
+    | .flex _ => some (Html.elem "col" #[] #[("style", "width: 100%")])
     | .natural => some (Html.elem "col" #[] #[])
   let rowEls := rows.mapIdx fun i row =>
     let cls := Id.run do
@@ -5177,7 +5178,13 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     if headerRows < rows.size then
       kids := kids.push (Html.elem "tbody" (rowEls.extract headerRows rowEls.size))
     return kids
-  Html.elem "table" kids #[("class", cls)]
+  let target := cols.findSome? fun c => match c.width with
+    | .flex t => some t
+    | .natural | .sized _ => none
+  let attrs := match target with
+    | some t => #[("class", cls), ("style", "width: " ++ t.css)]
+    | none => #[("class", cls)]
+  Html.elem "table" kids attrs
 
 /-- A use of a role in the artifact references the role, not only its frozen
 value: the emitted span's colour is `var(--n, …)`, resolved against the
