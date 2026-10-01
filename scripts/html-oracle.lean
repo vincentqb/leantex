@@ -45,7 +45,7 @@ def readers : List String := ["chromium", "firefox"]
 
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
-  ["load", "images", "fonts", "mathml", "lang", "landmarks", "snaps", "box-side",
+  ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
    "print-sheets", "no-script"]
 
@@ -204,6 +204,37 @@ const checks = {
     });
     return { ok: bad.length === 0, n: ms.length,
       why: bad.length ? `${bad.length}/${ms.length} <math> with an empty box or outside the MathML namespace` : '' };
+  },
+  // A text-sourced math alphabet projects to real CSS, because Chromium (and
+  // WebKit) honour no non-`normal` mathvariant: so the leaf's COMPUTED
+  // family/weight/style must be the slot's, not the surrounding math font.
+  // Every styled leaf carries `font-family: var(--font-*)` inline; here the
+  // computed family must equal that variable's own resolved value (the inline
+  // rule beat `math { font-family: var(--font-math) }`), the computed weight
+  // must be 700 exactly when the inline style asked for it, the computed
+  // style italic exactly when it did, and the shown scalar must stay the
+  // literal base character (ASCII), never a Mathematical Alphanumeric remap.
+  mathAlpha: () => {
+    const norm = (s) => String(s).replace(/["']/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const leaves = [...document.querySelectorAll('math mi[style*="--font-"], math mn[style*="--font-"]')];
+    const bad = [];
+    for (const el of leaves) {
+      const cs = getComputedStyle(el);
+      const m = /var\((--font-[a-z]+)\)/.exec(el.style.fontFamily || el.getAttribute('style') || '');
+      const wantFam = m ? norm(cs.getPropertyValue(m[1])) : '';
+      const gotFam = norm(cs.fontFamily);
+      const wantWeight = (el.style.fontWeight || '400');
+      const wantStyle = (el.style.fontStyle || 'normal');
+      const text = el.textContent || '';
+      const cp = text.codePointAt(0);
+      const ok = m && wantFam.length > 0 && gotFam === wantFam
+        && String(cs.fontWeight) === String(wantWeight)
+        && cs.fontStyle === wantStyle
+        && [...text].length === 1 && cp < 0x80;
+      if (!ok) bad.push(`${el.tagName.toLowerCase()} '${text}' family ${gotFam} want ${wantFam} weight ${cs.fontWeight} want ${wantWeight} style ${cs.fontStyle} want ${wantStyle} cp ${cp}`);
+    }
+    return { ok: bad.length === 0, n: leaves.length,
+      why: bad.length ? `${bad.length}/${leaves.length} styled math leaves off: ${bad[0]}` : '' };
   },
   lang: () => {
     const l = document.documentElement.lang;
