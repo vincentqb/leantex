@@ -3,6 +3,7 @@ import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
 import Tests.BoxRow
+import Tests.RecipeStructure
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -429,7 +430,11 @@ def reports : List Report := [
       thm% Layout.resolveMathAlphas_layout_agree,
       thm% MathMl.resolveMathAlphas_html_agree,
       check% mathChecks]
-    state := .guarded "236d3b06" .before .author }
+    state := .guarded "236d3b06" .before .author },
+  { id := "R65", date := "2026-10-01"
+    what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
+    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text]
+    state := .guarded "82e1e271" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
