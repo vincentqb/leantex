@@ -2791,6 +2791,13 @@ is transient execution state, not a scoped assignment. -/
 private def condStopSpaces : M Unit := do
   if (← get).ignoreSpaces then write fun st => { st with ignoreSpaces := false }
 
+/-- An executed prefix and the next unread source index. A split word's
+remainder stays separate: it is caller text, not output of the expansion. -/
+private structure CondRun where
+  raws : Array Raw
+  stop : Nat
+  tail : Array Raw := #[]
+
 mutual
 
 /-- Resolve the decidable conditionals at one level. `stack` holds every open
@@ -2799,25 +2806,26 @@ keeps what is read now (`CondOpen.keeps`), and a bare `\else`, `\or` or
 `\fi` with nothing open is not ours and passes through. `skip` counts the
 raws a decided head's test consumed. The list drives the recursion; `raws`
 and `i` give the heads their lookahead, exactly as `rewriteList` pairs
-them. -/
+them. `following` is available to a forwarded macro's argument reader,
+but is not otherwise executed by this replacement's walk. -/
 private def condList
-    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat)))
-    (plan : List Bool) (raws : Array Raw)
+    (ex : String → Pos → Array Raw → Nat → M (Option CondRun))
+    (plan : List Bool) (raws following : Array Raw)
     (out : Array Raw) (stack : List CondOpen) :
-    List Raw → Nat → Nat → M (Array Raw)
-  | [], _, _ => pure out
-  | _ :: rest, i, skip + 1 => condList ex plan raws out stack rest (i + 1) skip
+    List Raw → Nat → Nat → M CondRun
+  | [], i, skip => pure { raws := out, stop := i + skip }
+  | _ :: rest, i, skip + 1 => condList ex plan raws following out stack rest (i + 1) skip
   | .space :: rest, i, 0 => do
     let out := if plan.isEmpty && stack.all CondOpen.keeps && !(← get).ignoreSpaces
       then out.push .space else out
-    condList ex plan raws out stack rest (i + 1) 0
+    condList ex plan raws following out stack rest (i + 1) 0
   | .ctrl "newif" pos :: .ctrl n np :: rest, i, 0 => do
     -- `\newif\ifX` declares a decidable flag, initially false (plain TeX:
     -- `\newif` ends with `\csname …false\endcsname`): `\ifX` joins this
     -- pass, `\Xtrue`/`\Xfalse` set it. A `\newif` whose next token is not
     -- an `\if…` name passes through for the ordinary unknown warning.
     if !(stack.all CondOpen.keeps) then
-      condList ex [] raws out stack rest (i + 2) 0
+      condList ex [] raws following out stack rest (i + 2) 0
     else if n.startsWith "if" && n.length > 2 then
       condStopSpaces
       let x := (n.drop 2).toString
@@ -2831,13 +2839,13 @@ private def condList
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
           ((← get).useSite.getD pos)
-      condList ex [] raws out stack rest (i + 2) 0
+      condList ex [] raws following out stack rest (i + 2) 0
     else
       condStopSpaces
-      condList ex [] raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
+      condList ex [] raws following ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
   | .ctrl "newif" pos :: .space :: .ctrl n np :: rest, i, 0 => do
     if !(stack.all CondOpen.keeps) then
-      condList ex [] raws out stack rest (i + 3) 0
+      condList ex [] raws following out stack rest (i + 3) 0
     else if n.startsWith "if" && n.length > 2 then
       condStopSpaces
       let x := (n.drop 2).toString
@@ -2851,40 +2859,40 @@ private def condList
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
           ((← get).useSite.getD pos)
-      condList ex [] raws out stack rest (i + 3) 0
+      condList ex [] raws following out stack rest (i + 3) 0
     else
       condStopSpaces
-      condList ex [] raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
+      condList ex [] raws following (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
         stack rest (i + 3) 0
   | .ctrl "else" pos :: rest, i, 0 => do
     match stack with
     | [] =>
       condStopSpaces
-      condList ex [] raws (out.push (.ctrl "else" pos)) [] rest (i + 1) 0
-    | .decided k :: more => condList ex [] raws out (.decided (!k) :: more) rest (i + 1) 0
-    | .cased sel cur _ :: more => condList ex [] raws out (.cased sel cur true :: more) rest (i + 1) 0
+      condList ex [] raws following (out.push (.ctrl "else" pos)) [] rest (i + 1) 0
+    | .decided k :: more => condList ex [] raws following out (.decided (!k) :: more) rest (i + 1) 0
+    | .cased sel cur _ :: more => condList ex [] raws following out (.cased sel cur true :: more) rest (i + 1) 0
     | .opaque :: more =>
       if more.all CondOpen.keeps then condStopSpaces
       let out := if more.all CondOpen.keeps then out.push (.ctrl "else" pos) else out
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
   | .ctrl "or" pos :: rest, i, 0 => do
     match stack with
     | .cased sel cur false :: more =>
-      condList ex [] raws out (.cased sel (cur + 1) false :: more) rest (i + 1) 0
+      condList ex [] raws following out (.cased sel (cur + 1) false :: more) rest (i + 1) 0
     | _ =>
       if stack.all CondOpen.keeps then condStopSpaces
       let out := if stack.all CondOpen.keeps then out.push (.ctrl "or" pos) else out
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
   | .ctrl "fi" pos :: rest, i, 0 => do
     match stack with
     | [] =>
       condStopSpaces
-      condList ex [] raws (out.push (.ctrl "fi" pos)) [] rest (i + 1) 0
+      condList ex [] raws following (out.push (.ctrl "fi" pos)) [] rest (i + 1) 0
     | .opaque :: more =>
       if more.all CondOpen.keeps then condStopSpaces
       let out := if more.all CondOpen.keeps then out.push (.ctrl "fi" pos) else out
-      condList ex [] raws out more rest (i + 1) 0
-    | _ :: more => condList ex [] raws out more rest (i + 1) 0
+      condList ex [] raws following out more rest (i + 1) 0
+    | _ :: more => condList ex [] raws following out more rest (i + 1) 0
   | .ctrl "endinput" pos :: rest, i, 0 => do
     -- TeX reads the rest of the line, then no more of the file (TeXbook
     -- ch. 20). Only a file's own top level is cut: elsewhere the name
@@ -2892,7 +2900,7 @@ private def condList
     -- the conditionals the line closes close with it, and what else the
     -- line holds stands as written.
     if !(stack.all CondOpen.keeps) then
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
     -- premise: endInputChecks — a wrapper's top level is a file's own text,
     -- the one list TeX stops reading at a terminator
     else if (← get).fileTop then
@@ -2900,11 +2908,12 @@ private def condList
       if (rest.drop line.length).any fun r => !(r matches .space | .par _) then
         became "\\endinput" s!"the end of '{(← get).file}': its later lines are not read" pos
           (subject := some "ctrl:endinput")
-      return out ++ (line.filter fun r =>
-        !(r matches .ctrl "fi" _ | .ctrl "else" _ | .ctrl "or" _)).toArray
+      let kept := line.filter fun r =>
+        !(r matches .ctrl "fi" _ | .ctrl "else" _ | .ctrl "or" _)
+      return { raws := out ++ kept.toArray, stop := i + 1 + rest.length }
     else
       condStopSpaces
-      condList ex [] raws (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
+      condList ex [] raws following (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
   | .ctrl n pos :: rest, i, 0 => do
     let st ← get
     -- `\unless` before a head reverses the head's test (e-TeX).
@@ -2919,7 +2928,7 @@ private def condList
       if stack.isEmpty && !condExtent st.flags raws hi then
         -- An extent the pass cannot match: left whole for what follows.
         condStopSpaces
-        condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+        condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
       else
         let r := readHead st raws hi head unlessHead.isSome
         let live := stack.all CondOpen.keeps
@@ -2935,29 +2944,29 @@ private def condList
         | .opaque, some (h, hp) =>
           if live then condStopSpaces
           let out := if live then (out.push (.ctrl n pos)).push (.ctrl h hp) else out
-          condList ex [] raws out stack' rest (i + 1) 1
+          condList ex [] raws following out stack' rest (i + 1) 1
         | .opaque, none =>
           if live then condStopSpaces
           let out := if live then out.push (.ctrl n pos) else out
-          condList ex [] raws out stack' rest (i + 1) 0
+          condList ex [] raws following out stack' rest (i + 1) 0
         | _, _ =>
           if r.tail.isSome && stack'.all CondOpen.keeps then condStopSpaces
           let out := match r.tail with
             | some t => if stack'.all CondOpen.keeps then out.push t else out
             | none => out
-          condList ex [] raws out stack' rest (i + 1)
+          condList ex [] raws following out stack' rest (i + 1)
             (r.used + (if unlessHead.isSome then 1 else 0))
     else if !(stack.all CondOpen.keeps) then
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
     else if let some close := groupPrimitives.lookup n then
       condStopSpaces
       let mark ← condMark
       write fun st => { st with primitiveScopes := st.primitiveScopes.push (close, mark) }
-      condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if st.primitiveScopes.back?.any (·.1 == n) then
       condStopSpaces
       if let some (_, mark) := st.primitiveScopes.back? then condClose mark
-      condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if let some pt := deferredHooks.lookup n then
       condStopSpaces
       let j := skipSpaces raws (i + 1)
@@ -2967,13 +2976,13 @@ private def condList
         -- hookChecks holds nested and body declarations to their named fallback.
         if !st.condInDoc && !st.condReplaying then
           deferOne n pt body pos
-          condList ex [] raws out stack rest (i + 1) (j - i)
+          condList ex [] raws following out stack rest (i + 1) (j - i)
         else
           sayOnce ("ctrl:" ++ n) .W0340
             s!"'\\{n}' cannot defer from here; its group is read where it stands" pos
             (help := "declare the hook before '\\begin{document}'")
-          condList ex [] raws out stack rest (i + 1) 0
-      | _ => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+          condList ex [] raws following out stack rest (i + 1) 0
+      | _ => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if let some (test, query) := (loadedTests.find? (·.ctrl == n)).bind fun test =>
         (loadedAt raws (i + 1) test).map (test, ·) then
       -- premise: loadedTestChecks — selected branches execute where the
@@ -2982,16 +2991,16 @@ private def condList
       | some ans =>
         let msg := loadedMsg test query ans
         sayOnce ("ifloaded:" ++ msg) .N0114 msg (st.useSite.getD pos)
-        condList ex (loadedPlan test ans) raws out stack rest (i + 1) 0
+        condList ex (loadedPlan test ans) raws following out stack rest (i + 1) 0
       | none =>
         condStopSpaces
-        condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+        condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if n == "apptocmd" then
       condStopSpaces
       -- Patch text and callbacks are arguments, not conditionals in force.
       -- The finite hook arm decides the whole call after these passes.
       let (_, k, _) := takeHookArgs raws (i + 1)
-      condList ex [] raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
+      condList ex [] raws following ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
         stack rest (i + 1) (k - (i + 1))
     else if n.endsWith "true" && st.flags.contains (n.dropEnd 4).toString then
       condStopSpaces
@@ -3002,7 +3011,7 @@ private def condList
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on"
           (st.useSite.getD pos)
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
     else if n.endsWith "false" && st.flags.contains (n.dropEnd 5).toString then
       condStopSpaces
       let x := (n.dropEnd 5).toString
@@ -3012,7 +3021,7 @@ private def condList
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
           (st.useSite.getD pos)
-      condList ex [] raws out stack rest (i + 1) 0
+      condList ex [] raws following out stack rest (i + 1) 0
     else if condDefiners.contains n then
       condStopSpaces
       let bound := if definesNext.contains n then
@@ -3030,7 +3039,7 @@ private def condList
             discard s!"\\{n}\{\\{m}}" why s!"{n}:{m}" (st.useSite.getD pos)
             -- Consume every operand before later passes can collect a hook
             -- from the ignored signature or replacement text.
-            return ← condList ex [] raws out stack rest (i + 1) (sh.stop - (i + 1))
+            return ← condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
         unless provide && st.binds.contains m do
           -- Inside a frame the pass cannot decide, the branch may not run:
           -- the name is bound (the flat reading), its value unread.
@@ -3044,7 +3053,7 @@ private def condList
               recordValue key (v.map fun c => { c with optional := none }) global
           recordValue m v global (copied := n == "let")
       match definerShape raws i n with
-      | none => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      | none => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
         -- The texts are expanded where the definition is used, never here:
         -- nothing in them is decided, set or defined now. What the
@@ -3062,7 +3071,7 @@ private def condList
         if n == "let" && expands then
           became s!"\\let\\{bound.getD n}" "a copied command definition"
             (st.useSite.getD pos) (subject := some (bound.getD n))
-          return ← condList ex [] raws out stack rest (i + 1) (sh.stop - (i + 1))
+          return ← condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
         let settles := liveVal.any (·.arity == 0) && !st.condInDoc
         let refused := (n == "def" || n == "gdef") &&
           (undelimitedArity
@@ -3098,21 +3107,24 @@ setting or another definition, which TeX executes where it is used; this engine 
 execute this definition there, so that part of the text is skipped whole")
             (site.getD pos)
             (help := "use \\def with undelimited arguments or \\newcommand")
-        condList ex [] raws ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
+        condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
     else if condNoExpand.contains n then
       condStopSpaces
       -- The next token is read as itself here, never expanded.
       match rest with
-      | r :: _ => condList ex [] raws ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
-      | [] => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      | r :: _ => condList ex [] raws following ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
+      | [] => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
       if !st.condInDoc then recordLoad raws n i
-      match ← ex n pos raws (i + 1) with
-      | some (body, stop) =>
-        condList ex [] raws (out ++ body) stack rest (i + 1) (stop - (i + 1))
+      match ← ex n pos (raws ++ following) (i + 1) with
+      | some run =>
+        if run.stop > i + 1 + rest.length then
+          return { run with raws := out ++ run.raws }
+        condList ex [] raws following (out ++ run.raws ++ run.tail)
+          stack rest (i + 1) (run.stop - (i + 1))
       | none =>
         condStopSpaces
-        condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+        condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
   | r :: rest, i, 0 => do
     match plan with
     | keep :: more =>
@@ -3121,12 +3133,12 @@ execute this definition there, so that part of the text is skipped whole")
         | .group body _ => pure (out ++ body)
         | r => pure (out.push r)
         else pure out
-      condList ex more raws out stack rest (i + 1) 0
+      condList ex more raws following out stack rest (i + 1) 0
     | [] =>
       if stack.all CondOpen.keeps then
-        condList ex [] raws (out.push (← condOne ex true r)) stack rest (i + 1) 0
+        condList ex [] raws following (out.push (← condOne ex true r)) stack rest (i + 1) 0
       else
-        condList ex [] raws out stack rest (i + 1) 0
+        condList ex [] raws following out stack rest (i + 1) 0
 
 /-- Descend into a group, math or an environment body. The definition state
 is restored when its TeX group closes (`condClose`). A selected test operand
@@ -3135,25 +3147,25 @@ group in its text still does. A picture's own bindings are known before its
 body is read. An `\input` wrapper switches the file its notes name, as
 `rewriteRaw` does, and is no group at all. -/
 private def condOne
-    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat)))
+    (ex : String → Pos → Array Raw → Nat → M (Option CondRun))
     (groupScope : Bool) : Raw → M Raw
   | .group body p => do
     if groupScope then condStopSpaces
     let m ← condMark
     let top := (← get).fileTop
     if groupScope then write fun st => { st with fileTop := false }
-    let body' ← condList ex [] body #[] [] body.toList 0 0
+    let body' ← condList ex [] body #[] #[] [] body.toList 0 0
     let _ ← swapTop top
     if groupScope then condClose m
-    return .group body' p
+    return .group body'.raws p
   | .math d body p => do
     condStopSpaces
     let m ← condMark
     let top ← swapTop false
-    let body' ← condList ex [] body #[] [] body.toList 0 0
+    let body' ← condList ex [] body #[] #[] [] body.toList 0 0
     let _ ← swapTop top
     condClose m
-    return .math d body' p
+    return .math d body'.raws p
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some f =>
@@ -3163,10 +3175,10 @@ private def condOne
       let saved := (← get).file
       write fun st => { st with file := f }
       let top ← swapTop true
-      let body' ← condList ex [] body #[] [] body.toList 0 0
+      let body' ← condList ex [] body #[] #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun st => { st with file := saved }
-      return .env n body' p
+      return .env n body'.raws p
     | none =>
       if n == "document" then
         -- premise: Tests.macroPhaseChecks — only opening spaces disappear;
@@ -3179,11 +3191,11 @@ private def condOne
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
-      let body' ← condList ex [] body #[] [] body.toList 0 0
+      let body' ← condList ex [] body #[] #[] [] body.toList 0 0
       let _ ← swapTop top
       condClose m
       write fun st => { st with inPicture := inPic }
-      return .env n body' p
+      return .env n body'.raws p
   | r => do
     condStopSpaces
     pure r
@@ -3243,7 +3255,7 @@ so a retained alias sees the current inner text. A live use that still
 needs recursion when the orders rule it out is refused by name; `none`
 leaves it to the elaborator. -/
 private def condExpandAt (bound textBound : Nat) (n : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) : M (Option (Array Raw × Nat)) := do
+    (raws : Array Raw) (start : Nat) : M (Option CondRun) := do
   let st ← get
   let site := st.useSite
   let inPic := st.inPicture
@@ -3280,6 +3292,9 @@ on a conditional this engine cannot decide; the call is left unexpanded"
       let call := (takeCondArgs raws start body.arity (v.optional.map (·.2))).filter
         fun (args, _, _) => args.size == body.arity
       let some (args, stop, tail) := call | do
+        -- premise: macroForwardArgumentsChecks — an incomplete stored forwarder
+        -- waits for its use; an incomplete actual call still names the loss.
+        if st.settling.isSome then return none
         sayOnce ("cond:arguments:" ++ n) .W0104
           s!"'\\{n}' needs {body.arity} arguments before its replacement text can execute; \
 the argument boundary is unread here, so its optional selection and state changes are not applied"
@@ -3289,22 +3304,25 @@ the argument boundary is unread here, so its optional selection and state change
       let origin : Option MacroOrigin := if body.arity > 0 && !inPic && st.settling.isNone
         then some { id := st.macroClock, name := n } else none
       let body := bindRawArgsList args #[] body.raws.toList
+      let following := tail ++ raws.extract stop raws.size
       let nextBound := if serial < bound then serial else bound
       write fun s => { s with
         useSite := some (site.getD pos), macroClock := st.macroClock + 1 }
       let top ← swapTop false
-      let out ← if _h : serial < bound ∨ textSerial < textBound then
+      let run ← if _h : serial < bound ∨ textSerial < textBound then
           condList (fun m p rs k => condExpandAt nextBound textSerial m p rs k)
-            [] body #[] [] body.toList 0 0
+            [] body following #[] [] body.toList 0 0
         else
-          condList (fun _ _ _ _ => pure none) [] body #[] [] body.toList 0 0
+          condList (fun _ _ _ _ => pure none) [] body following #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
       let out := match origin with
-        | some origin => Parse.markMacroList origin #[] out.toList
-        | none => out
-      unless tail.isEmpty do condStopSpaces
-      return some (out ++ tail, stop)
+        | some origin => Parse.markMacroList origin #[] run.raws.toList
+        | none => run.raws
+      let used := run.stop - body.size
+      let remaining := if used == 0 then tail else run.tail
+      unless remaining.isEmpty do condStopSpaces
+      return some { raws := out, stop := stop + (used - tail.size), tail := remaining }
     else if v.live then
       sayOnce ("cond:unexpanded:" ++ n) .W0104
         (s!"'\\{n}' selects an optional argument or holds state changes that TeX executes where it is \
@@ -3326,14 +3344,14 @@ decreasing_by
 
 /-- The expander running text uses: every definition made so far is visible. -/
 private def condTopExpand (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
+    M (Option CondRun) := do
   let bound := (← get).serial + 1
   condExpandAt bound bound n pos raws start
 
 /-- Run `act` and put the definition state back as it was: a definition's
 text settled for the elaborator is read, not run, so nothing it binds, sets
 or defines — globally or not — outlives the reading. -/
-private def condSandbox (act : M (Array Raw)) : M (Array Raw) := do
+private def condSandbox (act : M CondRun) : M (Array Raw) := do
   let saved ← get
   let m ← condMark
   let r ← act
@@ -3341,7 +3359,7 @@ private def condSandbox (act : M (Array Raw)) : M (Array Raw) := do
   write fun st => { st with
     globals := st.globals.shrink m.globals
     loads := saved.loads, deferred := saved.deferred, ignoreSpaces := saved.ignoreSpaces }
-  return r
+  return r.raws
 
 /-- Settle the pending preamble definitions (`CondPending`) against the
 state at the preamble's end, which is where the elaborator reads a text no
@@ -3361,7 +3379,7 @@ private def condSettle : M (Array (String × Pos × Array Raw)) := do
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
           (condList (fun m q rs k => condExpandAt v.serial v.textSerial m q rs k)
-            [] replacement #[] [] replacement.toList 0 0)
+            [] replacement #[] #[] [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
     | _ => pure ()
@@ -3408,8 +3426,8 @@ private def condReplay (hooks : Array (DeferPoint × String × Pos × Array Raw)
   for (pt, file, pos, body) in hooks do
     if pt == point then
       write fun st => { st with file := file }
-      let body ← condList condTopExpand [] body #[] [] body.toList 0 0
-      out := out.push (pt, file, pos, body)
+      let body ← condList condTopExpand [] body #[] #[] [] body.toList 0 0
+      out := out.push (pt, file, pos, body.raws)
   write fun st => { st with
     file := saved.file, fileTop := saved.fileTop
     condReplaying := saved.condReplaying }
@@ -3424,7 +3442,7 @@ private def condDocument (raws : Array Raw) : M (Array Raw) := do
   let d := seam.getD raws.size
   let pre := raws.extract 0 d
   let post := raws.extract d raws.size
-  let pre' ← condList condTopExpand [] pre #[] [] pre.toList 0 0
+  let pre' ← condList condTopExpand [] pre #[] #[] [] pre.toList 0 0
   let hooks := (← get).deferred
   let endHooks ← condReplay hooks .endPreamble
   let texts ← if seam.isSome then condSettle else pure #[]
@@ -3434,8 +3452,8 @@ private def condDocument (raws : Array Raw) : M (Array Raw) := do
   let endHooks := endHooks.map fun (pt, f, pos, body) => (pt, f, pos, patch f body)
   let beginHooks ← condReplay hooks .beginDocument
   write fun st => { st with deferred := endHooks ++ beginHooks }
-  let post' ← condList condTopExpand [] post #[] [] post.toList 0 0
-  return patch file pre' ++ post'
+  let post' ← condList condTopExpand [] post #[] #[] [] post.toList 0 0
+  return patch file pre'.raws ++ post'.raws
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
 `\relax` vanishes. Each control word goes through `ref`, told whether an
