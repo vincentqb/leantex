@@ -25342,3 +25342,17 @@ down from 83 width differences in the frozen baseline. Its 60 selftests
 pass; no difference is exempted. This external report records the
 remaining visual parity boundary. Arbitrary installed-package execution
 also remains outside the implemented TeX subset.
+
+### 2026-10-01 — Math containment has a complete provenance proof
+
+`MathParse.mathContain_accounts` now holds for every parsing environment:
+each successfully contained unknown command comes from the declared
+containment policy, with a known naming-argument count. The proof follows
+the actual text, grid and parser loops through `Loop.OnSuccess`; it neither
+replaces execution with a proof-only fold nor assumes the parser's result.
+Four identical text-group scans share one unchanged reader. Parser notes
+cannot manufacture a containment note.
+
+The staged obligation is removed. This closes MathParse's last open
+obligation and leaves 28 in the queue; the obligation tier records the
+decrease through its producer.
