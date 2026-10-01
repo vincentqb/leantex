@@ -3149,6 +3149,14 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .alpha _ _ body =>
+    -- Unreachable on every public path, the same contract the MathML backend
+    -- states at its own `.alpha` arm: `resolveMathAlphas` eliminates each
+    -- `.alpha` node before any backend (`Math.resolveMathAlphas_covers`), and
+    -- the public entry `run` resolves first (`Ir.resolveMathAlphas`), so the
+    -- alpha-free corpus never takes this arm — two builds differing only here
+    -- are byte-identical on it. A node reaching here still lays its body out,
+    -- so no scalar is dropped; the alphabet styling it carried is the loss the
+    -- resolver would have named (N0018), never silent new content.
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
     -- `\genfrac`'s style argument sets the whole construct in its style
