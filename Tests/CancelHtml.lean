@@ -48,6 +48,34 @@ private def cancelKids : Html.Node → Array Html.Node
 private def cancelHasStr (hay needle : String) : Bool :=
   (hay.splitOn needle).length > 1
 
+/-- The own CSS declaration, rather than a substring that may name a
+property on a different element. -/
+private def cancelCss (key : String) (node : Html.Node) : String :=
+  let decls := (cancelAttr "style" node).splitOn ";"
+  let fields := decls.map fun decl =>
+    let parts := decl.splitOn ":"
+    (parts.headD "" |>.trimAscii.toString,
+      String.intercalate ":" parts.tail |>.trimAscii.toString)
+  (fields.reverse.find? (·.1 == key)).map (·.2) |>.getD ""
+
+/-- A corner triangle's whole containing rectangle lies in the operand:
+right/top anchors and percentage caps govern both axes, and every polygon
+coordinate lies inside that rectangle. A motion path or transform would
+invalidate this argument, even if the other declarations still appeared.
+The browser raster oracle independently checks the platform's paint. -/
+private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
+  let head := (cancelKids box).back?.getD (.text "")
+  let css := cancelAttr "style" head
+  let size := s!"min({MathMl.milliEm (4 * rule)}, 100%)"
+  cancelCss "position" box == "relative" &&
+    cancelCss "position" head == "absolute" &&
+    cancelCss "right" head == "0" && cancelCss "top" head == "0" &&
+    (cancelCss "left" head).isEmpty &&
+    cancelCss "width" head == size && cancelCss "height" head == size &&
+    cancelCss "clip-path" head == "polygon(0 50%, 100% 0, 50% 100%)" &&
+    !cancelHasStr css "offset-" && !cancelHasStr css "transform" &&
+    (cancelKids head).isEmpty
+
 /-- Room allocation cannot change a cancellation target's font-size level.
 The expected level comes from the same IR style rule the PDF layout reads.
 Smaller targets still step down; `samesize` also preserves inherited script
@@ -79,9 +107,8 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           (cancelTargetDepths (some 0) false [] node ==
             [some (cancelStyleDepth (spec.size.style st))])
 
-  -- These are ownership facts about the emitted tree. A triangle's own
-  -- clip-path says nothing about containment in its parent: rendered
-  -- checks must establish the platform's motion-path placement and bounds.
+  -- Ownership and bounded placement are separate facts: the triangle's
+  -- own clip-path alone does not establish containment in the operand.
   let emit (mark : CancelMark) (room thick : Bool) : Html.Node :=
     MathMl.nucNode {} false .ord
       (.cancel mark { room, thick } (if mark == .to then one '7' else .nil) (one 'x'))
@@ -118,6 +145,17 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           t s!"cancel HTML: {label} arrowhead belongs to the struck row"
             ((cancelKids box).size == 2 &&
               cancelHasStr (cancelAttr "style" head) "clip-path: polygon")
+          let rule := ({} : MathMl.Marks).rule * (if thick then 2 else 1)
+          t s!"cancel HTML: {label} arrowhead is bounded at the upper-right corner"
+            (cancelHeadPlaced rule box)
+          for bad in ["left: 0", "right: 1em", "top: -1em", "width: 1em", "height: 1em",
+              "offset-path: shape(from 100% 0%, line to 0% 100%)",
+              "transform: translateX(-100%)"] do
+            let moved := Html.Node.elem "mspace"
+              #[("style", cancelAttr "style" head ++ "; " ++ bad)] #[]
+            let mutated := Html.Node.elem "mrow" #[("style", css)] #[base, moved]
+            t s!"cancel HTML: {label} placement judge rejects {bad}"
+              (!cancelHeadPlaced rule mutated)
           t s!"cancel HTML: {label} target owns its clearance and room"
             (cancelHasStr (cancelAttr "style" valueRow) "padding-left:" &&
               cancelAttr "width" value == (if room then "" else "0"))

@@ -192,10 +192,12 @@ def cancelBand (corner ink half : String) : String :=
 
 /-- A cancel mark over its emitted struck row and value: CSS over the struck
 row's padded box, the box the PDF strikes corner to corner — `padding` the
-clearance, the gradient the band (`cancelBand`), and the arrowhead an empty
-element placed at the box's top-right corner and turned along its diagonal
-by the box itself (`offset-path` over the containing box, `offset-rotate`):
-MathML Core has no `menclose`, and this needs no script. The value is the
+clearance, the gradient the band (`cancelBand`), and the arrowhead a corner
+triangle whose width and height cannot exceed that box. Its four-stroke
+extent reuses the PDF head's length; the half-edge base points make a
+symmetric rising tip inside its containing rectangle. Absolute right/top
+placement anchors it to the padded operand. MathML Core has no `menclose`,
+and this needs no script. The value is the
 row's superscript, a clearance from the head, in the style the package's
 table names — a superscript steps one level down, which `smaller` keeps
 except over a display base (text style there) and `samesize` never takes —
@@ -217,10 +219,9 @@ def cancelNode (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec
   let give := if spec.room then "" else
     s!"margin-left: -{milliEm mk.gap}; margin-right: -{milliEm mk.gap}; "
   let box := s!"{give}padding: {milliEm mk.gap}; background-image: {bands}; {print}"
-  let head := Html.Node.elem "mspace" #[("style", s!"position: absolute; left: 0; top: 0; \
-width: {milliEm (4 * r)}; height: {milliEm (3 * r)}; background: {ink}; \
-clip-path: polygon(0 0, 100% 50%, 0 100%); offset-path: shape(from 100% 0%, line to 0% 100%); \
-offset-distance: 0%; offset-rotate: reverse; offset-anchor: 100% 50%; {print}")] #[]
+  let head := Html.Node.elem "mspace" #[("style", s!"position: absolute; right: 0; top: 0; \
+width: min({milliEm (4 * r)}, 100%); height: min({milliEm (4 * r)}, 100%); background: {ink}; \
+clip-path: polygon(0 50%, 100% 0, 50% 100%); {print}")] #[]
   let base := if mark == .to then
       Html.Node.elem "mrow" #[("style", "position: relative; " ++ box)] (struck.push head)
     else Html.Node.elem "mrow" #[("style", box)] struck
