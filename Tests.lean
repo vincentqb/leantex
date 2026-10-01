@@ -40,6 +40,7 @@ import Tests.MacroArguments
 import Tests.MacroDefaults
 import Tests.MacroRoles
 import Tests.MacroAccent
+import Tests.MacroForwarding
 import Tests.RoleShaping
 import Tests.MacroHookScope
 import Tests.MacroDelimiterScope
@@ -70,7 +71,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
-  macroRoleChecks macroAccentChecks roleShapingChecks
+  macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
   overlaySetChecks mathAlphaSemanticsChecks)
 
@@ -267,6 +268,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   macroDefaultChecks ref oneFace
   macroRoleChecks ref oneFace
   macroAccentChecks ref oneFace
+  macroForwardingChecks ref oneFace
   roleShapingChecks ref oneFace
   macroPhaseChecks ref oneFace
   macroHookScopeChecks ref oneFace

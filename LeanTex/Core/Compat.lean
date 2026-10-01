@@ -3301,7 +3301,9 @@ the argument boundary is unread here, so its optional selection and state change
           (site.getD pos)
           (help := "close an optional argument with ']' and put each required argument in braces")
         return none
-      let origin : Option MacroOrigin := if body.arity > 0 && !inPic && st.settling.isNone
+      -- Native content scopes separate uses of a settled body; settlement
+      -- must retain the executed child's provenance within that body.
+      let origin : Option MacroOrigin := if body.arity > 0 && !inPic
         then some { id := st.macroClock, name := n } else none
       let body := bindRawArgsList args #[] body.raws.toList
       let following := tail ++ raws.extract stop raws.size

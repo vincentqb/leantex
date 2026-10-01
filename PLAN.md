@@ -25527,3 +25527,26 @@ compares complete typed HTML and shipped glyphs against native role
 controls: sixty ownership failures before the fix become zero across
 seventy-two variants. Styled controls load distinct faces explicitly;
 both single-face and full-family callers pass.
+
+### 2026-10-01 — Forwarded arguments keep execution and ownership together
+
+A replacement's trailing macro can read its arguments from the caller's
+remaining tokens. The replacement walk returns executed output, the
+consumed source boundary and any unconsumed part of a word separately.
+Only the executed output receives the macro's role. Required and optional
+arguments remain raw until substituted, so state changes occur in source
+order and a repeated operand executes repeatedly.
+
+An incomplete speculative reading of a stored replacement waits for its
+use; an incomplete actual call still raises W0104. Settling a reusable
+builtin replacement retains its parameterized children's provenance.
+Native content scopes already separate successive uses, so the correction
+needs no additional identity allocator or raw-tree walk.
+
+`macroForwardingChecks` compares complete typed HTML, exact shipped glyphs,
+line positions, painted rules and role counts with native controls. The
+six settled-replacement ownership assertions fail at `7888736c` and pass
+after retaining that provenance. Empty and unreadable builtin replacements
+still raise W0361 and keep their native artifacts. The new check block
+runs in the full suite; nine independent LuaLaTeX oracle cases also cover
+forwarded stateful arguments and an incomplete call.
