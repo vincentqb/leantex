@@ -1080,24 +1080,31 @@ sets an empty line first. `parEnd`: a paragraph break follows, so the next
 paragraph opens with its own separation; otherwise the text after the
 display continues the paragraph. `align`: a display alignment (`align`,
 `gather`), which §1206 always spaces with the long skips and whose rows
-amsmath sets on its strut. The default is the common case, a display
+amsmath sets on its strut. `afterEnv`: in vertical mode the display opens
+right after a list/quote/theorem end, whose `\endtrivlist` leaves `\@endpe`
+set so the opening `\everypar` takes the indent box back (ltlists.dtx:
+`\@doendpe`) — TeX sets no empty line, exactly as after a heading
+(`\@afterheading`). This is the fact the walk read wrongly from its owed
+glue, which a `\vspace` fills too; elaboration knows the preceding
+environment and a space does not. The default is the common case, a display
 inside a paragraph that runs on after it. -/
 structure DisplayCtx where
   inPar : Bool := true
   parEnd : Bool := false
   align : Bool := false
+  afterEnv : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The role a display's context rides in: a name no document command can
 spell (it carries a hyphen, as `inParagraphRole` does). -/
 def DisplayCtx.role (c : DisplayCtx) : String :=
   "display-" ++ (if c.inPar then "p" else "v") ++ (if c.parEnd then "e" else "c") ++
-    (if c.align then "a" else "f")
+    (if c.align then "a" else "f") ++ (if c.afterEnv then "n" else "o")
 
 /-- Every display context, for reading a role back. -/
 def DisplayCtx.all : List DisplayCtx :=
-  [false, true].flatMap fun p => [false, true].flatMap fun e => [false, true].map fun a =>
-    { inPar := p, parEnd := e, align := a }
+  [false, true].flatMap fun p => [false, true].flatMap fun e => [false, true].flatMap fun a =>
+    [false, true].map fun v => { inPar := p, parEnd := e, align := a, afterEnv := v }
 
 /-- The context a role names, if it is a display's. -/
 def DisplayCtx.ofRole? (n : String) : Option DisplayCtx :=
@@ -1106,7 +1113,7 @@ def DisplayCtx.ofRole? (n : String) : Option DisplayCtx :=
 /-- A display's role reads back as its context (`_exact`). -/
 theorem DisplayCtx.ofRole?_role_exact (c : DisplayCtx) : DisplayCtx.ofRole? c.role = some c := by
   cases c with
-  | mk p e a => cases p <;> cases e <;> cases a <;> decide
+  | mk p e a v => cases p <;> cases e <;> cases a <;> cases v <;> decide
 
 /-- A list opening a paragraph adds the class's `\partopsep` at the top
 level and its level-three reset below: 2, 3 and 3 pt at the three standard
@@ -5103,6 +5110,23 @@ def Block.partopsepEnv : Block → Bool
   | .role n _ => n == thmSpaceRole .kernel
   | _ => false
 
+/-- A block whose end leaves TeX's `\@endpe` set (ltlists.dtx `\endtrivlist`,
+`\@doendpe`): a list, a quote, or any theorem-like trivlist. When a display
+opens a paragraph right after one — in vertical mode, possibly across a
+`\vspace` or a blank line but no intervening paragraph of text — the opening
+`\everypar` takes the indent box back, so TeX sets no empty line. One level
+of the in-paragraph wrapper (`inParagraphRole`) is seen through, as that is
+how a list opened mid-paragraph stands in the block stream. -/
+def Block.leavesEndPe : Block → Bool
+  | .list .. | .quote _ => true
+  | .role n body =>
+    (thmSpaceOf? n).isSome ||
+      (n == inParagraphRole && match body with
+        | #[.list ..] | #[.quote _] => true
+        | #[.role m _] => (thmSpaceOf? m).isSome
+        | _ => false)
+  | _ => false
+
 /-- A list or a quote marked as opened inside a paragraph
 (`inParagraphRole`). Anything else stands as it is. -/
 def inParagraph (b : Block) : Block :=
@@ -5190,15 +5214,16 @@ def displayCtxOf (b : Block) : DisplayCtx × Block :=
   | _ => ({}, b)
 
 /-- Record where the display an arm pushed past `k` stands in its paragraph
-(`DisplayCtx`): whether the paragraph flushed just before it had text, and
-whether a paragraph break follows. A display in the default context stays
-unwrapped; anything else pushed stands as it is. -/
-def markDisplay (inPar parEnd : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
+(`DisplayCtx`): whether the paragraph flushed just before it had text,
+whether a paragraph break follows, and whether it opens right after an
+environment end (`afterEnv`, the `\@endpe` state). A display in the default
+context stays unwrapped; anything else pushed stands as it is. -/
+def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
   match blocks.size == k + 1, blocks.back? with
   | true, some b =>
     let (c, d) := displayCtxOf b
     if !d.isDisplay then blocks else
-    let c := { c with inPar, parEnd }
+    let c := { c with inPar, parEnd, afterEnv }
     blocks.pop.push (if c == {} then d else .role c.role #[d])
   | _, _ => blocks
 
@@ -10344,8 +10369,8 @@ private theorem displayCtxOf_text (acc : String) (b : Block) :
 
 /-- Marking a display keeps the sequence's census: whatever context it
 records, the block pushed is the display itself or that display in a role. -/
-theorem markDisplay_text (inPar parEnd : Bool) (k : Nat) :
-    Conserves blocksText (markDisplay inPar parEnd k) := fun xs => by
+theorem markDisplay_text (inPar parEnd afterEnv : Bool) (k : Nat) :
+    Conserves blocksText (markDisplay inPar parEnd afterEnv k) := fun xs => by
   unfold markDisplay
   split
   · next b _ hb =>

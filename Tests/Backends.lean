@@ -543,9 +543,14 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The display formula's block owns both its boundaries through the two
   -- display tokens the PDF walk reads, over TeX's long skip as the screen's
   -- multiple of its quantum (10 pt over 6 pt quanta); the formula element
-  -- itself carries no margin, so the boundary has one emitter. Typed-tree
-  -- half: paragraph, display, paragraph emits the `.display` element between
-  -- two `<p>`s, and the numbered equation joins the same class.
+  -- itself carries no margin, so the boundary has one emitter. HTML uses the
+  -- long skip on both sides as a fixed CSS margin and nothing else: a
+  -- continuous medium has no `\predisplaysize`, so the PDF's short-skip
+  -- choice, the vertical-mode empty line, and the `\@endpe`/`\@afterheading`
+  -- state (`Ir.DisplayCtx.afterEnv`) are placement facts of the page alone —
+  -- the display context role is unwrapped here (`HtmlDoc`'s role arm). Typed-
+  -- tree half: paragraph, display, paragraph emits the `.display` element
+  -- between two `<p>`s, and the numbered equation joins the same class.
   t "html display skips are the two tokens over TeX's long skip"
     ((plainPage.splitOn
       ":where(* + .display) { margin-top: var(--abovedisplayskip, 1.208rem); }").length == 2 &&

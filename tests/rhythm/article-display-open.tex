@@ -1,0 +1,32 @@
+% rhythm: article display math opening a paragraph: a display after a list end (no empty line, TeX's \@endpe state), a display after a \vspace and a display after another display (the empty line amsmath's $$ sets in vertical mode) — the facts the engine reads from the source, not from its owed glue
+% boundary: listend-display Cedar span
+% boundary: vspace-display Fir span
+% boundary: display-display Ivy span
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\usepackage{unicode-math}
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\begin{document}
+Alder sets a line before the list.
+\begin{itemize}
+\item Birch item of the list.
+\end{itemize}
+\[ c + d = \text{Cedar} \]
+Dogwood follows the display after the list end.
+
+Elm sets one line before the vspace.
+
+\vspace{12pt}
+
+\[ e + f = \text{Fir} \]
+Grove follows the display after the vspace.
+
+Hazel sets one line before the pair of displays.
+
+\[ g + h = \text{Holly} \]
+
+\[ i + j = \text{Ivy} \]
+Juniper follows the second display.
+\end{document}

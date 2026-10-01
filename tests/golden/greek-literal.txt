@@ -52,7 +52,7 @@ para
   text "."
 para
   text "A display with both spellings side by side:"
-role display-vef
+role display-vefo
   center
     para
       formula display "Φ(α, β) = α^2 + β_γ - λ \\cos ω"

@@ -54,7 +54,7 @@ frame
     text "Arithmetic"
   para
     text "The first squares:"
-  role display-pea
+  role display-peao
     center
       para
         formula display "1 &= 1^2 \\\\ 1 + 3 &= 2^2"

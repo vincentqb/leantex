@@ -32,7 +32,7 @@ para
   text "."
 para
   text "An alignment carries all of it at once:"
-role display-vea
+role display-veao
   center
     para
       formula display "\\textcolor {blue}{\\textbf {\\sum _k}} a_k &= b \\\\  &= \\text {\\textbf {bound} above}"

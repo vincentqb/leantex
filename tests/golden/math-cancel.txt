@@ -13,14 +13,14 @@ para
   text "."
 para
   text "A value sits beside the arrow and above its operand:"
-role display-pef
+role display-pefo
   center
     para
       formula display "\\cancelto {0}{\\frac {r}{s}} + t^2"
         ord:cancelto{ord:frac{ord:𝑟}{ord:𝑠}}to{ord:0} bin:+ ord:𝑡^{ord:2}
 para
   text "Colour stays inside its group, including the arrow and value:"
-role display-pea
+role display-peao
   center
     para
       formula display "a &= {\\@ink:red \\textcolor {blue}{\\cancelto {7}{z}}} + w^2"

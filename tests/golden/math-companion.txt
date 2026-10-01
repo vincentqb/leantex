@@ -9,7 +9,7 @@ para
   formula inline "f(x) = x^2 - 1"
     ord:𝑓 open:( ord:𝑥 close:) rel:= ord:𝑥^{ord:2} bin:− ord:1
   text " sits inline beside its sentence, its x at the sentence’s own optical size. A display formula takes the same face:"
-role display-vef
+role display-vefo
   center
     para
       formula display "\\sum _{k=1}^{n} k = \\frac {n(n+1)}{2}"

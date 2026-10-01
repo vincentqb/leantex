@@ -8538,7 +8538,9 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
   let k := blocks.size
   let flushed ← flushPara ctx blocks cur
   let out ← displayMathArm ctx false body pos flushed
-  return Ir.markDisplay (Ir.flushedText k flushed) after flushed.size out
+  let inPar := Ir.flushedText k flushed
+  let afterEnv := !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false
+  return Ir.markDisplay inPar after afterEnv flushed.size out
 
 -- The well-founded translation whnf-reduces through the knot's body when
 -- it assembles the fixpoint and its equations; everything the arms call is
@@ -10833,11 +10835,12 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let k := blocks.size
         let flushed ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
+        let afterEnv := !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false
         let blocks ← elabEnvArm ctx' n body epos flushed
         -- A list or quote opened inside an open paragraph (no blank line
         -- before it) rides in the in-paragraph role: `\@trivlist` finds
         -- horizontal mode there and adds no `\partopsep`.
-        elabBlocksGo ctx' raws (i + 1) (Ir.markDisplay inPar (parFollows raws (i + 1))
+        elabBlocksGo ctx' raws (i + 1) (Ir.markDisplay inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (Ir.markInParagraph inPar flushed.size blocks)) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'

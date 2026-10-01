@@ -7401,24 +7401,26 @@ above, resolved at the walk's governing size from the one resolving site
 (`Ir.displaySkipsFor`), and whether TeX sets an empty line first —
 amsmath's `$$` opening a paragraph whose indent box stands (tex.web §1145:
 the paragraph so far is that box), which is neither right after a heading
-(`\@afterheading` takes the box) nor right after an environment whose end
-still stands owed (`\@endpe` takes it). `lead` counts the line's segments
-outside the formula's box. -/
+(`\@afterheading` takes the box) nor right after an environment end whose
+`\@endpe` takes it (`Ir.DisplayCtx.afterEnv`, read from the source by
+elaboration — not inferred from the walk's owed glue, which a `\vspace`
+fills too). `lead` counts the line's segments outside the formula's box. -/
 private def Acc.displayJob (a : Acc) (r : Rd) (lead : Nat := 0) : DisplayJob :=
   let s := Ir.displaySkipsFor a.tokens r.geom.fontSize
   { ctx := r.display, above := r.resolve s.above, aboveShort := r.resolve s.aboveShort
-    emptyLine := !r.display.inPar && !a.afterHeading && a.owed.isEmpty, lead := lead }
+    emptyLine := !r.display.inPar && !a.afterHeading && !r.display.afterEnv, lead := lead }
 
 /-- Opening a display: its skip above is TeX's choice, made where the line
 is set (`B.placeLine`), so the walk pays only what the boundary owes before
 it — inside a paragraph nothing of its own, as TeX spends no `\parskip`
-there; where the display opens a paragraph, TeX's own `\parskip`
-(`Geom.texParskip`) before the empty line amsmath's `$$` sets, never the
-engine's paragraph mark, which stands where TeX indents text and an empty
-line holds none. -/
-private def Acc.openDisplay (a : Acc) (r : Rd) : Acc :=
+there; where the display opens a paragraph (the empty line is set,
+`dj.emptyLine`), TeX's own `\parskip` (`Geom.texParskip`) before that empty
+line, never the engine's paragraph mark, which stands where TeX indents
+text and an empty line holds none. The gate is the display's own fact, not
+the owed glue a `\vspace` would fill. -/
+private def Acc.openDisplay (a : Acc) (r : Rd) (dj : DisplayJob) : Acc :=
   if r.display.inPar then { a with wantDefault := false }.flushGap r
-  else if a.owed.isEmpty && a.wantDefault then
+  else if dj.emptyLine && a.wantDefault then
     { a with wantDefault := false
              ops := a.ops.push (.skip (r.resolve r.geom.texParskip)) }.flushGap r
   else a.flushGap r
@@ -7442,7 +7444,7 @@ measure, placed as TeX places a display (`DisplayJob`). -/
 private def collectDisplayFormula (r : Rd) (a : Acc)
     (content : Array Inline) (indent : Sp) : Acc :=
   let dj := a.displayJob r
-  let a := a.openDisplay r
+  let a := a.openDisplay r dj
   let (a, leaf) := a.leafRange (leafCount content)
   let a := collectPara r a content indent true r.geom.fontSize
     (leaf := leaf) (span := leafCount content) (dispJob := some dj)
@@ -7453,9 +7455,9 @@ private def collectDisplayFormula (r : Rd) (a : Acc)
 stand as they were — the peer gap stands aside, as TeX spends no `\parskip`
 inside a paragraph, and the skip above is the page builder's to choose
 where the line is set. -/
-private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (howed : a.owed = #[])
+private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (dj : DisplayJob) (howed : a.owed = #[])
     (hk : a.anchorAt = none) (hin : r.display.inPar = true) :
-    (a.openDisplay r).ops = a.ops := by
+    (a.openDisplay r dj).ops = a.ops := by
   simp [Acc.openDisplay, Acc.flushGap, hin, howed, hk]
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
@@ -7480,7 +7482,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   -- above and below, TeX's (`DisplayJob`): the mirror box and its fil stand
   -- outside the formula's box.
   let dj := a.displayJob r (lead := 2)
-  let a := a.openDisplay r
+  let a := a.openDisplay r dj
   -- The formula's leaves, then the number's (`Struct`'s shape: the number
   -- is its `.label` node).
   let (a, leaf) := a.leafRange (leafCount content + leafCount num)

@@ -21,7 +21,7 @@ para
   formula inline "2\\pi r"
     ord:2 ord:𝜋 ord:𝑟
   text " is the same inline math."
-role display-vef
+role display-vefo
   center
     para
       formula display "\\sum _i \\alpha _i x^i \\le \\Gamma (n) \\cdot \\prod _j \\beta _j"
@@ -34,14 +34,14 @@ para
   formula inline "\\sqrt [3]{x + 1}"
     ord:sqrt[ord:3]{ord:𝑥 bin:+ ord:1}
   text ", and a grown pair covers a tall fraction:"
-role display-vef
+role display-vefo
   center
     para
       formula display "\\left ( \\frac {a + b}{c} \\right )^2 = \\frac {a^2 + 2ab + b^2}{c^2}"
         inner:left({ord:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}}right)^{ord:2} rel:= ord:frac{ord:𝑎^{ord:2} bin:+ ord:2 ord:𝑎 ord:𝑏 bin:+ ord:𝑏^{ord:2}}{ord:𝑐^{ord:2}}
 para
   text "A big operator carries its limits below and above in display style,"
-role display-vef
+role display-vefo
   center
     para
       formula display "\\sum _{i=1}^{n} i = \\frac {n(n+1)}{2}, \\qquad \\lim _{x \\to 0} \\frac {\\sin x}{x} = 1,"
@@ -51,19 +51,19 @@ para
   formula inline "\\sum _{i=1}^{n} i"
     op:lim:∑^{ord:𝑛}_{ord:𝑖 rel:= ord:1} ord:𝑖
   text " keeps them beside. Alignment points share one x per column:"
-role display-vea
+role display-veao
   center
     para
       formula display "2 + 4 + \\cdots + 2n &= n(n+1) \\\\  f(x) &= x^2 - 1 \\\\  &= (x-1)(x+1)"
         ord:align[(|ord:2 bin:+ ord:4 bin:+ inner:⋯ bin:+ ord:2 ord:𝑛|ord:{} rel:= ord:𝑛 open:( ord:𝑛 bin:+ ord:1 close:))(|ord:𝑓 open:( ord:𝑥 close:)|ord:{} rel:= ord:𝑥^{ord:2} bin:− ord:1)(||ord:{} rel:= open:( ord:𝑥 bin:− ord:1 close:) open:( ord:𝑥 bin:+ ord:1 close:))]
-role display-vea
+role display-veao
   center
     para
       formula display "a + b = c \\\\  x^2 + y^2 = z^2"
         ord:gather[(|ord:𝑎 bin:+ ord:𝑏 rel:= ord:𝑐)(|ord:𝑥^{ord:2} bin:+ ord:𝑦^{ord:2} rel:= ord:𝑧^{ord:2})]
 para
   text "A matrix is an array between grown delimiters, its cells in text style:"
-role display-vef
+role display-vefo
   center
     para
       formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\  x' & \\frac {1}{2}\\end{array} \\right ]"
@@ -108,7 +108,7 @@ para
   formula inline "\\vecb {w}"
     ord:alpha:bf{ord:𝑤}
   text "."
-role display-vef
+role display-vefo
   center
     para
       formula display "e^{i\\pi} + 1 = 0"

@@ -1961,6 +1961,43 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let pRuns := pOf (long ++ "\n\\[ x = 1 \\]\nBravo words.")
   t "the text a display runs on into pays no parskip"
     (three pRuns && step pRuns 1 == w sk.below + bs)
+  -- **The empty line is set from the display's own fact, not the walk's
+  -- owed glue.** amsmath's `$$` sets an empty line when it opens a
+  -- paragraph in vertical mode (tex.web §1145), suppressed only where
+  -- `\@endpe`/`\@afterheading` take the indent box — the fact elaboration
+  -- records (`Ir.DisplayCtx.afterEnv`), never inferred from owed glue a
+  -- `\vspace` or a preceding display's skip-below fills too. These are
+  -- fail-first on the owed-glue reading: owed is non-empty at each opening,
+  -- so that reading set no empty line and no `\parskip` before it.
+  let vsp := linesOf (long ++ "\n\n\\vspace{10pt}\n\\[ x = 1 \\]\nBravo words.")
+  t "a display opening a paragraph after a vspace sets the empty line, the vspace glue above it"
+    (three vsp && step vsp 0 == Dim.pt 10 + bs + w sk.aboveShort + bs)
+  let dd := linesOf "Alpha.\n\\[ a = 0 \\]\n\n\\[ x = 1 \\]\nBravo."
+  t "a display opening a paragraph after another display sets the empty line over the skip below the first"
+    (dd.size == 4 && step dd 1 == w sk.belowShort + bs + w sk.aboveShort + bs)
+  -- The `\@endpe` state suppresses the empty line: a display right after a
+  -- list end sets none, though the list leaves owed glue exactly as the
+  -- `\vspace` above does. The pair isolates the fact — equal owed, one
+  -- empty line (`bs`) apart — and is where the owed-glue reading was blind.
+  let listend := linesOf "\\begin{itemize}\\item A\\end{itemize}\n\n\\[ x = 1 \\]\nBravo."
+  let vsp2 := linesOf "Alpha words.\n\n\\vspace{10pt}\n\\[ x = 1 \\]\nBravo words."
+  t "a display after a list end sets no empty line, one amsmath sets after an equal vspace"
+    (listend.size == 3 && vsp2.size == 3 && step vsp2 0 == step listend 0 + bs)
+  -- A control between the text and the display opens the display's
+  -- paragraph whether or not a blank line follows it: the empty line is the
+  -- vertical-mode fact, not a literal blank line in the source.
+  let ctrlNo := linesOf "Alpha words.\n\\vspace{3pt}\n\\[ x = 1 \\]\nBravo."
+  let ctrlBlank := linesOf "Alpha words.\n\n\\vspace{3pt}\n\n\\[ x = 1 \\]\nBravo."
+  t "a vspace with no blank line after it opens the display's empty line, as a blank line would"
+    (ctrlNo.size == 3 && ctrlBlank.size == 3 && step ctrlNo 0 == step ctrlBlank 0 &&
+      step ctrlNo 0 == Dim.pt 3 + bs + w sk.aboveShort + bs)
+  -- With a declared `\parskip` the gate shows twice over: the opening after
+  -- a vspace pays the parskip before its empty line (the owed-glue reading
+  -- paid neither), while a list end still pays no parskip and sets no empty
+  -- line.
+  let pVsp := pOf (long ++ "\n\n\\vspace{10pt}\n\\[ x = 1 \\]\nBravo words.")
+  t "a display opening after a vspace pays the declared parskip before its empty line"
+    (three pVsp && step pVsp 0 == Dim.pt 10 + Dim.pt 5 + bs + w sk.aboveShort + bs)
 
 /-- Vertical spacing is TeX's, checked on the placed lines. Own function,
 same elaboration-budget reason as the others. -/
