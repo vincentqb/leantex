@@ -3112,7 +3112,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     -- No host per-scalar fallback — the projected family carries the base
     -- letter, or the scalar is the never-silent coverage loss (E0405).
     let size := e.sizeAt st
-    let fi := e.fs.lookup style.slot.toNat (if style.bold then 700 else 400) style.italic
+    let fi := e.fs.lookup style.slot.toNat style.weight style.italic
     match glyphOf size (e.fs.get fi) c with
     | some g =>
       ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.leading e.underline raise e.ground e.attr)), acc.2)

@@ -1500,7 +1500,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sfTree := HtmlDoc.blockNode { fonts := some sfFs } sfDoc.body[0]!
   t "typed HTML carries the sans-serif source scalar, not the host remap"
     (nodeTextOne "" sfTree == String.ofList [sfKept] &&
-      mathvariantOne sfTree == some "sans-serif")
+      mathvariantOne sfTree == some "normal" &&
+      styleOne sfTree == some "font-family: var(--font-sans)")
   t "the unavailable sans-serif alphabet is named once by the IR owner"
     ((sfDiags.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).isEmpty)
   -- Phase 2 contract: `remaps = faceCovers`, so a text-sourced alphabet the
@@ -1562,25 +1563,51 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       Math.MathAlphabet.textStyle? .frak == none &&
       Math.MathAlphabet.textStyle? .bfit == none)
   -- (c) The MathML projection: the semantic mathvariant each typed style
-  -- declares, the attribute the `.styled` MathML arm emits.
+  -- declares — now the IR-dump label (`Ir.dump` writes `styled:{variant}`)
+  -- and the semantic meaning, since the MathML leaf no longer emits it
+  -- (Chromium ignores every non-`normal` variant); the browser-honoured
+  -- projection is `.css`, checked next.
   t "MathML: the mathvariant projection of each typed style"
     ((({ slot := .body, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "normal") &&
       (({ slot := .body, bold := true, italic := false } : Math.MathTextStyle).mathvariant == "bold") &&
       (({ slot := .body, bold := false, italic := true } : Math.MathTextStyle).mathvariant == "italic") &&
       (({ slot := .sans, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "sans-serif") &&
       (({ slot := .mono, bold := false, italic := false } : Math.MathTextStyle).mathvariant == "monospace"))
+  -- (c') The CSS projection: the declarations each typed style projects, the
+  -- `style` attribute the `.styled` MathML leaf actually emits. Family from
+  -- the slot's `--font-*` variable, weight 700 only when bold, italic only
+  -- when italic — the axes `Layout` reads from the same style.
+  t "MathML: the CSS projection of each typed style"
+    ((({ slot := .body, bold := false, italic := false } : Math.MathTextStyle).css
+        == "font-family: var(--font-body)") &&
+      (({ slot := .body, bold := true, italic := false } : Math.MathTextStyle).css
+        == "font-family: var(--font-body); font-weight: 700") &&
+      (({ slot := .body, bold := false, italic := true } : Math.MathTextStyle).css
+        == "font-family: var(--font-body); font-style: italic") &&
+      (({ slot := .sans, bold := false, italic := false } : Math.MathTextStyle).css
+        == "font-family: var(--font-sans)") &&
+      (({ slot := .mono, bold := false, italic := false } : Math.MathTextStyle).css
+        == "font-family: var(--font-mono)") &&
+      (({ slot := .sans, bold := true, italic := true } : Math.MathTextStyle).css
+        == "font-family: var(--font-sans); font-weight: 700; font-style: italic"))
   -- (b)+(d) The agreement: for `\mathbf`, the PDF face selection
-  -- (`FontSet.lookup slot.toNat (if bold then 700 else 400) italic`) and the
-  -- MathML `mathvariant` both flow from the ONE style `textStyle? .bf` — the
-  -- run-face witness is above ("mathbf's letters go through the styled bold
-  -- body slot"), the MathML witness in "a text-style command declares its
-  -- semantic mathvariant"; here both projections are tied to the IR fact.
+  -- (`FontSet.lookup slot.toNat weight italic`) and the MathML CSS both flow
+  -- from the ONE style `textStyle? .bf`, through the ONE `weight` owner and
+  -- the ONE slot→family partition (`fontVar_toNat_agree`). The run-face
+  -- witness is above ("mathbf's letters go through the styled bold body
+  -- slot"), the MathML witness in the CSS projection check; here both are
+  -- tied to the IR fact, and the slot's two encodings agree.
   let bfStyle := (Math.MathAlphabet.textStyle? .bf).getD default
   t "PDF and MathML projections agree on the one typed style for mathbf"
     (bfStyle == { slot := .body, bold := true, italic := false } &&
-      mfs.lookup bfStyle.slot.toNat (if bfStyle.bold then 700 else 400) bfStyle.italic
+      mfs.lookup bfStyle.slot.toNat bfStyle.weight bfStyle.italic
         == mfs.lookup 0 700 false &&
-      bfStyle.mathvariant == "bold")
+      bfStyle.weight == 700 &&
+      bfStyle.css == "font-family: var(--font-body); font-weight: 700" &&
+      -- the CSS family partition and the FontSet slot partition agree
+      (Math.MathTextSlot.sans.fontVar == Math.MathTextSlot.sans.fontVar) &&
+      (decide (Math.MathTextSlot.body.fontVar ≠ Math.MathTextSlot.sans.fontVar)
+        == decide (Math.MathTextSlot.body.toNat ≠ Math.MathTextSlot.sans.toNat)))
   -- (Item 2 door) A body carrying an `.alpha` node — what a backend must
   -- never see — resolves to an alpha-free list; the general fact is the
   -- theorem `Math.resolveMathAlphas_covers`.
@@ -1599,6 +1626,49 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         (Math.MNucleus.alpha .bf .doc (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil)) with
       | .elem tag _ kids => tag == "merror" && !kids.isEmpty
       | _ => false)
+
+  -- Blocker 2 (typed tree): the `.styled` MathML leaf projects the family /
+  -- weight / shape onto a real `style` attribute (Chromium honours no
+  -- non-`normal` mathvariant), carries `mathvariant="normal"` on a letter
+  -- `mi` to cancel `math-auto`, and keeps the literal base scalar as its
+  -- text. A digit `mn` needs no cancel; a nested styled scalar reaches the
+  -- same leaf. Each row is the raw nucleus through `MathMl.nucNode`, read by
+  -- its tag, `style`, `mathvariant` and shown text.
+  let styledLeaf (sl : Math.MathTextSlot) (b i : Bool) (c : Char) : Html.Node :=
+    MathMl.nucNode {} false .ord (.styled { slot := sl, bold := b, italic := i } c)
+  let leafFacts (n : Html.Node) : Option (String × Option String × Option String × String) :=
+    match n with
+    | .elem tag attrs _ =>
+      some (tag, (attrs.find? (·.1 == "style")).map (·.2),
+        (attrs.find? (·.1 == "mathvariant")).map (·.2), nodeTextOne "" n)
+    | _ => none
+  t "styled normal letter: mi, body family, no weight/style, mathvariant normal, scalar kept"
+    (leafFacts (styledLeaf .body false false 'x')
+      == some ("mi", some "font-family: var(--font-body)", some "normal", "x"))
+  t "styled bold letter: mi carries font-weight 700, scalar kept"
+    (leafFacts (styledLeaf .body true false 'x')
+      == some ("mi", some "font-family: var(--font-body); font-weight: 700", some "normal", "x"))
+  t "styled italic letter: mi carries font-style italic, scalar kept"
+    (leafFacts (styledLeaf .body false true 'x')
+      == some ("mi", some "font-family: var(--font-body); font-style: italic", some "normal", "x"))
+  t "styled sans letter: mi carries the sans family, scalar kept"
+    (leafFacts (styledLeaf .sans false false 'x')
+      == some ("mi", some "font-family: var(--font-sans)", some "normal", "x"))
+  t "styled mono letter: mi carries the mono family, scalar kept"
+    (leafFacts (styledLeaf .mono false false 'x')
+      == some ("mi", some "font-family: var(--font-mono)", some "normal", "x"))
+  t "styled bold digit: mn carries weight 700 with NO mathvariant cancel, digit kept"
+    (leafFacts (styledLeaf .body true false '7')
+      == some ("mn", some "font-family: var(--font-body); font-weight: 700", none, "7"))
+  -- Nested: a styled scalar inside a subscript still reaches the one leaf,
+  -- styled and scalar-faithful.
+  let nestedStyled : Math.MList :=
+    .cons (.atom .ord (.sym 'a')
+      (.cons (.atom .ord (.styled { slot := .sans } 'k') .nil .nil false) .nil) .nil false) .nil
+  let nestedTree := MathMl.listNodes {} false none #[] nestedStyled
+  t "nested styled sans scalar in a subscript keeps its family, mathvariant normal and letter"
+    (styleOne (.elem "mrow" #[] nestedTree) == some "font-family: var(--font-sans)" &&
+      (nodeTextOne "" (.elem "mrow" #[] nestedTree)).toList.contains 'k')
 
   -- Blocker 1, Part A: source provenance decides the source, not just the
   -- alphabet. On a face that carries the math sans range, `\symsf` (forced
@@ -1628,7 +1698,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Elab.run "synthetic.tex" "$\\mathsf{R}$").1)
   let e2eMathsfTree := HtmlDoc.blockNode { fonts := some alphaFs } e2eMathsf.1.body[0]!
   t "mathsf (default text) is a styled sans text slot, no N0018"
-    (mathvariantOne e2eMathsfTree == some "sans-serif" &&
+    (mathvariantOne e2eMathsfTree == some "normal" &&
+      styleOne e2eMathsfTree == some "font-family: var(--font-sans)" &&
       (e2eMathsf.2.filter (·.code == "N0018")).isEmpty)
   let e2eSymsf := (Ir.resolveMathAlphas alphaCoverage fira.family
     (Elab.run "synthetic.tex" "$\\symsf{R}$").1)
@@ -1810,7 +1881,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "$\\textbf{v}+\\textit{w}+\\texttt{m}+\\textsf{s}$" == [] &&
       glyphChars "$\\textbf{v}$" == #['v'] &&
       glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$" &&
-      mathvariantOne bfvTree == some "bold")
+      mathvariantOne bfvTree == some "normal" &&
+      styleOne bfvTree == some "font-family: var(--font-body); font-weight: 700")
   -- Colour declarations now travel in the math list; the shipped colour
   -- and its scope are held by cancelReportChecks.
   t "a colour inside math keeps its content without a presentation loss"
