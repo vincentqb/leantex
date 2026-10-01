@@ -19,6 +19,12 @@ private def pdfLinkTargets (pdf : ByteArray) : Except String (Array ByteArray) :
       | _ => pure ()
   return out
 
+/-- How many page objects the PDF carries: the physical page count the
+artifact ships. -/
+private def pdfPageCount (pdf : ByteArray) : Except String Nat := do
+  let es ← PdfRead.objects pdf
+  return (es.val.filter fun e => PdfCensus.kindOf e.val == .page).size
+
 private def countTag (tag : String) : Html.Node → Nat
   | .text _ | .style _ | .script _ _ => 0
   | .elem t _ kids => (if t == tag then 1 else 0) + kids.foldl (fun n k => n + countTag tag k) 0
@@ -243,6 +249,106 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
   t "typed HTML keeps the nested tabularx and its target/flexible track"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
+
+/-- **The article `titlepage` environment is an isolated flow page.** The
+installed class opens a fresh page, applies the empty page style, and opens
+another at the close (`classes.dtx`, `\titlepage`). This engine lowers the
+environment before the block knot to the `\pagebreak` the flow already names
+around the body carried in a group — so there is no unknown-environment
+cascade, the body elaborates through the ordinary top-level block paths at
+the document's own flow geometry (its left margin, where LuaLaTeX sets
+ordinary titlepage text, the author's `\vfill` controlling the vertical
+split), a declaration inside ends at the close, and adjacent or boundary
+breaks close only a page holding content so no blank page is left. Assertions
+read the shipped pages (`Layout.Out`), the IR, the PDF page objects, and the
+typed HTML tree. -/
+def recipeTitlePageChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let page := "\\page{ width = 420pt, height = 600pt, hmargin = 54pt, vmargin = 48pt }\n"
+  let cascade := ["W0302", "W0301", "E0336", "E0311"]
+  -- Middle: a title page between lead and tail matter — exactly three pages,
+  -- the two `\clearpage` boundaries LuaLaTeX's `titlepage` sets.
+  let src := dvDoc page
+    ("Lead page.\\begin{titlepage}\nTop marker.\n\\vfill\nBottom marker." ++
+      "\\end{titlepage}Tail page.")
+  let (doc, ds) := elabStr src
+  t "titlepage is recognized with no unknown-environment or wrapper cascade"
+    (ds.all fun d => !cascade.contains d.code)
+  let out := layoutOf oneFace doc
+  let census := censusOf (coveredColorsOf doc) out
+  t "a title page between matter opens and closes exactly one physical page"
+    (out.pages.size == 3 && pageHas census 0 "Lead page." &&
+      pageHas census 1 "Top marker." && pageHas census 1 "Bottom marker." &&
+      pageHas census 2 "Tail page." &&
+      pageOccurs census 1 "Top marker." == 1 && pageOccurs census 2 "Tail page." == 1)
+  -- LuaLaTeX sets ordinary titlepage text left-aligned at the text margin,
+  -- the author's `\vfill` controlling the vertical split; the markers land at
+  -- the document's hmargin with the bottom pushed well below the top.
+  t "titlepage body uses the document's own flow geometry (left margin, author vfill)"
+    (match lineXOf census 1 "Top marker.", lineXOf census 1 "Bottom marker.",
+        lineYOf census 1 "Top marker.", lineYOf census 1 "Bottom marker." with
+     | some xt, some xb, some yt, some yb =>
+       xt == doc.page.hmargin && xb == doc.page.hmargin && yt < yb &&
+         yb - yt > doc.page.height / 3
+     | _, _, _, _ => false)
+  let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
+  t "the PDF artifact carries exactly the three physical pages"
+    (pdfPageCount pdf == .ok 3)
+  let (html, _) := HtmlDoc.emit {} doc
+  t "typed HTML keeps the title page body as one continuous semantic flow"
+    (["Lead page.", "Top marker.", "Bottom marker.", "Tail page."].all (hasStr html ·))
+  -- Leading: no blank page before.
+  let (fdoc, fds) := elabStr (dvDoc page "\\begin{titlepage}\nTitle only.\\end{titlepage}Body after.")
+  let fout := layoutOf oneFace fdoc
+  let fcensus := censusOf (coveredColorsOf fdoc) fout
+  t "a leading title page leaves no blank page before it"
+    (fds.all (fun d => !cascade.contains d.code) && fout.pages.size == 2 &&
+      pageHas fcensus 0 "Title only." && pageHas fcensus 1 "Body after.")
+  -- Trailing: no blank page after.
+  let (ldoc, lds) := elabStr (dvDoc page "Body before.\\begin{titlepage}\nColophon.\\end{titlepage}")
+  let lout := layoutOf oneFace ldoc
+  let lcensus := censusOf (coveredColorsOf ldoc) lout
+  t "a trailing title page leaves no blank page after it"
+    (lds.all (fun d => !cascade.contains d.code) && lout.pages.size == 2 &&
+      pageHas lcensus 0 "Body before." && pageHas lcensus 1 "Colophon.")
+  -- Empty body: adjacent breaks make no blank page; the two sides stay apart.
+  let (edoc, eds) := elabStr (dvDoc page "Before.\\begin{titlepage}\\end{titlepage}After.")
+  let eout := layoutOf oneFace edoc
+  let ecensus := censusOf (coveredColorsOf edoc) eout
+  let etrees := edoc.body.map (HtmlDoc.blockNode {})
+  t "an empty title page produces no blank page"
+    (eds.all (fun d => !cascade.contains d.code) && eout.pages.size == 2 &&
+      pageHas ecensus 0 "Before." && pageHas ecensus 1 "After." &&
+      etrees.foldl (fun n tree => n + countTag "section" tree) 0 == 0)
+  -- Nested block content stays block-shaped on the title page's own page.
+  let nsrc := dvDoc page
+    ("\\begin{titlepage}\n\\begin{center}Centered head.\\end{center}\n" ++
+      "\\begin{itemize}\\item First point.\\item Second point.\\end{itemize}" ++
+      "\\end{titlepage}After matter.")
+  let (ndoc, nds) := elabStr nsrc
+  let nout := layoutOf oneFace ndoc
+  let ncensus := censusOf (coveredColorsOf ndoc) nout
+  let listBlocks := Ir.foldBlocks
+    (fun n b => n + (if b matches .list .. then 1 else 0)) (fun n _ => n) 0 ndoc.body
+  t "nested block content inside a title page stays block-shaped on its page"
+    (nds.all (fun d => !cascade.contains d.code) && nout.pages.size == 2 &&
+      ["Centered head.", "First point.", "Second point."].all (pageHas ncensus 0 ·) &&
+      pageHas ncensus 1 "After matter." && listBlocks >= 1 &&
+      (match lineYOf ncensus 0 "First point.", lineYOf ncensus 0 "Second point." with
+       | some y1, some y2 => y1 < y2
+       | _, _ => false))
+  -- A declaration inside the title page applies there and is restored after:
+  -- the group that carries the body scopes it to the close.
+  let (ddoc, _) := elabStr (dvDoc page "\\begin{titlepage}\\Large Big title.\\end{titlepage}Plain tail.")
+  let dcensus := censusOf (coveredColorsOf ddoc) (layoutOf oneFace ddoc)
+  let (pdoc, _) := elabStr (dvDoc page "Plain tail.")
+  let pcensus := censusOf (coveredColorsOf pdoc) (layoutOf oneFace pdoc)
+  t "a size declaration inside a title page applies there and is restored after"
+    (match lineSizeOf dcensus 0 "Big title.", lineSizeOf dcensus 1 "Plain tail.",
+        lineSizeOf pcensus 0 "Plain tail." with
+     | some big, some tail, some plain => big > tail && tail == plain
+     | _, _, _ => false)
 
 
 

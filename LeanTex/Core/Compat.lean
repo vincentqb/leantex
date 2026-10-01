@@ -8151,6 +8151,29 @@ steps come from its body" p
             | some _ => return .env n (body'.extract (i + 1) body'.size) p
             | none => return .env n body' p
         | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+      else if n == "titlepage" then
+        -- article.cls's `titlepage` opens a fresh page, applies the empty
+        -- page style, and opens another at the close (classes.dtx,
+        -- `\titlepage`). One page model with no running furniture to clear:
+        -- its two boundaries are the `\pagebreak` the flow already names,
+        -- and the body between them is an ordinary block sequence scoped by
+        -- the group that carries it — an environment is a group (ltmiscen.dtx:
+        -- `\begin` opens one; TeXbook ch. 5), so a declaration inside ends at
+        -- the close and the body elaborates through the top-level block
+        -- paths. No new page-opening path: the isolation is `\pagebreak`'s,
+        -- whose vertical distribution and ground stand (`Layout.collectBlocks`,
+        -- `.pagebreak`), and adjacent or boundary breaks close only a page
+        -- holding content, so an empty or leading title page leaves no blank
+        -- page behind. HTML drops the boundary (`HtmlDoc`, `.pagebreak`), so
+        -- the body stays one continuous semantic flow with no paged artifact.
+        let st0 ← get
+        write fun st => { st with tableTop := false, defTop := false }
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        write fun st => { st with lens := st0.lens,
+                                  tableTop := st0.tableTop, defTop := st0.defTop }
+        became "\\begin{titlepage}…\\end{titlepage}"
+          "an isolated flow page (\\pagebreak … \\pagebreak)" p
+        return .group (#[Raw.ctrl "pagebreak" p] ++ body' ++ #[Raw.ctrl "pagebreak" p]) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment: only the arguments its
         -- signature reads reach the definition, as written; the body is
