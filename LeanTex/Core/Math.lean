@@ -679,8 +679,8 @@ def MathTextSlot.fontVar : MathTextSlot → String
 
 /-- The typed style a text-sourced math alphabet resolves to: which text
 family slot, and the weight/shape axes both backends project — the PDF
-through `FontSet.lookup (slot, weight, italic)`, MathML through a
-`mathvariant`. This is the resolved surface of `\mathrm`/`\mathit`/
+through `FontSet.lookup (slot, weight, italic)`, MathML through CSS
+family, weight and style declarations. This is the resolved surface of `\mathrm`/`\mathit`/
 `\mathbf`/`\mathsf`/`\mathtt` under unicode-math's default (text) source:
 the glyph is the plain base letter set in a text family, not a Mathematical
 Alphanumeric scalar. -/
@@ -703,6 +703,22 @@ def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
   | .sf => some { slot := .sans, bold := false, italic := false }
   | .tt => some { slot := .mono, bold := false, italic := false }
   | .bb | .cal | .frak | .bfit | .bm => none
+
+/-- Text alphabets serve Latin letters and digits independently of the
+Unicode symbol ranges: `\mathit{5}` uses the body italic face even though
+Unicode has no mathematical italic digits. Other ranges retain their
+symbol classification, and a symbol source is unchanged. -/
+def MathAlphabet.sourceRangeOf (a : MathAlphabet) (src : MathAlphabetSource)
+    (c : Char) : Option MathAlphabetRange :=
+  if src == .text && a.textStyle?.isSome then
+    MathAlphabet.rm.rangeOf c <|> a.rangeOf c
+  else a.rangeOf c
+
+/-- Selecting a symbol source preserves the Unicode range classifier for
+every alphabet and scalar. Text-family coverage cannot invent a symbol
+range, including the absent italic digits. -/
+theorem MathAlphabet.sourceRangeOf_sym_exact (a : MathAlphabet) (c : Char) :
+    a.sourceRangeOf .sym c = a.rangeOf c := rfl
 
 /-- The semantic MathML `mathvariant` a resolved text style declares: the
 attribute a MathML consumer reads to style the plain base letter, since the
@@ -746,9 +762,8 @@ def MathTextStyle.css (s : MathTextStyle) : String :=
 
 /-- The CSS family partition and the `FontSet` slot partition agree: two
 slots share a `--font-*` family exactly when they share a `FontSet` index.
-So the browser can never set a styled scalar in a different family than the
-PDF selects for it — the two projections of one `MathTextSlot` draw the
-same boundaries. -/
+This proves agreement of slot identifiers, not of loaded font files or
+browser fallback; those environment-dependent facts need artifact checks. -/
 theorem fontVar_toNat_agree (s t : MathTextSlot) :
     s.fontVar = t.fontVar ↔ s.toNat = t.toNat := by
   cases s <;> cases t <;> decide
@@ -1970,7 +1985,7 @@ def resolveCharStack (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c
   | (a, src) :: rest, c =>
-    match a.rangeOf c with
+    match a.sourceRangeOf src c with
     | some r =>
       match a.textStyle? with
       | some sty =>
@@ -1988,7 +2003,7 @@ outer alphabet — the innermost-first order the resolver rests on. -/
 theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (src : MathAlphabetSource)
     (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
-    (sty : MathTextStyle) (hr : a.rangeOf c = some r) (hst : a.textStyle? = some sty)
+    (sty : MathTextStyle) (hr : a.sourceRangeOf src c = some r) (hst : a.textStyle? = some sty)
     (hsrc : src = .text) (hserved : r.textServed = true) :
     resolveCharStack coverage ((a, src) :: rest) c = .styled sty (unItalic c) := by
   have hcond : (src == .text && r.textServed) = true := by
@@ -2003,7 +2018,7 @@ theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
     (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
     (hcov : coverage.remaps a r = true) :
     resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) := by
-  simp [resolveCharStack, hr, hst, hcov]
+  simp [resolveCharStack, MathAlphabet.sourceRangeOf, hr, hst, hcov]
 
 /-- The empty stack leaves the source scalar untouched: only an active
 alphabet can change a glyph. The base fact the resolver rests on. -/
@@ -2089,7 +2104,7 @@ def missingCharAlpha (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Option MathAlphabet
   | [], _ => none
   | (a, src) :: rest, c =>
-    match a.rangeOf c with
+    match a.sourceRangeOf src c with
     | some r =>
       match a.textStyle? with
       | some _ =>
@@ -2109,11 +2124,9 @@ def missingCharAlpha (coverage : MathAlphabetCoverage) :
 
 /-- The census names only scalars the resolver left at their source: if
 `missingCharAlpha` blames an alphabet for `c`, the stack kept `c` as a plain
-math scalar rather than remapping or text-styling it. So the whole-alphabet
-census (the N0018 owner) and the remapped scalars the per-character Layout
-path (W0016, an isolated glyph hole in a covered range) sees are over
-disjoint scalars — no glyph is accounted twice, and the census cannot drift
-from what the resolver rendered. -/
+math scalar rather than remapping or text-styling it. This is a resolver
+fact; it does not establish that the retained scalar exists in a font, or
+that a later fallback diagnostic cannot also name it. -/
 theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (c : Char),
       (missingCharAlpha coverage active c).isSome →
@@ -2123,7 +2136,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
     intro h
     rw [missingCharAlpha] at h
     rw [resolveCharStack]
-    cases hr : a.rangeOf c with
+    cases hr : a.sourceRangeOf src c with
     | none =>
       simp only [hr] at h ⊢
       exact missingCharAlpha_kept coverage rest c h
@@ -2584,7 +2597,7 @@ theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
     resolveCharStack coverage ((a, coverage.effectiveSource .sym a) :: rest) c
       = .sym (a.apply c) := by
   show resolveCharStack coverage ((a, .sym) :: rest) c = .sym (a.apply c)
-  simp only [resolveCharStack, hr]
+  simp only [resolveCharStack, MathAlphabet.sourceRangeOf_sym_exact, hr]
   have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
   cases a.textStyle? <;> simp [hcov, hne]
 
