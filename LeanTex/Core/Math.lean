@@ -2221,6 +2221,25 @@ inductive Resolved where
   | styled (style : MathTextStyle) (c : Char)
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- unicode-math-luatex.sty's `\__um_prepare_mathstyle:n` sets `\fam=-1`
+on every symbol-alphabet entry, even if `\__um_switch_to:n` installs no
+range. Clear an inherited text family, but keep its scalar: an enclosing
+text command's `\use@mathgroup` already switched Latin to literal mathcodes.
+The near-identity `.bm` wrapper is not such an alphabet: bm.sty retains
+the enclosing family for a digit (`\mathit{\bm{5}}`). It currently also
+represents `\boldsymbol`, whose distinct family semantics need a separate
+parser constructor; preserve that wrapper's existing behavior here. -/
+def Resolved.inAlphabet (a : MathAlphabet) (src : MathAlphabetSource) : Resolved → Resolved
+  | .sym c => .sym c
+  | .styled sty c =>
+    if src = .sym ∧ a ≠ .bm then .sym c else .styled sty c
+
+private theorem Resolved.inAlphabet_sym_covers (r : Resolved) (a : MathAlphabet)
+    (ha : a ≠ .bm) : ∃ c, r.inAlphabet a .sym = .sym c := by
+  cases r with
+  | sym c => exact ⟨c, rfl⟩
+  | styled sty c => exact ⟨c, by simp [Resolved.inAlphabet, ha]⟩
+
 /-- Resolve one scalar under a stack of active alphabets, innermost first.
 The first alphabet that classifies `c` into one of its ranges decides:
 
@@ -2230,9 +2249,10 @@ The first alphabet that classifies `c` into one of its ranges decides:
   alphabet's typed style, projected to a text family by the backends;
 * a `sym`-sourced range the selected face carries remaps
   (`MathAlphabet.apply`);
-* a `sym`-sourced range the face does not carry is stepped over, so an outer
-  alphabet can still apply — LuaLaTeX falls a nested uncovered alphabet
-  through to the enclosing one.
+* a `sym`-sourced range the face does not carry retains the enclosing
+  scalar mapping, but clears its text-family selection. The same reset
+  applies when the alphabet has no range for `c`, such as italic digits;
+* the near-identity `.bm` wrapper retains its enclosing resolution.
 
 With the stack exhausted the source scalar stands (`.sym c`). Structural
 recursion on the list, so total by construction. -/
@@ -2240,7 +2260,7 @@ def resolveCharStack (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c
   | (a, src) :: rest, c =>
-    match a.sourceRangeOf src c with
+    Resolved.inAlphabet a src <| match a.sourceRangeOf src c with
     | some r =>
       match a.textStyle? with
       | some sty =>
@@ -2263,7 +2283,9 @@ theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
     resolveCharStack coverage ((a, src) :: rest) c = .styled sty (unItalic c) := by
   have hcond : (src == .text && r.textServed) = true := by
     rw [hsrc, hserved]; rfl
-  simp [resolveCharStack, hr, hst, hcond]
+  simp only [resolveCharStack, hr, hst, hcond, ite_true]
+  subst src
+  rfl
 
 /-- A `sym`-sourced range the selected face carries remaps to the alphabet's
 mathematical-alphanumeric scalar. -/
@@ -2273,7 +2295,35 @@ theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
     (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
     (hcov : coverage.remaps a r = true) :
     resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) := by
-  simp [resolveCharStack, MathAlphabet.sourceRangeOf, hr, hst, hcov]
+  simp [resolveCharStack, MathAlphabet.sourceRangeOf, hr, hst, hcov,
+    Resolved.inAlphabet]
+
+/-- Every symbol alphabet selects the math family, for every scalar,
+coverage table and enclosing stack. Absent ranges and absent coverage
+cannot retain an outer text style. The near-identity `.bm` wrapper is not
+a symbol alphabet. -/
+theorem resolveCharStack_sym_covers (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char)
+    (ha : a ≠ .bm) :
+    ∃ d, resolveCharStack coverage ((a, .sym) :: rest) c = .sym d := by
+  rw [resolveCharStack]
+  exact Resolved.inAlphabet_sym_covers _ a ha
+
+/-- A boundary with no covered remap keeps the enclosing scalar mapping
+and applies only its family rule: symbol alphabets reset it, the `.bm`
+wrapper preserves it. The premise also includes scalars outside all of the
+alphabet's ranges; it is independent of a font name. -/
+theorem resolveCharStack_sym_fallback_exact (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))
+    (c : Char) (hcov : ∀ r, a.rangeOf c = some r → coverage.remaps a r = false) :
+    resolveCharStack coverage ((a, .sym) :: rest) c =
+      (resolveCharStack coverage rest c).inAlphabet a .sym := by
+  simp only [resolveCharStack, MathAlphabet.sourceRangeOf_sym_exact]
+  cases hr : a.rangeOf c with
+  | none => rfl
+  | some r =>
+    have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
+    cases a.textStyle? <;> simp [hcov r hr, hne]
 
 /-- The empty stack leaves the source scalar untouched: only an active
 alphabet can change a glyph. The base fact the resolver rests on. -/
@@ -2285,8 +2335,10 @@ mutual
 /-- Resolve alphabet boundaries in one structural walk. `active` is the
 stack of alphabets in force, innermost first; a nested command pushes onto
 it, as a nested TeX group nests scopes. Each scalar takes the innermost
-active alphabet whose range the face covers, falling through to an outer
-one otherwise. The public entry starts with an empty stack. -/
+active alphabet whose range the face covers; a symbol alphabet resets the
+text family even when its scalar mapping falls through. The near-identity
+`.bm` wrapper preserves its enclosing resolution. The public entry starts
+with an empty stack. -/
 def resolveAlphaList (coverage : MathAlphabetCoverage)
     (active : List (MathAlphabet × MathAlphabetSource)) : MList → MList
   | .nil => .nil
@@ -2395,7 +2447,8 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
     cases hr : a.sourceRangeOf src c with
     | none =>
       simp only [hr] at h ⊢
-      exact missingCharAlpha_kept coverage rest c h
+      rw [missingCharAlpha_kept coverage rest c h]
+      rfl
     | some r =>
       simp only [hr] at h ⊢
       cases hst : a.textStyle? with
@@ -2410,7 +2463,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
             by_cases hcc : (c' == c && (a.apply c != c)) = true
             · have hcceq : c' = c := by
                 simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-              simp [hcceq]
+              simp [hcceq, Resolved.inAlphabet]
             · exact absurd h (by simp [hcov, hrc, hcc])
       | some sty =>
         simp only [hst] at h ⊢
@@ -2426,7 +2479,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
               by_cases hcc : (c' == c && (a.apply c != c)) = true
               · have hcceq : c' = c := by
                   simp only [Bool.and_eq_true, beq_iff_eq] at hcc; exact hcc.1
-                simp [hcceq]
+                simp [hcceq, Resolved.inAlphabet]
               · exact absurd h (by simp [htext, hcov, hrc, hcc])
 
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
@@ -2862,6 +2915,6 @@ theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
   show resolveCharStack coverage ((a, .sym) :: rest) c = .sym (a.apply c)
   simp only [resolveCharStack, MathAlphabet.sourceRangeOf_sym_exact, hr]
   have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
-  cases a.textStyle? <;> simp [hcov, hne]
+  cases a.textStyle? <;> simp [hcov, hne, Resolved.inAlphabet]
 
 end LeanTex.Core.Math

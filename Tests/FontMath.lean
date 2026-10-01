@@ -1358,6 +1358,52 @@ def mathTextAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 
 
+/-- A symbol alphabet resets an enclosing text family even when the math
+face has no range to install. unicode-math-luatex.sty's
+`\__um_prepare_mathstyle:n` sets `\fam=-1` after switching mathcodes;
+`\use@mathgroup` has already made an outer text command's Latin literal.
+LuaLaTeX therefore ships upright A in Fira Math for the inner calligraphic
+scope, with Open Sans Bold restored on either side. Judge the shipped
+glyph faces and typed MathML, not an elaboration dump. -/
+def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let fs ← mathTextFaces
+  let bold := "font-family: var(--font-body); font-weight: 700"
+  let mut rows : Array (String × Array (Nat × Char) × Array (String × String)) := #[
+    ("\\mathbf{\\mathcal{A}}", #[(6, 'A')], #[("A", "")]),
+    ("\\mathbf{A\\mathcal{A}A}", #[(1, 'A'), (6, 'A'), (1, 'A')],
+      #[("A", bold), ("A", ""), ("A", bold)]),
+    ("\\mathcal{\\mathbf{A}}", #[(1, 'A')], #[("A", bold)]),
+    ("\\symbf{\\mathcal{A}}", #[(6, '𝐀')], #[("𝐀", "")]),
+    ("\\mathbf{\\symit{5}}", #[(6, '5')], #[("5", "")]),
+    ("\\mathit{\\mathcal{5}}", #[(6, '5')], #[("5", "")]),
+    ("\\mathbf{\\mathfrak{Z}}", #[(6, 'Z')], #[("Z", "")]),
+    ("\\mathit{\\symsf{A}}", #[(6, 'A')], #[("A", "")]),
+    -- bm.sty's wrapper does not reset the family of a digit; it is not a
+    -- unicode-math symbol alphabet. LuaLaTeX keeps this Open Sans Italic.
+    ("\\mathit{\\bm{5}}", #[(2, '5')],
+      #[("5", "font-family: var(--font-body); font-style: italic")]),
+    ("\\mathit{\\mathcal{\\Gamma}}", #[(6, '𝛤')], #[("𝛤", "")])]
+  for command in ["mathrm", "mathit", "mathsf", "mathtt"] do
+    rows := rows.push ("\\" ++ command ++ "{\\mathcal{A}}",
+      #[(6, 'A')], #[("A", "")])
+  for (source, expectedGlyphs, expectedLeaves) in rows do
+    let (raw, ds) := Elab.run "synthetic.tex" ("$" ++ source ++ "$")
+    let (doc, ads) := Ir.resolveMathAlphas fs.mathAlphabets "Fira Math" raw
+    let out := layoutOf fs doc
+    let glyphs := (bodyLines out).flatMap fun line => line.segs.flatMap fun seg =>
+      match seg with
+      | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
+      | _ => #[]
+    let (_, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
+    check ref (source ++ " reaches the artifacts without recovery")
+      (!(ds ++ ads ++ out.diags).any fun d =>
+        d.severity == .error || d.code == "W0012" || d.code == "W0009")
+    check ref (source ++ " resets only the inner PDF text family")
+      (glyphs == expectedGlyphs)
+    check ref (source ++ " resets only the inner HTML text family")
+      (mathTextLeavesList #[] body.toList == expectedLeaves)
+
+
 /-- M6's first slice, pinned end to end: the MATH constants read from the
 shipped face, the box-is-box widths in sp (a math box's advance is the sum
 of its atoms plus the spacing the table gives — recomputed here from the
@@ -1370,6 +1416,7 @@ every out-of-scope construct earns a code naming it while its text content
 survives — never its markup (`Ir.floorInk_mem`). -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathTextAmbientChecks ref
+  mathSymbolResetChecks ref
   let t := check ref
   let load (name : String) : IO Font.Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
@@ -2120,23 +2167,21 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => none
   t "boldsymbol leaves a digit plain; mathbf keeps the bold digit"
     (mbFive == some (mfs.lookup 0 700 false) && bsFive == some 1 && mbFive != bsFive)
-  -- Nesting is a stack, innermost-first: a scalar the inner alphabet does
-  -- not cover falls through to an outer one that does (measured against
-  -- four faces in scripts/math-alphabet-diff.lean). Fira carries neither
-  -- calligraphic nor fraktur letters, so the inner scope yields and the
-  -- outer \mathbf takes the digit / the letter — under the text source, as
-  -- the plain base glyph set at the bold body slot.
-  t "nested alphabets stack: mathbf takes a digit calligraphic cannot"
+  -- A symbol scope keeps the enclosing mathcode mapping but resets its
+  -- text family (unicode-math's \__um_prepare_mathstyle:n). LuaLaTeX ships
+  -- plain 5 and Z in the math face even where the inner alphabet has no
+  -- digit range or the face has no fraktur coverage.
+  t "nested alphabets: calligraphic resets the text family for a digit"
     (glyphChars "$\\mathbf{\\mathcal{5}}$" == #['5'] &&
       (lineOf "$\\mathbf{\\mathcal{5}}$").segs.any fun s => match s with
         | .run f _ _ _ glyphs _ _ _ _ _ _ =>
-          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == '5')
+          f == 1 && glyphs.any (·.2.1 == '5')
         | _ => false)
-  t "nested alphabets stack: mathbf takes a letter fraktur cannot cover here"
+  t "nested alphabets: uncovered fraktur resets the text family for a letter"
     (glyphChars "$\\mathbf{\\mathfrak{Z}}$" == #['Z'] &&
       (lineOf "$\\mathbf{\\mathfrak{Z}}$").segs.any fun s => match s with
         | .run f _ _ _ glyphs _ _ _ _ _ _ =>
-          f == mfs.lookup 0 700 false && glyphs.any (·.2.1 == 'Z')
+          f == 1 && glyphs.any (·.2.1 == 'Z')
         | _ => false)
   -- Range completeness confirmed against the oracle: \mathit sets the
   -- italic uppercase Greek block (U+1D6E2), \boldsymbol is near-identity
