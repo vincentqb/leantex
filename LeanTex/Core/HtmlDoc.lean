@@ -6503,10 +6503,22 @@ def emitTree (cfg : Config) (doc : Doc) :
   -- content), so every walk below — sectioning, the deck chrome, the
   -- landmark and anchor checks — sees only what this page carries.
   let doc := { doc with body := Ir.keepFor "html" doc.body }
+  -- The math-alphabet door for the HTML backend. Resolving AFTER `keepFor`
+  -- keeps the N0018 census consistent with what the HTML page actually
+  -- ships: an alphabet used only in content another backend owns, already
+  -- dropped above, is not named here. Coverage and family come from the
+  -- entry's own `cfg.fonts` (empty coverage and the `"math face"` family
+  -- name when none is configured), so a direct caller that never ran
+  -- `Ir.resolveMathAlphas` still gets an alpha-free body in every walk
+  -- below (`Math.resolveMathAlphas_covers`) and the per-alphabet N0018,
+  -- which lead the layout diagnostics (resolution preceded emission).
+  let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
+  let family := cfg.fonts.map (·.mathFamily) |>.getD "math face"
+  let (doc, aDiags) := Ir.resolveMathAlphas coverage family doc
   -- The locale resolves here, once, from the document: the furniture the
   -- walks below generate is worded in the document's language.
   let cfg := { cfg with locale := doc.info.locale }
-  let mut diags : Array Diag := #[]
+  let mut diags : Array Diag := aDiags
   if doc.head.isSome || doc.foot.isSome then
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"

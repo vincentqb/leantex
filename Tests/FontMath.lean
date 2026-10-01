@@ -2319,6 +2319,45 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" ("\\documentclass{article}\\fonts{ math = \"Fira Math\" }" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
 
+  -- Blocker 4: the public backend entries own math-alphabet resolution. A
+  -- direct caller that hands an UNRESOLVED `.alpha` doc to `Layout.run` or
+  -- `HtmlDoc.emit` must get the same artifact as the pre-resolved path, with
+  -- the N0018 resolution diagnostics prepended exactly once. Coverage and
+  -- family are derived from the entry's own inputs (`FontSet.mathAlphabets`,
+  -- `FontSet.mathFamily`), so this mirrors what the entry itself computes.
+  let publicEntryContract (fs : Font.FontSet) (raw : Ir.Doc) : Bool :=
+    let (res, ds) := Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily raw
+    let lRaw := Layout.run geom fs none raw
+    let lRes := Layout.run geom fs none res
+    let (hRaw, hdRaw) := HtmlDoc.emit { fonts := some fs } raw
+    let (hRes, _) := HtmlDoc.emit { fonts := some fs } res
+    -- (a) public Layout matches the pre-resolved layout artifact
+    reprStr lRaw.pages == reprStr lRes.pages &&
+      -- (c) N0018 accounted exactly once, leading the layout diags
+      lRaw.diags == ds ++ lRes.diags &&
+      -- (a) public HTML matches the pre-resolved HTML artifact
+      hRaw == hRes &&
+      -- (c) HTML N0018 census equals the resolver's, once per alphabet
+      (hdRaw.filter (·.code == "N0018")).map (·.subject)
+        == (ds.filter (·.code == "N0018")).map (·.subject)
+  let symbfRaw := (Elab.run "synthetic.tex" "$\\symbf{x}$").1
+  let nestedAlphaRaw := (Elab.run "synthetic.tex" "$\\mathbf{\\mathsf{A}}$").1
+  t "public entries resolve an unavailable alphabet (mathcal) themselves"
+    (publicEntryContract alphaFs alphaRaw)
+  t "public entries resolve a text-projected alphabet (mathsf) themselves"
+    (publicEntryContract sfFs sfRaw)
+  t "public entries resolve a covered symbol alphabet (symbf) themselves"
+    (publicEntryContract alphaFs symbfRaw)
+  t "public entries resolve a nested alphabet themselves"
+    (publicEntryContract alphaFs nestedAlphaRaw)
+  -- (b) a styled scalar RETAINS its face through the public HTML entry:
+  -- unresolved `\mathsf{R}` still produces the sans-family HTML the
+  -- pre-resolved path does (which the resolved-path checks above pin to
+  -- `font-family: var(--font-sans)`).
+  t "public HtmlDoc.emit retains the sans text family for unresolved mathsf"
+    ((HtmlDoc.emit { fonts := some sfFs } sfRaw).1
+      == (HtmlDoc.emit { fonts := some sfFs } sfDoc).1)
+
 
 /-- The isolated-glyph-hole owner (W0016), partitioned from the
 whole-alphabet owner (N0018) by the `remaps` bit. Two builds differing only

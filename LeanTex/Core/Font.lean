@@ -1281,6 +1281,13 @@ def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
   let c ← f.math
   pure (i, f, c)
 
+/-- The family name of the document's math face — the string the N0018
+math-alphabet diagnostic quotes. `"math face"` stands in when no usable math
+face is declared, the same default the driver's font builder uses, so the
+public backend entries, `Main`, and the test harness all name one family. -/
+def mathFamily (fs : FontSet) : String :=
+  fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
+
 /-- Slot 0 = body/serif, 1 = sans, 2 = mono; `weight` is the CSS number of
 the requested series. The driver resolves an index entry for every key the
 document can ask for (its declared faces and the weights its styles use),

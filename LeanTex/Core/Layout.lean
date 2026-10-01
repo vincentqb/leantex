@@ -11175,7 +11175,19 @@ cut marks, when declared, join every shipped face here — the marks seam
 pages alike carry the same eight, painted over any background. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) : Out :=
-  addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
+  -- The math-alphabet door: this public entry owns resolution, so a direct
+  -- caller that never ran `Ir.resolveMathAlphas` still gets an alpha-free
+  -- body in `runCore` (`Math.resolveMathAlphas_covers`) and the per-alphabet
+  -- N0018 diagnostics, which lead the layout diagnostics (the resolution
+  -- preceded layout). Coverage and family are the entry's own inputs
+  -- (`FontSet.mathAlphabets`, `FontSet.mathFamily`), the single family
+  -- spelling `Main` and the test harness also use. Resolving an already
+  -- alpha-free body is a fixed point adding no diagnostic
+  -- (`Ir.resolveMathAlphas_fixed_point`, `Ir.missingMathAlphas_alphaFree`),
+  -- so `Main`, which resolves once up front, is not double-counted.
+  let res := Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily doc
+  let out := addMarks (runCore geom fs pats res.1 imgs) (markFillsOf geom res.1)
+  { out with diags := res.2 ++ out.diags }
 
 /-- The background fact over the pre-marks pipeline: every page `runCore`
 ships under a `bg` that stays declared carries the full-page fill. The proof is
@@ -11247,15 +11259,24 @@ theorem page_background_survives
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
     (hbg : (doc.palette.find? "bg").isSome = true)
-    (hepoch : pageGroundsDeclared geom fs pats doc imgs = true) :
+    (hepoch : pageGroundsDeclared geom fs pats
+        (Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily doc).1 imgs = true) :
     ∀ p ∈ (run geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
         f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
           f.h = geom.pageH + 2 * geom.bleed := by
   intro p hp
-  unfold run at hp
+  -- `run` lays out the alpha-resolved body; the record-update of `diags`
+  -- leaves `pages` untouched, and `resolveMathAlphas` preserves `palette`
+  -- (it rewrites only formula leaves, `mapDoc` keeps every other field), so
+  -- the background hypothesis transfers unchanged and `runCore_bg` applies
+  -- to the resolved doc the epoch hypothesis already speaks of.
+  simp only [run] at hp
   obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
-  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats doc imgs hbg hepoch p0 hp0
+  have hbg' : (((Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily doc).1).palette.find? "bg").isSome
+      = true := hbg
+  obtain ⟨f, hf, hx, hy, hw, hh⟩ :=
+    runCore_bg geom fs pats _ imgs hbg' hepoch p0 hp0
   have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
   have hfp : f ∈ p.fills.toList := by
     rw [hpf, Array.mem_toList_iff]

@@ -939,18 +939,17 @@ def codeSources : IO (Array (String × List String)) := do
     out := out.push (f.toString, appliedCodes (stripNonCode (← IO.FS.readFile f)))
   return out
 
-/-- A document laid out as the driver hands it to the backends: math
+/-- A document laid out as the driver hands it to the backends. Math
 alphabet scopes resolve against the selected face before the fallback census
-or layout sees their scalars. Resolution diagnostics lead layout diagnostics,
-as they do in the driver. -/
+or layout sees their scalars, with the resolution diagnostics leading the
+layout diagnostics — but `Layout.run` now owns that resolution at its own
+entry (`FontSet.mathAlphabets`, `FontSet.mathFamily`), so the harness simply
+calls it and inherits the same prepended N0018 census the driver gets. -/
 def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
     (pats : Option Hyphen.Patterns := none)
     (imgs : Image.Store := {}) : Layout.Out :=
-  let family := fonts.math.bind (fonts.fonts[·]?) |>.map (·.family) |>.getD "math face"
-  let (doc, alphaDiags) := Ir.resolveMathAlphas fonts.mathAlphabets family doc
-  let out := Layout.run geom fonts pats doc imgs
-  { out with diags := alphaDiags ++ out.diags }
+  Layout.run geom fonts pats doc imgs
 
 /-- The font set a golden fixture lays out under in the suite: `oneFace`,
 plus the math face a build would resolve — `mathSet` (the shipped Fira
