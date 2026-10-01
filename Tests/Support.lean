@@ -1109,6 +1109,12 @@ flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- Face indices and character scalars of shipped body glyphs, in paint order. -/
+def bodyGlyphs (out : Layout.Out) : Array (Nat × Char) :=
+  (bodyLines out).flatMap fun line => line.segs.flatMap fun seg => match seg with
+    | .run f _ _ _ gs _ _ _ _ _ _ => gs.map fun g => (f, g.2.1)
+    | _ => #[]
+
 /-- The x each glyph run of a shipped line starts at, with its text. -/
 def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
   let mut x := l.x
@@ -1124,6 +1130,52 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
     | .poly _ _ => pure ()
     | .image _ w _ => x := x + w
   return out
+
+/-- A body glyph's shipped position and paint, independent of run segmentation
+and structure-leaf numbering. Positions and unexpanded advances are exact sp
+values; x excludes page bleed, y includes the run's raise, and line numbers
+count only body lines within each page. -/
+structure ShippedGlyph where
+  page : Nat
+  line : Nat
+  face : Nat
+  glyph : Nat
+  scalar : Char
+  x : Dim.Sp
+  y : Dim.Sp
+  advance : Dim.Sp
+  size : Dim.Sp
+  expand : Int
+  color : Ir.Color
+  link : Option String
+  leading : Option Dim.Sp
+  underline : Bool
+  ground : Option Ir.Color
+  deriving BEq, Repr
+
+/-- Body glyphs in paint order, retaining every field of `ShippedGlyph`.
+RoleShaping holds this coordinate arithmetic to the existing artifact pen
+model and checks the emitted PDF with that model's unchanged spelling bound. -/
+def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
+  let mut acc := #[]
+  for (page, p) in out.pages.zipIdx do
+    for (line, l) in (page.lines.filter (!·.furniture)).zipIdx do
+      let mut x := line.x
+      for seg in line.segs do
+        match seg with
+        | .run face color link width gs size leading underline raise ground _ =>
+          let mut dx := 0
+          for (glyph, scalar, advance) in gs do
+            acc := acc.push {
+              page := p, line := l, face, glyph, scalar
+              x := x + dx * (1000 + line.expand) / 1000
+              y := line.y - raise, advance, size, expand := line.expand
+              color, link, leading, underline, ground }
+            dx := dx + advance
+          x := x + width
+        | .gap width _ | .rule width _ _ _ | .image _ width _ => x := x + width
+        | .poly _ _ => pure ()
+  return acc
 
 /-- Gaps that stand before glyph ink, excluding a paragraph's closing fill. -/
 def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do

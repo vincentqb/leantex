@@ -25404,3 +25404,117 @@ helpers; four required/optional, top-level/local controls caught twelve
 artifact assertions in that attempted fix. The final guards pass alongside
 the original local-copy cases. LuaLaTeX PDF controls independently pin the
 copied-helper results and eight opening-space cases in the shared oracle.
+
+The expansion order remains bounded: a copied macro that makes another
+local copy of a helper renewed after its original definition can still
+refuse that inner call with W0104, leaving its state changes unapplied.
+The review reproduced this pre-existing alias-chain gap; these guards do
+not certify general copied-macro execution.
+
+### 2026-10-01 — Symbol math scopes reset inherited text families
+
+A symbol alphabet clears the enclosing text-family selection, including
+when the selected math face lacks the requested range. The source scalar
+still follows its enclosing mathcode mapping, and ordinary text-alphabet
+scopes restore their own family after the inner scope. The `bm` wrapper
+keeps its independently measured family behavior. One `inAlphabet`
+operation feeds both character resolution and missing-range accounting;
+a discarded outer text style cannot suppress the inner missing-range note.
+
+`resolveCharStack_sym_covers`, `resolveCharStack_sym_fallback_exact` and
+`missingCharAlpha_sym_named` state these relationships universally.
+Fourteen synthetic formulas inspect shipped glyph faces and typed MathML;
+20 artifact assertions fail before the reset and pass after. A separate
+accounting guard fails before normalization and passes after, comparing
+identical shipped glyphs and MathML with the required note. Their glyph
+reader is shared in `Tests.Support`.
+
+The corrected physical-point oracle matches all scalar and face sequences
+in the complete 304-row, four-font comparison: 92 matches, 212 differences,
+no missing observations and no reference errors. It reports 189 size and
+47 width differences, overlapping in 24 rows. Each size difference is one
+0.001 PDF-point bin; each bounding-box width difference is one 720-dpi
+unit. Those remain differences, not exemptions. The 66 oracle selftests
+pass independently of reference execution.
+
+### 2026-10-01 — Delimiter recovery respects local scope
+
+Delimiter signatures restore when a brace group or environment closes.
+Explicit global writes, including signature removals and writes later
+shadowed locally, survive that closure. Input wrappers introduce no
+scope. One signature state follows preamble, end-preamble hooks,
+begin-document hooks and body in execution order.
+
+Scope closure replays only the global writes made since it opened;
+replaying older writes would erase an enclosing local shadow. Seventeen
+synthetic cases exercise that rule through complete PDF layout and typed
+HTML comparisons, with 22 failed artifact assertions before the change
+and none after. `macroDelimiterScopeChecks` is wired into the full suite.
+This corrects the recovery of refused delimited calls; W0357 still names
+their unsupported definitions.
+
+### 2026-10-01 — Kernel space keeps its following operand
+
+`\space` is latex.ltx's zero-argument replacement in the existing macro
+meaning table. Optional-argument lookahead therefore expands neither that
+space nor a following bracket prematurely. A document's local definition,
+copy or removal of `\space` takes precedence, including in style fragments:
+the fragment reader receives the caller's visible binding names instead
+of installing a fresh kernel meaning over them.
+
+The optional-lookahead regression failed its diagnostic and both complete
+artifact comparisons before the fix. A seed-only implementation also
+failed four PDF/HTML shadowing assertions; the inherited-binding handoff
+closes those cases. `macroPhaseChecks` holds the combined behavior, and
+the independent LuaLaTeX PDF control retains the final `[Y]` operand.
+
+### 2026-10-01 — Macro names annotate execution without making boundaries
+
+A parameterized TeX macro retains its semantic role after substitution.
+Invocation ancestry travels on source positions; it creates neither a
+group nor a token an argument reader can consume. The elaborator turns
+that ancestry into the existing inline and block roles. A primitive at
+the end of replacement text can therefore consume the next source
+argument, and declarations still affect the remainder of their scope.
+`markMacroArray_source_exact` states that annotation preserves source;
+`markMacro_origins_exact` states the added ancestry independently.
+
+Block roles account for a pending paragraph before opening their own
+range. An empty group cannot spend that pending paragraph or hide the
+following heading's owner. Palette changes, pauses and open overlays
+close the active range before their continuation, preserving ownership
+without enclosing later source. Unpositioned whitespace belongs only to
+the common ancestry on both sides, so an external `\space` does not
+become part of the preceding macro.
+
+`macroRoleChecks` compares shipped glyph positions and paint, typed HTML
+ancestry, wrapper counts, paragraphs and overlay steps against independent
+controls. The hook and optional-argument checks use native identity
+definitions for their expected roles and still compare complete PDF
+layout and typed HTML; paragraph, interior-space, ownership and paint
+changes remain distinguishable. Flow declaration readers now sit outside
+the recursive block knot, carrying their progress and unchanged measure
+components into one continuation at the ordinary compiler budget.
+
+Layout shapes adjacent text with the same resolved style before assigning
+glyphs to semantic owners. Roles therefore preserve kerning and legal
+hyphenation points; an authored style change still separates the runs.
+Expansion uses whole-word offsets across the resulting fragments.
+`expandSpan_add_exact` proves that their rounded widths telescope to the
+unsplit width. The artifact guard compares exact glyph positions, paint,
+line extents and each structure leaf's ink, then reads the emitted PDF
+with the existing pen model and its unchanged spelling bound.
+
+`shippedBodyGlyphs` is the shared artifact census for macro ownership and
+shaping checks. The combined focused checks pass after the terminal
+substitution and shaping corrections; the expanded-word guards had eleven
+failures before the rounding fix. Those observations cover the tested
+native subset, not general TeX execution.
+
+The full suite passes with the style witness loading its distinct faces
+explicitly, including when the suite supplies a single-face font set.
+Harness regeneration changes only the conditional diagnostics goldens:
+package-load decisions say where they are evaluated and include their
+runtime uses. Both private reference decks build in PDF and HTML without
+image-loading failures. `scripts/bench.lean` passes at five runs per case;
+the reference-list growth is 4.1× for four times the entries (bound 8×).

@@ -38,7 +38,10 @@ import Tests.Conditionals
 import Tests.MacroBinding
 import Tests.MacroArguments
 import Tests.MacroDefaults
+import Tests.MacroRoles
+import Tests.RoleShaping
 import Tests.MacroHookScope
+import Tests.MacroDelimiterScope
 import Tests.PackageOptions
 import Tests.BoxRow
 import Tests.PackageCode
@@ -66,7 +69,8 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
-  macroHookScopeChecks packageOptionChecks
+  macroRoleChecks roleShapingChecks
+  macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
   overlaySetChecks mathAlphaSemanticsChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -260,8 +264,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   macroBindingChecks ref oneFace
   macroArgumentChecks ref oneFace
   macroDefaultChecks ref oneFace
+  macroRoleChecks ref oneFace
+  roleShapingChecks ref oneFace
   macroPhaseChecks ref oneFace
   macroHookScopeChecks ref oneFace
+  macroDelimiterScopeChecks ref oneFace
   packageOptionChecks ref oneFace
   picSiteChecks ref oneFace
   settleChecks ref
