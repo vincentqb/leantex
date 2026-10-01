@@ -77,6 +77,21 @@ private def requiredArgumentScopeCases : Array (String × String × String × St
         (call ++ r"{{\let\wordprobe\newwordprobe\wordprobe}}/\wordprobe") "New/Old"
     ]
 
+private def copiedHelperCases : Array (String × String × String × String) :=
+  #[false, true].flatMap fun optional => #[false, true].map fun grouped =>
+    let setup := r"\newif\ifprobeFlag\def\helperprobe#1{\probeFlagfalse#1}" ++
+      (if optional then r"\newcommand{\sourceprobe}[1][\helperprobe{}]{#1}"
+       else r"\def\sourceprobe#1{\helperprobe{#1}}") ++
+      r"\def\helperprobe#1{\probeFlagtrue#1}"
+    let call := if optional then r"\aliasprobe" else r"\aliasprobe{}"
+    let selected := r"\ifprobeFlag T\else F\fi"
+    ("copied-helper-" ++ (if optional then "optional" else "required") ++
+        (if grouped then "-local" else "-top"),
+      setup ++ (if grouped then r"\def\passprobe#1{#1}" else r"\let\aliasprobe\sourceprobe"),
+      if grouped then r"\passprobe{{\let\aliasprobe\sourceprobe" ++ call ++ selected ++ "}}/" ++ selected
+      else call ++ selected,
+      if grouped then "T/F" else "T")
+
 /-- Deferred hooks read and change the state at execution, while actual
 TeX groups restore local flags without splitting the surrounding paragraph.
 Required macro arguments execute after substitution, not during scanning.
@@ -87,13 +102,8 @@ def macroHookScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let article (pre body : String) := dvDoc (r"\pagestyle{empty}" ++ pre) body
-  let artifacts (source : String) :=
-    let (doc, ds) := elabStr source
-    let out := layoutOf fonts doc
-    let (head, tree, hds) := HtmlDoc.emitTree {} doc
-    (ds ++ out.diags ++ hds, out, Html.document "en" head tree,
-      shownTextList "" tree.toList)
-  let probes := macroHookScopeCases ++ requiredArgumentScopeCases
+  let artifacts := sourceArtifacts fonts
+  let probes := macroHookScopeCases ++ requiredArgumentScopeCases ++ copiedHelperCases
   for (label, pre, body, expected) in probes do
     let name := "macro hook scope " ++ label
     let (controlDs, controlOut, controlHtml, controlText) := artifacts (article "" expected)
