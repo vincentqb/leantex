@@ -446,6 +446,7 @@ def main (args : List String) : IO UInt32 := do
   argsChecks ref
   renderChecks ref
   lexChecks ref
+  braceEolChecks ref
   nfcChecks ref
   accentChecks ref
   localeChecks ref

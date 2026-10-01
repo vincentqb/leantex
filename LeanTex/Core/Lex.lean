@@ -88,6 +88,49 @@ theorem blank_line_par_agree (n : Nat) :
     (wsTokens false (n + 1)).tail = wsTokens true n := by
   simp [wsTokens]
 
+/-- The mid-line whitespace run, given whether a group brace sits immediately
+before the run (`prevLbrace`) or immediately after it (`nextRbrace`), and the
+run's newline count `n`. A single line end against a group brace is dropped —
+exactly as LaTeX's `{%` drops the line end after an opening brace — so the run
+emits nothing; every other run is byte-for-byte `wsTokens false n`, leaving
+same-line spacing and blank-line paragraph behaviour untouched. The brace
+carries no glyph, so any adjacency the drop leaves is intentional under the
+shorthand and earns no diagnostic: `{` at end of line and `{%` are identical
+after lexing. -/
+def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
+  if n = 1 ∧ (prevLbrace = true ∨ nextRbrace = true) then []
+  else wsTokens false n
+
+/-- A same-line run is always a space, whatever sits beside it. -/
+theorem midlineWs_same_line (p q : Bool) : midlineWs p q 0 = [.space] := by
+  simp [midlineWs, wsTokens]
+
+/-- A blank line keeps main's whole mid-line run, brace-adjacency
+notwithstanding. -/
+theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
+    midlineWs p q n = wsTokens false n := by
+  have : ¬ n = 1 := by omega
+  simp [midlineWs, this]
+
+/-- Suppression is exactly a single line end against a group brace: the
+contract is narrow, not a global whitespace trim. (`wsTokens false n` is
+always non-empty — it heads with a space — so an empty run can only be the
+suppressed case.) -/
+theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
+    midlineWs p q n = [] ↔ (n = 1 ∧ (p = true ∨ q = true)) := by
+  unfold midlineWs
+  split
+  · rename_i hc; exact iff_of_true rfl hc
+  · rename_i hc
+    refine iff_of_false ?_ hc
+    simp [wsTokens]
+
+/-- Away from braces the rule is byte-for-byte the old `wsTokens false`: the
+change is confined to brace-adjacency. -/
+theorem midlineWs_conservative (p q : Bool) (n : Nat) (hp : p = false) (hq : q = false) :
+    midlineWs p q n = wsTokens false n := by
+  simp [midlineWs, hp, hq]
+
 private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
   if i + ps.size > cs.size then
     return false
@@ -139,7 +182,17 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
       let here := pos
       if isWs c then
         let j := scanWhile cs i isWs
-        for tok in wsTokens false (newlines cs i j) do
+        let n := newlines cs i j
+        let prevLbrace := match toks.back? with
+          | some t => t.tok == .lbrace
+          | none => false
+        let nextRbrace := cs[j]? == some '}'
+        -- A single line end against a group brace is dropped, exactly as
+        -- LaTeX's `{%` drops the line end after an opening brace. Group
+        -- braces carry no glyph, so any adjacency this leaves is intentional
+        -- under the shorthand and earns no diagnostic: the two syntaxes are
+        -- indistinguishable at the lexer boundary.
+        for tok in midlineWs prevLbrace nextRbrace n do
           toks := toks.push ⟨tok, here⟩
         pos := posOver cs i j pos
         i := j

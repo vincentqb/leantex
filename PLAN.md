@@ -471,6 +471,30 @@ values, or location entered the repository.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-10-01 — the brace/end-of-line whitespace shorthand, ported to the
+`wsTokens`/macro-token lexer. A single ordinary line end against a literal
+group brace is dropped: a `{` ending a source line reads like LaTeX's `{%`,
+and a `}` opening the next line drops the space before it. The decision lives
+in one pure function, `Lex.midlineWs prevLbrace nextRbrace n`, returning `[]`
+only when `n = 1` and a brace abuts the run, and `wsTokens false n` otherwise
+— so same-line spacing (`n = 0`) and blank-line paragraphs (`n ≥ 2`) are
+byte-for-byte main's existing behaviour. Four theorems fix the scope:
+`midlineWs_same_line` (a same-line run is a space), `midlineWs_par` (a blank
+line keeps the whole mid-line run), `midlineWs_suppress_iff` (an empty run is
+*exactly* a single line end against a brace — `wsTokens false n` is never
+empty), and `midlineWs_conservative` (away from braces it is byte-for-byte
+`wsTokens false n`). The transformation is exercised by `braceEolChecks`
+(token-stream cases over words, controls, math, punctuation, starred
+commands, macro-definition bodies, key values, empty and nested groups,
+comments, CRLF, escaped braces, blank lines, and verbatim/listing/minted).
+No diagnostic is added: the brace-at-EOL drop is a deliberate shorthand, so
+any adjacency it produces is intentional and silent — the same silence `{%`
+already earns. The two syntaxes are identical after lexing, so no token-level
+heuristic could tell an intended join from a mistake without multiplying
+meanings under one code; main's diagnostics stay authoritative. A surprising
+join is a document-authoring matter, visible in the rendered page, not a
+lexer-boundary warning.
+
 2026-09-30 — Phase 2 of the math-alphabet contract: text-source host-fallback
 stopped, N0018 accounting proved. `MathAlphabetCoverage.remaps` dropped its
 `sources.get a == .text` arm, so `remaps = faceCovers`: a text-sourced

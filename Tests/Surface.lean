@@ -2681,6 +2681,124 @@ def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "lex position" (((Lex.lex "t" "a\nbé c").1.map fun tk => (tk.pos.line, tk.pos.col)).toList ==
     [(1, 1), (1, 2), (2, 1), (2, 3), (2, 4)])
 
+/-- **The narrow brace/end-of-line whitespace contract.** A single line end
+against a group brace is dropped — a literal `{` ending a source line reads
+like LaTeX's `{%`, and a `}` opening the next line drops the space before it
+— while every other whitespace run is byte-for-byte main's `wsTokens false`.
+Because the two syntaxes (`{` at end of line and `{%`) are indistinguishable
+at the lexer boundary, any adjacency the drop leaves is intentional under the
+shorthand and earns no diagnostic: these are transformation checks, asserting
+only the spacing change the rule promises, over words, controls, math,
+punctuation, starred commands, macro-definition bodies, key values, empty and
+nested groups, comments, CRLF, escaped braces, blank lines, and
+verbatim/listing/minted. -/
+def braceEolChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- EARS: when a `{` ends a source line followed only by a single line end
+  -- and indentation, the lexer shall emit no space between the brace and
+  -- the next word.
+  t "brace-eol opening: a { at EOL drops the line-end space"
+    (toks "a{\n  b" == [.word "a", .lbrace, .word "b"])
+  -- EARS: when a `}` begins the next source line, the lexer shall drop the
+  -- preceding single line-end space.
+  t "brace-eol closing: a } at line start drops the preceding space"
+    (toks "a\n}b" == [.word "a", .rbrace, .word "b"])
+  -- EARS: while a whitespace run stays on one line (n = 0), the lexer shall
+  -- emit a space even adjacent to a brace.
+  t "brace-eol same-line: A{ }B keeps its spaces"
+    (toks "A{ }B" == [.word "A", .lbrace, .space, .rbrace, .word "B"])
+  t "brace-eol same-line: \\textbf{ word} keeps its space"
+    (toks "\\textbf{ word}" == [.ctrl "textbf", .lbrace, .space, .word "word", .rbrace])
+  t "brace-eol same-line: \\text{ and } keeps both spaces"
+    (toks "\\text{ and }" ==
+      [.ctrl "text", .lbrace, .space, .word "and", .space, .rbrace])
+  -- EARS: while a whitespace run spans a blank line (n ≥ 2), the lexer shall
+  -- emit main's unchanged mid-line run (a space then a paragraph break),
+  -- brace-adjacency notwithstanding.
+  t "brace-eol blank line after { is unchanged (space then par)"
+    (toks "a{\n\nb" == [.word "a", .lbrace, .space, .par, .word "b"])
+  t "brace-eol blank line before } is unchanged (space then par)"
+    (toks "a\n\n}b" == [.word "a", .space, .par, .rbrace, .word "b"])
+  -- EARS: while a control word is the content after a `{` at EOL, the lexer
+  -- shall drop the line-end space and leave the control intact.
+  t "brace-eol opening: a control after { at EOL drops the space"
+    (toks "a{\n\\LaTeX}" == [.word "a", .lbrace, .ctrl "LaTeX", .rbrace])
+  -- EARS: while a control word opens the group whose `{` ends the line, the
+  -- lexer shall drop the following line-end space.
+  t "brace-eol opening: \\LaTeX{ at EOL drops the space"
+    (toks "\\LaTeX{\n  b}" == [.ctrl "LaTeX", .lbrace, .word "b", .rbrace])
+  -- EARS: while math ($…$) is the content after a `{` at EOL, the lexer
+  -- shall drop the line-end space and leave the math shifts intact.
+  t "brace-eol opening: math after { at EOL drops the space"
+    (toks "a{\n$x$}" == [.word "a", .lbrace, .math, .word "x", .math, .rbrace])
+  -- EARS: while a `}` at line start follows math, the lexer shall drop the
+  -- preceding line-end space.
+  t "brace-eol closing: a } after math at line start drops the space"
+    (toks "$x$\n}b" == [.math, .word "x", .math, .rbrace, .word "b"])
+  -- EARS: because punctuation is not special to the lexer, it rides inside
+  -- the word run; a `{` at EOL before it shall still drop the space.
+  t "brace-eol opening: leading punctuation stays in the word, space dropped"
+    (toks "a{\n,b}" == [.word "a", .lbrace, .word ",b", .rbrace])
+  -- EARS: a starred command's `*` is an ordinary word char; a `{` at EOL
+  -- after `\section*` shall drop the line-end space.
+  t "brace-eol starred: \\section*{ at EOL drops the space"
+    (toks "\\section*{\n  Title}" ==
+      [.ctrl "section", .word "*", .lbrace, .word "Title", .rbrace])
+  -- EARS: a macro-definition body brace at EOL shall drop the line-end
+  -- space like any other group brace.
+  t "brace-eol macro def: a body { at EOL drops the space"
+    (toks "\\newcommand{\\foo}{\n  bar}" ==
+      [.ctrl "newcommand", .lbrace, .ctrl "foo", .rbrace, .lbrace, .word "bar", .rbrace])
+  -- EARS: a key=value group brace at EOL shall drop the line-end space (the
+  -- key rides in the word up to the `{`).
+  t "brace-eol key value: key={ at EOL drops the space"
+    (toks "key={\n  val}" == [.word "key=", .lbrace, .word "val", .rbrace])
+  -- EARS: an empty group's inner line end abuts an opening and a closing
+  -- brace at once; the lexer shall drop it, leaving `{}` and the surrounding
+  -- words adjacent — intentional under the shorthand.
+  t "brace-eol empty group: a{<eol>}b drops the space, words abut"
+    (toks "a{\n}b" == [.word "a", .lbrace, .rbrace, .word "b"])
+  -- EARS: a nested group opened before the run shall not stop the drop; the
+  -- inner line end goes and the braces stand.
+  t "brace-eol nested group: a{<eol>{}}b drops the space"
+    (toks "a{\n{}}b" == [.word "a", .lbrace, .lbrace, .rbrace, .rbrace, .word "b"])
+  -- EARS: a comment consumes through its own line end and emits nothing at
+  -- line start; the `{` at EOL before it drops its space, so the words abut.
+  t "brace-eol comment: a comment in the group leaves the words adjacent"
+    (toks "alpha{\n%c\nbeta}" == [.word "alpha", .lbrace, .word "beta", .rbrace])
+  -- EARS: because `\{`/`\}` lex to `.ctrl`, not `.lbrace`/`.rbrace`, the
+  -- lexer shall never suppress a line-end space adjacent to them.
+  t "brace-eol escaped \\{ at EOL keeps its space"
+    (toks "a\\{\n  b" == [.word "a", .ctrl "{", .space, .word "b"])
+  t "brace-eol escaped \\} at line start keeps its space"
+    (toks "a\n\\}b" == [.word "a", .space, .ctrl "}", .word "b"])
+  -- EARS: CRLF line ends shall behave identically to LF (newlines count \n
+  -- only; \r is horizontal whitespace).
+  t "brace-eol opening CRLF drops the line-end space"
+    (toks "a{\r\n  b" == [.word "a", .lbrace, .word "b"])
+  t "brace-eol closing CRLF drops the preceding space"
+    (toks "a\r\n}b" == [.word "a", .rbrace, .word "b"])
+  t "brace-eol empty group CRLF drops the space"
+    (toks "alpha{\r\n}beta" == [.word "alpha", .lbrace, .rbrace, .word "beta"])
+  -- EARS: verbatim/listing/\verb regions are captured as one `.verb` token
+  -- before whitespace lexing, so a `{` at EOL inside them is untouched.
+  t "brace-eol verbatim: a { at EOL inside is one untouched verb token"
+    (match toks "\\begin{verbatim}\nx{\ny\n\\end{verbatim}" with
+     | [.verb "verbatim" _] => true | _ => false)
+  t "brace-eol lstlisting: a { at EOL inside is one untouched verb token"
+    (match toks "\\begin{lstlisting}\nx{\ny\n\\end{lstlisting}" with
+     | [.verb "lstlisting" _] => true | _ => false)
+  t "brace-eol minted: a { at EOL inside is one untouched verb token"
+    (match toks "\\begin{minted}\nx{\ny\n\\end{minted}" with
+     | [.verb "minted" _] => true | _ => false)
+  t "brace-eol verb: a { inside \\verb is one verb token, no lbrace"
+    (match toks "\\verb|{|" with | [.verb "verb" "{"] => true | _ => false)
+  -- EARS: an overlay/action spec brace (`\uncover<2>{`) shall drop its
+  -- line-end space like any other group brace — the { is unconditional.
+  t "brace-eol overlay spec: \\uncover<2>{ at EOL drops the line-end space"
+    (toks "\\uncover<2>{\n  text}" ==
+      [.ctrl "uncover", .word "<2>", .lbrace, .word "text", .rbrace])
+
 def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- UAX #15 NFC at input (Nfc.lean): composed output, canonical
