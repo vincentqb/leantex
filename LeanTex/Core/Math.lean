@@ -297,6 +297,11 @@ inductive MathAlphabet where
   (U+1D71C upper, U+1D736 lower, U+1D735 nabla), no digits. Symbol
   sourced (`\sym…` only). -/
   | bfit
+  /-- `\symbf` with unicode-math's default `bold-style=TeX`: upright
+  bold Latin, digits and Greek capitals, but bold italic lowercase Greek
+  (including ∂ and the variant slots). This selects existing
+  `bf`/`bfit` ranges; it has no separate Unicode block. -/
+  | bfDefault
   | sf
   | tt
   | rm
@@ -310,6 +315,8 @@ inductive MathAlphabet where
   | bm
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The distinct Unicode alphabets. `bfDefault` selects ranges of `bf`
+and `bfit`, so it must not duplicate them in coverage or `unapply`. -/
 def allAlphabets : List MathAlphabet :=
   [.bb, .cal, .frak, .bf, .bfit, .sf, .tt, .rm, .it]
 
@@ -368,7 +375,7 @@ def MathAlphabet.sourceKey : MathAlphabet → Option String
   | .bf => some "mathbf"
   | .sf => some "mathsf"
   | .tt => some "mathtt"
-  | .bb | .cal | .frak | .bfit | .bm => none
+  | .bb | .cal | .frak | .bfit | .bfDefault | .bm => none
 
 def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlphabetSource
   | .rm => s.rm
@@ -376,7 +383,7 @@ def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlp
   | .bf => s.bf
   | .sf => s.sf
   | .tt => s.tt
-  | .bb | .cal | .frak | .bfit | .bm => .sym
+  | .bb | .cal | .frak | .bfit | .bfDefault | .bm => .sym
 
 def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
     (source : MathAlphabetSource) : MathAlphabetSources :=
@@ -386,7 +393,7 @@ def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
   | .bf => { s with bf := source }
   | .sf => { s with sf := source }
   | .tt => { s with tt := source }
-  | .bb | .cal | .frak | .bfit | .bm => s
+  | .bb | .cal | .frak | .bfit | .bfDefault | .bm => s
 
 /-- Non-default source options as unicode-math reads them. The boundary
 standalone receives the same typed policy as the page. -/
@@ -432,56 +439,20 @@ def MathAlphabet.hole (a : MathAlphabet) (c : Char) : Option Char :=
 Alphanumeric block (Unicode ch. 22.2). `none` where the block has no such
 run: no script, fraktur, italic, or upright-beyond-ASCII digits — those
 digits stay as written, as unicode-math leaves them. `rm` is ASCII itself.
-`bfit` (`\bm`/`\boldsymbol`) carries no digits: with no bold math version
-declared, LuaLaTeX leaves `\boldsymbol{5}` a plain 5, so a bfit digit keeps
-its source scalar rather than taking the bold digit run. -/
+`bfit` (`\symbfit`) carries no digits: unicode-math leaves those digits at
+their source scalar rather than taking the bold digit run. -/
 def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
   | .bb => (0x1D538, 0x1D552, some 0x1D7D8)
   | .cal => (0x1D49C, 0x1D4B6, none)
   | .frak => (0x1D504, 0x1D51E, none)
   | .bf => (0x1D400, 0x1D41A, some 0x1D7CE)
   | .bfit => (0x1D468, 0x1D482, none)
+  | .bfDefault => (0x1D400, 0x1D41A, some 0x1D7CE)
   | .sf => (0x1D5A0, 0x1D5BA, some 0x1D7E2)
   | .tt => (0x1D670, 0x1D68A, some 0x1D7F6)
   | .rm => ('A'.toNat, 'a'.toNat, some '0'.toNat)
   | .it => (0x1D434, 0x1D44E, none)
   | .bm => (0x1D468, 0x1D482, none)
-
-/-- One letter or digit under an alphabet: the Letterlike hole when the
-block reserves the slot, else the base-offset scalar; a char the alphabet
-does not cover stays itself, so the map is total and `\mathbb{+}` keeps
-its plus. Greek: `bf` (upright bold) emboldens the upright capitals
-(U+1D6A8 block), the lowercase — read from their italic source block —
-into the upright-bold block (U+1D6C2), and `∇` (U+1D6C1); `it` sets the
-italic capitals (U+1D6E2 block), the lowercase already being italic at
-their source. `bfit` (`\bm`/`\boldsymbol`) has no installed range on this
-host — no bold math version is declared, so it maps nothing (`rangeOf`
-returns `none`); the base-offset entry it keeps only feeds `unapply`. -/
-def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
-  let c := unItalic c0
-  match a.hole c with
-  | some h => h
-  | none =>
-    let (upper, lower, digit) := a.bases
-    if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (upper + (c.toNat - 'A'.toNat))
-    else if 'a' ≤ c && c ≤ 'z' then Char.ofNat (lower + (c.toNat - 'a'.toNat))
-    else if '0' ≤ c && c ≤ '9' then
-      match digit with
-      | some d => Char.ofNat (d + (c.toNat - '0'.toNat))
-      | none => c
-    else if a == .bf && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
-      Char.ofNat (0x1D6A8 + (c.toNat - 0x391))
-    else if a == .it && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
-      Char.ofNat (0x1D6E2 + (c.toNat - 0x391))
-    else if a == .bf && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
-      Char.ofNat (c.toNat - 0x3A)
-    else if a == .bf && c == '\u2207' then Char.ofNat 0x1D6C1
-    else if a == .bfit && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
-      Char.ofNat (0x1D71C + (c.toNat - 0x391))
-    else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
-      Char.ofNat (c.toNat + 0x3A)
-    else if a == .bfit && c == '\u2207' then Char.ofNat 0x1D735
-    else c0
 
 /-- A separately installed range of a math alphabet. unicode-math tests the
 first scalar of each range before installing that range; an isolated glyph
@@ -515,6 +486,31 @@ def MathAlphabetRange.textServed : MathAlphabetRange → Bool
   | .latinUpper | .latinLower | .digits => true
   | .greekUpper | .greekLower | .misc => false
 
+/-- The 58 Greek slots of Unicode's Mathematical Alphanumeric blocks
+(Unicode ch. 22.2), written in their upright forms. Capital theta symbol
+occupies the capital-letter hole, nabla follows omega, and ∂ and
+the six variant slots follow lowercase omega. One inventory serves both
+directions; `greekSlot?` also accepts the parser's italic source scalars. -/
+private def uprightGreek : Array Char :=
+  "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡϴΣΤΥΦΧΨΩ∇αβγδεζηθικλμνξοπρςστυφχψω∂ϵϑϰϕϱϖ".toList.toArray
+
+private def greekSlot? (c : Char) : Option Nat :=
+  if 0x1D6E2 ≤ c.toNat && c.toNat ≤ 0x1D71B then some (c.toNat - 0x1D6E2)
+  else uprightGreek.findIdx? (· == c)
+
+/-- unicode-math's default bold TeX style is a selection of two installed
+ranges. Scalar mapping and face coverage read this same choice, so a face
+carrying only upright bold cannot silently satisfy bold italic Greek. -/
+def MathAlphabet.forRange (a : MathAlphabet) (r : MathAlphabetRange) : MathAlphabet :=
+  if a == .bfDefault then
+    if r == .greekLower then .bfit else .bf
+  else a
+
+/-- Selecting a canonical range twice cannot change its alphabet. -/
+theorem MathAlphabet.forRange_fixed_point (a : MathAlphabet) (r : MathAlphabetRange) :
+    (a.forRange r).forRange r = a.forRange r := by
+  cases a <;> cases r <;> rfl
+
 /-- The range an input scalar asks this alphabet to remap, if any. The
 input is the parser's ordinary math scalar: Latin variables are already
 italic, so `unItalic` recovers their source letter. -/
@@ -526,12 +522,40 @@ def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRan
   if 'A' ≤ c && c ≤ 'Z' then some .latinUpper
   else if 'a' ≤ c && c ≤ 'z' then some .latinLower
   else if '0' ≤ c && c ≤ '9' && digit.isSome then some .digits
-  else if (a == .bf || a == .it || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
-    some .greekUpper
-  else if (a == .bf || a == .bfit) && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
-    some .greekLower
-  else if (a == .bf || a == .bfit) && c == '\u2207' then some .misc
+  else if a == .rm || a == .it || a == .bf || a == .bfit || a == .bfDefault then
+    (greekSlot? c).map fun i =>
+      if i == 25 then .misc else if i < 25 then .greekUpper else .greekLower
   else none
+
+/-- One letter or digit under an alphabet: the Letterlike hole when the
+block reserves the slot, else the base-offset scalar. Greek uses the
+shared slot inventory, including identity ranges: an explicit upright or
+italic selection must override an enclosing alphabet even when its
+source scalar already has that shape. `bfDefault` selects its canonical
+range through `forRange`, just as coverage does. -/
+def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
+  let a := a.forRange ((a.rangeOf c0).getD .latinUpper)
+  let c := unItalic c0
+  match a.hole c with
+  | some h => h
+  | none =>
+    let (upper, lower, digit) := a.bases
+    if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (upper + (c.toNat - 'A'.toNat))
+    else if 'a' ≤ c && c ≤ 'z' then Char.ofNat (lower + (c.toNat - 'a'.toNat))
+    else if '0' ≤ c && c ≤ '9' then
+      match digit with
+      | some d => Char.ofNat (d + (c.toNat - '0'.toNat))
+      | none => c
+    else
+      match greekSlot? c with
+      | some i =>
+        match a with
+        | .rm => uprightGreek[i]?.getD c0
+        | .it => Char.ofNat (0x1D6E2 + i)
+        | .bf => Char.ofNat (0x1D6A8 + i)
+        | .bfit => Char.ofNat (0x1D71C + i)
+        | .bb | .cal | .frak | .bfDefault | .sf | .tt | .bm => c0
+      | none => c0
 
 def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
   allAlphabetRanges.filter fun r => a.rangeOf r.anchor == some r
@@ -548,7 +572,14 @@ structure MathAlphabetCoverage where
 
 def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
-  c.covered.contains (a, r)
+  c.covered.contains (a.forRange r, r)
+
+/-- Coverage is exactly the coverage of the canonical range selected by
+the scalar mapper, including the two halves of default bold. -/
+theorem MathAlphabetCoverage.faceCovers_forRange_exact (c : MathAlphabetCoverage)
+    (a : MathAlphabet) (r : MathAlphabetRange) :
+    c.faceCovers (a.forRange r) r = c.faceCovers a r := by
+  simp only [faceCovers, MathAlphabet.forRange_fixed_point]
 
 /-- Whether the shared-IR resolver remaps this range: exactly when the
 selected math face carries the range anchor. A range the face does not
@@ -617,6 +648,7 @@ def MathAlphabet.name : MathAlphabet → String
   | .frak => "frak"
   | .bf => "bf"
   | .bfit => "bfit"
+  | .bfDefault => "bf-default"
   | .sf => "sf"
   | .tt => "tt"
   | .rm => "rm"
@@ -630,6 +662,7 @@ def MathAlphabet.styleLabel : MathAlphabet → String
   | .frak => "fraktur"
   | .bf => "bold"
   | .bfit => "bold italic"
+  | .bfDefault => "bold with italic lowercase Greek"
   | .sf => "sans-serif"
   | .tt => "monospace"
   | .rm => "upright"
@@ -643,7 +676,7 @@ alphabets (double-struck, calligraphic, fraktur, sans-serif, monospace)
 cannot be synthesized — their base letter stands in plain, the loss
 named. -/
 def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
-  | .bf => (true, false)
+  | .bf | .bfDefault => (true, false)
   | .bfit => (true, true)
   | .it => (false, true)
   | .bm => (true, true)
@@ -702,7 +735,7 @@ def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
   | .bf => some { slot := .body, bold := true, italic := false }
   | .sf => some { slot := .sans, bold := false, italic := false }
   | .tt => some { slot := .mono, bold := false, italic := false }
-  | .bb | .cal | .frak | .bfit | .bm => none
+  | .bb | .cal | .frak | .bfit | .bfDefault | .bm => none
 
 /-- Text alphabets serve Latin letters and digits independently of the
 Unicode symbol ranges: `\mathit{5}` uses the body italic face even though
@@ -711,7 +744,7 @@ symbol classification, and a symbol source is unchanged. -/
 def MathAlphabet.sourceRangeOf (a : MathAlphabet) (src : MathAlphabetSource)
     (c : Char) : Option MathAlphabetRange :=
   if src == .text && a.textStyle?.isSome then
-    MathAlphabet.rm.rangeOf c <|> a.rangeOf c
+    (MathAlphabet.rm.rangeOf c).filter (·.textServed) <|> a.rangeOf c
   else a.rangeOf c
 
 /-- Selecting a symbol source preserves the Unicode range classifier for

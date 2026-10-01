@@ -45,6 +45,7 @@ def greekLiteral (c : Char) : Option Char :=
     | 'ϕ' => some '𝜙'
     | 'ϱ' => some '𝜚'
     | 'ϖ' => some '𝜛'
+    | 'ϴ' => some 'ϴ'
     | _ => none
 
 /-- Characters that classify directly (TeX's mathcodes, plain format): the
@@ -207,10 +208,11 @@ def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
    -- unicode-math's `\sym…` family selects the math (`sym`) version of each
    -- alphabet explicitly, forcing the symbol source regardless of the
    -- document's `MathAlphabetSources`. `\symup`/`\symrm` are the upright
-   -- roman; `\symbf`/`\symbfup` the upright bold; `\symbfit` the genuine
-   -- bold italic (`bfit`); the rest name their shape.
+   -- roman; `\symbf` the default TeX bold (italic lowercase Greek),
+   -- `\symbfup` upright bold, and `\symbfit` bold italic; the rest name
+   -- their shape.
    ("symup", .rm, .sym), ("symrm", .rm, .sym), ("symit", .it, .sym),
-   ("symbf", .bf, .sym), ("symbfup", .bf, .sym), ("symbfit", .bfit, .sym),
+   ("symbf", .bfDefault, .sym), ("symbfup", .bf, .sym), ("symbfit", .bfit, .sym),
    ("symsf", .sf, .sym), ("symtt", .tt, .sym), ("symbb", .bb, .sym),
    ("symcal", .cal, .sym), ("symfrak", .frak, .sym),
    -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
