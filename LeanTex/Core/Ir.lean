@@ -6368,6 +6368,11 @@ structure ElementStyle where
   hover : Option (Color × Option String) := none
   focus : Option (Color × Option String) := none
   motion : Option Nat := none
+  /-- The ink a link kind's text is set in (`link`, `url`, `cite`), where the
+  document declares one: hyperref's `linkcolor`, `urlcolor` and `citecolor`
+  under `colorlinks`. Read at the one site each kind's link is built
+  (`linkInk`); undeclared, a link keeps the running colour. -/
+  color : Option (Color × Option String) := none
   /-- The title page's declared slots (`TitleSlot`), read by the title page
   only: a title page that declares any sets exactly its slots, each where
   it is pinned. Empty is the built-in title page. -/
@@ -6408,7 +6413,8 @@ and the whole style addresses the `u-<name>` class hook in HTML. -/
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
-   "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo"]
+   "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo",
+   "link", "url", "cite"]
 
 structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -6416,6 +6422,15 @@ structure Styles where
 
 def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
+
+/-- A link's body in its kind's declared ink (`ElementStyle.color`: `link`
+for a cross-reference, `url` for a URL, `cite` for a citation mark), what
+hyperref's `colorlinks` sets: `\Hy@colorlink` colours the link's own text,
+never the brackets or words around it. Undeclared, the body as it stands. -/
+def Styles.linkInk (s : Styles) (kind : String) (body : Array Inline) : Array Inline :=
+  match (s.find? kind).bind (·.color) with
+  | some (c, n) => #[.colored c n body]
+  | none => body
 
 /-- Replace-on-redeclare, one entry per element — the same install mechanism
 as `Palette.declare`/`Tokens.declare`. A `\style` block edits keys of the
@@ -9991,6 +10006,19 @@ generated ink, excluded as `citeMark` is. -/
 theorem footnoteWrap_text (num : Option Nat) :
     Conserves plainText (footnoteWrap num) :=
   wrap_text (.footnote num) fun _ => rfl
+
+/-- A link's ink (`Styles.linkInk`) is a body-transparent wrap
+(`Inline.colored`, whose census is its body's) where the kind declares a
+colour, and the body unchanged where it does not, so it ships exactly the
+text census the body already had — the `Styles` walk's conservation fact
+(AGENTS.md, obligation table). -/
+theorem Styles_text (s : Styles) (kind : String) :
+    Conserves plainText (s.linkInk kind) := by
+  intro body
+  unfold Styles.linkInk
+  match (s.find? kind).bind (·.color) with
+  | none => rfl
+  | some (c, n) => exact wrap_text (Inline.colored c n) (fun _ => rfl) body
 
 -- Nothing vanishes: dimming recolours, never removes. The text of a frame's
 -- body is identical on every handout page, so the union of what the steps

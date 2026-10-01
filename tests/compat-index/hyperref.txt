@@ -18,3 +18,9 @@ body refuse:W0301 \pdfbookmark[1]{T}{n}
 body refuse:W0301 \belowpdfbookmark{T}{n}
 body refuse:W0301 \texorpdfstring{a}{b}
 pre impl \hypersetup{pdftitle=T}
+pre impl \hypersetup{colorlinks}
+pre impl \hypersetup{colorlinks, linkcolor=blue}
+pre impl \hypersetup{colorlinks, urlcolor=blue}
+pre impl \hypersetup{colorlinks, citecolor=blue}
+pre impl \hypersetup{colorlinks, allcolors=blue}
+pre inert:running-ink \hypersetup{hidelinks}

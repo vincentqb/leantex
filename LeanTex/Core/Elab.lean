@@ -4622,7 +4622,7 @@ no extent is reserved for it" pos
             -- Unresolved until the whole document's labels are known:
             -- `resolveRefs` fills the number at the end of elaboration, so
             -- a forward reference costs no second pass over the source.
-            let acc := (flushText acc sb).push (.ref key form "??" none)
+            let acc := flushText acc sb ++ ctx.styles.linkInk "link" #[.ref key form "??" none]
             modify fun st => { st with refSites := st.refSites.push (key, form, pos) }
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
@@ -4683,7 +4683,7 @@ no extent is reserved for it" pos
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j2 + 1)
-              (acc.push (.link (argText ctx urlRaw) inner)) ""
+              (acc.push (.link (argText ctx urlRaw) (ctx.styles.linkInk "url" inner))) ""
           | some (.group urlRaw _), _ =>
             -- One argument: the URL is also the text, which is the common case
             -- for a bare link and saves writing it twice.
@@ -4692,7 +4692,7 @@ no extent is reserved for it" pos
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.link url #[.text url])) ""
+              ((flushText acc sb).push (.link url (ctx.styles.linkInk "url" #[.text url]))) ""
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -4750,7 +4750,7 @@ no extent is reserved for it" pos
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
               ((flushText acc sb).push
-                (if name == "url" then .link url #[set] else set)) ""
+                (if name == "url" then .link url (ctx.styles.linkInk "url" #[set]) else set)) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{url} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -11766,7 +11766,7 @@ def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot"]
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"]
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. A
 slot owns its box; repeated `part` entries own independently styled data.
@@ -12058,6 +12058,8 @@ institute, or date, got '{vt}'" pos
         if let some v ← asColor then st := { st with hover := some v }
       | "focus" =>
         if let some v ← asColor then st := { st with focus := some v }
+      | "color" =>
+        if let some v ← asColor then st := { st with color := some v }
       | "motion" =>
         -- A duration, in milliseconds: the one unit CSS transitions and
         -- the reduced-motion literature both speak in.

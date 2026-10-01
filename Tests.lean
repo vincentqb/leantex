@@ -57,6 +57,7 @@ import Tests.OwnBib
 import Tests.Regress
 import Tests.Reports
 import Tests.Natbib
+import Tests.LinkColor
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
@@ -363,6 +364,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   hspaceAffineChecks ref oneFace
   inlineRuleChecks ref oneFace
   fontSizeAffineChecks ref oneFace
+  linkColorChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and

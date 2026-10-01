@@ -4141,6 +4141,7 @@ hover and focus inks, or a coloured run in the author line's template or a
 title slot's. -/
 def styleColored (st : ElementStyle) : Bool :=
   st.rule.isSome || st.separator.isSome || st.hover.isSome || st.focus.isSome ||
+    st.color.isSome ||
     ((st.authorFont.getD #[]) :: st.slots.toList.flatMap (fun s =>
       s.parts.toList.flatMap fun p => [p.content, p.font.getD #[]])).any
       (Ir.foldInlines (fun a i => a || i matches .colored _ _ _) false)

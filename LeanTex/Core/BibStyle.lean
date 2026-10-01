@@ -41,6 +41,11 @@ structure CitePunct where
   `and`, and a key repeating the last key's names printed whole. (Its bare
   author-year `\cite` is natbib's `\citealp`, a rename where it is read.) -/
   biblatex : Bool := false
+  /-- The ink a citation's linked mark is set in: the document's `cite` style
+  colour (`Ir.Styles.linkInk`), hyperref's `citecolor` under `colorlinks`.
+  Only the mark: the brackets and separators around it keep the running
+  colour, as `\Hy@colorlink` leaves them. -/
+  ink : Option (Ir.Color × Option String) := none
   deriving Repr, BEq, Inhabited
 
 /-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
@@ -395,8 +400,11 @@ private structure CiteAcc where
 private def emit (out : Array Ir.Inline) (s : String) : Array Ir.Inline :=
   if s.isEmpty then out else out.push (.text s)
 
-private def emitLink (out : Array Ir.Inline) (anchor s : String) : Array Ir.Inline :=
-  out.push (.link anchor #[.text s])
+private def emitLink (p : CitePunct) (out : Array Ir.Inline) (anchor s : String) :
+    Array Ir.Inline :=
+  out.push (.link anchor (match p.ink with
+    | some (c, n) => #[.colored c n #[.text s]]
+    | none => #[.text s]))
 
 /-- The first letter capitalized — natbib's `\NAT@Up`, what `\Citet` does
 to a name that opens with a lowercase particle. -/
@@ -482,7 +490,7 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
         else
           (if same then p.yysep ++ " " ++ (if s.numeric then pre else "")
             else acc.citea ++ names ++ " " ++ s.op ++ pre, mark, s.cl ++ tsep)
-    { out := emitLink (emit acc.out t.1) (anchorOf r.key) t.2.1
+    { out := emitLink p (emit acc.out t.1) (anchorOf r.key) t.2.1
       citea := t.2.2
       last := some names
       lastYear := some bare
@@ -524,8 +532,9 @@ private structure RunAcc where
   held : Option (String × Resolved) := none
 
 /-- The held number, printed. -/
-private def flushHeld (out : Array Ir.Inline) : Option (String × Resolved) → Array Ir.Inline
-  | some (pre, r) => emitLink (emit out pre) (anchorOf r.key) (toString r.position)
+private def flushHeld (p : CitePunct) (out : Array Ir.Inline) :
+    Option (String × Resolved) → Array Ir.Inline
+  | some (pre, r) => emitLink p (emit out pre) (anchorOf r.key) (toString r.position)
   | none => out
 
 /-- One key under `compress`: a number one past the last extends the run
@@ -534,7 +543,7 @@ and is held back; any other — a gap, a repeat, a mark that is no number (a
 key ends the run and prints `?` where it stands. -/
 private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
   | none =>
-    { acc := { st.acc with out := emit (flushHeld st.acc.out st.held) (st.acc.citea ++ "?"),
+    { acc := { st.acc with out := emit (flushHeld p st.acc.out st.held) (st.acc.citea ++ "?"),
                            citea := p.sep ++ " " } }
   | some r =>
     if r.label.isNone && st.last.map (· + 1) == some r.position then
@@ -542,7 +551,7 @@ private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
         held := some (if st.held.isSome then "–" else st.acc.citea, r) }
     else
       { acc := { st.acc with
-          out := emitLink (emit (flushHeld st.acc.out st.held) st.acc.citea) (anchorOf r.key)
+          out := emitLink p (emit (flushHeld p st.acc.out st.held) st.acc.citea) (anchorOf r.key)
             (r.label.getD (toString r.position))
           citea := p.sep ++ " ", dated := true }
         last := if r.label.isNone then some r.position else none }
@@ -553,7 +562,7 @@ by an en dash (`[1–3, 5]`), a run of two keeps both numbers, and a repeated
 number breaks a run and prints again. -/
 private def compressRuns (p : CitePunct) (parts : Array (Option Resolved)) : CiteAcc :=
   let st := parts.foldl (runStep p) {}
-  { st.acc with out := flushHeld st.acc.out st.held }
+  { st.acc with out := flushHeld p st.acc.out st.held }
 
 /-- A whole citation under natbib's punctuation, per its command (natbib.sty's
 command table): `\citep` wraps its keys in the brackets with `sep` between
@@ -1536,6 +1545,7 @@ def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
         pure (some Style.unsrtnat)
   let p := CitePunct.ofDoc doc.natbib ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
     (declared.all (·.labels))
+  let p := { p with ink := (doc.styles.find? "cite").bind (·.color) }
   -- biblatex sorts its list by its own schemes: nty for the numeric styles,
   -- nyt for the author-year ones (sorting=none keeps citation order).
   let style := declared.getD Style.unsrtnat
@@ -1586,11 +1596,18 @@ emits in a citation's place is text or a link over text
 body rewritten. Stated over the census fold (`Ir.pendingStep`) with the
 accumulator generalised, so each walk shape is one induction. -/
 
-/-- A node the citation renderer may emit: text, or a link whose body is
-text. Neither carries a pending leaf. -/
+/-- A citation link's body: its mark's text, or that text in the declared
+ink (`CitePunct.ink`). -/
+private def plainMark : Ir.Inline → Bool
+  | .text _ => true
+  | .colored _ _ b => b.all fun x => match x with | .text _ => true | _ => false
+  | _ => false
+
+/-- A node the citation renderer may emit: text, or a link whose body is a
+mark (`plainMark`). Neither carries a pending leaf. -/
 private def plainCite : Ir.Inline → Bool
   | .text _ => true
-  | .link _ body => body.all fun x => match x with | .text _ => true | _ => false
+  | .link _ body => body.all plainMark
   | _ => false
 
 private theorem foldInlineList_text (acc : Array Ir.Unresolved) :
@@ -1608,12 +1625,33 @@ private theorem foldInlineList_text (acc : Array Ir.Unresolved) :
     rw [Ir.foldInlineList, Ir.foldInline, ih _ hrest]
     simp [Ir.pendingStep, Ir.pendingLeaf]
 
+private theorem foldInlineList_mark (acc : Array Ir.Unresolved) :
+    ∀ l : List Ir.Inline, (∀ x ∈ l, plainMark x = true) →
+      Ir.foldInlineList Ir.pendingStep acc l = acc := by
+  intro l
+  induction l generalizing acc with
+  | nil => intro _; rfl
+  | cons x rest ih =>
+    intro h
+    have hx := h x (List.mem_cons_self ..)
+    have hrest := fun y hy => h y (List.mem_cons_of_mem _ hy)
+    cases x <;> simp only [plainMark] at hx <;> try exact absurd hx (by decide)
+    case text s =>
+      rw [Ir.foldInlineList, Ir.foldInline, ih _ hrest]
+      simp [Ir.pendingStep, Ir.pendingLeaf]
+    case colored c n b =>
+      have hb : ∀ y ∈ b.toList, (match y with | .text _ => true | _ => false) = true :=
+        fun y hy => Array.all_eq_true_iff_forall_mem.mp hx y (Array.mem_def.mpr hy)
+      rw [Ir.foldInlineList, Ir.foldInline, foldInlineList_text _ b.toList hb,
+        show Ir.pendingStep acc (.colored c n b) = acc by simp [Ir.pendingStep, Ir.pendingLeaf]]
+      exact ih acc hrest
+
 private theorem foldInline_plain (acc : Array Ir.Unresolved) (x : Ir.Inline)
     (h : plainCite x = true) : Ir.foldInline Ir.pendingStep acc x = acc := by
   cases x <;> simp only [plainCite] at h <;> try exact absurd h (by decide)
   case text s => simp [Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf]
   case link u body =>
-    rw [Ir.foldInline, foldInlineList_text]
+    rw [Ir.foldInline, foldInlineList_mark]
     · simp [Ir.pendingStep, Ir.pendingLeaf]
     · intro y hy
       exact Array.all_eq_true_iff_forall_mem.mp h y (Array.mem_def.mpr hy)
@@ -1636,16 +1674,17 @@ private theorem emit_plain (out : Array Ir.Inline) (s : String)
   · exact h
   · rw [Array.all_push, h]; rfl
 
-private theorem emitLink_plain (out : Array Ir.Inline) (anchor s : String)
-    (h : out.all plainCite = true) : (emitLink out anchor s).all plainCite = true := by
-  rw [emitLink, Array.all_push, h]; simp [plainCite]
+private theorem emitLink_plain (p : CitePunct) (out : Array Ir.Inline) (anchor s : String)
+    (h : out.all plainCite = true) : (emitLink p out anchor s).all plainCite = true := by
+  rw [emitLink, Array.all_push, h]
+  cases p.ink <;> simp [plainCite, plainMark]
 
 private theorem citeStep_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (n : Nat)
     (acc : CiteAcc) (o : Option Resolved) (h : acc.out.all plainCite = true) :
     (citeStep p f s n acc o).out.all plainCite = true := by
   cases o with
   | none => exact emit_plain _ _ h
-  | some r => exact emitLink_plain _ _ _ (emit_plain _ _ h)
+  | some r => exact emitLink_plain _ _ _ _ (emit_plain _ _ h)
 
 private theorem finish_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
     (acc : CiteAcc) (h : acc.out.all plainCite = true) :
@@ -1653,26 +1692,27 @@ private theorem finish_plain (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
   refine emit_plain _ _ ?_
   rw [Array.all_append, emit_plain _ _ (by simp), h]; rfl
 
-private theorem flushHeld_plain (out : Array Ir.Inline) (h : Option (String × Resolved))
-    (hout : out.all plainCite = true) : (flushHeld out h).all plainCite = true := by
+private theorem flushHeld_plain (p : CitePunct) (out : Array Ir.Inline)
+    (h : Option (String × Resolved))
+    (hout : out.all plainCite = true) : (flushHeld p out h).all plainCite = true := by
   cases h with
   | none => exact hout
-  | some ph => exact emitLink_plain _ _ _ (emit_plain _ _ hout)
+  | some ph => exact emitLink_plain _ _ _ _ (emit_plain _ _ hout)
 
 private theorem runStep_plain (p : CitePunct) (st : RunAcc) (o : Option Resolved)
     (h : st.acc.out.all plainCite = true) : (runStep p st o).acc.out.all plainCite = true := by
   cases o with
-  | none => exact emit_plain _ _ (flushHeld_plain _ _ h)
+  | none => exact emit_plain _ _ (flushHeld_plain _ _ _ h)
   | some r =>
     simp only [runStep]
     split
     · exact h
-    · exact emitLink_plain _ _ _ (emit_plain _ _ (flushHeld_plain _ _ h))
+    · exact emitLink_plain _ _ _ _ (emit_plain _ _ (flushHeld_plain _ _ _ h))
 
 private theorem compressRuns_plain (p : CitePunct) (parts : Array (Option Resolved)) :
     (compressRuns p parts).out.all plainCite = true := by
   unfold compressRuns
-  refine flushHeld_plain _ _ ?_
+  refine flushHeld_plain _ _ _ ?_
   exact Array.foldl_induction (motive := fun _ (a : RunAcc) => a.acc.out.all plainCite = true)
     (by simp) (fun _ b hb => runStep_plain p b _ hb)
 

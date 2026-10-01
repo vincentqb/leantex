@@ -551,6 +551,39 @@ structure TexAssign where
   value : Array Raw
   deriving Repr
 
+/-- hyperref's link colouring as its options accumulate — the package's
+options, then each `\hypersetup` (hyperref.sty's `colorlinks`, `hidelinks`,
+`linkcolor`, `urlcolor`, `citecolor`, `allcolors`); the colours default to
+hyperref's red, magenta and green. -/
+private structure LinkSetup where
+  colorlinks : Bool := false
+  link : String := "red"
+  url : String := "magenta"
+  cite : String := "green"
+  deriving Repr
+
+/-- One hyperref key read into the setup; `none` for a key that sets no link
+colour. -/
+private def LinkSetup.read (l : LinkSetup) (k v : String) : Option LinkSetup :=
+  match k with
+  | "colorlinks" => some { l with colorlinks := v != "false" }
+  | "hidelinks" => some { l with colorlinks := false }
+  | "linkcolor" => some { l with link := v }
+  | "urlcolor" => some { l with url := v }
+  | "citecolor" => some { l with cite := v }
+  | "allcolors" => some { l with link := v, url := v, cite := v }
+  | _ => none
+
+/-- The setup as the declarations the elaborator reads: each link kind's
+`\style{…}{ color = … }` under `colorlinks`, nothing otherwise — without it
+hyperref's `\Hy@colorlink` paints nothing, and a link keeps the running
+colour. -/
+private def LinkSetup.native (l : LinkSetup) : String :=
+  if l.colorlinks then
+    s!"\\style\{link}\{ color = {l.link} }\\style\{url}\{ color = {l.url} }" ++
+      s!"\\style\{cite}\{ color = {l.cite} }"
+  else ""
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -725,6 +758,8 @@ private structure St where
   synthesizes — the style is read anywhere before the list, and the
   preamble elaborator does not take it. -/
   bibStyle : Option String := none
+  /-- hyperref's link colouring as its options have declared it so far. -/
+  links : LinkSetup := {}
   /-- Names the caller declares the engine renders or reserves: what
   the provision definers' keep-existing policy reads for commands this
   document did not bind — every one of them *is* defined, in LaTeX and
@@ -4179,10 +4214,15 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
 \\page{ ... } declares anything further")
   synthAt native pos
 
-/-- `\hypersetup{pdfauthor=..., pdftitle=...}` → `\pdfmeta{...}`; rendering
-hints (`colorlinks`, `pdfborder`) have no meaning and go quietly. -/
+/-- `\hypersetup{pdfauthor=..., pdftitle=...}` → `\pdfmeta{...}`, and its link
+colours (`colorlinks`, `linkcolor`, `urlcolor`, `citecolor`, `allcolors`,
+`hidelinks`) → the link kinds' `\style` colours (`LinkSetup.native`). The
+other rendering hints (`pdfborder`, a viewer's frame) have no meaning and go
+quietly. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut keys : Array String := #[]
+  let mut links := (← get).links
+  let mut linked := false
   for e in Decl.splitEntries opts do
     match e.splitOn "=" with
     | k :: v =>
@@ -4192,8 +4232,13 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
         (v.drop 1).dropEnd 1 |>.toString else v
       for m in ["title", "author", "subject", "keywords"] do
         if k == "pdf" ++ m then keys := keys.push s!"{m} = \"{v}\""
+      if let some l := links.read k v then
+        links := l
+        linked := true
     | [] => pure ()
-  let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }"
+  if linked then write fun st => { st with links }
+  let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }" ++
+    (if linked then links.native else "")
   became "\\hypersetup" native pos
   synthAt native pos
 
@@ -6192,6 +6237,27 @@ no package options are supported by the strict native Markdown dialect" pos
       else if p == "unicode-math" && opt.isSome then
         out := out ++ (← unicodeMathOptions
           s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
+      else if p == "hyperref" && opt.isSome then
+        -- hyperref's package options are `\hypersetup`'s keys; the link
+        -- colours become the link kinds' `\style` colours, the rest are the
+        -- viewer's, discarded as before.
+        let mut links := (← get).links
+        let mut linked := false
+        for o in (opt.getD "").splitOn "," do
+          match o.splitOn "=" with
+          | k :: v =>
+            if let some l := links.read k.trimAscii.toString
+                (String.intercalate "=" v).trimAscii.toString then
+              links := l
+              linked := true
+          | [] => pure ()
+        if linked then write fun st => { st with links }
+        if linked && links.colorlinks then
+          let native := links.native
+          became s!"\\usepackage[{opt.getD ""}]\{hyperref}" native pos
+          out := out ++ (← synthAt native pos)
+        else
+          discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if nativePackages.contains p then
         discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
       else if boundaryPkgs.contains p && (← get).boundaryOpen then
