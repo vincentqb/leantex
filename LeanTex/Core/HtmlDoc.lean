@@ -5383,7 +5383,7 @@ private def Config.afterFrame (cfg : Config) : Block → Config
       closeInline := fun _ cfg _ => cfg
     } true cfg body
   | .para .. | .section .. | .list .. | .center .. | .ragged ..
-  | .spaced .. | .role .. | .quote .. | .abstract .. | .titled ..
+  | .spaced .. | .role .. | .link .. | .quote .. | .abstract .. | .titled ..
   | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .onSteps ..
   | .altSteps .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
   | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. | .picture ..
@@ -6213,6 +6213,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       if (Ir.DisplayCtx.ofRole? n).isSome then k
       else Html.elem "div" kids #[("class", roleClass n)]
     | _, _ => Html.elem "div" kids #[("class", roleClass n)]
+  -- HTML anchors have a transparent content model, so one anchor may own
+  -- arbitrary flow children; elaboration rejects every anchor-bearing
+  -- descendant before this node is built.
+  | .link target body =>
+    Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
+      #[("href", target), ("style", "display: block; color: inherit")]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
