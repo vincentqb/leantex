@@ -496,10 +496,13 @@ which is a dropped body and not a style key")]
 /-- A definition the conditional pass can read: its replacement text and the
 two prefixes its meaning carries, `\long` and e-TeX's `\protected`, which
 `\ifx` compares beside the text (TeXbook chapter 20: a `\long` macro and its
-short twin are different meanings). `live`: the text does something only a
-use can decide — it holds a conditional, sets a flag or makes a definition,
-itself or through a macro it uses — so the pass expands the macro where it
-is used rather than leave it to an expansion that has no conditionals.
+short twin are different meanings). An optional command is an outer wrapper
+holding its default and the name of a separately scoped inner definition
+(latex.ltx, `\@argdef`): a `\let` alias retains its default while following
+redefinitions of that inner text. `live`: the use must read a copied
+meaning, select an optional argument or execute a conditional, flag setting
+or definition, itself or through a macro it uses, so the pass expands it
+where it is used.
 `serial` orders definitions: a macro's text expands only macros defined
 before it, the elaborator's own visibility rule, which is what makes the
 expansion terminate. -/
@@ -508,6 +511,7 @@ private structure CondVal where
   long : Bool
   prot : Bool
   arity : Nat := 0
+  optional : Option (String × Array Raw) := none
   live : Bool := false
   serial : Nat := 0
 
@@ -516,6 +520,14 @@ it replaced (`none`: the name was not bound, or the flag not declared). -/
 private inductive CondUndo where
   | bind (n : String) (prev : Option (Option CondVal))
   | flag (n : String) (prev : Option Bool)
+
+/-- Where the definition state stood when a group or environment opened: the
+save stack's height, the globals made so far, the picture's own names. -/
+private structure CondMark where
+  undo : Nat
+  globals : Nat
+  picBound : Nat
+  primitives : Nat
 
 /-- A preamble definition of `name` (the one stamped `serial`) whose text,
 the group at `pos` in `file`, went out without what only a use decides. The
@@ -528,7 +540,7 @@ private structure CondPending where
   file : String
   pos : Pos
 
-/-- What the package- and class-loaded tests read (`resolveLoaded`): the loads
+/-- What the package- and class-loaded tests read (`condList`): the loads
 written so far, in flow order. A package carries the option list its first
 load passed — a second load of a loaded package passes nothing new, the
 kernel's clash check aside (latex.ltx, `\@onefilewithoptions`) — and `none`
@@ -694,24 +706,23 @@ private structure St where
   reads, the value what `\ifnum`, `\ifodd`, `\ifcase` and `\ifx` read, at
   the site that reads them. `none` is a name bound in a way no value can be
   read from — a parameter text, an expanding definer over unread names, a
-  `\let` to a name with no readable value, a definition inside a group the
-  pass has left. An environment is a TeX group, so what it binds ends with
-  it, a global definition excepted; a brace group keeps its names bound —
-  as often as not it is an argument (a hook) whose definitions are not
-  scoped to it, and that reading only ever errs toward "defined", the one
-  that keeps a guarded branch — but no value set inside it is read past it. -/
+  `\let` to a name with no readable value. Groups restore the meanings
+  they opened with; only global definitions outlive them. -/
   binds : Std.HashMap String (Option CondVal) := {}
   /-- `\newif` flags by base name (`\newif\ifshowdetail` records
   `showdetail`, initially false — plain TeX's `\newif` sets `\iffalse`)
   with the value the last `\Xtrue`/`\Xfalse` gave. Scoped like a value. -/
   flags : Std.HashMap String Bool := {}
   /-- The save stack (tex.web §268): each change to `binds` and `flags`, with
-  what it replaced, so the close of the environment the change was made in
+  what it replaced, so the close of the group the change was made in
   undoes it. It holds only what changed, so a group costs what it binds. -/
   undo : Array CondUndo := #[]
   /-- Every global definition, in the order made (`\gdef`, `\xdef`,
-  `\global`): what outlives the environment it was made in. -/
+  `\global`): what outlives the group it was made in. -/
   globals : Array (String × Option CondVal) := #[]
+  /-- Live primitive group pairs; their save marks cross macro and input
+  boundaries just as the tokens do. Brace groups restore this stack too. -/
+  primitiveScopes : Array (String × CondMark) := #[]
   /-- The names the picture being walked binds for itself — a `\foreach`
   variable, a `\pgfmathsetmacro` target. pgf binds them in the picture's
   own scope, so a test that reads one is the picture's to evaluate. -/
@@ -730,6 +741,9 @@ private structure St where
   /-- The document body has begun: a definition made from here on is read
   by the elaborator where it is made, not at the preamble's end. -/
   condInDoc : Bool := false
+  /-- Collection has ended. A hook met during replay is read in place,
+  with the existing placement diagnostic, never collected a second time. -/
+  condReplaying : Bool := false
   /-- Preamble definitions whose texts the pass took its decisions out of,
   settled against the state at the preamble's end (`condSettle`). -/
   pending : Array CondPending := #[]
@@ -785,7 +799,7 @@ private structure St where
   travels with the body because the replay happens in its own pass: what the
   engine refuses inside a `.sty`'s hook is still named at the `.sty`. -/
   deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
-  /-- The loads the loaded-test pass has read so far (`resolveLoaded`). -/
+  /-- The loads the shared conditional walk has read so far (`condList`). -/
   loads : LoadSet := {}
   /-- Native spacers appended to the ordinary block-begin template in the
   preamble. Applied after rewriting, including to blocks in definitions
@@ -1116,8 +1130,10 @@ private def macroToken : Raw → Raw
 
 end
 
-/-- One optional `[...]` argument, as source text. -/
-def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
+/-- One optional `[...]` argument, keeping its tokens inert. Groups are
+opaque to the delimiter scan; an ungrouped `[` does not nest (latex.ltx,
+`\@ifnextchar` and `\@argdef`). -/
+private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat := Id.run do
   let j := skipSpaces raws i
   match raws[j]? with
   | some (.sym '[' _) =>
@@ -1125,11 +1141,24 @@ def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
     let mut inner : Array Raw := #[]
     for _ in [k:raws.size + 1] do
       match raws[k]? with
-      | some (.sym ']' _) => return (some (rawSrc inner), k + 1)
+      | some (.sym ']' _) => return (some inner, k + 1)
       | some r => inner := inner.push r; k := k + 1
       | none => break
     return (none, i)
   | _ => (none, i)
+
+/-- One optional `[...]` argument, as source text for configuration keys. -/
+def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
+  let (arg, stop) := takeRawOpt raws i
+  (arg.map rawSrc, stop)
+
+/-- TeX removes one enclosing group from a delimited argument, exactly
+when that group is the whole argument (TeXbook chapter 20). LaTeX reads a
+default this way at definition time, then passes it intact on omission. -/
+private def ungroupArg (raws : Array Raw) : Array Raw :=
+  match raws.toList with
+  | [.group body _] => body
+  | _ => raws
 
 /-- Up to `n` optional `[...]` runs, and whether any of them was there. The
 box commands differ only in how many their signature allows, so the count is
@@ -2118,9 +2147,13 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
       if a == b then return two true src "compares a name with itself" "same" 2 none
       match condValueOf st.binds a, condValueOf st.binds b with
       | some (some va), some (some vb) =>
-        let v := macroTokens #[] va.raws.toList == macroTokens #[] vb.raws.toList &&
-          va.arity == vb.arity &&
-          va.long == vb.long && va.prot == vb.prot
+        let v := match va.optional, vb.optional with
+          | some (a, da), some (b, db) =>
+            a == b && macroTokens #[] da.toList == macroTokens #[] db.toList
+          | none, none =>
+            macroTokens #[] va.raws.toList == macroTokens #[] vb.raws.toList &&
+              va.arity == vb.arity && va.long == vb.long && va.prot == vb.prot
+          | _, _ => false
         return two v src
           (if v then "compares two equal definitions" else "compares two different definitions")
           (toString v) 2 none
@@ -2147,13 +2180,235 @@ private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :
   (n.endsWith "true" && flags.contains (n.dropEnd 4).toString) ||
     (n.endsWith "false" && flags.contains (n.dropEnd 5).toString)
 
+/-! # Package- and class-loaded tests
+
+`\@ifpackageloaded{p}{t}{f}` asks whether package `p` is loaded, and the
+document's own loads make that decidable here. The kernel's test
+(`\@ifl@aded`, latex.ltx; ltclass.dtx) holds exactly when `\ver@p.sty` is
+defined, and `\load@onefile@withoptions` defines it as the file starts to be
+read: a package counts as loaded from its `\usepackage` or `\RequirePackage`
+on, and never before. `\@ifpackagewith{p}{opts}` reads the list
+`\@pass@ptions` accumulates for `p` — each `\PassOptionsToPackage` for it and
+the options its load passed, never the class's global options — and holds
+when every wanted option is on it. The class forms read the `\documentclass`
+line the same way.
+
+What the pass reads is the loads this document and its local style files
+write. A package that another package loads, by a `\RequirePackage` inside a
+file this engine never reads, is invisible and reads as not loaded: that is
+the premise a negative answer rests on. A positive answer read where the test
+stands rests on nothing, since a load written here is a load LaTeX performs.
+
+A test is answered where it executes in the shared conditional walk. A
+macro's text and a deferred hook are held verbatim until their use or replay;
+a selected branch executes unbraced in the caller's state. No later pass
+can select a different branch after its definitions or flag changes ran. -/
+
+/-- The branches a loaded test carries after its name and option list: both,
+the true one only, or the false one only (latex.ltx defines the `T` and `F`
+forms over the `TF` one with `\@firstofone\@gobble` and `{}`). -/
+inductive LoadedBranches where
+  | tf
+  | t
+  | f
+  deriving BEq, Repr
+
+/-- One spelling of the loaded-test family: whether it reads the class or the
+packages, whether an option list follows the name, and its branches. -/
+structure LoadedTest where
+  ctrl : String
+  cls : Bool
+  withOpts : Bool
+  branches : LoadedBranches
+  deriving BEq, Repr
+
+/-- The family as latex.ltx defines it: the `\@if…` internals, and the
+`\If…Loaded…` interface `\let` to them or wrapped around them. -/
+def loadedTests : List LoadedTest :=
+  [⟨"@ifpackageloaded", false, false, .tf⟩, ⟨"IfPackageLoadedTF", false, false, .tf⟩,
+   ⟨"IfPackageLoadedT", false, false, .t⟩, ⟨"IfPackageLoadedF", false, false, .f⟩,
+   ⟨"@ifclassloaded", true, false, .tf⟩, ⟨"IfClassLoadedTF", true, false, .tf⟩,
+   ⟨"IfClassLoadedT", true, false, .t⟩, ⟨"IfClassLoadedF", true, false, .f⟩,
+   ⟨"@ifpackagewith", false, true, .tf⟩, ⟨"IfPackageLoadedWithOptionsTF", false, true, .tf⟩,
+   ⟨"IfPackageLoadedWithOptionsT", false, true, .t⟩,
+   ⟨"IfPackageLoadedWithOptionsF", false, true, .f⟩,
+   ⟨"@ifclasswith", true, true, .tf⟩, ⟨"IfClassLoadedWithOptionsTF", true, true, .tf⟩,
+   ⟨"IfClassLoadedWithOptionsT", true, true, .t⟩,
+   ⟨"IfClassLoadedWithOptionsF", true, true, .f⟩]
+
+/-- What one test asks: the class or the packages, the name, and the options
+it wants (`none` for a load test). -/
+structure LoadQuery where
+  cls : Bool
+  name : String
+  want : Option (Array String)
+  deriving BEq, Repr
+
+/-- An option list as the kernel compares it: comma-separated, spaces zapped
+(`\zap@space`), empty items skipped. -/
+def optionItems (s : String) : Array String :=
+  ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
+    |>.filter (!·.isEmpty) |>.toArray
+
+/-- One package load: the first load of a name stands, and a later one of the
+same name passes nothing new. -/
+def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
+  if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
+
+/-- The class line: the first `\documentclass` is the class. -/
+def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
+  if s.cls.isSome then s else { s with cls := some (c, os) }
+
+/-- Option passes, onto the class half or the package half. -/
+def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
+    LoadSet :=
+  if toClass then { s with clsPassed := s.clsPassed ++ ps }
+  else { s with passed := s.passed ++ ps }
+
+/-- The answer the loads read so far give a test: `some true` when it holds,
+`some false` when it fails, `none` when what it reads is not carried — a
+local style file's passed options, where only a positive answer is sound. -/
+def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
+  let passes (ps : Array (String × Array String)) : Array String :=
+    (ps.filter (·.1 == q.name)).foldl (fun acc e => acc ++ e.2) #[]
+  match q.cls, q.want with
+  | false, none => some (s.pkgs.any (·.1 == q.name))
+  | true, none => some (s.cls.any (·.1 == q.name))
+  | false, some want =>
+    let (seen, whole) := match s.pkgs.find? (·.1 == q.name) with
+      | some (_, some os) => (passes s.passed ++ os, true)
+      | some (_, none) => (passes s.passed, false)
+      | none => (passes s.passed, true)
+    if want.all seen.contains then some true else if whole then some false else none
+  | true, some want =>
+    let own := match s.cls with
+      | some (c, os) => if c == q.name then os else #[]
+      | none => #[]
+    some (want.all (passes s.clsPassed ++ own).contains)
+
+/-- Exactly `n` brace groups after `i`, each after any spaces: a loaded
+test's shape, read before anything is decided. A token that is not a group,
+or a paragraph break, leaves the test unread. -/
+private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Raw)) :=
+  Id.run do
+    let mut out : Array (Array Raw) := #[]
+    let mut j := i
+    for _ in [0:n] do
+      let k := skipSpaces raws j
+      match raws[k]? with
+      | some (.group body _) =>
+        out := out.push body
+        j := k + 1
+      | _ => return none
+    return some out
+
+/-- A name argument the pass can read: letters and punctuation only. A
+control word there is expanded by the kernel before the test, and this pass
+does not expand. -/
+private def plainName (body : Array Raw) : Bool :=
+  body.all fun
+    | .word .. | .space | .sym .. => true
+    | .par .. | .ctrl .. | .group .. | .math .. | .env .. | .verb .. => false
+
+/-- The question a loaded test at `i` asks, read from the groups after it;
+`none` when its shape is not the family's. -/
+private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option LoadQuery :=
+  let n := 1 + (if test.withOpts then 1 else 0) + (if test.branches == .tf then 2 else 1)
+  (argGroupsAt raws i n).bind fun args =>
+    let name := args.getD 0 #[]
+    if !plainName name || (rawSrc name).isEmpty then none
+    else some { cls := test.cls, name := rawSrc name,
+                want := if test.withOpts then some (optionItems (rawSrc (args.getD 1 #[])))
+                  else none }
+
+/-- Which of the groups after a resolved test are kept, unbraced, and which go
+with it: the name and the option list go, and the branch the answer picks
+stays. -/
+def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
+  let lead := if test.withOpts then [false, false] else [false]
+  let branches := match test.branches with
+    | .tf => [ans, !ans]
+    | .t => [ans]
+    | .f => [!ans]
+  lead ++ branches
+
+/-- The note a resolved test earns: what it read, when, and what that keeps. -/
+private def loadedMsg (test : LoadedTest) (q : LoadQuery) (ans : Bool) :
+    String :=
+  let opts := String.intercalate "," (q.want.getD #[]).toList
+  let fact := match q.cls, q.want.isSome, ans with
+    | false, false, true => s!"'{q.name}' is loaded"
+    | false, false, false => s!"no package '{q.name}' is loaded"
+    | false, true, true => s!"'{q.name}' was given '{opts}'"
+    | false, true, false => s!"'{q.name}' was not given '{opts}'"
+    | true, false, true => s!"the class is '{q.name}'"
+    | true, false, false => s!"the class is not '{q.name}'"
+    | true, true, true => s!"the class was given '{opts}'"
+    | true, true, false => s!"the class was not given '{opts}'"
+  let kept := match test.branches, ans with
+    | .tf, true => "the first branch is kept"
+    | .tf, false => "only the second branch is kept"
+    | .t, true | .f, false => "its branch is kept"
+    | .t, false | .f, true => "its branch is dropped"
+  s!"'\\{test.ctrl}': {fact} here, so {kept}"
+
+/-- A load the flow performs where it stands: a package line, the class line,
+an option pass, or a theme slot (beamer's `\usetheme{X}` is
+`\usepackage{beamerthemeX}`). A package loaded already keeps its first
+options. -/
+private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
+  let names (g : Array Raw) : Array String := optionItems (rawSrc g)
+  if name == "usepackage" || name == "RequirePackage" ||
+      name == "RequirePackageWithOptions" then
+    let (opt, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let os := if name == "RequirePackageWithOptions" then none
+      else some (optionItems (opt.getD ""))
+    write fun st => { st with loads :=
+      (names (args.getD 0 #[])).foldl (fun s p => s.addPkg p os) st.loads }
+  else if name == "documentclass" then
+    let (opt, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let c := rawSrc (args.getD 0 #[])
+    unless c.isEmpty do
+      write fun st => { st with loads := st.loads.setCls c (optionItems (opt.getD "")) }
+  else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
+    let (args, _) := takeGroups raws (i + 1) 2
+    let os := optionItems (rawSrc (args.getD 0 #[]))
+    let ps := (names (args.getD 1 #[])).map (·, os)
+    write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
+  else if let some pre := themeAsking.lookup name then
+    let (_, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    let nm := rawSrc (args.getD 0 #[])
+    unless nm.isEmpty do
+      write fun st => { st with loads := st.loads.addPkg (pre ++ nm) (some #[]) }
+
+/-- One collected hook: the note naming its replay point, and the body
+stored against that point. Separate from the walk so the walk's recursive
+calls stand in plain sight — a call behind a local function is a call the
+termination checker cannot see. -/
+private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
+    (pos : Pos) : M Unit := do
+  became s!"\\{name}\{...}" (match pt with
+    | .beginDocument => "its body, replayed at '\\begin{document}'"
+    | .endPreamble => "its body, replayed at the end of the preamble") pos
+  let file := (← get).file
+  write fun st => { st with deferred := st.deferred.push (pt, file, pos, body) }
+
+/-- The group primitives, opener to closer: `\begingroup … \endgroup`
+scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
+and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
+def groupPrimitives : List (String × String) :=
+  [("begingroup", "endgroup"), ("bgroup", "egroup")]
+
 mutual
 
 -- conserves: none — a predicate over a replacement text, not a walk that
 -- rewrites one.
 /-- Does a replacement text do something only its use can decide
-(`CondVal.live`): hold a conditional, set a flag, make a definition or a
-picture — itself, or through a macro it uses whose own text does? -/
+(`CondVal.live`): select an optional argument, hold a conditional, set a
+flag, make a definition or a picture — itself, or through a macro it uses? -/
 private def condLiveList (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : List Raw → Bool
   | [] => false
@@ -2163,7 +2418,9 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : Raw → Bool
   | .ctrl n _ =>
     isCondHead flags n || n == "unless" || n == "newif" || condDefiners.contains n ||
-      isFlagSetter flags n ||
+      isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
+      (deferredHooks.lookup n).isSome ||
+      groupPrimitives.any (fun p => p.1 == n || p.2 == n) ||
       (match condValueOf binds n with
        | some (some v) => v.live
        | _ => false)
@@ -2320,7 +2577,9 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool) : M Un
   let st ← get
   let s := st.serial + 1
   let v := v.map fun c =>
-    { c with live := condLiveList st.flags st.binds c.raws.toList, serial := s }
+    { c with
+      live := global || c.live || c.arity > 0 || c.optional.isSome || condLiveList st.flags st.binds c.raws.toList
+      serial := s }
   write fun st => { st with serial := s }
   setBind n v
   if global then write fun st => { st with globals := st.globals.push (n, v) }
@@ -2347,8 +2606,9 @@ private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run
 undelimited arity and prefixes its meaning carries. LaTeX's
 `\newcommand` family is `\long` exactly when it takes arguments and is not
 starred, so a parameterless one is never `\long` (measured against LaTeX2e
-2025-11-01: `\meaning` reads `macro:->x` for `\def` and `\newcommand` alike);
-an optional default remains unread here. An `\outer` macro cannot stand where
+2025-11-01: `\meaning` reads `macro:->x` for `\def` and `\newcommand` alike).
+An optional wrapper records a reserved inner name containing a space, which
+no document control word can spell. An `\outer` macro cannot stand where
 `\ifx` would read it, and a robust command's meaning names the command
 itself (`\protect \name␣`), so neither has a value two names could share.
 An expanding definer (`\edef`, `\xdef`) reads a body with no control word
@@ -2389,7 +2649,8 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let k0 := skipSpaces raws (j + 1)
     let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
     match raws[j]?, raws[k]? with
-    | some (.ctrl _ _), some (.ctrl m _) => return (condValueOf st.binds m).bind id
+    | some (.ctrl _ _), some (.ctrl m _) =>
+      return ((condValueOf st.binds m).bind id).map fun v => { v with live := true }
     | _, _ => return none
   if d == "newcommand" || d == "renewcommand" || d == "providecommand" then
     let j0 := skipSpaces raws (i + 1)
@@ -2401,9 +2662,15 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
       | some s => s.trimAscii.toString.toNat?
     let some arity := arity? | return none
     if arity > 9 then return none
+    let (defaultArg, k) := takeRawOpt raws k
+    if defaultArg.isSome && arity == 0 then return none
+    let some name := raws[j]?.bind boundName | return none
+    let optional := defaultArg.map fun arg => (name ++ " optional", ungroupArg arg)
     match raws[skipSpaces raws k]? with
     | some (.group body _) =>
-      return some { raws := body, arity, long := arity > 0 && !star, prot := false }
+      return some {
+        raws := body, arity, optional
+        long := arity > 0 && !star, prot := false }
     | _ => return none
   return none
 
@@ -2459,16 +2726,11 @@ private def condBoundRaw (acc : Array String) : Raw → Array String
 
 end
 
-/-- Where the definition state stood when a group or environment opened: the
-save stack's height, the globals made so far, the picture's own names. -/
-private structure CondMark where
-  undo : Nat
-  globals : Nat
-  picBound : Nat
-
 private def condMark : M CondMark := do
   let st ← get
-  return { undo := st.undo.size, globals := st.globals.size, picBound := st.picBound.size }
+  return {
+    undo := st.undo.size, globals := st.globals.size, picBound := st.picBound.size
+    primitives := st.primitiveScopes.size }
 
 /-- Set whether the pass reads a spliced file's top level, returning the
 value it replaces. -/
@@ -2485,29 +2747,14 @@ private def onLine (l : Nat) : Raw → Bool
   | .word _ p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p
   | .verb _ _ p => p.line == l
 
-/-- A brace group closes. What it bound stays bound — the flat reading of
-`binds` — but no value set inside it is read past it: the group is as often
-an argument (a hook) whose definitions are not in force here as a TeX group
-whose definitions are gone, and in neither case is the value set inside it
-the one in force after it. The save stack keeps what the group changed, so
-an enclosing environment still restores it, and the close costs what the
-group bound — nothing, for a group that bound nothing. -/
-private def condCloseGroup (m : CondMark) : M Unit := do
-  let st ← get
-  let changed := st.undo.extract m.undo st.undo.size
-  let made := st.globals.size
-  for u in changed do
-    if let .bind n _ := u then
-      write fun st => { st with binds := st.binds.insert n none }
-  for k in [m.globals:made] do
-    write fun st => { st with globals := st.globals.modify k fun p => (p.1, none) }
-
 /-- Unwind the save stack to `m`, latest change first: the definition state
 the mark was taken in, the picture's own names included. -/
 private def condUnwind (m : CondMark) : M Unit := do
   let st ← get
   let recs := st.undo.extract m.undo st.undo.size
-  write fun st => { st with undo := st.undo.shrink m.undo, picBound := st.picBound.shrink m.picBound }
+  write fun st => { st with
+    undo := st.undo.shrink m.undo, picBound := st.picBound.shrink m.picBound
+    primitiveScopes := st.primitiveScopes.shrink m.primitives }
   for k in [0:recs.size] do
     match recs[recs.size - 1 - k]? with
     | some (.bind n prev) =>
@@ -2522,11 +2769,11 @@ private def condUnwind (m : CondMark) : M Unit := do
           | none => st.flags.erase x }
     | none => pure ()
 
-/-- An environment closes. It is a TeX group, so the definition state is the
+/-- A TeX group closes, whether braces, math or an environment. Its state is the
 one it opened with — the save stack is unwound to its mark, latest change
 first — and only the global definitions made inside it outlive it, in the
 order they were made. -/
-private def condCloseEnv (m : CondMark) : M Unit := do
+private def condClose (m : CondMark) : M Unit := do
   let made := (← get).globals.extract m.globals (← get).globals.size
   condUnwind m
   for (n, v) in made do setBind n v
@@ -2541,18 +2788,22 @@ raws a decided head's test consumed. The list drives the recursion; `raws`
 and `i` give the heads their lookahead, exactly as `rewriteList` pairs
 them. -/
 private def condList
-    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat))) (raws : Array Raw)
+    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat)))
+    (plan : List Bool) (raws : Array Raw)
     (out : Array Raw) (stack : List CondOpen) :
     List Raw → Nat → Nat → M (Array Raw)
   | [], _, _ => pure out
-  | _ :: rest, i, skip + 1 => condList ex raws out stack rest (i + 1) skip
+  | _ :: rest, i, skip + 1 => condList ex plan raws out stack rest (i + 1) skip
+  | .space :: rest, i, 0 =>
+    let out := if plan.isEmpty && stack.all CondOpen.keeps then out.push .space else out
+    condList ex plan raws out stack rest (i + 1) 0
   | .ctrl "newif" pos :: .ctrl n np :: rest, i, 0 => do
     -- `\newif\ifX` declares a decidable flag, initially false (plain TeX:
     -- `\newif` ends with `\csname …false\endcsname`): `\ifX` joins this
     -- pass, `\Xtrue`/`\Xfalse` set it. A `\newif` whose next token is not
     -- an `\if…` name passes through for the ordinary unknown warning.
     if !(stack.all CondOpen.keeps) then
-      condList ex raws out stack rest (i + 2) 0
+      condList ex [] raws out stack rest (i + 2) 0
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
       setFlag x false
@@ -2565,12 +2816,12 @@ private def condList
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
           ((← get).useSite.getD pos)
-      condList ex raws out stack rest (i + 2) 0
+      condList ex [] raws out stack rest (i + 2) 0
     else
-      condList ex raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
+      condList ex [] raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2) 0
   | .ctrl "newif" pos :: .space :: .ctrl n np :: rest, i, 0 => do
     if !(stack.all CondOpen.keeps) then
-      condList ex raws out stack rest (i + 3) 0
+      condList ex [] raws out stack rest (i + 3) 0
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
       setFlag x false
@@ -2583,32 +2834,32 @@ private def condList
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
           ((← get).useSite.getD pos)
-      condList ex raws out stack rest (i + 3) 0
+      condList ex [] raws out stack rest (i + 3) 0
     else
-      condList ex raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
+      condList ex [] raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
         stack rest (i + 3) 0
   | .ctrl "else" pos :: rest, i, 0 => do
     match stack with
-    | [] => condList ex raws (out.push (.ctrl "else" pos)) [] rest (i + 1) 0
-    | .decided k :: more => condList ex raws out (.decided (!k) :: more) rest (i + 1) 0
-    | .cased sel cur _ :: more => condList ex raws out (.cased sel cur true :: more) rest (i + 1) 0
+    | [] => condList ex [] raws (out.push (.ctrl "else" pos)) [] rest (i + 1) 0
+    | .decided k :: more => condList ex [] raws out (.decided (!k) :: more) rest (i + 1) 0
+    | .cased sel cur _ :: more => condList ex [] raws out (.cased sel cur true :: more) rest (i + 1) 0
     | .opaque :: more =>
       let out := if more.all CondOpen.keeps then out.push (.ctrl "else" pos) else out
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
   | .ctrl "or" pos :: rest, i, 0 => do
     match stack with
     | .cased sel cur false :: more =>
-      condList ex raws out (.cased sel (cur + 1) false :: more) rest (i + 1) 0
+      condList ex [] raws out (.cased sel (cur + 1) false :: more) rest (i + 1) 0
     | _ =>
       let out := if stack.all CondOpen.keeps then out.push (.ctrl "or" pos) else out
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
   | .ctrl "fi" pos :: rest, i, 0 => do
     match stack with
-    | [] => condList ex raws (out.push (.ctrl "fi" pos)) [] rest (i + 1) 0
+    | [] => condList ex [] raws (out.push (.ctrl "fi" pos)) [] rest (i + 1) 0
     | .opaque :: more =>
       let out := if more.all CondOpen.keeps then out.push (.ctrl "fi" pos) else out
-      condList ex raws out more rest (i + 1) 0
-    | _ :: more => condList ex raws out more rest (i + 1) 0
+      condList ex [] raws out more rest (i + 1) 0
+    | _ :: more => condList ex [] raws out more rest (i + 1) 0
   | .ctrl "endinput" pos :: rest, i, 0 => do
     -- TeX reads the rest of the line, then no more of the file (TeXbook
     -- ch. 20). Only a file's own top level is cut: elsewhere the name
@@ -2616,7 +2867,7 @@ private def condList
     -- the conditionals the line closes close with it, and what else the
     -- line holds stands as written.
     if !(stack.all CondOpen.keeps) then
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
     -- premise: endInputChecks — a wrapper's top level is a file's own text,
     -- the one list TeX stops reading at a terminator
     else if (← get).fileTop then
@@ -2627,7 +2878,7 @@ private def condList
       return out ++ (line.filter fun r =>
         !(r matches .ctrl "fi" _ | .ctrl "else" _ | .ctrl "or" _)).toArray
     else
-      condList ex raws (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
+      condList ex [] raws (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
   | .ctrl n pos :: rest, i, 0 => do
     let st ← get
     -- `\unless` before a head reverses the head's test (e-TeX).
@@ -2641,7 +2892,7 @@ private def condList
     if isCondHead st.flags head then
       if stack.isEmpty && !condExtent st.flags raws hi then
         -- An extent the pass cannot match: left whole for what follows.
-        condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+        condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
       else
         let r := readHead st raws hi head unlessHead.isSome
         let live := stack.all CondOpen.keeps
@@ -2656,23 +2907,55 @@ private def condList
         match r.frame, unlessHead with
         | .opaque, some (h, hp) =>
           let out := if live then (out.push (.ctrl n pos)).push (.ctrl h hp) else out
-          condList ex raws out stack' rest (i + 1) 1
+          condList ex [] raws out stack' rest (i + 1) 1
         | .opaque, none =>
           let out := if live then out.push (.ctrl n pos) else out
-          condList ex raws out stack' rest (i + 1) 0
+          condList ex [] raws out stack' rest (i + 1) 0
         | _, _ =>
           let out := match r.tail with
             | some t => if stack'.all CondOpen.keeps then out.push t else out
             | none => out
-          condList ex raws out stack' rest (i + 1)
+          condList ex [] raws out stack' rest (i + 1)
             (r.used + (if unlessHead.isSome then 1 else 0))
     else if !(stack.all CondOpen.keeps) then
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
+    else if let some close := groupPrimitives.lookup n then
+      let mark ← condMark
+      write fun st => { st with primitiveScopes := st.primitiveScopes.push (close, mark) }
+      condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+    else if st.primitiveScopes.back?.any (·.1 == n) then
+      if let some (_, mark) := st.primitiveScopes.back? then condClose mark
+      condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+    else if let some pt := deferredHooks.lookup n then
+      let j := skipSpaces raws (i + 1)
+      match raws[j]? with
+      | some (.group body _) =>
+        -- premise: Tests.macroHookScopeChecks — hooks execute at their seam;
+        -- hookChecks holds nested and body declarations to their named fallback.
+        if !st.condInDoc && !st.condReplaying then
+          deferOne n pt body pos
+          condList ex [] raws out stack rest (i + 1) (j - i)
+        else
+          sayOnce ("ctrl:" ++ n) .W0340
+            s!"'\\{n}' cannot defer from here; its group is read where it stands" pos
+            (help := "declare the hook before '\\begin{document}'")
+          condList ex [true] raws out stack rest (i + 1) 0
+      | _ => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+    else if let some (test, query) := (loadedTests.find? (·.ctrl == n)).bind fun test =>
+        (loadedAt raws (i + 1) test).map (test, ·) then
+      -- premise: loadedTestChecks — selected branches execute where the
+      -- test stands; loads hidden inside an unread package remain unknown.
+      match st.loads.answer query with
+      | some ans =>
+        let msg := loadedMsg test query ans
+        sayOnce ("ifloaded:" ++ msg) .N0114 msg (st.useSite.getD pos)
+        condList ex (loadedPlan test ans) raws out stack rest (i + 1) 0
+      | none => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if n == "apptocmd" then
       -- Patch text and callbacks are arguments, not conditionals in force.
       -- The finite hook arm decides the whole call after these passes.
       let (_, k, _) := takeHookArgs raws (i + 1)
-      condList ex raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
+      condList ex [] raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
         stack rest (i + 1) (k - (i + 1))
     else if n.endsWith "true" && st.flags.contains (n.dropEnd 4).toString then
       let x := (n.dropEnd 4).toString
@@ -2682,7 +2965,7 @@ private def condList
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on"
           (st.useSite.getD pos)
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
     else if n.endsWith "false" && st.flags.contains (n.dropEnd 5).toString then
       let x := (n.dropEnd 5).toString
       setFlag x false
@@ -2691,7 +2974,7 @@ private def condList
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
           (st.useSite.getD pos)
-      condList ex raws out stack rest (i + 1) 0
+      condList ex [] raws out stack rest (i + 1) 0
     else if condDefiners.contains n then
       let bound := if definesNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
@@ -2708,15 +2991,21 @@ private def condList
             discard s!"\\{n}\{\\{m}}" why s!"{n}:{m}" (st.useSite.getD pos)
             -- Consume every operand before later passes can collect a hook
             -- from the ignored signature or replacement text.
-            return ← condList ex raws out stack rest (i + 1) (sh.stop - (i + 1))
+            return ← condList ex [] raws out stack rest (i + 1) (sh.stop - (i + 1))
         unless provide && st.binds.contains m do
           -- Inside a frame the pass cannot decide, the branch may not run:
           -- the name is bound (the flat reading), its value unread.
-          let v := if stack.any (· matches .opaque) then none
-            else definedValue st raws i n
-          recordValue m v (definesGlobally raws i n)
+          let value := definedValue st raws i n
+          let v := if stack.any (· matches .opaque) then none else value
+          let global := definesGlobally raws i n
+          -- A let copies the wrapper, not its target. Ordinary renewals
+          -- leave the old optional target available to existing aliases.
+          if n != "let" then
+            if let some (key, _) := value.bind (·.optional) then
+              recordValue key (v.map fun c => { c with optional := none }) global
+          recordValue m v global
       match definerShape raws i n with
-      | none => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      | none => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
         -- The texts are expanded where the definition is used, never here:
         -- nothing in them is decided, set or defined now. What the
@@ -2729,6 +3018,12 @@ private def condList
         -- A use of a built-in the pass never expands: the elaborator reads
         -- the text, at the preamble's end, so there it is settled.
         let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
+        -- premise: Tests.macroDefaultChecks — copied readable meanings
+        -- execute at their uses, including after the source is redefined.
+        if n == "let" && expands then
+          became s!"\\let\\{bound.getD n}" "a copied command definition"
+            (st.useSite.getD pos) (subject := some (bound.getD n))
+          return ← condList ex [] raws out stack rest (i + 1) (sh.stop - (i + 1))
         let settles := liveVal.any (·.arity == 0) && !st.condInDoc
         let refused := (n == "def" || n == "gdef") &&
           (undelimitedArity
@@ -2763,53 +3058,68 @@ private def condList
 setting or another definition, which TeX executes where it is used; this engine cannot \
 execute this definition there, so that part of the text is skipped whole")
             (site.getD pos)
-            (help := "use \\def or \\newcommand with undelimited required arguments")
-        condList ex raws ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
+            (help := "use \\def with undelimited arguments or \\newcommand")
+        condList ex [] raws ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
     else if condNoExpand.contains n then
       -- The next token is read as itself here, never expanded.
       match rest with
-      | r :: _ => condList ex raws ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
-      | [] => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      | r :: _ => condList ex [] raws ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
+      | [] => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
+      if !st.condInDoc then recordLoad raws n i
       match ← ex n pos raws (i + 1) with
       | some (body, stop) =>
-        condList ex raws (out ++ body) stack rest (i + 1) (stop - (i + 1))
-      | none => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
+        condList ex [] raws (out ++ body) stack rest (i + 1) (stop - (i + 1))
+      | none => condList ex [] raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
   | r :: rest, i, 0 => do
-    if stack.all CondOpen.keeps then
-      condList ex raws (out.push (← condOne ex r)) stack rest (i + 1) 0
-    else
-      condList ex raws out stack rest (i + 1) 0
+    match plan with
+    | keep :: more =>
+      let out ← if keep && stack.all CondOpen.keeps then do
+        match ← condOne ex false r with
+        | .group body _ => pure (out ++ body)
+        | r => pure (out.push r)
+        else pure out
+      condList ex more raws out stack rest (i + 1) 0
+    | [] =>
+      if stack.all CondOpen.keeps then
+        condList ex [] raws (out.push (← condOne ex true r)) stack rest (i + 1) 0
+      else
+        condList ex [] raws out stack rest (i + 1) 0
 
-/-- Descend into a group, math or an environment body. An environment and
-math are TeX groups: the definition state is restored when they close
-(`condCloseEnv`); a brace group is read as `condCloseGroup` says. A
-picture's own bindings are known before its body is read. An `\input`
-wrapper switches the file its notes name, as `rewriteRaw` does, and is no
-group at all. -/
+/-- Descend into a group, math or an environment body. The definition state
+is restored when its TeX group closes (`condClose`). A selected test operand
+has `groupScope = false`: its argument braces open no scope, but an explicit
+group in its text still does. A picture's own bindings are known before its
+body is read. An `\input` wrapper switches the file its notes name, as
+`rewriteRaw` does, and is no group at all. -/
 private def condOne
-    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat))) : Raw → M Raw
+    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat)))
+    (groupScope : Bool) : Raw → M Raw
   | .group body p => do
     let m ← condMark
-    let top ← swapTop false
-    let body' ← condList ex body #[] [] body.toList 0 0
+    let top := (← get).fileTop
+    if groupScope then write fun st => { st with fileTop := false }
+    let body' ← condList ex [] body #[] [] body.toList 0 0
     let _ ← swapTop top
-    condCloseGroup m
+    if groupScope then condClose m
     return .group body' p
   | .math d body p => do
     let m ← condMark
     let top ← swapTop false
-    let body' ← condList ex body #[] [] body.toList 0 0
+    let body' ← condList ex [] body #[] [] body.toList 0 0
     let _ ← swapTop top
-    condCloseEnv m
+    condClose m
     return .math d body' p
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some f =>
+      if !(← get).condInDoc && f.endsWith ".sty" then
+        let pkg := (f.dropEnd ".sty".length).toString
+        write fun st => { st with loads := st.loads.addPkg pkg none }
       let saved := (← get).file
       write fun st => { st with file := f }
       let top ← swapTop true
-      let body' ← condList ex body #[] [] body.toList 0 0
+      let body' ← condList ex [] body #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun st => { st with file := saved }
       return .env n body' p
@@ -2820,25 +3130,45 @@ private def condOne
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
-      let body' ← condList ex body #[] [] body.toList 0 0
+      let body' ← condList ex [] body #[] [] body.toList 0 0
       let _ ← swapTop top
-      condCloseEnv m
+      condClose m
       write fun st => { st with inPicture := inPic }
       return .env n body' p
   | r => pure r
 
 end
 
+/-- Bind a readable command's optional first argument and remaining
+undelimited arguments. An explicit empty option is a value; an unterminated
+option is unread. Omission uses the already-read default without removing
+another group. The optional lookahead consumes spaces but expands nothing. -/
+private def takeCondArgs (raws : Array Raw) (start arity : Nat)
+    (defaultArg : Option (Array Raw)) :
+    Option (Array (Array Raw) × Nat × Array Raw) := do
+  match defaultArg with
+  | none => some (takeRawArgs raws start arity)
+  | some fallback =>
+    if arity == 0 then none else do
+      let (actual, stop) := takeRawOpt raws start
+      let first := skipSpaces raws start
+      if actual.isNone && (raws[first]? matches some (.sym '[' _)) then none else
+        let (args, stop, tail) := takeRawArgs raws
+          (if actual.isSome then stop else first) (arity - 1)
+        some (#[(actual.map ungroupArg).getD fallback] ++ args, stop, tail)
+
 /-- Expand the macro `n` where the conditional pass meets it in live
-content, when its text does something only a use can decide
+content, when its optional argument or text needs the use's state
 (`CondVal.live`), or when the use stands inside a picture, which reads a
 macro at its own site: the text is walked where the use stands, against the
 state in force there, so its conditionals are decided — and its flags set,
 its definitions made — at the use, as TeX does, and the decisions are named
 at the use. `bound` is the serial below which a text may expand: a use in
 running text sees every definition made so far, a use inside a macro's text
-only those made before that macro, the elaborator's own visibility rule, so
-each nested expansion strictly lowers the bound. A live use the bound rules
+only those made before that macro, the elaborator's own visibility rule.
+An optional wrapper and its inner text use the later definition's serial,
+so a retained alias sees the current inner text and every nested expansion
+still strictly lowers the bound. A live use the bound rules
 out is refused by name; `none` leaves the name to the elaborator. -/
 private def condExpandAt (bound : Nat) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : M (Option (Array Raw × Nat)) := do
@@ -2849,30 +3179,42 @@ private def condExpandAt (bound : Nat) (n : String) (pos : Pos)
     (inPic && picWalkCtrls.contains n)
   match condValueOf st.binds n with
   | some (some v) =>
-    -- premise: macroUseChecks — a use between two states of what the text reads
+    -- premise: Tests.macroDefaultChecks — optional selection changes both
+    -- artifacts; macroUseChecks also holds execution between two states.
     if !(v.live || inPic) || own then return none
-    if _h : v.serial < bound then
-      let (args, stop, tail) := takeRawArgs raws start v.arity
-      if args.size != v.arity then
+    let value := match v.optional with
+      | none => some v
+      | some (key, _) => (condValueOf st.binds key).bind id
+    let some body := value | do
+      sayOnce ("cond:unexpanded:" ++ n) .W0104
+        s!"'\\{n}' selects an optional argument, but its replacement text depends \
+on a conditional this engine cannot decide; the call is left unexpanded"
+        (site.getD pos)
+      return none
+    let serial := max v.serial body.serial
+    if _h : serial < bound then
+      let call := (takeCondArgs raws start body.arity (v.optional.map (·.2))).filter
+        fun (args, _, _) => args.size == body.arity
+      let some (args, stop, tail) := call | do
         sayOnce ("cond:arguments:" ++ n) .W0104
-          s!"'\\{n}' needs {v.arity} arguments before its replacement text can execute; \
-the argument boundary is unread here, so its conditional and definition parts stay skipped"
+          s!"'\\{n}' needs {body.arity} arguments before its replacement text can execute; \
+the argument boundary is unread here, so its optional selection and state changes are not applied"
           (site.getD pos)
-          (help := "put each argument in braces")
+          (help := "close an optional argument with ']' and put each required argument in braces")
         return none
-      let body := bindRawArgsList args #[] v.raws.toList
+      let body := bindRawArgsList args #[] body.raws.toList
       write fun s => { s with useSite := some (site.getD pos) }
       let top ← swapTop false
-      let out ← condList (fun m p rs k => condExpandAt v.serial m p rs k)
-        body #[] [] body.toList 0 0
+      let out ← condList (fun m p rs k => condExpandAt serial m p rs k)
+        [] body #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
       return some (out ++ tail, stop)
     else if v.live then
       sayOnce ("cond:unexpanded:" ++ n) .W0104
-        (s!"'\\{n}' holds a conditional, a flag setting or a definition, which TeX executes where it is \
+        (s!"'\\{n}' selects an optional argument or holds state changes that TeX executes where it is \
 used; here it is reached through a macro defined before it, which this engine expands \
-without it, so that part of its text is skipped whole")
+without that selection or those changes")
         (site.getD pos)
         (help := "define '\\{n}' before the macros that use it")
       return none
@@ -2889,10 +3231,13 @@ private def condTopExpand (n : String) (pos : Pos) (raws : Array Raw) (start : N
 text settled for the elaborator is read, not run, so nothing it binds, sets
 or defines — globally or not — outlives the reading. -/
 private def condSandbox (act : M (Array Raw)) : M (Array Raw) := do
+  let saved ← get
   let m ← condMark
   let r ← act
   condUnwind m
-  write fun st => { st with globals := st.globals.shrink m.globals }
+  write fun st => { st with
+    globals := st.globals.shrink m.globals
+    loads := saved.loads, deferred := saved.deferred }
   return r
 
 /-- Settle the pending preamble definitions (`CondPending`) against the
@@ -2913,7 +3258,7 @@ private def condSettle : M (Array (String × Pos × Array Raw)) := do
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
           (condList (fun m q rs k => condExpandAt v.serial m q rs k)
-            replacement #[] [] replacement.toList 0 0)
+            [] replacement #[] [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
     | _ => pure ()
@@ -2949,416 +3294,45 @@ private def condPatchRaw (texts : Array (String × Pos × Array Raw)) (file : St
 
 end
 
-/-- The conditional pass over a document: its preamble, then the preamble's
-pending definitions settled against the state at its end and put back, then
-its body. A fragment with no `{document}` has no preamble's end, and is one
-walk. -/
+/-- Execute one deferred bucket in registration order, in its declaring
+files. Its state changes remain in force for the next bucket and the body;
+the returned text is translated and placed at that bucket's seam later. -/
+private def condReplay (hooks : Array (DeferPoint × String × Pos × Array Raw))
+    (point : DeferPoint) : M (Array (DeferPoint × String × Pos × Array Raw)) := do
+  let saved ← get
+  write fun st => { st with condReplaying := true, fileTop := false }
+  let mut out := #[]
+  for (pt, file, pos, body) in hooks do
+    if pt == point then
+      write fun st => { st with file := file }
+      let body ← condList condTopExpand [] body #[] [] body.toList 0 0
+      out := out.push (pt, file, pos, body)
+  write fun st => { st with
+    file := saved.file, fileTop := saved.fileTop
+    condReplaying := saved.condReplaying }
+  return out
+
+/-- Execute the preamble, its end hooks, the begin-document hooks, then the
+body. Stored definitions settle after end-preamble hooks have run. Every
+phase reads the same conditional, binding and load state, so a hook reads
+and changes that state only at its replay point. -/
 private def condDocument (raws : Array Raw) : M (Array Raw) := do
-  match raws.findIdx? (· matches .env "document" _ _) with
-  | none => condList condTopExpand raws #[] [] raws.toList 0 0
-  | some d =>
-    let pre := raws.extract 0 d
-    let post := raws.extract d raws.size
-    let pre' ← condList condTopExpand pre #[] [] pre.toList 0 0
-    let texts ← condSettle
-    let file := (← get).file
-    let pre' := if texts.isEmpty then pre' else condPatchList texts file #[] pre'.toList
-    let post' ← condList condTopExpand post #[] [] post.toList 0 0
-    return pre' ++ post'
-
-/-! # Package- and class-loaded tests
-
-`\@ifpackageloaded{p}{t}{f}` asks whether package `p` is loaded, and the
-document's own loads make that decidable here. The kernel's test
-(`\@ifl@aded`, latex.ltx; ltclass.dtx) holds exactly when `\ver@p.sty` is
-defined, and `\load@onefile@withoptions` defines it as the file starts to be
-read: a package counts as loaded from its `\usepackage` or `\RequirePackage`
-on, and never before. `\@ifpackagewith{p}{opts}` reads the list
-`\@pass@ptions` accumulates for `p` — each `\PassOptionsToPackage` for it and
-the options its load passed, never the class's global options — and holds
-when every wanted option is on it. The class forms read the `\documentclass`
-line the same way.
-
-What the pass reads is the loads this document and its local style files
-write. A package that another package loads, by a `\RequirePackage` inside a
-file this engine never reads, is invisible and reads as not loaded: that is
-the premise a negative answer rests on. A positive answer read where the test
-stands rests on nothing, since a load written here is a load LaTeX performs.
-
-A test is answered for the moment it runs. Standing in the flow — the
-preamble's, a style file's, the body's — it runs where it stands, and is read
-against the loads before it. Inside a group it runs when the command holding
-the group runs it: a deferred hook's body at `\begin{document}`, a definition
-body where the command is used, an argument where its command sets it. Every
-one of those is after the preamble but a preamble-time use, so a group's test
-is read against the whole preamble's loads, on the pass's second walk, and
-its note says so. The kept branch replaces the test, unbraced, as
-`\@firstoftwo` leaves it, and the other goes with it; N0114 names the
-choice. -/
-
-/-- The branches a loaded test carries after its name and option list: both,
-the true one only, or the false one only (latex.ltx defines the `T` and `F`
-forms over the `TF` one with `\@firstofone\@gobble` and `{}`). -/
-inductive LoadedBranches where
-  | tf
-  | t
-  | f
-  deriving BEq, Repr
-
-/-- One spelling of the loaded-test family: whether it reads the class or the
-packages, whether an option list follows the name, and its branches. -/
-structure LoadedTest where
-  ctrl : String
-  cls : Bool
-  withOpts : Bool
-  branches : LoadedBranches
-  deriving BEq, Repr
-
-/-- The family as latex.ltx defines it: the `\@if…` internals, and the
-`\If…Loaded…` interface `\let` to them or wrapped around them. -/
-def loadedTests : List LoadedTest :=
-  [⟨"@ifpackageloaded", false, false, .tf⟩, ⟨"IfPackageLoadedTF", false, false, .tf⟩,
-   ⟨"IfPackageLoadedT", false, false, .t⟩, ⟨"IfPackageLoadedF", false, false, .f⟩,
-   ⟨"@ifclassloaded", true, false, .tf⟩, ⟨"IfClassLoadedTF", true, false, .tf⟩,
-   ⟨"IfClassLoadedT", true, false, .t⟩, ⟨"IfClassLoadedF", true, false, .f⟩,
-   ⟨"@ifpackagewith", false, true, .tf⟩, ⟨"IfPackageLoadedWithOptionsTF", false, true, .tf⟩,
-   ⟨"IfPackageLoadedWithOptionsT", false, true, .t⟩,
-   ⟨"IfPackageLoadedWithOptionsF", false, true, .f⟩,
-   ⟨"@ifclasswith", true, true, .tf⟩, ⟨"IfClassLoadedWithOptionsTF", true, true, .tf⟩,
-   ⟨"IfClassLoadedWithOptionsT", true, true, .t⟩,
-   ⟨"IfClassLoadedWithOptionsF", true, true, .f⟩]
-
-/-- What one test asks: the class or the packages, the name, and the options
-it wants (`none` for a load test). -/
-structure LoadQuery where
-  cls : Bool
-  name : String
-  want : Option (Array String)
-  deriving BEq, Repr
-
-/-- An option list as the kernel compares it: comma-separated, spaces zapped
-(`\zap@space`), empty items skipped. -/
-def optionItems (s : String) : Array String :=
-  ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
-    |>.filter (!·.isEmpty) |>.toArray
-
-/-- One package load: the first load of a name stands, and a later one of the
-same name passes nothing new. -/
-def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
-  if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
-
-/-- The class line: the first `\documentclass` is the class. -/
-def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
-  if s.cls.isSome then s else { s with cls := some (c, os) }
-
-/-- Option passes, onto the class half or the package half. -/
-def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
-    LoadSet :=
-  if toClass then { s with clsPassed := s.clsPassed ++ ps }
-  else { s with passed := s.passed ++ ps }
-
-/-- The answer the loads read so far give a test: `some true` when it holds,
-`some false` when it fails, `none` when what it reads is not carried — a
-local style file's passed options, where only a positive answer is sound. -/
-def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
-  let passes (ps : Array (String × Array String)) : Array String :=
-    (ps.filter (·.1 == q.name)).foldl (fun acc e => acc ++ e.2) #[]
-  match q.cls, q.want with
-  | false, none => some (s.pkgs.any (·.1 == q.name))
-  | true, none => some (s.cls.any (·.1 == q.name))
-  | false, some want =>
-    let (seen, whole) := match s.pkgs.find? (·.1 == q.name) with
-      | some (_, some os) => (passes s.passed ++ os, true)
-      | some (_, none) => (passes s.passed, false)
-      | none => (passes s.passed, true)
-    if want.all seen.contains then some true else if whole then some false else none
-  | true, some want =>
-    let own := match s.cls with
-      | some (c, os) => if c == q.name then os else #[]
-      | none => #[]
-    some (want.all (passes s.clsPassed ++ own).contains)
-
-/-- When a test runs, as far as its place in the flow says. -/
-inductive LoadTiming where
-  /-- Where it stands: the preamble's flow, a style file's, the body's. -/
-  | now
-  /-- Inside a group — a hook's body, a definition, an argument: when the
-  command holding the group runs it, after the preamble. -/
-  | after
-  deriving BEq, Repr
-
-/-- The answer a test site gets, or `none` when nothing fixes one yet:
-`soFar` is what is loaded where the site stands, `final` the preamble's
-whole load set, known on the second walk. -/
-def loadedDecide (t : LoadTiming) (soFar : LoadSet) (final : Option LoadSet)
-    (q : LoadQuery) : Option Bool :=
-  match t with
-  | .now => soFar.answer q
-  | .after => final.bind (·.answer q)
-
-/-- Exactly `n` brace groups after `i`, each after any spaces: a loaded
-test's shape, read before anything is decided. A token that is not a group,
-or a paragraph break, leaves the test unread. -/
-private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Raw)) :=
-  Id.run do
-    let mut out : Array (Array Raw) := #[]
-    let mut j := i
-    for _ in [0:n] do
-      let k := skipSpaces raws j
-      match raws[k]? with
-      | some (.group body _) =>
-        out := out.push body
-        j := k + 1
-      | _ => return none
-    return some out
-
-/-- A name argument the pass can read: letters and punctuation only. A
-control word there is expanded by the kernel before the test, and this pass
-does not expand. -/
-private def plainName (body : Array Raw) : Bool :=
-  body.all fun
-    | .word .. | .space | .sym .. => true
-    | .par .. | .ctrl .. | .group .. | .math .. | .env .. | .verb .. => false
-
-/-- The question a loaded test at `i` asks, read from the groups after it;
-`none` when its shape is not the family's. -/
-private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option LoadQuery :=
-  let n := 1 + (if test.withOpts then 1 else 0) + (if test.branches == .tf then 2 else 1)
-  (argGroupsAt raws i n).bind fun args =>
-    let name := args.getD 0 #[]
-    if !plainName name || (rawSrc name).isEmpty then none
-    else some { cls := test.cls, name := rawSrc name,
-                want := if test.withOpts then some (optionItems (rawSrc (args.getD 1 #[])))
-                  else none }
-
-/-- Which of the groups after a resolved test are kept, unbraced, and which go
-with it: the name and the option list go, and the branch the answer picks
-stays. -/
-def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
-  let lead := if test.withOpts then [false, false] else [false]
-  let branches := match test.branches with
-    | .tf => [ans, !ans]
-    | .t => [ans]
-    | .f => [!ans]
-  lead ++ branches
-
-/-- The note a resolved test earns: what it read, when, and what that keeps. -/
-private def loadedMsg (test : LoadedTest) (q : LoadQuery) (ans : Bool) (t : LoadTiming) :
-    String :=
-  let opts := String.intercalate "," (q.want.getD #[]).toList
-  let fact := match q.cls, q.want.isSome, ans with
-    | false, false, true => s!"'{q.name}' is loaded"
-    | false, false, false => s!"no package '{q.name}' is loaded"
-    | false, true, true => s!"'{q.name}' was given '{opts}'"
-    | false, true, false => s!"'{q.name}' was not given '{opts}'"
-    | true, false, true => s!"the class is '{q.name}'"
-    | true, false, false => s!"the class is not '{q.name}'"
-    | true, true, true => s!"the class was given '{opts}'"
-    | true, true, false => s!"the class was not given '{opts}'"
-  let moment := match t with
-    | .now => " here"
-    | .after => " by the end of the preamble"
-  let kept := match test.branches, ans with
-    | .tf, true => "the first branch is kept"
-    | .tf, false => "only the second branch is kept"
-    | .t, true | .f, false => "its branch is kept"
-    | .t, false | .f, true => "its branch is dropped"
-  s!"'\\{test.ctrl}': {fact}{moment}, so {kept}"
-
-/-- A load the flow performs where it stands: a package line, the class line,
-an option pass, or a theme slot (beamer's `\usetheme{X}` is
-`\usepackage{beamerthemeX}`). A package loaded already keeps its first
-options. -/
-private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
-  let names (g : Array Raw) : Array String := optionItems (rawSrc g)
-  if name == "usepackage" || name == "RequirePackage" ||
-      name == "RequirePackageWithOptions" then
-    let (opt, j) := takeOpt raws (i + 1)
-    let (args, _) := takeGroups raws j 1
-    let os := if name == "RequirePackageWithOptions" then none
-      else some (optionItems (opt.getD ""))
-    write fun st => { st with loads :=
-      (names (args.getD 0 #[])).foldl (fun s p => s.addPkg p os) st.loads }
-  else if name == "documentclass" then
-    let (opt, j) := takeOpt raws (i + 1)
-    let (args, _) := takeGroups raws j 1
-    let c := rawSrc (args.getD 0 #[])
-    unless c.isEmpty do
-      write fun st => { st with loads := st.loads.setCls c (optionItems (opt.getD "")) }
-  else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
-    let (args, _) := takeGroups raws (i + 1) 2
-    let os := optionItems (rawSrc (args.getD 0 #[]))
-    let ps := (names (args.getD 1 #[])).map (·, os)
-    write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
-  else if let some pre := themeAsking.lookup name then
-    let (_, j) := takeOpt raws (i + 1)
-    let (args, _) := takeGroups raws j 1
-    let nm := rawSrc (args.getD 0 #[])
-    unless nm.isEmpty do
-      write fun st => { st with loads := st.loads.addPkg (pre ++ nm) (some #[]) }
-
-mutual
-
-/-- One level of the loaded-test pass. The list drives the recursion and the
-array gives the lookahead, as `condList` pairs them; `plan` is what the
-groups after a resolved test become, one entry per group, and the spaces
-between them go too. -/
-private def loadList (final : Option LoadSet) (raws : Array Raw) (t : LoadTiming)
-    (out : Array Raw) (plan : List Bool) : List Raw → Nat → Nat → M (Array Raw)
-  | [], _, _ => pure out
-  | _ :: rest, i, skip + 1 => loadList final raws t out plan rest (i + 1) skip
-  | .space :: rest, i, 0 =>
-    loadList final raws t (if plan.isEmpty then out.push .space else out) plan rest (i + 1) 0
-  | .ctrl "apptocmd" pos :: rest, i, 0 => do
-    -- A load test in an unselected callback must never run.
-    let (_, k, _) := takeHookArgs raws (i + 1)
-    loadList final raws t ((out.push (.ctrl "apptocmd" pos)) ++ raws.extract (i + 1) k)
-      [] rest (i + 1) (k - (i + 1))
-  | .ctrl name pos :: rest, i, 0 => do
-    match (loadedTests.find? (·.ctrl == name)).bind fun test =>
-        (loadedAt raws (i + 1) test).map (test, ·) with
-    | some (test, q) =>
-      -- premise: none — a package another package loads is invisible here and
-      -- reads as not loaded, and a group's test is read as run after the preamble
-      match loadedDecide t (← get).loads final q with
-      | some ans =>
-        let msg := loadedMsg test q ans t
-        sayOnce ("ifloaded:" ++ msg) .N0114 msg pos
-        loadList final raws t out (loadedPlan test ans) rest (i + 1) 0
-      | none => loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1) 0
-    | none =>
-      if t == .now then recordLoad raws name i
-      loadList final raws t (out.push (.ctrl name pos)) [] rest (i + 1) 0
-  | r :: rest, i, 0 => do
-    -- A group is tested, not matched, so `r` stays the list's own element.
-    if r matches .group _ _ then
-      match plan with
-      | keep :: more =>
-        let out ← if keep then loadOne final t out true r else pure out
-        loadList final raws t out more rest (i + 1) 0
-      | [] =>
-        let out ← loadOne final .after out false r
-        loadList final raws t out [] rest (i + 1) 0
-    else
-      let out ← loadOne final t out false r
-      loadList final raws t out [] rest (i + 1) 0
-termination_by structural l _ _ => l
-
-/-- One element under the pass. A kept branch is walked into the level it
-stands in, unbraced; the first walk leaves every other group whole, since the
-loads a group's tests are read against are not all known yet. A local style
-file is a load where it is spliced: `\ver@X.sty` is defined as the file starts
-to be read, so the file's own tests already see it. -/
-private def loadOne (final : Option LoadSet) (t : LoadTiming) (out : Array Raw)
-    (unbrace : Bool) : Raw → M (Array Raw)
-  | .group body p => do
-    if unbrace then loadList final body t out [] body.toList 0 0
-    else if final.isNone then pure (out.push (.group body p))
-    else
-      let inner ← loadList final body t #[] [] body.toList 0 0
-      pure (out.push (.group inner p))
-  | .env n body p => do
-    match Parse.inputEnvFile? n with
-    | some f =>
-      if t == .now && f.endsWith ".sty" then
-        let pkg := (f.dropEnd ".sty".length).toString
-        write fun st => { st with loads := st.loads.addPkg pkg none }
-      let saved := (← get).file
-      write fun st => { st with file := f }
-      let inner ← loadList final body t #[] [] body.toList 0 0
-      write fun st => { st with file := saved }
-      pure (out.push (.env n inner p))
-    | none =>
-      let inner ← loadList final body t #[] [] body.toList 0 0
-      pure (out.push (.env n inner p))
-  | r => pure (out.push r)
-termination_by structural r => r
-
-end
-
-/-- The loaded-test pass: a first walk reads the preamble's loads and answers
-every test standing in the flow, and a second answers every test inside a
-group against the whole preamble. A site is answered by exactly one walk, so
-each choice is named once. -/
-private def resolveLoaded (raws : Array Raw) : M (Array Raw) := do
-  let raws ← loadList none raws .now #[] [] raws.toList 0 0
-  let final := (← get).loads
-  write fun st => { st with loads := {} }
-  loadList (some final) raws .now #[] [] raws.toList 0 0
-
-/-- One collected hook: the note naming its replay point, and the body
-stored against that point. Separate from the walk so the walk's recursive
-calls stand in plain sight — a call behind a local function is a call the
-termination checker cannot see. -/
-private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
-    (pos : Pos) : M Unit := do
-  became s!"\\{name}\{...}" (match pt with
-    | .beginDocument => "its body, replayed at '\\begin{document}'"
-    | .endPreamble => "its body, replayed at the end of the preamble") pos
+  let seam := raws.findIdx? (· matches .env "document" _ _)
+  let d := seam.getD raws.size
+  let pre := raws.extract 0 d
+  let post := raws.extract d raws.size
+  let pre' ← condList condTopExpand [] pre #[] [] pre.toList 0 0
+  let hooks := (← get).deferred
+  let endHooks ← condReplay hooks .endPreamble
+  let texts ← if seam.isSome then condSettle else pure #[]
   let file := (← get).file
-  write fun st => { st with deferred := st.deferred.push (pt, file, pos, body) }
-
-mutual
-
-/-- The one deferral pass: a hook named in `deferredHooks` is removed from
-the stream and its body stored with the point it replays at. The body is
-stored VERBATIM and is never walked here — that is the rule that makes the
-mechanism terminate by construction rather than by a fuel parameter: a
-replay cannot re-collect. Collection finishes before any replay happens, so
-a `\\AtBeginDocument` written inside a hook body is not a second deferral;
-it meets the dispatcher at the replay point, where the document is already
-at the hook's own moment, and its group is read where it stands
-(`rewriteCtrl`'s arm says so with W0340).
-
-The `document` environment is not descended into: a hook is a preamble
-declaration (LaTeX's own `\\@onlypreamble`), so a hook standing in the body
-is at its replay point already and takes the same arm. -/
-private def collectDeferList (out : Array Raw) : List Raw → Nat → M (Array Raw)
-  | [], _ => pure out
-  | _ :: rest, skip + 1 => collectDeferList out rest skip
-  | .ctrl "apptocmd" pos :: rest, 0 => do
-    -- A callback's deferred declaration belongs to the callback.
-    let args := rest.toArray
-    let (_, k, _) := takeHookArgs args 0
-    collectDeferList ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) rest k
-  | .ctrl name pos :: .group body p :: rest, 0 => do
-    if let some pt := deferredHooks.lookup name then
-      deferOne name pt body pos
-      collectDeferList out rest 0
-    else
-      let g ← collectDeferOne (.group body p)
-      collectDeferList ((out.push (.ctrl name pos)).push g) rest 0
-  | .ctrl name pos :: .space :: .group body p :: rest, 0 => do
-    if let some pt := deferredHooks.lookup name then
-      deferOne name pt body pos
-      collectDeferList out rest 0
-    else
-      let g ← collectDeferOne (.group body p)
-      collectDeferList (((out.push (.ctrl name pos)).push .space).push g) rest 0
-  | r :: rest, 0 => do
-    collectDeferList (out.push (← collectDeferOne r)) rest 0
-termination_by structural l _ => l
-
-/-- Descend into a group or environment body; an `\\input` wrapper switches
-the file its note names, as `condOne` and `rewriteRaw` do. The document
-environment is left whole: see `collectDeferList`. -/
-private def collectDeferOne : Raw → M Raw
-  | .group body p => do
-    return .group (← collectDeferList #[] body.toList 0) p
-  | .env "document" body p => pure (.env "document" body p)
-  | .env n body p => do
-    match Parse.inputEnvFile? n with
-    | some f =>
-      let saved := (← get).file
-      write fun st => { st with file := f }
-      let body' ← collectDeferList #[] body.toList 0
-      write fun st => { st with file := saved }
-      return .env n body' p
-    | none =>
-      return .env n (← collectDeferList #[] body.toList 0) p
-  | r => pure r
-
-end
+  let patch (file : String) (body : Array Raw) :=
+    if texts.isEmpty then body else condPatchList texts file #[] body.toList
+  let endHooks := endHooks.map fun (pt, f, pos, body) => (pt, f, pos, patch f body)
+  let beginHooks ← condReplay hooks .beginDocument
+  write fun st => { st with deferred := endHooks ++ beginHooks }
+  let post' ← condList condTopExpand [] post #[] [] post.toList 0 0
+  return patch file pre' ++ post'
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
 `\relax` vanishes. Each control word goes through `ref`, told whether an
@@ -6967,12 +6941,6 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
-/-- The group primitives, opener to closer: `\begingroup … \endgroup`
-scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
-and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
-def groupPrimitives : List (String × String) :=
-  [("begingroup", "endgroup"), ("bgroup", "egroup")]
-
 /-- One level's group primitives paired into the brace group each pair is:
 an opener collects what follows it until the closer of its own kind, and an
 opener or closer with no partner at this level stands as written, for the
@@ -8038,9 +8006,6 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws := pairGroupsList true #[] raws.toList
     let raws := if (delimitedDefs raws).isEmpty then raws
       else (delimCallsList #[] raws #[] raws.toList 0 0).1
-    let raws ← resolveLoaded raws
-    -- After the conditionals: only live hook bodies are collected.
-    let raws ← collectDeferList #[] raws.toList 0
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[] 0
     let out ← rewriteList false raws #[] raws.toList 0 0
@@ -8061,6 +8026,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let mut bodySide : Array Raw := #[]
     for (pt, file, pos, body) in (← get).deferred do
       write fun st => { st with file := file, seam := pt == .beginDocument }
+      let body := pairGroupsList false #[] body.toList
       let body ← rewriteList false body #[] body.toList 0 0
       -- A hook declared inside an `\input`'ed file replays inside that
       -- file's wrapper, so what the engine refuses in it is still named at
@@ -8083,7 +8049,11 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     return match out.findIdx? isBody with
       | some i =>
         let tail := match out[i]? with
-          | some (.env n dbody p) => #[Raw.env n (counters ++ bodySide ++ dbody) p]
+          | some (.env n dbody p) =>
+            -- ltfiles.dtx ends \document with \ignorespaces, after its hooks:
+            -- an opening source newline cannot separate hook text from the body.
+            let dbody := (dbody.toList.dropWhile (· matches .space)).toArray
+            #[Raw.env n (counters ++ bodySide ++ dbody) p]
           | some r => #[r]
           | none => #[]
         out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
@@ -8213,7 +8183,7 @@ private theorem localSty_theme (cn pre nm : String) (pos : Pos)
   have hs : skipSpaces #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = 1 := by
     rw [skipSpaces]; simp
   have hopt : takeOpt #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = (none, 1) := by
-    simp [takeOpt, hs, Id.run]
+    simp [takeOpt, takeRawOpt, hs, Id.run]
   have hgrp : takeGroups #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 1
       = (#[#[Raw.word nm pos]], 2) := by
     simp [takeGroups, hs]

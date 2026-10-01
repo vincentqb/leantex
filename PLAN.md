@@ -25356,3 +25356,30 @@ cannot manufacture a containment note.
 The staged obligation is removed. This closes MathParse's last open
 obligation and leaves 28 in the queue; the obligation tier records the
 decrease through its producer.
+
+### 2026-10-01 — Macro operands and hooks execute in source order
+
+The compatibility reader binds required and optional arguments before it
+executes replacement text. An unused argument stays inert; an argument
+used twice executes twice. Defaults remain raw until selected, and an
+explicit empty optional argument differs from omission. A LaTeX optional
+wrapper keeps its own default while its hidden helper owns the body and
+arity, so a `\let` alias follows helper renewal without acquiring a new
+default. Group exit restores local macro meanings and flags; explicit
+global definitions survive it.
+
+Package-loaded queries and deferred hooks now share the conditional
+execution pass. A query reads the loads in force when it executes.
+End-preamble hooks run before begin-document hooks, and registering a
+hook does not execute its payload. This removes the separate loaded-query
+and hook-collection walks. An opening document newline is consumed after
+hook replay, as LaTeX's final `\ignorespaces` requires.
+
+`macroDefaultChecks`, `macroArgumentChecks` and `macroHookScopeChecks`
+exercise selected arguments, copied meanings, scope and hook timing over
+both artifacts. The hook checks compare complete `Layout.Out` pages and
+typed HTML with literal controls; they reject paragraph and interior-space
+changes even when concatenated text agrees. The external
+`macro-defaults-oracle.lean` pins expectations to LuaLaTeX PDFs and kernel
+source independently of the compatibility reader. These are extensions
+of the native TeX subset, not an arbitrary package interpreter.
