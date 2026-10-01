@@ -14443,6 +14443,75 @@ theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) :
   intro xs
   simp [linkBlocks, blocksText, linkBlockList_text]
 
+/-- A row of flow-transparent linked boxes: each tile's own content wrapped
+in exactly one link to the tile's target, the tiles gathered into one
+`{columns}` row of their declared widths. `Compat.boxRows` builds exactly
+this shape when it reads a `\hfill` run of `\hyperlink`/`\href`-wrapped
+minipages (reading the width through the wrapper, keeping the wrapper around
+the box's content); `linkedBoxRow_text` and `linkedBoxRow_links` are what
+both backends then honour. -/
+def linkedBoxRow (tiles : Array (BoxWidth × String × Array Block)) : Block :=
+  .columns (tiles.map fun t => (t.1, linkBlocks t.2.1 t.2.2))
+
+/-- The tiles' own content as one flat block sequence — no link wrappers, no
+columns: the baseline the row's census is conserved against. -/
+def boxRowBodies (tiles : List (BoxWidth × String × Array Block)) : List Block :=
+  tiles.flatMap fun t => t.2.2.toList
+
+/-- The top-level link target one column carries, `none` for a column that is
+not one link alone. Matched on the block list so the one-block-link column
+shape reduces cleanly. -/
+def colLinkOne (c : BoxWidth × Array Block) : Option String :=
+  match c.2.toList with
+  | [.link t _] => some t
+  | _ => none
+
+/-- The top-level link target each column carries. -/
+def colLinkTargets (cols : List (BoxWidth × Array Block)) : List (Option String) :=
+  cols.map colLinkOne
+
+/-- A linked box row conserves its tiles' text exactly: wrapping each tile in
+a link and gathering the tiles into one columns row neither drops a tile's
+content nor leaks a target string into the census — the row's text equals the
+tiles' own content laid out in order. -/
+theorem linkedCols_text (ts : List (BoxWidth × String × Array Block)) (acc : String) :
+    blockTextColumns acc (ts.map fun t => (t.1, linkBlocks t.2.1 t.2.2))
+      = blockTextList acc (boxRowBodies ts) := by
+  induction ts generalizing acc with
+  | nil => rfl
+  | cons t rest ih =>
+    have hlink : blockTextList acc (linkBlocks t.2.1 t.2.2).toList
+        = blockTextList acc t.2.2.toList := by
+      have h : (linkBlocks t.2.1 t.2.2).toList = linkBlockList t.2.1 t.2.2.toList := by
+        simp [linkBlocks]
+      rw [h, linkBlockList_text]
+    have hbb : boxRowBodies (t :: rest) = t.2.2.toList ++ boxRowBodies rest := by
+      simp [boxRowBodies]
+    simp only [List.map_cons, blockTextColumns, hlink]
+    rw [ih, hbb, blockTextList_append]
+
+/-- The row's census equals the flat tiles' census (`linkedCols_text` on the
+whole block): the columns gathering and the per-tile link wrappers are text
+transparent. Stated with the `_text` conservation suffix. -/
+theorem linkedBoxRow_text (tiles : Array (BoxWidth × String × Array Block)) (acc : String) :
+    blockTextOne acc (linkedBoxRow tiles)
+      = blockTextList acc (boxRowBodies tiles.toList) := by
+  simp only [linkedBoxRow, blockTextOne, Array.toList_map]
+  exact linkedCols_text tiles.toList acc
+
+/-- One link identity per column: every column of a linked box row is exactly
+one link, to that tile's own target — never a shared wrapper over the row and
+never one wrapper per inline leaf. -/
+theorem linkedBoxRow_links (tiles : Array (BoxWidth × String × Array Block)) :
+    colLinkTargets ((tiles.map fun t => (t.1, linkBlocks t.2.1 t.2.2)).toList)
+      = (tiles.map fun t => some t.2.1).toList := by
+  simp only [colLinkTargets, Array.toList_map, List.map_map]
+  apply List.map_congr_left
+  intro t _
+  have h : (linkBlocks t.2.1 t.2.2).toList = [Block.link t.2.1 t.2.2] := by
+    simp [linkBlocks, linkBlockList]
+  simp [Function.comp, colLinkOne, h]
+
 /-- A caption fills only what was left undeclared: a described image keeps
 its own words, and `artifact` inside a captioned figure stays decoration. -/
 def setAltFill (alt : String) : Alt → Alt
