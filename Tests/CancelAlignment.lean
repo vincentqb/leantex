@@ -94,6 +94,8 @@ def Witness.centred (w : Witness) : Bool := w.centreError2.natAbs ≤ 1
 It makes no claim about horizontal outline bounds or raster collisions. -/
 def Witness.originGap (w : Witness) : Dim.Sp := w.originX - w.tip.1
 
+def Witness.originGapped (w : Witness) : Bool := w.originGap == w.fontGap
+
 /-- Read a one-line synthetic page. The `u` immediately before the
 construct witnesses its actual style size and math face, so the expected
 gap is scaled from that font's MATH table rather than guessed from text
@@ -121,14 +123,16 @@ structure Probe where
   label : String
   body : String
   target : String
+  options : String
   deriving Repr
 
-/-- Invented operands span narrow, shallow and steep arrows. The fourth
-target contains only a superscript on an empty base: all its ink is away
-from its local baseline, exposing a bounds helper that includes zero. -/
+/-- Invented operands span narrow, shallow, steep and degenerate arrows.
+The fourth target contains only a superscript on an empty base: all its ink
+is away from its local baseline, exposing a bounds helper that includes zero. -/
 def probes : Array Probe := Id.run do
   let shapes := [("narrow", "i"), ("wide", "x+x+x+x+x+x"),
-    ("tall", "\\frac{x}{\\frac{x}{x}}")]
+    ("tall", "\\frac{x}{\\frac{x}{x}}"), ("empty", ""),
+    ("negative-advance", "x\\!\\!\\!\\!\\!\\!")]
   let styles := [("text", "$", "$"), ("display", "\\[", "\\]"),
     ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")]
   let targets := [("zero", "0", "0"), ("descender", "g", "𝑔"),
@@ -137,19 +141,72 @@ def probes : Array Probe := Id.run do
   for (shape, operand) in shapes do
     for (style, before, after) in styles do
       for (name, value, target) in targets do
-        result := result.push {
-          label := s!"{shape}/{style}/{name}"
-          body := before ++ "u\\cancelto{" ++ value ++ "}{" ++ operand ++ "}v" ++ after
-          target }
+        for options in ["makeroom", "overlap"] do
+          result := result.push {
+            label := s!"{shape}/{style}/{name}/{options}"
+            body := before ++ "u\\cancelto{" ++ value ++ "}{" ++ operand ++ "}v" ++ after
+            target, options }
   return result
 
 def layProbe (fonts : Font.FontSet) (p : Probe) : Layout.Out × Array Diag :=
-  let (doc, ds) := elabStr (dvDoc "\\usepackage[makeroom]{cancel}" p.body)
+  let (doc, ds) := elabStr (dvDoc ("\\usepackage[" ++ p.options ++ "]{cancel}") p.body)
   (layoutOf fonts doc, ds)
+
+/-- Deliberately translate only the target runs in an already shipped
+probe. This supplies positive controls and broken pages for the judge;
+it is never used to repair a page before the regression check. -/
+private def shiftTarget (out : Layout.Out) (target : String) (dy : Dim.Sp) : Layout.Out :=
+  { out with pages := out.pages.map fun page =>
+      { page with lines := page.lines.map fun line =>
+          { line with segs := line.segs.map fun seg =>
+              match seg with
+              | .run face color link width glyphs size leading underline raise ground attr =>
+                if !glyphs.isEmpty && glyphs.all (fun (_, scalar, _) =>
+                    target.toList.contains scalar) then
+                  .run face color link width glyphs size leading underline (raise + dy) ground attr
+                else seg
+              | .gap _ _ | .rule _ _ _ _ | .image _ _ _ | .poly _ _ => seg } } }
+
+/-- Judge controls over real glyph outlines. Translating a target clear
+of either side of coordinate zero must translate both bounds. Recentring
+an otherwise unchanged page must pass, and moving its target by two sp
+must fail in either direction. The horizontal origin is checked exactly. -/
+def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let fonts ← mathSetOf oneFace
+  for p in probes.filter (fun p => p.label.startsWith "narrow/text/") do
+    let (out, _) := layProbe fonts p
+    match measure fonts out p.target with
+    | .error e => check ref s!"cancel alignment judge: {p.label}: {e}" false
+    | .ok w =>
+      for dy in [1 - w.ink.bottom, -1 - w.ink.top] do
+        let moved := w.glyphs.map fun g => { g with y := g.y - dy }
+        check ref s!"cancel alignment judge: {p.label} translates both tight bounds"
+          (targetInk fonts moved == .ok
+            { bottom := w.ink.bottom + dy, top := w.ink.top + dy })
+      let centred := shiftTarget out p.target (-(w.centreError2 / 2))
+      match measure fonts centred p.target with
+      | .error e => check ref s!"cancel alignment judge: {p.label} recentered: {e}" false
+      | .ok c =>
+        check ref s!"cancel alignment judge: {p.label} accepts centred ink"
+          (c.centred && c.originGapped)
+        for dy in [-2, 2] do
+          check ref s!"cancel alignment judge: {p.label} detects a vertical displacement"
+            (match measure fonts (shiftTarget centred p.target dy) p.target with
+              | .ok broken => !broken.centred && broken.originGapped
+              | .error _ => false)
+        check ref s!"cancel alignment judge: {p.label} detects a one-sp origin displacement"
+          (!({ c with originX := c.originX + 1 } : Witness).originGapped)
+  check ref "cancel alignment judge: an absent head cannot certify alignment"
+    (match arrowTip #[] with | .error _ => true | .ok _ => false)
+  check ref "cancel alignment judge: a zero-area head cannot certify alignment"
+    (match arrowTip #[#[(0, 0), (1, 1), (2, 2)]] with | .error _ => true | .ok _ => false)
+  check ref "cancel alignment judge: an absent target cannot certify alignment"
+    (match targetInk fonts #[] with | .error _ => true | .ok _ => false)
 
 /-- Public suite entry point. Judged entirely on the shipped page and
 font outlines; no expected offset comes from `Math.cancelGeom`. -/
 def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  judgeChecks ref oneFace
   let fonts ← mathSetOf oneFace
   for p in probes do
     let (out, ds) := layProbe fonts p
@@ -161,6 +218,6 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
       check ref s!"cancel alignment: {p.label} centres target ink at the arrow tip"
         w.centred
       check ref s!"cancel alignment: {p.label} preserves the font-derived origin gap"
-        (w.originGap == w.fontGap)
+        w.originGapped
 
 end CancelAlignment
