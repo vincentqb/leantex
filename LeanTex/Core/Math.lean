@@ -2556,6 +2556,92 @@ theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : 
       resolveMathAlphas coverage body :=
   resolveMathAlphas_id coverage _ (resolveMathAlphas_covers coverage body)
 
+mutual
+
+/-- The census is empty on an alpha-free list: with no `.alpha` scope the
+active stack never grows past the fresh `[]`, and `missingCharAlpha` blames
+nothing from an empty stack (`missingCharAlphaGo [] = none`), so every
+`.sym` leaf leaves the accumulator untouched. The census face of
+`resolveAlphaList_nil_id`: the structure that keeps an already-resolved
+body a fixed point also keeps its diagnostics empty. -/
+private theorem missingAlphaList_nil_empty (coverage : MathAlphabetCoverage) :
+    ∀ out body, MList.alphaFree body = true →
+      missingAlphaList coverage [] out body = out
+  | _, .nil, _ => rfl
+  | out, .cons x rest, h => by
+    simp only [MList.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaList, missingAlphaItem_nil_empty coverage out x h.1,
+      missingAlphaList_nil_empty coverage out rest h.2]
+
+private theorem missingAlphaItem_nil_empty (coverage : MathAlphabetCoverage) :
+    ∀ out item, MItem.alphaFree item = true →
+      missingAlphaItem coverage [] out item = out
+  | _, .space _, _ => rfl
+  | _, .ink _ _, _ => rfl
+  | out, .atom _ nuc sup sub _, h => by
+    simp only [MItem.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaItem, missingAlphaNucleus_nil_empty coverage out nuc h.1,
+      missingAlphaList_nil_empty coverage out sup h.2.1,
+      missingAlphaList_nil_empty coverage out sub h.2.2]
+
+private theorem missingAlphaNucleus_nil_empty (coverage : MathAlphabetCoverage) :
+    ∀ out nucleus, MNucleus.alphaFree nucleus = true →
+      missingAlphaNucleus coverage [] out nucleus = out
+  | out, .sym _, _ => by
+    simp [missingAlphaNucleus, noteMissingAlpha, missingCharAlpha, missingCharAlphaGo]
+  | _, .styled _ _, _ => rfl
+  | _, .word _, _ => rfl
+  | out, .list body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out body h]
+  | _, .alpha _ _ _, h => by simp [MNucleus.alphaFree] at h
+  | out, .frac _ num den, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out num h.1,
+      missingAlphaList_nil_empty coverage out den h.2]
+  | out, .rad deg body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out deg h.1,
+      missingAlphaList_nil_empty coverage out body h.2]
+  | out, .delim _ _ body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out body h]
+  | out, .accent _ _ body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out body h]
+  | out, .grid _ rows, h => by
+    rw [missingAlphaNucleus, missingAlphaRows_nil_empty coverage out rows h]
+  | out, .cancel _ _ value body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_empty coverage out body h.2,
+      missingAlphaList_nil_empty coverage out value h.1]
+
+private theorem missingAlphaRow_nil_empty (coverage : MathAlphabetCoverage) :
+    ∀ out row, MRow.alphaFree row = true →
+      missingAlphaRow coverage [] out row = out
+  | _, .nil, _ => rfl
+  | out, .cons cell rest, h => by
+    simp only [MRow.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaRow, missingAlphaList_nil_empty coverage out cell h.1,
+      missingAlphaRow_nil_empty coverage out rest h.2]
+
+private theorem missingAlphaRows_nil_empty (coverage : MathAlphabetCoverage) :
+    ∀ out rows, MRows.alphaFree rows = true →
+      missingAlphaRows coverage [] out rows = out
+  | _, .nil, _ => rfl
+  | out, .cons row rest, h => by
+    simp only [MRows.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaRows, missingAlphaRow_nil_empty coverage out row h.1,
+      missingAlphaRows_nil_empty coverage out rest h.2]
+
+end
+
+/-- An alpha-free body owes no whole-alphabet diagnostic: `missingMathAlphas`
+is empty exactly when there is no `.alpha` scope left for it to blame. The
+diagnostic corollary of `resolveMathAlphas_covers` — after resolution the
+census is spent — and the fact the IR entry relies on to resolve a document
+twice without a second N0018. -/
+theorem missingMathAlphas_alphaFree (coverage : MathAlphabetCoverage) (body : MList)
+    (h : body.alphaFree = true) : missingMathAlphas coverage body = #[] :=
+  missingAlphaList_nil_empty coverage #[] body h
+
 /-- Resolving an alphabet stack is the identity on the classes projection,
 for any stack: `MList.classes` reads only the item-level atom class and
 never the nucleus, so rewriting a `.sym` glyph or turning an `.alpha`
