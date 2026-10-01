@@ -1,0 +1,33 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+font sans "Open Sans"
+font mono "Source Code Pro"
+section 1 number "1"
+  text "Alphabet Styles"
+para
+  text "The text-sourced alphabets each set the plain base letter in a text family: upright "
+  formula inline "\\mathrm {A}"
+    ord:alpha:rm{ord:𝐴}
+  text ", bold "
+  formula inline "\\mathbf {B}"
+    ord:alpha:bf{ord:𝐵}
+  text ", italic "
+  formula inline "\\mathit {C}"
+    ord:alpha:it{ord:𝐶}
+  text ", sans "
+  formula inline "\\mathsf {D}"
+    ord:alpha:sf{ord:𝐷}
+  text ", and mono "
+  formula inline "\\mathtt {E}"
+    ord:alpha:tt{ord:𝐸}
+  text " sit inline. A styled digit keeps its family too, as in "
+  formula inline "\\mathbf {7}"
+    ord:alpha:bf{ord:7}
+  text ", and a styled scalar nests inside a script in "
+  formula inline "x_{\\mathsf {k}} + y^{\\mathbf {2}}"
+    ord:𝑥_{ord:alpha:sf{ord:𝑘}} bin:+ ord:𝑦^{ord:alpha:bf{ord:2}}
+  text "."
+-- diagnostics
+(none)
