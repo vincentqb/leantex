@@ -11814,7 +11814,11 @@ list levels: itemize2..4, enumerate2..4")
     -- rewrite produced, so a key it fired may stand for a diagnostic the
     -- document never received, and recording it would silence the later
     -- visible one.
-    let (raws, ds, _) := Compat.rewrite ctx.file raws (warned := (← get).warnedUnknown)
+    -- A fragment inherits the caller's visible definitions, so a kernel
+    -- default cannot replace one before the elaborator reads it.
+    let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
+    let (raws, ds, _) := Compat.rewrite ctx.file raws
+      (warned := (← get).warnedUnknown) (inherited := inherited)
     modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
     return some (← elabInlines ctx raws)
   let lengthOf (key src : String) : EM (Option SymGlue) := do

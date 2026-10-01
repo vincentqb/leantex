@@ -8057,11 +8057,22 @@ therefore travels with the document, out of here and into the state the
 elaborator starts from, the way `Ir.overlayRange` became the one
 numberability reader both passes ask: one notion of "already said", one
 place it lives. It travels as a value the caller chains
-(`Elab.runRawsSpanned`), never as ambient state. -/
+(`Elab.runRawsSpanned`), never as ambient state.
+
+`inherited` names are already defined by a fragment's caller. Their
+replacement texts are unread here and remain for that caller to expand;
+definitions inside the fragment still replace and restore them normally. -/
 def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
-    (warned : Array String := #[]) :
+    (warned : Array String := #[]) (inherited : List String := []) :
     Array Raw × Array Diag × Array String :=
   let go : M (Array Raw) := do
+    -- latex.ltx's \def\space{ }: expansion, copying and local redefinition
+    -- share the ordinary meaning table, including the opening space scan.
+    recordValue "space"
+      (some { raws := #[.space], long := false, prot := false, live := true }) false
+    -- A fragment's caller owns these meanings. Their text is unread here;
+    -- local definitions can still replace them and scope restores them.
+    for n in inherited do setBind n none
     let raws ← condDocument raws
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList

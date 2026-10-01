@@ -210,5 +210,35 @@ def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         r"\IfClassLoadedTF{article}{}{Hidden} /T", "T/T"),
       ("paragraph stops scan", r"\AtBeginDocument{T}", r"\par/T", "T\\par/T")] do
     same ("macro phase whitespace " ++ label) (article pre body) (article "" expected)
+  -- The kernel's \space is an expandable, zero-argument space. It cannot
+  -- claim a following bracket as an option, and its copied meaning scopes.
+  for (label, pre, body, expected) in #[
+      ("optional lookahead",
+        r"\newcommand{\probe}[1][D]{(#1)}\def\probeOption{[E]}\let\?\probe",
+        r"\probe\probeOption/\?   [X]/\probe\space[Y]", "(D)[E]/(X)/(D) [Y]"),
+      ("following bracket", "", r"A\space[Y]B", "A [Y]B"),
+      ("inside group", "", r"A{\space}[Y]B", "A [Y]B"),
+      ("document meaning", r"\def\space{Q}", r"A\space[Y]B", "AQ[Y]B"),
+      ("copied meaning", r"\let\spacecopy\space\def\space{Q}",
+        r"A\spacecopy[Y]/\space", "A [Y]/Q"),
+      ("following bracket executes", r"\newif\ifspaceflag",
+        r"A\space[\spaceflagtrue Y]\ifspaceflag T\else F\fi", "A [Y]T"),
+      ("opening scan", r"\AtBeginDocument{T}", r"\space/T", "T/T"),
+      ("trailing replacement", r"\def\spaceprobe{A\space}", r"\spaceprobe B", "A B")] do
+    same ("macro kernel space " ++ label) (article pre body) (article "" expected)
+  same "macro kernel space local meaning restored"
+    (article "" r"A{\def\space{Q}\space}/\space[Y]B")
+    (article "" r"A{\def\space{Q}\space}/ [Y]B")
+  same "macro kernel space following refusal stays named"
+    (article "" r"A\space[\unreadspaceprobe{Y}]B")
+    (article "" r"A [\unreadspaceprobe{Y}]B") ["W0301"]
+  -- A style value is reparsed after definitions enter the elaborator.
+  -- That fragment inherits their names, never a fresh kernel meaning.
+  for definer in [r"\def\space{Q}", r"\define\space(){Q}"] do
+    let style (marker : String) :=
+      definer ++ r"\style{itemize}{marker={" ++ marker ++ "}}"
+    let body := r"\begin{itemize}\item Tail\end{itemize}"
+    same ("macro kernel space style shadow " ++ definer)
+      (article (style r"A\space B") body) (article (style "AQB") body)
 
 end Tests
