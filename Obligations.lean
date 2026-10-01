@@ -933,24 +933,6 @@ theorem formulaFloor_separates (num den : Math.MList)
       ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
   sorry
 
--- owed: mathContain_accounts
--- owner: LeanTex.Core.MathParse
--- source: the math granularity defect (PLAN 2026-09-25): one unmodelled control word in one addend of one alignment row degraded a whole display to body text, and the source floor then dropped every control word in it, so two `\sum` signs vanished, a superscript flattened onto the baseline and every subscript followed it — while inline math on the same page set correctly. The repair reduces such a construct to its content operand in the token stream, so the mathematics around it still parses. This is the confinement that makes the repair safe rather than a second source of falsity: containment may fire only for a control word the slice does not model AND on whose operands `Ir.floorNamedArgs` has already ruled, so reducing the construct applies a decision the floor already made instead of making a new one. The counterexample that fixed the boundary is `$a \xleftarrow{f} b$`: one operand, no table row, and reducing it to `𝑎𝑓𝑏` is `formulaFloor_separates`'s falsity one construct further out — which is why a single operand is not sufficient and the table row is. `keptToks_mem` is the upper bound and is proved (nothing invented: every token parsed is a token the author wrote); this is the clause that bounds *when* the reduction may happen at all.
--- blocker: `Loop.except_forIn_range_inv` and `Loop.except_bind_of_inv` now read the fallible loop directly, and `MathParse.containPlan_accounts` proves that the existing scan records only unknown names declared by `Ir.floorNamedArgs`; no duplicate scanner is needed. The remaining bridge is parser-note provenance: `parseMath` appends `parseToks`'s notes, so a successful `parseToks` must prove that none is `Note.constructFloored`. Its nested text-group scan carries the note accumulator through four command aliases (`text`, `mbox`, `textrm`, `operatorname`); expanding that local loop in each arm repeats the invariant proof and reaches the heartbeat limit. Factor the existing text-group scan into one named helper with a successful-result note invariant, compose it with the grid-note and outer-loop invariants, then combine parser provenance with `containPlan_accounts`. This is a parser factorization, not a reason to weaken the statement or split containment into two scans. `mathContainChecks` and the compat index remain the executable boundary witnesses.
--- goldens: no
-/-- **Containment fires only inside the family the floor has ruled on.** A
-note naming a reduced construct names a control word this slice does not
-model and whose operands `Ir.floorNamedArgs` declares — so the reduction
-applies a decision already made rather than inventing one, and a construct
-the table says nothing about degrades its formula whole instead. -/
-theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw) (l : Math.MList)
-    (notes : Array MathParse.Note)
-    (h : MathParse.parseMath display raws = .ok (l, notes)) :
-    ∀ w, MathParse.Note.constructFloored w ∈ notes →
-      ∃ n, w = "\\" ++ n ∧ MathParse.knownCtrl n = false ∧
-        (Ir.floorNamedArgs.lookup n).isSome := by
-  sorry
-
 -- The prefix LaTeX puts before a refused name on its way to a filename now
 -- lives with the scan that reads it (`Compat.nameRefusalAsk`), where it is
 -- closed against the code list rather than kept here by hand: a refusal
