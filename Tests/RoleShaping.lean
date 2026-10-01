@@ -4,47 +4,6 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- A glyph's shipped position and paint, independent of run segmentation
-and structure-leaf numbering. Advances and positions are exact sp values. -/
-private structure RoleGlyph where
-  page : Nat
-  line : Nat
-  face : Nat
-  glyph : Nat
-  scalar : Char
-  x : Dim.Sp
-  y : Dim.Sp
-  advance : Dim.Sp
-  size : Dim.Sp
-  expand : Int
-  color : Ir.Color
-  link : Option String
-  leading : Option Dim.Sp
-  underline : Bool
-  ground : Option Ir.Color
-  deriving BEq, Repr
-
-private def roleGlyphs (out : Layout.Out) : Array RoleGlyph := Id.run do
-  let mut acc := #[]
-  for (page, p) in out.pages.zipIdx do
-    for (line, l) in (page.lines.filter (!·.furniture)).zipIdx do
-      let mut x := line.x
-      for seg in line.segs do
-        match seg with
-        | .run face color link width gs size leading underline raise ground _ =>
-          let mut dx := 0
-          for (glyph, scalar, advance) in gs do
-            acc := acc.push {
-              page := p, line := l, face, glyph, scalar
-              x := x + dx * (1000 + line.expand) / 1000
-              y := line.y - raise, advance, size, expand := line.expand
-              color, link, leading, underline, ground }
-            dx := dx + advance
-          x := x + width
-        | .gap width _ | .rule width _ _ _ | .image _ width _ => x := x + width
-        | .poly _ _ => pure ()
-  return acc
-
 private def roleLeafGlyphText (out : Layout.Out) (id : Nat) : String :=
   (bodyLines out).foldl (fun s line =>
     line.segs.foldl (fun s seg => match seg with
@@ -63,7 +22,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     let laid := out.pages.flatMap fun p =>
       artLaidGlyphs geom { p with lines := p.lines.filter (!·.furniture) }
     t (label ++ ": exact artifact-model coordinates")
-      ((roleGlyphs out).map (fun g => g.x + geom.bleed) == laid)
+      ((shippedBodyGlyphs out).map (fun g => g.x + geom.bleed) == laid)
     match readArtifact (driverPdf fonts geom doc out) with
     | .error e => t s!"{label}: PDF reads back: {e}" false
     | .ok pages =>
@@ -85,7 +44,8 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     let out := layoutOf fonts doc
     let control := { doc with body := #[.para #[.text text]] }
     let plain := layoutOf fonts control
-    t s!"role shaping {name}: exact shipped glyphs" (roleGlyphs out == roleGlyphs plain)
+    t s!"role shaping {name}: exact shipped glyphs"
+      (shippedBodyGlyphs out == shippedBodyGlyphs plain)
     t s!"role shaping {name}: no layout loss" (out.diags.isEmpty && plain.diags.isEmpty)
     artifact s!"role shaping {name}" doc out (Layout.Geom.ofPage doc.page)
     artifact s!"role shaping {name} control" control plain (Layout.Geom.ofPage control.page)
@@ -99,9 +59,9 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   let bare := { styled with body := #[.para #[.text "AV"]] }
   let out := layoutOf fonts styled
   t "role shaping: authored style survives annotation"
-    (roleGlyphs out == roleGlyphs (layoutOf fonts control))
+    (shippedBodyGlyphs out == shippedBodyGlyphs (layoutOf fonts control))
   t "role shaping: authored style still changes the page"
-    (roleGlyphs out != roleGlyphs (layoutOf fonts bare))
+    (shippedBodyGlyphs out != shippedBodyGlyphs (layoutOf fonts bare))
   t "role shaping: distinct faces remain distinct"
     (bodyGlyphs out == #[(1, 'A'), (0, 'V')])
   artifact "role shaping styled" styled out (Layout.Geom.ofPage styled.page)
@@ -117,7 +77,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     ((bodyLines joinedOut).size > 1 &&
       (bodyGlyphs joinedOut).any (fun (_, c) => c == '-'))
   t "role shaping: hyphenation crosses semantic boundaries"
-    (roleGlyphs splitOut == roleGlyphs joinedOut)
+    (shippedBodyGlyphs splitOut == shippedBodyGlyphs joinedOut)
   artifact "role shaping hyphenated" hyphenated splitOut geom
   artifact "role shaping hyphenated control" joined joinedOut geom
   -- Expansion rounds whole-word coordinates. Changing the structure leaves
@@ -146,7 +106,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let label := s!"role shaping {name}, measure {measure}"
       t (label ++ ": control really expands")
         ((bodyLines plain).any (·.expand != 0))
-      t (label ++ ": exact expanded glyphs") (roleGlyphs out == roleGlyphs plain)
+      t (label ++ ": exact expanded glyphs") (shippedBodyGlyphs out == shippedBodyGlyphs plain)
       t (label ++ ": exact line extents")
         ((bodyLines out).map (fun l => (l.x, l.y, l.setWidth, l.expand)) ==
           (bodyLines plain).map (fun l => (l.x, l.y, l.setWidth, l.expand)))
