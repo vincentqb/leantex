@@ -193,7 +193,9 @@ structure Probe where
 
 /-- Invented operands span narrow, shallow, steep and degenerate arrows.
 The fourth target contains only a superscript on an empty base: all its ink
-is away from its local baseline, exposing a bounds helper that includes zero. -/
+is away from its local baseline, exposing a bounds helper that includes zero.
+Narrow and tall operands also carry a wide label, so a steep attachment
+must accommodate ink extending left of the tip as well as a logical end. -/
 def probes : Array Probe := Id.run do
   let shapes := [("narrow", "i"), ("wide", "x+x+x+x+x+x"),
     ("tall", "\\frac{x}{\\frac{x}{x}}"), ("empty", ""),
@@ -206,8 +208,11 @@ def probes : Array Probe := Id.run do
     ("multiple", "0g", "0𝑔"), ("raised-zero", "{}^{0}", "0")]
   let mut result := #[]
   for (shape, operand) in shapes do
+    let shapeTargets := if shape == "narrow" || shape == "tall" then
+        targets ++ [("wide-label", "000000g", "000000𝑔")]
+      else targets
     for (style, before, after, ordinaryBefore, ordinaryAfter) in styles do
-      for (name, value, target) in targets do
+      for (name, value, target) in shapeTargets do
         for options in ["makeroom", "overlap"] do
           result := result.push {
             label := s!"{shape}/{style}/{name}/{options}"
