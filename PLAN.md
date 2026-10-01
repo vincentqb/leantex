@@ -418,6 +418,27 @@ list.
   prose, so `Diag` must hold the read structurally before it can be stated.
   The witness meanwhile is the insert-spelled rows of the rule-(b) block and
   `themeTitleShipChecks` over the census.
+- `missingMathAlphas_alphaFree` — the document-level whole-alphabet census
+  is empty on an alpha-free document: when every formula body a document
+  declares is `alphaFree`, `Ir.missingMathAlphas` names no loss. The
+  document lift of `Math.missingMathAlphas_alphaFree` (proved) and the
+  census half of `Ir.resolveMathAlphas`'s diagnostics-empty corollary. The
+  resolution-idempotence it pairs with (`Ir.resolveMathAlphas_fixed_point`)
+  is proved; this half is blocked on a joint invariant over the
+  `foldInline`/`foldBlock` mutual (a fold whose leaf preserves the
+  accumulator at every visited node returns the init — the fold family has
+  no `_const` analogue today, only the boolean `||p` fold), the apparatus
+  being the size of the `mapBlock` idempotence already landed. The witness
+  is `Tests/Reports.lean`'s pinned `resolveMathAlphas_named`.
+- `htmlEmit_resolve_agree` — entry-idempotence, HTML side: emitting the
+  alpha-resolved document yields the same head and body nodes as emitting
+  the original (diagnostics differ only by the leading census). The HtmlDoc
+  analogue of `Layout.run_resolve_pages_agree` (proved). Blocked because
+  `emitTree` resolves AFTER `Ir.keepFor "html"`, so pre-resolving changes
+  what `keepFor` filters: the lift needs a `keepFor`∘`mapBlocks` commutation
+  (a fresh block-walk mutual) and `emitTree` factored through its inner
+  resolved document; `Layout.run` resolves first with nothing ahead of it,
+  which is why its analogue is two lines.
 
 ### Log
 

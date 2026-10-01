@@ -1,4 +1,5 @@
 import LeanTex.Core.Layout
+import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Loop
 import LeanTex.Core.Contrast
 import LeanTex.Core.Theme
@@ -1005,6 +1006,51 @@ theorem titleStyle_spelling_agree (file : String)
     (h : Elab.beamerInsertAlias.lookup b = some l) :
     ((Elab.runRaws file (pre ++ #[.ctrl b p] ++ post)).1.styles.find? "titlepage")
       = ((Elab.runRaws file (pre ++ #[.ctrl l q] ++ post)).1.styles.find? "titlepage") := by
+  sorry
+
+/-- The math-alphabet bodies a document's formula regions declare, in the
+order `foldDoc` reads them — what the whole-alphabet census ranges over, as
+a plain array so the alpha-free hypothesis is a per-element predicate. -/
+def mathBodies (doc : Ir.Doc) : Array Math.MList :=
+  Ir.foldDoc (fun out x => match x with
+    | .formula _ _ b => out.push b
+    | _ => out) #[] doc
+
+-- owed: missingMathAlphas_alphaFree
+-- owner: LeanTex.Core.Ir
+-- source: math-alphabet-contract task, deliverable 1 (the document-level census-empty fact; the Math-level mirror `Math.missingMathAlphas_alphaFree` is proved and discharges the per-formula step)
+-- blocker: both `Ir.missingMathAlphas` (a `foldDoc censusG #[]`, `censusG` pushing `Math.missingMathAlphas coverage body` at each `.formula`) and `mathBodies` (a `foldDoc` collecting the same bodies) traverse the identical formula nodes, so the lift is a joint invariant over the `foldInline`/`foldInlineList`/`foldBlock`/`foldBlockList`/`foldBlockItems`/`foldBlockCols`/`foldTableRows`/`foldAlgLines` mutual: a fold whose `fi` preserves the accumulator at every visited node returns the init, and `Math.missingMathAlphas_alphaFree` supplies that preservation per formula. That fold family has no accumulator-preservation (`_const`) analogue today — only the boolean `||p` fold reads one (`foldInline_or`/`foldInlineList_or`) — so the apparatus is a new mutual the size of the `mapBlock` idempotence already landed in Ir. The document-level resolution-idempotence it pairs with (`Ir.resolveMathAlphas_fixed_point`) is proved; this is the census half it does not reach, because a census over the *resolved* doc additionally needs the `foldDoc`-after-`mapDoc` fusion that `Bib.resolveDoc_no_cite` builds for its own census and that no analogue builds here
+-- goldens: no
+/-- The document-level census is empty on an alpha-free document (`_covers`
+discharged to empty): when every formula body a document declares is
+`alphaFree`, `Ir.missingMathAlphas` names no whole-alphabet loss. The
+document lift of `Math.missingMathAlphas_alphaFree`; the fact the entry
+relies on to resolve a document twice without a second N0018, and the
+census half of `Ir.resolveMathAlphas`'s diagnostics-empty corollary. -/
+theorem missingMathAlphas_alphaFree (coverage : Math.MathAlphabetCoverage)
+    (doc : Ir.Doc) (h : ∀ b ∈ mathBodies doc, Math.MList.alphaFree b = true) :
+    Ir.missingMathAlphas coverage doc = #[] := by
+  sorry
+
+-- owed: htmlEmit_resolve_agree
+-- owner: LeanTex.Core.HtmlDoc
+-- source: math-alphabet-contract task, deliverable 1 (the HtmlDoc analogue of `Layout.run_resolve_pages_agree`, which is proved)
+-- blocker: `emitTree` resolves math alphabets AFTER `Ir.keepFor "html"`, so pre-resolving the whole document changes what `keepFor` filters, and the clean `entry = realwork ∘ resolve` reduction the Layout proof uses does not hold. The lift needs two pieces neither of which is built: (1) `Ir.keepFor "html"` commutes with the body resolution `mapBlocks (resolveMathAlphaInline …)` — `keepFor` drops blocks by backend tag and never inspects a formula, so the two block walks commute, but that is a fresh mutual commutation over `keepForList`/`mapBlockList`; with it, the inner document is `resolveMathAlphas`-idempotent by `Ir.resolveMathAlphas_fixed_point`; and (2) the head and body nodes `emitTree` returns are a function of that inner resolved document and `cfg` (true — every walk below reads only the post-resolution `doc` and the locale it sets), which needs `emitTree` factored through its inner document or a congruence over its `Id.run do` block. `Layout.run` resolves first with no `keepFor` ahead of it, which is why its analogue goes through in two lines
+-- goldens: no
+/-- **Entry-idempotence, HTML side** (`_agree`): emitting the alpha-resolved
+document produces the same head and body nodes as emitting the original
+(the diagnostics differ only by the leading whole-alphabet census the
+unresolved path adds). The HtmlDoc analogue of `Layout.run_resolve_pages_agree`,
+pre-resolved with `emitTree`'s own coverage and family. -/
+theorem htmlEmit_resolve_agree (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
+    (HtmlDoc.emitTree cfg (Ir.resolveMathAlphas
+          (cfg.fonts.map (·.mathAlphabets) |>.getD {})
+          (cfg.fonts.map (·.mathFamily) |>.getD "math face") doc).1).1
+        = (HtmlDoc.emitTree cfg doc).1
+      ∧ (HtmlDoc.emitTree cfg (Ir.resolveMathAlphas
+          (cfg.fonts.map (·.mathAlphabets) |>.getD {})
+          (cfg.fonts.map (·.mathFamily) |>.getD "math face") doc).1).2.1
+        = (HtmlDoc.emitTree cfg doc).2.1 := by
   sorry
 
 end Obligations
