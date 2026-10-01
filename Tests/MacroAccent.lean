@@ -12,6 +12,8 @@ roles or whitespace. The shared glyph comparison ignores only run/leaf
 allocation, retaining placement, faces, paint, links and leading. -/
 def macroAccentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
+  -- Styled controls need distinct faces even when the caller uses oneFace.
+  let some styleFonts ← serifFacesSet | t "macro accent: serif faces load" false
   let native := "\\define\\wordprobe(a: content){\\a}" ++
     "\\define\\accentprobe(a: content){\\a}\\define\\outerprobe(a: content){\\a}"
   let word := "\\newcommand\\wordprobe[1]{#1}"
@@ -46,6 +48,7 @@ def macroAccentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
           ("plain", "", ""),
           ("bold", "\\textbf{", "}"),
           ("painted", "\\textcolor{blue}{", "}")] do
+        let fonts := if style == "plain" then fonts else styleFonts
         let source := dvDoc ("\\pagestyle{empty}" ++ pre)
           ("A" ++ opening ++ call ++ closing ++ suffix)
         let control := dvDoc ("\\pagestyle{empty}" ++ native)
