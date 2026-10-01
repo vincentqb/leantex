@@ -47,6 +47,7 @@ import Tests.MacroHookScope
 import Tests.MacroDelimiterScope
 import Tests.PackageOptions
 import Tests.BoxRow
+import Tests.RecipeStructure
 import Tests.PackageCode
 import Tests.DiagAudit
 import Tests.MathSym
@@ -162,6 +163,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   titleHeadingChecks ref oneFace
   boxWidthChecks ref oneFace
   minipageRowChecks ref oneFace
+  recipeLinkWrapperChecks ref oneFace
   boxPosRowChecks ref oneFace
   underlineChecks ref geom oneFace font
   linkSignalChecks ref geom oneFace

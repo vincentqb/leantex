@@ -13827,6 +13827,12 @@ theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
 
+/-- Wrap every inline leaf of a block tree in one link destination while
+preserving every block and inline wrapper. Block-shaped content wrappers use
+this generic map instead of inventing a parallel linked-block IR. -/
+def linkBlocks (url : String) (xs : Array Block) : Array Block :=
+  mapBlocks (fun x => .link url #[x]) xs
+
 mutual
 
 /-- The census face of the map, per node: a leaf function that conserves
@@ -14246,6 +14252,13 @@ theorem mapBlocks_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
+
+/-- Linking a block-shaped wrapper preserves its complete text census. The
+wrapper changes navigation, never content. -/
+theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) :=
+  mapBlocks_text (fun x => .link url #[x]) (by
+    intro x
+    simp [plainTextOne, plainTextList])
 
 /-- A caption fills only what was left undeclared: a described image keeps
 its own words, and `artifact` inside a captioned figure stays decoration. -/

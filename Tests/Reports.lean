@@ -3,6 +3,7 @@ import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
 import Tests.BoxRow
+import Tests.RecipeStructure
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -442,7 +443,11 @@ def reports : List Report := [
       thm% Math.cancelto_value_between,
       thm% Math.cancelto_room_covers]
     accept := ["native PDF renders of narrow, wide and tall arrows with ordinary and raised targets"]
-    state := .guarded "41c36677" .before .reviewer }
+    state := .guarded "41c36677" .before .reviewer },
+  { id := "R66", date := "2026-10-01"
+    what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
+    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text]
+    state := .guarded "82e1e271" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -1053,8 +1053,9 @@ def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
-   "paragraph", "subparagraph", "href", "link", "url", "nolinkurl",
-   "hspace", "rule", "fontsize", "includegraphics", "animategraphics", "faIcon", "pagenumber", "pagecount",
+   "paragraph", "subparagraph", "href", "link", "hyperlink", "hypertarget",
+   "url", "nolinkurl", "hspace", "rule", "fontsize", "includegraphics",
+   "animategraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
@@ -4797,6 +4798,32 @@ no extent is reserved for it" pos
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
+        else if name == "hyperlink" || name == "hypertarget" then
+          -- hyperref.sty defines both as two-group content wrappers: the
+          -- first group names a destination, the second is set unchanged.
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          let j2 := skipSpaces raws (j + 1)
+          have hj2ge := skipSpaces_ge raws (j + 1)
+          match hj : raws[j]?, hj2 : raws[j2]? with
+          | some (.group keyRaw _), some (.group body _) =>
+            have hj2lt := getElem?_lt hj2
+            have hw : rawWeightList body.toList < sliceWeight raws i :=
+              body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+            let key := argText ctx keyRaw
+            let inner ← elabInlines ctx body
+            let acc := flushText acc sb
+            let anchor := Ir.labelAnchor key
+            let acc := if name == "hyperlink" then
+                acc.push (.link ("#".append anchor) inner)
+              else
+                (acc.push (.label key)) ++ inner
+            have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j2 + 1) acc ""
+          | _, _ =>
+            diag ctx .E0304 s!"'\\{name}' needs a \{target}\{content}" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "href" || name == "link" then
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
@@ -5776,6 +5803,24 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
         | some (.group g2 _) => bodyIsBlock g2
         | _ => false))
   | _ => curEmpty && !twoGroups
+
+/-- Does a two-group content wrapper carry block-shaped content in its second
+argument? Hyperref's `\\hyperlink` and `\\hypertarget` use exactly this
+signature; the first group names the destination and the second is content. -/
+private def contentWrapperTakesBlocks (raws : Array Raw) (i : Nat) : Bool :=
+  let j := skipSpaces raws (i + 1)
+  let j2 := skipSpaces raws (j + 1)
+  match raws[j]?, raws[j2]? with
+  | some (.group _ _), some (.group body _) => bodyIsBlock body
+  | _, _ => false
+
+/-- Is `n` one of the two-group content wrappers whose second group here is
+block-shaped? Factored out of the `elabBlocksGo` block knot so the list
+literal and the `contentWrapperTakesBlocks` call compile once, outside the
+knot whose own `match` is at the LCNF compiler's heartbeat budget. -/
+private def linkWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
+  (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget")
+    && contentWrapperTakesBlocks raws i
 
 /-- The number an unstarred heading takes, stepped in flow order — or
 `none`, which is also the answer for every heading of a class that does
@@ -9836,6 +9881,46 @@ line is numbered" apos
 
 seal scanBracketArg Parse.inputEnvFile?
 
+/-- Does the control sequence `n`, met at `raws[i]` with the current paragraph
+accumulator `cur`, open a block rather than continue the paragraph? Lifted
+whole out of the `elabBlocksGo` block knot — whose own `match` sits at the
+LCNF compiler's heartbeat budget — so this decision compiles as one unit
+outside it (`isDeclBlock` is sealed here, so the call stays opaque). -/
+private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
+    (cur : Array Raw) : Bool :=
+  n == "par" || n == "block" || n == "centering" || n == "pause"
+    || (Ir.raggedSideOf? n).isSome
+    || n == "framefoot" || n == "pagebreak" || n == "appendix"
+    || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
+    -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
+    || (n == "nointerlineskip" && cur.isEmpty)
+    || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
+    || (n == "note" && cur.isEmpty)
+    -- A declaration met between blocks scopes the rest of the group,
+    -- as `\centering` does (the arm below); mid-paragraph it keeps
+    -- the inline reading.
+    || isDeclBlock ctx' n raws i cur
+    -- `\color{n}`'s block form: a flow ink declaration (the arm
+    -- below). Mid-paragraph the marker keeps the inline reading —
+    -- splitting the paragraph there would move text.
+    || (cur.isEmpty && n.startsWith "@ink:")
+    || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
+    || (cur.isEmpty && n == Compat.pageColorResetMark)
+    || (cur.isEmpty && n.startsWith "@lang:")
+    || n == BeamerColor.marker || n == BeamerColor.starMarker
+    || linkWrapperTakesBlocks n raws i
+    || (n != "note" &&
+      ((sectionLevel n).isSome
+        || declCtrl.contains n || runningCtrl.contains n || n == "define"
+        || counterCtrl n
+        || (match lookupUser ctx' n with
+            | some (_, cmd) => bodyIsBlock cmd.body
+            | none =>
+              ((overlayCtrls.contains n || n == "alt") &&
+                overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
+              titleCtrls.contains n || n == "maketitle"
+                || n == "titlepage" || n == "logo")))
+
 -- The block knot: the spine (`elabBlocksGo`), its two dispatch arms, the
 -- loop members that recurse into accumulated content, and the redefinition
 -- gate — mutually recursive, terminating by one six-component measure:
@@ -10820,6 +10905,40 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     if let some bpos := ju.2 then
       warnUnclosed ctx s!"'\\{n}'" bpos
     return (blocks, ⟨ju.1, by omega⟩)
+  else if ["href", "link", "hyperlink", "hypertarget"].contains n then
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    let j2 := skipSpaces raws (j + 1)
+    have hj2ge := skipSpaces_ge raws (j + 1)
+    match hj : raws[j]?, hj2 : raws[j2]? with
+    | some (.group targetRaw _), some (.group body _) =>
+      have hj2lt := getElem?_lt hj2
+      have hbw : rawWeightList body.toList + 1 ≤ sliceWeight raws j2 := by
+        have := elem_weight_le hj2 (Nat.le_refl j2)
+        simp only [rawWeight] at this
+        omega
+      have hbp : nestedParsList body.toList ≤ slicePars raws j2 := by
+        have := elem_pars_le hj2 (Nat.le_refl j2)
+        simp only [nestedPars] at this
+        exact Nat.le_trans (nestedParsList_le body.toList) this
+      have hb2 : sliceWeight raws j2 ≤ sliceWeight raws i :=
+        sliceWeight_le raws (by omega)
+      have hb3 : slicePars raws j2 ≤ slicePars raws i :=
+        slicePars_le raws (by omega)
+      have hb0 : sliceWeight body 0 = rawWeightList body.toList := sliceWeight_zero _
+      have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
+      let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+      let target := argText ctx targetRaw
+      let wrapped :=
+        if n == "hypertarget" then #[Block.para #[.label target]] ++ inner
+        else
+          let anchor := Ir.labelAnchor target
+          let url := if n == "hyperlink" then "#".append anchor else target
+          Ir.linkBlocks url inner
+      return (blocks ++ wrapped, ⟨j2 + 1, by omega⟩)
+    | _, _ =>
+      diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos
+      return (blocks, ⟨i + 1, by omega⟩)
   else
   match hlk : lookupUser ctx n with
   | some (k, cmd) =>
@@ -11191,38 +11310,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           (match pal? with
             | some pal => blocks.push (.setPalette pal)
             | none => blocks) cur ((← get).flowGen)
-      let isB : Bool :=
-        n == "par" || n == "block" || n == "centering" || n == "pause"
-          || (Ir.raggedSideOf? n).isSome
-          || n == "framefoot" || n == "pagebreak" || n == "appendix"
-          || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
-          -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
-          || (n == "nointerlineskip" && cur.isEmpty)
-          || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
-          || (n == "note" && cur.isEmpty)
-          -- A declaration met between blocks scopes the rest of the group,
-          -- as `\centering` does (the arm below); mid-paragraph it keeps
-          -- the inline reading.
-          || isDeclBlock ctx' n raws i cur
-          -- `\color{n}`'s block form: a flow ink declaration (the arm
-          -- below). Mid-paragraph the marker keeps the inline reading —
-          -- splitting the paragraph there would move text.
-          || (cur.isEmpty && n.startsWith "@ink:")
-          || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
-          || (cur.isEmpty && n == Compat.pageColorResetMark)
-          || (cur.isEmpty && n.startsWith "@lang:")
-          || n == BeamerColor.marker || n == BeamerColor.starMarker
-          || (n != "note" &&
-            ((sectionLevel n).isSome
-              || declCtrl.contains n || runningCtrl.contains n || n == "define"
-              || counterCtrl n
-              || (match lookupUser ctx' n with
-                  | some (_, cmd) => bodyIsBlock cmd.body
-                  | none =>
-                    ((overlayCtrls.contains n || n == "alt") &&
-                      overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
-                    titleCtrls.contains n || n == "maketitle"
-                      || n == "titlepage" || n == "logo")))
+      let isB : Bool := isBlockStart ctx' n raws i cur
       if !isB then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
