@@ -130,8 +130,9 @@ def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
 /-- The furniture ink-clearance floor: the least gap between a band's ink
 and the body's, and between the body's ink and a picture block. The value
 is TeX's own collision floor (`\lineskip=1pt`, TeXbook p.78), surviving
-here only as clearance — the interline rule is metric (`B.placeLine`) and
-never consults it. -/
+here as clearance — the interline rule is metric (`B.placeLine`) — and as
+TeX's `\lineskip` on either side of display math, where TeX's own interline
+rule stands (`texBaselineGap`). -/
 def inkClearance : Sp := pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
 
 /-- The lowest y a body line's ink may reach: the bottom margin, less the
@@ -4278,6 +4279,20 @@ private def noteFloor (bottom footins h : Sp) : Sp :=
   if h == 0 then bottom else bottom - h - footins
 
 
+/-- A display's placement, read where the page builder sets its first line:
+TeX's two skips above it (tex.web §1203 chooses between them by
+`\predisplaysize`), whether TeX first sets the empty line amsmath's `$$`
+opens in vertical mode, how many of the line's leading segments stand
+outside the formula's box (the numbered shape's mirror box and its fil), and
+where the display stands. -/
+private structure DisplayJob where
+  ctx : Ir.DisplayCtx
+  above : Glue
+  aboveShort : Glue
+  emptyLine : Bool
+  lead : Nat := 0
+  deriving Inhabited
+
 /-- Page assembly state. A page is set the way a line is: its lines are
 boxes, the vertical skips between them are glue, and `y` is the baseline of
 the last line at the glue's natural size. Shrink is applied to the whole
@@ -4312,6 +4327,17 @@ private structure B where
   interline is ink-referenced — from the rule's bottom edge to the
   next line's cap line (`interlineFor`). -/
   prevRuleOnly : Bool := false
+  /-- Where the last text line set ends, from the left margin: the right
+  edge of its content, what TeX's `\predisplaysize` measures (tex.web
+  §1146) for a display the paragraph runs into. `none` after anything
+  else. -/
+  lineEnd : Option Sp := none
+  /-- The band at `y` is display math: the next line's interline glue is
+  TeX's (`texBaselineGap`), from the display's box depth — TeX's
+  `\prevdepth` after a display (tex.web §1205). -/
+  texAfter : Bool := false
+  /-- The last display set took TeX's short skips (`Op.skipAlt`). -/
+  dispShort : Bool := false
   /-- Vertical glue since the last line, not yet laid. -/
   skip : Glue := {}
   /-- Per line of the current page: total shrink in the glue above it. -/
@@ -4606,6 +4632,42 @@ private def B.keepInk (b : B) (ink : Sp) : B :=
     (b.keepInk d).noBreak = b.noBreak := rfl
 @[simp] private theorem keepInk_pendingNotes (b : B) (d : Sp) :
     (b.keepInk d).pendingNotes = b.pendingNotes := rfl
+
+/-- Record what the line just set leaves the next one: whether it is display
+math (`texAfter`), which skips the display took (`dispShort`), and where a
+text line's content ends (`lineEnd`). -/
+private def B.displayState (b : B) (tex : Bool) (lineEnd : Option Sp) : B :=
+  { b with texAfter := tex, lineEnd := lineEnd }
+
+@[simp] private theorem displayState_cur (b : B) (t : Bool) (e : Option Sp) :
+    (b.displayState t e).cur = b.cur := rfl
+@[simp] private theorem displayState_pages (b : B) (t : Bool) (e : Option Sp) :
+    (b.displayState t e).pages = b.pages := rfl
+@[simp] private theorem displayState_noBreak (b : B) (t : Bool) (e : Option Sp) :
+    (b.displayState t e).noBreak = b.noBreak := rfl
+@[simp] private theorem displayState_pendingNotes (b : B) (t : Bool) (e : Option Sp) :
+    (b.displayState t e).pendingNotes = b.pendingNotes := rfl
+@[simp] private theorem displayState_boxDepth (b : B) (t : Bool) (e : Option Sp) :
+    (b.displayState t e).boxDepth = b.boxDepth := rfl
+
+/-- TeX's choice of skip above a display (tex.web §1203), joined to the
+pending glue so the page's shrink ledger reads it as any skip: the long one
+when the line before reaches the formula's left edge `left` (its
+`\predisplaysize`, §1146: that line's content plus two quads of the text
+face) or the display is an alignment (§1206), the short one otherwise — and
+always after a heading or an environment's end, whose empty paragraph
+opening measures `-\maxdimen` (§1145). The choice is remembered for the
+skip below (`Op.skipAlt`). -/
+private def B.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) : B :=
+  let long := dj.ctx.align ||
+    (if dj.ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
+     else dj.emptyLine && decide (left ≤ 2 * size))
+  { b with skip := b.skip.add (if long then dj.above else dj.aboveShort), dispShort := !long }
+
+@[simp] private theorem displaySkip_pages (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).pages = b.pages := rfl
+@[simp] private theorem displaySkip_noBreak (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).noBreak = b.noBreak := rfl
 
 /-- **A band just set as a line answers its glyph box's depth** (`_exact`):
 `keepInk`'s key is the band's own baseline and depth, so the page's
@@ -5008,6 +5070,8 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
            prevDepth := depth
            prevBelow := below
            prevRuleOnly := ruleLine
+           lineEnd := none
+           texAfter := false
            skip := {} }
 
 /-- `doc_geometry_uniform`, the honest whole-document statement for the
@@ -5023,6 +5087,14 @@ private theorem doc_geometry_uniform (b : B) (l line : LineOut)
     b.finishPage.geom = b.geom ∧ (b.pushSibling (some l)).geom = b.geom ∧
       (b.commit line depth below ruleLine consume overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl⟩
+
+/-- How far a segment advances the pen: its width on the line. -/
+def Seg.advance : Seg → Sp
+  | .run _ _ _ w .. => w
+  | .gap w _ => w
+  | .rule w .. => w
+  | .image _ w _ => w
+  | .poly _ _ => 0
 
 /-- A run emptied of its glyph payload, every metric field kept: the
 transformation `line_box_glyph_free` quantifies over. -/
@@ -5248,6 +5320,30 @@ def interlineFor (prevRule : Bool) (prevDepth prevBelow : Sp)
   (if prevRule then prevDepth else if ruleLine then 0 else prevBelow)
     + (if prevRule || ruleLine then box.inkAbove else box.above)
 
+/-- TeX's baseline distance between two boxes (tex.web §679, where a box
+joins a vertical list): `\baselineskip` whenever that leaves the boxes at
+least `\lineskiplimit` apart, else their extents with `\lineskip` between —
+LaTeX's `\lineskip` is 1 pt and `\lineskiplimit` 0 pt (latex.ltx:
+`\normallineskip`, `\normallineskiplimit`). `pd` is the upper box's depth,
+`h` the lower's height. What display math is spaced by, on both sides
+(`B.placeLine`). -/
+def texBaselineGap (bs pd h : Sp) : Sp :=
+  if pd + h ≤ bs then bs else pd + inkClearance + h
+
+/-- **Baselines stand at least `\baselineskip` apart, and their boxes never
+overlap** (`_between`): a formula's subscripts reach into the leading
+until nothing is left of it, and only then push the next line down —
+measured from the baselines, never from the boxes' edges. -/
+theorem texBaselineGap_between (bs pd h : Int) :
+    bs ≤ texBaselineGap bs pd h ∧ pd + h ≤ texBaselineGap bs pd h := by
+  unfold texBaselineGap
+  split
+  · have hle : pd + h ≤ bs := ‹_›
+    exact ⟨Int.le_refl bs, hle⟩
+  · have hgt : ¬ (pd + h ≤ bs) := ‹_›
+    show bs ≤ pd + 65536 + h ∧ pd + h ≤ pd + 65536 + h
+    omega
+
 /-- The furniture-symmetry argument, applied to bars: the realized gap
 from an upper rule's bottom edge (`prevDepth` below its baseline) to the
 next line's cap line equals the pending skip, and from a line's baseline
@@ -5435,12 +5531,20 @@ the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
-    (leaf : Option Nat := none) (firstBaseline : Option Sp := none) : B :=
+    (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
+    (display : Option DisplayJob := none) (opens : Bool := false) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
   -- it does in TeX's hbox, so it is read before the filter below.
   let ink := segsInk fs segs
+  -- A display's box is TeX's too (tex.web §1199), and a display
+  -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
+  -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`).
+  let bs := Ir.leadingFor size b.geom.leading
+  let (h, d) := match display with
+    | some dj => if dj.ctx.align then (max ink.1 (bs * 7 / 10), max ink.2 (bs * 3 / 10)) else ink
+    | none => ink
   let rl := ruleOnly segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
@@ -5456,23 +5560,35 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand, counted := counted, leaf := leaf }
+  -- The distance from the band above: TeX's interline glue on either side
+  -- of display math (`texBaselineGap`), over the empty line amsmath's `$$`
+  -- sets first where it opens a paragraph; the metric rule everywhere else.
+  let gap (b : B) : Sp := match display, opens with
+    | some dj, true =>
+      if dj.emptyLine then texBaselineGap bs b.boxDepth 0 + texBaselineGap bs 0 h
+      else texBaselineGap bs b.boxDepth h
+    | _, _ =>
+      if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth h
+      else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
   -- and the pending skip an anchor keeps (`B.topKept`). The line's box
   -- depth stays with it for the page's distribution (`B.boxDepth`). After
   -- `\nointerlineskip` the line takes no interline glue: its box stands on
-  -- the last box's (`B.ignoreDepth`).
+  -- the last box's (`B.ignoreDepth`). The peer gap is the display-aware
+  -- one (`gap`), which reduces to the metric interline off a display.
   let lead := Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading
-  (b.fitCommit mk
+  ((b.fitCommit mk
     (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
       + firstBaseline.getD
         (if b.ignoreDepth then b.boxDepth + ink.1
-         else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
+         else gap b))
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
     (fun b => b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
-    box.inkBelow box.below rl box.inkBelow bottom notes).keepInk ink.2
+    box.inkBelow box.below rl box.inkBelow bottom notes).keepInk d).displayState
+      display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (neither neighbour
@@ -5496,7 +5612,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (firstBaseline : Option Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
-    (hnn : b.notesH = 0) (hid : b.ignoreDepth = false)
+    (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
     (hfit : b.y + b.skip.width
         + firstBaseline.getD
           (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
@@ -5516,9 +5632,9 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp only [keepInk_cur]
+  simp only [displayState_cur, keepInk_cur]
   simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, interlineFor, hnn, noteFloor,
-    Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
+    htx, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
     Array.isEmpty_empty, ite_true]
@@ -5545,7 +5661,7 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp only [keepInk_cur]
+  simp only [displayState_cur, keepInk_cur]
   simp [hf, B.commit, B.attachNotes, Array.back?_push]
 
 /-- **The line names the leaf it was given** (`_exact`): the `LineOut`
@@ -5561,7 +5677,7 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
-  simp only [keepInk_cur]
+  simp only [displayState_cur, keepInk_cur]
   simp [hf, B.commit, B.attachNotes, Array.back?_push]
 
 /-- **A set line's box, for the page's distribution, is its glyphs'**
@@ -5753,6 +5869,9 @@ private structure ParaJob where
   before the after-skip, and `\@afterheading` sets `\clubpenalty` to
   10000, so the heading keeps the next paragraph's first two lines). -/
   keepNext : Sp := 0
+  /-- The paragraph is display math, set as TeX sets a display
+  (`B.placeLine`'s `display`). -/
+  display : Option DisplayJob := none
 
 /-- A title slot's placement resolved to the page: which point of its box
 (`anchor`) stands at which point of the page (`pagePoint`), the shifts in
@@ -5802,6 +5921,10 @@ them in document order, so the page builder stays sequential and the output
 does not depend on task scheduling. -/
 private inductive Op where
   | skip (g : Glue)
+  /-- Glue owed after a display, under TeX's two choices of skip below it:
+  the long and the short. The page builder ships the one the display's line
+  chose (`B.dispShort`). -/
+  | skipAlt (long short : Glue)
   /-- A titled frame's content opens here (`B.openBody`): below the title
   box, on a baseline, with the frame's own top skip pending. -/
   | bodyOpen (g : Glue)
@@ -5967,6 +6090,10 @@ private structure Rd where
   (`collectCentered`): a lone box row takes the centre's share of its
   slack (`Ir.HAlign.boxOffset`). Cleared for what the box contains. -/
   centreBoxes : Bool := false
+  /-- Where the display being collected stands in its paragraph
+  (`Ir.DisplayCtx`), from the role elaboration wrapped it in; outside one
+  the default, a display inside a paragraph that runs on after it. -/
+  display : Ir.DisplayCtx := {}
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -6054,6 +6181,11 @@ private structure Acc where
   (`Acc.flushAnchored`). -/
   anchorAt : Option Nat := none
   owed : Array Glue := #[]
+  /-- The glue owed after a display under TeX's short skip below it: `owed`
+  holds it under the long skip, this under the short, every owed-glue step
+  applied to both, and the page builder ships the one the display's line
+  chose (`Op.skipAlt`). `none` while no display's skip is owed. -/
+  dispAlt : Option (Array Glue) := none
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
   /-- Links of the unpinned navigation landmarks met so far, in document
@@ -6099,7 +6231,7 @@ private def Acc.wantGap (a : Acc) : Acc := { a with wantDefault := true }
 
 /-- `\vskip`: glue the document asked for, on top of whatever is owed. -/
 private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
-  { a with owed := a.owed.push g, declaredSkip := true }
+  { a with owed := a.owed.push g, declaredSkip := true, dispAlt := a.dispAlt.map (·.push g) }
 
 /-- `\vspace`: LaTeX's `\@vspace` (latex.ltx:9362-9390) is `\vskip #1` then
 `\vskip\z@skip`, so the last skip it leaves reads zero and the next
@@ -6107,7 +6239,17 @@ private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
 (`addvspace_after_vspace_exact`). A primitive `\vskip` — a heading's
 after-skip — leaves its own width as the last skip. -/
 private def Acc.vspace (a : Acc) (g : Glue) : Acc :=
-  { a with owed := (a.owed.push g).push {}, declaredSkip := true }
+  { a with owed := (a.owed.push g).push {}, declaredSkip := true
+           dispAlt := a.dispAlt.map fun o => (o.push g).push {} }
+
+/-- `Acc.addvspace` on owed glue alone: the larger by natural width against
+the last owed, appended after a zero one. -/
+private def addvOwed (owed : Array Glue) (g : Glue) : Array Glue :=
+  match owed.back? with
+  | some last =>
+    if last.width == 0 then owed.push g
+    else if last.width < g.width then owed.pop.push g else owed
+  | none => #[g]
 
 /-- `\addvspace`: an element's own space. Against glue already owed it takes
 the larger (by natural width, as LaTeX compares them), so two elements
@@ -6120,6 +6262,7 @@ document skip stacks for a following paragraph (`declaredSkip`) is not
 the element's, which stands its space in place of the default as it does
 after a paragraph — a trivlist and a list re-declare theirs. -/
 private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
+  let a := { a with dispAlt := a.dispAlt.map (addvOwed · g) }
   match a.owed.back? with
   | some last =>
     if last.width == 0 then { a with owed := a.owed.push g, declaredSkip := false }
@@ -6202,6 +6345,14 @@ private def Acc.flushAnchored (a : Acc) (r : Rd) (k : Nat) : Acc :=
         .anchorRule (r.resolve r.geom.texParskip),
         .skip ((a.owed.extract k a.owed.size).foldl Glue.add {})] }
 
+/-- The op the owed glue ships as: `g`, or — while a display's skip below is
+owed — `g` beside the same boundary under the short skip, for the page
+builder to pick (`Acc.dispAlt`). Called only where `g` is the owed sum. -/
+private def Acc.owedOp (a : Acc) (g : Glue) : Op :=
+  match a.dispAlt with
+  | none => .skip g
+  | some alt => .skipAlt g (alt.foldl Glue.add {})
+
 /-- Emit the gap owed, just before a line is placed. A stacked boundary
 ships as two items, the peer mark first and the declared glue after it,
 whose sum is the boundary's glue (`flushGap_items_exact`): on a page that
@@ -6218,22 +6369,23 @@ private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
       if a.owed.isEmpty then
         (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
       else if a.wantDefault && a.declaredSkip then
-        { a with ops := (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) }
-      else { a with ops := a.ops.push (.skip (a.gapGlue r)) }
+        { a with ops := (a.ops.push (.skip par)).push (a.owedOp (a.owed.foldl Glue.add {})) }
+      else { a with ops := a.ops.push (a.owedOp (a.gapGlue r)) }
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
-           afterHeading := false, anchorAt := none }
+           afterHeading := false, anchorAt := none, dispAlt := none }
 
 /-- **A stacked boundary's two items are its glue** (`_exact`): the peer mark
 and the declared glue `flushGap` ships at a peer boundary with a document
 skip owed add up to `gapGlue`, which the placement sums (`Glue.add_assoc`),
 so splitting the boundary moves nothing a page does not open on. -/
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
-    (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none) :
+    (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none)
+    (hd : a.dispAlt = none) :
     let par := if a.trivOwed then r.resolve r.geom.texParskip else r.parskip
     (a.flushGap r).ops = (a.ops.push (.skip par)).push (.skip (a.owed.foldl Glue.add {})) ∧
       par.add (a.owed.foldl Glue.add {}) = a.gapGlue r := by
   intro par
-  exact ⟨by simp [Acc.flushGap, ho, hs, hk, par], by simp [Acc.gapGlue, hs, par]⟩
+  exact ⟨by simp [Acc.flushGap, Acc.owedOp, ho, hs, hk, hd, par], by simp [Acc.gapGlue, hs, par]⟩
 
 /-- Glue's width grows by a non-negative addend on the right. -/
 private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
@@ -6305,9 +6457,9 @@ it stretches on the page it ends — dropping it would turn a centring
 sandwich into a bottom-flush page. -/
 private def Acc.pageBreak (a : Acc) : Acc :=
   let a := if a.owed.isEmpty then a
-    else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
+    else { a with ops := a.ops.push (a.owedOp (a.owed.foldl Glue.add {})) }
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[], declaredSkip := false,
-           trivOwed := false, afterHeading := false, anchorAt := none }
+           trivOwed := false, afterHeading := false, anchorAt := none, dispAlt := none }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
@@ -6367,7 +6519,8 @@ private def collectPara (r : Rd) (a : Acc)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (hangIndent : Sp := 0) (literalLines : Bool := false) : Acc :=
+    (hangIndent : Sp := 0) (literalLines : Bool := false)
+    (dispJob : Option DisplayJob := none) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -6497,7 +6650,8 @@ private def collectPara (r : Rd) (a : Acc)
       notes := noteBlocks
       inFloat := r.inFloat
       leaf := leaf
-      keepNext := keepNext }) }
+      keepNext := keepNext
+      display := dispJob }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -6898,7 +7052,8 @@ private def collectTable (r : Rd) (a0 : Acc)
             ops := #[]
             wantDefault := false
             owed := #[]
-            anchorAt := none }
+            anchorAt := none
+            dispAlt := none }
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
           let sub := match spec.align with
@@ -7241,53 +7396,67 @@ private def statefulBlock : Block → Bool
   | .setPalette _ | .setTokens _ => true
   | b => Ir.pageMarkerBlock b
 
-/-- The display skips, resolved at the walk's governing size from the one
-resolving site (`Ir.displayAbove`/`Ir.displayBelow`): the document's
-tokens, else the rhythm default. -/
-private def Acc.displaySkips (a : Acc) (r : Rd) : Glue × Glue :=
-  (r.resolve (Ir.displayAbove a.tokens r.geom.fontSize),
-   r.resolve (Ir.displayBelow a.tokens r.geom.fontSize))
+/-- What a display's line needs from the walk (`DisplayJob`): its two skips
+above, resolved at the walk's governing size from the one resolving site
+(`Ir.displaySkipsFor`), and whether TeX sets an empty line first —
+amsmath's `$$` opening a paragraph whose indent box stands (tex.web §1145:
+the paragraph so far is that box), which is neither right after a heading
+(`\@afterheading` takes the box) nor right after an environment whose end
+still stands owed (`\@endpe` takes it). `lead` counts the line's segments
+outside the formula's box. -/
+private def Acc.displayJob (a : Acc) (r : Rd) (lead : Nat := 0) : DisplayJob :=
+  let s := Ir.displaySkipsFor a.tokens r.geom.fontSize
+  { ctx := r.display, above := r.resolve s.above, aboveShort := r.resolve s.aboveShort
+    emptyLine := !r.display.inPar && !a.afterHeading && a.owed.isEmpty, lead := lead }
 
-/-- A display formula's block: its centred line stands inside the display
-skips, paid as the formula's own space — `\addvspace`, so the skip above
-takes the larger of itself and an element's space already owed (a
-heading's `after`), adds after a `\vspace` as every element's space does
-(`addvspace_after_vspace_exact`), and never stacks onto the peer gap
-(`flushGap` pays owed glue instead of the default:
-`display_skip_single_emitter`),
-and the skip below is owed to whatever line follows, as TeX's
-`\belowdisplayskip` is glue on the vertical list the next paragraph
-sits after. Both the unnumbered shape (`Ir.displayContent?`) and the
-numbered `.equation` come through here. -/
+/-- Opening a display: its skip above is TeX's choice, made where the line
+is set (`B.placeLine`), so the walk pays only what the boundary owes before
+it — inside a paragraph nothing of its own, as TeX spends no `\parskip`
+there; where the display opens a paragraph, TeX's own `\parskip`
+(`Geom.texParskip`) before the empty line amsmath's `$$` sets, never the
+engine's paragraph mark, which stands where TeX indents text and an empty
+line holds none. -/
 private def Acc.openDisplay (a : Acc) (r : Rd) : Acc :=
-  a.addvspace (a.displaySkips r).1
+  if r.display.inPar then { a with wantDefault := false }.flushGap r
+  else if a.owed.isEmpty && a.wantDefault then
+    { a with wantDefault := false
+             ops := a.ops.push (.skip (r.resolve r.geom.texParskip)) }.flushGap r
+  else a.flushGap r
 
+/-- Closing a display: the skip below is owed to what follows, as TeX's
+`\belowdisplayskip` is glue on the vertical list — an element's space meets
+it by `\addvspace`, a `\vspace` adds to it — under both of TeX's choices at
+once (`Acc.dispAlt`), the page builder shipping the one the line took. A
+paragraph break after it stacks TeX's `\parskip` on top, which the next
+paragraph opens with (`trivOwed`, as a list's space stacks it); text running
+on after it continues the paragraph and pays nothing more. -/
 private def Acc.closeDisplay (a : Acc) (r : Rd) : Acc :=
-  a.addvspace (a.displaySkips r).2
+  let s := Ir.displaySkipsFor a.tokens r.geom.fontSize
+  let short := a.addvspace (r.resolve s.belowShort)
+  let a := a.addvspace (r.resolve s.below)
+  { a with dispAlt := some short.owed, declaredSkip := a.declaredSkip || r.display.parEnd
+           trivOwed := a.trivOwed || r.display.parEnd }
 
 /-- The unnumbered display: the formula's paragraph centred on the
-measure, between the skips. -/
+measure, placed as TeX places a display (`DisplayJob`). -/
 private def collectDisplayFormula (r : Rd) (a : Acc)
     (content : Array Inline) (indent : Sp) : Acc :=
+  let dj := a.displayJob r
   let a := a.openDisplay r
   let (a, leaf) := a.leafRange (leafCount content)
   let a := collectPara r a content indent true r.geom.fontSize
-    (leaf := leaf) (span := leafCount content)
+    (leaf := leaf) (span := leafCount content) (dispJob := some dj)
   a.closeDisplay r
 
-/-- With nothing else owed and no peer boundary open, opening a display owes
-exactly the resolved `abovedisplayskip`, and the line that follows pays it
-alone — one `.skip` of that glue: the PDF side of "one emitter per
-boundary", the twin of the base sheet's single-owner display rules. At a
-peer boundary the page's parskip stands beside it rather than under it, as
-TeX contributes the parskip when the following paragraph starts — measured
-against LaTeX, a display after a paragraph break carries both
-(`skip_monotone`, `Acc.gapGlue`). -/
-private theorem display_skip_single_emitter (a : Acc) (r : Rd)
-    (howed : a.owed = #[]) (hpeer : a.wantDefault = false) (hk : a.anchorAt = none) :
-    ((a.openDisplay r).flushGap r).ops = a.ops.push (.skip (a.displaySkips r).1) := by
-  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, Acc.gapGlue, howed, hpeer, hk, Glue.add,
-    Acc.displaySkips, Rd.resolve, SymGlue.resolve]
+/-- **A display inside a paragraph opens no gap of the walk's own**
+(`_exact`): with nothing owed and no `\vspace*` anchor pending, the ops
+stand as they were — the peer gap stands aside, as TeX spends no `\parskip`
+inside a paragraph, and the skip above is the page builder's to choose
+where the line is set. -/
+private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (howed : a.owed = #[])
+    (hk : a.anchorAt = none) (hin : r.display.inPar = true) :
+    (a.openDisplay r).ops = a.ops := by
+  simp [Acc.openDisplay, Acc.flushGap, hin, howed, hk]
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph holding only label anchors ships no ink: no line and no
@@ -7308,8 +7477,10 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   -- its own right-aligned line rather than overprinting (TeX moves the
   -- number down in the same overlap). Justified whatever the page
   -- declares: the fils are the alignment. The display skips stand
-  -- above and below, the formula's own space (`Acc.openDisplay`).
-  let a := (a.openDisplay r).flushGap r
+  -- above and below, TeX's (`DisplayJob`): the mirror box and its fil stand
+  -- outside the formula's box.
+  let dj := a.displayJob r (lead := 2)
+  let a := a.openDisplay r
   -- The formula's leaves, then the number's (`Struct`'s shape: the number
   -- is its `.label` node).
   let (a, leaf) := a.leafRange (leafCount content + leafCount num)
@@ -7350,7 +7521,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
       indent := indent, center := false, size := r.geom.fontSize
       justify := true
       markerSegs := none, rule := none
-      leaf := leaf }) } : Acc).closeDisplay r
+      leaf := leaf, display := some dj }) } : Acc).closeDisplay r
 
 private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
   if level == 0 then
@@ -8144,7 +8315,8 @@ private def collectColumns (r : Rd) (a : Acc)
       ops := #[]
       wantDefault := false
       owed := #[]
-      anchorAt := none }
+      anchorAt := none
+      dispAlt := none }
     let sub := collectBlocks r sub body x0
     let a := { a with
       ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
@@ -8256,6 +8428,9 @@ private def collectBlock (r : Rd) (a : Acc)
   -- the space stands above and below where the role stands, as a list's
   -- topsep does, so the value lives once, upstream, never at use sites.
   | .role n body =>
+    -- A display's context (`Ir.DisplayCtx`): where TeX's placement reads it.
+    if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
+    else
     -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
     -- stands above and below it, on top of the peer gap (`Acc.trivSpace`).
     if n == Ir.trivlistRole then
@@ -8567,15 +8742,17 @@ takes that theorem's name rather than a fresh shape suffix because it is the
 same property over the other walk. Was an oracle over the shipped pages
 (roleLayoutChecks in Tests.lean) while `collectBlock` was one giant match
 whose equation lemmas exhausted `whnf`; the per-arm split made the unfold
-cheap. The engine's own trivlist, in-paragraph and theorem roles are the
-names that are not transparent — an environment opens space, and one opened
-inside a paragraph opens less — and so are the page-model marks
+cheap. The engine's own trivlist, in-paragraph, theorem and display roles
+are the names that are not transparent — an environment opens space, one
+opened inside a paragraph opens less, and a display is placed by where it
+stands in its paragraph — and so are the page-model marks
 (`Ir.pageMarkerRole`), which carry a fact of the page; a document can spell
 none of them. -/
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
-    (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false) :
+    (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false)
+    (hdc : Ir.DisplayCtx.ofRole? n = none) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
@@ -8583,8 +8760,8 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1
   have hni : (n == Ir.noInterlineRole) = false := by
     simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.2
-  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, hpa, hni, Bool.false_eq_true,
-    ite_false]
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, hpa, hni, hdc,
+    Bool.false_eq_true, ite_false]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open
@@ -8939,6 +9116,31 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     else (segs1, w1)
   (segs2, x1, w2, overfull, hang, exf)
 
+/-- A paragraph line's builder, before the line is placed: a display's first
+line takes TeX's skip above (`B.displaySkip`), measured to the formula's
+box — the line's own origin past the segments standing outside it. -/
+private def B.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x : Sp) (segs : Array Seg) :
+    B :=
+  match j.display, first with
+  | some dj, true =>
+    b.displaySkip dj
+      (x - b.geom.hmargin + (segs.extract 0 dj.lead).foldl (fun acc sg => acc + sg.advance) 0)
+      j.size
+  | _, _ => b
+
+@[simp] private theorem openDisplayAt_pages (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+    (segs : Array Seg) : (b.openDisplayAt j f x segs).pages = b.pages := by
+  unfold B.openDisplayAt; split <;> rfl
+@[simp] private theorem openDisplayAt_noBreak (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+    (segs : Array Seg) : (b.openDisplayAt j f x segs).noBreak = b.noBreak := by
+  unfold B.openDisplayAt; split <;> rfl
+@[simp] private theorem openDisplayAt_geom (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+    (segs : Array Seg) : (b.openDisplayAt j f x segs).geom = b.geom := by
+  unfold B.openDisplayAt; split <;> rfl
+@[simp] private theorem openDisplayAt_docBg (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+    (segs : Array Seg) : (b.openDisplayAt j f x segs).docBg = b.docBg := by
+  unfold B.openDisplayAt; split <;> rfl
+
 /-- What follows a placed paragraph line: its underline siblings (pushed
 after `placeLine`, so a page break has already decided where the text
 landed; the rules land beside it, adding no vertical space) and the
@@ -9001,9 +9203,11 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   let firstBaseline := if st.2.2 then j.firstBaseline else none
+  let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1
   (placeParaTrailer fs j brk g.1
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
-      (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)), brk, false)
+      (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
+      (display := j.display) (opens := st.2.2)), brk, false)
 
 /-- How many lines the document declared for a paragraph: one per forced
 break in its items. Every paragraph carries a trailing forced break —
@@ -9139,6 +9343,7 @@ theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeSlot)
 /-- One op staged for placement: paragraphs carry their breaking task. -/
 private inductive StagedOp where
   | skip (g : Glue)
+  | skipAlt (long short : Glue)
   | bodyOpen (g : Glue)
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
@@ -9498,6 +9703,10 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- `\parskip` stands after it; mid-page it is invisible and holds nothing.
     if b.fresh then b := { b with anchored := true, skip := g }
   | .noInterline => b := { b with ignoreDepth := true }
+  | .skipAlt long short =>
+    let g := if b.dispShort then short else long
+    unless b.fresh && !(b.skip.fil || g.fil) do
+      b := { b with skip := b.skip.add g }
   | .bodyOpen g => b := b.openBody fs g
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
@@ -9931,8 +10140,8 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) := by
   simp only [B.placeLine]
   exact fitCommit_extends ..
 
@@ -9940,15 +10149,17 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).pages = b.pages := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).pages = b.pages := by
   simp only [B.placeLine]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).noBreak = true := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).noBreak = true := by
   simp only [B.placeLine]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -9956,9 +10167,10 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
 `placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (nb : NoteBlock) (hnb : nb ∈ ns)
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (nb : NoteBlock) (hnb : nb ∈ ns)
     (l : LineOut) (hl : l ∈ nb.lines) :
-    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline).pendingNotes,
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).pendingNotes,
       l'.segs = l.segs := by
   simp only [B.placeLine]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
@@ -9968,8 +10180,8 @@ extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
-    (firstBaseline : Option Sp) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline) :=
+    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -10030,7 +10242,12 @@ in `runFloat`, this is what makes "no page was closed" mean "the shipped
 pages are exactly what they were". -/
 private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) : PagesExtend st.b (stepStaged fs imgs st s).b := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
+  cases s
+  case skipAlt long short =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals (refine pagesExtend_of_eq ?_; simp; done)
+  all_goals (simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split)
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
     | exact fitCommit_extends ..
@@ -10050,7 +10267,12 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) (h : st.b.noBreak = true) (hs : s ≠ .brk) :
     (stepStaged fs imgs st s).b.pages = st.b.pages ∧
     (stepStaged fs imgs st s).b.noBreak = true := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
+  cases s
+  case skipAlt long short =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals (refine ⟨?_, ?_⟩ <;> simp [h]; done)
+  all_goals (simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
@@ -10194,8 +10416,8 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) := by
   simp only [B.placeLine]
   exact bgStep_fitCommit ..
 
@@ -10353,6 +10575,7 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
   if h : k < staged.size then
     match staged[k] with
     | .skip g => keepExt b fs imgs staged (k + 1) (glue + g.width)
+    | .skipAlt g _ => keepExt b fs imgs staged (k + 1) (glue + g.width)
     | .anchor _ => keepExt b fs imgs staged (k + 1) glue
     | .picture _ pic _ =>
       let ((_, py0), (_, py1)) := pictureBox b.geom fs imgs b.xHeight pic
@@ -11056,6 +11279,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let staged : Array StagedOp := accF.ops.map fun op =>
     match op with
     | .skip g => .skip g
+    | .skipAlt l sh => .skipAlt l sh
     | .bodyOpen g => .bodyOpen g
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c

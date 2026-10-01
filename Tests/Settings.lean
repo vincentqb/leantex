@@ -31,7 +31,9 @@ def settingsBodies : List (String × String) :=
    ("list4", "\\begin{itemize}\n\\item Alpha\n\\begin{itemize}\n\\item Bravo\n" ++
       "\\begin{itemize}\n\\item Charlie\n\\begin{itemize}\n\\item Delta\n" ++
       "\\end{itemize}\n\\end{itemize}\n\\end{itemize}\n\\end{itemize}"),
-   ("display", "Alpha words before.\n\\[ x = y \\]\nBravo words after.")]
+   ("display", "Alpha words before.\n\\[ x = y \\]\nBravo words after."),
+   ("displaylong", "Alpha words before this display reach past it.\n\\[ x = y \\]\n" ++
+      "Bravo words after.")]
 
 /-- One probe per `Compat.paramSites` row an engine site carries: the
 LaTeX spelling, the native spelling of the same value, and the body that
@@ -118,7 +120,8 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       (set == pagesOf oneFace (doc native body))
     t s!"'{n}': the setting moves the page" (set != pagesOf oneFace (doc "" body))
   -- What LaTeX sets again before anything reads it sets nothing here either.
-  let reset := [("abovedisplayskip", "display"), ("belowdisplayskip", "display"),
+  let reset := [("abovedisplayskip", "displaylong"), ("belowdisplayskip", "displaylong"),
+    ("abovedisplayshortskip", "display"), ("belowdisplayshortskip", "display"),
     ("baselineskip", "paras"), ("itemsep", "list1"), ("parsep", "list1"),
     ("leftmargin", "list1"), ("itemindent", "list1")]
   for (n, bodyKey) in reset do
@@ -129,10 +132,15 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       ((dvE src).any fun d => d.code == "N0100" &&
         d.subject == some s!"ctrl:nothing:setlength:{n}")
   -- In the body a display skip stands until the next size change: its token.
-  let disp := "Alpha words before.\n\\[ x = y \\]\nBravo words after."
-  t "a body '\\abovedisplayskip' sets the page its token sets"
-    (pagesOf oneFace (doc "" ("\\setlength{\\abovedisplayskip}{31pt}\n\n" ++ disp)) ==
-      pagesOf oneFace (doc "" ("\\tokens{ abovedisplayskip = 31pt }\n\n" ++ disp)))
+  -- A line ending short of the formula spends the short skips, a longer one
+  -- the others, so each probe reaches the display its skip is read by.
+  for (n, bodyKey) in [("abovedisplayskip", "displaylong"), ("belowdisplayskip", "displaylong"),
+      ("abovedisplayshortskip", "display"), ("belowdisplayshortskip", "display")] do
+    let body := bodyOf bodyKey
+    let set := pagesOf oneFace (doc "" (s!"\\setlength\{\\{n}}\{31pt}\n\n" ++ body))
+    t s!"a body '\\{n}' sets the page its token sets"
+      (set == pagesOf oneFace (doc "" (s!"\\tokens\{ {n} = 31pt }\n\n" ++ body)))
+    t s!"a body '\\{n}' moves the display it reaches" (set != pagesOf oneFace (doc "" body))
   -- Every row no site reads is named where it stands, once per parameter.
   for (n, site) in Compat.paramSites do
     if let .unmodelled _ := site then

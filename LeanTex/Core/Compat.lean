@@ -299,10 +299,8 @@ def paramSites : List (String × ParamSite) :=
    ("leftmarginv", .listIndent 5), ("leftmarginvi", .listIndent 6),
    ("abovedisplayskip", .sizeReset (.token "abovedisplayskip")),
    ("belowdisplayskip", .sizeReset (.token "belowdisplayskip")),
-   ("abovedisplayshortskip", .sizeReset (.unmodelled
-      "spaces a display after a short line; a display here opens its long skip")),
-   ("belowdisplayshortskip", .sizeReset (.unmodelled
-      "spaces a display after a short line; a display here opens its long skip")),
+   ("abovedisplayshortskip", .sizeReset (.token "abovedisplayshortskip")),
+   ("belowdisplayshortskip", .sizeReset (.token "belowdisplayshortskip")),
    ("baselineskip", .sizeReset (.unmodelled
       "sets the leading; the leading here is the page's")),
    ("leftmargin", .listReset), ("itemsep", .listReset), ("parsep", .listReset),
@@ -3772,7 +3770,8 @@ private def skipEq (raws : Array Raw) (i : Nat) : Nat :=
 read through the length door in order, as TeX runs the body: a skip copied
 from one the body set earlier is that value, one it cannot read — a copy of
 a skip the class set — is named once and skipped (`unreadableLength`).
-Only the long skips a display reads are taken (`Ir.displaySkipDefault`). -/
+All four a display reads are taken, the short pair with the long
+(`Ir.displaySkipsFor`). -/
 private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array String) := do
   let mut lens := (← get).lens
   let known := (← get).measureKnown
@@ -6727,8 +6726,8 @@ skipped, and the length keeps its value" pos
     -- trailing display-skip internals are TeX the engine does not run;
     -- the translation note names what was taken. The display skips it
     -- assigns are the document's (`\begin{document}` runs `\normalsize`),
-    -- so they are its tokens; the short skips are never selected here
-    -- (`Ir.displaySkipDefault`), so only the long ones are taken.
+    -- so they are its tokens, the short pair with the long
+    -- (`Ir.displaySkipsFor`).
     if !xparse && cmd == "normalsize" then
       if let some (.group sbody _) := raws[js]? then
         let b := skipSpaces sbody 0

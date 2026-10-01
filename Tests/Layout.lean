@@ -1870,6 +1870,98 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((redef.2.filter (·.severity == .warning)).any (·.code == "W0303") &&
      redef.1.body == #[.para #[.underline #[.text "y"]]])
 
+/-- **Display math stands where TeX sets it, measured from the baselines**
+(tex.web §1199-1206, TeXbook ch. 19). The skip above is the size file's
+`\abovedisplayskip`, or the short skip where the line before ends left of
+the formula (`\predisplaysize`: that line's content plus two quads) — never
+for an alignment (§1206), and always where the display opens an empty
+paragraph; the skip below is its pair. Between the line above and the
+display, and the display and the line after it, TeX's interline glue (§679):
+`\baselineskip` from baseline to baseline over the skip, until the boxes
+would come closer than `\lineskiplimit`, where `\lineskip` separates them —
+a subscript's depth eats into the leading and pushes the next line only past
+it. Asserted over `Layout.Out` on the shipped lines' own boxes (`segsInk`),
+at the article body. The defect: the engine spaced a display by its metric
+line boxes, so a formula's limits stood their leaded depth, and the next line
+its leaded ascent, below it — too much below every deep display — and it never
+took the short skips, so a display after a short line stood a whole skip low. -/
+def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let fs ← mathSetOf oneFace
+  let linesOf (body : String) : Array Layout.LineOut :=
+    ((layoutOf fs (elabStr (dvDoc "" body)).1).pages.flatMap (·.lines)).filter fun l =>
+      !l.furniture && l.segs.any (· matches .run ..)
+  let geom := Layout.Geom.ofPage (elabStr (dvDoc "" "Alpha.")).1.page
+  let size := geom.fontSize
+  let bs := Ir.leadingFor size geom.leading
+  let sk := Ir.displaySkipsAt size
+  let w (g : Dim.SymGlue) : Dim.Sp := (g.resolve size 0).width
+  let texPar := (geom.texParskip.resolve size 0).width
+  let depth (l : Layout.LineOut) : Dim.Sp := (Layout.segsInk fs l.segs).2
+  let height (l : Layout.LineOut) : Dim.Sp := (Layout.segsInk fs l.segs).1
+  let step (xs : Array Layout.LineOut) (i : Nat) : Dim.Sp := xs[i + 1]!.y - xs[i]!.y
+  let long := "Alpha words run on long enough to pass the display."
+  let three (ls : Array Layout.LineOut) : Bool := ls.size == 3
+  let l1 := linesOf (long ++ "\n\\[ x = 1 \\]\nBravo words.")
+  t "a display after a long line stands the long skip and the leading below it"
+    (three l1 && step l1 0 == w sk.above + bs)
+  t "the line after a display stands the skip below and the leading under it"
+    (three l1 && step l1 1 == w sk.below + bs)
+  let s1 := linesOf "Alpha.\n\\[ x = 1 \\]\nBravo."
+  t "a display after a line ending left of it takes the short skips"
+    (three s1 && step s1 0 == w sk.aboveShort + bs && step s1 1 == w sk.belowShort + bs)
+  let sub := linesOf (long ++ "\n\\[ x_{i} = 1 \\]\nBravo words.")
+  t "a subscript under the leading moves no baseline: the baselines stand the leading apart"
+    (three sub && step sub 0 == w sk.above + bs && step sub 1 == w sk.below + bs)
+  let deep := linesOf (long ++ "\n\\[ \\sum_{i=1}^{n} x_{i} \\]\nBravo words.")
+  t "a display taller than the leading leaves allows stands its box a lineskip below the line"
+    (three deep && depth deep[0]! + height deep[1]! > bs &&
+      step deep 0 == w sk.above + depth deep[0]! + Layout.inkClearance + height deep[1]!)
+  t "the line under a deep display stands a lineskip below the display's box"
+    (three deep && depth deep[1]! + height deep[2]! > bs &&
+      step deep 1 == w sk.below + depth deep[1]! + Layout.inkClearance + height deep[2]!)
+  t "the baseline distance across a display is TeX's interline rule on both sides"
+    (three deep && step deep 0 == w sk.above + Layout.texBaselineGap bs (depth deep[0]!)
+        (height deep[1]!) &&
+      step deep 1 == w sk.below + Layout.texBaselineGap bs (depth deep[1]!) (height deep[2]!))
+  let opens := linesOf "Alpha words.\n\n\\[ x = 1 \\]\nBravo words."
+  t "a display opening a paragraph stands below the empty line amsmath sets, on the short skip"
+    (three opens && step opens 0 == texPar + bs + w sk.aboveShort + bs &&
+      step opens 1 == w sk.belowShort + bs)
+  let ends := linesOf (long ++ "\n\\[ x = 1 \\]\n\nBravo words.")
+  t "a paragraph break after a display stacks TeX's parskip on its skip"
+    (three ends && step ends 1 == w sk.below + texPar + bs)
+  let eq := linesOf (long ++ "\n\\begin{equation} x = 1 \\end{equation}\nBravo words.")
+  t "a numbered equation stands as a display does"
+    (three eq && step eq 0 == w sk.above + bs && step eq 1 == w sk.below + bs)
+  let eqs := linesOf "Alpha.\n\\begin{equation} x = 1 \\end{equation}\nBravo."
+  t "a numbered equation reads the short skips off its formula's edge, not its number's"
+    (three eqs && step eqs 0 == w sk.aboveShort + bs)
+  let al := linesOf "Alpha.\n\\begin{align*} x &= 1 \\end{align*}\nBravo."
+  t "an alignment after a short line takes the long skips"
+    (three al && step al 0 == w sk.above + bs && step al 1 == w sk.below + bs)
+  let tok := linesOf ("\\tokens{ abovedisplayshortskip = 5pt, belowdisplayshortskip = 7pt }" ++
+    "Alpha.\n\\[ x = 1 \\]\nBravo.")
+  t "declared short skips are the ones a short display pays"
+    (three tok && step tok 0 == Dim.pt 5 + bs && step tok 1 == Dim.pt 7 + bs)
+  -- With a declared `\parskip` the paragraph boundaries around a display
+  -- show: TeX's `\parskip` before the empty line a display opening its
+  -- paragraph sets, and after one a paragraph break follows — never inside
+  -- the paragraph a display runs on in.
+  let pOf (body : String) : Array Layout.LineOut :=
+    ((layoutOf fs (elabStr (dvDoc "\\setlength{\\parskip}{5pt}\n" body)).1).pages.flatMap
+      (·.lines)).filter fun l => !l.furniture && l.segs.any (· matches .run ..)
+  let pOpens := pOf "Alpha words.\n\n\\[ x = 1 \\]\nBravo words."
+  t "a display opening a paragraph pays the declared parskip before its empty line"
+    (three pOpens && step pOpens 0 == Dim.pt 5 + bs + w sk.aboveShort + bs &&
+      step pOpens 1 == w sk.belowShort + bs)
+  let pEnds := pOf (long ++ "\n\\[ x = 1 \\]\n\nBravo words.")
+  t "a paragraph break after a display pays the declared parskip on its skip"
+    (three pEnds && step pEnds 0 == w sk.above + bs && step pEnds 1 == w sk.below + Dim.pt 5 + bs)
+  let pRuns := pOf (long ++ "\n\\[ x = 1 \\]\nBravo words.")
+  t "the text a display runs on into pays no parskip"
+    (three pRuns && step pRuns 1 == w sk.below + bs)
+
 /-- Vertical spacing is TeX's, checked on the placed lines. Own function,
 same elaboration-budget reason as the others. -/
 def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
@@ -1902,35 +1994,11 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let commented := ysOf geom "a\n  % an aside\n\n  b"
   t "peers stay peers across a comment line before the blank line"
     (commented.size == 2 && commented[1]! - commented[0]! == plain[1]! - plain[0]!)
-  -- A display formula stands inside the display skips, not the peer gap:
-  -- paragraph, display, paragraph places three baselines whose two gaps
-  -- each exceed the leading by the resolved `abovedisplayskip` /
-  -- `belowdisplayskip` — the default at the governing size, the token
-  -- where the document declares one, and the numbered `{equation}` the
-  -- same. Asserted over `Layout.Out`, never the IR (AGENTS).
+  -- A display formula's space is TeX's, measured from the baselines
+  -- (`displayTexChecks`); here only that it is not the peer gap.
   let dispSkip := (Ir.displaySkipDefault body).resolve body 0
-  let disp := ysOf geom "a\n\n\\[ x = 1 \\]\n\nb"
-  t "a display formula opens the display skip above and below"
-    (disp.size == 3 && disp[1]! - disp[0]! == leading + dispSkip.width &&
-      disp[2]! - disp[1]! == leading + dispSkip.width)
   t "the display skip is not the peer gap"
     (dispSkip.width != (geom.parskip.resolve body 0).width)
-  -- Fail-first (the value-model port): the skip is the size file's own
-  -- (size10.clo `\abovedisplayskip` = 10pt), the accurate reading — not the
-  -- superseded two-quanta approximation (12pt at a 10pt body). Asserted on
-  -- the value and over `Layout.Out`; fails on the old model, passes now.
-  t "the display skip above is the size file's 10pt, not the old 12pt"
-    (dispSkip.width == Dim.pt 10 && dispSkip.width != Dim.pt 12 &&
-      disp.size == 3 && disp[1]! - disp[0]! == leading + Dim.pt 10)
-  let eqn := ysOf geom "a\n\n\\begin{equation} x = 1 \\end{equation}\n\nb"
-  t "a numbered equation opens the same display skips"
-    (eqn.size == 3 && eqn[1]! - eqn[0]! == leading + dispSkip.width &&
-      eqn[2]! - eqn[1]! == leading + dispSkip.width)
-  let declared := ysOf geom
-    "\\tokens{ abovedisplayskip = 30pt, belowdisplayskip = 3pt }a\n\n\\[ x = 1 \\]\n\nb"
-  t "declared display skips are the ones paid, above and below apart"
-    (declared.size == 3 && declared[1]! - declared[0]! == leading + Dim.pt 30 &&
-      declared[2]! - declared[1]! == leading + Dim.pt 3)
   let inlineDisp := ysOf geom "a $x$ b\n\nc"
   t "an inline formula opens no display skip"
     (inlineDisp.size == 2 &&
