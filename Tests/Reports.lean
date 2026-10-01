@@ -447,7 +447,11 @@ def reports : List Report := [
     what := "strikeout was requested without a shared through-line geometry for both artifacts"
     pins := [check% recipeUlemChecks, thm% Ir.decorated_text,
       thm% Layout.lineThroughRaise_exact]
-    state := .guarded "b2a4a435" .before .author }
+    state := .guarded "b2a4a435" .before .author },
+  { id := "R69", date := "2026-10-01"
+    what := "a title page environment kept its body as loose text under an unknown-environment warning instead of an isolated page between the surrounding matter"
+    pins := [check% recipeTitlePageChecks]
+    state := .guarded "a0aa65a1" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

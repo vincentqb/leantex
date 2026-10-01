@@ -34,6 +34,6 @@ body impl \begin{tabular}{l}x\end{tabular}
 body impl \begin{thebibliography}{9}\bibitem{k} x\end{thebibliography}
 pre inert:binds \newtheorem{thm}{Theorem}
 body refuse:W0301 \newtheorem{thm}{Theorem}\begin{thm}x\end{thm}
-body refuse:W0302 \begin{titlepage}x\end{titlepage}
+body impl \begin{titlepage}x\end{titlepage}
 body impl \begin{verbatim}x\end{verbatim}
 body impl \begin{verse}x\end{verse}
