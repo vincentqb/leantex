@@ -3148,7 +3148,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     return (items.push (.box w cur e.color e.link glyphs size e.leading e.underline raise e.ground e.attr), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
-  | .alpha _ body =>
+  | .alpha _ _ body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
     -- `\genfrac`'s style argument sets the whole construct in its style

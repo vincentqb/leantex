@@ -292,15 +292,22 @@ inductive MathAlphabet where
   | cal
   | frak
   | bf
-  /-- `\bm`/`\boldsymbol`: everything bold, variables staying italic —
-  bold italic letters, bold digits, bold italic lowercase Greek — where
-  `\mathbf` (`bf`) sets upright bold, LaTeX's split (bm package docs §1;
-  amsldoc §9.1 on `\boldsymbol`). -/
+  /-- `\symbfit`: the genuine mathematical bold-italic alphabet — bold
+  italic Latin letters (U+1D468/U+1D482 blocks) and bold italic Greek
+  (U+1D71C upper, U+1D736 lower, U+1D735 nabla), no digits. Symbol
+  sourced (`\sym…` only). -/
   | bfit
   | sf
   | tt
   | rm
   | it
+  /-- `\bm`/`\boldsymbol`: a near-identity alphabet — everything stays its
+  source glyph (`rangeOf` is always `none`, so coverage never marks it and
+  the stack falls each scalar through to its source scalar). `\bm{O}` is an
+  italic 𝑂, `\bm{5}` a plain 5, `\bm{\alpha}` an italic 𝛼: no over-bold and
+  no spurious loss, matching LuaLaTeX where no bold math version is
+  declared. Excluded from `allAlphabets`. -/
+  | bm
   deriving Repr, BEq, DecidableEq, Inhabited
 
 def allAlphabets : List MathAlphabet :=
@@ -323,6 +330,17 @@ def MathAlphabetSource.ofName? : String → Option MathAlphabetSource
   | "sym" => some .sym
   | "text" => some .text
   | _ => none
+
+/-- Where a math alphabet node came from, kept on the node so the resolver
+knows whether to force the symbol face or consult the document policy.
+`.sym` is `\sym…` — the symbol source is forced regardless of
+`MathAlphabetSources`. `.doc` is a legacy `\mathrm`/`\mathit`/`\mathbf`/
+`\mathsf`/`\mathtt`, `\text…`, `\bm`/`\boldsymbol`, or a plain-TeX
+`\cal`/`\frak` — the document's `MathAlphabetSources` decides its source. -/
+inductive AlphaSource where
+  | doc
+  | sym
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- unicode-math's five option-driven sources. Typed here even while text-slot
 projection remains a scoped compatibility follow-up, so an explicit
@@ -350,7 +368,7 @@ def MathAlphabet.sourceKey : MathAlphabet → Option String
   | .bf => some "mathbf"
   | .sf => some "mathsf"
   | .tt => some "mathtt"
-  | .bb | .cal | .frak | .bfit => none
+  | .bb | .cal | .frak | .bfit | .bm => none
 
 def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlphabetSource
   | .rm => s.rm
@@ -358,7 +376,7 @@ def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlp
   | .bf => s.bf
   | .sf => s.sf
   | .tt => s.tt
-  | .bb | .cal | .frak | .bfit => .sym
+  | .bb | .cal | .frak | .bfit | .bm => .sym
 
 def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
     (source : MathAlphabetSource) : MathAlphabetSources :=
@@ -368,7 +386,7 @@ def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
   | .bf => { s with bf := source }
   | .sf => { s with sf := source }
   | .tt => { s with tt := source }
-  | .bb | .cal | .frak | .bfit => s
+  | .bb | .cal | .frak | .bfit | .bm => s
 
 /-- Non-default source options as unicode-math reads them. The boundary
 standalone receives the same typed policy as the page. -/
@@ -427,6 +445,7 @@ def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
   | .tt => (0x1D670, 0x1D68A, some 0x1D7F6)
   | .rm => ('A'.toNat, 'a'.toNat, some '0'.toNat)
   | .it => (0x1D434, 0x1D44E, none)
+  | .bm => (0x1D468, 0x1D482, none)
 
 /-- One letter or digit under an alphabet: the Letterlike hole when the
 block reserves the slot, else the base-offset scalar; a char the alphabet
@@ -457,6 +476,11 @@ def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
     else if a == .bf && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
       Char.ofNat (c.toNat - 0x3A)
     else if a == .bf && c == '\u2207' then Char.ofNat 0x1D6C1
+    else if a == .bfit && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+      Char.ofNat (0x1D71C + (c.toNat - 0x391))
+    else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+      Char.ofNat (c.toNat + 0x3A)
+    else if a == .bfit && c == '\u2207' then Char.ofNat 0x1D735
     else c0
 
 /-- A separately installed range of a math alphabet. unicode-math tests the
@@ -495,18 +519,18 @@ def MathAlphabetRange.textServed : MathAlphabetRange → Bool
 input is the parser's ordinary math scalar: Latin variables are already
 italic, so `unItalic` recovers their source letter. -/
 def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
-  if a == .bfit then none
+  if a == .bm then none
   else
   let c := unItalic c0
   let (_, _, digit) := a.bases
   if 'A' ≤ c && c ≤ 'Z' then some .latinUpper
   else if 'a' ≤ c && c ≤ 'z' then some .latinLower
   else if '0' ≤ c && c ≤ '9' && digit.isSome then some .digits
-  else if (a == .bf || a == .it) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+  else if (a == .bf || a == .it || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
     some .greekUpper
-  else if a == .bf && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+  else if (a == .bf || a == .bfit) && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
     some .greekLower
-  else if a == .bf && c == '\u2207' then some .misc
+  else if (a == .bf || a == .bfit) && c == '\u2207' then some .misc
   else none
 
 def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
@@ -537,6 +561,18 @@ which is orthogonal to whether the math face covers the range. -/
 def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.faceCovers a r
+
+/-- The source in force for an alphabet node, given its provenance. A
+`\sym…` node forces the symbol source; a legacy node consults the document
+policy. This is what the resolver carries on its active stack, computed
+once when the node is pushed, so `\symsf` maps into the math sans range
+even under a default `mathsf=text` while a legacy `\mathsf` still honours
+the document policy. -/
+def MathAlphabetCoverage.effectiveSource (c : MathAlphabetCoverage)
+    (src : AlphaSource) (a : MathAlphabet) : MathAlphabetSource :=
+  match src with
+  | .sym => .sym
+  | .doc => c.sources.get a
 
 /-- The Latin letters every alphabet maps. -/
 def latinLetters : List Char :=
@@ -585,6 +621,7 @@ def MathAlphabet.name : MathAlphabet → String
   | .tt => "tt"
   | .rm => "rm"
   | .it => "it"
+  | .bm => "bm"
 
 /-- The styling an alphabet declares, for the note that names its loss. -/
 def MathAlphabet.styleLabel : MathAlphabet → String
@@ -597,6 +634,7 @@ def MathAlphabet.styleLabel : MathAlphabet → String
   | .tt => "monospace"
   | .rm => "upright"
   | .it => "italic"
+  | .bm => "bold italic"
 
 /-- What a text face can synthesize of an alphabet's styling when the math
 face lacks the mapped scalar: `(bold, italic)`. The bold and italic
@@ -608,6 +646,7 @@ def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
   | .bf => (true, false)
   | .bfit => (true, true)
   | .it => (false, true)
+  | .bm => (true, true)
   | _ => (false, false)
 
 /-- A text family slot a resolved text-sourced math alphabet projects to.
@@ -652,7 +691,7 @@ def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
   | .bf => some { slot := .body, bold := true, italic := false }
   | .sf => some { slot := .sans, bold := false, italic := false }
   | .tt => some { slot := .mono, bold := false, italic := false }
-  | .bb | .cal | .frak | .bfit => none
+  | .bb | .cal | .frak | .bfit | .bm => none
 
 /-- The semantic MathML `mathvariant` a resolved text style declares: the
 attribute a MathML consumer reads to style the plain base letter, since the
@@ -1430,9 +1469,11 @@ inductive MNucleus where
   | word (s : String)
   | list (body : MList)
   /-- A math alphabet before the selected face has answered which ranges it
-  carries. The driver eliminates every such node with `resolveMathAlphas`
+  carries. `source` records provenance: `.sym` (from `\sym…`) forces the
+  symbol source, `.doc` (a legacy command) consults the document policy.
+  The driver eliminates every such node with `resolveMathAlphas`
   before scalar fallback, layout, or either backend. -/
-  | alpha (alphabet : MathAlphabet) (body : MList)
+  | alpha (alphabet : MathAlphabet) (source : AlphaSource) (body : MList)
   /-- A resolved text-sourced alphabet scalar: the plain base letter `c`
   set under the typed text `style`, the only outcome `resolveMathAlphas`
   produces for a `text`-sourced alphabet (`\mathrm`, `\mathit`, `\mathbf`,
@@ -1647,7 +1688,7 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .styled _ c => acc.push c
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.scalarsList acc body
-  | .alpha _ body => MList.scalarsList acc body
+  | .alpha _ _ body => MList.scalarsList acc body
   | .frac spec num den =>
     -- In reading order, delimiters around the parts: the formula floor reads
     -- this walk (`Ir.formulaFloor`), so `\binom{n}{k}` reads `(nk)`.
@@ -1712,7 +1753,7 @@ def MNucleus.mathScalars (acc : Array Char) : MNucleus → Array Char
   | .styled _ _ => acc
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.mathScalarsList acc body
-  | .alpha _ body => MList.mathScalarsList acc body
+  | .alpha _ _ body => MList.mathScalarsList acc body
   | .frac spec num den =>
     let acc := match spec.left with
       | some c => acc.push c
@@ -1774,7 +1815,7 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (a.remapList body)
-  | .alpha b body => .alpha b body
+  | .alpha b src body => .alpha b src body
   | .frac spec num den => .frac spec (a.remapList num) (a.remapList den)
   | .rad deg body => .rad (a.remapList deg) (a.remapList body)
   | .delim l r body => .delim l r (a.remapList body)
@@ -1838,7 +1879,7 @@ def MNucleus.inks (ink : Option (Ir.Color × Option String))
   | .styled _ c => if c.isWhitespace then acc else usedInk ink acc
   | .word s => if s.toList.any (!·.isWhitespace) then usedInk ink acc else acc
   | .list body => MList.inks ink acc body
-  | .alpha _ body => MList.inks ink acc body
+  | .alpha _ _ body => MList.inks ink acc body
   | .frac spec num den =>
     let acc := if spec.rule.all (· > 0) || spec.left.isSome || spec.right.isSome
       then usedInk ink acc else acc
@@ -1887,7 +1928,7 @@ def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus →
   | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (MList.mapInk f body)
-  | .alpha a body => .alpha a (MList.mapInk f body)
+  | .alpha a src body => .alpha a src (MList.mapInk f body)
   | .frac spec num den => .frac spec (MList.mapInk f num) (MList.mapInk f den)
   | .rad deg body => .rad (MList.mapInk f deg) (MList.mapInk f body)
   | .delim l r body => .delim l r (MList.mapInk f body)
@@ -1934,7 +1975,7 @@ theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
   | .word _, _ => rfl
   | .list body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
-  | .alpha _ body, acc => by
+  | .alpha _ _ body, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
   | .frac _ num den, acc => by
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f num,
@@ -1993,14 +2034,14 @@ The first alphabet that classifies `c` into one of its ranges decides:
 With the stack exhausted the source scalar stands (`.sym c`). Structural
 recursion on the list, so total by construction. -/
 def resolveCharStack (coverage : MathAlphabetCoverage) :
-    List MathAlphabet → Char → Resolved
+    List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c
-  | a :: rest, c =>
+  | (a, src) :: rest, c =>
     match a.rangeOf c with
     | some r =>
       match a.textStyle? with
       | some sty =>
-        if coverage.sources.get a == .text && r.textServed then .styled sty (unItalic c)
+        if src == .text && r.textServed then .styled sty (unItalic c)
         else if coverage.remaps a r then .sym (a.apply c)
         else resolveCharStack coverage rest c
       | none =>
@@ -2012,21 +2053,23 @@ def resolveCharStack (coverage : MathAlphabetCoverage) :
 resolved scalar is the plain base letter under its typed style, ahead of any
 outer alphabet — the innermost-first order the resolver rests on. -/
 theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
-    (a : MathAlphabet) (rest : List MathAlphabet) (c : Char) (r : MathAlphabetRange)
+    (a : MathAlphabet) (src : MathAlphabetSource)
+    (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
     (sty : MathTextStyle) (hr : a.rangeOf c = some r) (hst : a.textStyle? = some sty)
-    (hsrc : coverage.sources.get a = .text) (hserved : r.textServed = true) :
-    resolveCharStack coverage (a :: rest) c = .styled sty (unItalic c) := by
-  have hcond : (coverage.sources.get a == .text && r.textServed) = true := by
+    (hsrc : src = .text) (hserved : r.textServed = true) :
+    resolveCharStack coverage ((a, src) :: rest) c = .styled sty (unItalic c) := by
+  have hcond : (src == .text && r.textServed) = true := by
     rw [hsrc, hserved]; rfl
   simp [resolveCharStack, hr, hst, hcond]
 
 /-- A `sym`-sourced range the selected face carries remaps to the alphabet's
 mathematical-alphanumeric scalar. -/
 theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
-    (a : MathAlphabet) (rest : List MathAlphabet) (c : Char) (r : MathAlphabetRange)
+    (a : MathAlphabet) (src : MathAlphabetSource)
+    (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
     (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
     (hcov : coverage.remaps a r = true) :
-    resolveCharStack coverage (a :: rest) c = .sym (a.apply c) := by
+    resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) := by
   simp [resolveCharStack, hr, hst, hcov]
 
 /-- The empty stack leaves the source scalar untouched: only an active
@@ -2042,14 +2085,14 @@ it, as a nested TeX group nests scopes. Each scalar takes the innermost
 active alphabet whose range the face covers, falling through to an outer
 one otherwise. The public entry starts with an empty stack. -/
 def resolveAlphaList (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) : MList → MList
+    (active : List (MathAlphabet × MathAlphabetSource)) : MList → MList
   | .nil => .nil
   | .cons x rest =>
     .cons (resolveAlphaItem coverage active x)
       (resolveAlphaList coverage active rest)
 
 def resolveAlphaItem (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) : MItem → MItem
+    (active : List (MathAlphabet × MathAlphabetSource)) : MItem → MItem
   | .atom cls nuc sup sub lim =>
     .atom cls (resolveAlphaNucleus coverage active nuc)
       (resolveAlphaList coverage active sup)
@@ -2058,7 +2101,7 @@ def resolveAlphaItem (coverage : MathAlphabetCoverage)
   | .ink c n => .ink c n
 
 def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) : MNucleus → MNucleus
+    (active : List (MathAlphabet × MathAlphabetSource)) : MNucleus → MNucleus
   | .sym c =>
     match resolveCharStack coverage active c with
     | .sym c' => .sym c'
@@ -2066,7 +2109,7 @@ def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
   | .styled sty c => .styled sty c
   | .word s => .word s
   | .list body => .list (resolveAlphaList coverage active body)
-  | .alpha a body => .list (resolveAlphaList coverage (a :: active) body)
+  | .alpha a src body => .list (resolveAlphaList coverage ((a, coverage.effectiveSource src a) :: active) body)
   | .frac spec num den => .frac spec
       (resolveAlphaList coverage active num)
       (resolveAlphaList coverage active den)
@@ -2081,13 +2124,13 @@ def resolveAlphaNucleus (coverage : MathAlphabetCoverage)
       (resolveAlphaList coverage active body)
 
 def resolveAlphaRow (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) : MRow → MRow
+    (active : List (MathAlphabet × MathAlphabetSource)) : MRow → MRow
   | .nil => .nil
   | .cons cell rest => .cons (resolveAlphaList coverage active cell)
       (resolveAlphaRow coverage active rest)
 
 def resolveAlphaRows (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) : MRows → MRows
+    (active : List (MathAlphabet × MathAlphabetSource)) : MRows → MRows
   | .nil => .nil
   | .cons row rest => .cons (resolveAlphaRow coverage active row)
       (resolveAlphaRows coverage active rest)
@@ -2110,14 +2153,14 @@ loss — provided the alphabet would in fact have changed the glyph
 `resolveCharStack` exactly, so the N0018 census reports the alphabet the
 reader asked for and could not get. -/
 def missingCharAlpha (coverage : MathAlphabetCoverage) :
-    List MathAlphabet → Char → Option MathAlphabet
+    List (MathAlphabet × MathAlphabetSource) → Char → Option MathAlphabet
   | [], _ => none
-  | a :: rest, c =>
+  | (a, src) :: rest, c =>
     match a.rangeOf c with
     | some r =>
       match a.textStyle? with
       | some _ =>
-        if coverage.sources.get a == .text && r.textServed then none
+        if src == .text && r.textServed then none
         else if coverage.remaps a r then none
         else
           match resolveCharStack coverage rest c with
@@ -2139,11 +2182,11 @@ path (W0016, an isolated glyph hole in a covered range) sees are over
 disjoint scalars — no glyph is accounted twice, and the census cannot drift
 from what the resolver rendered. -/
 theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (c : Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (c : Char),
       (missingCharAlpha coverage active c).isSome →
         resolveCharStack coverage active c = .sym c
   | [], c => by simp [missingCharAlpha]
-  | a :: rest, c => by
+  | (a, src) :: rest, c => by
     intro h
     rw [missingCharAlpha] at h
     rw [resolveCharStack]
@@ -2169,7 +2212,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
             · exact absurd h (by simp [hcov, hrc, hcc])
       | some sty =>
         simp only [hst] at h ⊢
-        cases htext : (coverage.sources.get a == .text && r.textServed) with
+        cases htext : (src == .text && r.textServed) with
         | true => exact absurd h (by simp [htext])
         | false =>
           cases hcov : coverage.remaps a r with
@@ -2185,7 +2228,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
               · exact absurd h (by simp [htext, hcov, hrc, hcc])
 
 private def noteMissingAlpha (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) (c : Char) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) (c : Char) :
     Array MathAlphabet :=
   match missingCharAlpha coverage active c with
   | some a => if out.contains a then out else out.push a
@@ -2197,14 +2240,14 @@ mutual
 alphabet whose active range stayed at its source scalar. The accumulator
 makes repetition idempotent and keeps first-use order. -/
 private def missingAlphaList (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) :
     MList → Array MathAlphabet
   | .nil => out
   | .cons x rest => missingAlphaList coverage active
       (missingAlphaItem coverage active out x) rest
 
 private def missingAlphaItem (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) :
     MItem → Array MathAlphabet
   | .atom _ nuc sup sub _ =>
     let out := missingAlphaNucleus coverage active out nuc
@@ -2214,13 +2257,13 @@ private def missingAlphaItem (coverage : MathAlphabetCoverage)
   | .ink _ _ => out
 
 private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) :
     MNucleus → Array MathAlphabet
   | .sym c => noteMissingAlpha coverage active out c
   | .styled _ _ => out
   | .word _ => out
   | .list body => missingAlphaList coverage active out body
-  | .alpha a body => missingAlphaList coverage (a :: active) out body
+  | .alpha a src body => missingAlphaList coverage ((a, coverage.effectiveSource src a) :: active) out body
   | .frac _ num den => missingAlphaList coverage active
       (missingAlphaList coverage active out num) den
   | .rad deg body => missingAlphaList coverage active
@@ -2232,14 +2275,14 @@ private def missingAlphaNucleus (coverage : MathAlphabetCoverage)
       (missingAlphaList coverage active out body) value
 
 private def missingAlphaRow (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) :
     MRow → Array MathAlphabet
   | .nil => out
   | .cons cell rest => missingAlphaRow coverage active
       (missingAlphaList coverage active out cell) rest
 
 private def missingAlphaRows (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) (out : Array MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) (out : Array MathAlphabet) :
     MRows → Array MathAlphabet
   | .nil => out
   | .cons row rest => missingAlphaRows coverage active
@@ -2266,7 +2309,7 @@ def MNucleus.alphaFree : MNucleus → Bool
   | .sym _ | .word _ => true
   | .styled _ _ => true
   | .list body => body.alphaFree
-  | .alpha _ _ => false
+  | .alpha _ _ _ => false
   | .frac _ num den => num.alphaFree && den.alphaFree
   | .rad deg body => deg.alphaFree && body.alphaFree
   | .delim _ _ body => body.alphaFree
@@ -2287,7 +2330,7 @@ end
 mutual
 
 private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ body, (resolveAlphaList coverage active body).alphaFree = true
   | .nil => rfl
   | .cons x rest => by
@@ -2296,7 +2339,7 @@ private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active rest]
 
 private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ item, (resolveAlphaItem coverage active item).alphaFree = true
   | .space _ => rfl
   | .ink _ _ => rfl
@@ -2307,7 +2350,7 @@ private theorem resolveAlphaItem_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active sub]
 
 private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ nucleus, (resolveAlphaNucleus coverage active nucleus).alphaFree = true
   | .sym c => by
     simp only [resolveAlphaNucleus]
@@ -2317,9 +2360,9 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
   | .list body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
       resolveAlphaList_covers coverage active body
-  | .alpha a body => by
+  | .alpha a src body => by
     simpa [resolveAlphaNucleus, MNucleus.alphaFree] using
-      resolveAlphaList_covers coverage (a :: active) body
+      resolveAlphaList_covers coverage ((a, coverage.effectiveSource src a) :: active) body
   | .frac _ num den => by
     simp [resolveAlphaNucleus, MNucleus.alphaFree,
       resolveAlphaList_covers coverage active num,
@@ -2343,7 +2386,7 @@ private theorem resolveAlphaNucleus_covers (coverage : MathAlphabetCoverage)
       resolveAlphaList_covers coverage active body]
 
 private theorem resolveAlphaRow_covers (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ row, (resolveAlphaRow coverage active row).alphaFree = true
   | .nil => rfl
   | .cons cell rest => by
@@ -2352,7 +2395,7 @@ private theorem resolveAlphaRow_covers (coverage : MathAlphabetCoverage)
       resolveAlphaRow_covers coverage active rest]
 
 private theorem resolveAlphaRows_covers (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ rows, (resolveAlphaRows coverage active rows).alphaFree = true
   | .nil => rfl
   | .cons row rest => by
@@ -2395,7 +2438,7 @@ private theorem resolveAlphaNucleus_nil_id (coverage : MathAlphabetCoverage) :
   | .word _, _ => rfl
   | .list body, h => by
     rw [resolveAlphaNucleus, resolveAlphaList_nil_id coverage body h]
-  | .alpha _ _, h => by simp [MNucleus.alphaFree] at h
+  | .alpha _ _ _, h => by simp [MNucleus.alphaFree] at h
   | .frac spec num den, h => by
     simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
     rw [resolveAlphaNucleus,
@@ -2454,7 +2497,7 @@ never the nucleus, so rewriting a `.sym` glyph or turning an `.alpha`
 scope into a `.list` leaves the class sequence — and thus the spacing the
 walk inserts — untouched. The stack analogue of `remapList_classes_id`. -/
 theorem resolveAlphaList_classes (coverage : MathAlphabetCoverage)
-    (active : List MathAlphabet) :
+    (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ l : MList, (resolveAlphaList coverage active l).classes = l.classes
   | .nil => rfl
   | .cons (.atom _ _ _ _ _) rest => by
@@ -2489,7 +2532,7 @@ mark, and grid cell is carried through unchanged. Stated over equal-size
 accumulators so the walk's threading composes; the top-level corollary
 takes `#[]`. Glyphs change; the count does not. -/
 private theorem resolveAlphaList_scalars_size (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (l : MList) (acc₁ acc₂ : Array Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (l : MList) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
       ((resolveAlphaList coverage active l).scalarsList acc₁).size
         = (MList.scalarsList acc₂ l).size
@@ -2500,7 +2543,7 @@ private theorem resolveAlphaList_scalars_size (coverage : MathAlphabetCoverage) 
     exact resolveAlphaItem_scalars_size coverage active x acc₁ acc₂ hs
 
 private theorem resolveAlphaItem_scalars_size (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (item : MItem) (acc₁ acc₂ : Array Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (item : MItem) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
       ((resolveAlphaItem coverage active item).scalars acc₁).size
         = (MItem.scalars acc₂ item).size
@@ -2513,7 +2556,7 @@ private theorem resolveAlphaItem_scalars_size (coverage : MathAlphabetCoverage) 
     exact resolveAlphaNucleus_scalars_size coverage active nuc acc₁ acc₂ hs
 
 private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (nuc : MNucleus) (acc₁ acc₂ : Array Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (nuc : MNucleus) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
       ((resolveAlphaNucleus coverage active nuc).scalars acc₁).size
         = (MNucleus.scalars acc₂ nuc).size
@@ -2528,9 +2571,9 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
   | active, .list body, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
     exact resolveAlphaList_scalars_size coverage active body acc₁ acc₂ hs
-  | active, .alpha a body, acc₁, acc₂, hs => by
+  | active, .alpha a src body, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
-    exact resolveAlphaList_scalars_size coverage (a :: active) body acc₁ acc₂ hs
+    exact resolveAlphaList_scalars_size coverage ((a, coverage.effectiveSource src a) :: active) body acc₁ acc₂ hs
   | active, .frac spec num den, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus, MNucleus.scalars]
     apply optPush_size_congr spec.right
@@ -2561,7 +2604,7 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
     exact resolveAlphaList_scalars_size coverage active body acc₁ acc₂ hs
 
 private theorem resolveAlphaRow_scalars_size (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (row : MRow) (acc₁ acc₂ : Array Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (row : MRow) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
       ((resolveAlphaRow coverage active row).scalarsRow acc₁).size
         = (MRow.scalarsRow acc₂ row).size
@@ -2572,7 +2615,7 @@ private theorem resolveAlphaRow_scalars_size (coverage : MathAlphabetCoverage) :
     exact resolveAlphaList_scalars_size coverage active cell acc₁ acc₂ hs
 
 private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) :
-    ∀ (active : List MathAlphabet) (rows : MRows) (acc₁ acc₂ : Array Char),
+    ∀ (active : List (MathAlphabet × MathAlphabetSource)) (rows : MRows) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
       ((resolveAlphaRows coverage active rows).scalarsRows acc₁).size
         = (MRows.scalarsRows acc₂ rows).size
@@ -2593,5 +2636,23 @@ theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body :
     ((resolveMathAlphas coverage body).scalarsList #[]).size
       = (MList.scalarsList #[] body).size :=
   resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
+
+/-- Source override survives to resolution. A `\sym…` node's effective
+source is forced `sym` (`effectiveSource .sym a = .sym`, regardless of the
+document's `MathAlphabetSources`), so on a range the selected face carries
+it remaps to the alphabet's mathematical-alphanumeric scalar — `\symsf{R}`
+maps into the math sans range even under a default `mathsf=text`, exactly
+as it would under an all-sym policy. The text-slot branch is never taken
+for a forced-sym push, because `.sym ≠ .text`. -/
+theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
+    (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))
+    (c : Char) (r : MathAlphabetRange)
+    (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = true) :
+    resolveCharStack coverage ((a, coverage.effectiveSource .sym a) :: rest) c
+      = .sym (a.apply c) := by
+  show resolveCharStack coverage ((a, .sym) :: rest) c = .sym (a.apply c)
+  simp only [resolveCharStack, hr]
+  have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
+  cases a.textStyle? <;> simp [hcov, hne]
 
 end LeanTex.Core.Math

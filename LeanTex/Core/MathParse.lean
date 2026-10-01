@@ -197,28 +197,29 @@ def ctrlSpace : List (String × Int) :=
 (`Math.MathAlphabet.apply`): LaTeX's `\math…` family, `\bm`/`\boldsymbol`
 (bold with variables kept italic), and the plain-TeX `\cal`/`\frak`, whose
 dominant use `{\cal L}` reads here as `\cal` taking the single letter. -/
-def alphaCtrl : List (String × Math.MathAlphabet) :=
-  [("mathbb", .bb), ("mathcal", .cal), ("cal", .cal),
-   ("mathfrak", .frak), ("frak", .frak),
+def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
+  [("mathbb", .bb, .doc), ("mathcal", .cal, .doc), ("cal", .cal, .doc),
+   ("mathfrak", .frak, .doc), ("frak", .frak, .doc),
    -- amsfonts.sty's obsolete spellings of `\mathbb` and `\mathbf`
-   ("Bbb", .bb), ("bold", .bf),
-   ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
-   ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm),
+   ("Bbb", .bb, .doc), ("bold", .bf, .doc),
+   ("mathbf", .bf, .doc), ("bm", .bm, .doc), ("boldsymbol", .bm, .doc),
+   ("mathit", .it, .doc), ("mathsf", .sf, .doc), ("mathtt", .tt, .doc), ("mathrm", .rm, .doc),
    -- unicode-math's `\sym…` family selects the math (`sym`) version of each
-   -- alphabet explicitly, mapping onto the same typed alphabets. `\symup`
-   -- and `\symrm` are the upright roman; `\symbf`/`\symbfup` the upright
-   -- bold; `\symbfit` the bold italic (`\bm`); the rest name their shape.
-   ("symup", .rm), ("symrm", .rm), ("symit", .it),
-   ("symbf", .bf), ("symbfup", .bf), ("symbfit", .bfit),
-   ("symsf", .sf), ("symtt", .tt), ("symbb", .bb),
-   ("symcal", .cal), ("symfrak", .frak),
+   -- alphabet explicitly, forcing the symbol source regardless of the
+   -- document's `MathAlphabetSources`. `\symup`/`\symrm` are the upright
+   -- roman; `\symbf`/`\symbfup` the upright bold; `\symbfit` the genuine
+   -- bold italic (`bfit`); the rest name their shape.
+   ("symup", .rm, .sym), ("symrm", .rm, .sym), ("symit", .it, .sym),
+   ("symbf", .bf, .sym), ("symbfup", .bf, .sym), ("symbfit", .bfit, .sym),
+   ("symsf", .sf, .sym), ("symtt", .tt, .sym), ("symbb", .bb, .sym),
+   ("symcal", .cal, .sym), ("symfrak", .frak, .sym),
    -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
    -- upright bold roman x, which is exactly what `\mathbf` does, so they
-   -- resolve to the same alphabets rather than leaving the formula
-   -- unrenderable. `\textrm` keeps the word arm above, which sets its
-   -- letters as one upright word instead of letter by letter.
-   ("textbf", .bf), ("textit", .it), ("textsf", .sf), ("texttt", .tt),
-   ("textnormal", .rm), ("emph", .it)]
+   -- resolve to the same alphabets (document-sourced) rather than leaving
+   -- the formula unrenderable. `\textrm` keeps the word arm above, which
+   -- sets its letters as one upright word instead of letter by letter.
+   ("textbf", .bf, .doc), ("textit", .it, .doc), ("textsf", .sf, .doc), ("texttt", .tt, .doc),
+   ("textnormal", .rm, .doc), ("emph", .it, .doc)]
 
 /-- A loss the parser can name without failing the formula: the
 mathematics renders, something about its presentation does not. Typed
@@ -805,8 +806,9 @@ private inductive Dest where
   | fracDen (spec : FracSpec) (num : MList)
   | sqrtBody (deg : MList)
   /-- A math alphabet's argument: its letters remap
-  (`Math.MathAlphabet.apply`) when the argument closes. -/
-  | alpha (a : Math.MathAlphabet)
+  (`Math.MathAlphabet.apply`) when the argument closes. `source` records
+  whether it came from `\sym…` (forced symbol) or a legacy command. -/
+  | alpha (a : Math.MathAlphabet) (source : Math.AlphaSource)
   /-- A math accent's base: the mark sets over it when it closes. -/
   | accentBody (mark : Char) (stretch : Bool)
   | leftRight (l : Option Char)
@@ -837,7 +839,7 @@ private structure PFrame where
   overNum : Option (Array MItem)
   /-- What this level answers when it closes, innermost awaiting
   construction first: `x^\mathbb{…}` opens with
-  `[.alpha .bb, .script true]`. -/
+  `[.alpha .bb .doc, .script true]`. -/
   dests : List Dest
 
 /-- Close a level's items into the list it denotes: everything before a
@@ -888,8 +890,8 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
     | .sqrtBody deg :: more =>
       arg := .cons (.atom .ord (.rad deg arg) .nil .nil false) .nil
       rest := more
-    | .alpha a :: more =>
-      arg := .cons (.atom .ord (.alpha a arg) .nil .nil false) .nil
+    | .alpha a src :: more =>
+      arg := .cons (.atom .ord (.alpha a src arg) .nil .nil false) .nil
       rest := more
     | .accentBody mark stretch :: more =>
       arg := .cons (.atom .ord (.accent mark stretch arg) .nil .nil false) .nil
@@ -1336,8 +1338,8 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         i := i + 1
       | none =>
       match alphaCtrl.lookup n with
-      | some a =>
-        pending := .alpha a :: pending
+      | some (a, src) =>
+        pending := .alpha a src :: pending
         i := i + 1
       | none =>
       match accentCtrl.lookup n with
