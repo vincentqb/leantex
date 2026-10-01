@@ -507,6 +507,7 @@ private structure CondVal where
   raws : Array Raw
   long : Bool
   prot : Bool
+  arity : Nat := 0
   live : Bool := false
   serial : Nat := 0
 
@@ -1093,23 +1094,23 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | _ => break
   return (out, j)
 
-/-- etoolbox's `\apptocmd` takes four TeX arguments: a group or one token
-each. A lexer word can hold several character arguments. The index owns
-that whole word; prepasses copy it unchanged and the dispatcher returns
-the unconsumed tail. All hook passes use this same boundary. -/
-private def takeHookArgs (raws : Array Raw) (i : Nat) :
+/-- Undelimited TeX arguments: a group or one token each. A lexer word
+can hold several character arguments. The index owns that whole word and
+the caller receives its unconsumed tail. Hooks and live macro calls share
+this boundary. -/
+private def takeRawArgs (raws : Array Raw) (i count : Nat) :
     Array (Array Raw) × Nat × Array Raw := Id.run do
   let mut args : Array (Array Raw) := #[]
   let mut j := i
   let mut tail : Array Raw := #[]
-  for _ in [0:4] do
-    if args.size == 4 then break
+  for _ in [0:count] do
+    if args.size == count then break
     let k := skipSpaces raws j
     match raws[k]? with
     | some (.group body _) => args := args.push body; j := k + 1
     | some (.word s p) =>
       let cs := s.toList
-      let n := min (4 - args.size) cs.length
+      let n := min (count - args.size) cs.length
       let mut pos := p
       for c in cs.take n do
         args := args.push #[.word c.toString pos]
@@ -1121,6 +1122,63 @@ private def takeHookArgs (raws : Array Raw) (i : Nat) :
       args := args.push #[r]; j := k + 1
     | _ => break
   return (args, j, tail)
+
+/-- etoolbox's `\apptocmd` reads four arguments through the shared reader. -/
+private def takeHookArgs (raws : Array Raw) (i : Nat) :
+    Array (Array Raw) × Nat × Array Raw :=
+  takeRawArgs raws i 4
+
+/-- The canonical undelimited parameter text `#1` through `#9`
+(TeXbook chapter 20), shared by value reading and translation. -/
+private def undelimitedArity (params : Array Raw) : Option Nat :=
+  read (params.filter fun r => !(r matches .space)).toList 0
+where
+  read : List Raw → Nat → Option Nat
+    | [], n => some n
+    | .sym '#' _ :: .word w _ :: rest, n =>
+      if n < 9 && w == toString (n + 1) then read rest (n + 1) else none
+    | _, _ => none
+
+mutual
+
+-- conserves: none — substitutes arguments for parameter tokens, preserving
+-- the surrounding surface structure; this is not an IR rewrite.
+/-- Bind parameters before executing replacement text. `#10` is argument
+one followed by `0`; `##` quotes one parameter token for a nested
+definition (TeXbook chapter 20). Substituted arguments are not scanned
+again by this binding, and verbatim text is opaque. -/
+private def bindRawArgsList (args : Array (Array Raw)) (out : Array Raw) :
+    List Raw → Array Raw
+  | [] => out
+  | .sym '#' p :: .sym '#' _ :: rest =>
+    bindRawArgsList args (out.push (.sym '#' p)) rest
+  | .sym '#' p :: .word w q :: rest =>
+    match w.toList with
+    | c :: cs =>
+      if c >= '1' && c <= '9' then
+        match args[c.toNat - '1'.toNat]? with
+        | some body =>
+          let out := out ++ body
+          let out := if cs.isEmpty then out
+            else out.push (.word (String.ofList cs) (q.next false))
+          bindRawArgsList args out rest
+        | none => bindRawArgsList args ((out.push (.sym '#' p)).push (.word w q)) rest
+      else bindRawArgsList args ((out.push (.sym '#' p)).push (.word w q)) rest
+    | [] => bindRawArgsList args ((out.push (.sym '#' p)).push (.word w q)) rest
+  | r :: rest => bindRawArgsList args (out.push (bindRawArgsRaw args r)) rest
+
+private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
+  | .group body p => .group (bindRawArgsList args #[] body.toList) p
+  | .env n body p => .env n (bindRawArgsList args #[] body.toList) p
+  | .math d body p => .math d (bindRawArgsList args #[] body.toList) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb e s p => .verb e s p
+
+end
 
 /-- `\tikz`'s one-command form from `i`: the raws up to and including the
 first `;` a top-level word carries — where TikZ's path parser ends the
@@ -1749,10 +1807,11 @@ private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → Str
   | k + 1, n =>
     match condValueOf vals n with
     | some (some v) =>
-      match (v.raws.filter fun r => !(r matches .space)).toList with
-      | [.word w _] => condIntLit w
-      | [.ctrl m _] => condIntOf vals k m
-      | _ => none
+      if v.arity != 0 then none else
+        match (v.raws.filter fun r => !(r matches .space)).toList with
+        | [.word w _] => condIntLit w
+        | [.ctrl m _] => condIntOf vals k m
+        | _ => none
     | _ => none
 
 /-- One element a test is read from: a character of a word (with the raw it
@@ -1969,7 +2028,8 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
       if a == b then return two true src "compares a name with itself" "same" 2 none
       match condValueOf st.binds a, condValueOf st.binds b with
       | some (some va), some (some vb) =>
-        let v := rawSrc va.raws == rawSrc vb.raws && va.long == vb.long && va.prot == vb.prot
+        let v := rawSrc va.raws == rawSrc vb.raws && va.arity == vb.arity &&
+          va.long == vb.long && va.prot == vb.prot
         return two v src
           (if v then "compares two equal definitions" else "compares two different definitions")
           (toString v) 2 none
@@ -2027,57 +2087,6 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
 
 end
 
-mutual
-
--- conserves: none — drops each conditional extent and flag setting a
--- definition's text holds, by design: they are decided at a use.
-/-- A replacement text with what only a use can decide removed, at any
-depth — every conditional extent the pass can match, every declared flag's
-setter and `\newif` — and whether anything was: the text an expansion that
-has no conditionals is given in place of branches it cannot choose. The list
-drives the recursion; `raws` and `i` give a head its extent, as `condList`
-pairs them. -/
-private def condStripList (flags : Std.HashMap String Bool) (raws : Array Raw)
-    (acc : Array Raw) (hit : Bool) : List Raw → Nat → Nat → Array Raw × Bool
-  | [], _, _ => (acc, hit)
-  | _ :: rest, i, skip + 1 => condStripList flags raws acc hit rest (i + 1) skip
-  | .ctrl n p :: rest, i, 0 =>
-    let h := match n, raws[i + 1]? with
-      | "unless", some (.ctrl h _) => h
-      | _, _ => n
-    let hi := if h != n then i + 1 else i
-    if isCondHead flags h then
-      match condExtentEnd flags raws hi with
-      | some e => condStripList flags raws acc true rest (i + 1) (e - i)
-      | none => condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
-    else if isFlagSetter flags n then
-      condStripList flags raws acc true rest (i + 1) 0
-    else if n == "newif" then
-      condStripList flags raws acc true rest (i + 1) 1
-    else condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
-  | r :: rest, i, 0 =>
-    let (r', h) := condStripRaw flags r
-    condStripList flags raws (acc.push r') (hit || h) rest (i + 1) 0
-
-private def condStripRaw (flags : Std.HashMap String Bool) : Raw → Raw × Bool
-  | .group body p =>
-    let (b, h) := condStripList flags body #[] false body.toList 0 0
-    (.group b p, h)
-  | .env n body p =>
-    let (b, h) := condStripList flags body #[] false body.toList 0 0
-    (.env n b p, h)
-  | .math d body p =>
-    let (b, h) := condStripList flags body #[] false body.toList 0 0
-    (.math d b p, h)
-  | .word w p => (.word w p, false)
-  | .space => (.space, false)
-  | .par p => (.par p, false)
-  | .ctrl n p => (.ctrl n p, false)
-  | .sym c p => (.sym c p, false)
-  | .verb e s p => (.verb e s p, false)
-
-end
-
 /-- A definition's operands as the pass reads them: where they stop, and
 which of them are replacement texts. An expanding definer's text is read
 where it stands, as TeX reads it, so it is not among the texts. -/
@@ -2091,11 +2100,12 @@ parameter text and text; `\let`'s name and source; the `\newcommand`
 family's name, `[n]`, `[default]` and text; an environment's name, options
 and two texts; xparse's name, argument spec and text; the native definers'
 name, signature and texts. -/
-private def definerShape (raws : Array Raw) (i : Nat) (d : String) : Option DefShape := Id.run do
+private def definerShape (raws : Array Raw) (i : Nat) (d : String)
+    (stored : Bool := false) : Option DefShape := Id.run do
   -- The first group at or after `k`, the parameter text or signature before it.
   let groupFrom (k : Nat) : Option Nat := Id.run do
     let mut j := k
-    for _ in [k:min raws.size (k + 40)] do
+    for _ in [k:raws.size] do
       match raws[j]? with
       | some (.group _ _) => return some j
       | some (.par _) => return none
@@ -2109,9 +2119,13 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String) : Option DefS
     if raws[j]? matches some (.word "*" _) then skipSpaces raws (j + 1) else j
   if d == "def" || d == "gdef" || d == "edef" || d == "xdef" || d == "define" then
     let j := skipSpaces raws (i + 1)
-    unless raws[j]? matches some (.ctrl _ _) do return none
+    -- A stored replacement text can name its future definition through
+    -- an argument. Its extent can be read before that argument is bound.
+    unless (raws[j]? matches some (.ctrl _ _)) ||
+        (stored && (raws[j]? matches some (.sym '#' _))) do return none
     let some b := groupFrom (j + 1) | return none
-    if d == "edef" || d == "xdef" then return some { stop := b, bodies := [] }
+    if d == "edef" || d == "xdef" then
+      return some { stop := if stored then b + 1 else b, bodies := [] }
     return some { stop := b + 1, bodies := [b] }
   if d == "let" then
     let j := skipSpaces raws (i + 1)
@@ -2151,6 +2165,61 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String) : Option DefS
     return some { stop := b + 1, bodies := [b] }
   return none
 
+mutual
+
+-- conserves: none — drops each conditional extent, definition and flag setting a
+-- definition's text holds, by design: they are decided at a use.
+/-- A replacement text with what only a use can decide removed, at any
+depth — every conditional extent and definition the pass can match, every
+declared flag's setter and `\newif` — and whether anything was: the text an expansion that
+has no conditionals is given in place of branches it cannot choose. The list
+drives the recursion; `raws` and `i` give a head its extent, as `condList`
+pairs them. -/
+private def condStripList (flags : Std.HashMap String Bool) (raws : Array Raw)
+    (acc : Array Raw) (hit : Bool) : List Raw → Nat → Nat → Array Raw × Bool
+  | [], _, _ => (acc, hit)
+  | _ :: rest, i, skip + 1 => condStripList flags raws acc hit rest (i + 1) skip
+  | .ctrl n p :: rest, i, 0 =>
+    let h := match n, raws[i + 1]? with
+      | "unless", some (.ctrl h _) => h
+      | _, _ => n
+    let hi := if h != n then i + 1 else i
+    if isCondHead flags h then
+      match condExtentEnd flags raws hi with
+      | some e => condStripList flags raws acc true rest (i + 1) (e - i)
+      | none => condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
+    else if isFlagSetter flags n then
+      condStripList flags raws acc true rest (i + 1) 0
+    else if n == "newif" then
+      condStripList flags raws acc true rest (i + 1) 1
+    else if condDefiners.contains n then
+      match definerShape raws i n (stored := true) with
+      | some sh => condStripList flags raws acc true rest (i + 1) (sh.stop - (i + 1))
+      | none => condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
+    else condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
+  | r :: rest, i, 0 =>
+    let (r', h) := condStripRaw flags r
+    condStripList flags raws (acc.push r') (hit || h) rest (i + 1) 0
+
+private def condStripRaw (flags : Std.HashMap String Bool) : Raw → Raw × Bool
+  | .group body p =>
+    let (b, h) := condStripList flags body #[] false body.toList 0 0
+    (.group b p, h)
+  | .env n body p =>
+    let (b, h) := condStripList flags body #[] false body.toList 0 0
+    (.env n b p, h)
+  | .math d body p =>
+    let (b, h) := condStripList flags body #[] false body.toList 0 0
+    (.math d b p, h)
+  | .word w p => (.word w p, false)
+  | .space => (.space, false)
+  | .par p => (.par p, false)
+  | .ctrl n p => (.ctrl n p, false)
+  | .sym c p => (.sym c p, false)
+  | .verb e s p => (.verb e s p, false)
+
+end
+
 /-- Record a definition of `n` whose readable value is `v` (`none`: none
 the pass can read), globally when `global`. The value is stamped with the
 next serial and with whether its text is live, read against the state the
@@ -2183,12 +2252,12 @@ private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run
     | _ => break
   return out
 
-/-- The value the definer `d` at `raws[i]` gives the name it binds: the body
-of a parameterless definition and the prefixes its meaning carries. LaTeX's
+/-- The value the definer `d` at `raws[i]` gives the name it binds: the body,
+undelimited arity and prefixes its meaning carries. LaTeX's
 `\newcommand` family is `\long` exactly when it takes arguments and is not
 starred, so a parameterless one is never `\long` (measured against LaTeX2e
 2025-11-01: `\meaning` reads `macro:->x` for `\def` and `\newcommand` alike);
-one with arguments is unread here. An `\outer` macro cannot stand where
+an optional default remains unread here. An `\outer` macro cannot stand where
 `\ifx` would read it, and a robust command's meaning names the command
 itself (`\protect \name␣`), so neither has a value two names could share.
 An expanding definer (`\edef`, `\xdef`) reads a body with no control word
@@ -2200,18 +2269,25 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
   if pre.contains "outer" then return none
   let long := pre.contains "long"
   let prot := pre.contains "protected"
-  if d == "def" || d == "gdef" || d == "edef" || d == "xdef" then
+  if d == "def" || d == "gdef" then
+    let j := skipSpaces raws (i + 1)
+    let some sh := definerShape raws i d | return none
+    let b := sh.stop - 1
+    let some arity := undelimitedArity (raws.extract (j + 1) b) | return none
+    match raws[b]? with
+    | some (.group body _) => return some { raws := body, arity, long, prot }
+    | _ => return none
+  if d == "edef" || d == "xdef" then
     let j := skipSpaces raws (i + 1)
     match raws[j]?, raws[j + 1]? with
     | some (.ctrl _ _), some (.group body _) =>
-      if d == "def" || d == "gdef" then return some { raws := body, long, prot }
       if body.all fun r => !(r matches .ctrl _ _) then
         return some { raws := body, long, prot }
       match (body.filter fun r => !(r matches .space)).toList with
       | [.ctrl m _] =>
         match condValueOf st.binds m with
         | some (some v) =>
-          if v.raws.all fun r => !(r matches .ctrl _ _) then
+          if v.arity == 0 && v.raws.all fun r => !(r matches .ctrl _ _) then
             return some { raws := v.raws, long, prot }
           return none
         | _ => return none
@@ -2228,8 +2304,15 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
-    match raws[skipSpaces raws (j + 1)]? with
-    | some (.group body _) => return some { raws := body, long := false, prot := false }
+    let (count, k) := takeOpt raws (j + 1)
+    let arity? := match count with
+      | none => some 0
+      | some s => s.trimAscii.toString.toNat?
+    let some arity := arity? | return none
+    if arity > 9 then return none
+    match raws[skipSpaces raws k]? with
+    | some (.group body _) =>
+      return some { raws := body, arity, long := arity > 0 && !star, prot := false }
     | _ => return none
   return none
 
@@ -2366,7 +2449,8 @@ keeps what is read now (`CondOpen.keeps`), and a bare `\else`, `\or` or
 raws a decided head's test consumed. The list drives the recursion; `raws`
 and `i` give the heads their lookahead, exactly as `rewriteList` pairs
 them. -/
-private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Array Raw)
+private def condList
+    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat))) (raws : Array Raw)
     (out : Array Raw) (stack : List CondOpen) :
     List Raw → Nat → Nat → M (Array Raw)
   | [], _, _ => pure out
@@ -2549,12 +2633,12 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
         -- elaborator expands.
         let st ← get
         let liveVal := match bound.bind (condValueOf st.binds ·) with
-          | some (some v) => if v.live then some v.serial else none
+          | some (some v) => if v.live then some v else none
           | _ => none
         -- A use of a built-in the pass never expands: the elaborator reads
         -- the text, at the preamble's end, so there it is settled.
         let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
-        let settles := liveVal.isSome && !st.condInDoc
+        let settles := liveVal.any (·.arity == 0) && !st.condInDoc
         let flags := st.flags
         let site := st.useSite
         let file := st.file
@@ -2570,20 +2654,20 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
               if let .group _ gp := r then texts := texts.push gp
             else ops := ops.push r
         if stripped && settles then
-          if let (some m, some s) := (bound, liveVal) then
+          if let (some m, some v) := (bound, liveVal) then
             for gp in texts do
               write fun st => { st with
-                pending := st.pending.push { name := m, serial := s, file := file, pos := gp } }
+                pending := st.pending.push { name := m, serial := v.serial, file := file, pos := gp } }
         if stripped && !(expands || settles) then
-          -- premise: macroUseChecks — a definition whose uses the pass does not
-          -- expand keeps no conditional for the elaborator to spell as text
+          -- premise: Tests.macroArgumentChecks — readable undelimited calls
+          -- execute after binding; an unread definition keeps no program
+          -- in a replacement text that the elaborator cannot execute.
           sayOnce ("cond:body:" ++ n ++ ":" ++ (bound.getD "")) .W0104
-            (s!"'\\{n}' makes a definition whose text holds a conditional or sets a \
-flag, which TeX decides where the definition is used; this engine does not expand it with \
-conditionals there, so that part of the text is skipped whole")
+            (s!"'\\{n}' makes a definition whose text holds a conditional, a flag \
+setting or another definition, which TeX executes where it is used; this engine cannot \
+execute this definition there, so that part of the text is skipped whole")
             (site.getD pos)
-            (help := "a command without parameters, defined with \\def or \\newcommand, \
-is expanded where it is used, conditional and all")
+            (help := "use \\def or \\newcommand with undelimited required arguments")
         condList ex raws ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
     else if condNoExpand.contains n then
       -- The next token is read as itself here, never expanded.
@@ -2591,8 +2675,9 @@ is expanded where it is used, conditional and all")
       | r :: _ => condList ex raws ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
       | [] => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
-      match ← ex n pos with
-      | some body => condList ex raws (out ++ body) stack rest (i + 1) 0
+      match ← ex n pos raws (i + 1) with
+      | some (body, stop) =>
+        condList ex raws (out ++ body) stack rest (i + 1) (stop - (i + 1))
       | none => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
   | r :: rest, i, 0 => do
     if stack.all CondOpen.keeps then
@@ -2606,7 +2691,8 @@ math are TeX groups: the definition state is restored when they close
 picture's own bindings are known before its body is read. An `\input`
 wrapper switches the file its notes name, as `rewriteRaw` does, and is no
 group at all. -/
-private def condOne (ex : String → Pos → M (Option (Array Raw))) : Raw → M Raw
+private def condOne
+    (ex : String → Pos → Array Raw → Nat → M (Option (Array Raw × Nat))) : Raw → M Raw
   | .group body p => do
     let m ← condMark
     let top ← swapTop false
@@ -2658,7 +2744,8 @@ running text sees every definition made so far, a use inside a macro's text
 only those made before that macro, the elaborator's own visibility rule, so
 each nested expansion strictly lowers the bound. A live use the bound rules
 out is refused by name; `none` leaves the name to the elaborator. -/
-private def condExpandAt (bound : Nat) (n : String) (pos : Pos) : M (Option (Array Raw)) := do
+private def condExpandAt (bound : Nat) (n : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) : M (Option (Array Raw × Nat)) := do
   let st ← get
   let site := st.useSite
   let inPic := st.inPicture
@@ -2669,15 +2756,25 @@ private def condExpandAt (bound : Nat) (n : String) (pos : Pos) : M (Option (Arr
     -- premise: macroUseChecks — a use between two states of what the text reads
     if !(v.live || inPic) || own then return none
     if _h : v.serial < bound then
+      let (args, stop, tail) := takeRawArgs raws start v.arity
+      if args.size != v.arity then
+        sayOnce ("cond:arguments:" ++ n) .W0104
+          s!"'\\{n}' needs {v.arity} arguments before its replacement text can execute; \
+the argument boundary is unread here, so its conditional and definition parts stay skipped"
+          (site.getD pos)
+          (help := "put each argument in braces")
+        return none
+      let body := bindRawArgsList args #[] v.raws.toList
       write fun s => { s with useSite := some (site.getD pos) }
       let top ← swapTop false
-      let out ← condList (fun m p => condExpandAt v.serial m p) v.raws #[] [] v.raws.toList 0 0
+      let out ← condList (fun m p rs k => condExpandAt v.serial m p rs k)
+        body #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
-      return some out
+      return some (out ++ tail, stop)
     else if v.live then
       sayOnce ("cond:unexpanded:" ++ n) .W0104
-        (s!"'\\{n}' holds a conditional or sets a flag, which TeX decides where it is \
+        (s!"'\\{n}' holds a conditional, a flag setting or a definition, which TeX executes where it is \
 used; here it is reached through a macro defined before it, which this engine expands \
 without it, so that part of its text is skipped whole")
         (site.getD pos)
@@ -2688,8 +2785,9 @@ without it, so that part of its text is skipped whole")
 termination_by bound
 
 /-- The expander running text uses: every definition made so far is visible. -/
-private def condTopExpand (n : String) (pos : Pos) : M (Option (Array Raw)) := do
-  condExpandAt ((← get).serial + 1) n pos
+private def condTopExpand (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  condExpandAt ((← get).serial + 1) n pos raws start
 
 /-- Run `act` and put the definition state back as it was: a definition's
 text settled for the elaborator is read, not run, so nothing it binds, sets
@@ -2713,11 +2811,13 @@ private def condSettle : M (Array (String × Pos × Array Raw)) := do
   for p in pend do
     match condValueOf (← get).binds p.name with
     | some (some v) =>
-      if v.serial == p.serial then
+      if v.serial == p.serial && v.arity == 0 then
         let file := (← get).file
         write fun st => { st with file := p.file, settling := some p.name }
+        let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
-          (condList (fun m q => condExpandAt v.serial m q) v.raws #[] [] v.raws.toList 0 0)
+          (condList (fun m q rs k => condExpandAt v.serial m q rs k)
+            replacement #[] [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
     | _ => pure ()
@@ -3470,7 +3570,8 @@ recorded; `none` for any other body, which the elaborator expands. -/
 private def listSettings? (st : St) (name : String) : Option (Array (String × Array Raw)) :=
   if !st.inList || st.inDef then none
   else match st.binds[name]? with
-    | some (some v) => go (v.raws.filter (!· matches .space)).toList #[]
+    | some (some v) =>
+      if v.arity == 0 then go (v.raws.filter (!· matches .space)).toList #[] else none
     | _ => none
 where
   go : List Raw → Array (String × Array Raw) → Option (Array (String × Array Raw))
@@ -5136,19 +5237,7 @@ were dropped: {dropped}" pos
         | some r => params := params.push r; k := j2 + 1
         | none => break
     let ps := params.filter fun r => match r with | .space => false | _ => true
-    let undelimited : Bool := Id.run do
-      let mut n := 0
-      let mut i2 := 0
-      for _ in [0:ps.size] do
-        match ps[i2]?, ps[i2 + 1]? with
-        | some (Raw.sym '#' _), some (Raw.word w _) =>
-          if w == toString (n + 1) then
-            n := n + 1
-            i2 := i2 + 2
-          else return false
-        | none, _ => break
-        | _, _ => return false
-      return i2 == ps.size
+    let arity := undelimitedArity params
     match cmd? with
     | some cmd =>
       -- A class's list-level macro read as the parameters it assigns.
@@ -5156,8 +5245,8 @@ were dropped: {dropped}" pos
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
             return some (#[], k + 1)
-      if found && !expanding && undelimited then
-        let n := ps.size / 2
+      if found && !expanding && arity.isSome then
+        let n := arity.getD 0
         let spec := String.ofList (List.replicate n 'm')
         write fun st => { st with
           bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
@@ -6227,7 +6316,7 @@ face serves every language, so the binding is dropped" pos
     if hook == "shipout/background" || hook == "shipout/foreground" then
       let st ← get
       let look (n : String) : Option (Array Raw) := match st.binds[n]? with
-        | some (some v) => some v.raws
+        | some (some v) => if v.arity == 0 then some v.raws else none
         | _ => none
       -- the lengths this level declared before the hook: what a rule's
       -- coordinates may name

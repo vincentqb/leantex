@@ -24908,3 +24908,51 @@ assertions fail on `fe32eef5` and pass after the correction. Twenty
 independent LuaLaTeX PDF probes confirm the definition timing. These
 guards cover nullary installers; parameter binding and group-local
 binding presence remain separate execution-state work.
+
+### 2026-10-01 — Local package option scheduling
+
+Local package options now follow the kernel's declared order for
+`\ProcessOptions`, caller order for `\ProcessOptions*`, and list order
+for `\ExecuteOptions`. Redeclaration replaces a handler in its original
+slot; an empty handler remains distinct from a spent handler. Catch-all
+bodies enter the same compatibility passes as named bodies.
+
+`packageOptionChecks` exercises the file-splicing path and compares shipped
+layout and typed HTML against literal controls. Its 116 failing assertions
+on `fe32eef5` pass after the correction; `scripts/package-options.lean`
+confirms 34 scheduling probes against LuaLaTeX. This supports literal
+package options, without claiming global class-option forwarding,
+`\CurrentOption`, or an arbitrary TeX expansion runtime. Diagnosing
+unhandled caller options is the next interface correction.
+
+### 2026-10-01 — Bind required arguments before executing replacement text
+
+The compatibility pass now shares one undelimited argument reader with
+hooks and one parameter-signature reader with definition translation.
+It binds required arguments before deciding conditionals or executing
+nested definitions. Quoted parameter tokens survive for the next
+definition, single-character arguments leave the rest of their word in
+place, and explicit zero-argument declarations use the nullary path.
+Stored definitions lose their executable parts only from the fallback
+text; their original replacement text remains available at invocation.
+
+`macroArgumentChecks` compares complete shipped layout text and visible
+typed HTML against literal controls. Its 33 cases reproduce 87 failing
+assertions on `fe32eef5`, including the explicit-zero regression found
+in independent review. The targeted warning-as-error build and combined
+macro, conditional, refusal and package checks pass. Independent
+LuaLaTeX probes confirm all 33 controls. Optional defaults, delimited
+arguments and general TeX expansion remain outside this live reader.
+
+### 2026-10-01 — Successful exception loops share an invariant
+
+`Loop.OnSuccess` and the `Except` loop lemmas carry a predicate through
+the actual `forIn` loop, including early completion and failure. They
+do not restate an implementation as a separate fold. The math containment
+scanner now exports `containPlan_accounts`: every collected name is both
+unknown to native math and present in the declared containment plan.
+
+The proof modules and successful nonempty loop probes pass, and an
+independent review found no proof blocker. This closes the scanner's
+name-accounting step, not the enclosing parser's provenance obligation;
+`mathContain_accounts` remains recorded under `Obligations/`.

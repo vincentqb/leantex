@@ -173,8 +173,8 @@ state in force at the use, and a macro used under two states takes two
 branches. The defect decided the conditional where the macro was defined:
 `\def\n{1}\def\show{\ifnum\n=1 One\else Two\fi}\def\n{2}\show` shipped "One"
 (TeX: "Two") with a note, where the base had named the loss. A use the engine
-cannot decide is refused by name, never decided at the definition: a macro
-with parameters is expanded by the elaborator, which has no conditionals.
+cannot decide is refused by name, never decided at the definition. Required
+arguments are bound before the pass decides the replacement text.
 Read off the shipped census and the structured diagnostics. Invented
 content throughout. -/
 def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
@@ -214,15 +214,14 @@ def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (_, useDs) := elabStr (dvDoc "" (showDef ++ "\\def\\probeN{2}\\probeShow"))
   t "the decision at the use is a keyed note"
     (useDs.any fun d => d.code == "N0114" && d.subject.isSome)
-  -- Never decided at the definition: with parameters the use is the
-  -- elaborator's, so the text's conditional is refused by name there, and
-  -- no branch is chosen from the state the definition was made in.
+  -- Bind arguments before deciding the replacement text, against the state
+  -- at the call rather than the state where the definition was stored.
   let argSrc := dvDoc "" ("\\def\\probeN{2}\\newcommand\\probeShow[1]{\\ifnum\\probeN=1 #1\\fi}" ++
     "\\def\\probeN{1}\\probeShow{Arg}")
   let (_, argDs) := elabStr argSrc
-  t "a conditional in a macro with parameters is refused by name, not decided where it is defined"
-    (argDs.any (fun d => d.code == "W0104" && d.subject.isSome) &&
-      argDs.all (·.code != "N0114"))
+  t "a conditional in a macro with parameters is decided after binding at the use"
+    (argDs.all (·.code != "W0104") && argDs.any (·.code == "N0114") &&
+      hasStr (censusText (censusOfSrc oneFace argSrc)) "Arg")
   -- A picture written as a macro draws the state at each use.
   let fig := "\\newcommand{\\probeFig}{\\begin{tikzpicture}\\ifnum\\probeStage=1 " ++
     "\\node at (0,0) {Small};\\else \\node at (0,0) {Large};\\fi\\end{tikzpicture}}\n"
@@ -262,12 +261,13 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (_, lateDs) := elabStr lateSrc
   t "a picture's test is not computed from a definition made after the picture"
     (lateDs.all (·.code != "N0114") && lateDs.any fun d => d.code == "W0334" && d.subject.isSome)
+  let wrapPic := pic "\\node at (0,0) {\\probeWrap{x}};\n"
   let wrapSrc := dvDoc "\\newcommand\\probeWrap[1]{A#1}\n"
-    (pic "\\node at (0,0) {\\probeWrap{x}};\n" ++ "\n\\renewcommand\\probeWrap[1]{B#1}\n")
+    (wrapPic ++ "\n\\renewcommand\\probeWrap[1]{B#1}\n" ++ wrapPic)
   let wrapped := censusText (censusOfSrc oneFace wrapSrc)
-  t "a macro the document defines with two texts is named in a picture, not drawn as its last"
-    (!hasStr wrapped "Bx" &&
-      (elabStr wrapSrc).2.any fun d => d.code == "W0334" && hasStr d.message "probeWrap")
+  t "a parameterized label redefined between pictures draws each site's text"
+    (occurs wrapped "Ax" == 1 && occurs wrapped "Bx" == 1 &&
+      (elabStr wrapSrc).2.all (·.severity == .note))
   let bpic := "\\begin{tikzpicture}\\draw (0,0) circle (1) node {\\probeLabel};\\end{tikzpicture}"
   let (bdoc, _) := elabStr (dvDoc "\\newcommand\\probeLabel{Early}\n"
     (bpic ++ "\n\n\\renewcommand\\probeLabel{Late}\n" ++ bpic))
