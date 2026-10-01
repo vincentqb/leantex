@@ -442,7 +442,11 @@ def reports : List Report := [
   { id := "R67", date := "2026-10-01"
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
     pins := [check% recipeTabularxChecks, thm% Layout.table_natural_width_exact]
-    state := .guarded "8a9cf04a" .before .author }
+    state := .guarded "8a9cf04a" .before .author },
+  { id := "R68", date := "2026-10-01"
+    what := "strikeout was requested without a shared through-line geometry for both artifacts"
+    pins := [check% recipeUlemRefusalChecks]
+    state := .answered }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
