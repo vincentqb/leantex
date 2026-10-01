@@ -1,12 +1,34 @@
 namespace LeanTex.Core
 
+/-- One macro invocation in the provenance of an expanded token. The id
+distinguishes separate invocations of the same name. -/
+structure MacroOrigin where
+  id : Nat
+  name : String
+  deriving Repr, BEq
+
 structure Pos where
   line : Nat := 1
   col : Nat := 1
-  deriving Repr, BEq
+  /-- Enclosing macro invocations, outermost first. -/
+  origins : List MacroOrigin := []
+  deriving Repr
+
+/-- Source-location identity ignores expansion provenance. Consumers that
+need macro ancestry read `Pos.origins` explicitly. -/
+instance : BEq Pos where
+  beq p q := p.line == q.line && p.col == q.col
+
+theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
+    ({ p with origins := xs } == { q with origins := ys }) = (p == q) := rfl
 
 def Pos.next (p : Pos) (newline : Bool) : Pos :=
-  if newline then ⟨p.line + 1, 1⟩ else ⟨p.line, p.col + 1⟩
+  if newline then { p with line := p.line + 1, col := 1 }
+  else { p with col := p.col + 1 }
+
+theorem Pos.next_origins_exact (p : Pos) (newline : Bool) :
+    (p.next newline).origins = p.origins := by
+  cases newline <;> rfl
 
 structure Span where
   file : String

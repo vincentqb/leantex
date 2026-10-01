@@ -16,6 +16,51 @@ inductive Raw where
   | verb (env : String) (s : String) (pos : Pos)
   deriving Repr, BEq, Inhabited
 
+/-- Macro ancestry is present even when empty on a positioned raw. A space
+has no position and leaves the enclosing consumer's ancestry unchanged. -/
+def Raw.origins? : Raw → Option (List MacroOrigin)
+  | .space => none
+  | .word _ p | .par p | .ctrl _ p | .sym _ p
+  | .group _ p | .math _ _ p | .env _ _ p | .verb _ _ p => some p.origins
+
+mutual
+
+/-- Prepend an enclosing invocation to every position in an expanded raw.
+This is a raw-tree walk, before IR exists; its list companion accumulates
+without introducing scanner or group boundaries. `markMacro_source_exact`
+holds its source serialization unchanged, including nested bodies. -/
+def markMacro (origin : MacroOrigin) : Raw → Raw
+  | .word s p => .word s { p with origins := origin :: p.origins }
+  | .space => .space
+  | .par p => .par { p with origins := origin :: p.origins }
+  | .ctrl n p => .ctrl n { p with origins := origin :: p.origins }
+  | .sym c p => .sym c { p with origins := origin :: p.origins }
+  | .group body p =>
+    .group (markMacroList origin #[] body.toList) { p with origins := origin :: p.origins }
+  | .math d body p =>
+    .math d (markMacroList origin #[] body.toList) { p with origins := origin :: p.origins }
+  | .env n body p =>
+    .env n (markMacroList origin #[] body.toList) { p with origins := origin :: p.origins }
+  | .verb env s p => .verb env s { p with origins := origin :: p.origins }
+
+def markMacroList (origin : MacroOrigin) (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => markMacroList origin (acc.push (markMacro origin r)) rest
+
+end
+
+theorem markMacro_origins_exact (origin : MacroOrigin) (r : Raw) :
+    (markMacro origin r).origins? = r.origins?.map (origin :: ·) := by
+  cases r <;> rfl
+
+/-- The accumulator prefix is untouched; each input raw occupies exactly
+one output position, in the same order. -/
+theorem markMacroList_toList (origin : MacroOrigin) (acc : Array Raw) (rs : List Raw) :
+    (markMacroList origin acc rs).toList = acc.toList ++ rs.map (markMacro origin) := by
+  induction rs generalizing acc with
+  | nil => simp [markMacroList]
+  | cons r rs ih => simp [markMacroList, ih, List.append_assoc]
+
 /-- What closes an open frame. -/
 inductive Stop where
   | brace
@@ -437,6 +482,33 @@ def rawSrcOne (r : Raw) : String :=
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
       s!"\\verb{d}{s}{d}"
     else s!"\\begin\{{env}}{s}\\end\{{env}}"
+
+end
+
+mutual
+
+/-- Annotating an array preserves the outer source spelling, including the
+serializer's trimming and every nested body's own serialization. -/
+theorem markMacroArray_source_exact (origin : MacroOrigin) (raws : Array Raw) :
+    rawSrc (markMacroList origin #[] raws.toList) = rawSrc raws := by
+  simp only [rawSrc, markMacroList_toList, List.nil_append]
+  rw [markMacroList_source_exact]
+
+/-- The untrimmed list spelling is preserved too: annotation cannot hide a
+changed separator at either end behind the outer serializer's trimming. -/
+theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw) :
+    rawSrcList (rs.map (markMacro origin)) = rawSrcList rs := by
+  cases rs with
+  | nil => rfl
+  | cons r rest =>
+    simp only [List.map_cons, rawSrcList]
+    rw [markMacro_source_exact, markMacroList_source_exact]
+
+/-- Provenance changes no source text. The statement covers every raw,
+recursing through groups, both math forms, and environments. -/
+theorem markMacro_source_exact (origin : MacroOrigin) (r : Raw) :
+    rawSrcOne (markMacro origin r) = rawSrcOne r := by
+  cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact]
 
 end
 

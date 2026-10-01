@@ -244,7 +244,7 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.imagesSansAlt wordless == #["picture#0"])
   t "a bare native picture fires W0376 on its own line"
     (wordlessDs.any fun d => d.code == "W0376" && d.subject == some "picture#0" &&
-      d.span == some ⟨"t", ⟨4, 1⟩⟩)
+      d.span == some ⟨"t", { line := 4, col := 1 }⟩)
   let caption := "A synthetic diagram"
   let (capNative, capNativeDs) := elabStr (dvDoc native
     ("\\begin{figure}" ++ pic "" square ++ s!"\\caption\{{caption}}\\end\{figure}"))

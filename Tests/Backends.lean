@@ -1924,7 +1924,8 @@ meaning, and no constructor outlives its last emission site. -/
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- render: porcelain is stable, escaped JSONL
-  let d : Diag := Diag.of .E0002 "bad \"quote\"\nline" (some ⟨"a.tex", ⟨3, 7⟩⟩)
+  let d : Diag := Diag.of .E0002 "bad \"quote\"\nline"
+    (some ⟨"a.tex", { line := 3, col := 7 }⟩)
     (help := "fix it")
   t "porcelain diag" (Render.porcelainDiag d ==
     "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\",\"loss\":\"dropped\"," ++
