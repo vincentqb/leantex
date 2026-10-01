@@ -3209,6 +3209,23 @@ private def takeCondArgs (raws : Array Raw) (start arity : Nat)
           (if actual.isSome then stop else first) (arity - 1)
         some (#[(actual.map ungroupArg).getD fallback] ++ args, stop, tail)
 
+mutual
+
+-- conserves: none — a predicate over surface tokens, not an IR rewrite.
+/-- A substituted replacement that cannot request another expansion or
+execute a control. Its group and math boundaries still pass through the
+ordinary conditional walk, preserving the opening-space scan. -/
+private def condTerminalList : List Raw → Bool
+  | [] => true
+  | r :: rest => condTerminalRaw r && condTerminalList rest
+
+private def condTerminalRaw : Raw → Bool
+  | .group body _ | .math _ body _ => condTerminalList body.toList
+  | .ctrl _ _ | .env _ _ _ => false
+  | .word _ _ | .space | .par _ | .sym _ _ | .verb _ _ _ => true
+
+end
+
 /-- Expand the macro `n` where the conditional pass meets it in live
 content, when its optional argument or text needs the use's state
 (`CondVal.live`), during the opening space scan, or inside a picture, which reads a
@@ -3218,10 +3235,13 @@ its definitions made — at the use, as TeX does, and the decisions are named
 at the use. `bound` is the binding order the enclosing text sees. An older
 binding lowers it; a newer copy of an older text keeps it and lowers
 `textBound` instead. Both keep helpers the enclosing text already sees,
-while every nested expansion descends the lexicographic pair.
+while every recursive expansion descends the lexicographic pair. A
+substituted replacement containing no controls or environments needs no
+recursion and can execute even when neither order descends.
 An optional wrapper and its inner text use the later of their serials,
-so a retained alias sees the current inner text. A live use the orders
-rule out is refused by name; `none` leaves it to the elaborator. -/
+so a retained alias sees the current inner text. A live use that still
+needs recursion when the orders rule it out is refused by name; `none`
+leaves it to the elaborator. -/
 private def condExpandAt (bound textBound : Nat) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : M (Option (Array Raw × Nat)) := do
   let st ← get
@@ -3248,7 +3268,15 @@ on a conditional this engine cannot decide; the call is left unexpanded"
     let textSerial := max v.textSerial body.textSerial
     -- premise: Tests.macroHookScopeChecks — copied texts execute locally
     -- while aliases keep helpers renewed before their enclosing use.
-    if _h : serial < bound ∨ textSerial < textBound then
+    let descends := serial < bound || textSerial < textBound
+    -- premise: Tests.macroRoleChecks — a terminal substituted call executes
+    -- without recursion, including copied meanings and discarded arguments;
+    -- an out-of-order effectful call still names its lost execution.
+    let terminal := !descends &&
+      (takeCondArgs raws start body.arity (v.optional.map (·.2))).any
+        (fun (args, _, _) => args.size == body.arity &&
+          condTerminalList (bindRawArgsList args #[] body.raws.toList).toList)
+    if descends || terminal then
       let call := (takeCondArgs raws start body.arity (v.optional.map (·.2))).filter
         fun (args, _, _) => args.size == body.arity
       let some (args, stop, tail) := call | do
@@ -3262,8 +3290,11 @@ the argument boundary is unread here, so its optional selection and state change
       let nextBound := if serial < bound then serial else bound
       write fun s => { s with useSite := some (site.getD pos) }
       let top ← swapTop false
-      let out ← condList (fun m p rs k => condExpandAt nextBound textSerial m p rs k)
-        [] body #[] [] body.toList 0 0
+      let out ← if _h : serial < bound ∨ textSerial < textBound then
+          condList (fun m p rs k => condExpandAt nextBound textSerial m p rs k)
+            [] body #[] [] body.toList 0 0
+        else
+          condList (fun _ _ _ _ => pure none) [] body #[] [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
       unless tail.isEmpty do condStopSpaces

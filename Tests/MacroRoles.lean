@@ -252,6 +252,28 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
       owned := #[("(", ["nestprobe"]), ("(X)", ["nestprobe", "nestprobe"]),
         (")", ["nestprobe"]), ("Tail", [])]
       counts := #[("nestprobe", 2, 2)] },
+    { label := "terminal call through a later binding"
+      pre := "\\newcommand\\outerrole[1]{O\\innerrole{#1}E}" ++
+        "\\newcommand\\innerrole[1]{(#1)}"
+      body := "\\outerrole{X}Tail", control := "O(X)ETail"
+      owned := #[("O", ["outerrole"]), ("(X)", ["outerrole", "innerrole"]),
+        ("E", ["outerrole"]), ("Tail", [])]
+      counts := #[("outerrole", 1, 1), ("innerrole", 1, 1)] },
+    { label := "terminal copied call through older text"
+      pre := "\\newcommand\\outerrole[1]{O\\innerrole{#1}E}" ++
+        "\\newcommand\\laterrole[1]{(#1)}\\let\\innerrole\\laterrole"
+      body := "\\outerrole{X}Tail", control := "O(X)ETail"
+      owned := #[("O", ["outerrole"]), ("(X)", ["outerrole", "innerrole"]),
+        ("E", ["outerrole"]), ("Tail", [])]
+      counts := #[("outerrole", 1, 1), ("innerrole", 1, 1)] },
+    { label := "terminal discarded argument does not execute"
+      pre := "\\def\\flagrole{F}" ++
+        "\\newcommand\\outerrole[1]{O\\innerrole{\\gdef\\flagrole{T}#1}E}" ++
+        "\\newcommand\\innerrole[1]{K}"
+      body := "\\outerrole{X}\\flagrole{} Tail", control := "OKEF Tail"
+      owned := #[("O", ["outerrole"]), ("K", ["outerrole", "innerrole"]),
+        ("E", ["outerrole"]), ("FTail", [])]
+      counts := #[("outerrole", 1, 1), ("innerrole", 1, 1)] },
     { label := "adjacent occurrences stay distinct"
       pre := word
       body := "\\wordrole{A}\\wordrole{B}Tail", control := "ABTail"
@@ -351,6 +373,27 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
     for (name, lo, hi) in c.counts do
       let count := (html.roles.filter (·.1 == name)).size
       t (label ++ s!": {name} wrapper count in [{lo}, {hi}]") (lo ≤ count && count ≤ hi)
+
+  -- A terminal substitution needs no recursive expansion. A later binding
+  -- that still needs conditional execution remains outside the serial
+  -- bound: its genuinely lost state change must still be named.
+  let effectful := dvDoc
+    ("\\newif\\ifroleprobe\\newcommand\\outerrole[1]{O\\innerrole{#1}E}" ++
+      "\\newcommand\\innerrole[1]{\\roleprobetrue#1}")
+    "\\outerrole{X}\\ifroleprobe T\\else F\\fi"
+  let (effectDoc, effectDs) := elabStr effectful
+  let (effectControl, _) := elabStr (dvDoc "" "OXET")
+  let (_, effectTree, _) := HtmlDoc.emitTree {} effectDoc
+  let (_, effectControlTree, _) := HtmlDoc.emitTree {} effectControl
+  t "macro roles nonterminal later binding: lost execution remains W0104"
+    (effectDs.any fun d =>
+      d.code == "W0104" && d.subject == some "cond:unexpanded:innerrole")
+  t "macro roles nonterminal later binding: the control ships the set flag"
+    (shownTextList "" effectControlTree.toList == "OXET")
+  t "macro roles nonterminal later binding: the warning names a real artifact difference"
+    (shownTextList "" effectTree.toList == "OXEF" &&
+      macroRoleGlyphs (layoutOf fs effectDoc) !=
+        macroRoleGlyphs (layoutOf fs effectControl))
 
   -- Metadata is transparent to a text parameter's predicate, but paint
   -- nested under that metadata still violates the text-only contract.
