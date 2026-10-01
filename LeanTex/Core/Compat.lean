@@ -38,7 +38,7 @@ playback loss is W0110 at every use, unsupported source selection W0307,
 and package-wide defaults are named rather than silently discarded. -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
-   "beamerposter", "paracol",
+   "beamerposter", "paracol", "tabularx",
    "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",

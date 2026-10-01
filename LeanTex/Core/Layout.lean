@@ -6812,6 +6812,7 @@ def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
   | .natural => nats.zipIdx.foldl (init := 0) fun m (r, i) =>
       if inSpan spans i j then m else max m ((r[j]?).getD 0)
   | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
+  | .flex _ => 0
 
 /-- What a span needs across the columns it covers: its text's natural
 width, or the width its own `p{…}` spec declares. -/
@@ -6819,6 +6820,7 @@ def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
   match s.spec.width with
   | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
   | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
+  | .flex target => target.resolve total
 
 /-- The box a span sets in: the columns it covers and the `2·colsep` gaps
 between them. -/
@@ -6837,32 +6839,54 @@ def widenAt (colsep total : Sp) (nats : Array (Array Sp)) (spans : Array Ir.ColS
       ws.set! j (max ws[j]! (spanNeed total nats s - before))
     else ws
 
-/-- A table's column widths: each column's base (`colBase`), then column by
-column, in order, the spans that end there (`widenAt`) — so a span reads the
-final widths of the columns before its last, as TeX's formula
-$w_j=\max_{i≤j}(w_{ij}-\sum_{i≤k<j}(t_k+w_k))$ does. -/
+/-- Give every flexible column an equal share of its target after natural
+and fixed columns, inner gaps, and outer pads. This is tabularx's trial
+arithmetic as a value: X defaults to `p{width}`, and the final trial divides
+the remaining target among the X columns (`tabularx.sty`, `TX@arith`). -/
+def tableFlexWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
+    (bases : Array Sp) (padL padR : Bool) : Array Sp :=
+  let count := cols.foldl (fun n c => if c.width matches .flex _ then n + 1 else n) 0
+  match cols.findSome? fun c => match c.width with
+    | .flex target => some target
+    | .natural | .sized _ => none with
+  | none => bases
+  | some target =>
+    let fixed := cols.zipIdx.foldl (fun sum (c, j) => match c.width with
+      | .flex _ => sum
+      | .natural | .sized _ => sum + bases[j]?.getD 0) 0
+    let outer := (if padL then colsep else 0) + (if padR then colsep else 0)
+    let inner := 2 * colsep * ((cols.size : Int) - 1)
+    let share := max 0 (target.resolve total - fixed - outer - inner) / max count 1
+    cols.mapIdx fun j c => match c.width with
+      | .flex _ => share
+      | .natural | .sized _ => bases[j]?.getD 0
+
+/-- A table's column widths: each column's base (`colBase`), flexible
+columns sharing their target remainder, then column by column the spans
+that end there (`widenAt`). -/
 def tableColWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) : Array Sp :=
-  (List.range cols.size).foldl (widenAt colsep total nats spans)
-    (cols.mapIdx fun j spec => colBase total spans nats j spec)
+    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
+    (padL : Bool := true) (padR : Bool := true) : Array Sp :=
+  let bases := cols.mapIdx fun j spec => colBase total spans nats j spec
+  let bases := tableFlexWidths colsep total cols bases padL padR
+  (List.range cols.size).foldl (widenAt colsep total nats spans) bases
 
 theorem widenAt_nil (colsep total : Sp) (nats : Array (Array Sp)) (ws : Array Sp)
     (j : Nat) : widenAt colsep total nats #[] ws j = ws := by
   simp [widenAt]
 
-/-- Outside every span when there is none: with no `\multicolumn`, a
-natural column's base (`colBase`) is its widest cell over every row. -/
+/-- Outside every span when there is none. -/
 theorem inSpan_nil (i j : Nat) : inSpan #[] i j = false := by
   simp [inSpan]
 
-/-- A table with no span is exactly its column bases: every `l`/`c`/`r`
-column is its widest cell (`inSpan_nil`), every `p` column its declared
-width, and nothing reads the rest of the measure — `collectTable`'s centring
-moves the box and never widens it. -/
+/-- With no span, a table is exactly its finalized bases: natural columns
+at their widest cell, fixed columns at their declaration, and flexible
+columns at an equal share of their target remainder. -/
 theorem table_natural_width_exact (colsep total : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) :
-    tableColWidths colsep total cols nats #[] =
-      cols.mapIdx (fun j spec => colBase total #[] nats j spec) := by
+    (nats : Array (Array Sp)) (padL padR : Bool) :
+    tableColWidths colsep total cols nats #[] padL padR =
+      tableFlexWidths colsep total cols
+        (cols.mapIdx fun j spec => colBase total #[] nats j spec) padL padR := by
   have hfold : ∀ (l : List Nat) (ws : Array Sp),
       l.foldl (widenAt colsep total nats #[]) ws = ws := by
     intro l
@@ -6910,7 +6934,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
   a := { a with hyphCache := cache }
-  let widths := tableColWidths colsep total cols nats spans
+  let widths := tableColWidths colsep total cols nats spans padL padR
   let lead : Sp := if padL then colsep else 0
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
