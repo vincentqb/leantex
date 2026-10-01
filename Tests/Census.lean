@@ -899,6 +899,27 @@ def censusTable :
     ("no page of this fixture ships a control sequence",
       !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"
         && !hasStr (censusText c) "textbf")]),
+  -- The text-sourced alphabets whose MathML projection rides on real CSS:
+  -- the PDF ships the plain base letter set in a text family, never a
+  -- Mathematical Alphanumeric scalar (which is the loss this projection
+  -- avoids). The unstyled variables stay italic Alphanumeric, as always.
+  ("math-alpha", fun _ c =>
+    let has (n : Nat) := hasStr (censusText c) (String.ofList [Char.ofNat n])
+    [
+    ("one page", c.size == 1),
+    ("the styled letters ship their plain base glyphs",
+      hasStr (censusText c) "B" && hasStr (censusText c) "C"
+        && hasStr (censusText c) "D" && hasStr (censusText c) "E"),
+    ("a styled scalar never ships a Mathematical Alphanumeric codepoint",
+      !has 0x1D401 && !has 0x1D436 && !has 0x1D5A3 && !has 0x1D674),
+    ("a styled digit ships its digit", hasStr (censusText c) "7"),
+    ("a nested styled scalar ships its letter in a script",
+      hasStr (censusText c) "k"),
+    ("the unstyled variables ship as italic Alphanumeric scalars",
+      has 0x1D465 && has 0x1D466),
+    ("no page of this fixture ships a control sequence",
+      !hasStr (censusText c) "mathsf" && !hasStr (censusText c) "mathbf"
+        && !hasStr (censusText c) "mathrm")]),
   ("math-cancel", fun _ c => [
     ("one page", c.size == 1),
     ("the document title ships", hasStr (censusText c) "Annotated Formulas"),
