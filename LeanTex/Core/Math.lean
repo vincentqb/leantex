@@ -938,10 +938,10 @@ theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
   cases rising <;> exact ⟨rfl, rfl⟩
 
 /-- A strike never leaves its box: every point of the band lies inside it,
-whatever the slope. With room reserved the box is the construct's own
-width, so a strike cannot overprint a neighbour. -/
+whatever the slope, including a zero width or height. With room reserved
+the box is the construct's own width. -/
 theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
-    (hr : 0 ≤ rule) (hw : x0 < x1) (hh : y0 < y1) :
+    (hr : 0 ≤ rule) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     ∀ p ∈ cancelBand rising x0 y0 x1 y1 rule,
       x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
   intro p hp
@@ -970,15 +970,10 @@ structure CancelGeom where
   advance : Int
   deriving Repr, BEq, Inhabited
 
-/-- A point brought inside the box `(x0, y0, x1, y1)` on each axis. The
-arrow's head and shaft are laid on the diagonal from the box's corner, so
-their wings run perpendicular to it: for an extreme aspect ratio (a wide,
-short struck subformula, or a tall, thin one) a wing's perpendicular reach
-carries it past an edge the diagonal never approaches — `\cancel{ABCDEF}`
-put a wing 22sp above a 100sp-tall box. Every vertex a mark inks is brought
-back to the box here, so no mark paints outside its reserved room whatever
-the proportions; for a box the head already fits (the ordinary near-square
-strike) this changes nothing. -/
+/-- Bring a vertex inside a non-inverted box on both axes. An arrow's
+perpendicular wings can otherwise cross the sides of a wide or tall box:
+`cancelHead 0 0 1000 100 20` reached `(919, 122)` above a 100sp-tall box.
+Vertices that already fit are unchanged (`clampBox_id`). -/
 def clampBox (x0 y0 x1 y1 : Int) (p : Int × Int) : Int × Int :=
   (max x0 (min x1 p.1), max y0 (min y1 p.2))
 
@@ -989,6 +984,12 @@ theorem clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
     x0 ≤ (clampBox x0 y0 x1 y1 p).1 ∧ (clampBox x0 y0 x1 y1 p).1 ≤ x1 ∧
     y0 ≤ (clampBox x0 y0 x1 y1 p).2 ∧ (clampBox x0 y0 x1 y1 p).2 ≤ y1 := by
   simp only [clampBox]; omega
+
+/-- Clamping preserves every vertex already inside the box. -/
+theorem clampBox_id (x0 y0 x1 y1 : Int) (p : Int × Int)
+    (hx0 : x0 ≤ p.1) (hx1 : p.1 ≤ x1) (hy0 : y0 ≤ p.2) (hy1 : p.2 ≤ y1) :
+    clampBox x0 y0 x1 y1 p = p := by
+  apply Prod.ext <;> simp only [clampBox] <;> omega
 
 /-- Every point of an array mapped through `clampBox` lies in the box. -/
 theorem mem_map_clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
@@ -1034,24 +1035,22 @@ def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   else #[]
 
 /-- The arrowhead never leaves its box: every vertex lies inside `(x0, y0,
-x1, y1)`, whatever the box's proportions and the rule's sign. With room
-reserved the box is the construct's own width, so the head cannot overprint
-a neighbour. -/
-theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 < x1) (hh : y0 < y1) :
+x1, y1)`, including a zero width or height, whatever the rule's sign. -/
+theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
       x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 :=
-  mem_map_clampBox_between x0 y0 x1 y1 (Int.le_of_lt hw) (Int.le_of_lt hh) _
+  mem_map_clampBox_between x0 y0 x1 y1 hw hh _
 
 /-- A drawn shaft never leaves its box: when the shaft is nonempty every
-vertex lies inside `(x0, y0, x1, y1)`. (The empty shaft has no vertices to
-place.) -/
-theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hw : x0 < x1) (hh : y0 < y1) :
+vertex lies inside a non-inverted box, including a zero width or height.
+The empty shaft has no vertices to place. -/
+theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     ∀ p ∈ cancelShaft x0 y0 x1 y1 rule,
       x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
   intro p hp
   simp only [cancelShaft] at hp
   split at hp
-  · exact mem_map_clampBox_between x0 y0 x1 y1 (Int.le_of_lt hw) (Int.le_of_lt hh) _ p hp
+  · exact mem_map_clampBox_between x0 y0 x1 y1 hw hh _ p hp
   · simp only [Array.not_mem_empty] at hp
 
 /-- The value's baseline above the construct's, as TeX sets a superscript
@@ -1100,8 +1099,8 @@ theorem cancelto_value_between (room : Bool) (i : CancelIn) :
   omega
 
 /-- The value clears the arrow: it starts a clearance right of the mark
-box and of every point of the head, so an arrowhead never touches the
-value it points at, whatever the box's slope. -/
+box and of every point of the head, whatever the box's slope. A strictly
+positive clearance separates the head and target origins. -/
 theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
     let b := i.box room
     b.2.2.1 + i.gap ≤ (cancelGeom .to room i).valueX ∧
@@ -1132,8 +1131,7 @@ theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
 
 /-- `\cancelto` inks exactly the arrow — its shaft then its head when the
 box holds a shaft, its head alone when it does not — and the value starts a
-clearance right of the mark box, so the arrow and the value it points at
-never touch. -/
+clearance right of the mark box. -/
 theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
     let b := i.box room
     (cancelGeom .to room i).polys =
@@ -1147,13 +1145,12 @@ theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
 
 /-- No cancel mark paints outside its box: every vertex of every polygon
 `cancelGeom` lays — each strike, or the arrow's shaft and head — lies inside
-the mark box, whatever the mark and the box's proportions. With room
-reserved (cancel.sty's `makeroom`) the box is the construct's own advance,
-so a mark cannot overprint an adjacent atom. -/
+the non-inverted mark box, including a zero width or height. All four
+flavors and both room settings share this bound; no sampling is involved. -/
 theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
     (hr : 0 ≤ i.rule)
-    (hw : (i.box room).1 < (i.box room).2.2.1)
-    (hh : (i.box room).2.1 < (i.box room).2.2.2) :
+    (hw : (i.box room).1 ≤ (i.box room).2.2.1)
+    (hh : (i.box room).2.1 ≤ (i.box room).2.2.2) :
     ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
       (i.box room).1 ≤ p.1 ∧ p.1 ≤ (i.box room).2.2.1 ∧
       (i.box room).2.1 ≤ p.2 ∧ p.2 ≤ (i.box room).2.2.2 := by
