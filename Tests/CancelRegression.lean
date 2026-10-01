@@ -167,15 +167,30 @@ box, on both axes. The control is an actual `Layout.Out` band: its corner
 theorem determines the box independently of the arrow's clamp. Wide and
 tall arrows fail this check with the clamp removed. Zero-area operands,
 all four math sizes, both room modes and both rule weights share the same
-judge; `Math.cancelGeom_polys_between` supplies the universal bound. -/
+judge; `Math.cancelGeom_envelope_between` supplies the universal bound.
+Clearance compares absolute positions after accumulating segment advances. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
-  let polygons (l : Layout.LineOut) := l.segs.filterMap fun s => match s with
-    | .poly pts _ => some pts
-    | _ => none
+  -- Polygon vertices are relative to the current pen, as in metricRunsAt.
+  let polygonsAt (l : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.Sp)) := Id.run do
+    let mut x := l.x
+    let mut out := #[]
+    for s in l.segs do
+      match s with
+      | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .rule w _ _ _ | .image _ w _ =>
+        x := x + w
+      | .poly pts _ => out := out.push (x, pts)
+    return out
+  let polygons (l : Layout.LineOut) := (polygonsAt l).map (·.2)
   let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
     (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
+  let arrowClearsTarget (l : Layout.LineOut) : Bool :=
+    let placed := polygonsAt l
+    match glyphX l "7" with
+    | some vx => !placed.isEmpty &&
+        placed.all fun (pen, pts) => pts.all fun (x, _) => pen + x < vx
+    | none => false
   let shapes := [("square", "x"), ("wide", "abcdefabcdef"), ("tall", "\\int"),
     ("fraction", "\\frac{x}{\\frac{z}{w}}"), ("empty", "")]
   let sizes := [("text", "$", "$"), ("display", "\\[", "\\]"),
@@ -203,7 +218,8 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           t s!"cancel box: {label}/{cmd} sets one line without recovery"
             (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
           let some line := lines[0]? | continue
-          let polys := polygons line
+          let placed := polygonsAt line
+          let polys := placed.map (·.2)
           let points := polys.flatten
           t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
             (!points.isEmpty && points.all fun (x, y) =>
@@ -219,13 +235,12 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
                 points.contains (x1, if cmd == "cancel" then y1 else y0))
           if cmd == "cancelto{7}" then
             t s!"cancel box: {label} arrow clears its target"
-              (match glyphX line "7" with
-                | some vx => points.all fun (x, _) => line.x + x < vx
-                | none => false)
+              (arrowClearsTarget line)
           if hasStr opts "makeroom" then
             t s!"cancel box: {label}/{cmd} holds every mark before the next atom"
               (match glyphX line "𝑦" with
-                | some yx => points.all fun (x, _) => line.x ≤ line.x + x && line.x + x ≤ yx
+                | some yx => placed.all fun (pen, pts) =>
+                    pts.all fun (x, _) => line.x ≤ pen + x && pen + x ≤ yx
                 | none => false)
 
   -- The operand still inks x after negative kerns make its advance negative.
@@ -247,3 +262,33 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
         ((glyphX line "𝑥").isSome && (glyphX line "7").isSome)
       t s!"cancel box: {label} ships a nonzero filled arrowhead"
         ((polygons line).back?.any fun pts => area2 pts != 0)
+
+  -- Move only the target origin one sp left of the painted arrow tip.
+  -- A script prefix makes the polygon's pen differ from the line origin;
+  -- reading the latter falsely certifies the moved target as clear.
+  let (doc, ds) := elabStr (dvDoc "\\usepackage[makeroom]{cancel}"
+    "$z^{\\cancelto{7}{x}y}$")
+  let lines := bodyLines (layoutOf fonts doc)
+  t "cancel box: clearance adversary sets one line without recovery"
+    (lines.size == 1 && !ds.any (fun d => d.code == "W0012" || d.code == "W0389"))
+  let some line := lines[0]? | return
+  let some vx := glyphX line "7" |
+    t "cancel box: clearance adversary ships its target" false
+    return
+  let placed := polygonsAt line
+  let tipX := placed.foldl
+    (fun m (pen, pts) => pts.foldl (fun m p => max m (pen + p.1)) m) line.x
+  t "cancel box: clearance adversary reaches a prefixed arrow"
+    (placed.any fun (pen, _) => pen > line.x)
+  let delta := tipX - 1 - vx
+  let moved := { line with segs := line.segs.flatMap fun seg => match seg with
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
+      if String.ofList (glyphs.toList.map (·.2.1)) == "7" then
+        #[.gap delta false, seg, .gap (-delta) false]
+      else #[seg]
+    | _ => #[seg] }
+  t "cancel box: clearance adversary moves only the target"
+    (glyphX moved "7" == some (tipX - 1) && polygonsAt moved == placed &&
+      (metricRunsAt moved).filter (·.1 != "7") == (metricRunsAt line).filter (·.1 != "7"))
+  t "cancel box: clearance judge rejects a target inside the arrow's horizontal extent"
+    (arrowClearsTarget line && !arrowClearsTarget moved)
