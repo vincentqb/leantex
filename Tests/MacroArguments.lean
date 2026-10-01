@@ -67,11 +67,13 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       "Absent Present Installed Tail"
   -- LuaLaTeX takes Different for significant replacement spaces (also
   -- inside groups) and for a paragraph versus a space. Positions, runs of
-  -- source whitespace and whitespace ending a control word do not count.
+  -- horizontal whitespace and whitespace ending a control word do not count.
   -- Read the chosen branch from both artifacts: trimming their whitespace
   -- cannot hide a wrong comparison of whitespace in the stored definitions.
   -- A blank line after a control word equals explicit \par; after a
   -- character its first end-of-line also supplies a space before \par.
+  -- Three newlines make two paragraph tokens, with that initial space
+  -- only after a character (LuaLaTeX; TeXbook chapter 8).
   for (label, left, right, expected) in #[
       ("ifx leading space", " #1", "#1", "Different"),
       ("ifx trailing space", "#1 ", "#1", "Different"),
@@ -80,6 +82,13 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       ("ifx paragraph versus space", "#1\n\nX", "#1 X", "Different"),
       ("ifx paragraph control equality", "#1\\tokenprobe\n\nX", "#1\\tokenprobe\\par X", "Same"),
       ("ifx paragraph control preceding space", "#1\n\nX", "#1\\par X", "Different"),
+      ("ifx paragraph control character equality", "#1\n\nX", "#1 \\par X", "Same"),
+      ("ifx two paragraphs character equality", "#1\n\n\nX", "#1 \\par\\par X", "Same"),
+      ("ifx two paragraphs control word equality",
+        "#1\\tokenprobe\n\n\nX", "#1\\tokenprobe\\par\\par X", "Same"),
+      ("ifx one versus two paragraphs character", "#1\n\nX", "#1\n\n\nX", "Different"),
+      ("ifx one versus two paragraphs control word",
+        "#1\\tokenprobe\n\nX", "#1\\tokenprobe\n\n\nX", "Different"),
       ("ifx equal tokens at different positions", "#1", "#1", "Same"),
       ("ifx equal space runs", " #1 ", "   #1   ", "Same"),
       ("ifx ignored control word space", "\\tokenprobe #1", "\\tokenprobe#1", "Same"),
