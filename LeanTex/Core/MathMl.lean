@@ -289,13 +289,20 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
         else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
   | .styled style c =>
-    -- A resolved text-sourced alphabet scalar: the plain base letter styled
-    -- by the semantic `mathvariant` the typed style declares (the PDF's
-    -- family/weight/italic projection's MathML counterpart).
+    -- A resolved text-sourced alphabet scalar: the plain base letter whose
+    -- family/weight/shape ride on real CSS (`style.css`), the same axes the
+    -- PDF reads from the one typed style — Chromium honours no non-`normal`
+    -- `mathvariant` (MathML Core §3.2.2), so attributes alone would leave
+    -- `\mathsf`/`\mathbf` in the default serif. `mathvariant="normal"` goes
+    -- on a single-char `mi` only, to cancel the renderer's `math-auto`
+    -- italic so the literal base letter stands and CSS decides its shape; a
+    -- digit `mn` and an operator `mo` are upright already and need no cancel.
     let tag := leafTag cls c
-    .elem tag (if tag == "mi" || tag == "mn" then #[("mathvariant", style.mathvariant)]
-        else if tag == "mo" then #[("stretchy", "false")] else #[])
-      #[.text (charText c)]
+    let base : Array (String × String) := match tag with
+      | "mi" => #[("mathvariant", "normal")]
+      | "mo" => #[("stretchy", "false")]
+      | _ => #[]
+    .elem tag (base.push ("style", style.css)) #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>

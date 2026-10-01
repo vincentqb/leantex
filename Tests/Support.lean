@@ -712,6 +712,29 @@ end
 
 mutual
 
+/-- The first `style` attribute an emitted tree declares, in document order:
+the MathML `.styled` arm sets `("style", style.css)` on the leaf, so this
+pulls the CSS a resolved text-style scalar carries (the browser-honoured
+twin of the PDF face-slot selection). `none` when no node declares one. -/
+def styleOne : Html.Node → Option String
+  | .text _ => none
+  | .style _ => none
+  | .script _ _ => none
+  | .elem _ attrs kids =>
+    match attrs.find? (fun (k, _) => k == "style") with
+    | some (_, v) => some v
+    | none => styleList kids.toList
+
+def styleList : List Html.Node → Option String
+  | [] => none
+  | k :: rest => match styleOne k with
+    | some v => some v
+    | none => styleList rest
+
+end
+
+mutual
+
 /-- The text an emitted page *shows*, as the artifact itself says it: the
 typed tree's characters with every `hidden` subtree dropped — what the UA
 stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of
