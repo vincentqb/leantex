@@ -1,0 +1,47 @@
+# source: installed paracol.sty 1.37 — Starting Environment, Column Width
+# Setting, Column-Switching Commands and Environments, Counter Operations,
+# Footnotes, Column Swapping, Text Coloring, and Background Painting.
+body impl \begin{paracol}{2}left\switchcolumn right\end{paracol}
+body impl \columnratio{.35}\begin{paracol}{2}left\switchcolumn right\end{paracol}
+body impl \begin{paracol}{2}left\switchcolumn[1] right\switchcolumn[0] left again\end{paracol}
+body refuse:W0104 \begin{paracol}{2}left\switchcolumn* right\end{paracol}
+body refuse:W0104 \begin{paracol}{3}one\switchcolumn two\end{paracol}
+body refuse:W0104 \columnratio{wide}\begin{paracol}{2}left\switchcolumn right\end{paracol}
+body refuse:W0104 \switchcolumn
+pre refuse:W0301 \setcolumnwidth{.35\textwidth,.65\textwidth}
+body refuse:W0302 \begin{column}x\end{column}
+body refuse:W0302 \begin{column*}x\end{column*}
+body refuse:W0302 \begin{nthcolumn}{1}x\end{nthcolumn}
+body refuse:W0302 \begin{nthcolumn*}{1}x\end{nthcolumn*}
+body refuse:W0302 \begin{leftcolumn}x\end{leftcolumn}
+body refuse:W0302 \begin{leftcolumn*}x\end{leftcolumn*}
+body refuse:W0302 \begin{rightcolumn}x\end{rightcolumn}
+body refuse:W0302 \begin{rightcolumn*}x\end{rightcolumn*}
+pre refuse:W0301 \globalcounter{section}
+pre refuse:W0301 \localcounter{section}
+pre refuse:W0301 \definethecounter{section}{0}{\arabic{section}}
+body refuse:W0301 \synccounter{section}
+body refuse:W0301 \syncallcounters
+pre refuse:W0301 \definecolumnpreamble{0}{\raggedright}
+pre refuse:W0301 \ensurevspace{\baselineskip}
+pre refuse:W0301 \addcontentsonly{toc}{0}
+pre refuse:W0301 \footnoteplacement{c}
+pre refuse:W0301 \multicolumnfootnotes
+pre refuse:W0301 \singlecolumnfootnotes
+pre refuse:W0301 \mergedfootnotes
+pre refuse:W0301 \fncounteradjustment
+pre refuse:W0301 \nofncounteradjustment
+pre refuse:W0301 \twosided
+pre refuse:W0301 \swapcolumninevenpages
+pre refuse:W0301 \noswapcolumninevenpages
+pre refuse:W0301 \marginparthreshold{1}
+body refuse:W0301 \columncolor{red}
+body refuse:W0301 \normalcolumncolor
+pre refuse:W0301 \colseprulecolor{red}
+pre refuse:W0301 \normalcolseprulecolor
+pre refuse:W0301 \backgroundcolor{c}{red}
+pre refuse:W0301 \nobackgroundcolor{c}
+pre refuse:W0301 \resetbackgroundcolor
+body refuse:W0301 \flushpage
+pre refuse:W0301 \coloredwordhyphenated
+pre refuse:W0301 \nocoloredwordhyphenated
