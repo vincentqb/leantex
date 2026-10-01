@@ -103,10 +103,10 @@ para
   color muted #73727F
     text "2019"
 para
-  underline
+  decoration underline
     text "Selected honours"
   text " follow, judged "
-  underline
+  decoration underline
     text "genuinely groundbreaking"
   text " by a jury."
 -- diagnostics

@@ -89,7 +89,7 @@ def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         if glyphs.any (fun (_, ch, _) => !ch.isWhitespace) then some c else none
       | .poly pts c => if pts.isEmpty then none else some c
       | .rule w h _ c => if w > 0 && h > 0 then some c else none
-      | .gap _ _ | .image _ _ _ => none
+      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ => none
     t s!"cancel contrast: {label} witnesses the colours actually shipped"
       (red.isSome && blue.isSome && inks.any (fun c => some c == blue) &&
         (inks.any (fun c => some c == red)) == redInk &&
@@ -178,7 +178,8 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let mut out := #[]
     for s in l.segs do
       match s with
-      | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .rule w _ _ _ | .image _ w _ =>
+      | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
+      | .decoration _ w _ _ _ | .rule w _ _ _ | .image _ w _ =>
         x := x + w
       | .poly pts _ => out := out.push (x, pts)
     return out

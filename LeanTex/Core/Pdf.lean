@@ -350,8 +350,8 @@ private def linkRects (geom : Geom) (page : PageOut) :
               out := out.push (x, y0, x + w, y1, url)
           | none => out := out.push (x, y0, x + w, y1, url)
         x := x + w
-      | .gap w _ => x := x + w
-      | .rule w _ _ _ => x := x + w
+      | .gap w _ | .decoratedGap w _ _ => x := x + w
+      | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
       | .image _ w _ => x := x + w
       | .poly _ _ => pure ()
   return out

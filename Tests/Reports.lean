@@ -445,8 +445,9 @@ def reports : List Report := [
     state := .guarded "8a9cf04a" .before .author },
   { id := "R68", date := "2026-10-01"
     what := "strikeout was requested without a shared through-line geometry for both artifacts"
-    pins := [check% recipeUlemRefusalChecks]
-    state := .answered }
+    pins := [check% recipeUlemChecks, thm% Ir.decorated_text,
+      thm% Layout.lineThroughRaise_exact]
+    state := .guarded "b2a4a435" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

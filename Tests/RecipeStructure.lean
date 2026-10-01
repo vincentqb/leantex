@@ -246,28 +246,126 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
 
 
 
-/-- **Strikeout stays one explicit unsupported boundary until it has shared
-geometry.** Installed ulem defines `\sout` by moving an underline to
-`ULdepth=-.55ex`, a rule through the glyphs. The current IR has only the
-below-baseline `underline` decoration; pretending that is strikeout would
-misrender both PDF geometry and HTML semantics. Until a shared strike value
-and exhaustive backend/walk arms land, the package and command each fire
-once and the command's text remains visible. -/
-def recipeUlemRefusalChecks (ref : IO.Ref (List String))
+mutual
+/-- Collect every PDF fill rectangle's colour, width, and height, descending
+into marked-content sequences. A through-line lowers to one such fill. -/
+private def pdfFillsOne (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
+    Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
+  | .fill color _ _ w h => out.push (color, w, h)
+  | .marked _ body => pdfFillsList out body.toList
+  | .path _ _ _ | .text _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ => out
+private def pdfFillsList (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
+    List Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
+  | [] => out
+  | op :: rest => pdfFillsList (pdfFillsOne out op) rest
+end
+
+/-- **Strikeout is a shared decoration, not a suppressed package warning.**
+Installed ulem fixes text-mode `\sout` at a `0.55ex` bottom (above the
+baseline) and `0.4pt` thickness from the command-entry face and colour, where
+`\uline` sits below the baseline. These checks read the IR, `Layout.Out`, the
+typed HTML tree, PDF operators, and the accessibility facts — never a dump. -/
+def recipeUlemChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let src := dvDoc "\\usepackage[normalem]{ulem}\n"
-    "Kept before. \\sout{Crossed words.} Kept after."
+  let load := "\\usepackage[normalem]{ulem}\n"
+  let src := dvDoc load "Kept before. \\sout{Crossed words.} Kept after."
   let (doc, ds) := elabStr src
-  t "ulem and sout each have one truthful diagnostic, with no cascade"
-    ((ds.filter (·.code == "W0103")).size == 1 &&
-      (ds.filter (·.code == "W0301")).size == 1 &&
-      ds.all (·.severity != .error))
+  t "normalem ulem and sout have no package or unknown-command loss"
+    (ds.all fun d => d.code != "W0103" && d.code != "W0301" && d.severity != .error)
+  t "sout has a typed line-through IR wrapper"
+    ((elabStr "\\sout{x}").1.body == #[.para #[.decorated .lineThrough #[.text "x"]]])
+  let bareDs := (elabStr (dvDoc "\\usepackage{ulem}\n" "\\emph{x}")).2
+  t "bare ulem keeps one precise emphasis diagnostic, no unknown-command"
+    ((bareDs.filter (·.code == "W0103")).size == 1 &&
+      bareDs.any (fun d => hasStr d.message "emph") &&
+      !bareDs.any (·.code == "W0301"))
+  let normalEm := (elabStr (dvDoc load "\\emph{x}")).1.body
+  let plainEm := (elabStr (dvDoc "" "\\emph{x}")).1.body
+  t "normalem leaves ordinary emphasis unchanged" (normalEm == plainEm)
+
   let out := layoutOf oneFace doc
   let census := censusOf (coveredColorsOf doc) out
-  t "the unsupported strike boundary preserves its text exactly once"
-    (pageOccurs census 0 "Crossed words." == 1)
-  let trees := doc.body.map (HtmlDoc.blockNode {})
-  t "typed HTML does not claim strike semantics it cannot share with PDF"
-    (trees.foldl (fun n tree => n + countTag "s" tree) 0 == 0 &&
-      trees.foldl (fun n tree => n + treeShownOccurs #[tree] "Crossed words.") 0 == 1)
+  t "strikeout preserves its text exactly once on one page"
+    (out.pages.size == 1 && pageOccurs census 0 "Crossed words." == 1)
+  let strikeSegs := (metricDecorationSegs out).filter fun (kind, _, _, _, _) =>
+    kind == .lineThrough
+  let strikeWidth := strikeSegs.foldl (fun n (_, w, _, _, _) => n + w) (0 : Dim.Sp)
+  let sourceWidth := (allLines out).foldl (fun n l =>
+    n + l.segs.foldl (fun n s => match s with
+      | .run _ _ _ w _ _ _ decorations _ _ _ =>
+        if decorations.lineThrough.isSome then n + w else n
+      | .decoratedGap w _ _ => n + w
+      | .gap .. | .decoration .. | .rule .. | .image .. | .poly .. => n) 0) 0
+  t "strikeout covers words and interword gaps at the shared through-line band"
+    (!strikeSegs.isEmpty && strikeWidth == sourceWidth &&
+      strikeSegs.all fun (_, w, thickness, raise, color) =>
+        w > 0 && thickness == Layout.lineThroughThickness &&
+          raise > 0 && color == Ir.Color.black)
+
+  let underlineOut := layoutOf oneFace (elabStr "\\underline{aqa}").1
+  let underlineSegs := (metricDecorationSegs underlineOut).filter
+    fun (kind, _, _, _, _) => kind == .underline
+  t "line-through cannot pass by substituting below-baseline underline geometry"
+    (!underlineSegs.isEmpty &&
+      strikeSegs.all (fun (_, _, _, raise, _) => raise > 0) &&
+      underlineSegs.all (fun (_, _, _, raise, _) => raise < 0))
+
+  let nestedSrc := dvDoc load
+    "\\textcolor{blue}{\\sout{A \\href{https://example.org}{\\textit{B}} \\textcolor{red}{C}}}"
+  let (nestedDoc, nestedDs) := elabStr nestedSrc
+  let nestedOut := layoutOf oneFace nestedDoc
+  let runColors := (bodyLines nestedOut).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .run _ color _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then none else some color
+    | _ => none
+  let strikeColors := (metricDecorationSegs nestedOut).filterMap
+    fun (kind, _, _, _, color) => if kind == .lineThrough then some color else none
+  t "strike keeps its entry colour while nested style, colour, and link survive"
+    (!nestedDs.any (fun d => d.code == "W0103" || d.code == "W0301" || d.severity == .error) &&
+      !runColors.isEmpty && runColors.any (· != runColors[0]!) &&
+      !strikeColors.isEmpty && strikeColors.all (· == runColors[0]!) &&
+      (bodyLines nestedOut).any fun l => l.segs.any fun s => match s with
+        | .run _ _ (some "https://example.org") _ _ _ _ _ _ _ _ => true
+        | _ => false)
+
+  let nestedTrees := nestedDoc.body.map (HtmlDoc.blockNode {})
+  let (nestedHtml, _) := HtmlDoc.emit {} nestedDoc
+  let facts := HtmlDoc.a11yFacts true false nestedTrees
+  t "typed HTML keeps s, link, emphasis, colour, and derives line-through CSS"
+    (nestedTrees.foldl (fun n tree => n + countTag "s" tree) 0 == 1 &&
+      nestedTrees.foldl (fun n tree => n + countTag "a" tree) 0 == 1 &&
+      nestedTrees.foldl (fun n tree => n + countTag "em" tree) 0 == 1 &&
+      nestedTrees.foldl (fun n tree => n + countTag "span" tree) 0 >= 2 &&
+      hasStr nestedHtml
+        "s { text-decoration-line: line-through; text-decoration-thickness: 0.4pt;" &&
+      facts.hiddenTabStops == 0 && treeShownOccurs nestedTrees "A B C" == 1)
+
+  let tree := Struct.ofDoc (Layout.pdfView doc)
+  let pdfFills := (Pdf.pageOps (Layout.Geom.ofPage doc.page) oneFace out.pages {} tree).flatMap
+    fun ops => pdfFillsList #[] ops.toList
+  t "every typed through-line becomes one PDF fill rule of its colour, width, and weight"
+    (!strikeSegs.isEmpty &&
+      strikeSegs.all fun (_, w, thickness, _, color) => pdfFills.contains (color, w, thickness))
+  match pdfLinkTargets
+      (Pdf.write (Layout.Geom.ofPage nestedDoc.page) oneFace nestedOut.pages nestedDoc.info) with
+  | .error e => failures ref s!"ulem link PDF: {e}"
+  | .ok targets =>
+    t "a link inside strikeout remains one PDF link annotation"
+      (targets == #["(https://example.org)".toUTF8])
+
+  let multiline (body : String) : Layout.Out :=
+    layoutOf oneFace (elabStr (dvDoc
+      ("\\page{ width = 110pt, height = 400pt, margin = 10pt }\n" ++ load) body)).1
+  let multilineOk (multi : Layout.Out) : Bool :=
+    let textYs := (bodyLines multi).filterMap fun l => if hasGlyphRun l then some l.y else none
+    let strikeYs := (bodyLines multi).filterMap fun l =>
+      if l.segs.any (· matches .decoration .lineThrough ..) then some l.y else none
+    textYs.size >= 2 && textYs.size == strikeYs.size && textYs.all strikeYs.contains
+  t "explicit and automatic multiline bodies draw one through-line per baseline"
+    (multilineOk (multiline "\\sout{First line\\\\Second line}") &&
+      multilineOk (multiline "\\sout{alpha beta gamma delta epsilon zeta eta theta}"))
+
+  let both := metricDecorationSegs (layoutOf oneFace (elabStr "\\underline{\\sout{aqa}}").1)
+  t "underline and line-through compose as two typed decoration kinds"
+    (both.any (fun (kind, _, _, _, _) => kind == .underline) &&
+      both.any (fun (kind, _, _, _, _) => kind == .lineThrough))

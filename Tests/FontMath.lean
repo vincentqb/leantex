@@ -1196,7 +1196,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-          | .gap _ _ | .rule .. | .image .. | .poly .. => false
+          | .gap _ _ | .decoratedGap _ _ _ | .rule .. | .decoration .. | .image .. | .poly .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
       -- word that hyphenates as body text must set unbroken as a heading,
@@ -1205,7 +1205,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
             | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '-')
-            | .gap _ _ | .rule .. | .image .. | .poly .. => false
+            | .gap _ _ | .decoratedGap _ _ _ | .rule .. | .decoration .. | .image .. | .poly .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
       t "a frame title never hyphenates"
@@ -1243,7 +1243,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '•')
-          | .gap _ _ | .rule .. | .image .. | .poly .. => false
+          | .gap _ _ | .decoratedGap _ _ _ | .rule .. | .decoration .. | .image .. | .poly .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
 
@@ -2051,8 +2051,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .run _ _ _ w glyphs _ _ _ _ _ _ =>
         if pick glyphs then return some x
         x := x + w
-      | .gap w _ => x := x + w
-      | .rule w _ _ _ => x := x + w
+      | .gap w _ | .decoratedGap w _ _ => x := x + w
+      | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
       | .image _ w _ => x := x + w
       | .poly _ _ => pure ()
     return none
@@ -2259,8 +2259,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         let mut x := l.x
         for s in l.segs do
           match s with
-          | .gap w _ => x := x + w
-          | .rule w _ _ _ => x := x + w
+          | .gap w _ | .decoratedGap w _ _ => x := x + w
+          | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
           | .image _ w _ => x := x + w
           | .poly _ _ => pure ()
           | .run _ _ _ w glyphs sz _ _ raise _ _ =>
