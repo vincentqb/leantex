@@ -1,0 +1,26 @@
+% rhythm: article display math placed from the baselines: a short line into a display and out of it (the short skips), a deep display under a long line (a lineskip below its limits), and an alignment after a short line (the long skips a display alignment always takes)
+% boundary: short-display Birch span
+% boundary: display-short Cedar span
+% boundary: par-deep Dogwood span
+% boundary: deep-par Elm span
+% boundary: par-align Fir span
+% boundary: align-par Hazel span
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\usepackage{unicode-math}
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\begin{document}
+Alder.
+\[ a + b = \text{Birch} \]
+Cedar follows.
+
+Delta sets one line that reaches past the display.
+\[ \sum_{i=1}^{n} x_{i} = \text{Dogwood} \]
+Elm follows the deep display.
+
+Fern.
+\begin{align*} a &= \text{Fir} \end{align*}
+Hazel follows the alignment.
+\end{document}

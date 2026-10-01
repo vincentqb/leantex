@@ -1,0 +1,31 @@
+% rhythm: beamer display math placed from the baselines, each in a top-aligned frame of its own: a long line into a display and out of it, a short line into one (the short skips), and a deep display under a long line (a lineskip below its limits)
+% boundary: par-display Birch span
+% boundary: display-par Cedar span
+% boundary: short-display Dogwood span
+% boundary: display-short Elm span
+% boundary: par-deep Fir span
+% boundary: deep-par Hazel span
+\documentclass{beamer}
+\usefonttheme{professionalfonts}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\usepackage{unicode-math}
+\setmathfont{FiraMath-Regular.otf}[Path=../corpus/fonts/]
+\begin{document}
+\begin{frame}[t]{Alder title}
+Alder sets one line past the display.
+\[ a + b = \text{Birch} \]
+Cedar follows.
+\end{frame}
+\begin{frame}[t]{Delta title}
+Delta.
+\[ a + b = \text{Dogwood} \]
+Elm follows.
+\end{frame}
+\begin{frame}[t]{Fern title}
+Fern sets one line past the display.
+\[ \sum_{i=1}^{n} x_{i} = \text{Fir} \]
+Hazel follows.
+\end{frame}
+\end{document}
