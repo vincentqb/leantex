@@ -24892,3 +24892,19 @@ unchanged main and on the integration tree; the baseline browser passed
 all twelve integration runs. No navigation assertion was weakened.
 The final private reference-corpus PDF and HTML are byte-identical to the
 outputs already checked by rendered-page and image probes.
+
+### 2026-10-01 — Stored definitions take effect at invocation
+
+Preparing a macro definition no longer records the names its replacement
+text might define. The conditional pass records executed definitions, and
+translation of stored replacement text restores its incoming binding set.
+This removes an eager name collector and an independent translation-state
+leak instead of adding another special case for installer macros.
+
+`macroBindingChecks` compares shipped layout text and visible typed HTML
+with literal controls across four nullary definers, unused and skipped
+calls, actual invocation, and provision before invocation. Thirty-six
+assertions fail on `fe32eef5` and pass after the correction. Twenty
+independent LuaLaTeX PDF probes confirm the definition timing. These
+guards cover nullary installers; parameter binding and group-local
+binding presence remain separate execution-state work.

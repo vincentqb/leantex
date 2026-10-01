@@ -2078,36 +2078,6 @@ private def condStripRaw (flags : Std.HashMap String Bool) : Raw → Raw × Bool
 
 end
 
-mutual
-
--- conserves: none — the scan answers a set of names, not a tree.
-/-- The names the definers inside a replacement text bind, at any depth:
-bound where the text is used, which the pass reads as bound from the
-definition on — the flat reading, which only ever errs toward "defined". -/
-private def condBindsList (acc : Array String) : List Raw → Array String
-  | [] => acc
-  | .ctrl d _ :: rest =>
-    let acc := if definesNext.contains d then
-        match (rest.dropWhile isSpaceOrStar).head?.bind boundName with
-        | some m => acc.push m
-        | none => acc
-      else acc
-    condBindsList acc rest
-  | r :: rest => condBindsList (condBindsRaw acc r) rest
-
-private def condBindsRaw (acc : Array String) : Raw → Array String
-  | .group body _ => condBindsList acc body.toList
-  | .env _ body _ => condBindsList acc body.toList
-  | .math _ body _ => condBindsList acc body.toList
-  | .word _ _ => acc
-  | .space => acc
-  | .par _ => acc
-  | .ctrl _ _ => acc
-  | .sym _ _ => acc
-  | .verb _ _ _ => acc
-
-end
-
 /-- A definition's operands as the pass reads them: where they stop, and
 which of them are replacement texts. An expanding definer's text is read
 where it stands, as TeX reads it, so it is not among the texts. -/
@@ -2574,9 +2544,9 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
       | none => condList ex raws (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
         -- The texts are expanded where the definition is used, never here:
-        -- nothing in them is decided, set or defined now. The names they
-        -- bind are bound from here on, and what the expansion cannot decide
-        -- is taken out of the definition the elaborator expands.
+        -- nothing in them is decided, set or defined now. What the
+        -- expansion cannot decide is taken out of the definition the
+        -- elaborator expands.
         let st ← get
         let liveVal := match bound.bind (condValueOf st.binds ·) with
           | some (some v) => if v.live then some v.serial else none
@@ -2590,18 +2560,15 @@ private def condList (ex : String → Pos → M (Option (Array Raw))) (raws : Ar
         let file := st.file
         let mut ops : Array Raw := #[]
         let mut stripped := false
-        let mut inner : Array String := #[]
         let mut texts : Array Pos := #[]
         for k in [i + 1:sh.stop] do
           if let some r := raws[k]? then
             if sh.bodies.contains k then
-              inner := condBindsRaw inner r
               let (r', h) := condStripRaw flags r
               ops := ops.push r'
               stripped := stripped || h
               if let .group _ gp := r then texts := texts.push gp
             else ops := ops.push r
-        for m in inner do recordDefined m
         if stripped && settles then
           if let (some m, some s) := (bound, liveVal) then
             for gp in texts do
@@ -7599,13 +7566,16 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedLens := (← get).lens
     let savedTop := (← get).tableTop
     let savedDefTop := (← get).defTop
+    let savedBound := (← get).bound
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
                               tableTop := false, defTop := saved > 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
     -- A group's assignments end with it (TeXbook ch. 24: an assignment is
-    -- local to the group it stands in).
+    -- local to the group it stands in). Translating stored replacement
+    -- text likewise installs none of the definitions it contains.
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
-                              lens := savedLens, tableTop := savedTop, defTop := savedDefTop }
+                              lens := savedLens, tableTop := savedTop, defTop := savedDefTop,
+                              bound := if saved > 0 then savedBound else st.bound }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.

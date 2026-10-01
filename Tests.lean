@@ -33,6 +33,7 @@ import Tests.CompatGate
 import Tests.HtmlTokens
 import Tests.HtmlA11y
 import Tests.Conditionals
+import Tests.MacroBinding
 import Tests.BoxRow
 import Tests.PackageCode
 import Tests.DiagAudit
@@ -55,7 +56,7 @@ import Tests.Natbib
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
-  xparseIgnoredOperandsChecks
+  xparseIgnoredOperandsChecks macroBindingChecks
   overlaySetChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -244,6 +245,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   picStateChecks ref oneFace
   ifxMeaningChecks ref oneFace
   macroUseChecks ref oneFace
+  macroBindingChecks ref oneFace
   picSiteChecks ref oneFace
   settleChecks ref
   quoteChecks ref oneFace
