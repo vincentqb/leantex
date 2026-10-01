@@ -821,27 +821,43 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- for. N0100 is matched on its structured subject, never on the message and
   -- never on "some N0100 exists" — the hook's own deferral note is an N0100
   -- too, so the weaker form holds even when the row does nothing at all.
-  for row in Compat.meaningFree do
-    let (name, arity, note) := row
-    let groups := String.join (List.replicate arity "{ignored_message_}")
-    let (diagDoc, diagDs) := elabStr ("\\documentclass{article}\n" ++
-      "\\AtBeginDocument{\\" ++ name ++ groups ++ "{SENTINEL}}\n" ++
-      "\\begin{document}\nx\n\\end{document}")
-    -- the sentinel is one group past the declared arity: it must survive
-    t s!"compat {name} consumes exactly its {arity} log-only groups"
-      (diagDoc.body == #[.para #[.text "SENTINEL x"]])
-    t s!"compat {name} lets no reserved character of a log group reach the page"
-      (diagDs.all fun d => d.code != "W0301" && d.code != "E0311" &&
-        d.severity != .error)
-    -- a row carrying a reason earns its silence through a named N0100; a row
-    -- carrying none is named by the silence guard instead (W0387)
-    if note.isSome then
-      t s!"compat {name} accounts for its no-op as N0100 naming the command"
-        (diagDs.any fun d => d.code == "N0100" &&
-          d.subject == some ("ctrl:nothing:" ++ name))
-    else
-      t s!"compat {name} is consumed with its loss named"
-        (diagDs.any fun d => d.code == "W0387")
+  -- Synthetic LuaLaTeX probes join {SENTINEL} directly to the first body
+  -- token. A literal or control space inside the hook survives; source
+  -- whitespace around \begin{document} supplies none.
+  let logFace ← match Font.parse
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"log-only hook fixture: {e}")
+  let logFonts := oneFaceOf logFace
+  for (spacing, separator, expected) in
+      [("adjacent", "", "SENTINELx"), ("literal space", " ", "SENTINEL x"),
+       ("control space", "\\ ", "SENTINEL x")] do
+    let (controlDs, controlOut, controlHtml, controlText) :=
+      sourceArtifacts logFonts (dvDoc "" expected)
+    t s!"compat {spacing} hook control ships exactly its literal text"
+      (controlDs.isEmpty && controlText == expected &&
+        (bodyLines controlOut).map (lineText ·) == #[expected])
+    for (name, arity, note) in Compat.meaningFree do
+      let groups := String.join (List.replicate arity "{ignored_message_}")
+      let source := dvDoc
+        ("\\AtBeginDocument{\\" ++ name ++ groups ++ "{SENTINEL}" ++ separator ++ "}\n") "x"
+      let (diagDs, out, html, _) := sourceArtifacts logFonts source
+      -- The sentinel is one group past the declared arity: it must survive
+      -- on the page, with precisely the spacing of its literal control.
+      t s!"compat {name} consumes exactly its {arity} log-only groups ({spacing})"
+        (reprStr out.pages == reprStr controlOut.pages && html == controlHtml)
+      t s!"compat {name} lets no reserved character of a log group reach the page ({spacing})"
+        (diagDs.all fun d => d.code != "W0301" && d.code != "E0311" &&
+          d.severity != .error)
+      -- A row carrying a reason earns its silence through one named N0100;
+      -- a row carrying none is named by the silence guard instead (W0387).
+      if note.isSome then
+        t s!"compat {name} accounts for its no-op as N0100 naming the command ({spacing})"
+          ((diagDs.filter fun d => d.code == "N0100" &&
+            d.subject == some ("ctrl:nothing:" ++ name)).size == 1)
+      else
+        t s!"compat {name} is consumed with its loss named ({spacing})"
+          (diagDs.any fun d => d.code == "W0387")
   -- The other half of the rule: an arbitrary unknown command still preserves
   -- its argument content, so the table is a named exception and not a licence
   -- to swallow groups.
