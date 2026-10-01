@@ -10940,7 +10940,11 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     if let some bpos := ju.2 then
       warnUnclosed ctx s!"'\\{n}'" bpos
     return (blocks, ⟨ju.1, by omega⟩)
-  else if ["href", "link", "hyperlink", "hypertarget"].contains n then
+  -- `renderedBuiltins`: the literal link arm fires only after `lookupUser`
+  -- fails, so a document's redefinition shadows it — the same precedence
+  -- the inline dispatch keeps, now kept here too.
+  else if ["href", "link", "hyperlink", "hypertarget"].contains n
+      && (lookupUser ctx n).isNone then
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     let j2 := skipSpaces raws (j + 1)

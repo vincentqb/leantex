@@ -155,6 +155,23 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     (!mAnchorText.isEmpty &&
       mtrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0 &&
       nestedTrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0)
+  -- User-definition precedence: `href`/`link`/`hyperlink`/`hypertarget` are
+  -- `renderedBuiltins`, which the block dispatch (like the inline dispatch)
+  -- must handle by its literal arm only AFTER `lookupUser` fails. A document
+  -- that redefines one with a block-shaped use is the user's command, not
+  -- the built-in link: no `#dest` anchor, the redefinition's own output.
+  let (rdoc, rds) := elabStr (dvDoc
+    "\\usepackage{hyperref}\n\\renewcommand{\\hyperlink}[2]{Redefined lead: #2}\n"
+    "\\hyperlink{dest}{Alpha words.\\par Beta words.}")
+  let rLinks := Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
+    (fun n _ => n) 0 rdoc.body
+  let rTrees := rdoc.body.map (HtmlDoc.blockNode {})
+  let rHrefs := rTrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  let rText := " ".intercalate ((allLines (layoutOf oneFace rdoc)).toList.map lineText)
+  t "a redefined block link name is the user's command, consulted before the built-in arm"
+    (rLinks == 0 && !rHrefs.contains "#dest" &&
+      hasStr rText "Redefined lead:" && hasStr rText "Alpha words." && hasStr rText "Beta words." &&
+      rds.all (fun d => !cascade.contains d.code))
 
 /-- **Paracol's two flows are one typed columns row.** The installed package
 sets each column's width from `\columnratio`, gives the final column the
