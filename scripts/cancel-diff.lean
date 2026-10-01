@@ -23,18 +23,19 @@ The struck content and the neighbour are separate math words, so Poppler
 isolates each; the value is the digit 7, kept upright. Gated invariants,
 both required of BOTH engines:
 
-  G1  room reserved   the neighbour sits further right under makeroom than
-                      under overlap (the reserved box holds the mark before
-                      the next atom); the makeroom−overlap advance is held
-                      to the band cross-engine
+  G1  room reserved   makeroom never moves the neighbour left of overlap;
+                      the makeroom−overlap advance is held to the band
+                      cross-engine whenever cancel.sty adds room
   G2  value to the right of the struck box            (\cancelto)
-  G3  value above the struck baseline                 (\cancelto)
+  G3  value top above the struck glyph top          (\cancelto)
 
-The cross-engine tolerance is a magnitude band [0.40, 2.50] on the room the
-mark reserves (the neighbour's makeroom−overlap advance) — a box quantity
-both engines derive from the struck ink and the same overbar clearance. It
-catches a gross divergence (a mark reserving no room, an order-of-magnitude
-misplacement) while tolerating the honest per-engine metric difference.
+The cross-engine tolerance is a magnitude band [0.40, 2.50] on a positive
+reference room effect. cancel.sty's `\@can@slash` selects a slope whose
+horizontal reach can already fit a narrow or tall operand: makeroom then
+adds no advance. Those cases are measured too, with the engine's extra
+clearance bounded by 2pt (the explicit "+2" line extension in cancel.sty
+v2.2). A zero engine effect against a positive reference still fails;
+zero reference effects never divide by zero or escape a bound.
 
 The value's rise and rightward offset are printed as evidence, NOT gated on
 magnitude: leantex sets the `\cancelto` value as the struck subformula's
@@ -71,7 +72,7 @@ def microPt (s : String) : Option Int := do
 def wordText (line : String) : String :=
   let after := String.intercalate ">" ((line.splitOn ">").drop 1)
   let body := (after.splitOn "</word>").headD ""
-  (((body.replace "&amp;" "&").replace "&lt;" "<").replace "&gt;" ">").trimAscii.toString
+  (((body.replace "&lt;" "<").replace "&gt;" ">").replace "&amp;" "&").trimAscii.toString
 
 /-- Every non-empty word box in a Poppler `-bbox` dump. cancel.sty's rules
 surface as empty-text word boxes; those are dropped, since the differential
@@ -97,11 +98,12 @@ def pointMicro (v : Int) : String :=
 
 /-- The mathematical-italic scalar an ASCII letter maps to in math mode,
 matching leantex's elaboration and unicode-math: `a`–`z` at U+1D44E, `A`–`Z`
-at U+1D434 (with the six holes the plane leaves filled from the Letterlike
-block — none used here). A digit stays itself. -/
+at U+1D434, with italic h at U+210E in Letterlike Symbols (Unicode's
+Mathematical Alphanumeric Symbols chart). A digit stays itself. -/
 def mathItalic (c : Char) : String :=
   let u := c.toNat
-  if 'a'.toNat ≤ u && u ≤ 'z'.toNat then
+  if c == 'h' then "ℎ"
+  else if 'a'.toNat ≤ u && u ≤ 'z'.toNat then
     String.singleton (Char.ofNat (0x1D44E + (u - 'a'.toNat)))
   else if 'A'.toNat ≤ u && u ≤ 'Z'.toNat then
     String.singleton (Char.ofNat (0x1D434 + (u - 'A'.toNat)))
@@ -110,10 +112,10 @@ def mathItalic (c : Char) : String :=
 def mathItalicStr (s : String) : String :=
   String.join (s.toList.map mathItalic)
 
-/-- One case of the invented matrix. `struck` is the ASCII struck content
-(mapped to math italic for word matching); `neighbour` the following atom;
+/-- One case of the invented matrix. `struck` is the TeX source and
+`struckWord` its expected Poppler text; `neighbour` the following atom;
 `value` the `\cancelto` target (`none` for a plain strike); `display`
-whether the math is set in display style; `opts` the cancel.sty options. -/
+whether the math is set in display style; `thick` selects `thicklines`. -/
 structure Case where
   label : String
   cmd : String
@@ -129,17 +131,19 @@ def mkCase (label cmd struck struckWord neighbour : String) (value : Option Stri
     (display thick : Bool := false) : Case :=
   { label, cmd, struck, struckWord, neighbour, value, display, thick }
 
-/-- The matrix: one axis moved at a time off a wide `\cancelto` base. `∫`
-gives a tall, narrow struck box; `abcd` a short, wide one; `v` a small one. -/
+/-- Every cancellation flavor over narrow, wide and tall struck content,
+then display and thick-rule variants of the wide arrow. Zero-area boxes
+have no struck word for Poppler to isolate; the universal containment
+contract and shipped-layout checks cover those independently. -/
 def cases : List Case :=
-  [ mkCase "narrow"  "cancelto" "v"      (mathItalicStr "v")    "Z" (some "7")
-  , mkCase "wide"    "cancelto" "abcd"   (mathItalicStr "abcd") "Z" (some "7")
-  , mkCase "tall"    "cancelto" "\\int"  "∫"                    "Z" (some "7")
-  , mkCase "display" "cancelto" "abcd"   (mathItalicStr "abcd") "Z" (some "7") true
-  , mkCase "thick"   "cancelto" "abcd"   (mathItalicStr "abcd") "Z" (some "7") false true
-  , mkCase "cancel"  "cancel"   "abcd"   (mathItalicStr "abcd") "Z" none
-  , mkCase "bcancel" "bcancel"  "abcd"   (mathItalicStr "abcd") "Z" none
-  , mkCase "xcancel" "xcancel"  "abcd"   (mathItalicStr "abcd") "Z" none ]
+  let shapes := [("narrow", "v", mathItalicStr "v"),
+    ("wide", "abcd", mathItalicStr "abcd"), ("tall", "\\int", "∫")]
+  ["cancel", "bcancel", "xcancel", "cancelto"].flatMap (fun cmd =>
+    shapes.map fun (label, struck, word) =>
+      mkCase s!"{cmd}-{label}" cmd struck word "Z"
+        (if cmd == "cancelto" then some "7" else none)) ++
+  [ mkCase "display" "cancelto" "abcd" (mathItalicStr "abcd") "Z" (some "7") true
+  , mkCase "thick" "cancelto" "abcd" (mathItalicStr "abcd") "Z" (some "7") false true ]
 
 def bodyOf (c : Case) : String :=
   let mark := match c.value with
@@ -203,38 +207,62 @@ structure Boxes where
 def isolate (c : Case) (words : Array WordBox) : Option Boxes := do
   -- Match by exact glyph text: this ignores cancel.sty's arrowhead (a `:`
   -- glyph), the engine's page number, and the mark rules (empty words).
-  let struck ← words.find? (·.text == c.struckWord)
-  let neighbour ← words.find? (·.text == mathItalicStr c.neighbour)
+  let unique (text : String) : Option WordBox :=
+    match (words.filter (·.text == text)).toList with
+    | [w] => some w
+    | _ => none
+  let struck ← unique c.struckWord
+  let neighbour ← unique (mathItalicStr c.neighbour)
   match c.value with
   | some v =>
-    let value ← words.find? (·.text == v)
+    let value ← unique v
     return { struck, neighbour, value := some value }
   | none => return { struck, neighbour, value := none }
 
+/-- Compare reserved advances in micro-points. The zero-reference budget
+is cancel.sty v2.2's explicit 2pt line extension in `\@can@slash`. Positive
+effects use the declared ratio band, compared before rounding. -/
+def roomAgreement (reference engine : Int) : Bool :=
+  0 ≤ reference && 0 ≤ engine &&
+    if reference == 0 then engine ≤ 2000000
+    else 400 * reference ≤ 1000 * engine && 1000 * engine ≤ 2500 * reference
+
 def selftest : IO UInt32 := do
   let xml := "<page>\n<word xMin=\"1.000000\" yMin=\"5.000000\" xMax=\"3.000000\" \
-yMax=\"7.000000\">ab</word>\n<word xMin=\"4.000000\" yMin=\"5.000000\" xMax=\"5.000000\" \
-yMax=\"7.000000\">Z</word>\n<word xMin=\"3.200000\" yMin=\"2.000000\" xMax=\"3.800000\" \
+yMax=\"7.000000\">𝑎𝑏</word>\n<word xMin=\"4.000000\" yMin=\"5.000000\" xMax=\"5.000000\" \
+yMax=\"7.000000\">𝑍</word>\n<word xMin=\"3.200000\" yMin=\"2.000000\" xMax=\"3.800000\" \
 yMax=\"3.000000\">7</word>\n<word xMin=\"1.500000\" yMin=\"5.500000\" xMax=\"2.500000\" \
 yMax=\"6.500000\"></word>\n</page>"
   let ws := parseWords xml
   let expected : Array WordBox :=
-    #[{ text := "ab", x0 := 1000000, y0 := 5000000, x1 := 3000000, y1 := 7000000 },
-      { text := "Z", x0 := 4000000, y0 := 5000000, x1 := 5000000, y1 := 7000000 },
+    #[{ text := "𝑎𝑏", x0 := 1000000, y0 := 5000000, x1 := 3000000, y1 := 7000000 },
+      { text := "𝑍", x0 := 4000000, y0 := 5000000, x1 := 5000000, y1 := 7000000 },
       { text := "7", x0 := 3200000, y0 := 2000000, x1 := 3800000, y1 := 3000000 }]
   let wsOk := ws == expected
-  let c := mkCase "t" "cancelto" "ab" "ab" "Z" (some "7")
+  let c := mkCase "t" "cancelto" "ab" "𝑎𝑏" "Z" (some "7")
   let iso := isolate c ws
   let isoOk := match iso with
-    | some b => b.struck.text == "ab" && b.neighbour.text == "Z" &&
+    | some b => b.struck.text == "𝑎𝑏" && b.neighbour.text == "𝑍" &&
         (b.value.map (·.text)) == some "7"
     | none => false
-  -- The math-italic mapping matches leantex elaboration on a known letter.
-  let mapOk := mathItalic 'a' == "𝑎" && mathItalic 'Z' == "𝑍" && mathItalic '7' == "7"
-  if wsOk && isoOk && mapOk then
+  -- Each expected glyph word must be present exactly once. Unrelated
+  -- words (page furniture or cancel.sty's arrow glyph) remain irrelevant.
+  let missingOk := ws.all fun w => (isolate c (ws.filter (·.text != w.text))).isNone
+  let uniqueOk := ws.all fun w => (isolate c (ws.push w)).isNone
+  let unrelatedOk := (isolate c (ws.push { text := ":", x0 := 0, y0 := 0, x1 := 1, y1 := 1 })).isSome
+  let escapedOk := wordText "<word>&amp;lt; &lt; &gt; &amp;</word>" == "&lt; < > &"
+  -- Unicode's italic h lives in Letterlike Symbols, not the plane-1 run.
+  let mapOk := mathItalic 'a' == "𝑎" && mathItalic 'h' == "ℎ" &&
+    mathItalic 'Z' == "𝑍" && mathItalic '7' == "7"
+  let roomOk := roomAgreement 0 0 && roomAgreement 0 2000000 &&
+    !roomAgreement 0 2000001 && !roomAgreement 0 (-1) &&
+    !roomAgreement (-1) 0 && !roomAgreement 1000000 0 &&
+    roomAgreement 1000000 400000 && roomAgreement 1000000 2500000 &&
+    !roomAgreement 1000000 399999 && !roomAgreement 1000000 2500001
+  if wsOk && isoOk && missingOk && uniqueOk && unrelatedOk && escapedOk && mapOk && roomOk then
     IO.println "cancel-diff --selftest: all passed"
     return 0
-  IO.eprintln s!"cancel-diff --selftest: FAIL words={wsOk} isolate={isoOk} map={mapOk}"
+  IO.eprintln s!"cancel-diff --selftest: FAIL words={wsOk} isolate={isoOk} missing={missingOk} unique={uniqueOk} unrelated={unrelatedOk} escaped={escapedOk} map={mapOk} room={roomOk}"
   return 1
 
 /-- A ratio `a / b` in per-mille, or none when `b` is zero. -/
@@ -259,7 +287,7 @@ def main (args : List String) : IO UInt32 := do
       return 2
   IO.println "cancel-diff: cancellation placement, LuaLaTeX (cancel.sty) vs leantex"
   IO.println "  shared face: FiraMath / Fira Sans (repository corpus)"
-  IO.println "  cross-engine magnitude band: [0.40, 2.50]; direction gated exactly"
+  IO.println "  room: [0.40, 2.50] × positive reference; 0–2pt when reference adds none"
   IO.println s!"  lualatex: {← version "lualatex" #["--version"] root}"
   IO.println s!"  poppler:  {← version "pdftotext" #["-v"] root}"
 
@@ -306,7 +334,7 @@ def main (args : List String) : IO UInt32 := do
       | some mb, some ob =>
         let gapMk := mb.neighbour.x0 - mb.struck.x0
         let gapOv := ob.neighbour.x0 - ob.struck.x0
-        let g1 := gapMk > gapOv
+        let g1 := gapMk ≥ gapOv
         unless g1 do failed := true
         effects := effects ++ [(ename, gapMk - gapOv)]
         IO.println s!"  {ename}: neighbour gap makeroom {pointMicro gapMk} pt, overlap {pointMicro gapOv} pt [G1 room {if g1 then "PASS" else "FAIL"}]"
@@ -324,25 +352,29 @@ def main (args : List String) : IO UInt32 := do
       | _, _ =>
         failed := true
         IO.println s!"  {ename}: could not isolate struck/neighbour/value boxes [FAIL]"
-    -- The reserved-room band is gated cross-engine. The value's rise and dx
-    -- are printed as evidence only: leantex sets the value as a superscript,
-    -- cancel.sty at the arrow tip, so they agree in direction, not scale.
-    let ratioLine (name : String) (m : List (String × Int)) : IO (Option Bool) := do
+    match effects.lookup "lualatex", effects.lookup "leantex" with
+    | some l, some e =>
+      cross := cross + 1
+      let ok := roomAgreement l e
+      unless ok do crossFail := crossFail + 1
+      let comparison := match ratioMille e l with
+        | some r => s!"{r}‰ [400, 2500]"
+        | none => s!"{pointMicro e} pt [0, 2]"
+      IO.println s!"    room agreement: {comparison} [{if ok then "PASS" else "FAIL"}]"
+    | _, _ => pure ()
+    -- Value rise and dx are evidence: the native target is a superscript,
+    -- while cancel.sty positions it at the arrow tip.
+    let ratioLine (name : String) (m : List (String × Int)) : IO Unit := do
       match m.lookup "lualatex", m.lookup "leantex" with
       | some l, some e =>
         match ratioMille e l with
         | some r =>
-          let ok := 400 ≤ r && r ≤ 2500
-          IO.println s!"    {name} leantex/lualatex = {r}‰{if name == "room effect" then s!" [{if ok then "in band" else "OUT OF BAND"}]" else " (evidence)"}"
-          return some ok
-        | none => IO.println s!"    {name}: lualatex baseline zero — skipped"; return none
-      | _, _ => return none
-    match ← ratioLine "room effect" effects with
-    | some ok => cross := cross + 1; unless ok do crossFail := crossFail + 1
-    | none => pure ()
-    let _ ← ratioLine "value rise" rises
-    let _ ← ratioLine "value dx" dxs
-  IO.println s!"\ncancel-diff: {cross} gated room-effect ratios, {crossFail} out of band"
+          IO.println s!"    {name} leantex/lualatex = {r}‰ (evidence)"
+        | none => IO.println s!"    {name}: lualatex baseline zero (evidence)"
+      | _, _ => pure ()
+    ratioLine "value rise" rises
+    ratioLine "value dx" dxs
+  IO.println s!"\ncancel-diff: {cross} gated room comparisons, {crossFail} out of band"
   if reportOnly then
     IO.println "cancel-diff: report only (no gate)"
     return 0
