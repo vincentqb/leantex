@@ -3149,14 +3149,26 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .alpha _ _ body =>
-    -- Unreachable on every public path, the same contract the MathML backend
-    -- states at its own `.alpha` arm: `resolveMathAlphas` eliminates each
-    -- `.alpha` node before any backend (`Math.resolveMathAlphas_covers`), and
-    -- the public entry `run` resolves first (`Ir.resolveMathAlphas`), so the
-    -- alpha-free corpus never takes this arm — two builds differing only here
-    -- are byte-identical on it. A node reaching here still lays its body out,
-    -- so no scalar is dropped; the alphabet styling it carried is the loss the
-    -- resolver would have named (N0018), never silent new content.
+    -- SHARED `.alpha`-arm contract (identical at the MathML backend's own
+    -- `.alpha` arm). Both arms are DEAD after resolution and CONTENT-PRESERVING:
+    --  (1) dead — `resolveMathAlphas` eliminates every `.alpha` nucleus before
+    --      any backend (`Math.resolveMathAlphas_covers`: the resolved body is
+    --      `alphaFree`, and `MNucleus.alphaFree` is `false` on `.alpha`), and
+    --      both public entries resolve first and idempotently (`Layout.run`
+    --      and `HtmlDoc.emitTree` call `Ir.resolveMathAlphas`;
+    --      `Ir.resolveMathAlphas_fixed_point` and `run_resolve_pages_agree`
+    --      pin that a second resolution rewrites nothing), so the alpha-free
+    --      corpus never takes this arm — two builds differing only in it are
+    --      byte-identical on that corpus;
+    --  (2) content-preserving — a node that somehow reached here still renders
+    --      every scalar of its body (laid out here as a plain row, kept inside
+    --      the MathML marker there); no scalar is dropped. The only lost thing
+    --      is the alphabet styling, which the resolver would have named (N0018).
+    -- The two backends render the dead arm differently (a plain row here; a
+    -- loud `merror` there) only because Layout has no error-node analogue to
+    -- MathML's `merror` and may add neither a diagnostic nor an artifact-
+    -- changing marker; since the arm is dead, that difference never ships, so
+    -- the backends stay consistent on every reachable input.
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac spec num den =>
     -- `\genfrac`'s style argument sets the whole construct in its style
@@ -11190,9 +11202,10 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- preceded layout). Coverage and family are the entry's own inputs
   -- (`FontSet.mathAlphabets`, `FontSet.mathFamily`), the single family
   -- spelling `Main` and the test harness also use. Resolving an already
-  -- alpha-free body is a fixed point adding no diagnostic
-  -- (`Ir.resolveMathAlphas_fixed_point`, `Ir.missingMathAlphas_alphaFree`),
-  -- so `Main`, which resolves once up front, is not double-counted.
+  -- alpha-free body is a fixed point (`Ir.resolveMathAlphas_fixed_point`)
+  -- adding no diagnostic (`Math.missingMathAlphas_alphaFree`), so `Main`,
+  -- which resolves once up front, is not double-counted; the entry
+  -- idempotence this gives is `run_resolve_pages_agree`.
   let res := Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily doc
   let out := addMarks (runCore geom fs pats res.1 imgs) (markFillsOf geom res.1)
   { out with diags := res.2 ++ out.diags }
@@ -11290,5 +11303,22 @@ theorem page_background_survives
     rw [hpf, Array.mem_toList_iff]
     exact Array.mem_append.mpr (Or.inl hf0)
   exact ⟨f, hfp, hx, hy, hw, hh⟩
+
+/-- **Entry-idempotence** (`_agree`): laying out the alpha-resolved document
+produces the same pages as laying out the original. `run` owns the
+math-alphabet door — it resolves first — so running it on an
+already-resolved body resolves nothing further (`Ir.resolveMathAlphas_fixed_point`),
+and the layout, which reads only the resolved body, is identical. The only
+difference between the two runs is in the diagnostics: the unresolved path
+emits the whole-alphabet census (N0018) once at the front, which the
+already-resolved path has nothing to add to (`Math.missingMathAlphas_alphaFree`).
+Stated through the fixed point, not `rfl`. -/
+theorem run_resolve_pages_agree
+    (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Ir.Doc) (imgs : Image.Store) :
+    (run geom fs pats (Ir.resolveMathAlphas fs.mathAlphabets fs.mathFamily doc).1 imgs).pages
+      = (run geom fs pats doc imgs).pages := by
+  simp only [run]
+  rw [Ir.resolveMathAlphas_fixed_point fs.mathAlphabets fs.mathFamily doc]
 
 end LeanTex.Core.Layout

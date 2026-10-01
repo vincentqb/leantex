@@ -306,12 +306,24 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
-    -- Unreachable on every public path: `resolveMathAlphas` eliminates each
-    -- `.alpha` node before either backend (`resolveMathAlphas_covers`), and
-    -- the driver and `HtmlDoc.emit` resolve first. A `.alpha` reaching here
-    -- is a bypass of that door, so it is loud — a MathML `merror` naming the
-    -- unresolved alphabet's content — never a silent `mrow` that would pass
-    -- as ordinary math. The body still renders inside, so no content is lost.
+    -- SHARED `.alpha`-arm contract (identical at the Layout backend's own
+    -- `.alpha` arm). Both arms are DEAD after resolution and CONTENT-PRESERVING:
+    --  (1) dead — `resolveMathAlphas` eliminates every `.alpha` nucleus before
+    --      either backend (`resolveMathAlphas_covers`: the resolved body is
+    --      `alphaFree`, and `MNucleus.alphaFree` is `false` on `.alpha`), and
+    --      both public entries resolve first and idempotently (`Layout.run`
+    --      and `HtmlDoc.emitTree` call `Ir.resolveMathAlphas`;
+    --      `Ir.resolveMathAlphas_fixed_point` pins that a second resolution
+    --      rewrites nothing), so a `.alpha` reaching here is a bypass of that
+    --      door and the alpha-free corpus never takes this arm;
+    --  (2) content-preserving — the body still renders (every scalar inside
+    --      the marker here, laid out as a plain row there); no scalar is lost.
+    -- The two backends render the dead arm differently (a loud `merror` here,
+    -- naming the bypass, since an `mrow` would pass as ordinary math; a plain
+    -- row there, Layout having no error-node analogue and being barred from
+    -- adding a diagnostic or an artifact-changing marker); since the arm is
+    -- dead, that difference never ships, so the backends stay consistent on
+    -- every reachable input.
     .elem "merror" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
