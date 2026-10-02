@@ -7617,6 +7617,12 @@ private def boxAt (rs : Array Raw) (i : Nat) :
     else none
   | _ => none
 
+/-- A linked row is only a candidate until elaboration resolves the link
+names. Keep the original calls beside the proposed row: an overriding
+macro owns its arguments, including boxes it discards. The space makes
+this internal environment unspellable as a document environment name. -/
+def linkedBoxRowMark : String := " linked box row"
+
 /-- Each run of minipages at one level whose separators are row glue holding
 a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
 declare: LaTeX sets such boxes on one line with the fill between them
@@ -7686,9 +7692,16 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
             else break
           | none => break
         if cols.size ≥ 2 then
-          out := out.push (.env "columns"
-            (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) cp0)
-          rows := rows.push (cp0, opts, false)
+          let row := Raw.env "columns"
+            (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) cp0
+          let source := rs.extract i j
+          if source.any (fun r => r matches .ctrl "href" _ | .ctrl "hyperlink" _) then
+            out := out.push (.env linkedBoxRowMark
+              (#[.group source cp0, .group #[row] cp0] ++
+                if opts then #[.space] else #[]) cp0)
+          else
+            out := out.push row
+            rows := rows.push (cp0, opts, false)
           i := j
         else
           -- A lone box is left as it stands: push its first token and
