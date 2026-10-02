@@ -126,6 +126,15 @@ def underlineSpacingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let narrow := { geom with pageW := Dim.pt 300, hmargin := Dim.pt 30 }
   spacingWitness ref fonts narrow "broken justified link"
     ("\\href{https://example.org/spacing}{" ++ long ++ "}") long false 3
+  let signed := "Amber\\hspace{-2pt}Cedar\\hspace{0pt}Stone Birch"
+  spacingWitness ref fonts geom "zero and negative spacing"
+    ("\\underline{" ++ signed ++ "}") signed
+  let styled := "\\textcolor{blue}{Amber }\\textit{Cedar }{\\large Stone }\\textbf{Birch}"
+  match ← serifFacesSet with
+  | none => check ref "spacing: shipped style faces load" false
+  | some faces =>
+    spacingWitness ref faces geom "font color size transitions"
+      ("\\underline{" ++ styled ++ "}") styled
   let plain := layoutOf fonts (elabStr phrase).1 geom
   check ref "plain spacing has no decoration" (((bodyLines plain).flatMap spacingPaint).isEmpty)
 
