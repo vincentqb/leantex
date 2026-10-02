@@ -4,7 +4,7 @@ open LeanTex.Core
 
 namespace Tests
 
-private def styleAttr (attrs : Array (String × String)) (key : String) : String :=
+def styleAttr (attrs : Array (String × String)) (key : String) : String :=
   ((attrs.find? (·.1 == key)).map (·.2)).getD ""
 
 /-- Read the emitted selector attributes, not the elaborator's selector parser.
@@ -168,26 +168,26 @@ private def styleTagCount (tree : Array Html.Node) (tag : String)
   ((elemAttrsList (· == tag) #[] tree.toList).filter fun (_, attrs) =>
     className.isEmpty || ((styleAttr attrs "class").splitOn " ").contains className).size
 
-private def styleBuild (fonts : Font.FontSet) (source : String) :
+def styleBuild (fonts : Font.FontSet) (source : String) :
     Layout.Out × Array Html.Node × Array Diag :=
   let (doc, ds) := elabStr source
   let out := layoutOf fonts doc
   let (_, tree, htmlDs) := HtmlDoc.emitTree {} doc
   (out, tree, ds ++ out.diags ++ htmlDs)
 
-private def stylePage (out : Layout.Out) (i : Nat) : Layout.Out :=
+def stylePage (out : Layout.Out) (i : Nat) : Layout.Out :=
   { out with pages := match out.pages[i]? with | some p => #[p] | none => #[] }
 
-private def styleText (out : Layout.Out) : String :=
+def styleText (out : Layout.Out) : String :=
   String.ofList ((shippedBodyGlyphs out).toList.map (·.scalar))
 
-private def styleCopies (text needle : String) : Nat :=
+def styleCopies (text needle : String) : Nat :=
   (text.splitOn needle).length - 1
 
 /-- The marker has already been held to one copy by styleWitness. Reading its
 shipped glyphs lets a positive assertion distinguish a real style from two
 identically unstyled (or blank) artifacts. Markers contain no spaces. -/
-private def styleGlyphs (out : Layout.Out) (marker : String) : Array ShippedGlyph :=
+def styleGlyphs (out : Layout.Out) (marker : String) : Array ShippedGlyph :=
   let glyphs := shippedBodyGlyphs out
   match (List.range glyphs.size).find? (fun i =>
       (glyphs.extract i (i + marker.length)).toList.map (·.scalar) == marker.toList) with
