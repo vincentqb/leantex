@@ -26,6 +26,7 @@ import Tests.PdfReadObjects
 import Tests.RasterPages
 import Tests.Diag
 import Tests.Themes
+import Tests.SlideLabels
 import Tests.FontMath
 import Tests.MathAlphaGeometry
 import Tests.MathAlphaSemantics
@@ -324,6 +325,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   footerBandChecks ref oneFace
   chromeFooterChecks ref oneFace
   numberingChecks ref oneFace
+  slideLabelChecks ref oneFace
   composeChecks ref oneFace
   frameFootChecks ref oneFace
   scannerChecks ref

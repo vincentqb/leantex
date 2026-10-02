@@ -992,8 +992,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\maketitle\n\\section{S}\n\\begin{frame}{One}\na\n\\end{frame}\n" ++
      "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "numbering deck source clean" ds.isEmpty
-  t "the numbering skips title and standout and reaches its count"
-    (doc.frameCount == 1 && doc.frameNumbers.toList.filterMap id == [1])
+  t "the numbering skips the title but counts standout frames"
+    (doc.frameCount == 2 && doc.frameNumbers.toList.filterMap id == [1, 2])
   let geom := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom
   t "numbering deck four pages" (out.pages.size == 4)
@@ -1001,7 +1001,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (out.pages.map (·.foot.isSome) == #[false, false, true, false])
   t "the content frame is frame 1, not 2"
     ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "S1")
-  t "the progress bar shows 0 of 1 before any content frame"
+  t "the progress bar shows 0 of 2 before any content frame"
     (match out.pages[1]? with
      | some p => (p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)) &&
          !(p.fills.any fun f => f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
@@ -1024,8 +1024,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      "\\begin{frame}{B}\nc\n\\end{frame}\n" ++
      "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "two-sequences deck source clean" dDs.isEmpty
-  t "two content frames count 1 and 2"
-    (dDoc.frameCount == 2 && dDoc.frameNumbers.toList.filterMap id == [1, 2])
+  t "two content frames and the standout count 1, 2 and 3"
+    (dDoc.frameCount == 3 && dDoc.frameNumbers.toList.filterMap id == [1, 2, 3])
   let dOut := layoutOf oneFace dDoc
   t "two-sequences deck six pages" (dOut.pages.size == 6)
   t "a stepped frame's pages share one footer"
@@ -1059,7 +1059,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (fOut.pages.any fun p => p.fills.any fun f =>
       f.w == mp && f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
   let (zDoc, zDs) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
-    ("\\maketitle\n\\section{S}\n\\begin{frame}[standout]\nQ\n\\end{frame}"))
+    "\\maketitle\n\\section{S}\n")
   t "zero-count deck source clean" zDs.isEmpty
   t "a deck with no countable frame draws no progress bar"
     (zDoc.frameCount == 0 &&
@@ -2811,7 +2811,8 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
        ":is(.step[data-step=\"2\"]) { opacity: 100%; }") == 1 &&
      count (".slide-track[data-snapped=\"3\"] " ++
        ":is(.step[data-step=\"2\"], .step[data-step=\"3\"]) { opacity: 100%; }") == 1 &&
-     count ".slide-track > section.slide { scroll-snap-align: start; scroll-snap-stop: always; }" == 2)
+     count ".slide-track { scroll-snap-align: start; scroll-snap-stop: always; }" == 2 &&
+     count ".slide-track > section.slide { scroll-snap-align: start;" == 0)
   t "reduced motion is the plain row at full colour, one page per frame"
     (count ".step { opacity: 100%; animation: none; }" == 1 &&
      count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; }" == 1 &&

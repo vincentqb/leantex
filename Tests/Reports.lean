@@ -32,6 +32,7 @@ import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.MarkdownInput
 import Tests.OverlaySets
+import Tests.SlideLabels
 import scripts.LandCore
 
 /-!
@@ -479,7 +480,11 @@ def reports : List Report := [
   { id := "R71", date := "2026-10-02"
     what := "internal links around boxes kept their annotations but used URI fragments instead of destinations on the final PDF pages"
     pins := [check% pdfDestinationChecks, check% recipeLinkWrapperChecks]
-    state := .guarded "4fec4fd2" .before .reviewer }
+    state := .guarded "4fec4fd2" .before .reviewer },
+  { id := "R72", date := "2026-10-02"
+    what := "HTML slides mixed title-derived fragments with frame numbers, omitted the first reveal suffix, and excluded standout content from the shared frame count"
+    pins := [check% slideLabelChecks, thm% Ir.Chrome.standoutFootBand_exact]
+    state := .guarded "7214eeb2" .before .reviewer }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

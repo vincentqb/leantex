@@ -167,6 +167,14 @@ with numbered reveal steps and one PDF page per step. Overlay lists select
 individual steps: `\uncover<1,4>{...}` selects steps 1 and 4, while
 `\uncover<1-4>{...}` selects every step from 1 through 4. Lists and ranges
 can be combined, as in `<1,3-5>`.
+HTML slide links use `#titlepage`, then `#section-0`, `#section-1`, …
+for section dividers, and `#1`, `#2`, … for content frames. Standout frames
+advance the content count while hiding their footer. A frame with reveals
+uses `#16.1`, `#16.2`, …; `#16` also opens its first reveal. After an
+explicit frame-number reset, content links use `#appendix-1`, … to stay
+distinct from the main deck. Repeated title pages use `#titlepage-2`, ….
+Existing title-based anchors remain available unless they conflict with
+a numbered or semantic slide link; such a conflict is diagnosed.
 `icons.tex` shows the fontawesome5 spellings
 (`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever
 installed or shipped face covers it, with a required text alternative.
@@ -184,8 +192,9 @@ digits, real superscripts and unit symbols.
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
 shows the frame-title bar, a section page with its progress bar, and a
 standout frame. `\chrome{standout-note=true}` keeps an explicit `\framefoot`
-note on an unnumbered standout frame. A deck that declares no theme gets the
-`daylight` bundle — warm paper, one azure accent, no title bar (`daylight.tex` shows it);
+note on a standout frame without showing its number. A deck that declares
+no theme gets the `daylight` bundle — warm paper, one azure accent, no title bar
+(`daylight.tex` shows it);
 `\theme{default}` opts back to the bare look, as beamer's own
 `\usetheme{default}` does. `theme-modern.tex` sketches the rest of the M5b
 bundle (dark variant, chrome) and does not build yet.

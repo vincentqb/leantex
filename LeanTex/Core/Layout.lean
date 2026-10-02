@@ -1116,7 +1116,7 @@ structure PageOut where
   /-- The countable frame this page belongs to — its `Ir.frameNumbers`
   number, written at `finishPage` from the same `.foot` op that carries
   the footer, so a stepped or spilling frame's pages all bear it. `none`
-  on section pages, the title page, standout frames, and every page of a
+  on section pages, the title page, and every page of a
   flow-class document: the page→frame attribution the partition statement
   `pages_partition_frames` (Obligations) ranges over. -/
   frame : Option Nat := none
@@ -6554,9 +6554,9 @@ private inductive Op where
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   /-- The chrome footer for pages closed from here on, with the number of
-  the countable frame the pages belong to: a frame sets both (its own
-  number, the section in force), a section page or standout frame clears
-  them, and a spill page inherits its frame's. -/
+  the countable frame the pages belong to. A standout keeps its number
+  while hiding its footer; a section page clears both, and a spill page
+  inherits its frame's. -/
   | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
       (look : Option Ir.TitledLook)
   /-- The logo state changes here: pages from this point carry `content`
@@ -6692,7 +6692,7 @@ private structure Acc where
   resolving-site half of the declared ground on `Seg.run`. -/
   ground : Option Ir.Color := none
   /-- The number of the frame being collected, from `Ir.frameNumbers`:
-  `some k` for the k-th countable frame, `none` for a title or standout
+  `some k` for the k-th countable frame, `none` for a title
   frame. Threaded by `run`'s driver off the one numbering — nothing in the
   walk counts. -/
   frameNum : Option Nat := none
@@ -8777,11 +8777,10 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
 
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the
 footer that belongs to the frame — its pages, spill pages included, carry
-the frame's own number. A frame the numbering skips — the title page, a
-standout — normally carries no footer: moloch renders both plain
-(beamerinnerthememoloch.dtx:314-320, 777-778), and a number slot with no
-number has nothing true to show. An explicit standout-note restoration
-is selected by the shared band rule. -/
+the frame's own number. Title and standout pages normally carry no footer:
+moloch renders both plain (beamerinnerthememoloch.dtx:314-320, 777-778).
+The shared band rule keeps that furniture choice separate from counting
+the standout, and selects an explicitly restored standout note. -/
 private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
   let a := a.pageBreak
   let a := { a with ops := a.ops.push (.frameOpen breakable) }

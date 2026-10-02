@@ -1930,19 +1930,20 @@ def artStagesList (inl : Option String) (acc : Array (Option String)) :
 
 end
 
-/-- The plain frames' declared grounds in document order, read at the one
-resolving site both backends answer to (`Ir.frameGroundOf`): the palette in
-force at each top-level frame that is neither standout nor the title page —
-the top-level walk both backends make. -/
-def artFrameGrounds (doc : Ir.Doc) : Array (Option Ir.Color) := Id.run do
+/-- The frames' declared grounds in document order, read at the one
+resolving site both backends answer to (`Ir.frameGroundOf`). The HTML
+plain-stage judge excludes the standout inversion; the PDF frame-number
+judge includes it, since a hidden footer does not remove a content frame. -/
+def artFrameGrounds (doc : Ir.Doc) (includeStandout : Bool := false) :
+    Array (Option Ir.Color) := Id.run do
   let mut pal := doc.palette
   let mut out : Array (Option Ir.Color) := #[]
   for b in doc.body do
     match b with
     | .setPalette p => pal := p
     | .frame _ standout valign _ _ =>
-      if !standout && !(valign matches .golden) then
-        out := out.push (Ir.frameGroundOf pal false valign)
+      if (includeStandout || !standout) && !(valign matches .golden) then
+        out := out.push (Ir.frameGroundOf pal standout valign)
     | _ => pure ()
   return out
 
@@ -2021,7 +2022,7 @@ color: var(--fg, var(--ink)); }\n}\n"
     ("the ink rule gone", root ++
       "section.slide { background: var(--bg, var(--surface)); }\n", live, true)]
 
-/-- Every page of a plain frame that does not stand on the frame's declared
+/-- Every page of a counted frame that does not stand on the frame's declared
 ground: the PDF half of the stage-ground claim, read off `Layout.Out` — the
 fill the page ships first, which `finishPage` prepends whole. A frame on an
 undeclared ground ships no full-page fill; a declared one ships its own
@@ -2033,7 +2034,9 @@ def artPageGroundOffences (geom : Layout.Geom) (expected : Array (Option Ir.Colo
   for p in pages do
     i := i + 1
     let some k := p.frame | continue
-    let want := expected[k - 1]?.getD none
+    let some want := expected[k - 1]? | do
+      out := out.push s!"page {i} names frame {k} without a declared ground entry"
+      continue
     let ground := p.fills[0]?.bind fun f =>
       if f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH then some f.color
       else none
@@ -2077,7 +2080,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc geom none (← corpusStore doc)
-    let pageOffs := artPageGroundOffences geom expected out.pages
+    let pageOffs := artPageGroundOffences geom (artFrameGrounds doc true) out.pages
     t s!"stage ground {n} pdf: {pageOffs.toList}" pageOffs.isEmpty
   t s!"stage ground: slides fixtures are judged ({judged})" (0 < judged)
   t s!"stage ground: declared grounds are reached ({declared})" (0 < declared)
@@ -2093,15 +2096,31 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let egeom := Layout.Geom.ofPage edoc.page
   let eout := layoutOf oneFace edoc egeom
   t s!"stage ground epoch deck: one page per frame ({eout.pages.size})" (eout.pages.size == 3)
-  let pageOffs := artPageGroundOffences egeom expected eout.pages
+  let pageOffs := artPageGroundOffences egeom (artFrameGrounds edoc true) eout.pages
   t s!"stage ground epoch deck pdf: {pageOffs.toList}" pageOffs.isEmpty
   let (sdoc, _) := elabStr artEpochSpillDeck
   let sgeom := Layout.Geom.ofPage sdoc.page
   let sout := layoutOf oneFace sdoc sgeom
   t s!"stage ground spill deck: the frame continues ({sout.pages.size} pages)"
     (sout.pages.size ≥ 2 && sout.pages.all (·.frame == some 1))
-  let spillOffs := artPageGroundOffences sgeom (artFrameGrounds sdoc) sout.pages
+  let spillOffs := artPageGroundOffences sgeom (artFrameGrounds sdoc true) sout.pages
   t s!"stage ground spill deck pdf: {spillOffs.toList}" spillOffs.isEmpty
+  let (mixed, _) := elabStr (deck169 "\\theme{moloch}"
+    ("\\begin{frame}{Before}FirstBody\\end{frame}\n" ++
+     "\\begin{frame}[standout]{Aside}AsideBody\\end{frame}\n" ++
+     "\\begin{frame}{After}LastBody\\end{frame}"))
+  let mgeom := Layout.Geom.ofPage mixed.page
+  let mout := layoutOf oneFace mixed mgeom
+  let mgrounds := artFrameGrounds mixed true
+  t "stage ground: a counted standout keeps its own inversion between ordinary frames"
+    (mgrounds == #[mixed.palette.find? "bg", some (Ir.Design.ofDoc mixed).standout.bg,
+        mixed.palette.find? "bg"] &&
+      mout.pages.map (·.frame) == #[some 1, some 2, some 3] &&
+      (artPageGroundOffences mgeom mgrounds mout.pages).isEmpty)
+  let missingFill := mout.pages.mapIdx fun i p => if i == 1 then { p with fills := #[] } else p
+  t "stage ground: the PDF judge rejects a missing standout fill and an unknown frame"
+    (!(artPageGroundOffences mgeom mgrounds missingFill).isEmpty &&
+      !(artPageGroundOffences mgeom #[] mout.pages).isEmpty)
   -- beamer's own spelling of the ground: `background canvas`'s bg is the
   -- canvas fill (the default template's full-page rule), so in the preamble
   -- it declares the document's ground and in the body an epoch's.
@@ -2118,7 +2137,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (artFrameGrounds bdoc == #[bdoc.palette.find? "bg", some { r := 0xF0, g := 0xE8, b := 0xD8 }] &&
      bds.all (·.severity == .note))
   let bgeom := Layout.Geom.ofPage bdoc.page
-  let bOffs := artPageGroundOffences bgeom (artFrameGrounds bdoc) (layoutOf oneFace bdoc bgeom).pages
+  let bOffs := artPageGroundOffences bgeom (artFrameGrounds bdoc true) (layoutOf oneFace bdoc bgeom).pages
   let (bhead, bbody, _) := HtmlDoc.emitTree {} bdoc
   let bcss := artTreeCssList (artTreeCssList "" bhead.toList) bbody.toList
   let bHtml := artStageGroundOffences (artFrameGrounds bdoc) bcss bbody

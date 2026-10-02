@@ -25694,3 +25694,54 @@ The title-page guard certifies isolation, declaration scope and vertical
 placement. It does not certify the article class's empty page style or page
 counter reset. Those still need a page-scoped furniture/counter representation;
 the existing flow-page lowering does not implement them.
+
+### 2026-10-02 — One frame count and explicit HTML slide labels
+
+Content numbering and footer visibility are independent. Standout frames
+advance `Ir.frameNumbers` in both artifacts, while `Chrome.frameFootBand`
+still hides their furniture unless an explicit note is restored. The
+generalized `standoutFootBand_exact` holds for every optional frame number,
+note setting and note body: restoring a note never restores numeric ink.
+
+Each emitted HTML snap carries its canonical `data-slide-label`. Content
+frames use the shared frame number; every reveal of a stepped frame has a
+dotted suffix, including its first reveal. The bare number aliases that
+first reveal. Title pages use `titlepage`, then `titlepage-2`, and emitted
+section dividers use `section-0`, `section-1`, and so on. A heading that
+does not open a divider consumes no divider ordinal. An explicit frame
+restart prefixes the restarted addresses with `appendix-`.
+
+These labels are HTML addresses, not a second content counter. The existing
+constant deck script reads them directly instead of deriving a second
+numbering from title slugs. Existing DOM anchors remain aliases. Canonical
+labels take precedence over an alias for another slide, and W0327 names
+that conflict. Missing-fragment checking admits canonical routes only when
+the constant script actually ships; an article still diagnoses the same
+unresolved fragments.
+
+Reduced motion navigates once per stage. Testing only spacer visibility
+skipped entire stepped slides when their spacers were hidden; stage
+identity now determines the next stop in either direction. Explicit reveal
+links still restore their step, and normal scrolling, reloads and history
+retain the existing navigation state.
+
+When reveal spacers are hidden, the outer track carries snapping. The
+sticky inner stage's moving snap area could strand backward-then-forward
+navigation on the preceding slide. The browser guard reproduces that
+failure under reduced motion and checks the same stable track on the
+no-timeline floor.
+
+`slideLabelChecks` fails 78 assertions on `7214eeb2` and passes after the
+fix. It checks canonical labels and retained aliases on the typed HTML,
+alongside actual footer slots and glyphs on `Layout.Out`, including repeated
+titles, hidden standouts, repeated section names, appendix resets and
+numeric/semantic anchor collisions. The shared numbering proofs still
+compile. The benchmark completes with five samples per case; its reference
+list growth check measures 4.0 times for four times the input, within its
+existing bound of eight.
+
+Final combined validation passes the warnings-as-failures build, `lake
+test`, and every target cell and browser-face capture across the browser
+oracle's 86 fixtures in Chromium. Firefox cannot launch on this host and
+remains untested. The private reference deck compiles to both artifacts;
+its HTML carries unique labels and a contiguous shared content count.

@@ -2619,11 +2619,11 @@ def stepSnapHide : DeckRule :=
   { selector := [.lit ".snap"], decls := [("display", "none")]
     requires := .unsupported .viewTimeline }
 
-/-- The floor's snap carrier for a stepped frame: with the spacers
-hidden the stage itself is the snap page, through the same alignment the
-door rule declares. -/
+/-- With spacers hidden, the track is the frame's stable snap box. The
+inner stage is sticky: its moving snap area can keep backward-then-forward
+navigation on the preceding frame. -/
 def stepTrackFloorSnap : DeckRule :=
-  { selector := [.lit ".slide-track > section.slide"]
+  { selector := [.lit ".slide-track"]
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")]
     requires := .unsupported .viewTimeline }
 
@@ -2817,7 +2817,7 @@ def stepCoveredGuard : DeckRule :=
 
 /-- The track's reduced-motion reverts: one page per stepped frame — the
 spacers collapse (their presses would be dead with the fade gone), the
-track takes one viewport, and the stage keeps the frame's snap. -/
+track takes one viewport and keeps the frame's snap. -/
 def stepTrackWidthReduce : DeckRule :=
   { selector := [.lit ".slide-track"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw")]
@@ -2828,7 +2828,7 @@ def stepSnapReduceHide : DeckRule :=
     part := .reduce }
 
 def stepTrackSnapReduce : DeckRule :=
-  { selector := [.lit ".slide-track > section.slide"]
+  { selector := [.lit ".slide-track"]
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")]
     part := .reduce }
 
@@ -3671,7 +3671,7 @@ so on the timeline path the snap points count one per stepless frame
 plus one per step — the PDF handout's own pagination
 (`pages_partition_frames`, the owed PDF half, is this count's twin: its
 per-frame page count is `Ir.frameSteps`, this count's source).
-On the floor the spacers hide (`stepSnapHide`) and the stage takes the
+On the floor the spacers hide (`stepSnapHide`) and the track takes the
 frame's one snap (`stepTrackFloorSnap`): one snap point per frame.
 `_covers`'s grade over the partition: each fact is the membership of the
 rule that carries it, in the gate that scopes it. -/
@@ -3683,10 +3683,11 @@ theorem snap_pages_partition_frames (v pg : String) (cp ms : Nat) (hms : 2 ≤ m
       ("display", "none") ∈ stepSnapHide.decls) ∧
     (stepTrackFloorSnap ∈ deckRules v pg cp ms ∧
       stepTrackFloorSnap.requires = .unsupported .viewTimeline ∧
+      stepTrackFloorSnap.selector = [.lit ".slide-track"] ∧
       ("scroll-snap-align", "start") ∈ stepTrackFloorSnap.decls) :=
   ⟨⟨mem_deckRules_base (by simp [deckBase]), rfl, by decide⟩,
    ⟨mem_deckRules_step hms (mem_stepRules_fixed (by decide)), rfl, by decide⟩,
-   ⟨mem_deckRules_step hms (mem_stepRules_fixed (by decide)), rfl, by decide⟩⟩
+   ⟨mem_deckRules_step hms (mem_stepRules_fixed (by decide)), rfl, rfl, by decide⟩⟩
 
 /-- The text census does not depend on which path a browser takes:
 trivially, since the stylesheet ships no text — no deck rule sets a
@@ -3781,7 +3782,7 @@ points: ArrowRight/ArrowDown/PageDown/Space → next; ArrowLeft/ArrowUp/
 PageUp/Shift+Space → previous; Home/End → first/last. It ignores key
 events whose target is editable or that carry modifiers other than
 Shift, and respects reduced motion (`matchMedia` → instant scroll, and
-hidden spacers are skipped so a stepped frame is one press). "Snap
+each stepped frame is one stop, even when its spacers are hidden). "Snap
 point" is the same list the CSS snaps to, read by the same selector the
 stylesheet declares alignment on: `[data-snap]` (`deckSnapDoor`) — one
 door, so the script and the stylesheet cannot name different elements.
@@ -3792,9 +3793,11 @@ and writes `data-snapped="k"` on its track, which the floor's numeric
 uncover rules read (`stepSnappedRule`). At startup it marks
 `<html data-deck-script>`, the gate the floor's covered default rides
 (`stepFloorCovered`): without the script that covered state is never
-declared. Fragments follow the shared frame number, with a dotted step
-suffix after the first reveal. Unnumbered stages and restarted frame
-numbers use unique title slugs; authored slug links still resolve. Keyboard
+declared. Every snap carries its canonical `data-slide-label`: the shared
+frame number, with a dotted suffix on every reveal of a stepped frame;
+`titlepage` and `section-k` for front matter; an `appendix-` prefix after a
+frame-number restart. Bare frame numbers still reach the first reveal,
+and authored title-slug links still resolve. Keyboard
 moves push history, native scrolling replaces the current fragment, and
 hash navigation restores the snap without adding history. -/
 def deckScript : String :=
@@ -3804,28 +3807,11 @@ def deckScript : String :=
   if (snaps.length === 0) return;
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
-  const stages = [...new Set(snaps.map(stageOf))];
-  const reserved = new Set(stages.map(s => s.dataset.frameNumber).filter(Boolean));
-  const numbered = new Set();
-  const keys = new Map(stages.map((stage, i) => {
-    const n = stage.dataset.frameNumber;
-    let key;
-    if (n && !numbered.has(n)) {
-      key = n;
-      numbered.add(n);
-    } else {
-      key = stage.id || `page-${i + 1}`;
-      while (reserved.has(key)) key += \"-\";
-    }
-    reserved.add(key);
-    return [stage, { key, step: 0 }];
-  }));
-  const links = snaps.map(s => {
-    const entry = keys.get(stageOf(s));
-    entry.step += 1;
-    return entry.step === 1 ? entry.key : `${entry.key}.${entry.step}`;
-  });
+  const links = snaps.map(s => s.dataset.slideLabel);
   const routes = new Map(links.map((key, i) => [key, i]));
+  links.forEach((key, i) => {
+    if (key.endsWith(\".1\")) routes.set(key.slice(0, -2), i);
+  });
   const box = (el) => {
     const r = el.getBoundingClientRect();
     const stage = stageOf(el);
@@ -3898,8 +3884,10 @@ def deckScript : String :=
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
   const skip = (i, dir) => {
-    while (reduce.matches && snaps[i] && snaps[i].getBoundingClientRect().width === 0)
-      i += dir;
+    if (!reduce.matches) return i;
+    while (snaps[i] && stageOf(snaps[i]) === stageOf(snaps[cur])) i += dir;
+    if (!snaps[i]) return cur;
+    while (i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
     return i;
   };
   addEventListener(\"keydown\", (e) => {
@@ -3909,7 +3897,10 @@ def deckScript : String :=
         (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
-    else if (e.key === \"End\") i = snaps.length - 1;
+    else if (e.key === \"End\") {
+      i = snaps.length - 1;
+      while (reduce.matches && i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
+    }
     else if ((e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
         e.key === \"ArrowUp\" || e.key === \"PageUp\") i = skip(cur - 1, -1);
     else if ((e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
@@ -3933,28 +3924,11 @@ theorem deck_script_constant : deckScript =
   if (snaps.length === 0) return;
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
-  const stages = [...new Set(snaps.map(stageOf))];
-  const reserved = new Set(stages.map(s => s.dataset.frameNumber).filter(Boolean));
-  const numbered = new Set();
-  const keys = new Map(stages.map((stage, i) => {
-    const n = stage.dataset.frameNumber;
-    let key;
-    if (n && !numbered.has(n)) {
-      key = n;
-      numbered.add(n);
-    } else {
-      key = stage.id || `page-${i + 1}`;
-      while (reserved.has(key)) key += \"-\";
-    }
-    reserved.add(key);
-    return [stage, { key, step: 0 }];
-  }));
-  const links = snaps.map(s => {
-    const entry = keys.get(stageOf(s));
-    entry.step += 1;
-    return entry.step === 1 ? entry.key : `${entry.key}.${entry.step}`;
-  });
+  const links = snaps.map(s => s.dataset.slideLabel);
   const routes = new Map(links.map((key, i) => [key, i]));
+  links.forEach((key, i) => {
+    if (key.endsWith(\".1\")) routes.set(key.slice(0, -2), i);
+  });
   const box = (el) => {
     const r = el.getBoundingClientRect();
     const stage = stageOf(el);
@@ -4027,8 +4001,10 @@ theorem deck_script_constant : deckScript =
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
   const skip = (i, dir) => {
-    while (reduce.matches && snaps[i] && snaps[i].getBoundingClientRect().width === 0)
-      i += dir;
+    if (!reduce.matches) return i;
+    while (snaps[i] && stageOf(snaps[i]) === stageOf(snaps[cur])) i += dir;
+    if (!snaps[i]) return cur;
+    while (i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
     return i;
   };
   addEventListener(\"keydown\", (e) => {
@@ -4038,7 +4014,10 @@ theorem deck_script_constant : deckScript =
         (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
-    else if (e.key === \"End\") i = snaps.length - 1;
+    else if (e.key === \"End\") {
+      i = snaps.length - 1;
+      while (reduce.matches && i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
+    }
     else if ((e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
         e.key === \"ArrowUp\" || e.key === \"PageUp\") i = skip(cur - 1, -1);
     else if ((e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
@@ -6610,8 +6589,12 @@ the `<nav>` landmarks, the `id` anchors, and the in-page link targets
 judged, never the IR — a backend conditional may have dropped a nav or an
 anchor on the way here, and only the tree knows what this page carries. -/
 private structure PageFacts where
-  ids : Array String := #[]
+  /-- DOM anchors with the canonical snap that contains them, when any. -/
+  ids : Array (String × Option String) := #[]
   fragmentRefs : Array String := #[]
+  /-- Canonical labels read by the deck's script, in snap order. -/
+  slideLabels : Array String := #[]
+  deck : Bool := false
   /-- Unlabeled `<nav>` landmarks: a labeled one is distinguishable, so
   only these count toward W0325 (ARIA Landmark Regions). -/
   navs : Nat := 0
@@ -6622,25 +6605,28 @@ private structure PageFacts where
 
 mutual
 
-private def pageFactsOne (acc : PageFacts) : Node → PageFacts
+private def pageFactsOne (stage : Option String) (acc : PageFacts) : Node → PageFacts
   | .text _ => acc
   | .style _ => acc
-  | .script _ _ => acc
+  | .script _ text => { acc with deck := acc.deck || text == deckScript }
   | .elem tag attrs kids =>
+    let stage := (attrOf? attrs "data-slide-label").orElse (fun _ => stage)
+    let acc := if attrs.any (·.1 == "data-snap") then
+        { acc with slideLabels := acc.slideLabels ++ stage.toArray } else acc
     let acc := if tag == "nav" && attrs.all (·.1 != "aria-label") then
         { acc with navs := acc.navs + 1 } else acc
     let acc := if attrs.any (fun kv => kv.1 == "class" && kv.2 == "reveal-scroll") then
         { acc with reveals := acc.reveals + 1 } else acc
     let acc := attrs.foldl (init := acc) fun a kv =>
-      if kv.1 == "id" then { a with ids := a.ids.push kv.2 }
+      if kv.1 == "id" then { a with ids := a.ids.push (kv.2, stage) }
       else if kv.1 == "href" && kv.2.startsWith "#" then
         { a with fragmentRefs := a.fragmentRefs.push kv.2 }
       else a
-    pageFactsList acc kids.toList
+    pageFactsList stage acc kids.toList
 
-private def pageFactsList (acc : PageFacts) : List Node → PageFacts
+private def pageFactsList (stage : Option String) (acc : PageFacts) : List Node → PageFacts
   | [] => acc
-  | k :: rest => pageFactsList (pageFactsOne acc k) rest
+  | k :: rest => pageFactsList stage (pageFactsOne stage acc k) rest
 
 end
 
@@ -6695,12 +6681,13 @@ private def claimStageName (taken : Std.HashSet String) : Node → Node × Std.H
   | .script attrs s => (.script attrs s, taken)
 
 /-- The snap spacers of a stepped frame's track, one per overlay step:
-each claims its deep-link anchor `<frame>-k` through the same door as
+each carries the canonical fragment `<label>.k` and claims its title-slug
+alias `<frame>-k` through the same door as
 every id this backend assigns (`claimId`), a clash named exactly as a
 frame title's is. Recursion over the step list with threaded
 accumulators, so the spacer count is a statement
 (`track_snaps_exact`), not a reading of a loop. -/
-private def snapWalk (id text : String) (kids : Array Node)
+private def snapWalk (id text label : String) (kids : Array Node)
     (taken : Std.HashMap String String) (diags : Array Diag) :
     List Nat → Array Node × Std.HashMap String String × Array Diag
   | [] => (kids, taken, diags)
@@ -6713,9 +6700,10 @@ anchor '{id}-{k}'; the step anchor becomes '{sid}'"
           (help := some s!"an in-page link '#{id}-{k}' reaches only \
 the first; retitle one frame, or link to '#{sid}'"))
       | none => diags
-    snapWalk id text
+    snapWalk id text label
       (kids.push (Html.elem "div" #[]
-        #[("class", "snap"), ("id", sid), ("data-snap", "")]))
+        #[("class", "snap"), ("id", sid), ("data-snap", ""),
+          ("data-slide-label", s!"{label}.{k}")]))
       (taken.insert sid text) diags rest
 
 /-- The steps a frame with `steps` overlay steps snaps through: 1 to
@@ -6728,14 +6716,14 @@ private def stepList (steps : Nat) : List Nat :=
     (stepList steps).length = steps := by
   simp [stepList]
 
-private theorem snapWalk_count (id text : String) :
+private theorem snapWalk_count (id text label : String) :
     ∀ (ks : List Nat) (kids : Array Node) (taken : Std.HashMap String String)
       (diags : Array Diag),
-      (snapWalk id text kids taken diags ks).1.size = kids.size + ks.length
+      (snapWalk id text label kids taken diags ks).1.size = kids.size + ks.length
   | [], _, _, _ => rfl
   | k :: rest, kids, taken, diags => by
     unfold snapWalk
-    rw [snapWalk_count id text rest]
+    rw [snapWalk_count id text label rest]
     simp only [Array.size_push, List.length_cons]
     omega
 
@@ -6745,10 +6733,10 @@ private theorem snapWalk_count (id text : String) :
 `deckStepCss` reads back as `--steps` and the very count the PDF handout
 paginates the frame by (that half is the owed `pages_partition_frames`;
 there is no umbrella theorem over the two, one half being owed). -/
-private theorem track_snaps_exact (id text : String)
+private theorem track_snaps_exact (id text label : String)
     (taken : Std.HashMap String String) (diags : Array Diag)
     (frame : Ir.Block) :
-    (snapWalk id text #[] taken diags
+    (snapWalk id text label #[] taken diags
         (stepList (Ir.frameSteps frame))).1.size
       = Ir.frameSteps frame := by
   rw [snapWalk_count, stepList_length]
@@ -7102,11 +7090,13 @@ def emitTree (cfg : Config) (doc : Doc) :
       (blockNodesInto cfg #[] doc.body.toList, #[])
     else Id.run do
       -- The one numbering: the same array the PDF path threads
-      -- (`Ir.frameNumbers`, T2–T4). This walk indexes it and counts
-      -- nothing, so the two backends cannot disagree.
+      -- (`Ir.frameNumbers`, T2–T4). Content numbers come only from it;
+      -- the local front-matter ordinals name HTML fragment addresses.
       let nums := doc.frameNumbers
       let mut total := doc.frameCount
       let mut done := 0
+      let mut titlePages := 0
+      let mut sectionPages := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
       -- The body's `\logo` declarations, keyed by their position: the
@@ -7156,6 +7146,12 @@ via \\chrome is the sequence both backends share"))
           let frameCfg := cfg.inFrame b
           let num := nums[i]?.getD none
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
+          let label := match num with
+            | some n =>
+              if doc.frameRestart.any (· ≤ i) then s!"appendix-{n}" else toString n
+            | none =>
+              if titlePages == 0 then "titlepage" else s!"titlepage-{titlePages + 1}"
+          if num.isNone then titlePages := titlePages + 1
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*
           -- under the class-gated uncover rules (`deckStepCss`), so the
@@ -7195,7 +7191,7 @@ first; retitle one frame, or link to '#{id}'"))
           let steps := frameCfg.overlaySteps
           let (spacers, taken2, diags2) :=
             if steps > 1 then
-              snapWalk id text #[] taken walkDiags (stepList steps)
+              snapWalk id text label #[] taken walkDiags (stepList steps)
             else
               (#[], taken, walkDiags)
           taken := taken2
@@ -7241,10 +7237,11 @@ first; retitle one frame, or link to '#{id}'"))
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
                 (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
-                  ("id", id)] ++ numberAttrs)
+                  ("id", id), ("data-slide-label", s!"{label}.1")] ++ numberAttrs)
             else match node with
               | .elem tag attrs kids =>
-                Node.elem tag (attrs ++ #[("id", id), ("data-snap", "")] ++ numberAttrs) kids
+                Node.elem tag (attrs ++ #[("id", id), ("data-snap", ""),
+                  ("data-slide-label", label)] ++ numberAttrs) kids
               | .text s => Node.text s
               | .style s => Node.style s
               | .script attrs s => Node.script attrs s
@@ -7271,8 +7268,10 @@ first; retitle one frame, or link to '#{id}'"))
               (attachLogo cfg
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
-                    stageAttrs cfg.deck name ++ #[("data-snap", "")]))
+                    stageAttrs cfg.deck name ++ #[("data-snap", ""),
+                      ("data-slide-label", s!"section-{sectionPages}")]))
                 (Ir.logoInForce doc.logo logoSpans i)))
+            sectionPages := sectionPages + 1
           else
             acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround
               (blockNode cfg (.section 1 starred num title)))
@@ -7341,7 +7340,25 @@ first; retitle one frame, or link to '#{id}'"))
     body := body.push (Html.elem "script" #[]
       #[("data-math-boundary", tool), ("src", tool)])
   -- The landmark and anchor contracts, judged over the emitted tree.
-  let facts := pageFactsList {} body.toList
+  let facts := pageFactsList none {} body.toList
+  -- premise: slideLabelChecks — these routes ship with the constant script;
+  -- without it only DOM anchors are promised. A bare frame label aliases
+  -- its first reveal, exactly as `deckScript` reads the emitted attributes.
+  let routes := if facts.deck then
+      facts.slideLabels.foldl (init := ({} : Std.HashMap String String)) fun a label =>
+        let a := a.insert label label
+        if label.endsWith ".1" then a.insert (label.dropEnd 2).toString label else a
+    else {}
+  for (id, stage) in facts.ids do
+    if let some target := routes[id]? then
+      if stage != some target then
+        diags := diags.push (Diag.of .W0327
+          s!"fragment '#{id}' names both a slide and an element anchor; \
+slide navigation uses '#{target}'"
+          (subject := some id)
+          (help := some (match stage with
+            | some label => s!"use '#{label}' to reach the slide holding that anchor"
+            | none => "rename the anchor so it differs from a slide label")))
   if facts.navs > 1 then
     -- One unlabeled landmark per role: "if a specific landmark role is
     -- used more than once on a page, provide each instance a unique label"
@@ -7368,7 +7385,8 @@ Regions): give each one a name, \\begin{nav}[label = Site]"))
   for fref in facts.fragmentRefs do
     let frag := (fref.drop 1).toString
     let isTop := frag.isEmpty || frag.map Char.toLower == "top"
-    unless isTop || facts.ids.contains frag || checked.contains fref do
+    unless isTop || facts.ids.any (·.1 == frag) || routes.contains frag ||
+        checked.contains fref do
       checked := checked.push fref
       diags := diags.push (Diag.of .W0326
         s!"in-page link '{fref}' has no target anchor on this page"
@@ -7376,7 +7394,7 @@ Regions): give each one a name, \\begin{nav}[label = Site]"))
             "this page has no anchors: a level-1 \\section title becomes \
 one in the article class"
           else s!"anchors on this page: \
-{String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}")))
+{String.intercalate ", " (facts.ids.toList.map (fun kv => "#" ++ kv.1))}")))
   -- Every <img> this page ships is one a browser decodes, or its loss is
   -- named: judged over the emitted tree, so an image the page never links
   -- is never named, and one under a hidden strip still is.

@@ -172,7 +172,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (restored, restoreDs) := build (standoutFooterHook)
   let out := layoutOf fonts restored
   let html := hookHtml restored
-  let expected := #[("StandoutNote", ""), ("NormalNote", "1 / 2"), ("", "2 / 2")]
+  let expected := #[("StandoutNote", ""), ("NormalNote", "3 / 4"), ("", "4 / 4")]
   t "standout footer hook: Layout.Out restores only the explicit note, without a number"
     (pdfFoots out == expected &&
       (out.pages[0]?.map fun p => p.lines.any (fun l => lineText l == "StandoutNote")) == some true)

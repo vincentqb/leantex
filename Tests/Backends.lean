@@ -1325,8 +1325,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
       (attrs.find? (·.1 == "data-frame-number")).map fun (_, n) => (tag, n)
   t "numbered-link fixture elaborates clean" linksDs.isEmpty
   t "numbered links use the shared frame sequence once per stage, skipping unnumbered pages"
-    (numbered == #[("div", "1"), ("section", "2")] &&
-      linksDoc.frameNumbers.toList.filterMap id == [1, 2])
+    (numbered == #[("div", "1"), ("section", "2"), ("section", "3")] &&
+      linksDoc.frameNumbers.toList.filterMap id == [1, 2, 3])
   t "the deck pages horizontally by scroll snap on the root, no scrollbar stealing width"
     (has deckPage "html { scroll-snap-type: x mandatory; overflow-y: clip; }" &&
      has deckPage "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }")

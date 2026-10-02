@@ -73,7 +73,7 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       | some (left, right) =>
         (left.isEmpty || pageOccurs census i left == 1) &&
         (right.isEmpty || pageOccurs census i right == 1))
-  t "typed HTML footers count the same frames without numbering standouts"
+  t "typed HTML footers count the same frames without displaying standout numbers"
     (slideFootsList #[] html.toList == expected.htmlFooters)
 
 private def fractionTheme : String :=

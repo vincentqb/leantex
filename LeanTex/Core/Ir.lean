@@ -5276,15 +5276,14 @@ def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array Block) 
     blocks.pop.push (if c == {} then d else .role c.role #[d])
   | _, _ => blocks
 
-/-- The frames the deck numbers: a `.frame` that is neither standout nor
-golden. Only `\maketitle` produces `.golden`, and moloch's `\maketitle` is
-`\frame[plain,noframenumbering]{\titlepage}` (beamerinnerthememoloch.dtx:314-320);
-its standout frames are likewise `noframenumbering` (:777-778). beamer's
-`noframenumbering` does not advance the frame counter (user guide §8.1), so
-the k-th countable frame in document order bears number k — the fold below —
+/-- The frames the deck numbers: every `.frame` except a golden title page.
+The title is front matter; a standout is content whose footer is hidden,
+so it advances the same counter as any other content frame. Footer
+visibility is selected separately by `Chrome.frameFootBand`. The k-th
+countable frame in document order bears number k — the fold below —
 and a non-countable frame bears none. -/
 def Block.countable : Block → Bool
-  | .frame _ standout valign _ _ => !standout && !(valign matches .golden)
+  | .frame _ _ valign _ _ => !(valign matches .golden)
   | _ => false
 
 /-- Count of `true` in a mask: the numbering's denominator. -/
@@ -6748,7 +6747,7 @@ and naming one slot never clears its sibling. -/
 structure Chrome where
   footerLeft : Option ChromeSlot := none
   footerRight : Option ChromeSlot := none
-  /-- Restore an explicit note on an unnumbered standout frame. Undeclared
+  /-- Restore an explicit note on a standout frame. Undeclared
   keeps the class's plain standout; `some false` explicitly disables it. -/
   standoutNote : Option Bool := none
   deriving Repr, BEq, Inhabited
@@ -6829,26 +6828,28 @@ theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline))
 /-- The frame's band, selected once for both backends. Moloch's standout
 option normally clears the footline. Restoring its plain template only
 when `frame footer` is nonempty restores that note, never a section datum
-or a number on an unnumbered frame (beamerinnerthememoloch.sty,
+or a number (beamerinnerthememoloch.sty,
 `KV@beamerframe@standout`; beamerouterthememoloch.sty, `footline/plain`). -/
 def Chrome.frameFootBand (c : Chrome) (ff : Option (Array Inline))
     (sec : Array Inline) (n : Option Nat) (total : Nat) (standout : Bool) :
     Option (Array BandSlot) :=
-  match n with
-  | some k =>
-    if c.hasFooter || ff.isSome then some (c.footBand ff sec k total) else none
-  | none =>
-    if standout && c.standoutNote.getD false && !(ff.getD #[]).isEmpty then
+  if standout then
+    if c.standoutNote.getD false && !(ff.getD #[]).isEmpty then
       some (bandSlotIf .left (ff.getD #[]) notePriority "the \\framefoot note")
     else none
+  else
+    n.bind fun k =>
+      if c.hasFooter || ff.isSome then some (c.footBand ff sec k total) else none
 
-/-- An unnumbered restored standout band contains only its explicit note:
-neither chrome datum reaches either backend, and an empty note has no band. -/
+/-- A standout band contains only a restored explicit note, independently
+of its frame number. Neither chrome datum reaches either backend, and an
+empty or disabled note has no band. -/
 theorem Chrome.standoutFootBand_exact (c : Chrome) (ff : Option (Array Inline))
-    (sec : Array Inline) (total : Nat) :
-    { c with standoutNote := some true }.frameFootBand ff sec none total true =
-      if (ff.getD #[]).isEmpty then none else
-        some (bandSlotIf .left (ff.getD #[]) notePriority "the \\framefoot note") := by
+    (sec : Array Inline) (n : Option Nat) (total : Nat) :
+    c.frameFootBand ff sec n total true =
+      if c.standoutNote.getD false && !(ff.getD #[]).isEmpty then
+        some (bandSlotIf .left (ff.getD #[]) notePriority "the \\framefoot note")
+      else none := by
   simp [frameFootBand]
 
 /-- A band's inline content read left to right — the reading order, as
