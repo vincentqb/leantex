@@ -12550,10 +12550,19 @@ epoch removes `bg`. This observes the same staging seam as `run`, including
 backend projection and overlay selection. It neither gates emission nor
 changes diagnostics; a false result permits the explicitly unpainted pages
 that `nopagecolor` requests. -/
-def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+private def pageGroundsDeclaredCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) : Bool :=
   withLayoutOps geom fs pats doc imgs fun staged _ _ =>
     staged.all StagedOp.preservesGround
+
+private def resolveDocMath (fs : FontSet) (doc : Doc) : Doc × Array Diag :=
+  let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
+  Ir.resolveMathAlphas fs.mathAlphabets family doc
+
+/-- Inspect the same resolved document that the public layout entry sets. -/
+def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) : Bool :=
+  pageGroundsDeclaredCore geom fs pats (resolveDocMath fs doc).1 imgs
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. Printer's
@@ -12562,7 +12571,17 @@ cut marks, when declared, join every shipped face here — the marks seam
 pages alike carry the same eight, painted over any background. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) : Out :=
-  addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
+  let (doc, diags) := resolveDocMath fs doc
+  let out := addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
+  { out with diags := diags ++ out.diags }
+
+/-- Page equality is the projection of the shared IR normalization fixed point. -/
+theorem run_resolve_pages_agree (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store) :
+    (run geom fs pats (resolveDocMath fs doc).1 imgs).pages =
+      (run geom fs pats doc imgs).pages := by
+  simp only [run, resolveDocMath]
+  rw [Ir.resolveMathAlphas_fixed_point]
 
 /-- The background fact over the pre-marks pipeline: every page `runCore`
 ships under a `bg` that stays declared carries the full-page fill. The proof is
@@ -12574,7 +12593,7 @@ private theorem runCore_bg
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
     (hbg : (doc.palette.find? "bg").isSome = true)
-    (hepoch : pageGroundsDeclared geom fs pats doc imgs = true) :
+    (hepoch : pageGroundsDeclaredCore geom fs pats doc imgs = true) :
     ∀ p ∈ (runCore geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
         f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
@@ -12589,7 +12608,7 @@ private theorem runCore_bg
     · exact h
   intro p hp
   unfold runCore withLayoutOps at hp
-  unfold pageGroundsDeclared withLayoutOps at hepoch
+  unfold pageGroundsDeclaredCore withLayoutOps at hepoch
   dsimp only [Id.run, bind, pure, Id] at hp hepoch
   obtain ⟨q, hq, hfills, -, -, -, -⟩ := runPost_pages _ p hp
   have fin : ∀ (b0 : B), bgFilled b0.geom q →
@@ -12643,7 +12662,7 @@ theorem page_background_survives
   intro p hp
   unfold run at hp
   obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
-  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats doc imgs hbg hepoch p0 hp0
+  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats (resolveDocMath fs doc).1 imgs hbg hepoch p0 hp0
   have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
   have hfp : f ∈ p.fills.toList := by
     rw [hpf, Array.mem_toList_iff]

@@ -6991,7 +6991,7 @@ diagnostics the backend itself raises; `emit` renders it. The tree is the
 page before serialization: what the cross-backend agreement census judges
 against the PDF's `Layout.Out`, so a divergence is caught on structure, not
 by parsing the rendering back. -/
-def emitTree (cfg : Config) (doc : Doc) :
+private def emitTreeCore (cfg : Config) (doc : Doc) :
     Array Node × Array Node × Array Diag := Id.run do
   -- The page's view of the document: backend conditionals resolve here, at
   -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
@@ -7452,6 +7452,27 @@ one in the article class"
     if let some en := cfg.imgs.get? k then
       diags := diags.push (undecodableDiag (resolvedSrc en) en.webError (some k))
   return (head, body, diags)
+
+/-- Normalize the shared IR at the public entry, before any backend walk. -/
+def emitTree (cfg : Config) (doc : Doc) :
+    Array Node × Array Node × Array Diag :=
+  let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
+  let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
+    |>.map (·.family) |>.getD "math face"
+  let (doc, diags) := Ir.resolveMathAlphas coverage family doc
+  let (head, body, backendDiags) := emitTreeCore cfg doc
+  (head, body, diags ++ backendDiags)
+
+/-- Both tree projections read the IR resolver's one fixed point. -/
+theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
+    let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
+    let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
+      |>.map (·.family) |>.getD "math face"
+    let resolved := (Ir.resolveMathAlphas coverage family doc).1
+    (emitTree cfg resolved).1 = (emitTree cfg doc).1 ∧
+      (emitTree cfg resolved).2.1 = (emitTree cfg doc).2.1 := by
+  dsimp only
+  simp [emitTree, Ir.resolveMathAlphas_fixed_point]
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured

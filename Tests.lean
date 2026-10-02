@@ -31,6 +31,7 @@ import Tests.SlideLabels
 import Tests.FontMath
 import Tests.MathAlphaGeometry
 import Tests.MathAlphaSemantics
+import Tests.MathAlphaEntry
 import Tests.Struct
 import Tests.PdfConformance
 import Tests.Artifact
@@ -431,6 +432,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathChecks ref
   mathAlphaGeometryChecks ref
   mathAlphaSemanticsChecks ref
+  Tests.mathAlphaEntryChecks ref
   isolatedHoleChecks ref
   mathSymChecks ref
   textSymChecks ref
