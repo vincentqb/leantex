@@ -13,6 +13,7 @@ import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.Artifact
+import Tests.UnderlineSpacing
 import Tests.HtmlTokens
 import Tests.Settings
 import Tests.Redefine
@@ -529,7 +530,13 @@ def reports : List Report := [
     pins := [check% diagnosticFormatChecks]
     accept := ["the report reader selftest distinguishes diagnostic records from quoted codes and unrelated log text",
       "the convention gate rejects a direct diagnostic-print mutation that the previous gate allowed"]
-    state := .guarded "e5a5428a" .before .author }
+    state := .guarded "e5a5428a" .before .author },
+  { id := "R76", date := "2026-10-02"
+    what := "native link underlines stopped at each word and left interword spaces unpainted, including shared frame footers"
+    pins := [check% underlineSpacingChecks, thm% Layout.appendUnderline_exact,
+      thm% Layout.appendUnderline_covers]
+    accept := ["native reference-deck footer inspected before and after the spacing correction"]
+    state := .guarded "75c71d1e" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

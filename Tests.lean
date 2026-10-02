@@ -41,6 +41,7 @@ import Tests.MathAlphaEntry
 import Tests.Struct
 import Tests.PdfConformance
 import Tests.Artifact
+import Tests.UnderlineSpacing
 import Tests.CompatGate
 import Tests.HtmlTokens
 import Tests.HtmlA11y
@@ -200,6 +201,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recipeLinkAffordChecks ref oneFace
   boxPosRowChecks ref oneFace
   underlineChecks ref geom oneFace font
+  underlineSpacingChecks ref oneFace
   linkSignalChecks ref geom oneFace
   inkGeometryChecks ref
   spacingChecks ref geom oneFace font

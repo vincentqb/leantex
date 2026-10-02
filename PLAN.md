@@ -26011,3 +26011,26 @@ The format guards cover the whole diagnostic registry and real CLI output;
 377 assertions fail against the old formatter and pass with the new one.
 Python's warnings and logging documentation and Loguru's record/sink API
 inform this separation; their sources are recorded beside `Render.human`.
+
+
+### 2026-10-02 — Underline follows the set text span
+
+An underline covers the set span of its text, including authored and
+interword space, except where glyph ink requires clearance. Runs and spaces
+carry the same two decoration slots. A run resolves its underline band from
+its actual font face; a space retains the band in force at its position.
+Line-through keeps its independent command-entry band, so the two can compose.
+Neither decoration changes line breaking, glyph positions or link destinations.
+
+`Layout.appendUnderline_exact` states the emitted intervals and pen advance
+for every set segment, width and obstruction list. `appendUnderline_covers`
+connects that paint to coverage outside the chained ink clearances. These are
+artifact geometry contracts; the IR decoration semantics already select what
+is underlined. The shared painter replaces a separate run-only implementation
+and reuses the existing font-derived band and skip-ink clearance.
+
+The new guard reads actual `Layout.Out` rectangles and emitted PDF fills.
+Its 102 space-coverage assertions fail on `75c71d1e` and pass after correction.
+It exercises automatic links, explicit underlines, authored spacing, wrapping,
+composition with strikeout, style changes, and shared footers over reveals.
+Signed-space and ordinary-text controls hold text placement unchanged.
