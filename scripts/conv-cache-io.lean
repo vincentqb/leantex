@@ -37,6 +37,8 @@ def main (args : List String) : IO UInt32 := do
       ("warm", "", 1, true),
       ("refusal", "echo \"${out%/*}/source.pdf: refused input\" >&2\nexit 3\n", 1, false),
       ("silent", "exit 3\n", 2, false),
+      ("signal-term", "echo interrupted >&2\nkill -TERM $$\n", 2, false),
+      ("signal-kill", "echo interrupted >&2\nkill -KILL $$\n", 2, false),
       ("empty", ": > \"$out\"\n", 2, false),
       ("failed-output", "echo invalid > \"$out\"\necho refused >&2\nexit 3\n", 1, false),
       ("malformed", "echo invalid > \"$out\"\n", 2, false),
