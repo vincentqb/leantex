@@ -6070,7 +6070,7 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "E0502 renders the including file and line, never its directory"
     (dsM.any fun d => d.code == "E0502" &&
       ((Render.human false d).splitOn
-        "--> tests/corpus/input-missing/m.tex:4:1").length == 2)
+        " - tests/corpus/input-missing/m.tex:4:1 - ").length == 2)
   let dsN ← run "outer"
   t "a nested input's E0502 names the input file it sits in"
     (dsN.any fun d => d.code == "E0502" &&

@@ -1002,7 +1002,8 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         let name := (e.fileName.dropEnd ".tex".length).toString
         let r ← IO.Process.output
           { cmd := leantexBin
-            args := #["-q", "build", e.path.toString, "-o", (work / "corpus" / (name ++ ".html")).toString] }
+            args := #["-q", "--porcelain", "build", e.path.toString,
+              "-o", (work / "corpus" / (name ++ ".html")).toString] }
         let log := r.stdout ++ r.stderr
         faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
         if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name

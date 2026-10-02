@@ -956,10 +956,10 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
     let log := r.stdout ++ r.stderr
     let count (needle : String) : Nat := (log.splitOn needle).length - 1
     t s!"driver: a profiled PNG is one W0603, an oriented JPEG one W0604, per source: {log}"
-      (r.exitCode == 0 && count "warning[W0603]" == 1 && count "warning[W0604]" == 1 &&
+      (r.exitCode == 0 && count "[W0603]" == 1 && count "[W0604]" == 1 &&
        hasStr log "profiled.png" && hasStr log "oriented.jpg" && hasStr log "tag 6")
     t "driver: the WebP is refused by name as W0602"
-      (count "warning[W0602]" == 1 && hasStr log "WebP images cannot be embedded")
+      (count "[W0602]" == 1 && hasStr log "WebP images cannot be embedded")
     let pdf ← IO.FS.readBinFile (dir / "out" / "d.pdf")
     let text := pdfText pdf
     t "driver: the profiled PNG and the oriented JPEG embed pass-through"

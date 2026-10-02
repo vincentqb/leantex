@@ -78,6 +78,7 @@ import LeanTex
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
 import scripts.Gate
+import Lean.Data.Json
 
 namespace Scoreboard
 
@@ -1184,26 +1185,21 @@ def parse (line : String) : Option BrowserFace := do
 
 end BrowserFace
 
-/-- Attribute each browser-face diagnostic from its own continuation lines.
-Unrelated log text cannot name its tool; an unnamed or ambiguous tool stays
-unattributed instead of being guessed from the image's format. -/
-def browserFaceFailures (fixture log : String) : Array BrowserFace := Id.run do
-  let mut blocks : Array String := #[]
-  let mut current := ""
-  for line in log.splitOn "\n" do
-    if ["warning[W0605]", "warning[W0378]"].any (fun code => (line.splitOn code).length > 1) then
-      if !current.isEmpty then blocks := blocks.push current
-      current := line
-    else if !current.isEmpty then
-      if line.startsWith " " || line.startsWith "\t" then current := current ++ "\n" ++ line
-      else
-        blocks := blocks.push current
-        current := ""
-  if !current.isEmpty then blocks := blocks.push current
-  return blocks.map fun block =>
+/-- Read browser-face failures from the CLI's structured diagnostic stream.
+Codes are fields, never snippets of human output or quoted message text.
+An unnamed or ambiguous converter remains unattributed. -/
+def browserFaceFailures (fixture log : String) : Array BrowserFace :=
+  ((log.splitOn "\n").filterMap fun line => do
+    let record ← (Lean.Json.parse line).toOption
+    let event ← (record.getObjValAs? String "event").toOption
+    if event != "diagnostic" then none else do
+    let code ← (record.getObjValAs? String "code").toOption
+    if !["W0605", "W0378"].contains code then none else do
+    let message ← (record.getObjValAs? String "message").toOption
     let tools := ["rsvg-convert", "pdftocairo", "xmllint"].filter fun tool =>
-      (block.splitOn tool).length > 1
-    BrowserFace.failed fixture (match tools with | [tool] => tool | _ => "unattributed")
+      (message.splitOn tool).length > 1
+    return BrowserFace.failed fixture
+      (match tools with | [tool] => tool | _ => "unattributed")).toArray
 
 /-- The committed key of browser-converted faces. The href and the SHA-256 of
 the exact bytes are both in the input; order is canonical, so directory walk

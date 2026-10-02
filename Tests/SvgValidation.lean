@@ -113,7 +113,7 @@ exec \"$LEANTEX_SVG_CONVERTER\" \"$@\"\n"
       catch err => throw <| IO.userError s!"{err}\n{run.stdout}{run.stderr}"
     let log := run.stdout ++ run.stderr
     check ref "driver records the failed poster conversion once"
-      ((log.splitOn "warning[W0605]").length == 2 &&
+      ((log.splitOn "[W0605]").length == 2 &&
         (log.splitOn "deliberate poster conversion failure").length == 2)
     check ref "driver emits a named placeholder without a moving image URL"
       ((html.splitOn "data-image-src=\"moving.svg\"").length == 2 &&

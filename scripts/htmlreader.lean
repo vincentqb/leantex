@@ -34,6 +34,7 @@ and valid successful browser-face captures. This tier carries the separate
 ratchet question, "how much passes, and is it more than last time."
 -/
 import scripts.Board
+import Lean.Data.Json
 
 open Scoreboard
 
@@ -281,17 +282,29 @@ browser-face: figures missing-fields\n"
   no "browser identity: encoded names and uppercase SVG retain their spelling"
     (browserImageIdentity "figures" encoded ==
       some (LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets" "i0-a , λ.SVG"))
-  let misleading := "rsvg-convert: unrelated setup output\n\
-warning[W0605]: image has no browser face\n  pdftocairo exited 2\n"
+  let message (code text : String) := Lean.Json.compress <| Lean.Json.mkObj
+    [("event", .str "diagnostic"), ("code", .str code), ("message", .str text)]
+  let misleading := "rsvg-convert: unrelated setup output\n" ++
+    message "W0605" "image has no browser face\n  pdftocairo exited 2" ++ "\n"
   no "browser failure: attribution reads only the relevant diagnostic"
     (browserFaceFailures "figures" misleading == #[BrowserFace.failed "figures" "pdftocairo"])
   no "browser failure: an unnamed converter stays unattributed"
-    (browserFaceFailures "figures" "warning[W0605]: PDF has no browser face\n" ==
+    (browserFaceFailures "figures" (message "W0605" "PDF has no browser face") ==
       #[BrowserFace.failed "figures" "unattributed"])
   no "browser failure: each diagnostic keeps its own tool"
     (browserFaceFailures "figures"
-      "warning[W0605]: rsvg-convert exited 2\nwarning[W0605]: pdftocairo exited 3\n" ==
+      (message "W0605" "rsvg-convert exited 2" ++ "\n" ++
+        message "W0378" "pdftocairo exited 3") ==
       #[BrowserFace.failed "figures" "rsvg-convert", BrowserFace.failed "figures" "pdftocairo"])
+  no "browser failure: quoted codes and tool names in other records cannot become diagnostics"
+    (browserFaceFailures "figures"
+      (message "W0301" "warning[W0605]: rsvg-convert exited 2\n" ++ "\n" ++
+       "{\"event\":\"summary\",\"code\":\"W0605\",\"message\":\"pdftocairo\"}\n" ++
+       "Warning - Degraded [W0605] - unrelated human output\n") == #[])
+  no "browser failure: escaped lines cannot manufacture another diagnostic"
+    (browserFaceFailures "figures"
+      (message "W0605" "pdftocairo exited 2\nwarning[W0605]: more detail") ==
+      #[BrowserFace.failed "figures" "pdftocairo"])
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmlreader" (.pairs "pass" "rows") measureTier selftest args

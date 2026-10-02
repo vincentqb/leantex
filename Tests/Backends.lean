@@ -1941,7 +1941,7 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- render: human, no color
   t "human diag plain" (Render.human false d ==
-    "error[E0002]: bad \"quote\"\nline\n  --> a.tex:3:7\n  help: fix it")
+    "Error - Dropped [E0002] - a.tex:3:7 - bad \"quote\"\n  line\n  help: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -3299,7 +3299,7 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (code, log, _) ← run "alt-pdf" "article"
       "\\output{ formats = pdf, alternatives = required }\n" one
     t s!"driver: pdf + alternatives = required builds with one W0701: {log}"
-      (code == 0 && count log "warning[W0701]" == 1 && hasStr log "alternatives = required")
+      (code == 0 && count log "[W0701]" == 1 && hasStr log "alternatives = required")
     let (code, log, _) ← run "alt-html" "article"
       "\\output{ formats = html, alternatives = required }\n" one
     t "driver: html + alternatives = required builds with no W0701"
@@ -3307,10 +3307,10 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (code, log, _) ← run "alt-both" "article"
       "\\output{ formats = pdf, html, alternatives = required }\n" one
     t "driver: pdf+html + alternatives = required warns once, for the PDF"
-      (code == 0 && count log "warning[W0701]" == 1)
+      (code == 0 && count log "[W0701]" == 1)
     let (code, log, _) ← run "srgb-pdf" "article" "\\output{ formats = pdf, color = srgb }\n" one
     t "driver: pdf + color = srgb builds with one W0701"
-      (code == 0 && count log "warning[W0701]" == 1 && hasStr log "color = srgb")
+      (code == 0 && count log "[W0701]" == 1 && hasStr log "color = srgb")
     let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
     t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
     -- Red 3: css = own ships no face, so the assertion fails; `fonts =
