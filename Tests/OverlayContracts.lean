@@ -37,7 +37,7 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     t (here ++ ": finite CSS has a reachable numbered track")
       (attrs.any fun a => HtmlDoc.attrOf? a "class" == some "slide-track")
     for k in [1, 2, 3, 4] do
-      let track := s!".slide-track[data-snapped=\"{k}\"] "
+      let track := s!"[data-snapped=\"{k}\"] "
       for selector in
           [s!"html[data-deck-script] {track}.step-set:not([data-steps~=\"{k}\"])",
            track ++ s!".alt-set[data-steps~=\"{k}\"]",
