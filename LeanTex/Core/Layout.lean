@@ -686,11 +686,12 @@ structure DecorationRule where
   raise : Sp := 0
   deriving Repr, BEq, Inhabited
 
-/-- Decoration paint carried by boxes and set-line gaps. The fixed two-slot
-record permits underline and line-through to compose without allocating in
-the paragraph hot path. -/
-structure Decorations where
-  underline : Bool := false
+/-- The two decoration slots shared by runs and spaces. Runs defer underline
+resolution until their actual fallback face is known (`Bool`); spaces carry
+the band of the face and size in force at the space (`Option DecorationRule`).
+Line-through always retains its command-entry band. -/
+structure Decorations (U : Type := Bool) [Inhabited U] where
+  underline : U := default
   lineThrough : Option DecorationRule := none
   deriving Repr, BEq, Inhabited
 
@@ -700,9 +701,9 @@ inductive Item where
       (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
       (attr : Attribution)
   | glue (g : Glue)
-  /-- Breakable authored glue under a through-line. Kept separate so ordinary
-  glue carries no decoration payload in the hot path. -/
-  | decoratedGlue (g : Glue) (lineThrough : DecorationRule)
+  /-- Breakable authored glue with resolved decoration bands. Kept separate
+  so ordinary glue carries no decoration payload in the hot path. -/
+  | decoratedGlue (g : Glue) (decorations : Decorations (Option DecorationRule))
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
   /-- An image: an unbreakable box `w` wide standing `h` above the baseline
@@ -744,8 +745,8 @@ inductive Seg where
   marker column and a rule's clearance are `false`. Decorations ride only
   where authored text supplied the gap. -/
   | gap (w : Sp) (word : Bool)
-  /-- A set interword or authored gap that remains inside a through-line. -/
-  | decoratedGap (w : Sp) (word : Bool) (lineThrough : DecorationRule)
+  /-- A set interword or authored gap retaining both decoration bands. -/
+  | decoratedGap (w : Sp) (word : Bool) (decorations : Decorations (Option DecorationRule))
   /-- A text-decoration rule retained as a typed artifact fact. PDF lowers it
   to the same filled geometry as a generic rule; census and tests can still
   distinguish underline from line-through. -/
@@ -3746,6 +3747,24 @@ private def TextStyle.resolvedDecorations (sty : TextStyle)
     lineThrough := sty.decorations.lineThrough.map
       (·.rule base xHeight textW textH fs) }
 
+/-- The same per-face underline band for a glyph run or an authored space.
+Its bottom is measured upward from the baseline, as in `Seg.decoration`. -/
+private def underlineRule (font : Font) (size : Sp) (color : Ir.Color) : DecorationRule :=
+  let upem : Int := font.unitsPerEm
+  let (pos, thick) := font.band
+  let thickness := thick * size / upem
+  { color, thickness, raise := pos * size / upem - thickness }
+
+private def Decorations.resolve (d : Decorations) (font : Font) (size : Sp)
+    (color : Ir.Color) : Decorations (Option DecorationRule) :=
+  { underline := if d.underline then some (underlineRule font size color) else none
+    lineThrough := d.lineThrough }
+
+private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
+    (size : Sp) (color : Ir.Color) : Item :=
+  if d.underline || d.lineThrough.isSome then .decoratedGlue g (d.resolve font size color)
+  else .glue g
+
 /-- One flatten token into the accumulator — the fold step of
 `itemsOfInlines`, named so a conservation statement can induct over it:
 every token's ink becomes items, an entry in `dropped`, or a note body
@@ -3868,9 +3887,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let g := interword sz (fs.get idx)
     let after := if acc.wordEnd == acc.items.size then spaceKern fs true acc.items.back? else 0
     let g := { g with width := g.width + after }
-    let item := match decorations.lineThrough with
-      | some rule => Item.decoratedGlue g rule
-      | none => Item.glue g
+    let item := Item.ofDecoratedGlue g decorations (fs.get idx) sz sty.color
     { acc with items := acc.items.push item }
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
@@ -3886,9 +3903,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (.pen 0 10000 false 0 Ir.Color.black #[])
       else acc.items
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    let item := match decorations.lineThrough with
-      | some rule => Item.decoratedGlue glue rule
-      | none => Item.glue glue
+    let font := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
+    let item := Item.ofDecoratedGlue glue decorations font sz sty.color
     { acc with items := items.push item }
   | .rule sty width height raise =>
     let values := MeasureValues.horizontal textW textH
@@ -9706,6 +9722,117 @@ theorem mergeIntervals_chained (obs : Array (Int × Int))
       (fun o ho => hmem o (List.mem_cons_of_mem _ ho)) hrest
       (fun o ho => hhd o ho)
 
+/-- Horizontal placement and resolved bands of actual decoration segments.
+This is artifact geometry: the pen advances by the set segment widths, and
+only typed decoration segments contribute painted spans. -/
+def decorationSpans (x : Int) : List Seg → List (Int × Int × Ir.Decoration × DecorationRule)
+  | [] => []
+  | .decoration k w t r c :: rest =>
+    (x, x + w, k, { color := c, thickness := t, raise := r }) :: decorationSpans (x + w) rest
+  | s :: rest => decorationSpans (x + s.advance) rest
+
+private theorem decorationSpans_append (a b : List Seg) (x : Int) :
+    decorationSpans x (a ++ b) = decorationSpans x a ++
+      decorationSpans (x + (a.map Seg.advance).sum) b := by
+  induction a generalizing x with
+  | nil => simp [decorationSpans]
+  | cons s rest ih =>
+    cases s <;> simp [decorationSpans, Seg.advance, ih, Int.add_assoc]
+
+private def underlinePieces (paint : DecorationRule) (hi : Int) :
+    List (Int × Int) → Int → Array Seg → Array Seg
+  | [], cur, out => out.push (.gap (hi - cur) false)
+  | (lo, stop) :: rest, cur, out =>
+    underlinePieces paint hi rest stop
+      ((out.push (.gap (lo - cur) false)).push
+        (.decoration .underline (stop - lo) paint.thickness paint.raise paint.color))
+
+private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : Int)
+    (spans : List (Int × Int)) (out : Array Seg)
+    (hx : x + (out.toList.map Seg.advance).sum = cur) :
+    x + ((underlinePieces paint hi spans cur out).toList.map Seg.advance).sum = hi ∧
+    decorationSpans x (underlinePieces paint hi spans cur out).toList =
+      decorationSpans x out.toList ++ spans.map (fun (lo, stop) => (lo, stop, Ir.Decoration.underline, paint)) := by
+  induction spans generalizing cur out with
+  | nil =>
+    simp [underlinePieces, decorationSpans_append, decorationSpans, Seg.advance]
+    omega
+  | cons span rest ih =>
+    let next := (out.push (.gap (span.1 - cur) false)).push
+      (.decoration .underline (span.2 - span.1) paint.thickness paint.raise paint.color)
+    have hn : x + (next.toList.map Seg.advance).sum = span.2 := by
+      simp [next, Seg.advance]
+      omega
+    have hit := ih span.2 next hn
+    constructor
+    · exact hit.1
+    · simp only [underlinePieces]
+      rw [hit.2]
+      simp [next, decorationSpans_append, decorationSpans, Seg.advance]
+      constructor <;> omega
+
+/-- Read underline from the one decoration carrier: runs resolve their actual
+face here; authored spaces already carry their resolved band. -/
+def Seg.underlineRule (fs : FontSet) (lineSize : Sp) : Seg → Option DecorationRule
+  | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
+    (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
+  | .decoratedGap _ _ decorations => decorations.underline
+  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ | .poly _ _ => none
+
+/-- Append the skip-ink paint of any set segment, keeping its full advance
+as gaps between the surviving spans. In particular a zero or negative
+space still advances the pen exactly, even though it paints no span. -/
+def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
+    (x : Sp) (seg : Seg) (out : Array Seg) : Array Seg :=
+  match seg.underlineRule fs size with
+  | none => out.push (.gap seg.advance false)
+  | some paint => underlinePieces paint (x + seg.advance)
+      (subtract x (x + seg.advance) obs) x out
+
+/-- The shared run/space painter's placement contract. It emits exactly the
+complement intervals with the selected band, and preserves the pen at the
+segment's right edge, for every segment, width and obstruction list. This is
+native artifact geometry, not a second interpretation of IR decoration.
+Together with `underline_skips_ink` it holds skip-ink of the actual paint. -/
+theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int × Int))
+    (origin x : Int) (seg : Seg) (out : Array Seg)
+    (hx : origin + (out.toList.map Seg.advance).sum = x) :
+    origin + ((appendUnderline fs size obs x seg out).toList.map Seg.advance).sum =
+        x + seg.advance ∧
+    decorationSpans origin (appendUnderline fs size obs x seg out).toList =
+      decorationSpans origin out.toList ++
+        ((seg.underlineRule fs size).toList.flatMap fun paint =>
+          (subtract x (x + seg.advance) obs).map fun (lo, hi) =>
+            (lo, hi, Ir.Decoration.underline, paint)) := by
+  cases hp : seg.underlineRule fs size with
+  | none =>
+    simp [appendUnderline, hp, decorationSpans_append, decorationSpans, Seg.advance]
+    omega
+  | some paint =>
+    simpa [appendUnderline, hp] using underlinePieces_placement paint
+      (x + seg.advance) origin x (subtract x (x + seg.advance) obs) out hx
+
+/-- Every point in an underlined segment outside the line's ink clearances
+is covered by an actual emitted underline with that segment's resolved band.
+The quantifier includes `decoratedGap`, so word spaces and authored spacing
+obey the same coverage and placement contract as glyph runs. -/
+theorem appendUnderline_covers (fs : FontSet) (size : Sp) (obs : List (Int × Int))
+    (origin x point : Int) (seg : Seg) (out : Array Seg) (paint : DecorationRule)
+    (hpen : origin + (out.toList.map Seg.advance).sum = x)
+    (hpaint : seg.underlineRule fs size = some paint) (hch : Chained obs)
+    (hx : x ≤ point ∧ point < x + seg.advance)
+    (hout : ∀ o ∈ obs, point < o.1 ∨ o.2 ≤ point) :
+    ∃ lo hi, (lo, hi, Ir.Decoration.underline, paint) ∈
+      decorationSpans origin (appendUnderline fs size obs x seg out).toList ∧
+      lo ≤ point ∧ point < hi := by
+  obtain ⟨span, hs, hcov⟩ := underline_covers_gaps obs x (x + seg.advance) point hch hx hout
+  refine ⟨span.1, span.2, ?_, hcov⟩
+  rw [(appendUnderline_exact fs size obs origin x seg out hpen).2]
+  apply List.mem_append_right
+  simp only [hpaint, Option.toList_some, List.flatMap_cons, List.flatMap_nil,
+    List.append_nil, List.mem_map]
+  exact ⟨span, hs, rfl⟩
+
 /-- Underline rules for one set line: a second walk over its segs, aligned by
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
 writer's x-tracking stays linear and link rectangles see no extra runs. Each
@@ -9723,14 +9850,15 @@ reaches over a run boundary — a negative-sidebearing italic descender, or a
 descender's clearance spilling past its own advance — clears the
 neighbouring rule too. An obstruction is judged against the band of the run
 that owns the glyph. The merged obstructions are `Chained`
-(`mergeIntervals_chained`) and each run's rules are `subtract` of its span,
-so `underline_skips_ink` and `underline_covers_gaps` hold of what ships.
-Empty when the line has no underlined run, so the common case allocates
-nothing. -/
+(`mergeIntervals_chained`). Runs and authored spaces use `appendUnderline`:
+its placement and coverage contracts connect the actual paint to `subtract`,
+so the skip-ink and coverage facts also hold across word spaces.
+Empty when the line has no underline, so the common case allocates nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
       | .run _ _ _ _ _ _ _ decorations _ _ _ => decorations.underline
+      | .decoratedGap _ _ decorations => decorations.underline.isSome
       | _ => false) do
     return #[]
   -- Pass 1: obstruction intervals in line coordinates, each glyph's
@@ -9757,47 +9885,18 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       x := x + w
   -- Merge into the chained obstruction list the theorems consume.
   let merged := mergeIntervals obs
-  -- Pass 2: rules under the underlined runs, minus the obstructions.
+  -- Pass 2: the same span painter for words and spaces, after line setting.
   let mut out : Array Seg := #[]
   x := 0
   for seg in segs do
-    match seg with
-    | .gap w _ | .decoratedGap w _ _ =>
-      out := out.push (.gap w false)
-      x := x + w
-    | .rule w _ _ _ | .decoration _ w _ _ _ =>
-      out := out.push (.gap w false)
-      x := x + w
-    | .poly _ _ => pure ()
-    | .image _ w _ =>
-      out := out.push (.gap w false)
-      x := x + w
-    | .run fontIdx color _ w _ size _ decorations _ _ _ =>
-      if !decorations.underline then
-        out := out.push (.gap w false)
-      else
-        let font := fs.get fontIdx
-        let sz := if size == 0 then lineSize else size
-        let upem : Int := font.unitsPerEm
-        let (bandPos, bandThick) := font.band
-        let top := bandPos * sz / upem
-        let thick := bandThick * sz / upem
-        let raise := top - thick
-        let mut cur : Sp := x
-        for (plo, phi) in subtract x (x + w) merged do
-          if plo > cur then
-            out := out.push (.gap (plo - cur) false)
-          out := out.push (.decoration .underline (phi - plo) thick raise color)
-          cur := phi
-        if x + w > cur then
-          out := out.push (.gap (x + w - cur) false)
-      x := x + w
+    out := appendUnderline fs lineSize merged x seg out
+    x := x + seg.advance
   return out
 
 private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
   unless segs.any (fun s => match s with
       | .run _ _ _ _ _ _ _ decorations _ _ _ => decorations.lineThrough.isSome
-      | .decoratedGap _ _ _ => true
+      | .decoratedGap _ _ decorations => decorations.lineThrough.isSome
       | _ => false) do
     return #[]
   let mut out : Array Seg := #[]
@@ -9808,8 +9907,11 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
       | some paint =>
         out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color)
       | none => out := out.push (Seg.gap w false)
-    | .decoratedGap w _ paint =>
-      out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color)
+    | .decoratedGap w _ decorations =>
+      match decorations.lineThrough with
+      | some paint =>
+        out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color)
+      | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
     | .image _ w _ => out := out.push (.gap w false)
