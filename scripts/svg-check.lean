@@ -1,12 +1,26 @@
 import Tests.SvgValidation
 import Tests.SvgTerminal
+import Tests.SvgBrowser
+import Tests.SvgFaces
+import Tests.SvgPublication
 
-/-! External SVG converter oracle. Build leantex Tests.SvgValidation
-Tests.SvgTerminal first. Requires xmllint, xsltproc, rsvg-convert and
-Poppler; all documents are synthetic and no network inputs are used. -/
+/-! External SVG converter and publication oracle. Build every imported
+check and the CLI before running:
 
-def main : IO UInt32 := do
+```
+lake build leantex Tests.SvgValidation Tests.SvgTerminal Tests.SvgBrowser Tests.SvgFaces Tests.SvgPublication
+lake env lean scripts/svg-check.lean
+```
+
+The driver checks import Main, so this entry uses `#eval`; run without
+`--run`. Requires xmllint, xsltproc, rsvg-convert and Poppler; all documents
+are synthetic and no network inputs are used. -/
+
+#eval (do
   let failures ← IO.mkRef []
+  Tests.svgBrowserSourceChecks failures
+  Tests.svgFacePreparationChecks failures
+  Tests.svgPublicationChecks failures
   Tests.svgValidationChecks failures
   Tests.svgTerminalBoundaryChecks failures
   Tests.svgTerminalDriverChecks failures
@@ -14,4 +28,6 @@ def main : IO UInt32 := do
   for name in failed.reverse do
     IO.eprintln s!"FAIL: {name}"
   IO.println s!"SVG converter oracle: {failed.length} failures"
-  return if failed.isEmpty then 0 else 1
+  if !failed.isEmpty then
+    throw <| IO.userError "SVG converter oracle failed"
+  : IO Unit)
