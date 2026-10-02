@@ -59,7 +59,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       let failure ← IO.mkRef (some missing)
       let calls ← IO.mkRef #[]
       let runTool := svgToolRunner calls tool failure source
-      let result ← ImageAssets.svgPlan {} source .last (runTool := runTool)
+      let result ← ImageAssets.svgPlan {} source .last (runTool := some runTool)
       let (missing, diag) := fulfil result
       let (before, beforePdf) := artifact missing
       check ref (label ++ " stops at the unavailable tool") ((← calls.get) == stopped)
@@ -77,7 +77,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
           !bytesContain beforePdf "/Im1 Do")
       failure.set none
       calls.set #[]
-      let restored ← ImageAssets.svgPlan {} source .last (runTool := runTool)
+      let restored ← ImageAssets.svgPlan {} source .last (runTool := some runTool)
       let (loaded, afterDiag) := fulfil restored
       let (after, afterPdf) := artifact loaded
       check ref (label ++ " retries the same source after tool restoration")
@@ -96,7 +96,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     let calls ← IO.mkRef #[]
     let failure ← IO.mkRef (some (.ok { exitCode := code, stdout := "ignored", stderr }))
     let result ← ImageAssets.svgPlan {} source .last
-      (runTool := svgToolRunner calls "rsvg-convert" failure source)
+      (runTool := some (svgToolRunner calls "rsvg-convert" failure source))
     let (_, diag) := fulfil result
     check ref s!"SVG converter error {code}/{stderr} keeps its evidence without install advice"
       (diag.any fun d => hasStr d.message s!"rsvg-convert exited {code}: {stderr}" &&
@@ -104,7 +104,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let calls ← IO.mkRef #[]
   let failure ← IO.mkRef (some (.error (IO.Error.resourceExhausted none 24 "open files")))
   let result ← ImageAssets.svgPlan {} source .last
-    (runTool := svgToolRunner calls "rsvg-convert" failure source)
+    (runTool := some (svgToolRunner calls "rsvg-convert" failure source))
   check ref "SVG process resource failure keeps its evidence without install advice"
     (match result with
       | .error err => hasStr err "open files" && !hasStr err "brew install"
