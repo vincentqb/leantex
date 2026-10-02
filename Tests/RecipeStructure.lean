@@ -335,6 +335,82 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
 
+/-- **Array `>{decl}` and `<{decl}` column modifiers set a column's
+alignment.** The array package reads a `>{...}` group before a column and a
+`<{...}` group after it (array manual §1-2); `\raggedright`, `\raggedleft`,
+and `\centering` select the column's horizontal alignment and
+`\arraybackslash` is inert inside the group. The common flexible recipe
+column `>{\raggedright\arraybackslash}X` must stay a flexible target-width
+column whose alignment follows the modifier, and must raise no
+unreadable-type (W0104) or short-row (W0337) cascade. An effect the group
+carries that the engine does not model is named once. Assertions read the
+shared table IR (`Ir.ColSpec`). -/
+def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let firstTable := fun (doc : Ir.Doc) =>
+    (Ir.foldBlocks (fun acc b => match b with
+      | .table cols pl pr _ _ _ => acc.push (cols, pl, pr)
+      | _ => acc) (fun acc _ => acc) #[] doc.body)[0]?
+  let isFlex := fun (w : Ir.ColWidth) => match w with | .flex _ => true | _ => false
+  let cascade := ["W0104", "W0337", "W0338", "W0103", "W0301", "W0302"]
+  -- A raggedright X: one flexible, left-aligned column, no cascade.
+  let (d1, ds1) := elabStr (dvDoc "\\usepackage{tabularx}\n"
+    "\\begin{tabularx}{\\linewidth}{>{\\raggedright\\arraybackslash}X}Key.\\end{tabularx}")
+  t "a raggedright X column stays flexible, left-aligned, with no cascade"
+    (match firstTable d1 with
+     | some (cols, _, _) =>
+       cols.size == 1 && cols[0]?.map (·.align) == some .left &&
+       ((cols[0]?.map (·.width)).any isFlex) &&
+       ds1.all (fun d => !cascade.contains d.code)
+     | none => false)
+  -- Mixed l then a centring X.
+  let (d2, ds2) := elabStr (dvDoc "\\usepackage{tabularx}\n"
+    "\\begin{tabularx}{\\linewidth}{l>{\\centering\\arraybackslash}X}A & B.\\end{tabularx}")
+  t "a mixed l and centring-X spec yields a natural-left then a flexible-centre column"
+    (match firstTable d2 with
+     | some (cols, _, _) =>
+       cols.size == 2 &&
+       cols[0]?.map (·.align) == some .left && cols[0]?.map (·.width) == some .natural &&
+       cols[1]?.map (·.align) == some .center && ((cols[1]?.map (·.width)).any isFlex) &&
+       ds2.all (fun d => !cascade.contains d.code)
+     | none => false)
+  -- Raggedleft on a p column.
+  let (d3, ds3) := elabStr (dvDoc ""
+    "\\begin{tabular}{>{\\raggedleft\\arraybackslash}p{3cm}}x\\end{tabular}")
+  t "raggedleft on a p column sets right alignment with no cascade"
+    (match firstTable d3 with
+     | some (cols, _, _) =>
+       cols.size == 1 && cols[0]?.map (·.align) == some .right &&
+       ds3.all (fun d => !cascade.contains d.code)
+     | none => false)
+  -- An unsupported effect is named once; the column still stands.
+  let (d4, ds4) := elabStr (dvDoc ""
+    "\\begin{tabular}{>{\\bfseries}c}a\\end{tabular}")
+  t "an unsupported modifier effect is named once and the column stands"
+    (match firstTable d4 with
+     | some (cols, _, _) =>
+       cols.size == 1 && cols[0]?.map (·.align) == some .center &&
+       (ds4.filter (·.code == "W0104")).size == 1 &&
+       ds4.all (fun d => d.code != "W0337")
+     | none => false)
+  -- A post `\arraybackslash` modifier is inert.
+  let (d5, ds5) := elabStr (dvDoc ""
+    "\\begin{tabular}{c<{\\arraybackslash}}a\\end{tabular}")
+  t "a post arraybackslash modifier is inert and raises no cascade"
+    (match firstTable d5 with
+     | some (cols, _, _) =>
+       cols.size == 1 && cols[0]?.map (·.align) == some .center &&
+       ds5.all (fun d => !cascade.contains d.code)
+     | none => false)
+  -- An `@{}` gap after a modified X drops the right pad.
+  let (d6, ds6) := elabStr (dvDoc "\\usepackage{tabularx}\n"
+    "\\begin{tabularx}{\\linewidth}{>{\\raggedright\\arraybackslash}X@{}}k.\\end{tabularx}")
+  t "an @{} gap after a modified X column drops the right pad with no cascade"
+    (match firstTable d6 with
+     | some (cols, _, padR) =>
+       cols.size == 1 && padR == false && ds6.all (fun d => !cascade.contains d.code)
+     | none => false)
+
 /-- **The article `titlepage` environment is an isolated flow page.** The
 installed class opens a fresh page, applies the empty page style, and opens
 another at the close (`classes.dtx`, `\titlepage`). This engine lowers the

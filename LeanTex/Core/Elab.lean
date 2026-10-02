@@ -2405,11 +2405,40 @@ private def tableTarget (ctx : Ctx) (src : String) : Except String Ir.TableTarge
   let e ← affineLength ctx (· != .textHeight) src
   return .sized e
 
+/-- An array `>{decl}`/`<{decl}` modifier group: the alignment its
+declarations select — the last of `\raggedright` (flush left),
+`\raggedleft` (flush right), `\centering` wins, as in LaTeX — with
+`\arraybackslash` consumed as inert and every other effect named once as a
+`(key, message, help)` the caller's `warnOnce` keys by the command, so one
+unmodelled effect fires once over the whole table rather than per row. -/
+private def decodeColMods (g : Array Raw) :
+    Option Ir.HAlign × Array (String × String × String) := Id.run do
+  let mut align : Option Ir.HAlign := none
+  let mut warns : Array (String × String × String) := #[]
+  for r in g do
+    match r with
+    | .ctrl name _ =>
+      match name with
+      | "raggedright" => align := some .left
+      | "raggedleft" => align := some .right
+      | "centering" => align := some .center
+      | "arraybackslash" => pure ()
+      | _ =>
+        warns := warns.push (s!"colmod:{name}",
+          s!"column modifier '\\{name}' is not modelled; the column keeps its \
+alignment", "")
+    | _ =>
+      unless isSpaceOrPar r do
+        warns := warns.push ("colmod",
+          "a column modifier is not modelled; the column keeps its alignment", "")
+  return (align, warns)
+
 /-- The `tabular` column spec: `l`/`c`/`r` natural columns, `p{width}`
 (and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
 `@{}` deleting the outer pad on its edge, `|` warned and never drawn —
 "Never, ever use vertical rules" (booktabs.dtx §The layout of formal
-tables). Returns the columns, the outer-pad flags, and warnings as
+tables), and the array `>{decl}`/`<{decl}` modifiers selecting a column's
+alignment. Returns the columns, the outer-pad flags, and warnings as
 (key, message, help) for the caller's `warnOnce`. -/
 private def parseColSpec (ctx : Ctx) (spec : Array Raw)
     (flexTarget : Option Ir.TableTarget := none) :
@@ -2419,6 +2448,8 @@ private def parseColSpec (ctx : Ctx) (spec : Array Raw)
   let mut padR := true
   let mut warns : Array (String × String × String) := #[]
   let mut i : Nat := 0
+  -- A pending `>{decl}` alignment, applied to the next column pushed.
+  let mut pendingAlign : Option Ir.HAlign := none
   for _ in [0:spec.size] do
     if h : i < spec.size then
       match spec[i] with
@@ -2447,16 +2478,24 @@ only the empty '@{}' deleting an outer pad is",
         let mut tookGroup := false
         for c in w.toList do
           match c with
-          | 'l' => cols := cols.push { width := .natural, align := .left }
-          | 'c' => cols := cols.push { width := .natural, align := .center }
-          | 'r' => cols := cols.push { width := .natural, align := .right }
+          | 'l' =>
+            cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+            pendingAlign := none
+          | 'c' =>
+            cols := cols.push { width := .natural, align := pendingAlign.getD .center }
+            pendingAlign := none
+          | 'r' =>
+            cols := cols.push { width := .natural, align := pendingAlign.getD .right }
+            pendingAlign := none
           | 'X' =>
             match flexTarget with
-            | some target => cols := cols.push { width := .flex target, align := .left }
+            | some target =>
+              cols := cols.push { width := .flex target, align := pendingAlign.getD .left }
             | none =>
               warns := warns.push ("colspec",
                 "unsupported column type 'X'; set as 'l'", "load tabularx and use its environment")
-              cols := cols.push { width := .natural, align := .left }
+              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+            pendingAlign := none
           | 'p' | 'm' | 'b' =>
             let widthGroup := if ci == last then
               match spec[i + 1]? with
@@ -2478,7 +2517,49 @@ the full measure",
               warns := warns.push ("mb",
                 s!"'{c}\{...}' vertical cell alignment is not modelled; set \
 as 'p'", "")
-            cols := cols.push { width := width, align := .left }
+            cols := cols.push { width := width, align := pendingAlign.getD .left }
+            pendingAlign := none
+          | '>' =>
+            -- `>{decl}` lexes as a word character with its group beside it:
+            -- the decoded alignment is held for the next column pushed.
+            if ci == last then
+              match spec[i + 1]? with
+              | some (.group g _) =>
+                tookGroup := true
+                let (a, ws) := decodeColMods g
+                if a.isSome then pendingAlign := a
+                warns := warns ++ ws
+              | _ =>
+                warns := warns.push ("colspec",
+                  "unsupported column type '>'; set as 'l'", "")
+                cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+                pendingAlign := none
+            else
+              warns := warns.push ("colspec",
+                "unsupported column type '>'; set as 'l'", "")
+              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              pendingAlign := none
+          | '<' =>
+            -- `<{decl}` applies to the column just pushed.
+            if ci == last then
+              match spec[i + 1]? with
+              | some (.group g _) =>
+                tookGroup := true
+                let (a, ws) := decodeColMods g
+                if let some al := a then
+                  if cols.size > 0 then
+                    cols := cols.modify (cols.size - 1) (fun col => { col with align := al })
+                warns := warns ++ ws
+              | _ =>
+                warns := warns.push ("colspec",
+                  "unsupported column type '<'; set as 'l'", "")
+                cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+                pendingAlign := none
+            else
+              warns := warns.push ("colspec",
+                "unsupported column type '<'; set as 'l'", "")
+              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              pendingAlign := none
           | '@' =>
             -- `@{...}` lexes as a word character with the group beside it:
             -- the empty `@{}` deletes the outer pad on its edge.
@@ -2501,7 +2582,8 @@ is too small")
             if !c.isWhitespace then
               warns := warns.push ("colspec",
                 s!"unsupported column type '{c}'; set as 'l'", "")
-              cols := cols.push { width := .natural, align := .left }
+              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              pendingAlign := none
           ci := ci + 1
         i := i + (if tookGroup then 2 else 1)
       | _ => i := i + 1
