@@ -331,9 +331,55 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     (fun acc n => acc ++ attrValuesOf (· == "table") "style" n) #[]
   let colStyles := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "col") "style" n) #[]
-  t "typed HTML keeps the nested tabularx and its target/flexible track"
+  let cellClasses := trees.foldl
+    (fun acc n => acc ++ attrValuesOf (fun x => x == "td" || x == "th") "class" n) #[]
+  t "typed HTML keeps the nested tabularx and its target width"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1 &&
-      tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
+      tableStyles.contains "width: 100%")
+  -- Item 2: both backends leave the natural `l` column to `auto` (no <col>
+  -- width; its cells carry the nowrap class), and the single X takes the full
+  -- flex share — which is 100% here, a computed share (`Ir.tableColShares`),
+  -- not the old unconditional per-column 100%. So exactly one <col> carries a
+  -- width, the X's.
+  t "the natural column is auto+nowrap and the X column takes the full flex share"
+    (colStyles == #["width: 100%"] && cellClasses.contains "bt-nowrap")
+
+/-- **The typed HTML `<col>` widths are the per-column shares of the target,
+measure-free (`Ir.tableColShares`).** Both backends leave natural `l`/`c`/`r`
+columns to CSS `auto` (no `<col>` width; their cells carry `bt-nowrap` so
+auto-layout cannot squeeze them to min-content) and give only sized `p{…}`
+and flexible `X` columns an explicit width: a sized column its fraction of
+the target, each `X` an equal part of the remainder. The percentages are the
+`percentCss` of the shared IR value, so the HTML `<col>` tracks the same
+resolved widths the PDF path lays out. Assertions read the typed HTML tree. -/
+def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let render := fun (src : String) =>
+    let (doc, _) := elabStr (dvDoc "\\usepackage{tabularx}\n\\usepackage{array}\n" src)
+    doc.body.map (HtmlDoc.blockNode {})
+  let colStylesOf := fun (src : String) =>
+    (render src).foldl (fun acc n => acc ++ attrValuesOf (· == "col") "style" n) #[]
+  let cellStylesOf := fun (src : String) =>
+    (render src).foldl
+      (fun acc n => acc ++ attrValuesOf (fun x => x == "td" || x == "th") "style" n) #[]
+  let cellClassesOf := fun (src : String) =>
+    (render src).foldl
+      (fun acc n => acc ++ attrValuesOf (fun x => x == "td" || x == "th") "class" n) #[]
+  t "two X columns each take half the target"
+    (colStylesOf "\\begin{tabularx}{\\linewidth}{XX}A & B\\end{tabularx}"
+      == #["width: 50%", "width: 50%"])
+  t "a sized p-column takes its fraction and X takes the remainder"
+    (colStylesOf "\\begin{tabularx}{\\linewidth}{p{0.3\\linewidth}X}A & B\\end{tabularx}"
+      == #["width: 30%", "width: 70%"])
+  t "a natural column mixed with X stays auto; X takes the full flex share"
+    (colStylesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}"
+      == #["width: 100%"])
+  t "a natural column's cells carry the nowrap class"
+    ((cellClassesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}").contains "bt-nowrap")
+  t "an array alignment modifier reaches the X cells"
+    ((cellStylesOf
+        "\\begin{tabularx}{\\linewidth}{>{\\raggedleft\\arraybackslash}X}A\\end{tabularx}").contains
+      "text-align: right")
 
 /-- **Array `>{decl}` and `<{decl}` column modifiers set a column's
 alignment.** The array package reads a `>{...}` group before a column and a
