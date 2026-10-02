@@ -25818,6 +25818,17 @@ meanings, forwarding and skipped uses retain their behavior. The focused
 matrix failed 28 assertions before the predicate correction. The parallel
 column guard also checks repeated doubling of the gutter.
 
+Scope exit restores resolved opening values, rather than reevaluating saved
+expressions. The compatibility pass identifies locally assigned token sites;
+elaboration captures their values from its actual opening environment and
+restores them through one token epoch. This also respects a native opening
+declaration that Compat cannot see. The added column probes failed 12 artifact
+assertions before this correction, across native declarations and a copied
+register whose local value later changes. Capturing a scope's opening values
+also preserves any pending paragraph text; the snapshot introduces no new
+paragraph boundary. Eight shipped-page and typed HTML assertions exposed
+that regression and pass with the existing accumulator carried into the scope.
+
 Math alphabet resolution has a document-wide fixed point and a quiet
 diagnostic census. The proofs quantify over the IR constructors and compose
 through its shared walks; captions and reference values enter the same census
@@ -25848,6 +25859,17 @@ browser-face planning consume captured bytes, with no later reread of mutable
 source or cache paths. The planning values are shared by the driver and
 browser oracle. Captures account for every expected face identity, so a
 missing, duplicated or substituted image cannot certify a page.
+
+The final review tightens those boundary facts: completed captures are read
+from their stable task results, signal termination remains inconclusive even
+after a partial log, and tool identity follows the executable selected by
+PATH. Non-executable shadows, directories and empty PATH components cannot
+make a cache describe a different binary. The process and cache probes
+witnessed these failures before the fixes and pass after them.
+The cache namespace also retires v1 answers, which could contain an
+interruption recorded as a refusal. A historical-slot probe failed two
+assertions before that migration and now verifies a fresh conversion followed
+by reuse of its replacement.
 
 Focused process, cache, publication, source-deletion, repeated-preparation
 and native final-pose probes pass. `scripts/svg-check.lean` now runs the
