@@ -804,115 +804,76 @@ def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
-/-- A boundary picture's HTML face, converted into the picture cache and
-not yet published: the captured SVG, and the name it takes beside the page. -/
-structure Publication where
-  bytes : ByteArray
-  name : String
-
-/-- The HTML face of the boundary converts the captured PDF bytes through
-the same bounded, content-keyed conversion cache as image faces. An unkeyed
-sibling file cannot answer for them, and the store's `href` points the
-`<img>` at the name the picture will have beside the page. The function receives the
-asset directory's *relative* name and never the page's location: no path
-under the output can be formed here, which is what keeps the conversion
-on the cache side of the assertion gate; `publish` writes each captured
-`Publication` atomically after it. `pdftocairo` missing or failing is
-W0378 for this artifact only — the PDF is unaffected — and the sources it
-failed on are returned: a picture the rendered subset draws in part is
-drawn by the subset on the page (`Boundary.htmlWithdraw`), and any other
-shows its text alternative. -/
-def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store) :
-    IO (Image.Store × Array Publication × Array Diag × Array String) := do
-  if pics.isEmpty then return (imgs, #[], #[], #[])
+/-- Convert the captured boundary PDF to captured browser SVG. Conversion
+failure retains the existing named fallback; no output path is consulted. -/
+def picsToSvg (pics : Array PicResult) (imgs : Image.Store) :
+    IO (Image.Store × Array Diag × Array String) := do
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
-  let mut pubs : Array Publication := #[]
   let mut unconverted : Array String := #[]
   for r in pics do
-    let hash := (r.src.drop Ir.picSrcPrefix.length).toString
-    let svgName := hash ++ ".svg"
     match ← ImageAssets.picFace r.bytes with
     | .ok bytes =>
-      pubs := pubs.push { bytes, name := svgName }
       entries := entries.map fun en =>
-        if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
-        else en
+        if en.src == r.src then { en with webSvg := some bytes } else en
     | .error why =>
       diags := diags.push (DriverDiag.boundarySvgMissing why)
       unconverted := unconverted.push r.src
-  return ({ entries }, pubs, diags, unconverted)
+  return ({ entries }, diags, unconverted)
 
-/-- An image publication: captured browser bytes and their source path.
-The file name is the typed page's asset request. -/
-structure ImageCopy where
-  source : System.FilePath
-  name : String
-  data : Option ByteArray
+private def htmlLocalBytes (file name : String) : IO (Except String ByteArray) := do
+  if name.isEmpty || name.startsWith "//" || name.contains ':' then
+    return .error "a declared HTML resource must name a local file"
+  let path := System.FilePath.mk name
+  let path := if path.isAbsolute then path else
+    (System.FilePath.mk file).parent.getD "." / path
+  try return .ok (← IO.FS.readBinFile path)
+  catch _ => return .error "a declared HTML resource could not be read"
 
-/-- The image copies a page requests (`HtmlDoc.imageAssets`), carrying the
-same captured bytes its content keys name. The resolved source is a fallback
-for entries without captured bytes. Pure: `publish` performs the copies
-after the gate. -/
-def imageCopies (file : String) (imgs : Image.Store) : Array ImageCopy :=
-  let dir := (System.FilePath.mk file).parent.getD "."
-  (HtmlDoc.imageAssets imgs).filterMap fun a =>
-    (imgs.get? a.srcIndex).map fun en =>
-      let p := System.FilePath.mk (HtmlDoc.resolvedSrc en)
-      { source := if p.isAbsolute then p else dir / p, name := a.file
-        data := if a.poster then en.posterSvg else en.browserBytes }
+/-- Capture local head resources, attest exact SVG bytes through the existing
+parsed-XML/converter boundary, then check the tree that publication will render.
+No URL is fetched and no output directory exists at this point. -/
+def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
+    IO (Except String HtmlDoc.ClosedPage × Array Diag) := do
+  let mut cfg := cfg
+  if let some name := doc.output.stylesheet then
+    let .ok bytes ← htmlLocalBytes file name | return (.error
+      ("the declared stylesheet " ++ HtmlResource.referenceLabel name ++
+        " could not be captured from a local file"), #[])
+    let some css := String.fromUTF8? bytes | return (.error
+      ("the declared stylesheet " ++ HtmlResource.referenceLabel name ++ " is not UTF-8"), #[])
+    let css := if css.startsWith "\uFEFF" then (css.drop 1).toString else css
+    cfg := { cfg with stylesheet := some (name, css) }
+  if let some name := doc.info.favicon then
+    let .ok bytes ← htmlLocalBytes file name | return (.error
+      ("the declared favicon " ++ HtmlResource.referenceLabel name ++
+        " could not be captured from a local file"), #[])
+    let media := if Image.isSvg name then HtmlResource.Media.svg
+      else if ({ media := .png, bytes } : HtmlResource.Embedded).ready #[] then .png
+      else if ({ media := .ico, bytes } : HtmlResource.Embedded).ready #[] then .ico
+      else .jpeg
+    cfg := { cfg with favicon := some (name, { media, bytes }) }
+  let mut svgChecked : Array ByteArray := #[]
+  for resource in HtmlDoc.resources cfg do
+    if resource.media == .svg && !svgChecked.contains resource.bytes then
+      match ← ImageAssets.validateSvg resource.bytes with
+      | .ok _ => svgChecked := svgChecked.push resource.bytes
+      | .error why => return (.error ("an embedded SVG failed resource validation: " ++ why), #[])
+  return HtmlDoc.emitClosed cfg doc svgChecked
 
-/-- Phase 3's single write site, after the assertion gate: the only code in
-the driver that brings an output location into existence — the `-o`
-directory, the page with its asset and font directories, the markdown
-twin, the PDF. Everything it writes was built in memory before the gate,
-so a failing document reaches none of this and leaves nothing behind; an
-artifact absent from the plan creates nothing, not even its directory.
-Returns the paths written, for the verdict line. -/
-def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
-    (html : Option (String × String × Array Publication × Array ImageCopy ×
-      Option (Array HtmlDoc.FontAsset)))
+/-- The only artifact write site, after acceptance. An HTML publication
+requires a checked tree and writes its own serialization, with no sidecars
+or rereads of resources captured before the gate. -/
+def publish (outDir : Option String) (html : Option (String × HtmlDoc.ClosedPage))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String) := do
   let mut written : Array String := #[]
   if let some o := outDir then
     IO.FS.createDirAll o
-  if let some (path, page, pubs, rasters, fonts?) := html then
-    let parent := (System.FilePath.mk path).parent.getD "."
-    IO.FS.createDirAll parent
-    unless pubs.isEmpty do
-      let t ← IO.monoMsNow
-      let dir := parent / assetsDir
-      IO.FS.createDirAll dir
-      for pub in pubs do
-        ConvCache.atomicWrite (dir / pub.name) pub.bytes
-      ui.phase "boundary-svg" s!"{pubs.size} pictures ({assetsDir})" (← since t)
-    -- Images publish the captured bytes their content keys name.
-    unless rasters.isEmpty do
-      let t ← IO.monoMsNow
-      let dir := parent / assetsDir
-      IO.FS.createDirAll dir
-      let mut bytes := 0
-      for image in rasters do
-        let data ← match image.data with
-          | some data => pure data
-          | none => IO.FS.readBinFile image.source
-        IO.FS.writeBinFile (dir / image.name) data
-        bytes := bytes + data.size
-      ui.phase "assets" s!"{rasters.size} images, {bytes} bytes ({assetsDir})" (← since t)
-    IO.FS.writeFile path page
+  if let some (path, page) := html then
+    IO.FS.createDirAll ((System.FilePath.mk path).parent.getD ".")
+    IO.FS.writeFile path page.render
     written := written.push path
-    -- The emission's font-file requests, fulfilled beside the page: the
-    -- faces the styling references, byte for byte the ones the PDF embeds.
-    if let some assets := fonts? then
-      let t ← IO.monoMsNow
-      let dir := parent / fontsDir
-      IO.FS.createDirAll dir
-      let mut bytes := 0
-      for a in assets do
-        IO.FS.writeBinFile (dir / a.file) a.data
-        bytes := bytes + a.data.size
-      ui.phase "fonts" s!"{assets.size} faces, {bytes} bytes ({fontsDir})" (← since t)
   if let some (path, text) := md then
     IO.FS.writeFile path text
     written := written.push path
@@ -1208,9 +1169,6 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let htmlPath := outPath ui.cfg.output outIsDir file .html
       let mdPath := mdOutPath ui.cfg.output outIsDir file doc.output.md
       let pdfPath := outPath ui.cfg.output outIsDir file .pdf
-      let stem := (System.FilePath.mk htmlPath).fileStem.getD "out"
-      let assetsDir := stem ++ ".assets"
-      let fontsDir := stem ++ ".fonts"
       -- Phase 2, the build, in memory: every artifact's bytes exist before
       -- any is judged, so the assertion gate reads the file that would
       -- ship (the PDF census) and a failing document leaves nothing
@@ -1258,23 +1216,21 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       fired := fired ++ rC.fired
       accepted := accepted ++ rC.accepted
       warnings := warnings + rC.warnings
-      let mut htmlBuilt : Option (String × Array Publication × Array ImageCopy) :=
-        none
+      let mut htmlBuilt : Option HtmlDoc.ClosedPage := none
       if emit.contains .html then
         let t ← IO.monoMsNow
         let cssMode := match css with
           | .own => HtmlDoc.CssMode.own
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
-        -- The boundary pictures' HTML face: the cached PDFs convert to
-        -- SVGs in the cache, and the store's hrefs point at the names
-        -- they will publish under (`picsToSvg`; W0378 names a converter
+        -- The boundary pictures' HTML face: captured PDFs convert to
+        -- captured SVG bytes (`picsToSvg`; W0378 names a converter
         -- this host lacks). A picture the conversion failed on, and that
         -- the rendered subset draws in part, is drawn by the subset on
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
-        let (imgs, pubs, svgDiags, unconverted) ← picsToSvg pics assetsDir imgs
+        let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs
         let imgs ← imageBrowserFaces imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
@@ -1294,8 +1250,6 @@ in the HTML" (← since t)
           mathBoundary := ui.cfg.mathBoundary
           imgs := imgs
           fonts := if shipFonts then some fs else none
-          fontsDir := fontsDir
-          assetsDir := assetsDir
           -- The markdown twin, when one is being written beside the page,
           -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then (System.FilePath.mk mdPath).fileName
@@ -1304,14 +1258,20 @@ in the HTML" (← since t)
           -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
         }
-        let (html, hdiags) := HtmlDoc.emit hcfg htmlDoc
+        let (result, hdiags) ← prepareHtml file hcfg htmlDoc
         let r4 ← ui.resolve doc.allow allowAll hdiags
         fired := fired ++ r4.fired
         accepted := accepted ++ r4.accepted
         warnings := warnings + r4.warnings
-        ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
-        -- The page's image copies, planned here and performed by `publish`.
-        htmlBuilt := some (html, pubs, imageCopies file imgs)
+        match result with
+        | .error detail =>
+          ui.diag (DriverDiag.htmlResourceUnavailable detail)
+          ui.accepted accepted
+          ui.summary file 1 (← since t0)
+          return 1
+        | .ok page =>
+          ui.phase "html" s!"{page.render.utf8ByteSize} bytes" (← since t)
+          htmlBuilt := some page
       let mut mdBuilt : Option String := none
       if emit.contains .md then
         let t ← IO.monoMsNow
@@ -1350,7 +1310,7 @@ in the HTML" (← since t)
       let t ← IO.monoMsNow
       -- Every artifact the plan emits must carry its fonts: the PDF by the
       -- census of its bytes (a copied page can bring a face the writer
-      -- never embedded), the HTML by the faces it ships beside the page;
+      -- never embedded), the HTML by the faces it embeds in the page;
       -- the markdown twin carries none and contributes nothing.
       let readsPdf := doc.asserts.any fun a => match a.kind with
         | .fontsAllEmbedded | .pdfProfile _ => true
@@ -1407,9 +1367,7 @@ in the HTML" (← since t)
         ui.accepted accepted
         ui.summary file failures.size (← since t0)
         return exitFor 0 failures.size warnings ui.cfg.werror
-      let written ← publish ui outDir assetsDir fontsDir
-        (htmlBuilt.map fun (html, pubs, rasters) =>
-          (htmlPath, html, pubs, rasters, if shipFonts then some (HtmlDoc.fontAssets fs) else none))
+      let written ← publish outDir (htmlBuilt.map (htmlPath, ·))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.

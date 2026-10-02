@@ -1,0 +1,277 @@
+import Tests.Support
+import Main
+
+open LeanTex.Core
+
+namespace Tests
+
+/-- A single HTML file carries the exact captured rendering bytes in its
+actual typed carriers. These assertions fail on the sibling-file emitter;
+closure of nested SVG/CSS references is a separate, stricter obligation. -/
+def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let moving := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
+  let poster := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
+  let body := "\\includegraphics[alt={A captured square}]{figure.svg} " ++
+    "\\href{https://example.invalid/reading}{Further reading}"
+  let doc := (elabStr body).1
+  let imgs : Image.Store := { entries := #[
+    { src := "figure.svg", source := some moving, posterSvg := some poster,
+      info := some { pxW := 20, pxH := 20 } }] }
+  let cfg : HtmlDoc.Config := { imgs, fonts := some fonts, mdHref := some "reading.md" }
+  let (head, tree, _) := HtmlDoc.emitTree cfg doc
+  let images := elemAttrsList (· == "img") #[] tree.toList
+  let sources := elemAttrsList (· == "source") #[] tree.toList
+  let expectedMoving ← htmlDataOracle "image/svg+xml" moving
+  let expectedPoster ← htmlDataOracle "image/svg+xml" poster
+  t "contained HTML: moving image carries captured bytes"
+    (images.size == 1 && images.all (fun (_, attrs) =>
+      attrs.contains ("src", expectedMoving)))
+  t "contained HTML: static media source carries its own captured bytes"
+    (sources.size == 1 && sources.all (fun (_, attrs) =>
+      attrs.contains ("srcset", expectedPoster) &&
+      attrs.contains ("media", "print, (prefers-reduced-motion: reduce)")))
+  let converted := { imgs with entries := imgs.entries.map fun en =>
+    { en with source := some "replaced original".toUTF8, webSvg := some moving } }
+  let (_, convertedTree, _) := HtmlDoc.emitTree { cfg with imgs := converted } doc
+  t "contained HTML: converted browser bytes win over original bytes"
+    ((elemAttrsList (· == "img") #[] convertedTree.toList).all fun (_, attrs) =>
+      attrs.contains ("src", expectedMoving))
+  let css := treeCssList "" head.toList
+  for ff in HtmlDoc.shipFaces fonts do
+    let f := fonts.get ff.index
+    let expected ← htmlDataOracle (if f.isCff then "font/otf" else "font/ttf") f.data
+    t "contained HTML: font rule carries its resolved face byte for byte"
+      (hasStr css ("src: url(\"" ++ expected ++ "\") format(\"" ++ ff.format ++ "\")"))
+  let links := elemAttrsList (· == "a") #[] tree.toList
+  t "contained HTML: outgoing reading link remains navigation"
+    (links.any fun (_, attrs) => attrs.contains ("href", "https://example.invalid/reading"))
+  t "contained HTML: markdown alternate remains navigation"
+    ((elemAttrsList (· == "link") #[] head.toList).any fun (_, attrs) =>
+      attrs.contains ("rel", "alternate") && attrs.contains ("href", "reading.md"))
+
+  let iconDoc := { doc with info := { doc.info with favicon := some "icon.svg" } }
+  let iconCfg := { cfg with favicon := some ("icon.svg", { media := .svg, bytes := poster }) }
+  let (iconHead, _, _) := HtmlDoc.emitTree iconCfg iconDoc
+  t "contained HTML: favicon carries its captured bytes"
+    ((elemAttrsList (· == "link") #[] iconHead.toList).any fun (_, attrs) =>
+      attrs.contains ("rel", "icon") && attrs.contains ("href", expectedPoster))
+  t "contained HTML: captured tree closes with exact SVG attestations"
+    ((HtmlDoc.emitClosed iconCfg iconDoc #[moving, poster]).1.isOk)
+  t "contained HTML: another SVG's attestation cannot cover these bytes"
+    (!(HtmlDoc.emitClosed iconCfg iconDoc #["different bytes".toUTF8]).1.isOk)
+  t "contained HTML: missing icon capture cannot publish"
+    (!(HtmlDoc.emitClosed cfg iconDoc #[moving, poster]).1.isOk)
+  let resource : HtmlResource.Embedded := { media := .svg, bytes := moving }
+  let close (head body : Array Html.Node) :=
+    HtmlResource.close #[resource] #[moving] HtmlDoc.deckScript "en" head body
+  let image := Html.elem "img" #[] #[("src", resource.uri), ("alt", "Captured square")]
+  for (name, head, body) in [
+      ("remote image", #[], #[Html.elem "img" #[] #[("src", "https://example.invalid/x.png")]]),
+      ("fragment image fetch", #[], #[Html.elem "img" #[] #[("src", "#local")]]),
+      ("fragment srcset fetch", #[], #[Html.elem "source" #[] #[("srcset", "#local")]]),
+      ("fragment-led srcset list", #[], #[Html.elem "source" #[]
+        #[("srcset", "#local 1x, https://example.invalid/x.png 2x")]]),
+      ("relative stylesheet", #[Html.elem "link" #[] #[("rel", "stylesheet"), ("href", "x.css")]], #[]),
+      ("remote icon", #[Html.elem "link" #[] #[("rel", "icon"), ("href", "https://example.invalid/x.ico")]], #[]),
+      ("hidden source", #[], #[Html.elem "picture" #[image,
+        Html.elem "source" #[] #[("srcset", "missing.svg"), ("media", "print")]]]),
+      ("unattested data", #[], #[Html.elem "img" #[] #[("src", "data:image/svg+xml;base64,PHN2Zy8+")]]),
+      ("active markup", #[], #[Html.elem "iframe" #[] #[("srcdoc", "<img src='x'>")]]),
+      ("script source", #[Html.Node.script #[("src", "https://example.invalid/x.js")] ""], #[]),
+      ("new executable script", #[Html.Node.script #[] "fetch('https://example.invalid/x')"], #[]),
+      ("event handler", #[], #[Html.elem "p" #[] #[("onclick", "fetch('x')")]]),
+      ("raw attribute name", #[], #[Html.elem "p" #[] #[("x\"><img src='missing'>", "")]])] do
+    t ("contained gate refuses " ++ name) (!(close head body).isOk)
+  for (value, label) in [("missing-figure.png", "missing-figure.png"),
+      ("data:image/svg+xml;base64," ++ String.ofList (List.replicate 1024 'A'), "image/svg+xml")] do
+    match close #[] #[Html.elem "img" #[] #[("src", value)]] with
+    | .error detail =>
+      t "contained gate: refusal names the reference without dumping its payload"
+        (hasStr detail label && detail.length < 256)
+    | .ok _ => t "contained gate: unresolved diagnostic probe must be refused" false
+  for (name, css) in [
+      ("external url", "p { background: url(https://example.invalid/x.png) }"),
+      ("fragment background fetch", "p { background: url(#local) }"),
+      ("fragment font fetch", "@font-face { font-family: Probe; src: url(#local) }"),
+      ("relative url", "p { background: URL('missing.svg') }"),
+      ("import string", "@import 'missing.css';"),
+      ("import url", "@import url('missing.css');"),
+      ("image-set string", "p { background: image-set('missing.png' 1x) }"),
+      ("escaped function", "p { background: u\\72l(missing.png) }"),
+      ("external font", "@font-face { font-family: sample; src: local('Sample') }"),
+      ("raw text terminator", "</style><img src='missing'>"),
+      ("unterminated token", "p { content: 'unterminated }"),
+      ("raw newline in string", "p { content: 'open\n'; background: url(missing.png) }")] do
+    t ("contained gate refuses CSS " ++ name) (!(close #[.style css] #[image]).isOk)
+    t ("contained gate refuses style attribute " ++ name)
+      (!(close #[] #[Html.elem "p" #[] #[("style", css)]]).isOk)
+  for (name, css) in [
+      ("captured URL", "p { background: url(\"" ++ resource.uri ++ "\") }"),
+      ("inert URL text", "p::before { content: 'url(missing.png)' }"),
+      ("inert comment", "/* @import 'missing.css'; */ p { color: red }"),
+      ("quoted escape", "p::before { content: \"a\\\" url(missing.png)\" }"),
+      ("generated marker", "p::before { content: \"" ++ HtmlDoc.cssString "a\"\\b" ++ "\" }"),
+      ("generated functions", "@supports (color: color-mix(in oklab, red, blue)) { p { color: var(--ink, red) } }")] do
+    t ("contained gate accepts CSS " ++ name) ((close #[.style css] #[image]).isOk)
+  t "contained gate permits fragment references in SVG reference attributes"
+    ((close #[] #[Html.elem "svg" #[
+      Html.elem "use" #[] #[("href", "#local")],
+      Html.elem "rect" #[] #[("fill", "url(#local)"), ("clip-path", "url(#clip)")]]]).isOk)
+  t "contained gate permits navigation, inert metadata and the constant deck script"
+    ((close #[Html.Node.script #[("type", "application/ld+json")] "{\"url\":\"https://example.invalid\"}",
+      Html.Node.script #[] HtmlDoc.deckScript,
+      Html.elem "link" #[] #[("rel", "canonical"), ("href", "https://example.invalid/page")],
+      Html.elem "link" #[] #[("rel", "alternate"), ("type", "text/markdown"), ("href", "page.md")]]
+      #[image, Html.elem "a" #[Html.text "Reading"] #[("href", "https://example.invalid/reading")]]).isOk)
+  for mode in [HtmlDoc.CssMode.own, .bulma, .none] do
+    let sheetDoc := { iconDoc with output := { iconDoc.output with stylesheet := some "local.css" } }
+    let sheetCfg := { iconCfg with css := mode, stylesheet := some ("local.css", "p { color: red }") }
+    let (result, _) := HtmlDoc.emitClosed sheetCfg sheetDoc #[moving, poster]
+    t s!"contained HTML: declared local CSS is inline in mode {repr mode}" result.isOk
+    if let .ok page := result then
+      t "contained HTML: checked publication renders exactly the captured tree"
+        (page.render == (HtmlDoc.emit sheetCfg sheetDoc).1)
+    t "contained HTML: missing declared CSS cannot publish"
+      (!(HtmlDoc.emitClosed { sheetCfg with stylesheet := none } sheetDoc #[moving, poster]).1.isOk)
+    t "contained HTML: nested CSS resources cannot publish"
+      (!(HtmlDoc.emitClosed { sheetCfg with stylesheet := some ("local.css", "@import 'missing.css';") }
+        sheetDoc #[moving, poster]).1.isOk)
+  t "contained HTML: Bulma framework request cannot rely on a host stylesheet"
+    (!(HtmlDoc.emitClosed { cfg with css := .bulma } doc #[moving, poster]).1.isOk)
+  let collection : HtmlResource.Embedded := { media := .ttf, bytes := "ttcf".toUTF8 }
+  t "contained gate refuses a collection mislabeled as a standalone font"
+    (!(HtmlResource.close #[collection] #[] HtmlDoc.deckScript "en"
+      #[.style ("@font-face { font-family: Probe; src: url(\"" ++ collection.uri ++ "\"); }")] #[]).isOk)
+  for renderer in ["katex", "mathjax"] do
+    t ("contained HTML: remote math boundary is refused: " ++ renderer)
+      (!(HtmlDoc.emitClosed { cfg with mathBoundary := some renderer } doc #[moving, poster]).1.isOk)
+
+/-- Capture and publication are separated by deliberate source mutations.
+SVG dependency mutations cross the actual CLI validator before the gate. -/
+def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  IO.FS.withTempDir fun dir => do
+    let css := "p { color: rgb(1, 2, 3) }"
+    let square := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
+    IO.FS.writeFile (dir / "local.css") css
+    IO.FS.writeBinFile (dir / "icon.svg") square
+    IO.FS.writeBinFile (dir / "figure.svg") square
+    let doc := (elabStr "\\includegraphics[alt={Captured square}]{figure.svg}").1
+    let captured := { doc with
+      output := { doc.output with stylesheet := some "local.css" }
+      info := { doc.info with favicon := some "icon.svg" } }
+    let cfg : HtmlDoc.Config := { imgs := { entries := #[
+      { src := "figure.svg", source := some square, info := some { pxW := 20, pxH := 20 } }] } }
+    let output := dir / "output"
+    let (result, _) ← prepareHtml (dir / "source.tex").toString cfg captured
+    t "contained publication: checked preparation writes no output" (!(← output.pathExists))
+    match result with
+    | .error why => t ("contained publication: preparation failed: " ++ why) false
+    | .ok page =>
+      let expected ← htmlDataOracle "image/svg+xml" square
+      IO.FS.writeFile (dir / "local.css") "@import 'outside.css';"
+      IO.FS.writeFile (dir / "icon.svg") "<svg><image href='outside.png'/></svg>"
+      IO.FS.removeFile (dir / "figure.svg")
+      let target := output / "page.html"
+      let written ← publish none (some (target.toString, page)) none none
+      let html ← IO.FS.readFile target
+      t "contained publication: writes the checked serialization byte for byte"
+        (html == page.render && written == #[target.toString])
+      t "contained publication: retains captured stylesheet and image/icon bytes"
+        (hasStr html css && !hasStr html "outside.css" && !hasStr html "outside.png" &&
+          hasStr html ("src=\"" ++ expected ++ "\"") &&
+          hasStr html ("href=\"" ++ expected ++ "\""))
+      t "contained publication: one HTML file is the whole output"
+        ((← output.readDir).map (·.fileName) == #["page.html"])
+    for (name, contents, expected) in [
+        ("one leading BOM", "\uFEFF" ++ css, css),
+        ("two leading BOMs", "\uFEFF\uFEFF" ++ css, "\uFEFF" ++ css),
+        ("interior BOM", "p::before { content: '\uFEFF' }", "p::before { content: '\uFEFF' }")] do
+      IO.FS.writeFile (dir / "local.css") contents
+      let (result, _) ← prepareHtml (dir / "source.tex").toString cfg
+        { doc with output := { doc.output with stylesheet := some "local.css" } }
+      t ("contained stylesheet: decoding preserves selector text for " ++ name)
+        (match result with
+         | .ok page => page.head.any (fun n => match n with
+           | .style actual => actual == expected
+           | _ => false)
+         | .error _ => false)
+    IO.FS.writeBinFile (dir / "invalid.css") ⟨#[255]⟩
+    let invalidCssDoc := { doc with output := { doc.output with stylesheet := some "invalid.css" } }
+    let (invalidCss, _) ← prepareHtml (dir / "source.tex").toString cfg invalidCssDoc
+    t "contained publication: UTF-8 refusal names the declared stylesheet"
+      (match invalidCss with
+       | .error why => hasStr why "invalid.css" && hasStr why "UTF-8"
+       | .ok _ => false)
+    for (name, bytes) in [
+        ("image href", svgDocument "<image href=\"outside.png\"/>"),
+        ("use href", svgDocument "<use href=\"outside.svg#shape\"/>"),
+        ("CSS import", svgDocument "<style>@import 'outside.css';</style>"),
+        ("CSS URL", svgDocument "<style>rect { fill: url(outside.svg#paint) }</style>"),
+        ("style attribute", svgDocument "<rect style=\"fill:url(outside.svg#paint)\"/>"),
+        ("event", svgDocument "<rect onload=\"fetch('outside')\"/>"),
+        ("foreignObject", svgDocument "<foreignObject><div>Content</div></foreignObject>"),
+        ("external XML entity", ("<!DOCTYPE svg [<!ENTITY x SYSTEM 'outside.txt'>]>" ++
+          String.fromUTF8! (svgDocument "<text>&x;</text>")).toUTF8)] do
+      let mutated := { cfg with imgs := { entries := cfg.imgs.entries.map fun en =>
+        { en with source := some bytes } } }
+      let (rejected, _) ← prepareHtml (dir / "source.tex").toString mutated doc
+      t ("contained publication: exact SVG validation refuses " ++ name) (!rejected.isOk)
+
+/-- Refusal precedes the CLI's output writes, including best-effort mode.
+These cases wrote unresolved pages before checked publication was installed. -/
+def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  IO.FS.withTempDir fun dir => do
+    for (name, preamble, args) in [
+        ("missing CSS", "\\output{ formats = html, stylesheet = \"missing.css\" }", #[]),
+        ("nested CSS", "\\output{ formats = html, stylesheet = \"nested.css\" }", #[]),
+        ("missing icon", "\\output{ formats = html }\n\\pdfmeta{ favicon = \"missing.svg\" }", #[]),
+        ("remote math", "\\output{ formats = html }", #["--math-boundary", "katex"]),
+        ("best effort", "\\output{ formats = html, stylesheet = \"missing.css\" }", #["--best-effort"]),
+        ("missing framework", "\\output{ formats = html, css = bulma }", #[]),
+        ("remote framework", "\\output{ formats = html, css = bulma, stylesheet = \"https://example.invalid/framework.css\" }", #[])] do
+      let input := dir / name
+      let output := input / "output"
+      IO.FS.createDirAll input
+      IO.FS.writeFile (input / "nested.css") "@import 'https://example.invalid/nested.css';"
+      IO.FS.writeFile (input / "source.tex")
+        ("\\documentclass{article}\n" ++ preamble ++
+          "\n\\begin{document}\nAn invented resource probe.\\end{document}\n")
+      let request : IO.Process.SpawnArgs := {
+        cmd := binary.toString, cwd := some input,
+        args := #["source.tex", "-o", output.toString ++ "/"] ++ args,
+        env := #[("LEANTEX_FONT", some font.toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+      let run ← IO.Process.output request
+      check ref ("contained CLI: refuses " ++ name ++ " before creating output")
+        (run.exitCode != 0 && hasStr (run.stdout ++ run.stderr) "E0606" && !(← output.pathExists))
+      for (probe, resource) in [("missing CSS", "missing.css"), ("missing icon", "missing.svg"),
+          ("best effort", "missing.css"), ("remote framework", "https://example.invalid/framework.css")] do
+        if name == probe then
+          check ref ("contained CLI: refusal names the authored resource for " ++ name)
+            (hasStr (run.stdout ++ run.stderr) resource)
+      IO.FS.createDirAll output
+      IO.FS.writeFile (output / "source.html") "existing artifact"
+      let retry ← IO.Process.output request
+      check ref ("contained CLI: refusal preserves existing output for " ++ name)
+        (retry.exitCode != 0 && hasStr (retry.stdout ++ retry.stderr) "E0606" &&
+          (← IO.FS.readFile (output / "source.html")) == "existing artifact" &&
+          (← output.readDir).map (·.fileName) == #["source.html"])
+
+/-- The shipped generated syntax must remain in the checked vocabulary.
+This is a syntax coverage guard; missing captures still owe publication checks. -/
+def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for name in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let (doc, _) ← elabFixture name src
+    for mode in [HtmlDoc.CssMode.own, .bulma, .none] do
+      let (head, body, _) := HtmlDoc.emitTree { css := mode } doc
+      let refusals := (HtmlResource.requests head body).filterMap fun
+        | .refused why => some why
+        | _ => none
+      check ref s!"contained corpus syntax: {name} {repr mode}: {repr refusals}" refusals.isEmpty
+
+end Tests

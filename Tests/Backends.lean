@@ -2111,11 +2111,11 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((html.splitOn "--font-body: \"ltx-body\"").length == 2) &&
      ((html.splitOn "--font-sans: \"ltx-sans\"").length == 2) &&
      ((html.splitOn "--font-mono: \"ltx-mono\"").length == 2))
-  t "font ship: every requested file is referenced from the page"
-    ((HtmlDoc.fontAssets fs).all fun a => (html.splitOn a.file).length ≥ 2)
-  t "font ship: one write request per face, carrying its bytes"
-    ((HtmlDoc.fontAssets fs).size == fs.fonts.size &&
-     (HtmlDoc.fontAssets fs).all fun a => !a.data.isEmpty)
+  t "font ship: every captured face is embedded in the page"
+    ((HtmlDoc.fontResources fs).all fun a => (html.splitOn a.uri).length ≥ 2)
+  t "font ship: one captured resource per face, carrying its bytes"
+    ((HtmlDoc.fontResources fs).size == fs.fonts.size &&
+     (HtmlDoc.fontResources fs).all fun a => !a.bytes.isEmpty)
   t "font ship: the OS/2 sans class closes the body stack, not the slot's serif"
     ((html.splitOn "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", sans-serif;").length == 2)
   t "font ship: an undeclared class takes the slot's kind"
@@ -3314,7 +3314,7 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
     t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
     -- Red 3: css = own ships no face, so the assertion fails; `fonts =
-    -- embedded` is the opt-in that ships `.fonts/` and passes it.
+    -- embedded` is the opt-in that embeds the font bytes and passes it.
     let (code, log, outDir) ← run "own" "article"
       "\\output{ formats = html, css = own }\n\\assert{ fonts.all_embedded }\n" one
     t s!"driver: css = own + fonts.all_embedded is E0330: {log}"
@@ -3322,9 +3322,10 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (code, log, outDir) ← run "optin" "article"
       "\\output{ formats = html, css = own, fonts = embedded }\n\\assert{ fonts.all_embedded }\n" one
     t s!"driver: css = own + fonts = embedded passes the assertion: {log}" (code == 0)
-    t "driver: fonts = embedded publishes the face beside the page"
-      ((← (outDir / "optin.fonts").isDir) &&
-       !(← (outDir / "optin.fonts").readDir).isEmpty)
+    let optinHtml ← IO.FS.readFile (outDir / "optin.html")
+    t "driver: fonts = embedded publishes the font bytes inside the single page"
+      (hasStr optinHtml "src: url(\"data:font/" &&
+       (← outDir.readDir).map (·.fileName) == #["optin.html"])
     let (code, _, outDir) ← run "optout" "article" "\\output{ formats = html, fonts = none }\n" one
     t "driver: fonts = none with no css story ships no faces"
       (code == 0 && !(← (outDir / "optout.fonts").pathExists))
@@ -4238,14 +4239,9 @@ def imgSrcsList (acc : Array String) : List Html.Node → Array String
 
 end
 
-/-- The self-contained page: every `<img src>` a loaded raster entry
-produces names a file `publish` writes under `<stem>.assets/`, and nothing
-under that directory exists before the assertion gate. A fact of the
-artifact, not the IR — file placement is where a page lives — so the
-in-memory half reads the typed tree (`imgSrcs`) and the on-disk half runs
-this tree's own binary, on a document that ships its face and its raster
-from the corpus. Replacing a raster at the same source path changes its
-published URL; rebuilding unchanged bytes preserves the page and URL. -/
+/-- Captured raster bytes live in the typed image carrier and the one file
+the CLI publishes. Replacing a raster at the same source path changes its
+embedded URL; unchanged bytes preserve the page and URL. -/
 def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let png : Image.Plan := { pxW := 64, pxH := 40 }
@@ -4256,24 +4252,26 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, ds) := elabStr (dvDoc "" body)
     t s!"html assets: fixture elaborates clean: {body}" ds.isEmpty
     return doc
-  -- Red 1: a loaded raster links the copy beside the page, and the asset
-  -- list names that copy with the store index it came from.
+  let rects ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let rectsUri ← htmlDataOracle "image/png" rects
+  let alphaUri ← htmlDataOracle "image/png" alpha
+  -- A loaded raster embeds its captured bytes, independent of source naming.
   let doc ← docOf "\\includegraphics[alt={A box}]{rects.png}"
-  let one : Image.Store := { entries := #[{ src := "rects.png", info := some png }] }
-  t "html assets: a loaded raster's src names its copy under the assets directory"
-    (srcsOf one doc == #["out.assets/i0-rects.png"])
-  t "html assets: imageAssets names the copy with its store index"
-    (HtmlDoc.imageAssets one == #[{ file := "i0-rects.png", srcIndex := 0 }])
-  -- Red 2: two sources sharing a basename in different directories take
-  -- distinct names — the index prefix, not the basename, carries identity.
+  let one : Image.Store := { entries := #[{ src := "rects.png", info := some png, source := some rects }] }
+  t "html assets: a loaded raster's src embeds its exact capture"
+    (srcsOf one doc == #[rectsUri])
+  t "html assets: the capture list carries the source bytes"
+    ((HtmlDoc.imageResources one).map (·.bytes) == #[rects])
+  -- Two sources sharing a basename retain their distinct captured content.
   let doc2 ← docOf "\\includegraphics[alt={A}]{a/plot.png} and \\includegraphics[alt={B}]{b/plot.png}"
-  let two : Image.Store := { entries := #[{ src := "a/plot.png", info := some png },
-                                          { src := "b/plot.png", info := some png }] }
-  t "html assets: two rasters sharing a basename take distinct asset names"
-    (srcsOf two doc2 == #["out.assets/i0-plot.png", "out.assets/i1-plot.png"])
-  t "html assets: imageAssets covers both, in store order"
-    ((HtmlDoc.imageAssets two).map (·.srcIndex) == #[0, 1] &&
-     (HtmlDoc.imageAssets two).map (·.file) == #["i0-plot.png", "i1-plot.png"])
+  let two : Image.Store := { entries := #[
+    { src := "a/plot.png", info := some png, source := some rects },
+    { src := "b/plot.png", info := some png, source := some alpha }] }
+  t "html assets: rasters sharing a basename retain distinct content URLs"
+    (srcsOf two doc2 == #[rectsUri, alphaUri] && rectsUri != alphaUri)
+  t "html assets: captured resources cover both in store order"
+    ((HtmlDoc.imageResources two).map (·.bytes) == #[rects, alpha])
   -- Red 3: an entry that did not load keeps the source spelling (the
   -- placeholder, already diagnosed) and has no asset row.
   let unloaded : Image.Store := { entries := #[{ src := "rects.png" }] }
@@ -4283,10 +4281,9 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- disk, and the copy takes that name, not the bare spelling.
   let bare ← docOf "\\includegraphics[alt={A box}]{rects}"
   let resolved : Image.Store :=
-    { entries := #[{ src := "rects", href := "rects.png", info := some png }] }
-  t "html assets: a bare graphicx name copies under its resolved file name"
-    (srcsOf resolved bare == #["out.assets/i0-rects.png"] &&
-     HtmlDoc.imageAssets resolved == #[{ file := "i0-rects.png", srcIndex := 0 }])
+    { entries := #[{ src := "rects", href := "rects.png", info := some png, source := some rects }] }
+  t "html assets: a bare graphicx name embeds the resolved file's bytes"
+    (srcsOf resolved bare == #[rectsUri])
   -- A PDF source is a form XObject in the PDF and no browser image either
   -- way: it keeps today's src and ships no copy (named-next for html-oracle).
   let pdfDoc ← docOf "\\includegraphics[alt={A page}]{box.pdf}"
@@ -4295,25 +4292,22 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     { entries := #[{ src := "box.pdf", info := pdfPlan }] }
   t "html assets: a PDF source keeps its spelling and ships no copy"
     (srcsOf pdfStore pdfDoc == #["box.pdf"] && (HtmlDoc.imageAssets pdfStore).isEmpty)
-  -- A boundary picture publishes as SVG through its own list already; its
-  -- entry keeps the href the conversion set.
+  -- A boundary picture carries the SVG bytes captured by conversion.
   let picSrc := Ir.picSrcPrefix ++ "abc"
   let picStore : Image.Store :=
-    { entries := #[{ src := picSrc, href := "out.assets/abc.svg"
+    { entries := #[{ src := picSrc, webSvg := some "<svg/>".toUTF8
                      info := some { pxW := 10, pxH := 10 } }] }
-  t "html assets: a boundary picture keeps its SVG href and has no raster row"
-    (HtmlDoc.imageHref "out.assets" picStore picSrc == "out.assets/abc.svg" &&
-     (HtmlDoc.imageAssets picStore).isEmpty)
+  t "html assets: a boundary picture embeds its SVG bytes"
+    (HtmlDoc.imageHref "out.assets" picStore picSrc == "data:image/svg+xml;base64,PHN2Zy8+" &&
+     (HtmlDoc.imageResources picStore).map (·.bytes) == #["<svg/>".toUTF8])
   -- The name's index is recoverable whatever the basename (the executable
   -- twin of `imageAssetName_inj`).
   t "html assets: equal names mean equal indices"
     (HtmlDoc.imageAssetName 3 "a/x.png" == "i3-x.png" &&
      HtmlDoc.imageAssetName 3 "a/x.png" != HtmlDoc.imageAssetName 13 "x.png" &&
      HtmlDoc.imageAssetName 12 "x.png" != HtmlDoc.imageAssetName 1 "2-x.png")
-  -- Red 4 and 5, the driver end to end: the copy lands beside the page
-  -- named by `-o`, byte for byte the source; a failing assertion leaves no
-  -- `-o` directory and no `.assets/` anywhere — the copies are phase-3
-  -- lines, after the gate.
+  -- The CLI embeds the source bytes in the file named by `-o`; a failing
+  -- assertion still leaves no output directory or artifact.
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the asset checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
@@ -4337,14 +4331,11 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       let tag := ((imgs.getD 1 "").splitOn ">").headD ""
       let attr := ((" " ++ tag).splitOn " src=\"").getD 1 ""
       let url := (attr.splitOn "\"").headD ""
-      let beside := url.startsWith "x.assets/"
-      t s!"driver: {phase}: the page links one raster under <stem>.assets"
-        (imgs.length == 2 && beside && !hasStr page "src=\"rects.png\"")
-      let copy := dir / "out" / url
-      let copied ← if beside then copy.pathExists else pure false
-      t s!"driver: {phase}: the linked raster is published beside the page" copied
-      t s!"driver: {phase}: the linked raster is the source, byte for byte"
-        (copied && (← if copied then IO.FS.readBinFile copy else pure ByteArray.empty) == expected)
+      let expectedUri ← htmlDataOracle "image/png" expected
+      t s!"driver: {phase}: the page embeds one raster byte for byte"
+        (imgs.length == 2 && url == expectedUri)
+      t s!"driver: {phase}: the output contains only the HTML file"
+        ((← (dir / "out").readDir).map (·.fileName) == #["x.html"])
       return (page, url)
     let r ← buildPage
     t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
@@ -4372,7 +4363,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       p.toString.endsWith ".assets"
     t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
       (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
-       assetDirs == #[dir / "out" / "x.assets"])
+       assetDirs.isEmpty)
     IO.FS.removeDirAll dir
 
 

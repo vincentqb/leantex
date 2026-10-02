@@ -41,9 +41,8 @@ def svgSourcePrecedenceChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "SVG lookup still accepts both SVG extensions after existing formats"
     (candidates.filter (Image.isSvg ·) == ["sequence.svg", "sequence.SVG"])
 
-/-- Filenames are not URLs. Primary and media-selected image links encode
-each filename byte while publication keeps the literal filename. A space
-in `srcset` would otherwise be parsed as a descriptor, disabling fallback. -/
+/-- Filenames cannot change embedded primary or media-selected image URLs.
+A space in `srcset` would otherwise disable the fallback as a descriptor. -/
 def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let source := "moving figure,#?%20é.svg"
@@ -60,20 +59,15 @@ def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, tree, _) := HtmlDoc.emitTree { imgs, assetsDir } doc
   let images := elemAttrsList (· == "img") #[] tree.toList
   let sources := elemAttrsList (· == "source") #[] tree.toList
-  let assetPrefix := "output%20files/figures%231/"
-  let encoded := "moving%20figure%2C%23%3F%2520%C3%A9.svg"
-  let key := Flate.contentKey "<svg/>".toUTF8 ++ "-"
-  t "SVG primary URL encodes the asset directory and literal filename"
-    (images.any fun (_, attrs) => attrs.contains ("src", assetPrefix ++ "i0-" ++ key ++ encoded))
-  t "SVG print and reduced-motion srcset is one encoded URL"
+  let embedded := "data:image/svg+xml;base64,PHN2Zy8+"
+  t "SVG primary URL depends on bytes, not the filename or output directory"
+    (images.any fun (_, attrs) => attrs.contains ("src", embedded))
+  t "SVG print and reduced-motion srcset is one embedded URL"
     (sources.any fun (_, attrs) =>
-      attrs.contains ("srcset", assetPrefix ++ "p0-" ++ key ++ encoded) &&
+      attrs.contains ("srcset", embedded) &&
       attrs.contains ("media", "print, (prefers-reduced-motion: reduce)"))
-  t "SVG URL encoding does not rename published files"
-    ((HtmlDoc.imageAssets imgs).map (·.file) ==
-      #["i0-" ++ key ++ source, "p0-" ++ key ++ source])
   let facts := HtmlDoc.a11yFacts true false tree
-  t "encoded SVG URLs retain the accessible image alternative"
+  t "embedded SVG URLs retain the accessible image alternative"
     (images.size == 1 && facts.imgs == 1 && facts.imgsUnnamed == 0 &&
       facts.hiddenTabStops == 0)
 
@@ -114,10 +108,9 @@ def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
       (links poster).2 == (links { poster with webSvg := some blank }).2)
   for en in [captured, converted, updated, poster, posterUpdated] do
     let emitted := links en
-    let assets := HtmlDoc.imageAssets { entries := #[en] }
-    t "image refresh: every emitted URL names its literal published file"
-      ((emitted.1 ++ emitted.2) ==
-        assets.map (fun asset => HtmlDoc.imageAssetHref "assets" asset.file))
+    let resources := HtmlDoc.imageResources { entries := #[en] }
+    t "image refresh: every emitted URL embeds its captured bytes"
+      ((emitted.1 ++ emitted.2) == resources.map (·.uri))
     t "image refresh: rebuilding the same captured bytes preserves its URLs"
       (links en == links { en with source := en.source.map (fun bytes => bytes.extract 0 bytes.size) })
   for stem in [String.ofList (List.replicate 216 'a'),
@@ -126,9 +119,8 @@ def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let assets := HtmlDoc.imageAssets { entries := #[en] }
     t "image refresh: long primary and poster names fit a 255-byte filesystem component"
       (assets.all fun asset => asset.file.utf8ByteSize ≤ 255 && asset.file.endsWith ".svg")
-    t "image refresh: shortened names still match the typed page's links"
-      ((links en).1 ++ (links en).2 ==
-        assets.map (fun asset => HtmlDoc.imageAssetHref "assets" asset.file))
+    t "image refresh: long filenames do not change the typed page's embedded resources"
+      (links en == links posterUpdated)
 
 /-- The first poster keeps the base drawing, while the last asks the XML
 converter for the terminal pose. Later numbered frames need a PDF sequence. This
@@ -159,14 +151,15 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let data ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
   let info := (Image.decode data).toOption
   t "SVG asset probe has a vector print face" (info.any (·.form.isSome))
-  let imgs : Image.Store := { entries := #[{ src := "diagram.svg", info }] }
+  let drawing := "<svg/>".toUTF8
+  let imgs : Image.Store := { entries := #[{ src := "diagram.svg", info, source := some drawing }] }
   let doc := (elabStr "\\includegraphics[alt={A moving square}]{diagram.svg}").1
   let (_, body, diags) := HtmlDoc.emitTree { imgs, assetsDir := "assets" } doc
   let srcs := body.foldl HtmlDoc.imgSrcsOne #[]
-  t "SVG print face still publishes the SVG browser asset"
-    ((HtmlDoc.imageAssets imgs).map (·.file) == #["i0-diagram.svg"])
-  t "typed HTML links the published SVG"
-    (srcs == #["assets/i0-diagram.svg"])
+  t "SVG print face still captures the SVG browser bytes"
+    ((HtmlDoc.imageResources imgs).map (·.bytes) == #[drawing])
+  t "typed HTML embeds the captured SVG"
+    (srcs == #["data:image/svg+xml;base64,PHN2Zy8+"])
   t "SVG browser face has no PDF-only placeholder diagnostic"
     (!(diags.any (·.code == "W0605")))
   -- The native decode can succeed before the mandatory browser poster

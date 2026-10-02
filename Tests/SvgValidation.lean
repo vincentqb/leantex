@@ -55,17 +55,19 @@ def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"SVG companion {name}: the driver builds" (run.exitCode == 0)
       let html ← IO.FS.readFile (output / "figure.html")
       let (primarySrc, primary) ← svgPublishedAsset html output "img" "src"
-      let published ← (output / "figure.assets").readDir
+      let published ← output.readDir
+      check ref s!"SVG companion {name}: one HTML file contains all rendering resources"
+        (published.map (·.fileName) == #["figure.html"])
       match expected with
       | some bytes =>
         let (posterSrc, poster) ← svgPublishedAsset html output "source" "srcset"
         check ref s!"SVG companion {name}: original animation bytes publish"
           (primary == bytes && !poster.isEmpty)
         check ref s!"SVG companion {name}: the static media fallback is reachable"
-          (primarySrc != posterSrc && published.size == 2)
+          (primarySrc != posterSrc)
       | none =>
         check ref s!"SVG companion {name}: the selected PDF still supplies a static face"
-          (!primary.isEmpty && primary != unsupported && published.size == 1 &&
+          (!primary.isEmpty && primary != unsupported &&
             (html.splitOn "<img ").length == 2 && (html.splitOn "<source ").length == 1)
       check ref s!"SVG companion {name}: source bytes remain unchanged"
         ((← IO.FS.readBinFile (input / "sequence.PDF")) == svgCanvasPdf &&
