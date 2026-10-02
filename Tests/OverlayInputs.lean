@@ -71,11 +71,64 @@ private def inputAlertEffects (ref : IO.Ref (List String)) (fonts : Font.FontSet
         ((ids.filter (· == id)).size == 1)
     check ref (label ++ ": no phantom third note") (!ids.contains "fn3")
 
+/-- Beamer's newcommand<> wrappers remember the last selector through their
+ordinary arguments (beamer@foundspec / beamer@finalspec). Only/alt consume one
+selector, and a final slot never skips a space. These guards failed on
+f6d3a50 before the review correction. -/
+private def inputSelectorWindows (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  for name in ["alert", "emph"] do
+    let want := "\\" ++ name ++ "<2>{Probe}"
+    inputEquivalent ref fonts (name ++ " final selector wins")
+      ("\\" ++ name ++ "<1>{Probe}<2>") want
+    inputEquivalent ref fonts (name ++ " repeated prefix selector wins")
+      ("\\" ++ name ++ "<1><2>{Probe}") want
+    inputEquivalent ref fonts (name ++ " final fragment reads use state")
+      ("\\def\\Step{1}\\def\\Pick{\\" ++ name ++ "<1>{Probe}<\\Step>}" ++
+        "\\def\\Step{2}\\Pick") want
+  for (label, source, want) in [
+      ("only prefix closes its selector window", "\\only<1>{Probe}<2>", "\\only<1>{Probe}{<2>}"),
+      ("only suffix does not skip space", "\\only{Probe} <1,3>", "Probe <1,3>"),
+      ("emph suffix does not skip space", "\\emph{Probe} <1,3>", "\\emph{Probe} {<1,3>}"),
+      ("font wrapper has no final selector", "\\textbf{Probe}<1,3>", "\\textbf{Probe}{<1,3>}")] do
+    inputEquivalent ref fonts label source want
+
+/-- A selector reads a finite graph of parameterless text definitions at the
+use. Reusing a dependency is not a cycle. An unread fragment must reach the
+unsupported-selector boundary without running its definitions or setters. -/
+private def inputSelectorFragments (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let names := (List.range 24).map fun n => "Step" ++ String.ofList (List.replicate n 'x')
+  let (defs, first) := names.foldr (fun name (defs, next) =>
+    ("\\def\\" ++ name ++ "{" ++ next ++ "}" ++ defs, "\\" ++ name)) ("", "1,3")
+  inputEquivalent ref fonts "fragment path follows the binding table"
+    (defs ++ "\\only<" ++ first ++ ">{Probe}") "\\only<1,3>{Probe}"
+  inputEquivalent ref fonts "fragment dependency can occur twice"
+    "\\def\\Leaf{2}\\def\\Pair{\\Leaf,\\Leaf}\\only<\\Pair>{Probe}" "\\only<2,2>{Probe}"
+  for (label, source, want) in [
+      ("self cycle", "\\def\\Step{\\Step}\\only<\\Step>{Probe}", "Probe"),
+      ("mutual cycle", "\\def\\Left{\\Right}\\def\\Right{\\Left}\\only<\\Left>{Probe}", "Probe"),
+      ("group fragment", "\\def\\Step{{2}}\\only<\\Step>{Probe}", "Probe"),
+      ("argument fragment", "\\def\\Step#1{#1}\\only<\\Step>{Probe}", "Probe"),
+      ("definition fragment",
+        "\\def\\Bad{\\gdef\\Sentinel{Lost}2}\\def\\Sentinel{Kept}\\only<\\Bad>{Probe} \\Sentinel",
+        "Probe Kept"),
+      ("flag fragment",
+        "\\newif\\ifprobe\\def\\Bad{\\probetrue 2}\\only<\\Bad>{Probe} \\ifprobe Lost\\else Kept\\fi",
+        "Probe Kept")] do
+    let clock := "\n\n\\uncover<3>{ClockMarker}"
+    let (out, _, ds) := inputBuild fonts (source ++ clock)
+    let (expected, _, _) := inputBuild fonts (want ++ clock)
+    check ref (label ++ ": refused selector named")
+      (ds.any (·.code == "W0105") && ds.all (·.severity != .error))
+    check ref (label ++ ": refusal preserves shipped body and state")
+      (out.pages.size == 3 && inputText out == inputText expected)
+
 /-- Surface-boundary regression entry; standalone callers need only the
 shipped one-face font set. Guards were run against e5a5428a before the fix;
 this module does not depend on the parallel overlay-contract work. -/
 def overlayInputChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   inputAlertEffects ref fonts
+  inputSelectorWindows ref fonts
+  inputSelectorFragments ref fonts
   for command in ["only", "uncover", "visible", "textbf", "textcolor{blue}"] do
     -- textcolor's selector precedes its colour, not its content argument.
     let head := if command == "textcolor{blue}" then "textcolor" else command

@@ -1372,29 +1372,49 @@ structure OverlaySelector where
 
 /-- Read `<...>` across lexer and substituted-argument fragments. Beamer's
 master decoder expands fragments and removes spaces (beamerbasedecode.sty,
-beamer@masterdecode); no argument group or paragraph can be consumed here. -/
-def overlaySelector? (raws : Array Raw) (start : Nat) : Option OverlaySelector := Id.run do
+beamer@masterdecode); no argument group or paragraph can be consumed here.
+Before an ordinary argument, newcommand<> accepts repeated selectors and the
+last one wins (beamer@foundspec). `many` reads that slot without consuming any
+text after its last complete selector. -/
+def overlaySelector? (raws : Array Raw) (start : Nat)
+    (many : Bool := false) : Option OverlaySelector := Id.run do
   let some (.word first pos) := raws[start]? | return none
   unless first.startsWith "<" do return none
   let mut text := ""
+  let mut selectorPos := pos
+  let mut opened := true
+  let mut selected : Option OverlaySelector := none
   for k in [start:raws.size] do
     match raws[k]? with
     | some (.word s p) =>
-      let head := (s.takeWhile (· != '>')).toString
-      text := text ++ head
-      if head.length < s.length then
-        let tail := (s.drop (head.length + 1)).toString
-        return some {
-          word := .word (String.ofList ((text ++ ">").toList.filter (!·.isWhitespace))) pos
-          stop := k + 1
-          tail := if tail.isEmpty then #[] else
-            #[.word tail { p with col := p.col + head.length + 1 }] }
+      for (c, ci) in s.toList.zipIdx do
+        if !opened then
+          if c == '<' then
+            text := "<"
+            selectorPos := { p with col := p.col + ci }
+            opened := true
+          else if !c.isWhitespace then return selected
+        else
+          text := text.push c
+          if c == '>' then
+            let tail := (s.drop (ci + 1)).toString
+            selected := some {
+              word := .word (String.ofList (text.toList.filter (!·.isWhitespace))) selectorPos
+              stop := k + 1
+              tail := if tail.isEmpty then #[] else
+                #[.word tail { p with col := p.col + ci + 1 }] }
+            if !many then return selected
+            opened := false
     | some .space => pure ()
-    | some (.ctrl n _) => text := text ++ "\\" ++ n
-    | some (.sym '#' _) => return none -- an unbound definer parameter is not a selector yet
-    | some (.sym c _) => text := text.push c
-    | _ => return none
-  return none
+    | some (.ctrl n _) =>
+      if opened then
+        text := text ++ "\\" ++ n
+      else return selected
+    | some (.sym '#' _) => return selected -- an unbound definer parameter is not a selector yet
+    | some (.sym c _) =>
+      if opened then text := text.push c else return selected
+    | _ => return selected
+  return selected
 
 /-- Read the canonical word produced by overlaySelector?, including refused
 selectors. Recognizing the boundary never certifies numbered membership. -/
@@ -1407,9 +1427,15 @@ private structure OverlayWindow where
   left : Nat
   middle : Bool
   passed : Bool := false
+  selected : Bool := false
 
 private def OverlayWindow.accepts (w : OverlayWindow) : Bool :=
   !w.passed || w.left == 0 || w.middle
+
+/-- Only newcommand<> continues looking after a selector, until its ordinary
+arguments end. Only/alt and prefix-only wrappers finish at their first one. -/
+private def OverlayWindow.afterSelector (w : OverlayWindow) : Option OverlayWindow :=
+  if w.middle && w.left > 0 then some { w with selected := true } else none
 
 private def overlayNext (pending : Option OverlayWindow) (r : Raw)
     (head : Nat) : Option OverlayWindow :=
@@ -1431,12 +1457,14 @@ private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow
   | [], _, _ => acc
   | _ :: rest, i, skip + 1 => overlayInputsList raws pending acc rest (i + 1) skip
   | r :: rest, i, 0 =>
-    let selected := pending.filter (·.accepts) |>.bind fun _ => overlaySelector? raws i
+    let selected := pending.filter (·.accepts) |>.bind fun w =>
+      overlaySelector? raws i (w.middle && w.left > 0)
     match selected, pending with
     | some s, some w =>
       let acc := (acc.extract 0 (w.head + 1)).push s.word ++
-        acc.extract (w.head + 1) acc.size ++ s.tail
-      overlayInputsList raws none acc rest (i + 1) (s.stop - (i + 1))
+        acc.extract (w.head + 1 + if w.selected then 1 else 0) acc.size ++ s.tail
+      let pending := if s.tail.isEmpty then w.afterSelector else none
+      overlayInputsList raws pending acc rest (i + 1) (s.stop - (i + 1))
     | _, _ =>
       let next := overlayNext pending r acc.size
       overlayInputsList raws next (acc.push (overlayInputsRaw r)) rest (i + 1) 0
@@ -1467,11 +1495,19 @@ private def overlayOpen (raws : Array Raw) : Bool := Id.run do
   for r in raws do
     match r with
     | .word s _ =>
-      if opened then
-        if s.contains '>' then opened := false
-      else if pending.any (·.accepts) && s.startsWith "<" then
-        opened := !s.contains '>'
-      pending := none
+      if !opened && !pending.any (·.accepts) then
+        pending := overlayNext pending r 0
+      else
+        for c in s.toList do
+          if opened then
+            if c == '>' then
+              opened := false
+              pending := pending.bind OverlayWindow.afterSelector
+          else if c == '<' && pending.any (·.accepts) then
+            opened := true
+          else if c.isWhitespace then
+            pending := overlayNext pending .space 0
+          else pending := none
     | .ctrl _ _ | .sym _ _ | .space =>
       if !opened then pending := overlayNext pending r 0
     | _ =>
@@ -2098,9 +2134,13 @@ private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → Str
     | _ => none
 
 /-- Expand only textual, parameterless selector fragments in the state of
-this use. The finite binding table bounds a dependency path: a longer path
-revisits a name and is cyclic. A command with effects, groups or arguments is
-not a fragment; it remains for the explicit unsupported-selector diagnostic. -/
+this use. Every successful lookup is a key in this fixed, unmodified table.
+Each recursive edge spends one name on its dependency path, so a path longer
+than the table's size repeats a name. Parameterless expansion has no changing
+argument or state to end that cycle. Sibling paths get the same remaining
+bound: repeated uses of one dependency are not cycles. This is a finite-graph
+bound, not a fixed expansion cap. A command with effects, groups or arguments
+is not a fragment; it remains for the explicit unsupported-selector diagnostic. -/
 private def overlayFragment (vals : Std.HashMap String (Option CondVal)) :
     Nat → String → Option String
   | 0, _ => none
@@ -3301,12 +3341,14 @@ execute this definition there, so that part of the text is skipped whole")
       if !st.condInDoc then recordLoad raws n i
       -- premise: Tests.overlayInputChecks — a selector reads textual macro
       -- fragments at its use, before the shared numbered boundary is sealed.
-      let fragment := if overlayOpen out then
-          overlayFragment st.binds st.binds.size n else none
-      match fragment with
-      | some text =>
-        condList ex [] raws following (out.push (.word text pos)) stack rest (i + 1) 0
-      | none => match ← ex n pos (raws ++ following) (i + 1) with
+      if overlayOpen out then
+        let r := match overlayFragment st.binds st.binds.size n with
+          | some text => .word text pos
+          | none => .ctrl n pos
+        -- A refused fragment stays inside the selector; ordinary execution
+        -- here would run effects and could turn its remainder into a number.
+        condList ex [] raws following (out.push r) stack rest (i + 1) 0
+      else match ← ex n pos (raws ++ following) (i + 1) with
         | some run =>
           if run.stop > i + 1 + rest.length then
             return { run with raws := out ++ run.raws }
