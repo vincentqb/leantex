@@ -1,4 +1,4 @@
-import LeanTex.Cli.PicCache
+import LeanTex.Cli.RunBounded
 
 /-! Asking the boundary tool who it is: the effect half of PicCache's
 version policy. The decisions are values there (`PicCache.probed`,
@@ -11,21 +11,28 @@ namespace LeanTex.Cli.ToolProbe
 
 open LeanTex.Core
 
-/-- The file PATH would reach for this tool name, or nothing when no entry
-holds it. A name with a separator in it is a path already and is taken as
-one. -/
+/-- The first executable regular file on PATH, including relative and
+empty (current-directory) entries. Explicit paths get the same check.
+An unset PATH has a platform-defined fallback, so supplies no identity. -/
 def onPath (tool : String) : IO (Option System.FilePath) := do
-  if tool.contains '/' then
-    let p := System.FilePath.mk tool
-    return if ← p.pathExists then some p else none
-  let entries := ((← IO.getEnv "PATH").getD "").splitOn ":"
-  for dir in entries do
-    unless dir.isEmpty do
-      let p := System.FilePath.mk dir / tool
-      if ← p.pathExists then return some p
-  return none
+  let mut candidates := #[tool]
+  unless tool.contains '/' do
+    let some path ← IO.getEnv "PATH" | return none
+    candidates := (path.splitOn ":").toArray.map
+      (fun dir => (System.FilePath.mk (if dir.isEmpty then "." else dir) / tool).toString)
+  -- POSIX test asks the OS about execution rights, including ACLs. Keep the
+  -- whole lookup bounded (one second plus 100 ms cleanup); an incomplete
+  -- lookup grants no identity. Candidate paths are arguments, never code.
+  let got ← RunBounded.runBounded "/bin/sh"
+    (#["-c", "for candidate do\n\
+if test -f \"$candidate\" && test -x \"$candidate\"; then\n\
+  printf '%s' \"$candidate\"; exit 0\n\
+fi\n\
+done\n\
+exit 1", "tool-probe"] ++ candidates) (← IO.currentDir) 1000 100
+  return if got.ran == .exited 0 then some (System.FilePath.mk got.out) else none
 
-/-- The stat-only witness of which binary is installed: the resolved path
+/-- The witness of the executable selected above: the resolved path
 (a distribution that versions its install directory changes it), the size
 and the modification time (a distribution that replaces the binary in place
 changes those) — the three facts the font cache already keys a face on.

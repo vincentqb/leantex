@@ -79,6 +79,39 @@ def main (args : List String) : IO UInt32 := do
         let b ← run #["font"]
         check "unembedded font: still converts without reusing a slot"
           (a.out.startsWith "OK " && b.out == a.out && (← calls count) == before + 2)
+  -- exec searches past a non-executable file or a directory. The cache
+  -- must follow the tool it reaches, including a same-banner replacement.
+  for label in #["non-executable", "directory", "current-directory"] do
+    IO.FS.withTempDir fun dir => do
+      let shadow := dir / "shadow"
+      let bin := dir / "bin"
+      let cache := dir / "cache"
+      let count := dir / "count"
+      IO.FS.createDirAll shadow
+      IO.FS.createDirAll bin
+      let skipped := shadow / "pdftocairo"
+      if label == "directory" then IO.FS.createDir skipped
+      else IO.FS.writeFile skipped (stub first)
+      writeTool (bin / "pdftocairo") (stub first)
+      let selected := if label == "current-directory" then dir / "pdftocairo"
+        else bin / "pdftocairo"
+      if label == "current-directory" then writeTool selected (stub first)
+      let searchPath := (if label == "current-directory" then "" else shadow.toString) ++
+        ":" ++ bin.toString
+      let run := RunBounded.runBounded probe.toString #[] dir 4000 100
+        (env := #[("PATH", some searchPath),
+          ("XDG_CACHE_HOME", some cache.toString), ("COUNT", some count.toString)])
+      let a ← run
+      let b ← run
+      check s!"PATH {label}: executable answer is reusable"
+        (a.complete && b.complete && a.out.startsWith "OK " && b.out == a.out &&
+          (← calls count) == 1 && (← slots cache).size == 1)
+      writeTool selected (stub (face "M0 0L30 30L40 40"))
+      let c ← run
+      let d ← run
+      check s!"PATH {label}: actual executable replacement changes the answer"
+        (c.complete && d.complete && c.out.startsWith "OK " && c.out != a.out &&
+          d.out == c.out && (← calls count) == 2 && (← slots cache).size == 2)
   IO.FS.withTempDir fun dir => do
     let bin := dir / "bin"
     let cache := dir / "cache"
