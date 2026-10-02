@@ -1,4 +1,5 @@
 import LeanTex.Core.Html
+import LeanTex.Core.HtmlResource
 import LeanTex.Core.MathMl
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
@@ -76,17 +77,21 @@ structure Config where
   epochGround : Bool := false
   /-- The document's resolved faces, from the driver — the same `FontSet`
   the PDF embeds from — when the artifact ships them: one `@font-face` per
-  face, files written beside the page. `none` (a document that declared
+  face, carrying its captured font program as a data URL. `none` (a document that declared
   its `css =` story owns fonts itself, and so does a caller with no font
   environment) keeps the name-only stacks. -/
   fonts : Option Font.FontSet := none
-  /-- The sibling directory the driver writes the shipped faces into,
-  relative to the page — what every `src: url(...)` references. -/
+  /-- Compatibility field for callers staging older directory-based pages.
+  Embedded font URLs do not read it. -/
   fontsDir : String := "fonts"
-  /-- The sibling directory the driver publishes the page's rasters (and
-  the boundary pictures' SVGs) into, relative to the page — what every
-  loaded raster's `<img src>` references (`imageHref`). -/
+  /-- Compatibility field for older staging callers. Embedded image URLs
+  do not read it. -/
   assetsDir : String := "assets"
+  /-- Exact declared stylesheet spelling and captured text. A missing or
+  mismatched capture remains a link, which checked publication refuses. -/
+  stylesheet : Option (String × String) := none
+  /-- Captured icon bytes, keyed by the document's exact favicon spelling. -/
+  favicon : Option (String × HtmlResource.Embedded) := none
   /-- Inside a declared title slot: the slot's font template already wraps
   what it sets, so the title heading there takes no `titlepage` template
   of its own — the PDF's `slotTitle` reading, the same one value. -/
@@ -1694,6 +1699,14 @@ def fontFileName (i : Nat) (f : Font.Font) : String :=
     c.isAlphanum || c == '-' || c == '_' || c == '.'
   s!"f{i}-{String.ofList safe}." ++ (if f.isCff then "otf" else "ttf")
 
+/-- The browser consumes the resolved font program itself, with the same
+OpenType container distinction the PDF embedding reads. -/
+def fontResource (f : Font.Font) : HtmlResource.Embedded :=
+  { media := if f.isCff then .otf else .ttf, bytes := f.data }
+
+def fontResources (fs : Font.FontSet) : Array HtmlResource.Embedded :=
+  (Array.range fs.fonts.size).map fun i => fontResource (fs.get i)
+
 /-- One `@font-face` the page ships: face `index` of the set under one
 synthetic family, with the descriptors CSS matches on — the face's own
 declared weight and italic flag, never the slot's request, so a family's
@@ -1768,30 +1781,23 @@ that declares no contract key gets no W0701 from its page. -/
 theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
   decide
 
-/-- Every `src:` the styling names is a file the driver is asked to write:
-rules and requests are projections of one enumeration, so the page cannot
-reference a face whose bytes were never requested. -/
+/-- Every face declared in CSS embeds a captured font program from the
+resolved set. This is an artifact resource fact; the shared face-coverage
+contract remains `shipFaces_covers`. -/
 theorem shipFaces_src_shipped (fs : Font.FontSet) :
-    ∀ ff ∈ shipFaces fs, ∃ a ∈ fontAssets fs, a.file = ff.file := by
+    ∀ ff ∈ shipFaces fs, fontResource (fs.get ff.index) ∈ fontResources fs := by
   intro ff hff
   simp only [shipFaces, Array.mem_flatMap] at hff
   obtain ⟨i, hi, hmem⟩ := hff
   simp only [Array.mem_map, List.mem_toArray] at hmem
   obtain ⟨fam, _, rfl⟩ := hmem
-  refine ⟨{ file := fontFileName i (fs.get i), data := (fs.get i).data }, ?_, rfl⟩
-  simp only [fontAssets, Array.mem_map]
-  exact ⟨i, hi, rfl⟩
+  exact Array.mem_map.mpr ⟨i, hi, rfl⟩
 
-/-! ## Images beside the page
+/-! ## Captured image resources
 
-A loaded PNG, JPEG or SVG is published under `<stem>.assets/` beside the page,
-as the faces are under `<stem>.fonts/`, so the page is self-contained
-wherever `-o` puts it: `src` once kept the source-relative spelling, and a
-page built outside its source directory showed broken images. Phase 2
-decides the names and the `src` strings here, purely; `publish` is the
-only code that puts a byte under the directory, after the gate. The proof
-stops at the emitted `src` and the asset list — that a browser resolves
-the relative URL and decodes the bytes is the oracle. -/
+The primary and static media faces are embedded from their captured bytes.
+The legacy asset names below remain staging identities for report readers;
+they no longer determine a published page's URLs or filesystem writes. -/
 
 /-- One image the page links: the file name it takes beside the page and
 the store index it came from — a copy request for the driver (effects as
@@ -1875,33 +1881,41 @@ def imageAssetHref (assetsDir file : String) : String :=
     (r := fun c => Std.Http.Internal.Char.isUnreserved c || c == '/'.toUInt8)
     (assetsDir ++ "/" ++ file))
 
-/-- What an `<img>` for a request links: the copy under `assetsDir` when the
-entry ships, else the resolved spelling (the placeholder of an unloaded
-entry, an unconverted PDF source, a boundary picture's SVG href). Selection
-is part of the key: two pages from one PDF must not share an image. -/
-def imageRequestHref (assetsDir : String) (imgs : Image.Store) (req : Image.Request) : String :=
-  match imgs.findRequest? req with
-  | some k =>
-    match imgs.get? k with
-    | some en =>
-      if imageShips en then
-        imageAssetHref assetsDir (imageAssetName k (browserAssetSrc en) en.browserBytes)
-      else resolvedSrc en
-    | none => req.src
+/-- A browser face consists of captured bytes, never a path read again at
+publication. Boundary pictures enter through the same converted SVG field. -/
+def imageResource? (en : Image.Loaded) : Option HtmlResource.Embedded := do
+  if en.webError.isSome || !(imageShips en ||
+      (en.src.startsWith Ir.picSrcPrefix && en.webSvg.isSome)) then none else do
+    let bytes ← en.browserBytes
+    let media := if en.webSvg.isSome || Image.isSvg (resolvedSrc en) then .svg
+      else if bytes.extract 0 8 == ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩ then .png else .jpeg
+    some { media, bytes }
+
+def imagePosterResource? (en : Image.Loaded) : Option HtmlResource.Embedded := do
+  let _ ← imageResource? en
+  let bytes ← en.posterSvg
+  some { media := .svg, bytes }
+
+def imageResources (imgs : Image.Store) : Array HtmlResource.Embedded :=
+  imgs.entries.filterMap imageResource? ++ imgs.entries.filterMap imagePosterResource?
+
+/-- Selection is part of the request key. Missing capture remains unresolved
+and is rejected by checked publication; it is never silently omitted. -/
+def imageRequestHref (_assetsDir : String) (imgs : Image.Store) (req : Image.Request) : String :=
+  match imgs.findRequest? req |>.bind imgs.get? with
+  | some en => (imageResource? en |>.map (·.uri)).getD (resolvedSrc en)
   | none => req.src
 
-/-- The default first-page request's browser link. -/
 def imageHref (assetsDir : String) (imgs : Image.Store) (src : String) : String :=
   imageRequestHref assetsDir imgs { src }
 
-/-- A static media source exists exactly when its captured bytes publish. -/
-def imagePosterHref (assetsDir : String) (imgs : Image.Store) (req : Image.Request) :
+/-- The static media source embeds its own captured SVG. -/
+def imagePosterHref (_assetsDir : String) (imgs : Image.Store) (req : Image.Request) :
     Option String := do
   let k ← imgs.findRequest? req
   let en ← imgs.get? k
-  if imageShips en && en.posterSvg.isSome then
-    some (imageAssetHref assetsDir (imagePosterName k en))
-  else none
+  let r ← imagePosterResource? en
+  some r.uri
 
 /-- A length on the CSS ruler, in whole pixels, to nearest: CSS fixes
 1in = 72pt = 96px (CSS Values 4 §6.2), so a point reads as 4/3 px — the
@@ -2032,58 +2046,43 @@ theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loaded}
   · exact (Array.getElem?_eq_some_iff.mp hen).1
   · simp [hen, hr]
 
-/-- Every `src` a loaded browser face produces is a file the driver is asked
-to copy: `imageRequestHref` and `imageAssets` project one decision
-(`imageShips`), so the page cannot link a copy that was never requested —
-the `shipFaces_src_shipped` shape. A fact of the artifact, not the IR: file
-placement is where a page lives. That the browser resolves the relative URL
-and decodes the bytes is the oracle, never this theorem. -/
+/-- Every embedded primary carrier is drawn from the captured resource
+projection. No claim about a directory or subsequent file read is needed. -/
 theorem img_request_src_shipped (assetsDir : String) (imgs : Image.Store) (req : Image.Request)
-    {k : Nat} {en : Image.Loaded} (hk : imgs.findRequest? req = some k)
-    (hen : imgs.get? k = some en) (hr : imageShips en = true) :
-    ∃ a ∈ imageAssets imgs, imageRequestHref assetsDir imgs req =
-      imageAssetHref assetsDir a.file := by
-  refine ⟨{ file := imageAssetName k (browserAssetSrc en) en.browserBytes, srcIndex := k },
-    ?_, ?_⟩
-  · apply Array.mem_append.mpr
-    left
-    simp only [Array.mem_filterMap]
-    refine ⟨k, Array.mem_range.mpr (Array.getElem?_eq_some_iff.mp hen).1, ?_⟩
-    simp [hen, hr]
+    {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
+    (hk : imgs.findRequest? req = some k) (hen : imgs.get? k = some en)
+    (hr : imageResource? en = some r) :
+    r ∈ imageResources imgs ∧ imageRequestHref assetsDir imgs req = r.uri := by
+  refine ⟨Array.mem_append.mpr (.inl (Array.mem_filterMap.mpr ⟨en, ?_, hr⟩)), ?_⟩
+  · exact Array.mem_of_getElem? hen
   · simp [imageRequestHref, hk, hen, hr]
 
-/-- The default request projects the same publication guarantee. -/
+/-- The default request projects the same captured resource guarantee. -/
 theorem img_src_shipped (assetsDir : String) (imgs : Image.Store) (src : String)
-    {k : Nat} {en : Image.Loaded} (hk : imgs.find? src = some k)
-    (hen : imgs.get? k = some en) (hr : imageShips en = true) :
-    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = imageAssetHref assetsDir a.file :=
+    {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
+    (hk : imgs.find? src = some k) (hen : imgs.get? k = some en)
+    (hr : imageResource? en = some r) :
+    r ∈ imageResources imgs ∧ imageHref assetsDir imgs src = r.uri :=
   img_request_src_shipped assetsDir imgs { src } hk hen hr
 
-/-- Every static `<source>` names a captured asset, the publication half
-of the media choice. This is an artifact fact: file placement belongs to
-the HTML output directory. -/
+/-- Every static media carrier embeds the exact captured poster bytes. -/
 theorem imagePosterHref_covers (assetsDir : String) (imgs : Image.Store) (req : Image.Request)
-    {k : Nat} {en : Image.Loaded} (hk : imgs.findRequest? req = some k)
-    (hen : imgs.get? k = some en) (hr : imageShips en = true)
-    (hp : en.posterSvg.isSome = true) :
-    ∃ a ∈ imageAssets imgs, imagePosterHref assetsDir imgs req =
-      some (imageAssetHref assetsDir a.file) := by
-  refine ⟨{ file := imagePosterName k en, srcIndex := k, poster := true }, ?_, ?_⟩
-  · apply Array.mem_append.mpr
-    right
-    simp only [Array.mem_filterMap]
-    refine ⟨k, Array.mem_range.mpr (Array.getElem?_eq_some_iff.mp hen).1, ?_⟩
-    simp [hen, hr, hp]
-  · simp [imagePosterHref, hk, hen, hr, hp]
+    {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
+    (hk : imgs.findRequest? req = some k) (hen : imgs.get? k = some en)
+    (hr : imagePosterResource? en = some r) :
+    r ∈ imageResources imgs ∧ imagePosterHref assetsDir imgs req = some r.uri := by
+  refine ⟨Array.mem_append.mpr (.inr (Array.mem_filterMap.mpr ⟨en, ?_, hr⟩)), ?_⟩
+  · exact Array.mem_of_getElem? hen
+  · simp [imagePosterHref, hk, hen, hr]
 
-def fontFaceRule (dir : String) (ff : FontFace) : String :=
+def fontFaceRule (fs : Font.FontSet) (ff : FontFace) : String :=
   s!"@font-face \{ font-family: \"{ff.family}\"; font-weight: {ff.weight}; " ++
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
-  s!"src: url(\"{dir}/{ff.file}\") format(\"{ff.format}\"); }\n"
+  s!"src: url(\"{(fontResource (fs.get ff.index)).uri}\") format(\"{ff.format}\"); }\n"
 
 /-- The `@font-face` block, one rule per `shipFaces` entry. -/
-def fontFaceCss (dir : String) (fs : Font.FontSet) : String :=
-  String.join ((shipFaces fs).toList.map (fontFaceRule dir))
+def fontFaceCss (fs : Font.FontSet) : String :=
+  String.join ((shipFaces fs).toList.map (fontFaceRule fs))
 
 /-- The face-shipping rules: every `@font-face`, then the body weight the
 document resolved and the synthesis contract. The slot's regular face sets
@@ -2096,8 +2095,8 @@ limited to small caps, which both backends do synthesise (CSS Fonts 4
 §font-synthesis; the PDF's is Layout's own, from its GSUB read). Without
 this line a title asking for 600 over a 300/400 family renders faux-bold
 where the PDF sets the family's real Regular. -/
-def fontCss (dir : String) (fs : Font.FontSet) : String :=
-  fontFaceCss dir fs ++
+def fontCss (fs : Font.FontSet) : String :=
+  fontFaceCss fs ++
   s!"body \{ font-weight: {(fs.get (fs.lookup 0 400 false)).weight}; " ++
   "font-synthesis: small-caps; }\n"
 
@@ -7099,7 +7098,10 @@ private def emitTreeCore (cfg : Config) (doc : Doc) :
   if let some url := doc.info.url then
     head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
   if let some icon := doc.info.favicon then
-    head := head.push (Html.elem "link" #[] #[("rel", "icon"), ("href", icon)])
+    let href := match cfg.favicon with
+      | some (source, r) => if source == icon then r.uri else icon
+      | none => icon
+    head := head.push (Html.elem "link" #[] #[("rel", "icon"), ("href", href)])
   if let some md := cfg.mdHref then
     head := head.push (Html.elem "link" #[]
       #[("rel", "alternate"), ("type", "text/markdown"), ("href", md)])
@@ -7152,9 +7154,9 @@ private def emitTreeCore (cfg : Config) (doc : Doc) :
   diags := diags ++ styleDiags
   -- The shipped faces' rules ride exactly where the slot variables ride:
   -- a mode that emits no variables ships no rules, and the driver writes
-  -- the files only when it passed the set.
+  -- the captured programs only when it passed the set.
   let faceRules := match cfg.fonts with
-    | some fs => fontCss cfg.fontsDir fs
+    | some fs => fontCss fs
     | none => ""
   match cfg.css with
   | .own => head := head.push (Node.style (faceRules ++ baseCss cfg doc ++ "\n" ++ themeCss doc ++ styled))
@@ -7170,7 +7172,10 @@ private def emitTreeCore (cfg : Config) (doc : Doc) :
   -- the later rule wins, so the document's own stylesheet can restyle the
   -- defaults instead of fighting them.
   if let some href := doc.output.stylesheet then
-    head := head.push (Html.elem "link" #[] #[("rel", "stylesheet"), ("href", href)])
+    head := head.push (match cfg.stylesheet with
+      | some (source, css) => if source == href then Node.style css else
+          Html.elem "link" #[] #[("rel", "stylesheet"), ("href", href)]
+      | none => Html.elem "link" #[] #[("rel", "stylesheet"), ("href", href)])
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
@@ -7541,6 +7546,39 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag :=
   -- locale record backs it: the artifact's declaration and the engine's
   -- data are different questions.
   (Html.document (doc.info.language.getD "en") head body, diags)
+
+/-- Exact captured resource projection available to this artifact. -/
+def resources (cfg : Config) : Array HtmlResource.Embedded :=
+  (cfg.fonts.map fontResources).getD #[] ++ imageResources cfg.imgs ++
+    (cfg.favicon.map fun (_, r) => #[r]).getD #[]
+
+abbrev ClosedPage := HtmlResource.ClosedPage deckScript
+
+/-- The publication entry checks the actual emitted tree. SVG evidence
+must come from the driver's parsed-XML validator on these exact bytes. -/
+def emitClosed (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray) :
+    Except String ClosedPage × Array Diag :=
+  let (head, body, diags) := emitTree cfg doc
+  -- premise: Tests.htmlContainedChecks — Bulma requires a captured framework stylesheet.
+  let page := if cfg.css == .bulma && doc.output.stylesheet.isNone then
+      .error "Bulma HTML requires a captured local framework stylesheet"
+    else HtmlResource.close (resources cfg) svgChecked deckScript
+      (doc.info.language.getD "en") head body
+  (page, diags)
+
+/-- Artifact-specific closure, enforced before a page can be published:
+the checked page is the emitter's actual serialization and every projected
+rendering reference resolves against its captured resources. -/
+theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray)
+    {page : ClosedPage} (h : (emitClosed cfg doc svgChecked).1 = .ok page) :
+    page.render = (emit cfg doc).1 ∧
+      ∀ r ∈ HtmlResource.requests (emitTree cfg doc).1 (emitTree cfg doc).2.1,
+        HtmlResource.resolves (resources cfg) svgChecked deckScript r = true := by
+  dsimp only [emitClosed] at h
+  split at h
+  · contradiction
+  · exact HtmlResource.close_covers (resources cfg) svgChecked deckScript
+      (doc.info.language.getD "en") _ _ h
 
 /-- Every emitted page declares a language: the artifact is
 `Html.document` over the document's declared tag, the engine's `en`

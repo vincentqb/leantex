@@ -30,10 +30,10 @@ def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
     let expected := Hermetic.pageExpectedFaces "figure" faced
     check ref "hermetic source: expected identities match real converted primary and poster"
       (expected == Hermetic.pageExpectedFaces "figure" actual && expected.size == 2)
-    check ref "hermetic source: the typed page contains every projected asset href"
-      ((HtmlDoc.imageAssets faced).all fun a =>
+    check ref "hermetic source: the typed page contains every captured resource URI"
+      ((HtmlDoc.imageResources faced).all fun a =>
         let html := (HtmlDoc.emit { imgs := faced, assetsDir := "figure.assets" } doc).1
-        (html.splitOn (HtmlDoc.imageAssetHref "figure.assets" a.file)).length > 1)
+        (html.splitOn a.uri).length > 1)
     let without : Image.Store :=
       { entries := store.entries.map fun en => { en with companion := none } }
     check ref "hermetic source: removing a captured companion changes both plan and key"

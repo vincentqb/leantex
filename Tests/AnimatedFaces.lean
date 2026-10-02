@@ -69,13 +69,11 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       attrs.any (fun (key, value) => key == "media" &&
         hasStr value "print" && hasStr value "prefers-reduced-motion: reduce") &&
       attrs.any (fun (key, value) => key == "srcset" && !value.isEmpty))
-  t "both animation and static poster are published"
-    ((HtmlDoc.imageAssets imgs).size == 2)
-  t "animation and static poster have distinct asset names"
-    (((HtmlDoc.imageAssets imgs).map (·.file)).toList.eraseDups.length == 2)
-  t "every picture source names a published asset"
+  t "both animation and static poster are captured"
+    ((HtmlDoc.imageResources imgs).size == 2)
+  t "every picture source embeds a captured resource"
     (sources.all fun (_, attrs) => attrs.all fun (key, value) =>
-      key != "srcset" || (HtmlDoc.imageAssets imgs).any (fun asset => value == "assets/" ++ asset.file))
+      key != "srcset" || (HtmlDoc.imageResources imgs).any (fun asset => value == asset.uri))
   let facts := HtmlDoc.a11yFacts true false tree
   t "animation alternatives name one image without hidden focus"
     (images.size == 1 && images.all (fun (_, attrs) => attrs.contains ("alt", "Moving square")) &&
