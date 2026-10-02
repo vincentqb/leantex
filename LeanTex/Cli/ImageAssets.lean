@@ -1,5 +1,6 @@
 import LeanTex.Core.Image
 import LeanTex.Cli.SvgPoster
+import LeanTex.Cli.RunBounded
 
 /-! Vector image IO. Captured SVG bytes remain the browser source. Fresh
 conversions return bytes; only the driver decides when to publish them. -/
@@ -156,7 +157,7 @@ SVG inputs pass the support boundary before librsvg sees them. -/
 private def convert (tool inputExt outputExt : String)
     (args : System.FilePath → System.FilePath → Array String) (bytes : ByteArray)
     (terminal : Bool := false)
-    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := fun args => IO.Process.output args) :
+    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := RunBounded.output) :
     IO (Except String ByteArray) := do
   try
     IO.FS.withTempDir fun dir => do
@@ -196,7 +197,7 @@ terminal-value projection. The caller retains the captured SVG unchanged
 for the browser. Unsupported timelines fail rather than paint the base. -/
 def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first)
-    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := fun args => IO.Process.output args) :
+    (runTool : IO.Process.SpawnArgs → IO IO.Process.Output := RunBounded.output) :
     IO (Except String Image.Plan) := do
   match svgPosterAtEnd page with
   | .error err => return .error err
