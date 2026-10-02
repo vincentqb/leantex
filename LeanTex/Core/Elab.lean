@@ -11497,6 +11497,12 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' (raws.extract 0 i
           ++ splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size) i
           blocks cur gen'
+      else if body.any isParRaw && !isArgument cur then
+        -- A restoring scope stays whole so its snapshot predates every
+        -- assignment. Its opening text still joins the pending paragraph:
+        -- only a boundary inside the body may flush that paragraph.
+        let inner ← elabBlockScope ctx' body cur
+        elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         -- A scope group carrying a `\centering` declaration, or holding
         -- block content — a list, a table, a heading, a display — is a
@@ -11952,8 +11958,11 @@ termination_by (ctx.envLimit, noteFlag ctx,
 decreasing_by all_goals blocks_dec
 
 /-- A fresh block accumulator inherits its caller's semantic owners but
-never their accumulator offsets. Tokens retain any deeper ancestry. -/
-private def elabBlockScope (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+never their accumulator offsets. Tokens retain any deeper ancestry.
+A restoring paragraph scope also carries its caller's pending text, so
+capturing the opening lengths introduces no paragraph boundary. -/
+private def elabBlockScope (ctx : Ctx) (raws : Array Raw) (cur : Array Raw := #[]) :
+    EM (Array Block) := do
   let (savedLengths, ⟨body, _hsw, _hsp, _hsn⟩) := openLengthScope ctx raws
   have _hw := sliceWeight_zero body
   have _hp := slicePars_zero body
@@ -11961,7 +11970,7 @@ private def elabBlockScope (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := 
   have _hp0 := slicePars_zero raws
   let ⟨innerCtx, _hm⟩ : MCtx ctx ←
     pure ⟨{ ctx with macroRoles := ctx.macroRoles.enter }, rfl, rfl, rfl, rfl⟩
-  let blocks ← elabBlocksGo innerCtx body 0 #[] #[] (← get).flowGen
+  let blocks ← elabBlocksGo innerCtx body 0 #[] cur (← get).flowGen
   closeLengthScope ctx savedLengths blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws 0,

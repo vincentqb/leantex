@@ -116,6 +116,18 @@ private def columnGeomStyles (trees : Array Html.Node) : Array String :=
       if !(cls.splitOn " ").contains "columns" then none else
         (attrs.find? (·.1 == "style")).map (·.2)
 
+mutual
+private def columnGeomParaOne (acc : Array String) : Html.Node → Array String
+  | .text _ | .style _ | .script _ _ => acc
+  | .elem tag _ kids =>
+    columnGeomParaList
+      (if tag == "p" then acc.push (nodeTextList "" kids.toList) else acc) kids.toList
+
+private def columnGeomParaList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | node :: rest => columnGeomParaList (columnGeomParaOne acc node) rest
+end
+
 private def columnGeomSource (measure : Int) (body : String) (pre : String := "") : String :=
   dvDoc ("\\page{width=" ++ toString (measure + 40) ++
     "pt,height=600pt,hmargin=20pt,vmargin=20pt}\n" ++
@@ -189,6 +201,20 @@ private def columnGeomParagraphs (label : String) (count : Nat) : String :=
 private def columnGeomBefore (a b : Nat × Sp × Sp) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && a.2.2 < b.2.2)
 
+private def columnGeomScopeContinuation (ref : IO.Ref (List String))
+    (fonts : Font.FontSet) (name src : String) : IO Unit := do
+  let (doc, _) := elabStr src
+  let out := layoutOf fonts doc
+  let (_, trees, _) := HtmlDoc.emitTree {} doc
+  let paras := (columnGeomParaList #[] trees.toList).map fun s =>
+    String.ofList (s.toList.filter (!·.isWhitespace))
+  check ref s!"{name}: opening scope text continues the shipped paragraph"
+    ((columnGeomPlaces out "AlphaBeta").size == 1 &&
+      (columnGeomPlaces out "Alpha").isEmpty && (columnGeomPlaces out "Beta").isEmpty &&
+      (columnGeomPlaces out "Gamma").size == 1)
+  check ref s!"{name}: opening scope text continues the typed HTML paragraph"
+    (paras.count "AlphaBeta" == 1 && paras.count "Gamma" == 1)
+
 /-- The article class sets `\columnsep` to 10pt (article.cls).
 Paracol's `\pcol@setcolwidth@r` first subtracts that gap from `\textwidth`,
 then applies ratios and gives the last column the remainder. An invented
@@ -227,6 +253,23 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- declaration source or the order in which local assignments changed them.
   let openGap := columnGeomExpected (pt 200) (pt 18) 1
   let closedGap := columnGeomExpected (pt 200) 0 1
+  -- A closing snapshot must not turn the scope's opening text into a new
+  -- paragraph. Its saved value also predates every part split by \par.
+  for (source, pre) in #[
+      ("native", "\\tokens{columnsep=18pt}\n"),
+      ("copied", "\\newlength{\\savedgap}\\setlength{\\savedgap}{18pt}\n" ++
+        "\\setlength{\\columnsep}{\\savedgap}\n")] do
+    for acrossParts in #[false, true] do
+      let body := "Alpha {Beta\\par\\setlength{\\columnsep}{0pt}" ++
+        (if acrossParts then "\\setlength{\\savedgap}{30pt}\n" ++ columnGeomPair else "") ++
+        "Gamma}\\par\n" ++ columnGeomPair
+      let pre := "\\columnratio{.25}\n" ++ pre ++
+        (if source == "native" then "\\newlength{\\savedgap}\n" else "")
+      let src := columnGeomSource 200 body pre
+      let name := s!"paracol paragraph scope ({source}, split={acrossParts})"
+      columnGeomScopeContinuation ref oneFace name src
+      columnGeomCase ref oneFace name src (pt 200)
+        (if acrossParts then #[closedGap, openGap] else #[openGap])
   for nativeInBody in #[false, true] do
     let native := "\\tokens{columnsep=18pt}\n"
     let body := (if nativeInBody then native else "") ++ columnGeomPair ++
