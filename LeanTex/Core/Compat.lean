@@ -1346,13 +1346,30 @@ def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw ×
     | none => return none
   return none
 
+/-- A saved native meaning carries a reserved control name through macro
+execution. Decoding happens only at native dispatch, after document-name
+lookup: TeX's \let copies the meaning, so a later definition of the source
+name cannot change it (TeXbook ch. 20). A control word cannot contain a space. -/
+def overlayName (name : String) : String :=
+  if name.startsWith "overlay native " then (name.drop "overlay native ".length).toString
+  else name
+
+private def overlayNativeName (name : String) : String :=
+  let native := overlayName name
+  "overlay native " ++ native
+
+private def overlayTitled (name : String) : Bool :=
+  ["block", "alertblock", "exampleblock"].contains name
+
 /-- The numbered-selector surface shared by compatibility and elaboration.
 `args` counts ordinary arguments before the last selector slot. Zero means
 prefix-only. Beamer's font wrappers, colour declarations and uncover/visible
 have only that slot; only/alt and newcommand<> wrappers also have a final
 slot (beamerbaseoverlay.sty, only/alt and beamer@parseargs). -/
 private def overlayArity? (name : String) : Option (Nat × Bool) :=
-  if ["alert", "emph"].contains name then some (1, true)
+  let name := overlayName name
+  if ["alert", "emph", "titled overlay"].contains name then some (1, true)
+  else if ["hyperlink", "hypertarget"].contains name then some (2, true)
   else if name == "only" then some (1, false)
   else if name == "alt" then some (2, false)
   else if ["uncover", "visible", "onslide", "item", "textcolor", "color",
@@ -1423,28 +1440,72 @@ def overlayWord? : Raw → Option String
   | _ => none
 
 private structure OverlayWindow where
+  name : String
   head : Nat
   left : Nat
   middle : Bool
   passed : Bool := false
   selected : Bool := false
+  labelDepth : Nat := 0
+  labelDone : Bool := false
 
 private def OverlayWindow.accepts (w : OverlayWindow) : Bool :=
-  !w.passed || w.left == 0 || w.middle
+  w.labelDepth == 0 && (!w.passed || w.left == 0 || w.middle)
 
 /-- Only newcommand<> continues looking after a selector, until its ordinary
 arguments end. Only/alt and prefix-only wrappers finish at their first one. -/
 private def OverlayWindow.afterSelector (w : OverlayWindow) : Option OverlayWindow :=
   if w.middle && w.left > 0 then some { w with selected := true } else none
 
+
+/-- Item labels have a second selector slot after the bracketed label
+(beamer@itemreverse). Label text is opaque to this window, including nested
+brackets; selectors inside its groups still use their own native windows. -/
 private def overlayNext (pending : Option OverlayWindow) (r : Raw)
     (head : Nat) : Option OverlayWindow :=
-  match r with
-  | .ctrl n _ => (overlayArity? n).map fun (arity, middle) => { head, left := arity, middle }
-  | .space => pending.filter fun w => !w.passed || w.left > 0
-  | .group _ _ => pending.bind fun w =>
-      if w.left == 0 then none else some { w with left := w.left - 1, passed := true }
-  | _ => none
+  if let some w := pending then
+    if w.labelDepth > 0 then
+      some { w with labelDepth := match r with
+        | .sym '[' _ => w.labelDepth + 1
+        | .sym ']' _ => w.labelDepth - 1
+        | _ => w.labelDepth }
+    else if w.name == "item" && !w.labelDone && (r matches .sym '[' _) then
+      some { w with labelDepth := 1, labelDone := true }
+    else advance
+  else advance
+where
+  advance := match r with
+    | .ctrl n _ => (overlayArity? n).map fun (arity, middle) =>
+        { name := overlayName n, head, left := arity, middle }
+    | .space => pending.filter fun w => !w.passed || w.left > 0 || w.name == "item"
+    | .group _ _ => pending.bind fun w =>
+        if w.left == 0 then none else some { w with left := w.left - 1, passed := true }
+    | .word "" _ => pending
+    | _ => none
+
+private def overlayVariantName (w : OverlayWindow) (text : String) : Option String :=
+  if w.name == "onslide" && !w.passed then
+    if text.startsWith "*" then some "only"
+    else if text.startsWith "+" then some "visible"
+    else none
+  else none
+
+/-- Beamer routes onslide* to only, and onslide+ to visible. Both visible
+and the ordinary onslide retain this engine's declared dim-cover policy.
+The sign is outside the selector; <+> itself remains relative and refused. -/
+private def overlayVariant (pending : Option OverlayWindow) (acc : Array Raw)
+    (r : Raw) : Option OverlayWindow × Array Raw × Raw :=
+  match pending, r with
+  | some w, .word text p =>
+    if let some name := overlayVariantName w text then
+      let (name, pos) := match acc[w.head]? with
+        | some (.ctrl n q) => (if n == overlayName n then name else overlayNativeName name, q)
+        | _ => (name, p)
+      let acc := acc.set! w.head (.ctrl name pos)
+      let next := overlayNext none (.ctrl name pos) w.head
+      (next, acc, .word (text.drop 1).toString { p with col := p.col + 1 })
+    else (pending, acc, r)
+  | _, _ => (pending, acc, r)
 
 mutual
 
@@ -1457,8 +1518,9 @@ private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow
   | [], _, _ => acc
   | _ :: rest, i, skip + 1 => overlayInputsList raws pending acc rest (i + 1) skip
   | r :: rest, i, 0 =>
+    let (pending, acc, r) := overlayVariant pending acc (overlayInputsRaw r)
     let selected := pending.filter (·.accepts) |>.bind fun w =>
-      overlaySelector? raws i (w.middle && w.left > 0)
+      overlaySelector? (raws.set! i r) i (w.middle && w.left > 0)
     match selected, pending with
     | some s, some w =>
       let acc := (acc.extract 0 (w.head + 1)).push s.word ++
@@ -1467,11 +1529,16 @@ private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow
       overlayInputsList raws pending acc rest (i + 1) (s.stop - (i + 1))
     | _, _ =>
       let next := overlayNext pending r acc.size
-      overlayInputsList raws next (acc.push (overlayInputsRaw r)) rest (i + 1) 0
+      overlayInputsList raws next (acc.push r) rest (i + 1) 0
 
 private def overlayInputsRaw : Raw → Raw
   | .group body p => .group (overlayInputsList body none #[] body.toList 0 0) p
-  | .env n body p => .env n (overlayInputsList body none #[] body.toList 0 0) p
+  | .env n body p =>
+    if overlayTitled n then
+      let head := Raw.ctrl "titled overlay" p
+      let rs := overlayInputsList body (overlayNext none head 0) #[head] body.toList 0 0
+      .env n (rs.extract 1 rs.size) p
+    else .env n (overlayInputsList body none #[] body.toList 0 0) p
   | .math d body p => .math d body p
   | .word w p => .word w p
   | .space => .space
@@ -1494,7 +1561,12 @@ private def overlayOpen (raws : Array Raw) : Bool := Id.run do
   let mut opened := false
   for r in raws do
     match r with
-    | .word s _ =>
+    | .word text p =>
+      let mut s := text
+      if !opened then
+        if let some name := pending.bind (overlayVariantName · text) then
+          pending := overlayNext none (.ctrl name p) 0
+          s := (text.drop 1).toString
       if !opened && !pending.any (·.accepts) then
         pending := overlayNext pending r 0
       else
@@ -2653,7 +2725,7 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
        | some (some v) => v.live
        | _ => false)
   | .group body _ => condLiveList flags binds body.toList
-  | .env n body _ => pictureEnvs.contains n || condLiveList flags binds body.toList
+  | .env n body _ => overlayTitled n || pictureEnvs.contains n || condLiveList flags binds body.toList
   | .math _ body _ => condLiveList flags binds body.toList
   | .word _ _ => false
   | .space => false
@@ -2880,8 +2952,13 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let k0 := skipSpaces raws (j + 1)
     let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
     match raws[j]?, raws[k]? with
-    | some (.ctrl _ _), some (.ctrl m _) =>
-      return ((condValueOf st.binds m).bind id).map fun v => { v with live := true }
+    | some (.ctrl _ _), some (.ctrl m p) =>
+      match condValueOf st.binds m with
+      | some v => return v.map fun v => { v with live := true }
+      | none =>
+        if (overlayArity? m).isSome then
+          return some { raws := #[.ctrl (overlayNativeName m) p], long := false, prot := false, live := true }
+        return none
     | _, _ => return none
   if d == "newcommand" || d == "renewcommand" || d == "providecommand" then
     let j0 := skipSpaces raws (i + 1)
@@ -3423,11 +3500,14 @@ private def condOne [Monad m]
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
-      let body' ← condList ex [] body #[] #[] [] body.toList 0 0
+      -- The title argument belongs to this environment's selector window,
+      -- just as it does in overlayInputsRaw after execution.
+      let head := if overlayTitled n then #[Raw.ctrl "titled overlay" p] else #[]
+      let body' ← condList ex [] body #[] head [] body.toList 0 0
       let _ ← swapTop top
       condClose m
       write fun st => { st with inPicture := inPic }
-      return .env n body'.raws p
+      return .env n (body'.raws.extract head.size body'.raws.size) p
   | r => do
     condStopSpaces
     pure r
@@ -8347,9 +8427,13 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     write fun st => { st with bodyNext := 1 }
     rewriteList inBody raws (out.push (.ctrl "define" pos)) rest (i + 1) 0
   | .ctrl name pos :: rest, i, 0 => do
-    match ← rewriteCtrl name pos raws (i + 1) with
+    match ← rewriteCtrl (overlayName name) pos raws (i + 1) with
     | some (repl, consumed) => rewriteList inBody raws (out ++ repl) rest (i + 1) consumed
-    | none => rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0
+    | none =>
+      -- Item is a structural delimiter and cannot be redefined by a
+      -- document (Elab.builtinNames); its saved meaning is the same token.
+      let name := if overlayName name == "item" then "item" else name
+      rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0
   -- `#k` is the native parameter `\ak`. The digits may be glued to text
   -- (`#1,`), so the word is split. Outside a body `#` is literal: a colour.
   | .sym '#' p :: .word w wp :: rest, i, 0 => do
