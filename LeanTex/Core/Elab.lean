@@ -4182,9 +4182,9 @@ private def selectorSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Op
     unless spec.isSome do warnOverlaySpec ctx w pos
     return spec
 
-/-- Resolve a native link wrapper once, then cover that whole result. The
-body has already been elaborated, so neither selection nor a nested-link
-refusal can duplicate its effects. -/
+/-- Beamer's native targets use \only (beamerbaseoverlay.sty): select the
+whole link or destination body, with an empty excluded reading. The body
+has already been elaborated, so selection cannot duplicate its effects. -/
 private def targetInlines (ctx : Ctx) (name key : String)
     (spec : Option OverlaySpec) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
   let wrapped ← if name == "hyperlink" then
@@ -4197,7 +4197,7 @@ private def targetInlines (ctx : Ctx) (name key : String)
         pure #[.link ("#".append (Ir.labelAnchor key)) (ctx.styles.linkInk "link" inner)]
     else
       pure (#[.label key] ++ inner)
-  return selectedCover Inline.onSteps spec wrapped
+  return pushModifier #[] spec wrapped #[]
 
 /-- The one W0105 for `\alt` without a numbered specification, outside
 the knot. An alternation inks exactly one alternative per step page, and
@@ -5035,7 +5035,7 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "hyperlink" || name == "hypertarget" then
-          -- Beamer's native two-group wrappers cover the complete link or
+          -- Beamer's native two-group wrappers select the complete link or
           -- destination body. All documented selector slots reach this head.
           let head := selectorHead raws (i + 1)
           let j := head.2
@@ -11360,7 +11360,12 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
             -- image-only body takes no decoration (`linkBodyAfford`).
             let kind := if n == "hyperlink" then "link" else "url"
             pure (Ir.linkBlocks url (ctx.styles.linkBodyAfford kind inner))
-      return (blocks ++ selectedCover Block.onSteps spec wrapped, ⟨j2 + 1, by omega⟩)
+      let selected := match spec with
+        | some spec =>
+          let (firstPage, otherPage) := spec.pageOrder wrapped #[]
+          #[Block.altSteps spec firstPage otherPage]
+        | none => wrapped
+      return (blocks ++ selected, ⟨j2 + 1, by omega⟩)
     | _, _ =>
       diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos
       return (blocks, ⟨i + 1, by omega⟩)

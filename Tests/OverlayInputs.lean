@@ -28,7 +28,7 @@ private def inputSelectors (html : Array Html.Node) : Array (Array (String × St
 selector attributes. The positive text assertion prevents two empty artifacts
 from passing; glyph equality also observes covered colour and placement. -/
 private def inputEquivalent (ref : IO.Ref (List String)) (fonts : Font.FontSet)
-    (label source canonical : String) : IO Unit := do
+    (label source canonical : String) (probeCopies : Nat := 3) : IO Unit := do
   -- Fix the frame extent before a source can redefine the clock's name.
   let clock := "\\uncover<3>{ClockMarker}\n\n"
   let (out, html, ds) := inputBuild fonts (clock ++ source)
@@ -38,7 +38,7 @@ private def inputEquivalent (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       ds.all (·.severity == .note) && wantDs.all (·.severity == .note))
   check ref (label ++ ": numbered shipped pages")
     (shippedBodyGlyphs out == shippedBodyGlyphs want &&
-      ((inputText out).splitOn "Probe").length == 4)
+      ((inputText out).splitOn "Probe").length == probeCopies + 1)
   check ref (label ++ ": typed HTML selector boundary")
     (inputSelectors html == inputSelectors wantHtml &&
       nodeTextList "" html.toList == nodeTextList "" wantHtml.toList)
@@ -86,19 +86,6 @@ private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontS
       ("\\begin{" ++ kind ++ "}< 1 , 3 >{Heading}Probe\\end{" ++ kind ++ "}") want
     inputEquivalent ref fonts (kind ++ " final selector")
       ("\\begin{" ++ kind ++ "}{Heading}< 1 , 3 >Probe\\end{" ++ kind ++ "}") want
-  for name in ["hyperlink", "hypertarget"] do
-    let tail := if name == "hyperlink" then "\\hypertarget{input-link}{}" else ""
-    let args := "{input-link}{Probe}"
-    let want := "\\uncover<1,3>{\\" ++ name ++ args ++ "}" ++ tail
-    for (slot, call) in [
-        ("prefix", "\\" ++ name ++ "< 1 , 3 >" ++ args),
-        ("middle", "\\" ++ name ++ "{input-link}< 1 , 3 >{Probe}"),
-        ("final", "\\" ++ name ++ args ++ "< 1 , 3 >")] do
-      inputEquivalent ref fonts (name ++ " " ++ slot ++ " selector") (call ++ tail) want
-    let blocks := "{input-link}{Probe\\par Second}"
-    inputEquivalent ref fonts (name ++ " block selector")
-      ("\\" ++ name ++ "<1,3>" ++ blocks ++ tail)
-      ("\\uncover<1,3>{\\" ++ name ++ blocks ++ "}" ++ tail)
   for item in ["\\item<1,3>[Label]Probe", "\\item[Label] < 1 , 3 >Probe"] do
     inputEquivalent ref fonts "description label and body selected together"
       ("\\begin{description}" ++ item ++ "\\end{description}")
@@ -119,7 +106,111 @@ private def inputNativeFamilies (ref : IO.Ref (List String)) (fonts : Font.FontS
     "\\let\\Pick\\onslide\\def\\only#1{Lost}\\Pick*<1,3>{Probe}" "\\only<1,3>{Probe}"
   inputEquivalent ref fonts "saved native wrapper keeps block dispatch"
     "\\let\\Pick\\hyperlink\\def\\hyperlink#1{Lost}\\Pick<1,3>{input-link}{Probe\\par Second}\\hypertarget{input-link}{}"
-    "\\hyperlink<1,3>{input-link}{Probe\\par Second}\\hypertarget{input-link}{}"
+    "\\hyperlink<1,3>{input-link}{Probe\\par Second}\\hypertarget{input-link}{}" 2
+
+private def inputAttr (attrs : Array (String × String)) (key : String) : String :=
+  ((attrs.find? (·.1 == key)).map (·.2)).getD ""
+
+/-- Read the artifact's selector vocabulary; covering carriers remain present.
+Only the display-level alternative carriers can remove their descendants. -/
+private def inputAltShown (attrs : Array (String × String)) (step : Nat) : Bool :=
+  let classes := (inputAttr attrs "class").splitOn " "
+  if classes.contains "alt-set" then
+    (inputAttr attrs "data-steps").splitOn " " |>.contains (toString step)
+  else if classes.contains "alt-crisp" || classes.contains "alt-pending" then
+    let lo := (inputAttr attrs "data-step").toNat?.getD 1
+    let hi := (inputAttr attrs "data-step-last").toNat?
+    let active := lo ≤ step && (hi.map fun n => decide (step ≤ n)).getD true
+    if classes.contains "alt-pending" then !active else active
+  else !(attrs.any (·.1 == "hidden"))
+
+mutual
+
+private def inputAtOne (step : Nat) (acc : Array Html.Node) : Html.Node → Array Html.Node
+  | .elem tag attrs kids =>
+    if inputAltShown attrs step then
+      acc.push (.elem tag attrs (inputAtList step #[] kids.toList))
+    else acc
+  | node => acc.push node
+
+private def inputAtList (step : Nat) (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | node :: rest => inputAtList step (inputAtOne step acc node) rest
+
+end
+
+private def inputPageLinks (page : Layout.PageOut) : Array String :=
+  page.links.map (·.target) ++ page.lines.flatMap fun line =>
+    line.segs.filterMap fun
+      | .run _ _ link .. => link
+      | _ => none
+
+/-- Beamer's native targets use only (beamerbaseoverlay.sty, lines 631–632):
+excluded steps have no body ink, link, or destination. Ordinary only currently
+covers in this engine, so it is a reference for the included reading alone;
+the independent absence assertions below judge the excluded reading. -/
+private def inputNativeTargetRemoval (ref : IO.Ref (List String))
+    (fonts : Font.FontSet) : IO Unit := do
+  for name in ["hyperlink", "hypertarget"] do
+    let target := if name == "hyperlink" then "input-link" else "input-target"
+    let dest := if name == "hyperlink" then "input-body" else target
+    let href := if name == "hyperlink" then "#input-link" else "https://example.invalid/target"
+    let ink := if name == "hyperlink" then "\\label{input-body}Probe"
+      else "\\href{https://example.invalid/target}{Probe}"
+    let tail := "\n\nAlways\\hypertarget{outside}{}" ++
+      if name == "hyperlink" then "\\hypertarget{input-link}{}" else ""
+    for block in [false, true] do
+      let body := ink ++ if block then "\\par Second" else ""
+      let args := "{" ++ target ++ "}{" ++ body ++ "}"
+      let bare := "\\" ++ name ++ args
+      for spec in ["2", "1,3"] do
+        let selector := "< " ++ spec ++ " >"
+        let clock := "\\uncover<3>{ClockMarker}\n\n"
+        let (want, wantHtml, wantDs) := inputBuild fonts
+          (clock ++ "\\only<" ++ spec ++ ">{" ++ bare ++ "}" ++ tail)
+        for (slot, call) in [
+            ("prefix", "\\" ++ name ++ selector ++ args),
+            ("middle", "\\" ++ name ++ "{" ++ target ++ "}" ++ selector ++ "{" ++ body ++ "}"),
+            ("final", bare ++ selector)] do
+          let (out, html, ds) := inputBuild fonts (clock ++ call ++ tail)
+          let label := s!"native {name} {if block then "block" else "inline"} {slot} <{spec}>"
+          check ref (label ++ ": complete artifacts")
+            (out.pages.size == 3 && want.pages.size == 3 &&
+              ds.all (·.severity == .note) && wantDs.all (·.severity == .note))
+          check ref (label ++ ": one authored HTML body and destination")
+            (treeOccurs html "Probe" == 1 && ((inputAttrs html "id").filter (· == dest)).size == 1)
+          for step in [1, 2, 3] do
+            let selected := if spec == "2" then step == 2 else step == 1 || step == 3
+            let view := inputAtList step #[] html.toList
+            let expected := if selected then 1 else 0
+            let suffix := s!": step {step}"
+            check ref (label ++ suffix ++ " HTML body present exactly when selected")
+              (treeOccurs view "Probe" == expected &&
+                (!block || treeOccurs view "Second" == expected) && treeOccurs view "Always" == 1)
+            check ref (label ++ suffix ++ " HTML link present exactly when selected")
+              ((inputAttrs view "href").contains href == selected)
+            check ref (label ++ suffix ++ " HTML destination present exactly when selected")
+              ((inputAttrs view "id").contains dest == selected &&
+                (inputAttrs view "id").contains "outside")
+            if let some page := out.pages[step - 1]? then
+              let one := { out with pages := #[page] }
+              let text := inputText one
+              check ref (label ++ suffix ++ " layout body present exactly when selected")
+                ((text.splitOn "Probe").length == expected + 1 &&
+                  (!block || (text.splitOn "Second").length == expected + 1) &&
+                  (text.splitOn "Always").length == 2)
+              check ref (label ++ suffix ++ " layout link present exactly when selected")
+                ((inputPageLinks page).contains href == selected)
+              check ref (label ++ suffix ++ " layout destination present exactly when selected")
+                (page.lines.any (fun line => line.anchors.contains dest) == selected &&
+                  page.lines.any (fun line => line.anchors.contains "outside"))
+              if selected then
+                let wantView := inputAtList step #[] wantHtml.toList
+                check ref (label ++ suffix ++ " included reading agrees with only")
+                  (shippedBodyGlyphs one == shippedBodyGlyphs { want with pages := want.pages.extract (step - 1) step } &&
+                    nodeTextList "" view.toList == nodeTextList "" wantView.toList &&
+                    inputAttrs view "id" == inputAttrs wantView "id" &&
+                    inputAttrs view "href" == inputAttrs wantView "href")
 
 /-- Every new native boundary reads fragments at use, including a titled
 body reached through a macro. Refused fragments retain the page and the
@@ -226,6 +317,7 @@ def overlayInputChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   inputSelectorFragments ref fonts
   inputNativeFamilies ref fonts
   inputNativeFragments ref fonts
+  inputNativeTargetRemoval ref fonts
   for command in ["only", "uncover", "visible", "textbf", "textcolor{blue}"] do
     -- textcolor's selector precedes its colour, not its content argument.
     let head := if command == "textcolor{blue}" then "textcolor" else command
