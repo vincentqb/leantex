@@ -1596,6 +1596,33 @@ theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
       = flatten mathOk noteOk st sty body := by
   simp [flattenOne, h, hs]
 
+/-- **The PDF projection of `Ir.Styles.linkLeafAfford_afford`.** A
+text-bearing link-body leaf lowers through `flattenOne` exactly as the leaf
+set in the kind's ink and underlined: the `.colored`/`.decorated` wrappers the
+afford fact builds recurse to the same run style the inline `.link` arm itself
+sets — the kind's ink on `color`, `underline := true` on `decorations` (the
+annotation url is the only part the inline arm adds beyond these). So the
+afforded body's runs carry the kind's ink colour and `Decorations.underline`
+in `Layout.Out`, which `Pdf` lowers to coloured glyphs and an underline fill —
+the PDF half of the one IR value both backends read (`Ir.Styles.linkBodyAfford`;
+HtmlDoc's `linkLeafAfford_projects` is the other). -/
+theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
+    (sty : TextStyle) (s : Styles) (kind : String) (x : Inline)
+    (h : x.bearsLinkText = true) :
+    flattenOne mathOk noteOk st sty (s.linkLeafAfford kind x)
+      = (match (s.find? kind).bind (·.color) with
+         | some (c, _) =>
+             flattenOne mathOk noteOk st
+               { sty with color := c,
+                          decorations := { sty.decorations with underline := true } } x
+         | none =>
+             flattenOne mathOk noteOk st
+               { sty with decorations := { sty.decorations with underline := true } } x) := by
+  rw [Styles.linkLeafAfford_afford s kind x h]
+  cases hc : (s.find? kind).bind (·.color) with
+  | none => simp [flattenOne, flatten, flattenList]
+  | some p => obtain ⟨c, _⟩ := p; simp [flattenOne, flatten, flattenList]
+
 -- The attribution covers the walk: a counter standing in a block hands out
 -- nothing but that block's leaves, the block itself, and note marks. The
 -- statement is over the tokens `flatten` decides attribution for;
