@@ -1,5 +1,11 @@
 # source: array manual §1-2 — colspec letters are read at the tabular; the
-# >{...} decorations are skipped W0104, \newcolumntype is not read.
+# >{...} pre and <{...} post modifiers select a column's alignment
+# (\raggedright, \raggedleft, \centering), \arraybackslash is inert, and an
+# unmodelled effect is named once (W0104); \newcolumntype is not read.
 pre refuse:W0301 \newcolumntype{Y}{c}
 body refuse:W0104 \begin{tabular}{>{\bfseries}c}a\end{tabular}
+body impl \begin{tabular}{>{\raggedright\arraybackslash}p{3cm}}Cell content.\end{tabular}
+body impl \begin{tabular}{>{\centering}c}Cell content.\end{tabular}
+body impl \begin{tabular}{>{\raggedleft}l}Cell content.\end{tabular}
+body impl \begin{tabular}{c<{\arraybackslash}}Cell content.\end{tabular}
 pre impl \setlength{\extrarowheight}{2pt}
