@@ -223,6 +223,28 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     columnGeomCase ref oneFace s!"paracol scoped {gap}pt"
       (columnGeomSource 200 body "\\columnratio{.25}\n") (pt 200)
       #[want, columnGeomExpected (pt 200) (pt gap) 1, want]
+  -- Scope exit restores the values held at entry, regardless of their
+  -- declaration source or the order in which local assignments changed them.
+  let openGap := columnGeomExpected (pt 200) (pt 18) 1
+  let closedGap := columnGeomExpected (pt 200) 0 1
+  for nativeInBody in #[false, true] do
+    let native := "\\tokens{columnsep=18pt}\n"
+    let body := (if nativeInBody then native else "") ++ columnGeomPair ++
+      "{\\setlength{\\columnsep}{0pt}\n" ++ columnGeomPair ++ "}\n" ++ columnGeomPair
+    columnGeomCase ref oneFace s!"paracol restores native opening gap (body={nativeInBody})"
+      (columnGeomSource 200 body
+        ("\\columnratio{.25}\n" ++ if nativeInBody then "" else native))
+      (pt 200) #[openGap, closedGap, openGap]
+  for assignments in #[
+      "\\setlength{\\columnsep}{0pt}\\setlength{\\savedgap}{30pt}\n",
+      "\\setlength{\\savedgap}{30pt}\\setlength{\\columnsep}{0pt}\n"] do
+    let body := columnGeomPair ++ "{" ++ assignments ++ columnGeomPair ++ "}\n" ++
+      columnGeomPair ++ "\\setlength{\\columnsep}{\\savedgap}\n" ++ columnGeomPair
+    columnGeomCase ref oneFace s!"paracol restores copied opening gap ({assignments.trimAscii})"
+      (columnGeomSource 200 body
+        ("\\columnratio{.25}\n\\newlength{\\savedgap}\\setlength{\\savedgap}{18pt}\n" ++
+          "\\setlength{\\columnsep}{\\savedgap}\n"))
+      (pt 200) #[openGap, closedGap, openGap, openGap]
   -- TeX copies a register's value at each executed assignment, including
   -- the class default and reads inside a command definition.
   columnGeomCase ref oneFace "paracol copied class gap"

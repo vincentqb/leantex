@@ -5867,6 +5867,7 @@ def bodyIsBlockOne : Raw → Bool
       -- declaration-shaped: it must expand through the block walk,
       -- where the define door and the counter arm stand.
       || n == "define" || counterCtrl n
+      || (Compat.lengthRestoreKeys? n).isSome
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb env _ _ => env != "verb"
@@ -10295,6 +10296,44 @@ private def pageMark? (n : String) : Option Block :=
   else if (Ir.pageOpeningOfRole? n).isSome then some (.role n #[])
   else none
 
+/-- Compat's closing metadata belongs to the enclosing scope, including
+when a paracol body is split into two flows. It is not body content. -/
+private def lengthScopeKeys? (raws : Array Raw) : Option (Array String) :=
+  match raws[raws.size - 1]? with
+  | some (.ctrl n _) => Compat.lengthRestoreKeys? n
+  | _ => none
+
+/-- Capture the already-resolved opening values through the same token
+environment `applyTokens` reads. A saved expression would instead read a
+dependent register's closing value; Compat alone cannot see native tokens.
+Removing the metadata only shrinks the block walk's measures. -/
+private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
+    Array (String × SymGlue) × { body : Array Raw //
+      rawWeightList body.toList ≤ rawWeightList raws.toList ∧
+      rawParsList body.toList ≤ rawParsList raws.toList ∧
+      nestedParsList body.toList ≤ nestedParsList raws.toList } :=
+  if let some keys := lengthScopeKeys? raws then
+    let saved := keys.filterMap fun key =>
+      ((ctx.tokens.find? key).orElse fun _ =>
+        (ctx.engineTokens.find? (·.1 == key)).map (·.2)).map (key, ·)
+    (saved, ⟨raws.extract 0 (raws.size - 1),
+      extract_weight_le .., extract_pars_le .., extract_nested_le ..⟩)
+  else
+    (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)
+
+/-- Restore only locally assigned lengths, retaining unrelated flow
+declarations. One resolved token epoch reaches both backends. -/
+private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
+    (blocks : Array Block) : EM (Array Block) := do
+  if saved.isEmpty then return blocks
+  let st ← get
+  let tk := saved.foldl (fun tk (key, value) => tk.declare key value)
+    (st.flowTokens.getD ctx.tokens)
+  modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
+  return blocks.push (.setTokens tk)
+
+seal lengthScopeKeys? openLengthScope closeLengthScope
+
 mutual
 
 /-- Rule (b), judged once at the definition — the gate both registration
@@ -10680,8 +10719,9 @@ math through tables, frames, lists, floats and columns to defined wrappers
 and the unknown-wrapper splice. The caller consumed the environment
 itself; every recursion here descends into its body, so the weight sum
 falls by at least the wrapper. -/
-private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
+private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
+  let (savedLengths, ⟨body, hsw, hsp, hsn⟩) := openLengthScope ctx scope
   have hb0 : sliceWeight body 0 = rawWeightList body.toList := sliceWeight_zero _
   have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
   have hb2 := nestedParsList_le body.toList
@@ -11088,10 +11128,10 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     have hx0 : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
     have hx1 : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
     blocks := blocks ++ (← elabBlockScope ctx kept)
-  return blocks
+  closeLengthScope ctx savedLengths blocks
 termination_by (ctx.envLimit, noteFlag ctx,
-  visParsGo ctx.user ctx.limit + rawParsList body.toList,
-  visWeightGo ctx.user ctx.limit + 1 + rawWeightList body.toList, 1, 0)
+  visParsGo ctx.user ctx.limit + rawParsList scope.toList,
+  visWeightGo ctx.user ctx.limit + 1 + rawWeightList scope.toList, 1, 0)
 decreasing_by all_goals blocks_dec
 
 /-- One general control word at block level, standing at `i`: native
@@ -11444,11 +11484,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         sliceWeight_zero _
       have hg1 : slicePars body 0 = nestedParsList body.toList :=
         slicePars_zero _
-      if hpp : body.any isParRaw && !isArgument cur then
+      if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone then
         -- A scope group holding a paragraph end is spliced open first, so
         -- the `\par` inside it is the boundary it is everywhere else.
         have hpp2 : body.any isParRaw = true := by
-          simp only [Bool.and_eq_true] at hpp; exact hpp.1
+          simp only [Bool.and_eq_true] at hpp; exact hpp.1.1
         have hdec := slicePars_splice h hr hpp2 ctx' gpos
         have hdec2 : slicePars (raws.extract 0 i
             ++ (splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size)) i
@@ -11914,9 +11954,15 @@ decreasing_by all_goals blocks_dec
 /-- A fresh block accumulator inherits its caller's semantic owners but
 never their accumulator offsets. Tokens retain any deeper ancestry. -/
 private def elabBlockScope (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+  let (savedLengths, ⟨body, _hsw, _hsp, _hsn⟩) := openLengthScope ctx raws
+  have _hw := sliceWeight_zero body
+  have _hp := slicePars_zero body
+  have _hw0 := sliceWeight_zero raws
+  have _hp0 := slicePars_zero raws
   let ⟨innerCtx, _hm⟩ : MCtx ctx ←
     pure ⟨{ ctx with macroRoles := ctx.macroRoles.enter }, rfl, rfl, rfl, rfl⟩
-  elabBlocksGo innerCtx raws 0 #[] #[] (← get).flowGen
+  let blocks ← elabBlocksGo innerCtx body 0 #[] #[] (← get).flowGen
+  closeLengthScope ctx savedLengths blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws 0,
   visWeightGo ctx.user ctx.limit + sliceWeight raws 0, 3, 0)
@@ -11947,6 +11993,7 @@ theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
 
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal blockMacroStep
+unseal lengthScopeKeys? openLengthScope closeLengthScope
 unseal closeBlockMacros blockControlContext
 unseal flowStyleCtrl flowStyleArm
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
