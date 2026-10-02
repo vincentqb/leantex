@@ -10,10 +10,10 @@ its CSS enumerates positive, ordered endpoints. Expectations are authored
 finite sets, independent of the IR selector evaluator. -/
 private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  for (spec, selected, other) in
-      [("0-", "1 2 3 4", ""), ("0-2", "1 2", "3 4"),
-       ("0", "", "1 2 3 4"), ("2-0", "", "1 2 3 4"),
-       ("4-2", "", "1 2 3 4"), ("0-,0-", "1 2 3 4", "")] do
+  for (spec, selected, other, activeFirst) in
+      [("0-", "1 2 3 4", "", true), ("0-2", "1 2", "3 4", true),
+       ("0", "", "1 2 3 4", false), ("2-0", "", "1 2 3 4", false),
+       ("4-2", "", "1 2 3 4", false), ("0-,0-", "1 2 3 4", "", true)] do
     let source := deck169Frame
       (s!"\\uncover<{spec}>" ++ "{InkProbe} " ++
         s!"\\alt<{spec}>" ++ "{PrimaryProbe}{OtherProbe}\n\n\\uncover<4,4>{ClockMarker}")
@@ -31,9 +31,11 @@ private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : 
     t (here ++ ": finite cover membership")
       (attrs.any fun a => HtmlDoc.attrOf? a "class" == some "step-set" &&
         HtmlDoc.attrOf? a "data-steps" == some selected)
+    -- The HTML declares the first-page arm first; these are authored page orders.
+    let choices := if activeFirst then #[some selected, some other] else #[some other, some selected]
     t (here ++ ": finite choice partitions the numbered states")
       ((attrs.filter fun a => (((HtmlDoc.attrOf? a "class").getD "").splitOn " ").contains
-        "alt-set").map (fun a => HtmlDoc.attrOf? a "data-steps") == #[some selected, some other])
+        "alt-set").map (fun a => HtmlDoc.attrOf? a "data-steps") == choices)
     t (here ++ ": finite CSS has a reachable numbered track")
       (attrs.any fun a => HtmlDoc.attrOf? a "class" == some "slide-track")
     for k in [1, 2, 3, 4] do
@@ -111,6 +113,19 @@ private def contractCarrier (rules : Array (String × String)) (k : Nat)
   if display != "none" && display != "contents" then none
     else some (display != "none", opacity)
 
+/-- The two descendant selectors reset different carriers. Read each emitted
+selector's opacity; a missing reset leaves the original product intact. -/
+private def contractReset (rules : Array (String × String)) (k : Nat)
+    (isEnd : Bool) : Option Nat := do
+  let parent := s!"html[data-deck-script] [data-snapped=\"{k}\"] " ++
+    s!":is(.step, .step-set):not([data-steps~=\"{k}\"])"
+  let target := parent ++ " :is(.step, .step-set)" ++
+    (if isEnd then " > .step-end" else "")
+  let (_, decls) ← rules.find? fun (sel, _) =>
+    sel == target || sel.startsWith (target ++ ", ") || sel.endsWith (", " ++ target)
+  let value ← contractDecl decls "opacity"
+  contractPercent value
+
 private structure ContractLeaf where
   text : String
   opacity : Nat × Nat
@@ -120,15 +135,23 @@ private structure ContractLeaf where
 mutual
 
 private def contractHtmlOne (rules : Array (String × String)) (k : Nat)
-    (opacity : Nat × Nat) (marks : Array (String × String)) (acc : Array ContractLeaf) :
+    (pending resetEnd : Bool) (opacity : Nat × Nat) (marks : Array (String × String)) (acc : Array ContractLeaf) :
     Html.Node → Option (Array ContractLeaf)
   | .text text => some (acc.push { text, opacity, marks })
   | .style _ | .script _ _ => some acc
   | .elem tag attrs kids => do
     let (shown, pct) ← contractCarrier rules k attrs
     if !shown then return acc
-    let opacity := if pct == 100 then opacity else (opacity.1 * pct, opacity.2 * 100)
     let classes := (styleAttr attrs "class").splitOn " "
+    let root := classes.contains "step" || classes.contains "step-set"
+    let isEnd := classes.contains "step-end"
+    let pct := if (root && pending) || (isEnd && resetEnd) then
+      (contractReset rules k isEnd).getD pct else pct
+    let opacity := if pct == 100 then opacity else (opacity.1 * pct, opacity.2 * 100)
+    -- Only a direct child of a descendant root matches the end reset selector.
+    let resetEnd := root && pending
+    let pending := pending || (root &&
+      !((styleAttr attrs "data-steps").splitOn " ").contains (toString k))
     let style := styleAttr attrs "style"
     let marks :=
       if ["strong", "em", "u", "s", "ul", "ol", "li"].contains tag then
@@ -137,15 +160,15 @@ private def contractHtmlOne (rules : Array (String × String)) (k : Nat)
       else if style.startsWith "color:" then marks.push ("color", style)
       else if classes.contains "alert" then marks.push ("alert", "")
       else marks
-    contractHtmlList rules k opacity marks acc kids.toList
+    contractHtmlList rules k pending resetEnd opacity marks acc kids.toList
 
 private def contractHtmlList (rules : Array (String × String)) (k : Nat)
-    (opacity : Nat × Nat) (marks : Array (String × String)) (acc : Array ContractLeaf) :
+    (pending resetEnd : Bool) (opacity : Nat × Nat) (marks : Array (String × String)) (acc : Array ContractLeaf) :
     List Html.Node → Option (Array ContractLeaf)
   | [] => some acc
   | n :: ns => do
-    let acc ← contractHtmlOne rules k opacity marks acc n
-    contractHtmlList rules k opacity marks acc ns
+    let acc ← contractHtmlOne rules k pending resetEnd opacity marks acc n
+    contractHtmlList rules k pending resetEnd opacity marks acc ns
 
 end
 
@@ -178,9 +201,9 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       t (here ++ " exact glyph placement and paint")
         (shippedBodyGlyphs page == shippedBodyGlyphs control)
       t (here ++ " exact decoration ink") (metricDecorationSegs page == metricDecorationSegs control)
-      let actual := contractHtmlList rules (i + 1) (1, 1) #[] #[] tree.toList
+      let actual := contractHtmlList rules (i + 1) false false (1, 1) #[] #[] tree.toList
       let expected := contractHtmlList (rulesOf (source reading))
-        (i + 1) (1, 1) #[] #[] wantTree.toList
+        (i + 1) false false (1, 1) #[] #[] wantTree.toList
       t (here ++ " readable emitted script-floor CSS") (actual.isSome && expected.isSome)
       let observed := ["BeforeGuard", "AfterGuard", "ClockMarker"] ++ markers
       for marker in observed do
@@ -206,14 +229,23 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let readerRules := rulesOf readerSource
   let changedRules := readerRules.map fun (sel, decls) =>
     (sel, if hasStr sel ".step-set:not" then "opacity: 7%;" else decls)
-  let readInk (rules : Array (String × String)) := do
-    let leaves ← contractHtmlList rules 1 (1, 1) #[] #[] readerTree.toList
+  let readInk (tree : Array Html.Node) (rules : Array (String × String)) := do
+    let leaves ← contractHtmlList rules 1 false false (1, 1) #[] #[] tree.toList
     return (leaves.filter fun leaf => hasStr leaf.text "InkProbe").map (·.opacity)
   t "overlay reader sees an emitted opacity change at the same numbered state"
-    ((readInk readerRules).isSome && readInk changedRules == some #[(7, 100)] &&
-      readInk readerRules != readInk changedRules)
+    ((readInk readerTree readerRules).isSome && readInk readerTree changedRules == some #[(7, 100)] &&
+      readInk readerTree readerRules != readInk readerTree changedRules)
   t "overlay reader refuses a missing finite opacity rule"
-    ((readInk (readerRules.filter fun (sel, _) => !hasStr sel ".step-set:not")).isNone)
+    ((readInk readerTree (readerRules.filter fun (sel, _) => !hasStr sel ".step-set:not")).isNone)
+  let nestedSource := source "\\uncover<2,4>{\\uncover<3,4>{InkProbe}}"
+  let (_, nestedTree, _) := styleBuild fonts nestedSource
+  let nestedRules := rulesOf nestedSource
+  let withoutReset := nestedRules.filter fun (sel, _) =>
+    !hasStr sel ":is(.step, .step-set):not"
+  t "overlay reader detects double paint when the emitted ancestor reset is removed"
+    (readInk nestedTree nestedRules == readInk readerTree readerRules &&
+      (readInk nestedTree withoutReset).isSome &&
+      readInk nestedTree withoutReset != readInk nestedTree nestedRules)
   let covered (body : String) := "\\uncover<0,0>{" ++ body ++ "}"
   let paint := "\\textcolor{blue}{\\textbf{\\underline{InkProbe}}}"
   for cmd in ["only", "uncover", "visible", "onslide"] do
