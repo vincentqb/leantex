@@ -161,7 +161,9 @@ private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
     let detail := s!"{tool} exited {ran.exitCode}: {stderr}" ++
       (if stderr.isEmpty then ran.stdout.trimAscii.toString else "") ++
       (if unstarted then "; " ++ recovery else "")
-    throw <| if unstarted || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
+    -- The process API encodes signals as 128 + signal. High exits are
+    -- ambiguous even when the child logged before termination.
+    throw <| if ran.exitCode >= 128 || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
       then .inconclusive detail else .refused detail
   return ran.stdout
 
