@@ -316,7 +316,7 @@ def paramSites : List (String × ParamSite) :=
    ("labelsep", .unmodelled "separates a list label from its item; the gap here is half an em"),
    ("labelwidth", .unmodelled "boxes a list label; a label here sets at its own width"),
    ("footnotesep", .unmodelled "struts a footnote's first line; the strut here follows the type"),
-   ("columnsep", .unmodelled "separates a two-column page's columns; the text here is one column"),
+   ("columnsep", .token "columnsep"),
    ("arraycolsep", .unmodelled "pads an array's columns; the padding here is half an em"),
    ("jot", .unmodelled "adds space between an alignment's rows, which no site here reads"),
    ("fboxsep", .unmodelled "pads a framed box, which no site here reads"),
@@ -623,6 +623,9 @@ private structure St where
   `\columnratio` is global and its final column receives the remainder
   (`paracol.sty`, `\pcol@setcolwidth@r`). -/
   paracolRatio : Nat := 500
+  /-- Switching commands belong to the enclosing paracol flow. Its close
+  splits them after the ordinary rewrite has read local length settings. -/
+  inParacol : Bool := false
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
@@ -3546,6 +3549,11 @@ def kernelSkip : String → Option String
   | "bigskipamount" => some "12pt plus 4pt minus 4pt"
   | _ => none
 
+/-- Class-independent length defaults the compatibility store can read
+before an assignment: the skip amounts and the text-column gap. -/
+private def kernelLength (n : String) : Option String :=
+  if n == "columnsep" then some s!"{Ir.columnSep.sp.toPtString}pt" else kernelSkip n
+
 /-- A length value as the door reads it where it stands: a kernel parameter
 the document set is the value it holds (TeX copies a register's value; the
 parameter's own token may not exist, or carry an engine name), a kernel
@@ -3576,7 +3584,9 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
   let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
   let held (n : String) : Option String :=
-    if kernel n then set n
+    -- premise: columnGeometryChecks — class defaults are readable register
+    -- values too; copying a gap and repeating a macro both read it at use.
+    if kernel n then (set n).orElse fun _ => kernelLength n
     else if (kernelSkip n).isSome then
       match set n with
       | some v => if deferred then none else some v
@@ -5881,7 +5891,9 @@ its value is skipped" pos
     let (right, k) := takeOpt raws j
     if args.isEmpty then return none
     let src := rawSrc (args.getD 0 #[])
-    if (paracolRatio? src).isNone then
+    if let some ratio := paracolRatio? src then
+      write fun st => { st with paracolRatio := ratio }
+    else
       sayOnce "paracol:ratio" .W0104
         s!"cannot read two-column ratio '{src}'; the previous ratio stands" pos
         (help := "write one fraction between zero and one, like \\columnratio{0.35}")
@@ -5891,6 +5903,9 @@ its value is skipped" pos
     became "\\columnratio" "the widths of the next two-column flow" pos
     return some (#[], k)
   | "switchcolumn" =>
+    -- premise: columnGeometryChecks — the enclosing flow consumes the
+    -- switch as a column boundary and both artifacts retain its content.
+    if (← get).inParacol then return none
     let (_, j) := takeOpt raws start
     let js := skipSpaces raws j
     let starred := raws[js]? matches some (.word "*" _)
@@ -7116,49 +7131,16 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos) : M Raw := d
       (help := "write \\begin{paracol}{2} for two independent columns")
     return .group (body.extract k body.size) pos
   let (left, right) ← splitParacol body k
-  let width (p : Nat) : Raw := .group #[.word (paracolFactor p) pos] pos
+  -- paracol.sty's `\pcol@setcolwidth@r` reserves the gap before applying
+  -- ratios. Both the enclosing measure and its gap are read by the one
+  -- length resolver where the columns open, including native declarations.
+  let width (p : Nat) : Raw :=
+    .group #[.word s!"{paracolFactor p} * (linewidth - columnsep)" pos] pos
   became "\\begin{paracol}{2}...\\switchcolumn..."
     "\\begin{columns} with two independent column flows" pos
   return .env "columns"
     #[.env "column" (#[width ratio] ++ left) pos,
       .env "column" (#[width (1000 - ratio)] ++ right) pos] pos
-
-mutual
-
-/-- Make paracol's global ratio and its two flow boundaries explicit before
-the ordinary compatibility rewrite. -/
--- conserves: none — one environment becomes the existing columns tree; its
--- text conservation is checked over the shipped page and typed HTML.
-private def paracolList (raws : Array Raw) (out : Array Raw) :
-    List Raw → Nat → Nat → M (Array Raw)
-  | [], _, _ => pure out
-  | _ :: rest, i, skip + 1 => paracolList raws out rest (i + 1) skip
-  | .ctrl "columnratio" _ :: rest, i, 0 => do
-    let (args, j) := takeGroups raws (i + 1) 1
-    let (_, k) := takeOpt raws j
-    if let some p := paracolRatio? (rawSrc (args.getD 0 #[])) then
-      write fun st => { st with paracolRatio := p }
-    paracolList raws (out ++ raws.extract i k) rest (i + 1) (k - (i + 1))
-  | r :: rest, i, 0 => do
-    paracolList raws (out.push (← paracolRaw r)) rest (i + 1) 0
-
-private def paracolRaw : Raw → M Raw
-  | .group body p => do
-    return .group (← paracolList body #[] body.toList 0 0) p
-  | .env n body p => do
-    let ratio := (← get).paracolRatio
-    let body' ← paracolList body #[] body.toList 0 0
-    if n == "paracol" then paracolEnv ratio body' p else return .env n body' p
-  | .math d body p => do
-    return .math d (← paracolList body #[] body.toList 0 0) p
-  | .word s p => pure (.word s p)
-  | .space => pure .space
-  | .par p => pure (.par p)
-  | .ctrl n p => pure (.ctrl n p)
-  | .sym c p => pure (.sym c p)
-  | .verb env s p => pure (.verb env s p)
-
-end
 
 /-- beamer's command form of a column: at the top level of a `{columns}`
 body, `\column{width}` starts a column where it stands, running to the
@@ -8076,6 +8058,21 @@ specs are not modelled")
 
 end
 
+/-- TeX restores local length assignments at a group's close (TeXbook
+ch. 24). Native token declarations are flow epochs, so the bridge writes
+the restored values explicitly. Only a known previous value and a token
+site can be restored here; an unmodelled parameter has no paint to undo. -/
+private def restoreLengths (before after : Array (String × String)) (p : Pos) :
+    M (Array Raw) := do
+  let mut out := #[]
+  for (n, value) in after do
+    let prior := ((before.find? (·.1 == n)).map (·.2)).orElse fun _ => kernelLength n
+    if let some old := prior then
+      if old != value then
+        if let .token key := (paramSites.lookup n).getD (.token n) then
+          out := out ++ (← synthAt s!"\\tokens\{ {key} = {old} }" p)
+  return out
+
 mutual
 
 /-- Walk `raws`. The list is `raws` from index `i` on and only drives the
@@ -8134,13 +8131,14 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
                               tableTop := false, defTop := saved > 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
+    let restores ← restoreLengths savedLens (← get).lens p
     -- A group's assignments end with it (TeXbook ch. 24: an assignment is
     -- local to the group it stands in). Translating stored replacement
     -- text likewise installs none of the definitions it contains.
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
                               lens := savedLens, tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
-    return .group body' p
+    return .group (body' ++ restores) p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
     match Parse.inputEnvFile? n with
@@ -8224,11 +8222,13 @@ steps come from its body" p
         let st0 ← get
         write fun st => { st with tableTop := false, defTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
+        let restores ← restoreLengths st0.lens (← get).lens p
         write fun st => { st with lens := st0.lens,
                                   tableTop := st0.tableTop, defTop := st0.defTop }
         became "\\begin{titlepage}…\\end{titlepage}"
           "an isolated flow page (\\pagebreak … \\pagebreak)" p
-        return .group (#[Raw.ctrl "pagebreak" p] ++ body' ++ #[Raw.ctrl "pagebreak" p]) p
+        return .group
+          (#[Raw.ctrl "pagebreak" p] ++ body' ++ restores ++ #[Raw.ctrl "pagebreak" p]) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment: only the arguments its
         -- signature reads reach the definition, as written; the body is
@@ -8242,11 +8242,16 @@ steps come from its body" p
         -- parameter set there is that list's own.
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
-                                  tableTop := tableEnvs.contains n, defTop := false }
+                                  tableTop := tableEnvs.contains n, defTop := false,
+                                  inParacol := n == "paracol" }
         let body' ← rewriteList inBody body #[] body.toList 0 0
+        let restores ← restoreLengths st0.lens (← get).lens p
         write fun st => { st with lens := st0.lens, inList := st0.inList,
-                                  tableTop := st0.tableTop, defTop := st0.defTop }
-        return .env n body' p
+                                  tableTop := st0.tableTop, defTop := st0.defTop,
+                                  inParacol := st0.inParacol }
+        if n == "paracol" then
+          paracolEnv st0.paracolRatio (body' ++ restores) p
+        else return .env n (body' ++ restores) p
   | r => pure r
 
 end
@@ -8371,7 +8376,6 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
-    let raws ← paracolList raws #[] raws.toList 0 0
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[] 0
     let out ← rewriteList false raws #[] raws.toList 0 0

@@ -682,6 +682,10 @@ columns in a tabular environment are separated by 2\tabcolsep", 6pt
 (classes.dtx §Array and tabular). An `@{}` in the column spec deletes the
 outer pad, as in LaTeX. -/
 def tabColSep : Dim.Length := { sp := Dim.pt 6 }
+/-- The gap between text columns: LaTeX's `\columnsep`, 10pt
+(classes.dtx §Multicolumn). Paracol subtracts it before sharing the
+remaining measure (`\pcol@setcolwidth@r`). -/
+def columnSep : Dim.Length := { sp := Dim.pt 10 }
 /-- Two stacked full rules separate by LaTeX's `\doublerulesep`, 2pt
 (classes.dtx §Array and tabular) — drawn, but warned: "never use double
 rules" (booktabs.dtx §The layout of formal tables). -/

@@ -223,6 +223,17 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     columnGeomCase ref oneFace s!"paracol scoped {gap}pt"
       (columnGeomSource 200 body "\\columnratio{.25}\n") (pt 200)
       #[want, columnGeomExpected (pt 200) (pt gap) 1, want]
+  -- TeX copies a register's value at each executed assignment, including
+  -- the class default and reads inside a command definition.
+  columnGeomCase ref oneFace "paracol copied class gap"
+    (columnGeomSource 200 columnGeomPair
+      ("\\columnratio{.25}\n\\setlength{\\columnsep}{2\\columnsep}\n"))
+    (pt 200) #[columnGeomExpected (pt 200) (pt 20) 1]
+  columnGeomCase ref oneFace "paracol saved class gap"
+    (columnGeomSource 200 columnGeomPair
+      ("\\columnratio{.25}\n\\newlength{\\savedgap}\\setlength{\\savedgap}{\\columnsep}\n" ++
+        "\\setlength{\\columnsep}{18pt}\\setlength{\\columnsep}{\\savedgap}\n"))
+    (pt 200) #[want]
   -- Unequal flows still revisit their common opening page and join after
   -- the longer flow. Rules on every paragraph witness continuation widths.
   for (leftCount, rightCount) in #[(24, 1), (1, 24), (24, 17), (17, 24)] do

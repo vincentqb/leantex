@@ -6597,18 +6597,20 @@ private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
 /-- The engine tokens over the finished page, for body reads: every value
-is determined once the class defaults are applied, so all four resolve. -/
+is determined once the class defaults are applied. -/
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.Length.ofSp page.width }),
     ("paperheight", { width := Dim.Length.ofSp page.height }),
     ("textwidth", { width := Dim.Length.ofSp page.textWidth }),
-    ("textheight", { width := Dim.Length.ofSp page.textHeight })]
+    ("textheight", { width := Dim.Length.ofSp page.textHeight }),
+    ("columnsep", { width := Ir.columnSep })]
 
 /-- The engine's own length tokens, LaTeX's page dimen parameters read
 onto the token namespace: `paperwidth`/`paperheight` (the physical page),
 `textwidth`/`textheight` (the measure between the margins — TeX's own
-parameters, TeXbook ch. 23). Resolved eagerly at the read site, as every
+parameters, TeXbook ch. 23), and the class's text-column gap
+(`Ir.columnSep`). Resolved eagerly at the read site, as every
 token reference is (the `\setlength{\x}{2\x}` rule) — the offered keys of
 the one resolving site, `engineLengthTokensOfPage ∘ classPageDefaults`:
 offered from the declared page where one is declared, else where the class
@@ -6641,6 +6643,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "paperwidth" | "paperheight" => whKnown
     | "textwidth" => whKnown && hmKnown
     | "textheight" => whKnown && vmKnown
+    | "columnsep" => true
     | _ => false
   (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
     (fun kv => offered kv.1)

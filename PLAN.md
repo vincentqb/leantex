@@ -25773,3 +25773,22 @@ the expanded modifier check exposed seven failures before the decoder was
 restored. The three overflow geometry guards also failed on that base.
 Focused checks pass after the changes. No physical-width theorem is inferred
 from an elaboration dump or a CSS percentage.
+
+### 2026-10-02 — Resolve column gutters at the flow boundary
+
+Parallel columns reserve the current `columnsep` before applying their
+ratios. The class default is the sourced ten-point register value, and
+copies and local assignments use the existing length resolver. TeX groups
+emit explicit restoration of known length values into native token epochs;
+native declarations retain their existing flow semantics. Paracol lowering
+now belongs to the ordinary compatibility walk, removing its separate
+recursive prepass.
+
+Both renderers consume the resulting column measures. HTML adds no second
+fixed gutter; its declared distribution places the remaining space, just
+as the native column origins do. The geometry guard reads rule spans, glyph
+origins, text retention and typed HTML across measures, ratios, local
+restoration and unequal multi-page flows. It failed 67 assertions on
+`d4ba7463`; copying the class gap and restoring a saved gap exposed further
+failures before the register default was readable. These checks and the
+native-setting parity check pass after the correction.

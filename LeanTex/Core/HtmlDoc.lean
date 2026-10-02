@@ -6328,7 +6328,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "div" (columnNodesInto cfg.into #[] cols.toList)
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
-          s!"justify-content: {justify}; column-gap: 0.75rem")]
+          s!"justify-content: {justify}")]
   | .onSteps spec body =>
     -- The block form of the inline step arm: visible — the handout floor —
     -- with its `--step` index for the class-gated uncover, range as data,

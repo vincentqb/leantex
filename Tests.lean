@@ -53,6 +53,7 @@ import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
+import Tests.ColumnGeometry
 import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.DiagAudit
@@ -180,6 +181,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tableFlexChecks ref oneFace
   tableFlexOverflowChecks ref oneFace
   columnFlowChecks ref oneFace
+  columnGeometryChecks ref oneFace
   recipeTitlePageChecks ref oneFace
   recipeUlemChecks ref oneFace
   recipeLinkAffordChecks ref oneFace

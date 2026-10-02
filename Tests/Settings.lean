@@ -18,7 +18,8 @@ def settingsBodies : List (String × String) :=
    ("table", "Alpha words.\n\n\\begin{tabular}{ll}\\toprule\nAlpha & Bravo\\\\\n\\midrule\n" ++
       "Charlie & Delta\\\\\n\\cmidrule(lr){1-2}\nEcho & Foxtrot\\\\\n" ++
       "\\bottomrule\n\\end{tabular}\n\nBravo words."),
-   ("rules", "\\begin{tabular}{ll}\\toprule\\toprule\nAlpha & Bravo\\\\\n" ++
+    ("columns", "\\begin{paracol}{2}Alpha words.\\switchcolumn Bravo words.\\end{paracol}"),
+    ("rules", "\\begin{tabular}{ll}\\toprule\\toprule\nAlpha & Bravo\\\\\n" ++
       "\\bottomrule\n\\end{tabular}"),
    ("parlist", "Alpha words.\n\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n\n" ++
       "Charlie words."),
@@ -50,7 +51,8 @@ def paramProbes : List (String × String × String × String) :=
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
    ("partopsep", "\\setlength{\\partopsep}{9pt}", "\\tokens{ partopsep = 9pt }", "parlist"),
    ("footins", "\\setlength{\\skip\\footins}{61pt}", "\\tokens{ footins = 61pt }", "note"),
-   ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
+    ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
+    ("columnsep", "\\setlength{\\columnsep}{19pt}", "\\tokens{ columnsep = 19pt }", "columns"),
    ("heavyrulewidth", "\\setlength{\\heavyrulewidth}{3pt}",
      "\\tokens{ heavyrulewidth = 3pt }", "table"),
    ("lightrulewidth", "\\setlength{\\lightrulewidth}{2pt}",

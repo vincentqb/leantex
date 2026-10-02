@@ -8,6 +8,7 @@ import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
+import Tests.ColumnGeometry
 import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.Artifact
@@ -459,7 +460,7 @@ def reports : List Report := [
     state := .guarded "82e1e271" .before .author },
   { id := "R67", date := "2026-10-01"
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
-    pins := [check% recipeParacolChecks, check% columnFlowChecks,
+    pins := [check% recipeParacolChecks, check% columnFlowChecks, check% columnGeometryChecks,
       thm% Ir.boxWidth_tracks_agree]
     state := .guarded "b91c2555" .before .author },
   { id := "R68", date := "2026-10-01"

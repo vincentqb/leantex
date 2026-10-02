@@ -268,9 +268,9 @@ def recipeParacolChecks (ref : IO.Ref (List String))
   let cols := doc.body.findSome? fun b => match b with
     | .columns cs => some cs
     | _ => none
-  t "columnratio maps to declared complementary column widths"
-    ((cols.map fun cs => cs.map (fun c => c.1.size)) ==
-      some #[.frac 350, .frac 650])
+  t "columnratio shares the measure after reserving the class's column gap"
+    ((cols.map fun cs => cs.map (fun c => c.1.resolve (Dim.pt 200))) ==
+      some #[some (Dim.pt 665 / 10), some (Dim.pt 1235 / 10)])
   let out := layoutOf oneFace doc
   let census := censusOf (coveredColorsOf doc) out
   t "switchcolumn appends each segment to its selected flow"
@@ -284,8 +284,10 @@ def recipeParacolChecks (ref : IO.Ref (List String))
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let styles := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "div") "style" n) #[]
+  let tracks := cols.map fun cs =>
+    String.intercalate " " (cs.toList.map fun (w, _) => Ir.Track.css w.trackOf)
   t "typed HTML projects the same two ratio tracks"
-    (styles.any (hasStr · "grid-template-columns: 35% 65%") &&
+    (tracks.any (fun ts => styles.any (hasStr · s!"grid-template-columns: {ts}")) &&
       trees.foldl (fun n tree => n + countTag "table" tree) 0 == 1)
   let (starDoc, starDs) := elabStr (dvDoc "\\usepackage{paracol}\n"
     "\\begin{paracol}{2}Left.\\switchcolumn*[Spanning words.]Right.\\end{paracol}")
