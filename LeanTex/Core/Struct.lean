@@ -2002,10 +2002,18 @@ theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
   simp
   omega
 
+/-- Covering with any selector preserves the whole numbered structure,
+including leaf contents and ids, at both IR levels. -/
+theorem onSteps_id (spec : OverlaySpec) (bodyI : Array Inline) (bodyB : Array Block)
+    (out : Array Node) (k : Nat) :
+    number k (inlineRaw out (.onSteps spec bodyI)) = number k (inlinesRaw out bodyI.toList)
+      ∧ number k (blockRaw out (.onSteps spec bodyB)) = number k (blocksRaw out bodyB.toList) :=
+  ⟨rfl, rfl⟩
+
 /-- **`alt_leaf_projects`** (`_projects`): the ids the tree gives an overlay
-alternation's two groups, at both levels the IR carries one. The group stored
-first — the one step 1 inks (`Ir.altShowsFirst_id`) — is numbered from the
-node's own start; the other from that start plus the first group's leaf count.
+alternation's two groups, for every selector and at both IR levels. The group
+stored first — the one step 1 inks (`Ir.OverlaySpec.showsFirst_id`) — is numbered
+from the node's own start; the other from that start plus the first group's leaf count.
 
 Layout's alternation arms are this projection: a page that inks the group
 stored first steps the counter over the other group *after* setting it, and a
@@ -2015,19 +2023,19 @@ the id the tree already assigned it. That is what keeps one leaf per group
 across a frame's step pages — the id is the node's position in the document
 tree, not a count the walk accumulates, and nothing has to reconcile two
 counters after the fact. -/
-theorem alt_leaf_projects (n : Nat) (last : Option Nat)
+theorem alt_leaf_projects (spec : OverlaySpec)
     (firstI otherI : Array Inline) (firstB otherB : Array Block) (k : Nat) :
-    (leaves (number k (inlineRaw #[] (Inline.alt n last firstI otherI)))).toList.map Prod.fst
+    (leaves (number k (inlineRaw #[] (Inline.altSteps spec firstI otherI)))).toList.map Prod.fst
         = List.range' k (leafCountInlines firstI)
           ++ List.range' (k + leafCountInlines firstI) (leafCountInlines otherI)
-      ∧ (leaves (number k (blockRaw #[] (Block.alt n last firstB otherB)))).toList.map Prod.fst
+      ∧ (leaves (number k (blockRaw #[] (Block.altSteps spec firstB otherB)))).toList.map Prod.fst
         = List.range' k (leafCountBlocks firstB)
           ++ List.range' (k + leafCountBlocks firstB) (leafCountBlocks otherB) := by
-  have hi : inlineRaw #[] (Inline.alt n last firstI otherI)
+  have hi : inlineRaw #[] (Inline.altSteps spec firstI otherI)
       = inlinesRaw #[] firstI.toList ++ inlinesRaw #[] otherI.toList := by
     simp only [inlineRaw]
     exact inlinesRaw_acc (inlinesRaw #[] firstI.toList) otherI.toList
-  have hb : blockRaw #[] (Block.alt n last firstB otherB)
+  have hb : blockRaw #[] (Block.altSteps spec firstB otherB)
       = blocksRaw #[] firstB.toList ++ blocksRaw #[] otherB.toList := by
     simp only [blockRaw]
     exact blocksRaw_acc (blocksRaw #[] firstB.toList) otherB.toList
