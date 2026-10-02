@@ -84,30 +84,29 @@ json.dump({'version': 1, 'provider': 'Pygments',
           sys.stdout, ensure_ascii=True, separators=(',', ':'))
 "#
 
-private def diagnostic (file : String) (request : ListingReply.Request)
+private def diagnostic (request : ListingReply.Request)
     (failure : ListingReply.Failure) : Diag :=
-  { DriverDiag.listingHighlightUnavailable request.language failure.reason with
-    span := some { file, pos := {} } }
+  DriverDiag.listingHighlightUnavailable request.language failure.reason
 
 /-- Unfinished, absent or malformed batches produce no reusable answers.
 Every affected request keeps the driver's named loss; completed per-request
 refusals instead come from the decoder alongside source-valid plain answers. -/
-private def failed (file : String) (requests : Array ListingReply.Request)
+private def failed (requests : Array ListingReply.Request)
     (failure : ListingReply.Failure) : Array ListingReply.Answer × Array Diag :=
-  (#[], requests.map fun request => diagnostic file request failure)
+  (#[], requests.map fun request => diagnostic request failure)
 
 /-- Fulfil content-keyed requests through the installed provider, in one bounded
 process. Its elapsed time and captured bytes are limited by `RunBounded`; source,
 request and token ceilings are shared with the pure protocol validator. An empty
 batch starts no tool. No external output becomes diagnostic prose or authored
 code, and no answer is returned before exact reconstruction is checked. -/
-def fulfil (file : String) (requests : Array ListingReply.Request) :
+def fulfil (_file : String) (requests : Array ListingReply.Request) :
     IO (Array ListingReply.Answer × Array Diag) := do
   if requests.isEmpty then return (#[], #[])
-  if !ListingReply.withinBudget requests then return failed file requests .budget
+  if !ListingReply.withinBudget requests then return failed requests .budget
   try
     let some python ← ToolProbe.onPath "python3"
-      | return failed file requests .unavailable
+      | return failed requests .unavailable
     let python ← IO.FS.realPath python
     IO.FS.withTempDir fun dir => do
       let input := dir / "requests.json"
@@ -116,19 +115,19 @@ def fulfil (file : String) (requests : Array ListingReply.Request) :
         #["-I", "-B", "-c", bridge, input.toString, toString ListingReply.maxTokens] dir
         (captureLimit := ListingReply.maxReplyBytes)
       if !got.complete then
-        return failed file requests (match got.ran with
+        return failed requests (match got.ran with
           | .unstarted _ => .unavailable
           | _ => .budget)
       match got.ran with
       | .exited 0 =>
         match ListingReply.decode requests got.out with
         | .ok (answers, failures) =>
-          return (answers, failures.map fun (request, failure) => diagnostic file request failure)
-        | .error _ => return failed file requests .invalidReply
-      | .exited 3 => return failed file requests .unavailable
-      | .exited 4 | .overran _ => return failed file requests .budget
-      | .exited _ => return failed file requests .rejected
-      | .unstarted _ => return failed file requests .unavailable
-  catch _ => return failed file requests .unavailable
+          return (answers, failures.map fun (request, failure) => diagnostic request failure)
+        | .error _ => return failed requests .invalidReply
+      | .exited 3 => return failed requests .unavailable
+      | .exited 4 | .overran _ => return failed requests .budget
+      | .exited _ => return failed requests .rejected
+      | .unstarted _ => return failed requests .unavailable
+  catch _ => return failed requests .unavailable
 
 end LeanTex.Cli.ListingHighlight
