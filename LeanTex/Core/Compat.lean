@@ -1346,6 +1346,139 @@ def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw ×
     | none => return none
   return none
 
+/-- The numbered-selector surface shared by compatibility and elaboration.
+`args` counts ordinary arguments before the last selector slot. Zero means
+prefix-only. Beamer's font wrappers, colour declarations and uncover/visible
+have only that slot; only/alt and newcommand<> wrappers also have a final
+slot (beamerbaseoverlay.sty, only/alt and beamer@parseargs). -/
+private def overlayArity? (name : String) : Option (Nat × Bool) :=
+  if ["alert", "emph"].contains name then some (1, true)
+  else if name == "only" then some (1, false)
+  else if name == "alt" then some (2, false)
+  else if ["uncover", "visible", "onslide", "item", "textcolor", "color",
+      "textrm", "textsf", "texttt", "textmd", "textbf", "textup", "textit",
+      "textsl", "textsc", "textnormal", "underline", "uline", "sout"].contains name
+    then some (0, false)
+  else none
+
+/-- A closed selector consumes whole raws through `stop`; a suffix of its
+last word remains caller text in `tail`. Only whitespace is normalized here:
+Ir.overlayRange remains the sole numbered-membership parser, and unsupported
+mode, relative and action spellings still reach its W0105 caller. -/
+structure OverlaySelector where
+  word : Raw
+  stop : Nat
+  tail : Array Raw := #[]
+
+/-- Read `<...>` across lexer and substituted-argument fragments. Beamer's
+master decoder expands fragments and removes spaces (beamerbasedecode.sty,
+beamer@masterdecode); no argument group or paragraph can be consumed here. -/
+def overlaySelector? (raws : Array Raw) (start : Nat) : Option OverlaySelector := Id.run do
+  let some (.word first pos) := raws[start]? | return none
+  unless first.startsWith "<" do return none
+  let mut text := ""
+  for k in [start:raws.size] do
+    match raws[k]? with
+    | some (.word s p) =>
+      let head := (s.takeWhile (· != '>')).toString
+      text := text ++ head
+      if head.length < s.length then
+        let tail := (s.drop (head.length + 1)).toString
+        return some {
+          word := .word (String.ofList ((text ++ ">").toList.filter (!·.isWhitespace))) pos
+          stop := k + 1
+          tail := if tail.isEmpty then #[] else
+            #[.word tail { p with col := p.col + head.length + 1 }] }
+    | some .space => pure ()
+    | some (.ctrl n _) => text := text ++ "\\" ++ n
+    | some (.sym '#' _) => return none -- an unbound definer parameter is not a selector yet
+    | some (.sym c _) => text := text.push c
+    | _ => return none
+  return none
+
+/-- Read the canonical word produced by overlaySelector?, including refused
+selectors. Recognizing the boundary never certifies numbered membership. -/
+def overlayWord? : Raw → Option String
+  | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
+  | _ => none
+
+private structure OverlayWindow where
+  head : Nat
+  left : Nat
+  middle : Bool
+  passed : Bool := false
+
+private def OverlayWindow.accepts (w : OverlayWindow) : Bool :=
+  !w.passed || w.left == 0 || w.middle
+
+private def overlayNext (pending : Option OverlayWindow) (r : Raw)
+    (head : Nat) : Option OverlayWindow :=
+  match r with
+  | .ctrl n _ => (overlayArity? n).map fun (arity, middle) => { head, left := arity, middle }
+  | .space => pending.filter fun w => !w.passed || w.left > 0
+  | .group _ _ => pending.bind fun w =>
+      if w.left == 0 then none else some { w with left := w.left - 1, passed := true }
+  | _ => none
+
+mutual
+
+/-- Normalize only advertised selector slots, after macro execution. Moving
+an accepted final selector to the head lets every spelling share its native
+handler. A final selector is adjacent, as beamer@ifnextcharospec requires. -/
+-- conserves: none — a surface boundary walk; no IR content has been elaborated.
+private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow)
+    (acc : Array Raw) : List Raw → Nat → Nat → Array Raw
+  | [], _, _ => acc
+  | _ :: rest, i, skip + 1 => overlayInputsList raws pending acc rest (i + 1) skip
+  | r :: rest, i, 0 =>
+    let selected := pending.filter (·.accepts) |>.bind fun _ => overlaySelector? raws i
+    match selected, pending with
+    | some s, some w =>
+      let acc := (acc.extract 0 (w.head + 1)).push s.word ++
+        acc.extract (w.head + 1) acc.size ++ s.tail
+      overlayInputsList raws none acc rest (i + 1) (s.stop - (i + 1))
+    | _, _ =>
+      let next := overlayNext pending r acc.size
+      overlayInputsList raws next (acc.push (overlayInputsRaw r)) rest (i + 1) 0
+
+private def overlayInputsRaw : Raw → Raw
+  | .group body p => .group (overlayInputsList body none #[] body.toList 0 0) p
+  | .env n body p => .env n (overlayInputsList body none #[] body.toList 0 0) p
+  | .math d body p => .math d body p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+end
+
+/-- The shared source boundary, before compatibility routing and the one
+elaborator. Macro execution must precede this pass. -/
+def overlayInputs (raws : Array Raw) : Array Raw :=
+  overlayInputsList raws none #[] raws.toList 0 0
+
+/-- An executing macro fragment is inside a selector exactly when an
+advertised slot opened `<` and has not closed it. Groups stay opaque. -/
+private def overlayOpen (raws : Array Raw) : Bool := Id.run do
+  let mut pending : Option OverlayWindow := none
+  let mut opened := false
+  for r in raws do
+    match r with
+    | .word s _ =>
+      if opened then
+        if s.contains '>' then opened := false
+      else if pending.any (·.accepts) && s.startsWith "<" then
+        opened := !s.contains '>'
+      pending := none
+    | .ctrl _ _ | .sym _ _ | .space =>
+      if !opened then pending := overlayNext pending r 0
+    | _ =>
+      opened := false
+      pending := overlayNext pending r 0
+  return opened
+
 /-- The alert style around a body, one spelling for both `\alert` forms:
 themed, the theme's alert colour AND bold — colour alone would be the only
 signal distinguishing the run, which WCAG 2.2 SC 1.4.1 forbids (metropolis
@@ -1359,57 +1492,36 @@ def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
       .group (#[.ctrl "bfseries" pos] ++ body) pos]
   else #[.group (#[.ctrl "bfseries" pos] ++ body) pos]
 
-/-- `\alert<spec>{body}` is beamer's own equation,
-`\alt<spec>{\alert{body}}{body}`: the alert style on the spec's steps, the
-plain body on every other step, and nothing covered — alternation, not
-transparency. The stopgap it replaces was `\uncover<spec>{\alert{body}}`,
-taken when no IR constructor could vary style per step: one copy carrying
-the alert style throughout, dimmed before its step, so the run was alert
-from step one and the reader saw the change as undimming rather than as
-becoming alert. `Ir.Inline.alt` varies content per step page and both
-backends select one group from it (`alt_backend_agree`), so the faithful
-rewrite costs nothing the census would call a doubling: the two
-alternatives are declared once each and exactly one is inked per page.
+/-- An unforgeable command name: a control word cannot contain a space.
+The marker asks Elab for a conditional style over one elaborated body. -/
+def alertMark (themed : Bool) : String :=
+  if themed then "alert themed" else "alert plain"
 
-The spec word travels as written for the elaborator's one overlay reader
-(its `\alt` arm numbers it or keeps the honest W0105 and shows the
-alternatives), so there is still no second overlay implementation here.
-The styled alternative comes first because that is the order the arm reads:
-`\alt<spec>{active}{otherwise}`. -/
+/-- A conditional alert carries its body once. The compatibility walk leaves
+the body group in its original stream, so its own commands are rewritten once
+as well. Tests.overlayInputChecks observes the note numbers and label effects
+on shipped pages and the full typed HTML, rather than inferring conservation
+from two raw alternatives. -/
 def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
-  #[.ctrl "alt" pos, spec, .group (alertStyled themed body pos) pos, .group body pos]
+  #[.ctrl (alertMark themed) pos, spec, .group body pos]
 
-/-- Text conservation for the two `\alert` spellings is stated where text
-exists: a raw has no text census (which words are content and which are a
-colour name is the elaborator's knowledge), so the fact is over the
-elaborated inlines — `alertOverlayChecks` holds the shipped-page census of
-the styled and the plain alternative, the body's text appearing exactly
-once on every step page and covered on none. On the raws the statement is
-structural: the body is carried whole, untouched, by the styled
-alternative (`alertOverlay_styled_exact`) and by the plain one
-(`alertOverlay_plain_exact`), and the overlay is those four raws and no
-fifth (`alertOverlay_exact`) — so the two alternatives are the only copies
-of the body, which is what the doubling defect needs pinned rather than
-left to the definition. -/
+/-- The raw boundary carries one body group; effect conservation is checked
+at elaboration's artifacts, where footnotes and labels have meanings. -/
 theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     alertOverlay themed spec body pos =
-      #[.ctrl "alt" pos, spec, .group (alertStyled themed body pos) pos,
-        .group body pos] := rfl
+      #[.ctrl (alertMark themed) pos, spec, .group body pos] := rfl
 
+/-- The style is requested by one marker, without a second raw body. -/
 theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
-    (alertOverlay themed spec body pos)[2]? = some (.group (alertStyled themed body pos) pos) :=
-  rfl
+    (alertOverlay themed spec body pos)[0]? = some (.ctrl (alertMark themed) pos) := rfl
 
-/-- The other alternative is the body itself, plain: what every step
-outside the spec shows, unstyled and uncovered. -/
+/-- The single body stays untouched until its one elaboration. -/
 theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
-    (alertOverlay themed spec body pos)[3]? = some (.group body pos) := rfl
+    (alertOverlay themed spec body pos)[2]? = some (.group body pos) := rfl
 
-/-- The spec reaches the elaborator as written: the overlay carries it at
-the position the `\alt` arm reads, so a spec the step model cannot number
-is judged there (W0105), never silently dropped here. -/
+/-- Numbered membership is decided by the elaborator's common reader. -/
 theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     (alertOverlay themed spec body pos)[1]? = some spec := rfl
 
@@ -1985,6 +2097,24 @@ private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → Str
         | _ => none
     | _ => none
 
+/-- Expand only textual, parameterless selector fragments in the state of
+this use. The finite binding table bounds a dependency path: a longer path
+revisits a name and is cyclic. A command with effects, groups or arguments is
+not a fragment; it remains for the explicit unsupported-selector diagnostic. -/
+private def overlayFragment (vals : Std.HashMap String (Option CondVal)) :
+    Nat → String → Option String
+  | 0, _ => none
+  | k + 1, n => do
+    let v ← (condValueOf vals n).bind id
+    if v.arity != 0 || v.optional.isSome then none else do
+      let parts ← v.raws.toList.mapM fun r => match r with
+        | .word s _ => some s
+        | .space => some ""
+        | .sym c _ => some (String.singleton c)
+        | .ctrl m _ => overlayFragment vals k m
+        | _ => none
+      return String.join parts
+
 /-- One element a test is read from: a character of a word (with the raw it
 stands in and its offset there), a space, or a control word. -/
 private inductive CondAtom where
@@ -2470,6 +2600,7 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : Raw → Bool
   | .ctrl n _ =>
     isCondHead flags n || n == "unless" || n == "newif" || condDefiners.contains n ||
+      (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
       ["input", "include", "markdownInput"].contains n ||
@@ -3168,15 +3299,22 @@ execute this definition there, so that part of the text is skipped whole")
       | [] => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
       if !st.condInDoc then recordLoad raws n i
-      match ← ex n pos (raws ++ following) (i + 1) with
-      | some run =>
-        if run.stop > i + 1 + rest.length then
-          return { run with raws := out ++ run.raws }
-        condList ex [] raws following (out ++ run.raws ++ run.tail)
-          stack rest (i + 1) (run.stop - (i + 1))
-      | none =>
-        condStopSpaces
-        condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      -- premise: Tests.overlayInputChecks — a selector reads textual macro
+      -- fragments at its use, before the shared numbered boundary is sealed.
+      let fragment := if overlayOpen out then
+          overlayFragment st.binds st.binds.size n else none
+      match fragment with
+      | some text =>
+        condList ex [] raws following (out.push (.word text pos)) stack rest (i + 1) 0
+      | none => match ← ex n pos (raws ++ following) (i + 1) with
+        | some run =>
+          if run.stop > i + 1 + rest.length then
+            return { run with raws := out ++ run.raws }
+          condList ex [] raws following (out ++ run.raws ++ run.tail)
+            stack rest (i + 1) (run.stop - (i + 1))
+        | none =>
+          condStopSpaces
+          condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
   | r :: rest, i, 0 => do
     match plan with
     | keep :: more =>
@@ -5726,25 +5864,14 @@ is skipped" pos
       write fun st => { st with themed := true }
     return none
   | "alert" =>
-    -- Themed, alert is the theme's colour AND bold (`alertStyled` says
-    -- why). With an overlay spec the command is beamer's own
-    -- `\alt<spec>{styled}{body}`: styled on the spec's steps, plain on
-    -- every other, nothing covered — the spec used to fall through, and
-    -- `\textcolor{alert}` then read `<2>` as its content and failed E0304
-    -- (unthemed, `\textbf` set the spec as text), and the `\uncover`
-    -- stopgap that replaced it carried the alert style on every step.
-    -- Without a spec the plain rewrite stands untouched.
     let j := skipSpaces raws start
     match raws[j]? with
-    | some (spec@(.word w _)) =>
-      if w.startsWith "<" && w.endsWith ">" then
-        let (args, k) := takeGroups raws (j + 1) 1
-        match args[0]? with
-        | some body =>
-          became s!"\\alert{w}" s!"\\alt{w}\{...}\{...}" pos
-          return some (alertOverlay (← get).themed spec body pos, k)
-        | none => alertPlain pos raws (j + 1)
-      else alertPlain pos raws start
+    | some spec@(.word w _) =>
+      if (overlayWord? spec).isNone then return ← alertPlain pos raws start
+      became s!"\\alert{w}" "a conditional alert style" pos
+      -- Leave the original body for rewriteRaw: it is not expanded into
+      -- two alternative groups and no nested compatibility work is skipped.
+      return some (#[.ctrl (alertMark (← get).themed) pos, spec], j + 1)
     | _ => alertPlain pos raws start
   | "setbeamertemplate" =>
     -- `frame footer` is the one template with a native meaning: its body
@@ -8473,7 +8600,7 @@ def executeInputs [Monad m] (reader : InputReader m) (file : String)
 The gathered running content lands just before the document, and deferred
 text is translated at its recorded seam without executing it again. -/
 def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
-  let raws := executed.raws
+  let raws := overlayInputs executed.raws
   let go : M (Array Raw) := do
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
@@ -8498,6 +8625,7 @@ def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array Str
     let mut bodySide : Array Raw := #[]
     for (pt, file, pos, body) in (← get).deferred do
       write fun st => { st with file := file, seam := pt == .beginDocument }
+      let body := overlayInputs body
       let body ← rewriteList false body #[] body.toList 0 0
       -- A hook declared inside an `\input`'ed file replays inside that
       -- file's wrapper, so what the engine refuses in it is still named at

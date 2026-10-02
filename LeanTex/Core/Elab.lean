@@ -1713,10 +1713,12 @@ private def modifierLiteral (ctx : Ctx) (style : Style) (spec : Option OverlaySp
   | none => (true, ctx.literalWhen)
   | some selected => (false, some ((ctx.literalWhen.map (·.union selected)).getD selected))
 
-/-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
-private def specWord? : Raw → Option String
-  | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
-  | _ => none
+/-- Canonical selector words come from the shared compatibility boundary. -/
+private def specWord? : Raw → Option String := Compat.overlayWord?
+
+private def modifierStyle? (name : String) : Option Style :=
+  if name == Compat.alertMark true || name == Compat.alertMark false then some .bold
+  else argStyles.lookup name
 
 /-- A text modifier may have an overlay before its ordinary arguments.
 Consume that head independently of the argument reader: a selector is never
@@ -4121,6 +4123,22 @@ private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
       (help := "model values use their documented component count and range")
     return .rejected
 
+/-- A conditional alert derives both readings from the same elaborated
+body. Ordinary font commands retain their measured correction edges. -/
+private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
+    (edges : Bool × Bool) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
+  if name == Compat.alertMark false then return #[.styled .bold inner]
+  if name != Compat.alertMark true then return Ir.fontCmdInlines style edges inner
+  let bold := #[Inline.styled .bold inner]
+  match ← readColor ctx ctx.palette none "alert" pos with
+  | .resolved c cssName =>
+    recordColorSpan ctx "alert" c cssName.isSome pos
+    return #[.colored c cssName bold]
+  | .missing =>
+    warnPaletteMiss ctx "alert" pos
+    return bold
+  | .rejected => return bold
+
 /-- The one W0105 for an overlay specification the step model cannot
 number, outside the knot: one spelling for its three doors. -/
 private def warnOverlaySpec (ctx : Ctx) (w : String) (pos : Pos) : EM Unit :=
@@ -4777,7 +4795,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- wins, so the symbol only fires when nothing shadows it.
           elabInlinesFrom ctx raws (i + 1) acc
             (sb ++ (Lex.textSymbols.lookup name).getD "")
-        else if let some style := argStyles.lookup name then
+        else if let some style := modifierStyle? name then
           let head := modifierHead raws (i + 1)
           let j := head.2
           have hjge : i + 1 ≤ j := modifierHead_monotone raws (i + 1)
@@ -4810,17 +4828,15 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let inner ← elabInlines argCtx (fontCmdContent body)
             have hadv : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws next
-              (pushModifier acc spec
-                (Ir.fontCmdInlines style (edges body.toList raws[next]?) inner) inner) ""
+            let active ← modifierInlines ctx name style (edges body.toList raws[next]?) inner pos
+            elabInlinesFrom ctx raws next (pushModifier acc spec active inner) ""
           | some (.word s p) =>
             have hjlt := getElem?_lt hj
             have hadv : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             let inner := wordInlines argCtx s p
-            elabInlinesFrom ctx raws next
-              (pushModifier (flushText acc sb) spec
-                (Ir.fontCmdInlines style (edges [.word s p] raws[next]?) inner) inner) ""
+            let active ← modifierInlines ctx name style (edges [.word s p] raws[next]?) inner pos
+            elabInlinesFrom ctx raws next (pushModifier (flushText acc sb) spec active inner) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -15373,57 +15389,13 @@ end
 def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   settleList file 0 #[] #[] raws.toList
 
-mutual
-
-/-- A closing overlay delimiter also ends its specification when the body
-immediately follows it in the same lexer word. Split only after an overlay
-head, before compatibility rewrites and elaboration share the numbered
-selector reader. Neither part is interpreted here. -/
--- conserves: none — these are surface words, before the IR census exists.
-private def overlayWordsList (awaitSpec afterArg : Bool) (acc : Array Raw) :
-    List Raw → Array Raw
-  | [] => acc
-  | .ctrl n p :: rest =>
-    overlayWordsList (overlayCtrls.contains n || ["alt", "alert", "item", "textcolor"].contains n ||
-      (argStyles.lookup n).isSome || (decorationCtrls.lookup n).isSome) (n == "emph")
-      (acc.push (.ctrl n p)) rest
-  | .space :: rest => overlayWordsList awaitSpec afterArg (acc.push .space) rest
-  | .word w p :: rest =>
-    let head := (w.takeWhile (· != '>')).toString
-    let tail := (w.drop (head.length + 1)).toString
-    let selector := awaitSpec && w.startsWith "<"
-    let acc := if selector && !tail.isEmpty then
-        (acc.push (.word (head ++ ">") p)).push
-          (.word tail { p with col := p.col + head.length + 1 })
-      else acc.push (.word w p)
-    overlayWordsList (afterArg && !selector) false acc rest
-  | (.group body p) :: rest =>
-    -- Beamer's newcommand<> emphasis wrapper also accepts its selector
-    -- immediately after the body; ordinary text-font wrappers do not.
-    overlayWordsList afterArg false
-      (acc.push (.group (overlayWordsList false false #[] body.toList) p)) rest
-  | r :: rest => overlayWordsList false false (acc.push (overlayWordsRaw r)) rest
-
-private def overlayWordsRaw : Raw → Raw
-  | .group body p => .group (overlayWordsList false false #[] body.toList) p
-  | .env n body p => .env n (overlayWordsList false false #[] body.toList) p
-  | .math d body p => .math d body p
-  | .word w p => .word w p
-  | .space => .space
-  | .par p => .par p
-  | .ctrl n p => .ctrl n p
-  | .sym c p => .sym c p
-  | .verb env s p => .verb env s p
-
-end
-
 /-- Execute input-bearing macros with the driver's reader. Parse recovery
-and overlay token boundaries are settled before the shared evaluator, just
+is settled before the shared evaluator; selector boundaries follow expansion, just
 as they are on the file-free preparation path. -/
 def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
-  Compat.executeInputs reader file (overlayWordsList false false #[] raws.toList)
+  Compat.executeInputs reader file raws
     (provideKeeps := renderedBuiltins ++ structuralNames) (diags := splitDiags)
 
 /-- A file answer enters the same execution state after its own parse
@@ -15432,7 +15404,7 @@ inside it keep the file that owns their positions. -/
 def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
   let (raws, splitDiags) := settleSplits file raws
-  Compat.resumeInput reader context (overlayWordsList false false #[] raws.toList) splitDiags
+  Compat.resumeInput reader context raws splitDiags
 
 /-- Prepare a document whose macro and input execution already ran. Scans
 see the fulfilled surface, and compatibility translation continues from
@@ -15451,7 +15423,6 @@ option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
-  let raws := overlayWordsList false false #[] raws.toList
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=
