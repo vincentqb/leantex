@@ -554,9 +554,9 @@ def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Font
   let src ← IO.FS.readFile file
   let (toks, lexDiags) := Lex.lex file src
   let (raws, parseDiags) := Parse.parse file toks
-  let (raws, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file raws
-  let prepared := Elab.prepare file raws
+  let (executed, inputDiags, _) ← Input.expandInputs file raws
+  let (raws, dataDiags) ← Input.resolveData file executed.raws
+  let prepared := Elab.prepareExecuted file { executed with raws := raws }
   let pre := Elab.preambleDoc file prepared
   let preFs ← Hermetic.fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
@@ -843,9 +843,9 @@ def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Fon
   let src ← IO.FS.readFile file
   let (toks, lexDiags) := Lex.lex file src
   let (raws, parseDiags) := Parse.parse file toks
-  let (raws, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file raws
-  let prepared := Elab.prepare file raws
+  let (executed, inputDiags, _) ← Input.expandInputs file raws
+  let (raws, dataDiags) ← Input.resolveData file executed.raws
+  let prepared := Elab.prepareExecuted file { executed with raws := raws }
   let pre := Elab.preambleDoc file prepared
   let preFs ← Hermetic.fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs

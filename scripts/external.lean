@@ -86,9 +86,10 @@ def elaborate (file : String) : IO (Array Diag) := do
   let text ← IO.FS.readFile file
   let (toks, lexDs) := Lex.lex file text
   let (raws, parseDs) := Parse.parse file toks
-  let (raws, inputDs, _) ← Input.expandInputs file raws
-  let (raws, dataDs) ← Input.resolveData file raws
-  return (Elab.runRaws file raws (lexDs ++ parseDs ++ inputDs ++ dataDs)).2
+  let (executed, inputDs, _) ← Input.expandInputs file raws
+  let (raws, dataDs) ← Input.resolveData file executed.raws
+  return (Elab.runExecuted file { executed with raws := raws }
+    (lexDs ++ parseDs ++ inputDs ++ dataDs)).2
 
 def standing (ds : Array Diag) : Int :=
   if ds.any (·.severity == .error) then 0

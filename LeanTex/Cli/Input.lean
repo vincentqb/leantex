@@ -1,6 +1,7 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Compat
+import LeanTex.Core.Elab
 import LeanTex.Core.MdDesugar
 import LeanTex.Core.Utf8
 import LeanTex.Core.Bib
@@ -8,16 +9,12 @@ import LeanTex.Core.BibStyle
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
 
-/-! The driver's file-splicing frontend: `\input`/`\include`, `\markdownInput`
-and the local `.sty` read (`\usepackage{p}` with `p.sty` beside the document)
-are one splice — each wraps a file's parsed text as its own input fragment — and
-run to one fixpoint here. Reading a file is an effect, so it happens in
-the driver rather than in the core; the core sees one tree, as if the
-document had been written in one file. Lives beside the other Cli modules
-rather than in Main so the fixpoint is testable: the three `\input`-parity
-cases (a `\usepackage` inside an `\input`'ed preamble file, a
-`\RequirePackage` inside a spliced `.sty`, an `\input` inside a `.sty`)
-exist only across passes of this loop.
+/-! The driver's file frontend fulfils `\input`/`\include`,
+`\markdownInput` and local `.sty` requests at their executed use. The pure
+macro evaluator returns requests; this driver reads the file, parses its
+surface once and resumes the same execution context with that answer.
+Unused definitions and unselected branches have no file effects. Local
+styles and ordinary inputs share the existing eight-file nesting bound.
 
 Every other file the *document* names is read here for the same reason:
 the document's own bytes (`readSource`), the `.bib` its `\bibliography`
@@ -96,88 +93,6 @@ def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
       let (raws, parseDs) := Parse.parse path toks
       (raws, lexDs ++ parseDs)
 
-/-- Consuming a command's optional argument leaves a suffix of its input.
-This bound lets the ordinary structural splice walk read command signatures
-without introducing a second depth limit. -/
-private theorem drop_size_le (rs : List Parse.Raw) (n : Nat) :
-    sizeOf (rs.drop n) ≤ sizeOf rs := by
-  induction rs generalizing n with
-  | nil => simp
-  | cons r rs ih =>
-    cases n with
-    | zero => simp
-    | succ n =>
-      simp only [List.drop_succ_cons]
-      have := ih n
-      simp only [List.cons.sizeOf_spec]
-      omega
-
-mutual
-
-/-- One splicing pass. `out` accumulates so the walk is linear: prepending to
-the recursive result would copy it at every element. `file` is the file the
-raws under scrutiny were parsed from — the top-level document, or the
-spliced file whose `inputEnv` wrapper we descended into — so a missing
-`\input` is reported at the file and line that wrote it. -/
-def spliceList (dir : System.FilePath) (file : String)
-    (out : Array Parse.Raw) (ds : Array Diag) (hit : Bool) :
-    List Parse.Raw → IO (Array Parse.Raw × Array Diag × Bool)
-  | [] => pure (out, ds, hit)
-  | .ctrl "input" pos :: .group nameRaws _ :: rest
-  | .ctrl "include" pos :: .group nameRaws _ :: rest => do
-    let (sub, ds') ← readInput dir file (Parse.rawSrc nameRaws) pos
-    spliceList dir file (out ++ sub) (ds ++ ds') true rest
-  | .ctrl "markdownInput" pos :: rest => do
-    let raws := rest.toArray
-    let (opt, k) := Compat.takeOpt raws 0
-    let j := Parse.skipSpaces raws k
-    match raws[j]? with
-    | some (.group nameRaws _) =>
-      -- markdown.sty defines one optional setup argument and one filename.
-      -- Native Markdown has one dialect; legacy setup keys remain a named
-      -- loss, never literal option text in the output.
-      let name := Parse.rawSrc nameRaws
-      -- markdown.sty's file lookup honours an explicit extension; without
-      -- one it tries `.tex`, then the literal spelling (inputFileChecks).
-      let prefer := fun name : String => if (System.FilePath.mk name).extension.isSome then name
-        else name ++ ".tex"
-      let (sub, ds') ← readFragment dir file name pos prefer
-        "markdownInput" Md.read
-      let opts := (opt.getD "").trimAscii.toString
-      let ds' := if opts.isEmpty then ds' else ds'.push <|
-        Diag.of .W0110 s!"'\\markdownInput' options '{opts}' are not applied; \
-the file uses the Markdown document dialect" (some ⟨file, pos⟩)
-          (subject := some "markdownInput:options")
-      spliceList dir file (out ++ sub) (ds ++ ds') true (rest.drop (j + 1))
-    | _ =>
-      spliceList dir file (out.push (.ctrl "markdownInput" pos)) ds hit rest
-  | r :: rest => do
-    let (r', ds', hit') ← spliceOne dir file r
-    spliceList dir file (out.push r') (ds ++ ds') (hit || hit') rest
-termination_by rs => sizeOf rs
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  have := drop_size_le rest (Parse.skipSpaces rest.toArray k + 1)
-  omega
-
-def spliceOne (dir : System.FilePath) (file : String) :
-    Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
-  | .env n body p => do
-    let (body', ds, hit) ← spliceList dir ((Parse.inputEnvFile? n).getD file)
-      #[] #[] false body.toList
-    return (.env n body' p, ds, hit)
-  | .group body p => do
-    let (body', ds, hit) ← spliceList dir file #[] #[] false body.toList
-    return (.group body' p, ds, hit)
-  | r => pure (r, #[], false)
-termination_by r => sizeOf r
-decreasing_by
-  all_goals simp_wf
-  all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
-
-end
-
 /-- `\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
 own rule (ltfiles.dtx `\@onefilewithoptions`: find `p.sty` on the input
 path and read it as TeX). Reading the file is this driver's effect, the
@@ -202,35 +117,60 @@ def expandLocalSty (dir : System.FilePath) (raws : Array Parse.Raw) :
   if stys.isEmpty then return (raws, #[])
   return Compat.applyLocalSty raws stys
 
-/-- `\input{name}` — and the local `.sty`, which is `\input` at its
-`\usepackage` position — splices a file into the parsed tree. One pass
-splices each site without descending into what it read; nested inputs, a
-`\usepackage` inside an `\input`'ed file, a `\RequirePackage` inside a
-spliced `.sty`, and an `\input` inside a `.sty` all resolve on the next
-pass, and eight passes bound the depth the way TeX's input stack does — a
-`.sty` that `\RequirePackage`s itself hits E0501, never loops. Every pass
-is a structural walk, total by construction. Returns the tree, the
-splice diagnostics, and the `.sty` records `Main` names as N0020 once the
-elaborated counts exist. -/
+private structure InputLog where
+  diags : Array Diag := #[]
+  spliced : Array (String × Option String × Pos) := #[]
+
+private abbrev ReadM := StateT InputLog IO
+
+/-- Fulfil one executed request. The existing eight-file input-stack bound
+also covers local styles; ordinary macro execution keeps its own binding
+order and does not spend input depth. An absent local style is left for
+normal package dispatch. Answers stay parsed AST and execute before the
+requesting token stream continues. -/
+private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
+    Compat.InputReader ReadM := fun request context => do
+  let input := ["input", "include", "markdownInput"].contains request.command
+  let (style, records) ← if input then pure (#[], #[])
+    else expandLocalSty dir request.call
+  if !input && records.isEmpty then return (none, context)
+  match depth with
+  | 0 =>
+    modify fun log => { log with diags := log.diags.push DriverDiag.inputTooDeep }
+    return (none, context)
+  | depth + 1 =>
+    let (sub, diags) ← if !input then pure (style, #[])
+      else if request.command == "markdownInput" then do
+        let prefer := fun name : String =>
+          if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
+        let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
+          "markdownInput" Md.read
+        let ds := if request.options.isEmpty then ds else ds.push <|
+          Diag.of .W0110 s!"'\\markdownInput' options '{request.options}' are not applied; \
+the file uses the Markdown document dialect" (some ⟨request.file, request.pos⟩)
+            (subject := some "markdownInput:options")
+        pure (sub, ds)
+      else readInput dir request.file request.name request.pos
+    let records := records.map fun (sty, source, pos) =>
+      (sty, source <|> if request.file == root then none else some request.file, pos)
+    modify fun log => { log with
+      diags := log.diags ++ diags, spliced := log.spliced ++ records }
+    let (answer, context) ←
+      Elab.resumeInput (readAt dir root depth) context request.file sub
+    return (some answer, context)
+
+/-- Execute macros and fulfil input requests in source order. A definition
+or unselected branch never reads a file; an actual use binds its filename
+before the driver reads it, and the answer's definitions and flags are in
+force at the caller's next token. The returned execution must continue
+through `Elab.prepareExecuted` or `Elab.runExecuted`, without a second macro
+pass. The other results are read diagnostics and the local-style records
+whose N0020 counts become available after elaboration. -/
 def expandInputs (file : String) (raws : Array Parse.Raw) :
-    IO (Array Parse.Raw × Array Diag × Array (String × Option String × Pos)) := do
+    IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) := do
   let dir := (System.FilePath.mk file).parent.getD "."
-  let mut raws := raws
-  let mut diags : Array Diag := #[]
-  let mut spliced : Array (String × Option String × Pos) := #[]
-  for _ in [0:8] do
-    let (raws', ds, hitInput) ← spliceList dir file #[] #[] false raws.toList
-    let (raws'', sp) ← expandLocalSty dir raws'
-    raws := raws''
-    diags := diags ++ ds
-    spliced := spliced ++ sp
-    unless hitInput || !sp.isEmpty do
-      return (raws, diags, spliced)
-  let (_, _, stillInput) ← spliceList dir file #[] #[] false raws.toList
-  let (_, stillSty) ← expandLocalSty dir raws
-  if stillInput || !stillSty.isEmpty then
-    diags := diags.push DriverDiag.inputTooDeep
-  return (raws, diags, spliced)
+  let (executed, log) ← (Elab.executeInputs (readAt dir file 8) file raws).run {}
+  return (executed, log.diags, log.spliced)
 
 /-- The bibliography request an elaborated document states (`Ir.bibRefs`),
 fulfilled: each named `.bib` resolves beside the document, like `\input`,

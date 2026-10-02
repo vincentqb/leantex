@@ -10,6 +10,7 @@ import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.Markdown
 import Tests.MarkdownInput
+import Tests.InputUse
 import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
@@ -108,6 +109,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingHighlightChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
+  Tests.inputUseChecks ref
   backendChecks ref
   landmarkChecks ref
   pinChecks ref

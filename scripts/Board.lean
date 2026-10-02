@@ -1603,9 +1603,9 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
   let src ← IO.FS.readFile file
   let (toks, lexDiags) := Lex.lex file src
   let (raws, parseDiags) := Parse.parse file toks
-  let (raws, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file raws
-  let prepared := Elab.prepare file raws
+  let (executed, inputDiags, _) ← Input.expandInputs file raws
+  let (raws, dataDiags) ← Input.resolveData file executed.raws
+  let prepared := Elab.prepareExecuted file { executed with raws := raws }
   let pre := Elab.preambleDoc file prepared
   let preFs ← fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
