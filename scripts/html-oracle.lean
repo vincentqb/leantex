@@ -152,7 +152,7 @@ def checkFile (path : String) : IO UInt32 := do
   match parseMatrix text with
   | .error e => die 2 s!"html-oracle: {path}: {e}"
   | .ok m =>
-    let bad := offences m ++ (Scoreboard.browserFaceFaults text keys.browserFaceSource).map
+    let bad := offences m ++ (Scoreboard.browserFaceFaults text keys.browserFaceSource keys.expectedFaces).map
       ("browser-face: " ++ ·)
     if bad.isEmpty then
       IO.println s!"html-oracle: every target cell and browser-face capture passes ({String.intercalate " " m.target.toList})"
@@ -842,15 +842,16 @@ cannot silently turn a previously exercised image into a passing `na` cell. -/
 def capturedBrowserFaces (root : System.FilePath) (fixtures : Array String)
     (failures : Array Scoreboard.BrowserFace) : IO (Array Scoreboard.BrowserFace) := do
   let mut out := failures
-  let rootPrefix := root.toString ++ "/"
   for fixture in fixtures do
     let html ← IO.FS.readFile (root / (fixture ++ ".html"))
     let assets := root / (fixture ++ ".assets")
     if !(← assets.isDir) then continue
     for file in (← System.FilePath.walkDir assets).qsort (·.toString < ·.toString) do
-      if (← file.isDir) || file.extension != some "svg" then continue
-      let href := (file.toString.drop rootPrefix.length).toString
-      if (html.splitOn href).length > 1 then
+      if (← file.isDir) || !LeanTex.Core.Image.isSvg file.toString then continue
+      let rel := (file.toString.drop (assets.toString.length + 1)).toString
+      let href := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") rel
+      if (html.splitOn s!"src=\"{href}\"").length > 1 ||
+          (html.splitOn s!"srcset=\"{href}\"").length > 1 then
         out := out.push (Scoreboard.BrowserFace.captured fixture href (← IO.FS.readBinFile file))
       else
         out := out.push { fixture, href, result := .failed "unlinked-svg" }
@@ -1003,12 +1004,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           { cmd := leantexBin
             args := #["-q", "build", e.path.toString, "-o", (work / "corpus" / (name ++ ".html")).toString] }
         let log := r.stdout ++ r.stderr
-        if (log.splitOn "warning[W0605]").length > 1 then
-          let tool := if (log.splitOn "rsvg-convert").length > 1
-            then "rsvg-convert" else "pdftocairo"
-          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name tool)
-        if (log.splitOn "warning[W0378]").length > 1 then
-          faceFailures := faceFailures.push (Scoreboard.BrowserFace.failed name "pdftocairo-boundary")
+        faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
         if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
     let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
@@ -1077,6 +1073,29 @@ def selftest : IO UInt32 := do
     if (parseMatrix text).isOk then
       IO.eprintln s!"FAIL {name}: parsed"
       bad := bad + 1
+  let captureFails ← IO.FS.withTempDir fun root => do
+    let fixture := "encoded"
+    let assets := root / (fixture ++ ".assets")
+    IO.FS.createDirAll assets
+    let bytes := "<svg/>".toUTF8
+    let names := #["a , λ.svg", "upper.SVG"]
+    let mut expected := #[]
+    let mut html := ""
+    for (name, k) in names.zipIdx do
+      let file := LeanTex.Core.HtmlDoc.imageAssetName k name (some bytes)
+      let href := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") file
+      IO.FS.writeBinFile (assets / file) bytes
+      html := html ++ s!"<img src=\"{href}\">"
+      expected := expected.push (Scoreboard.BrowserFace.captured fixture href bytes)
+    IO.FS.writeFile (root / (fixture ++ ".html")) html
+    let captured ← capturedBrowserFaces root #[fixture] #[]
+    let mut failures := 0
+    for face in expected do
+      unless captured.contains face do
+        IO.eprintln s!"FAIL browser capture: encoded/uppercase href {face.href} is captured exactly"
+        failures := failures + 1
+    return failures
+  bad := bad + captureFails
   if bad == 0 then
     IO.println "html-oracle: selftest ok"
     return 0

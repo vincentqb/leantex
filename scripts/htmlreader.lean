@@ -132,7 +132,7 @@ lake env lean --run scripts/html-oracle.lean"
 (src-key {recordedHtml}, this tree builds {keys.html}), so its counts are about pages this tree \
 no longer emits; rerun the browser: lake env lean --run scripts/html-oracle.lean"
     return (#[], #[])
-  let faceFaults := browserFaceFaults text keys.browserFaceSource
+  let faceFaults := browserFaceFaults text keys.browserFaceSource keys.expectedFaces
   unless faceFaults.isEmpty do
     IO.eprintln s!"scoreboard: {matrixPath} does not describe this tree's browser faces:"
     for fault in faceFaults do IO.eprintln s!"  {fault}"
@@ -190,10 +190,14 @@ alpha       pass       untested\n"
   no "key: 16 hex digits" ((contentKey a).length == 16)
   -- The browser-face capture is the exact href and converted content the
   -- browser run received. A converter regression cannot retain its key.
-  let face := BrowserFace.captured "figures" "figures.assets/i0-box.svg" "<svg/>".toUTF8
-  let changedBytes := BrowserFace.captured "figures" "figures.assets/i0-box.svg"
+  let imageHref (k : Nat) (bytes : ByteArray) :=
+    LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
+      (LeanTex.Core.HtmlDoc.imageAssetName k "box.svg" (some bytes))
+  let face := BrowserFace.captured "figures" (imageHref 0 "<svg/>".toUTF8) "<svg/>".toUTF8
+  let expected := #[("figures", "figures.assets/i0-box.svg")]
+  let changedBytes := BrowserFace.captured "figures" face.href
     "<svg><path/></svg>".toUTF8
-  let changedHref := BrowserFace.captured "figures" "figures.assets/i1-box.svg" "<svg/>".toUTF8
+  let changedHref := BrowserFace.captured "figures" (imageHref 1 "<svg/>".toUTF8) "<svg/>".toUTF8
   let failed := BrowserFace.failed "figures" "pdftocairo"
   no "browser face: converted bytes move the key"
     (browserFaceKey #[face] != browserFaceKey #[changedBytes])
@@ -210,22 +214,84 @@ alpha       pass       untested\n"
   let faceText := "browser-face-src-key: source\nbrowser-face-key: " ++
     browserFaceKey #[face] ++ "\n" ++ face.render ++ "\n"
   no "browser face: matching source and exact capture certify the cells"
-    (browserFaceFaults faceText "source").isEmpty
+    (browserFaceFaults faceText "source" expected).isEmpty
   no "browser face: moved hermetic inputs stale the capture"
-    (!(browserFaceFaults faceText "different-source").isEmpty)
+    (!(browserFaceFaults faceText "different-source" expected).isEmpty)
   let staleHref := "browser-face-src-key: source\nbrowser-face-key: " ++
     browserFaceKey #[face] ++ "\n" ++ changedHref.render ++ "\n"
   no "browser face: changed captures cannot retain the committed key"
-    (!(browserFaceFaults staleHref "source").isEmpty)
+    (!(browserFaceFaults staleHref "source" expected).isEmpty)
   let duplicateFace := faceText ++ face.render ++ "\n"
   no "browser face: duplicate hrefs are a fault"
-    (!(browserFaceFaults duplicateFace "source").isEmpty)
+    (!(browserFaceFaults duplicateFace "source" expected).isEmpty)
   let malformedFace := "browser-face-src-key: source\nbrowser-face-key: deadbeef\n\
 browser-face: figures missing-fields\n"
   no "browser face: a malformed record is a fault"
     (!(browserFaceFaults malformedFace "source").isEmpty)
   no "browser face: absent records and keys are faults"
     (!(browserFaceFaults "src-key: html\n" "source").isEmpty)
+  let records (faces : Array BrowserFace) :=
+    "browser-face-src-key: source\nbrowser-face-key: " ++ browserFaceKey faces ++ "\n" ++
+      String.intercalate "\n" (faces.toList.map BrowserFace.render) ++ "\n"
+  for href in ["figures.assets/unclassified.svg", "figures.assets/i0-plot.png",
+      "elsewhere/i0-box.svg", "figures.assets/012345.svg"] do
+    let stray := BrowserFace.captured "figures" href "<svg/>".toUTF8
+    no s!"browser face: unclassified identity {href} is refused"
+      (!(browserFaceFaults (records #[stray]) "source").isEmpty)
+  let empty := BrowserFace.captured "figures" face.href ByteArray.empty
+  no "browser face: an empty capture cannot certify pass cells"
+    (!(browserFaceFaults (records #[empty]) "source" expected).isEmpty)
+  no "browser face: a missing expected poster is refused even with a recomputed key"
+    (!(browserFaceFaults faceText "source"
+      #[("figures", "figures.assets/i0-box.svg"), ("figures", "figures.assets/p0-box.svg")]).isEmpty)
+  no "browser face: an extra face is refused even with a recomputed key"
+    (!(browserFaceFaults (records #[face, changedHref]) "source"
+      #[("figures", "figures.assets/i0-box.svg")]).isEmpty)
+  let replaced := BrowserFace.captured "figures"
+    (imageHref 0 "<svg><path/></svg>".toUTF8) "<svg><path/></svg>".toUTF8
+  no "browser identity: content-key changes retain the expected identity"
+    (browserImageIdentity "figures" face.href == browserImageIdentity "figures" replaced.href)
+  no "browser identity: the exact capture key still sees a content-key change"
+    (browserFaceKey #[face] != browserFaceKey #[replaced])
+  no "browser identity: two content keys for one role/index/name are duplicates"
+    (!(browserFaceFaults (records #[face, replaced]) "source" expected).isEmpty)
+  no "browser identity: an index change remains visible"
+    (browserImageIdentity "figures" face.href != browserImageIdentity "figures" changedHref.href)
+  let posterHref := LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
+    (LeanTex.Core.HtmlDoc.imagePosterName 0 { src := "box.pdf", posterSvg := some "<svg/>".toUTF8 })
+  no "browser identity: primary and poster remain distinct"
+    (browserImageIdentity "figures" posterHref == some "figures.assets/p0-box.svg" &&
+      browserImageIdentity "figures" face.href != browserImageIdentity "figures" posterHref)
+  let poster := BrowserFace.captured "figures" posterHref "<svg/>".toUTF8
+  no "browser face: the complete expected primary/poster set passes"
+    (browserFaceFaults (records #[face, poster]) "source"
+      (expected.push ("figures", "figures.assets/p0-box.svg"))).isEmpty
+  let boundaryHref := "figures.assets/" ++ LeanTex.Core.Ir.picHash "invented boundary" ++ ".svg"
+  let boundary := BrowserFace.captured "figures" boundaryHref "<svg/>".toUTF8
+  no "browser identity: boundary hash is classified only as a boundary"
+    (browserBoundaryFace "figures" boundaryHref && (browserImageIdentity "figures" boundaryHref).isNone)
+  no "browser identity: an image is never classified as a boundary"
+    (!browserBoundaryFace "figures" face.href)
+  no "browser face: an actual boundary identity passes without an image expectation"
+    (browserFaceFaults (records #[boundary]) "source").isEmpty
+  no "browser face: a raster-only page needs no converted capture"
+    (browserFaceFaults (records #[]) "source").isEmpty
+  let encoded := LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
+    (LeanTex.Core.HtmlDoc.imageAssetName 0 "a , λ.SVG" (some "<svg/>".toUTF8))
+  no "browser identity: encoded names and uppercase SVG retain their spelling"
+    (browserImageIdentity "figures" encoded ==
+      some (LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets" "i0-a , λ.SVG"))
+  let misleading := "rsvg-convert: unrelated setup output\n\
+warning[W0605]: image has no browser face\n  pdftocairo exited 2\n"
+  no "browser failure: attribution reads only the relevant diagnostic"
+    (browserFaceFailures "figures" misleading == #[BrowserFace.failed "figures" "pdftocairo"])
+  no "browser failure: an unnamed converter stays unattributed"
+    (browserFaceFailures "figures" "warning[W0605]: PDF has no browser face\n" ==
+      #[BrowserFace.failed "figures" "unattributed"])
+  no "browser failure: each diagnostic keeps its own tool"
+    (browserFaceFailures "figures"
+      "warning[W0605]: rsvg-convert exited 2\nwarning[W0605]: pdftocairo exited 3\n" ==
+      #[BrowserFace.failed "figures" "rsvg-convert", BrowserFace.failed "figures" "pdftocairo"])
 
 def main (args : List String) : IO UInt32 :=
   tierMain "htmlreader" (.pairs "pass" "rows") measureTier selftest args
