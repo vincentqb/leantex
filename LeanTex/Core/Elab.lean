@@ -15276,6 +15276,34 @@ private def overlayWordsRaw : Raw → Raw
 
 end
 
+/-- Execute input-bearing macros with the driver's reader. Parse recovery
+and overlay token boundaries are settled before the shared evaluator, just
+as they are on the file-free preparation path. -/
+def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
+    (raws : Array Raw) : m Compat.Executed :=
+  let (raws, splitDiags) := settleSplits file raws
+  Compat.executeInputs reader file (overlayWordsList false #[] raws.toList)
+    (provideKeeps := renderedBuiltins ++ structuralNames) (diags := splitDiags)
+
+/-- A file answer enters the same execution state after its own parse
+recovery. Its source wrapper remains intact, so requests and diagnostics
+inside it keep the file that owns their positions. -/
+def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
+    (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
+  let (raws, splitDiags) := settleSplits file raws
+  Compat.resumeInput reader context (overlayWordsList false #[] raws.toList) splitDiags
+
+/-- Prepare a document whose macro and input execution already ran. Scans
+see the fulfilled surface, and compatibility translation continues from
+that execution's state rather than replaying any effects. -/
+def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
+  let picScan := Compat.boundaryScan executed.raws
+  let picMacros := macroScan executed.raws
+  let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
+  let (raws, textDiags, warned) := Compat.rewriteText file raws warned
+  { raws := raws, picPre := picScan.pre, picSets := picScan.sets
+    picMacros := picMacros, warned := warned, compatDiags := compatDiags ++ textDiags }
+
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
 option, a beamer font theme — is nonetheless a declaration the preamble
@@ -15426,14 +15454,25 @@ again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
 ships, the subset's drawing with its refusals named. The first pass — the
 requests, stated from the document alone — is `runRawsSpanned`'s. -/
-def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
+private def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
+    (picMetric : Ir.Pic.LabelMetric) :
     Doc × Array Diag :=
-  let p := prepare file raws
   let first := runPrepared file p earlier picMetric
   let (doc, diags, rs) := if first.2.2.fallbacks.isEmpty then first
     else runPrepared file p earlier picMetric first.2.2.fallbacks
   (doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
+
+/-- Elaborate parsed input on the span-free, file-free path. -/
+def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
+  runPreparedFinal file (prepare file raws) earlier picMetric
+
+/-- The same finalization for a surface whose file requests were fulfilled
+during execution. Both paths share boundary withdrawal and reference
+diagnostics over the document they return. -/
+def runExecuted (file : String) (executed : Compat.Executed) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
+  runPreparedFinal file (prepareExecuted file executed) earlier picMetric
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

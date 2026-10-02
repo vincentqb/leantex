@@ -827,6 +827,36 @@ private structure St where
 
 private abbrev M := StateM St
 
+/-- A file read reached by the bounded macro evaluator. The filename is
+already bound by the call's arguments; stored definitions and unselected
+branches produce no request. The driver supplies parsed surface tokens. -/
+structure InputRequest where
+  command : String
+  file : String
+  pos : Pos
+  name : String
+  options : String := ""
+  /-- The original command and its operands, for the existing local-style
+  candidate and splice readers. No argument is reconstructed from text. -/
+  call : Array Raw := #[]
+
+/-- The execution state at a file read. Only `resumeInput` can run a
+fragment against it; the driver carries it without inspecting meanings. -/
+structure InputContext where
+  private state : St
+
+/-- File effects cross the core boundary as requests and parsed answers.
+The answer runs in the requesting context, so its definitions and flag
+changes are visible to the caller's next token. `none` leaves the original
+call for ordinary compatibility dispatch, as when no local style exists. -/
+abbrev InputReader (m : Type → Type) :=
+  InputRequest → InputContext → m (Option (Array Raw) × InputContext)
+
+private abbrev EvalM (m : Type → Type) := StateT St m
+
+private instance [Monad m] : MonadLift M (EvalM m) where
+  monadLift act := fun st => pure (act st)
+
 /-- The one door for a state mutation: `f`, then the `writes` bump the
 dispatcher's silence guard reads. Every `modify`/`set` in this file outside
 `say`/`write`/`account` is rejected by the pre-commit hook, so an arm
@@ -2435,6 +2465,7 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
     isCondHead flags n || n == "unless" || n == "newif" || condDefiners.contains n ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
+      ["input", "include", "markdownInput"].contains n ||
       groupPrimitives.any (fun p => p.1 == n || p.2 == n) ||
       (match condValueOf binds n with
        | some (some v) => v.live
@@ -2818,11 +2849,11 @@ raws a decided head's test consumed. The list drives the recursion; `raws`
 and `i` give the heads their lookahead, exactly as `rewriteList` pairs
 them. `following` is available to a forwarded macro's argument reader,
 but is not otherwise executed by this replacement's walk. -/
-private def condList
-    (ex : String → Pos → Array Raw → Nat → M (Option CondRun))
+private def condList [Monad m]
+    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
     (plan : List Bool) (raws following : Array Raw)
     (out : Array Raw) (stack : List CondOpen) :
-    List Raw → Nat → Nat → M CondRun
+    List Raw → Nat → Nat → EvalM m CondRun
   | [], i, skip => pure { raws := out, stop := i + skip }
   | _ :: rest, i, skip + 1 => condList ex plan raws following out stack rest (i + 1) skip
   | .space :: rest, i, 0 => do
@@ -3156,9 +3187,9 @@ has `groupScope = false`: its argument braces open no scope, but an explicit
 group in its text still does. A picture's own bindings are known before its
 body is read. An `\input` wrapper switches the file its notes name, as
 `rewriteRaw` does, and is no group at all. -/
-private def condOne
-    (ex : String → Pos → Array Raw → Nat → M (Option CondRun))
-    (groupScope : Bool) : Raw → M Raw
+private def condOne [Monad m]
+    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
+    (groupScope : Bool) : Raw → EvalM m Raw
   | .group body p => do
     if groupScope then condStopSpaces
     let m ← condMark
@@ -3264,8 +3295,9 @@ An optional wrapper and its inner text use the later of their serials,
 so a retained alias sees the current inner text. A live use that still
 needs recursion when the orders rule it out is refused by name; `none`
 leaves it to the elaborator. -/
-private def condExpandAt (bound textBound : Nat) (n : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) : M (Option CondRun) := do
+private def condExpandAt [Monad m] (reader : Option (InputReader m))
+    (bound textBound : Nat) (n : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) : EvalM m (Option CondRun) := do
   let st ← get
   let site := st.useSite
   let inPic := st.inPicture
@@ -3322,7 +3354,7 @@ the argument boundary is unread here, so its optional selection and state change
         useSite := some (site.getD pos), macroClock := st.macroClock + 1 }
       let top ← swapTop false
       let run ← if _h : serial < bound ∨ textSerial < textBound then
-          condList (fun m p rs k => condExpandAt nextBound textSerial m p rs k)
+          condList (fun n p rs k => condExpandAt reader nextBound textSerial n p rs k)
             [] body following #[] [] body.toList 0 0
         else
           condList (fun _ _ _ _ => pure none) [] body following #[] [] body.toList 0 0
@@ -3344,7 +3376,26 @@ without that selection or those changes")
         (help := "define '\\{n}' before the macros that use it")
       return none
     else return none
-  | _ => return none
+  | some none => return none
+  | none =>
+    -- A stored replacement may be inspected during settlement, but only
+    -- execution may ask the driver for a file.
+    if st.settling.isSome then return none
+    let some reader := reader | return none
+    let input := ["input", "include", "markdownInput"].contains n
+    let style := st.fileTop && !st.condInDoc &&
+      (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
+    unless input || style do return none
+    let (opt, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
+    let j := skipSpaces raws k
+    let some (.group name _) := raws[j]? | return none
+    let request : InputRequest :=
+      { command := n, file := st.file, pos := site.getD pos
+        name := rawSrc name, options := (opt.getD "").trimAscii.toString
+        call := #[.ctrl n pos] ++ raws.extract start (j + 1) }
+    let (answer, context) ← reader request { state := st }
+    write fun _ => context.state
+    return answer.map fun answer => { raws := answer, stop := j + 1 }
 termination_by (bound, textBound)
 decreasing_by
   simp_wf
@@ -3355,15 +3406,26 @@ decreasing_by
     omega
 
 /-- The expander running text uses: every definition made so far is visible. -/
-private def condTopExpand (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option CondRun) := do
+private def condTopExpand [Monad m] (reader : Option (InputReader m))
+    (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    EvalM m (Option CondRun) := do
   let bound := (← get).serial + 1
-  condExpandAt bound bound n pos raws start
+  condExpandAt reader bound bound n pos raws start
+
+/-- Execute a parsed file answer in the state of its request, before
+continuing the caller. The input wrapper carries its filename and opens
+no TeX group; definitions therefore obey the caller's existing scope. -/
+def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
+    (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
+  let (run, state) ←
+    (condList (condTopExpand (some reader)) [] raws #[] #[] [] raws.toList 0 0).run
+      { context.state with diags := context.state.diags ++ diags }
+  return (run.raws, { state := state })
 
 /-- Run `act` and put the definition state back as it was: a definition's
 text settled for the elaborator is read, not run, so nothing it binds, sets
 or defines — globally or not — outlives the reading. -/
-private def condSandbox (act : M CondRun) : M (Array Raw) := do
+private def condSandbox [Monad m] (act : EvalM m CondRun) : EvalM m (Array Raw) := do
   let saved ← get
   let m ← condMark
   let r ← act
@@ -3378,7 +3440,8 @@ state at the preamble's end, which is where the elaborator reads a text no
 use the pass sees reaches: each one still in force is walked there, its
 decisions named as the definition's, and handed back with where it stands.
 The document body begins here. -/
-private def condSettle : M (Array (String × Pos × Array Raw)) := do
+private def condSettle [Monad m] (reader : Option (InputReader m)) :
+    EvalM m (Array (String × Pos × Array Raw)) := do
   let pend := (← get).pending
   write fun st => { st with pending := #[], condInDoc := true }
   let mut out : Array (String × Pos × Array Raw) := #[]
@@ -3390,7 +3453,7 @@ private def condSettle : M (Array (String × Pos × Array Raw)) := do
         write fun st => { st with file := p.file, settling := some p.name }
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
-          (condList (fun m q rs k => condExpandAt v.serial v.textSerial m q rs k)
+          (condList (fun n q rs k => condExpandAt reader v.serial v.textSerial n q rs k)
             [] replacement #[] #[] [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
@@ -3430,15 +3493,16 @@ end
 /-- Execute one deferred bucket in registration order, in its declaring
 files. Its state changes remain in force for the next bucket and the body;
 the returned text is translated and placed at that bucket's seam later. -/
-private def condReplay (hooks : Array (DeferPoint × String × Pos × Array Raw))
-    (point : DeferPoint) : M (Array (DeferPoint × String × Pos × Array Raw)) := do
+private def condReplay [Monad m] (reader : Option (InputReader m))
+    (hooks : Array (DeferPoint × String × Pos × Array Raw))
+    (point : DeferPoint) : EvalM m (Array (DeferPoint × String × Pos × Array Raw)) := do
   let saved ← get
   write fun st => { st with condReplaying := true, fileTop := false }
   let mut out := #[]
   for (pt, file, pos, body) in hooks do
     if pt == point then
       write fun st => { st with file := file }
-      let body ← condList condTopExpand [] body #[] #[] [] body.toList 0 0
+      let body ← condList (condTopExpand reader) [] body #[] #[] [] body.toList 0 0
       out := out.push (pt, file, pos, body.raws)
   write fun st => { st with
     file := saved.file, fileTop := saved.fileTop
@@ -3449,22 +3513,23 @@ private def condReplay (hooks : Array (DeferPoint × String × Pos × Array Raw)
 body. Stored definitions settle after end-preamble hooks have run. Every
 phase reads the same conditional, binding and load state, so a hook reads
 and changes that state only at its replay point. -/
-private def condDocument (raws : Array Raw) : M (Array Raw) := do
+private def condDocument [Monad m] (reader : Option (InputReader m))
+    (raws : Array Raw) : EvalM m (Array Raw) := do
   let seam := raws.findIdx? (· matches .env "document" _ _)
   let d := seam.getD raws.size
   let pre := raws.extract 0 d
   let post := raws.extract d raws.size
-  let pre' ← condList condTopExpand [] pre #[] #[] [] pre.toList 0 0
+  let pre' ← condList (condTopExpand reader) [] pre #[] #[] [] pre.toList 0 0
   let hooks := (← get).deferred
-  let endHooks ← condReplay hooks .endPreamble
-  let texts ← if seam.isSome then condSettle else pure #[]
+  let endHooks ← condReplay reader hooks .endPreamble
+  let texts ← if seam.isSome then condSettle reader else pure #[]
   let file := (← get).file
   let patch (file : String) (body : Array Raw) :=
     if texts.isEmpty then body else condPatchList texts file #[] body.toList
   let endHooks := endHooks.map fun (pt, f, pos, body) => (pt, f, pos, patch f body)
-  let beginHooks ← condReplay hooks .beginDocument
+  let beginHooks ← condReplay reader hooks .beginDocument
   write fun st => { st with deferred := endHooks ++ beginHooks }
-  let post' ← condList condTopExpand [] post #[] #[] [] post.toList 0 0
+  let post' ← condList (condTopExpand reader) [] post #[] #[] [] post.toList 0 0
   return patch file pre'.raws ++ post'.raws
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
@@ -8343,28 +8408,18 @@ private def blockHookList (spacing : Array Raw) (out : Array Raw) : List Raw →
 
 end
 
-/-- Rewrite a whole parsed document. The gathered running content lands just
-before `\begin{document}`, where a declaration belongs.
+/-- The executed surface and the state its compatibility rewrite must
+continue from. Keeping them together prevents a second execution of flags,
+hooks or file effects while the driver resolves other document requests. -/
+structure Executed where
+  raws : Array Raw
+  private state : St
 
-`warned` in and out is the warn-once key set as data: a once-per-document
-diagnostic is a promise about the DOCUMENT, not about whichever pass first
-met a cause, and this pass and the elaborator both fire on some of the same
-keys (`spec:overlay` is the one two arms share today — an unnumberable
-overprint item here, an unnumberable `\alt` there). A set per pass makes the
-promise per pass, which is how a deck spelling both got W0105 twice. The set
-therefore travels with the document, out of here and into the state the
-elaborator starts from, the way `Ir.overlayRange` became the one
-numberability reader both passes ask: one notion of "already said", one
-place it lives. It travels as a value the caller chains
-(`Elab.runRawsSpanned`), never as ambient state.
-
-`inherited` names are already defined by a fragment's caller. Their
-replacement texts are unread here and remain for that caller to expand;
-definitions inside the fragment still replace and restore them normally. -/
-def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
-    (warned : Array String := #[]) (inherited : List String := []) :
-    Array Raw × Array Diag × Array String :=
-  let go : M (Array Raw) := do
+private def executeBy [Monad m] (reader : Option (InputReader m))
+    (file : String) (raws : Array Raw) (provideKeeps : List String)
+    (warned : Array String) (inherited : List String) (diags : Array Diag) :
+    m Executed := do
+  let go : EvalM m (Array Raw) := do
     -- latex.ltx's \def\space{ }: expansion, copying and local redefinition
     -- share the ordinary meaning table, including the opening space scan.
     recordValue "space"
@@ -8372,7 +8427,29 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     -- A fragment's caller owns these meanings. Their text is unread here;
     -- local definitions can still replace them and scope restores them.
     for n in inherited do setBind n none
-    let raws ← condDocument raws
+    condDocument reader raws
+  let (raws, state) ← go.run
+    { file := file, provideKeeps := provideKeeps, warned := warned, diags := diags,
+      fileTop := reader.isSome,
+      boundaryOpen := !boundaryRefused raws,
+      wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
+  return { raws := raws, state := state }
+
+/-- Execute the document with a driver that fulfils file requests at their
+uses. All macro recursion retains its existing binding-order bound; the
+driver owns the input stack and returns parsed fragments through
+`resumeInput`. -/
+def executeInputs [Monad m] (reader : InputReader m) (file : String)
+    (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[]) :
+    m Executed :=
+  executeBy (some reader) file raws provideKeeps #[] [] diags
+
+/-- Finish the compatibility rewrite after execution and file fulfilment.
+The gathered running content lands just before the document, and deferred
+text is translated at its recorded seam without executing it again. -/
+def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
+  let raws := executed.raws
+  let go : M (Array Raw) := do
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
@@ -8425,13 +8502,36 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
         out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
       | none => out ++ running ++ preSide ++ bodySide
   let st0 : St :=
-    { file := file, provideKeeps := provideKeeps, warned := warned,
+    { executed.state with
       boundaryOpen := !boundaryRefused raws,
-      wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
+      wholeDoc := raws.any (· matches .env "document" _ _) }
   let (out, st) := go.run st0
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   (out, st.diags, st.warned)
+
+/-- Rewrite a whole parsed document. The gathered running content lands just
+before `\begin{document}`, where a declaration belongs.
+
+`warned` in and out is the warn-once key set as data: a once-per-document
+diagnostic is a promise about the DOCUMENT, not about whichever pass first
+met a cause, and this pass and the elaborator both fire on some of the same
+keys (`spec:overlay` is the one two arms share today — an unnumberable
+overprint item here, an unnumberable `\alt` there). A set per pass makes the
+promise per pass, which is how a deck spelling both got W0105 twice. The set
+therefore travels with the document, out of here and into the state the
+elaborator starts from, the way `Ir.overlayRange` became the one
+numberability reader both passes ask: one notion of "already said", one
+place it lives. It travels as a value the caller chains
+(`Elab.runRawsSpanned`), never as ambient state.
+
+`inherited` names are already defined by a fragment's caller. Their
+replacement texts are unread here and remain for that caller to expand;
+definitions inside the fragment still replace and restore them normally. -/
+def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
+    (warned : Array String := #[]) (inherited : List String := []) :
+    Array Raw × Array Diag × Array String :=
+  rewriteExecuted (executeBy (m := Id) none file raws provideKeeps warned inherited #[])
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
 own rule made literal (ltfiles.dtx `\\@onefilewithoptions`: find `p.sty` on
