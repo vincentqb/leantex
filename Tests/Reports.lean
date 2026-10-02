@@ -38,6 +38,7 @@ import Tests.MathAlphaEntry
 import Tests.OverlaySets
 import Tests.OverlayStyles
 import Tests.OverlayContracts
+import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.DiagnosticFormat
 import Tests.SlideLabels
@@ -513,8 +514,8 @@ def reports : List Report := [
       .thm `Ir.exclusiveOccurrences_exact _ (@Ir.exclusiveOccurrences_exact.{0})]
     state := .guarded "0358eb0d" .before .author },
   { id := "R74", date := "2026-10-02"
-    what := "overlay contracts excluded zero and reversed selectors, one-reveal HTML frames lacked a numbered state, and nested covering multiplied dimming"
-    pins := [check% overlayContractChecks, check% overlaySingletonHtmlChecks,
+    what := "overlay contracts excluded zero and reversed selectors, one-reveal frames failed to evaluate selectors, and nested covering multiplied dimming"
+    pins := [check% overlayContractChecks, check% overlaySingletonChecks, check% overlaySingletonHtmlChecks,
       thm% Ir.OverlaySpec.pageSteps_partition_contract, thm% Ir.OverlaySpec.pending_nested_exact,
       thm% Struct.onSteps_id,
       thm% HtmlDoc.overlayUsesRange_contract, thm% HtmlDoc.overlay_pending_agree,
@@ -524,7 +525,8 @@ def reports : List Report := [
   { id := "R75", date := "2026-10-02"
     what := "diagnostics lacked a compact fixed category and inline source position, while a report reader inferred warning records from human text"
     pins := [check% diagnosticFormatChecks]
-    accept := ["the report reader selftest distinguishes diagnostic records from quoted codes and unrelated log text"]
+    accept := ["the report reader selftest distinguishes diagnostic records from quoted codes and unrelated log text",
+      "the convention gate rejects a direct diagnostic-print mutation that the previous gate allowed"]
     state := .guarded "e5a5428a" .before .author }
 ]
 

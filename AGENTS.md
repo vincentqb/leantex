@@ -123,6 +123,12 @@ in this repo; refer to the private reference corpus abstractly.
 
 - TeX package/class warning and info controls are log-only compatibility rows: consume their exact groups in `Compat.meaningFree`, require N0100 accounting through a deferred-hook test, and never let those groups enter body recovery. Arbitrary unknown commands must still preserve their arguments.
 
+- Document diagnostics reach the terminal as typed `Diag` records through
+  `Ui.diag`; only `Render` formats them. Reports read porcelain JSON records,
+  never human headers. `diagnosticOutputBypasses` and its mutation selftest
+  enforce this CLI source convention, including early formatting and direct
+  printing of diagnostic fields.
+
 - A typographic attachment names its anchors, direction and the bounds it
   reads: measured ink, advance or baseline-inclusive line box. Derive
   displacement from those constraints and the resolved font, and reserve the resulting

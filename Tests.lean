@@ -16,6 +16,7 @@ import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
 import Tests.OverlayStyles
 import Tests.OverlayContracts
+import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
 import Tests.Census
@@ -380,6 +381,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   overlaySetChecks ref oneFace
   overlayStyleChecks ref oneFace
   overlayContractChecks ref oneFace
+  overlaySingletonChecks ref oneFace
   overlaySingletonHtmlChecks ref
   frameHeadingScopeChecks ref oneFace
   nestedStageChecks ref oneFace arts
