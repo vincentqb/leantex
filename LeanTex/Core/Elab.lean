@@ -259,6 +259,9 @@ structure Ctx where
   styles : Styles := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
+  /-- A conditional mono face keeps punctuation literal only on its selected
+  steps. Nested selectors combine here, so the source body executes once. -/
+  literalWhen : Option OverlaySpec := none
   /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
   character is literal text there, never a build error. -/
   noteBody : Bool := false
@@ -982,13 +985,6 @@ no-op command. -/
 def fontCmdContent (body : Array Raw) : Array Raw :=
   body.filter fun r => !fontCmdNocorr r
 
-/-- A text-font command's run: the styled argument, with the italic
-corrections `fontCmdEdges` asks for inside it before the argument, under
-the face the command selects, and after it, under the face around it. -/
-def fontCmdPush (acc : Array Inline) (style : Style) (edges : Bool × Bool)
-    (inner : Array Inline) : Array Inline :=
-  (Ir.fontCmdInlines style edges inner).foldl Array.push acc
-
 def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
    ("_", "_"), ("~", "~"), (" ", " "),
@@ -1690,17 +1686,63 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ | .role _ _ => true
     | _ => false) true xs
 
+/-- Punctuation is a presentation leaf: conditional mono text carries two
+spellings, without executing its containing source or semantic effects twice. -/
+private def punctuationInline (literal : Bool) (when? : Option OverlaySpec)
+    (s : String) : Inline :=
+  if literal then .text s else
+  let smart := smartPunct s
+  if smart == s then .text s else
+  match when? with
+  | some spec => .alternate spec #[.text s] #[.text smart]
+  | none => .text smart
+
 /-- A bare word consumed as an argument carries the same semantic owners
 as a braced word, without re-reading its source or inventing a group. -/
 private def wordInlines (ctx : Ctx) (s : String) (pos : Pos) : Array Inline :=
-  let text := if ctx.literalText then s else smartPunct s
   (relativeOrigins ctx.macroRoles.enter.inherited pos.origins).foldr
-    (fun origin inner => #[.role origin.name inner]) #[.text text]
+    (fun origin inner => #[.role origin.name inner])
+    #[punctuationInline ctx.literalText ctx.literalWhen s]
+
+/-- Literal punctuation follows the union of the active monospace scopes.
+Return only those fields: a font modifier never changes elaboration's budgets. -/
+private def modifierLiteral (ctx : Ctx) (style : Style) (spec : Option OverlaySpec) :
+    Bool × Option OverlaySpec :=
+  if style != .mono || ctx.literalText then (ctx.literalText, ctx.literalWhen) else
+  match spec with
+  | none => (true, ctx.literalWhen)
+  | some selected => (false, some ((ctx.literalWhen.map (·.union selected)).getD selected))
 
 /-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
 private def specWord? : Raw → Option String
   | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
   | _ => none
+
+/-- A text modifier may have an overlay before its ordinary arguments.
+Consume that head independently of the argument reader: a selector is never
+text to underline, colour, or set in another face. -/
+private def modifierHead (raws : Array Raw) (start : Nat) : Option String × Nat :=
+  let j := skipSpaces raws start
+  match raws[j]?.bind specWord? with
+  | some w => (some w, skipSpaces raws (j + 1))
+  | none => (none, j)
+
+private theorem modifierHead_monotone (raws : Array Raw) (start : Nat) :
+    start ≤ (modifierHead raws start).2 := by
+  have h := skipSpaces_ge raws start
+  have h' := skipSpaces_ge raws (skipSpaces raws start + 1)
+  unfold modifierHead
+  dsimp only
+  split <;> dsimp <;> omega
+
+/-- A modifier changes only its selected reading. With no numbered
+selector, its ordinary styled reading remains; unsupported syntax is
+accounted by `modifierSpec` before this constructor is called. -/
+private def pushModifier (acc : Array Inline) (spec : Option OverlaySpec)
+    (active otherwise : Array Inline) : Array Inline :=
+  match spec with
+  | some s => acc.push (.alternate s active otherwise)
+  | none => acc ++ active
 
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
@@ -2909,9 +2951,9 @@ mutual
 processed by their own call, with their own literal-text setting, so this
 walk deliberately descends only through semantic roles. -/
 -- conserves: none — smart punctuation changes the text's scalar sequence.
-private def mapSmartText : Inline → Inline
-  | .text t => .text (smartPunct t)
-  | .role name inner => .role name (mapSmartTextList #[] inner.toList)
+private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
+  | .text t => punctuationInline false when? t
+  | .role name inner => .role name (mapSmartTextList when? #[] inner.toList)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
   | x@(.colored ..) | x@(.link ..) | x@(.label ..) | x@(.ref ..)
   | x@(.decorated ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
@@ -2919,9 +2961,10 @@ private def mapSmartText : Inline → Inline
   | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
   | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => x
 
-private def mapSmartTextList (acc : Array Inline) : List Inline → Array Inline
+private def mapSmartTextList (when? : Option OverlaySpec) (acc : Array Inline) :
+    List Inline → Array Inline
   | [] => acc
-  | x :: xs => mapSmartTextList (acc.push (mapSmartText x)) xs
+  | x :: xs => mapSmartTextList when? (acc.push (mapSmartText when? x)) xs
 end
 
 /-- `\\[len]`'s declared extra space, read from the bracket's source. -/
@@ -4087,6 +4130,17 @@ shown on every step" pos
     (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
 
+/-- Number a modifier's optional selector with the same reader as every
+other overlay. Refused selectors retain the ordinary styled reading and
+are named by the existing overlay diagnostic. -/
+private def modifierSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Option OverlaySpec) := do
+  match head with
+  | none => return none
+  | some w =>
+    let spec := Ir.overlayRange w
+    unless spec.isSome do warnOverlaySpec ctx w pos
+    return spec
+
 /-- The one W0105 for `\alt` without a numbered specification, outside
 the knot. An alternation inks exactly one alternative per step page, and
 an unnumberable spec does not lift that: the step model cannot say which
@@ -4425,7 +4479,7 @@ decreasing_by all_goals knot_dec
 /-- Elaborate raw items as inline content. -/
 def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
   let out ← elabInlinesFrom { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] ""
-  return if ctx.literalText then out else out.map mapSmartText
+  return if ctx.literalText then out else out.map (mapSmartText ctx.literalWhen)
 termination_by (ctx.envLimit, ctx.limit, rawWeightList raws.toList, 4)
 decreasing_by all_goals knot_dec
 
@@ -4724,10 +4778,25 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx raws (i + 1) acc
             (sb ++ (Lex.textSymbols.lookup name).getD "")
         else if let some style := argStyles.lookup name then
-          let argCtx := { ctx with
-            literalText := style == Style.mono || ctx.literalText }
-          let j := skipSpaces raws (i + 1)
-          have hjge := skipSpaces_ge raws (i + 1)
+          let head := modifierHead raws (i + 1)
+          let j := head.2
+          have hjge : i + 1 ≤ j := modifierHead_monotone raws (i + 1)
+          -- beamerbaseoverlay.sty: the font wrappers take a leading selector;
+          -- only emph, declared with newcommand<>, also takes a trailing one.
+          let tailSpec := if name == "emph" && head.1.isNone then
+              raws[j + 1]?.bind specWord? else none
+          let next := j + 1 + if tailSpec.isSome then 1 else 0
+          have hnext : j + 1 ≤ next := Nat.le_add_right _ _
+          let spec ← modifierSpec ctx (head.1.orElse fun _ => tailSpec) pos
+          -- Beamer presentation emphasis selects italic (beamerbaseoverlay.sty
+          -- emph), while the flow class retains LaTeX's alternating emphasis.
+          let style := if name == "emph" && ctx.slides then .italic else style
+          -- Beamer's emph is an italic declaration wrapper, not a font command;
+          -- its measured edges have no automatic correction (overlayStyleChecks).
+          let edges := fun body next => if name == "emph" && ctx.slides
+            then (false, false) else fontCmdEdges body next
+          let literal := modifierLiteral ctx style spec
+          let argCtx := { ctx with literalText := literal.1, literalWhen := literal.2 }
           match hj : raws[j]? with
           | some (.group body _) =>
             have hjlt := getElem?_lt hj
@@ -4739,23 +4808,27 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
                 simpa [fontCmdContent] using
                   rawWeightList_filter_monotone (fun r => !fontCmdNocorr r) body.toList) hw
             let inner ← elabInlines argCtx (fontCmdContent body)
-            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            have hadv : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1)
-              (fontCmdPush acc style (fontCmdEdges body.toList raws[j + 1]?) inner) ""
+            elabInlinesFrom ctx raws next
+              (pushModifier acc spec
+                (Ir.fontCmdInlines style (edges body.toList raws[next]?) inner) inner) ""
           | some (.word s p) =>
             have hjlt := getElem?_lt hj
-            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            have hadv : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1)
-              (fontCmdPush (flushText acc sb) style (fontCmdEdges [.word s p] raws[j + 1]?)
-                (wordInlines argCtx s p)) ""
+            let inner := wordInlines argCtx s p
+            elabInlinesFrom ctx raws next
+              (pushModifier (flushText acc sb) spec
+                (Ir.fontCmdInlines style (edges [.word s p] raws[next]?) inner) inner) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if let some decoration := decorationCtrls.lookup name then
-          let j := skipSpaces raws (i + 1)
-          have hjge := skipSpaces_ge raws (i + 1)
+          let head := modifierHead raws (i + 1)
+          let j := head.2
+          have hjge : i + 1 ≤ j := modifierHead_monotone raws (i + 1)
+          let spec ← modifierSpec ctx head.1 pos
           match hj : raws[j]? with
           | some (.group body _) =>
             have hjlt := getElem?_lt hj
@@ -4765,13 +4838,15 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let inner ← elabInlines ctx body
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1) (acc.push (.decorated decoration inner)) ""
+            elabInlinesFrom ctx raws (j + 1)
+              (pushModifier acc spec #[.decorated decoration inner] inner) ""
           | some (.word s p) =>
             have hjlt := getElem?_lt hj
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push (.decorated decoration (wordInlines ctx s p))) ""
+              (pushModifier (flushText acc sb) spec
+                #[.decorated decoration (wordInlines ctx s p)] (wordInlines ctx s p)) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5106,8 +5181,10 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if name == "pagecount" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
   else if name == "textcolor" then
-    let j0 := skipSpaces raws (i + 1)
-    have hj0ge := skipSpaces_ge raws (i + 1)
+    let head := modifierHead raws (i + 1)
+    let j0 := head.2
+    have hj0ge := modifierHead_monotone raws (i + 1)
+    let spec ← modifierSpec ctx head.1 pos
     let model := (bracketRunSrc raws j0).map fun opt =>
       (rawSrc opt).trimAscii.toString
     let j := skipBracketRun raws j0
@@ -5130,16 +5207,17 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         recordColorSpan ctx label c cssName.isSome pos
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
-        elabInlinesFrom ctx raws (j2 + 1) (acc.push (.colored c cssName inner)) ""
+        elabInlinesFrom ctx raws (j2 + 1)
+          (pushModifier acc spec #[.colored c cssName inner] inner) ""
       | .missing =>
         warnPaletteMiss ctx source pos
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
-        elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
+        elabInlinesFrom ctx raws (j2 + 1) (pushModifier acc spec inner inner) ""
       | .rejected =>
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
-        elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
+        elabInlinesFrom ctx raws (j2 + 1) (pushModifier acc spec inner inner) ""
     | _, _ =>
       diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5330,9 +5408,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let ib ← elabInlines ctx gb
           -- Page order, not spec order (`Ir.Inline.alt`): step 1 ships the
           -- in-range group only when the range already covers it.
-          let onFirst := if spec.pending 1 then ib else ia
-          let onOther := if spec.pending 1 then ia else ib
-          elabInlinesFrom ctx raws (j3 + 1) (acc.push (.altSteps spec onFirst onOther)) ""
+          elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alternate spec ia ib)) ""
         | none =>
           -- One reading, never two: the warning says the step model cannot
           -- number this spec, so the active alternative — the styled one
@@ -11318,8 +11394,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlockScope stepCtx ga
           let ib ← elabBlockScope ctx gb
-          blocks := blocks.push
-            (if spec.pending 1 then .altSteps spec ib ia else .altSteps spec ia ib)
+          let (firstPage, otherPage) := spec.pageOrder ia ib
+          blocks := blocks.push (.altSteps spec firstPage otherPage)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the
@@ -15304,26 +15380,33 @@ immediately follows it in the same lexer word. Split only after an overlay
 head, before compatibility rewrites and elaboration share the numbered
 selector reader. Neither part is interpreted here. -/
 -- conserves: none — these are surface words, before the IR census exists.
-private def overlayWordsList (awaitSpec : Bool) (acc : Array Raw) :
+private def overlayWordsList (awaitSpec afterArg : Bool) (acc : Array Raw) :
     List Raw → Array Raw
   | [] => acc
   | .ctrl n p :: rest =>
-    overlayWordsList (overlayCtrls.contains n || ["alt", "alert", "item"].contains n)
+    overlayWordsList (overlayCtrls.contains n || ["alt", "alert", "item", "textcolor"].contains n ||
+      (argStyles.lookup n).isSome || (decorationCtrls.lookup n).isSome) (n == "emph")
       (acc.push (.ctrl n p)) rest
-  | .space :: rest => overlayWordsList awaitSpec (acc.push .space) rest
+  | .space :: rest => overlayWordsList awaitSpec afterArg (acc.push .space) rest
   | .word w p :: rest =>
     let head := (w.takeWhile (· != '>')).toString
     let tail := (w.drop (head.length + 1)).toString
-    let acc := if awaitSpec && w.startsWith "<" && !tail.isEmpty then
+    let selector := awaitSpec && w.startsWith "<"
+    let acc := if selector && !tail.isEmpty then
         (acc.push (.word (head ++ ">") p)).push
           (.word tail { p with col := p.col + head.length + 1 })
       else acc.push (.word w p)
-    overlayWordsList false acc rest
-  | r :: rest => overlayWordsList false (acc.push (overlayWordsRaw r)) rest
+    overlayWordsList (afterArg && !selector) false acc rest
+  | (.group body p) :: rest =>
+    -- Beamer's newcommand<> emphasis wrapper also accepts its selector
+    -- immediately after the body; ordinary text-font wrappers do not.
+    overlayWordsList afterArg false
+      (acc.push (.group (overlayWordsList false false #[] body.toList) p)) rest
+  | r :: rest => overlayWordsList false false (acc.push (overlayWordsRaw r)) rest
 
 private def overlayWordsRaw : Raw → Raw
-  | .group body p => .group (overlayWordsList false #[] body.toList) p
-  | .env n body p => .env n (overlayWordsList false #[] body.toList) p
+  | .group body p => .group (overlayWordsList false false #[] body.toList) p
+  | .env n body p => .env n (overlayWordsList false false #[] body.toList) p
   | .math d body p => .math d body p
   | .word w p => .word w p
   | .space => .space
@@ -15340,7 +15423,7 @@ as they are on the file-free preparation path. -/
 def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
-  Compat.executeInputs reader file (overlayWordsList false #[] raws.toList)
+  Compat.executeInputs reader file (overlayWordsList false false #[] raws.toList)
     (provideKeeps := renderedBuiltins ++ structuralNames) (diags := splitDiags)
 
 /-- A file answer enters the same execution state after its own parse
@@ -15349,7 +15432,7 @@ inside it keep the file that owns their positions. -/
 def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
   let (raws, splitDiags) := settleSplits file raws
-  Compat.resumeInput reader context (overlayWordsList false #[] raws.toList) splitDiags
+  Compat.resumeInput reader context (overlayWordsList false false #[] raws.toList) splitDiags
 
 /-- Prepare a document whose macro and input execution already ran. Scans
 see the fulfilled surface, and compatibility translation continues from
@@ -15368,7 +15451,7 @@ option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
-  let raws := overlayWordsList false #[] raws.toList
+  let raws := overlayWordsList false false #[] raws.toList
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let (raws, compatDiags, warned) :=

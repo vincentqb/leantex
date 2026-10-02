@@ -3000,6 +3000,22 @@ theorem union_comm_agree (s t : OverlaySpec) (k : Nat) :
 theorem showsFirst_id (s : OverlaySpec) : s.showsFirst 1 = true := by
   simp [showsFirst]
 
+/-- Store alternatives in first-page order, regardless of which side of
+an exact selector contains step one. Every alternation constructor uses
+this bridge from the author's active/otherwise order to artifact order. -/
+def pageOrder {α : Type} (s : OverlaySpec) (active otherwise : α) : α × α :=
+  if s.pending 1 then (otherwise, active) else (active, otherwise)
+
+/-- Selecting from page-order storage recovers the author's chosen arm at
+every step, for any payload and any union of numbered intervals. -/
+theorem pageOrder_select_exact {α : Type} (s : OverlaySpec) (k : Nat)
+    (active otherwise : α) :
+    (if s.showsFirst k then (s.pageOrder active otherwise).1
+      else (s.pageOrder active otherwise).2) =
+      (if s.selects k then active else otherwise) := by
+  by_cases hk : s.selects k = true <;> by_cases hfirst : s.selects 1 = true <;>
+    simp_all [pageOrder, showsFirst, pending]
+
 /-- No numbered page is lost or added by the finite artifact projection. -/
 theorem selectedSteps_mem (s : OverlaySpec) (steps k : Nat) :
     k ∈ s.selectedSteps steps ↔ 1 ≤ k ∧ k ≤ steps ∧ s.selects k = true := by
@@ -3170,6 +3186,12 @@ inductive Inline where
     (firstPage otherPage : Array Inline) : Inline :=
   .altSteps ⟨n, last, []⟩ firstPage otherPage
 
+
+/-- An alternation in source order; the shared page-order bridge is the
+only place its active and otherwise arms change positions. -/
+def Inline.alternate (spec : OverlaySpec) (active otherwise : Array Inline) : Inline :=
+  let (firstPage, otherPage) := spec.pageOrder active otherwise
+  .altSteps spec firstPage otherPage
 
 /-- Which edges of a text-font command get an italic correction, factored
 over the surface token predicates so prose and native picture labels read
@@ -10791,9 +10813,35 @@ def headingLevelColumns (out : Array Nat) : List (BoxWidth × Array Block) → A
 
 end
 
+/-- Mutually exclusive readings share equal occurrences. Multiset difference
+preserves repeated occurrences within either reading, unlike global deduplication.
+The order is the first reading followed by the other reading's extra occurrences. -/
+def exclusiveOccurrences {α : Type u} [BEq α] (first other : Array α) : Array α :=
+  first ++ (first.toList.foldl List.erase other.toList).toArray
+
+private theorem eraseOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
+    (x : α) (first other : List α) :
+    (first.foldl List.erase other).count x = other.count x - first.count x := by
+  induction first generalizing other with
+  | nil => simp
+  | cons a rest ih =>
+    rw [List.foldl_cons, ih, List.count_erase, List.count_cons]
+    omega
+
+/-- Exclusive readings preserve the larger multiplicity of every element:
+shared occurrences appear once, and authored repeats in either arm survive. -/
+theorem exclusiveOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
+    (x : α) (first other : Array α) :
+    (exclusiveOccurrences first other).toList.count x =
+      max (first.toList.count x) (other.toList.count x) := by
+  simp only [exclusiveOccurrences, Array.toList_append, List.count_append,
+    eraseOccurrences_exact]
+  omega
+
 mutual
 
-/-- Every footnote in document order, with its resolved mark number: the
+/-- Every footnote in document order, with its resolved mark number: equal
+occurrences in mutually exclusive alternatives share one endnote. This is the
 one flow the backends' endnote sections read (the HTML `doc-endnotes`
 section, the markdown `[^k]` definitions). The accumulator threads
 through, as every walk here does. -/
@@ -10826,7 +10874,8 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .columns cols => footnoteColumns out cols.toList
   | .onSteps _ body => footnoteBlockList out body.toList
   | .altSteps _ firstPage otherPage =>
-    footnoteBlockList (footnoteBlockList out firstPage.toList) otherPage.toList
+    out ++ exclusiveOccurrences (footnoteBlockList #[] firstPage.toList)
+      (footnoteBlockList #[] otherPage.toList)
   | .only _ body => footnoteBlockList out body.toList
   | .nav _ body => footnoteBlockList out body.toList
   | .frame title _ _ _ body =>
@@ -10893,7 +10942,8 @@ def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
   | .decorated _ body => footnoteInlineList out body.toList
   | .onSteps _ body => footnoteInlineList out body.toList
   | .altSteps _ firstPage otherPage =>
-    footnoteInlineList (footnoteInlineList out firstPage.toList) otherPage.toList
+    out ++ exclusiveOccurrences (footnoteInlineList #[] firstPage.toList)
+      (footnoteInlineList #[] otherPage.toList)
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out

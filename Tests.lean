@@ -14,6 +14,7 @@ import Tests.InputUse
 import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
+import Tests.OverlayStyles
 import Tests.FrameHeadingScope
 import Tests.Census
 import Tests.Backends
@@ -85,7 +86,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
+  overlaySetChecks overlayStyleChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -373,6 +374,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   xparseProvideChecks ref oneFace
   xparseIgnoredOperandsChecks ref oneFace
   overlaySetChecks ref oneFace
+  overlayStyleChecks ref oneFace
   frameHeadingScopeChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace

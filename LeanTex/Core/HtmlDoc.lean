@@ -4639,6 +4639,52 @@ def overlayAltNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
       ("data-steps", String.intercalate " " (pages.map toString))] ++
       if first then #[] else #[("hidden", "hidden")])
 
+mutual
+
+private def anchorIdsOne (acc : Array String) : Node → Array String
+  | .elem _ attrs kids =>
+    let ids := attrs.filterMap fun (key, value) => if key == "id" then some value else none
+    anchorIdsList (acc ++ ids) kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+private def anchorIdsList (acc : Array String) : List Node → Array String
+  | [] => acc
+  | x :: xs => anchorIdsList (anchorIdsOne acc x) xs
+
+end
+
+mutual
+
+/-- Relocate only named anchors. All tags, content, links, accessibility
+attributes and unrelated IDs remain the original typed nodes. -/
+private def unanchorOne (ids : Array String) : Node → Node
+  | .elem tag attrs kids => .elem tag
+      (attrs.filter fun (key, value) => !(key == "id" && ids.contains value))
+      (unanchorList ids #[] kids.toList)
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs js => .script attrs js
+
+private def unanchorList (ids : Array String) (acc : Array Node) : List Node → Array Node
+  | [] => acc
+  | x :: xs => unanchorList ids (acc.push (unanchorOne ids x)) xs
+
+end
+
+/-- An anchor shared by exclusive alternatives has one stable target outside
+both carriers. Hidden DOM still owns its IDs (HTML's id uniqueness rule), so
+copying a note reference or label into both branches would create duplicate
+IDs and make backlinks depend on which hidden branch the browser finds first.
+This is an artifact fact: the IR alternatives may share semantic identity. -/
+def overlayAlternatives (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first other : Array Node) : Array Node :=
+  let otherIds := anchorIdsList #[] other.toList
+  let shared := ((anchorIdsList #[] first.toList).filter otherIds.contains).toList.eraseDups.toArray
+  let anchors := shared.map fun id =>
+    Html.elem "span" #[] #[("id", id), ("data-alt-anchor", "")]
+  anchors ++ #[overlayAltNode tag steps spec true (unanchorList shared #[] first.toList),
+    overlayAltNode tag steps spec false (unanchorList shared #[] other.toList)]
+
 /-- An artifact-specific projection of IR membership: matching a numbered
 HTML token selects exactly the step layout selects, within the frame. -/
 theorem overlay_membership_agree (spec : Ir.OverlaySpec) (steps k : Nat)
@@ -4949,9 +4995,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- no snap state the group stored first is what shows. Both groups stay
     -- in the tree because the document declares both; selection is
     -- `display`-level, never `step`'s covering.
-    (acc.push (overlayAltNode "span" cfg.overlaySteps spec true
-        (inlineNodesInto cfg #[] firstPage.toList))).push
-      (overlayAltNode "span" cfg.overlaySteps spec false (inlineNodesInto cfg #[] otherPage.toList))
+    acc ++ overlayAlternatives "span" cfg.overlaySteps spec
+      (inlineNodesInto cfg #[] firstPage.toList) (inlineNodesInto cfg #[] otherPage.toList)
   | .icon c label =>
     -- The glyph is a Private Use Area scalar assistive technology cannot
     -- read, so it is hidden (`aria-hidden`) and the accessible name rides
@@ -6340,8 +6385,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- the pair rides a container of its own because a block arm ships one
     -- node, and the container carries nothing — no range, no side, no rule.
     Html.elem "div"
-      #[overlayAltNode "div" cfg.overlaySteps spec true (blockNodesInto cfg.into #[] firstPage.toList),
-        overlayAltNode "div" cfg.overlaySteps spec false (blockNodesInto cfg.into #[] otherPage.toList)]
+      (overlayAlternatives "div" cfg.overlaySteps spec
+        (blockNodesInto cfg.into #[] firstPage.toList) (blockNodesInto cfg.into #[] otherPage.toList))
       #[("class", "alt-pair")]
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck

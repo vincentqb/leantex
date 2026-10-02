@@ -25896,3 +25896,45 @@ side ancestry. The driver uses Git's ancestor result to distinguish
 preservation from replay; an unreadable result refuses the operation.
 Both paths still check owner races, net content and the full gate plan.
 The pure landing selftest and all 31 guarded repository scenarios pass.
+
+### 2026-10-02 — Numbered selectors belong to text modifiers
+
+An overlay on a text modifier selects the appearance of its argument; the
+argument remains once on every reveal. Font, decoration and text-colour
+commands now read the same numbered selector as visibility and alternation.
+The exact union of intervals survives into both artifacts, including selectors
+that exclude the first reveal. `OverlaySpec.pageOrder_select_exact` states the
+shared storage/selection contract for any payload and numbered union.
+
+The modifier elaborates its body once, so notes, labels and counters do not
+execute twice. Conditional monospaced punctuation is a leaf presentation
+choice over that same body. The footnote census takes the multiset maximum
+across exclusive readings, preserving repeats inside one reading;
+`exclusiveOccurrences_exact` proves this for every element. HTML moves
+a shared anchor outside its two carriers, because hidden nodes still own
+their IDs. Links, accessibility attributes and the branch contents remain.
+
+Beamer's font and colour wrappers take a leading selector. Its emphasis
+wrapper also accepts one immediately after the argument and selects italic
+in presentation mode; ordinary article emphasis still alternates. These
+positions follow `beamerbaseoverlay.sty`. Independent LuaLaTeX probes also
+confirm that presentation emphasis adds no automatic font-command correction;
+a nested-italic artifact guard failed before that distinction was carried.
+Numbered underline and strikeout
+are a native extension of the same modifier rule. Only an eligible command
+head splits an adjacent angle selector. Prose, formulas and verbatim content
+retain their literal angle text; unsupported selectors keep their diagnostic.
+
+`overlayStyleChecks` compares shipped glyphs, decoration geometry and typed
+HTML to independently authored readings over singleton, range and union
+selectors, nested styles, source effects and literal punctuation. Its HTML
+projection checks both sides of its declared normalization, retaining missing
+or duplicate targets, lost links, unrelated styling and accessibility changes.
+The broken tree `0358eb0d` printed selectors and shipped only one reveal for
+numbered strikeout, underline and font commands.
+
+Validation: the final artifact guard fails on `0358eb0d` and passes on the
+fixed tree. `lake build --wfail`, `lake test` and the preamble commutation
+oracle pass. Both outputs of the private reference deck compile; the affected
+native PDF pages and local-file Firefox and Chromium views show the same text
+once per reveal, with decoration only on the selected reveals.

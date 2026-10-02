@@ -36,6 +36,7 @@ import Tests.MarkdownInput
 import Tests.InputUse
 import Tests.MathAlphaEntry
 import Tests.OverlaySets
+import Tests.OverlayStyles
 import Tests.SlideLabels
 import scripts.LandCore
 
@@ -66,7 +67,7 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
-  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks
+  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
 namespace Reports
@@ -501,7 +502,12 @@ def reports : List Report := [
   { id := "R72", date := "2026-10-02"
     what := "HTML slides mixed title-derived fragments with frame numbers, omitted the first reveal suffix, and excluded standout content from the shared frame count"
     pins := [check% slideLabelChecks, thm% Ir.Chrome.standoutFootBand_exact]
-    state := .guarded "7214eeb2" .before .reviewer }
+    state := .guarded "7214eeb2" .before .reviewer },
+  { id := "R73", date := "2026-10-02"
+    what := "numbered selectors on text modifiers appeared as literal angle text instead of applying the modifier on the selected reveals"
+    pins := [check% overlayStyleChecks, thm% Ir.OverlaySpec.pageOrder_select_exact,
+      .thm `Ir.exclusiveOccurrences_exact _ (@Ir.exclusiveOccurrences_exact.{0})]
+    state := .guarded "0358eb0d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
