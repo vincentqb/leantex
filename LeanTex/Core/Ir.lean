@@ -14078,6 +14078,13 @@ def resolveMathAlphaInline (coverage : Math.MathAlphabetCoverage) : Inline → I
   | .pageCount => .pageCount
   | .linebreak extra => .linebreak extra
 
+/-- A formula leaf is already resolved after one pass. -/
+theorem resolveMathAlphaInline_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (x : Inline) :
+    resolveMathAlphaInline coverage (resolveMathAlphaInline coverage x) =
+      resolveMathAlphaInline coverage x := by
+  cases x <;> simp only [resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
+
 /-- Every alphabet whose used range the selected symbol face lacks,
 deduplicated in first-use order across every formula region `foldDoc` reads. -/
 def missingMathAlphas (coverage : Math.MathAlphabetCoverage)

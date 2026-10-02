@@ -3002,6 +3002,87 @@ theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : 
       resolveMathAlphas coverage body :=
   resolveMathAlphas_id coverage _ (resolveMathAlphas_covers coverage body)
 
+mutual
+
+private theorem missingAlphaList_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ out body, MList.alphaFree body = true →
+      missingAlphaList coverage [] out body = out
+  | _, .nil, _ => rfl
+  | out, .cons x rest, h => by
+    simp only [MList.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaList, missingAlphaItem_nil_id coverage out x h.1,
+      missingAlphaList_nil_id coverage out rest h.2]
+
+private theorem missingAlphaItem_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ out item, MItem.alphaFree item = true →
+      missingAlphaItem coverage [] out item = out
+  | _, .space _, _ => rfl
+  | _, .ink _ _, _ => rfl
+  | out, .atom _ nuc sup sub _, h => by
+    simp only [MItem.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaItem, missingAlphaNucleus_nil_id coverage out nuc h.1,
+      missingAlphaList_nil_id coverage out sup h.2.1,
+      missingAlphaList_nil_id coverage out sub h.2.2]
+
+private theorem missingAlphaNucleus_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ out nucleus, MNucleus.alphaFree nucleus = true →
+      missingAlphaNucleus coverage [] out nucleus = out
+  | _, .sym _, _ => rfl
+  | _, .styled _ _, _ => rfl
+  | _, .word _, _ => rfl
+  | out, .list body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out body h]
+  | _, .alpha _ _ _, h => by simp [MNucleus.alphaFree] at h
+  | out, .frac _ num den, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out num h.1,
+      missingAlphaList_nil_id coverage out den h.2]
+  | out, .rad deg body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out deg h.1,
+      missingAlphaList_nil_id coverage out body h.2]
+  | out, .delim _ _ body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out body h]
+  | _, .big _ _, _ => rfl
+  | out, .accent _ _ body, h => by
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out body h]
+  | out, .grid _ rows, h => by
+    rw [missingAlphaNucleus, missingAlphaRows_nil_id coverage out rows h]
+  | out, .cancel _ _ value body, h => by
+    simp only [MNucleus.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaNucleus, missingAlphaList_nil_id coverage out body h.2,
+      missingAlphaList_nil_id coverage out value h.1]
+
+private theorem missingAlphaRow_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ out row, MRow.alphaFree row = true →
+      missingAlphaRow coverage [] out row = out
+  | _, .nil, _ => rfl
+  | out, .cons cell rest, h => by
+    simp only [MRow.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaRow, missingAlphaList_nil_id coverage out cell h.1,
+      missingAlphaRow_nil_id coverage out rest h.2]
+
+private theorem missingAlphaRows_nil_id (coverage : MathAlphabetCoverage) :
+    ∀ out rows, MRows.alphaFree rows = true →
+      missingAlphaRows coverage [] out rows = out
+  | _, .nil, _ => rfl
+  | out, .cons row rest, h => by
+    simp only [MRows.alphaFree, Bool.and_eq_true] at h
+    rw [missingAlphaRows, missingAlphaRow_nil_id coverage out row h.1,
+      missingAlphaRows_nil_id coverage out rest h.2]
+
+end
+
+/-- An alpha-free tree contributes no whole-alphabet loss, for any coverage. -/
+theorem missingMathAlphas_alphaFree_exact (coverage : MathAlphabetCoverage) (body : MList)
+    (h : body.alphaFree = true) : missingMathAlphas coverage body = #[] :=
+  missingAlphaList_nil_id coverage #[] body h
+
+/-- Resolution spends its whole-alphabet census; a second pass adds no note. -/
+theorem missingMathAlphas_resolve_exact (coverage : MathAlphabetCoverage) (body : MList) :
+    missingMathAlphas coverage (resolveMathAlphas coverage body) = #[] :=
+  missingMathAlphas_alphaFree_exact coverage _ (resolveMathAlphas_covers coverage body)
+
 /-- Resolving an alphabet stack is the identity on the classes projection,
 for any stack: `MList.classes` reads only the item-level atom class and
 never the nucleus, so rewriting a `.sym` glyph or turning an `.alpha`
