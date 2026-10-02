@@ -157,8 +157,8 @@ so rebuilding changed bytes gives the browser a new image URL.
 
 The converter oracle uses synthetic SVGs, including resources a converter
 would silently omit, and builds both outputs from SVG sources alone: build
-`leantex Tests.SvgValidation Tests.SvgTerminal`, then run
-`lake env lean --run scripts/svg-check.lean` on a host with `xmllint`,
+`leantex Tests.SvgValidation Tests.SvgTerminal Tests.SvgBrowser Tests.SvgFaces Tests.SvgPublication`, then run
+`lake env lean scripts/svg-check.lean` on a host with `xmllint`,
 `xsltproc`, `rsvg-convert` and Poppler. It is separate from the hermetic test
 suite.
 

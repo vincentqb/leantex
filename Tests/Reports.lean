@@ -9,6 +9,7 @@ import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
+import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.Artifact
@@ -32,6 +33,8 @@ import Tests.BeamerColors
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.MarkdownInput
+import Tests.InputUse
+import Tests.MathAlphaEntry
 import Tests.OverlaySets
 import Tests.SlideLabels
 import scripts.LandCore
@@ -64,7 +67,7 @@ open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks
-  tableContextChecks linkMacroLayoutChecks)
+  tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
 namespace Reports
 
@@ -423,7 +426,7 @@ def reports : List Report := [
     state := .guarded "db831892" .before .author },
   { id := "R62", date := "2026-09-30"
     what := "Markdown file inclusion in a TeX document printed the filename and skipped the fragment instead of rendering its content"
-    pins := [check% markdownInputChecks]
+    pins := [check% markdownInputChecks, check% inputUseChecks]
     accept := ["invented article and slide fragments preserve content and code spacing in both artifacts, with file lookup compared against lualatex"]
     state := .guarded "db831892" .before .author },
   { id := "R63", date := "2026-09-30"
@@ -436,9 +439,15 @@ def reports : List Report := [
     what := "an unavailable calligraphic alphabet selected an unrelated host glyph instead of the math face's ordinary source glyph"
     pins := [thm% Math.resolveMathAlphas_covers,
       thm% Math.resolveMathAlphas_fixed_point,
-      thm% Layout.resolveMathAlphas_layout_agree,
-      thm% MathMl.resolveMathAlphas_html_agree,
-      check% mathChecks]
+       thm% Layout.resolveMathAlphas_layout_agree,
+       thm% MathMl.resolveMathAlphas_html_agree,
+       thm% Ir.resolveMathAlphas_fixed_point,
+       thm% Ir.resolveMathAlphas_diags_exact,
+       thm% Ir.resolveMathAlphas_named,
+       thm% Layout.run_resolve_pages_agree,
+       thm% HtmlDoc.emitTree_resolve_agree,
+       check% mathAlphaEntryChecks, check% mathAlphaRegionChecks,
+       check% mathChecks]
     state := .guarded "236d3b06" .before .author },
   { id := "R65", date := "2026-10-01"
     what := "a native PDF cancellation target followed a superscript baseline instead of the arrow's direction and left no measured clearance from its tip"
@@ -461,6 +470,7 @@ def reports : List Report := [
   { id := "R67", date := "2026-10-01"
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
     pins := [check% recipeParacolChecks, check% columnFlowChecks, check% columnGeometryChecks,
+      check% macroLengthExecutionChecks,
       thm% Ir.boxWidth_tracks_agree]
     state := .guarded "b91c2555" .before .author },
   { id := "R68", date := "2026-10-01"
@@ -480,7 +490,9 @@ def reports : List Report := [
     state := .guarded "b2a4a435" .before .author },
   { id := "R70", date := "2026-10-01"
     what := "a title page environment kept its body as loose text under an unknown-environment warning instead of an isolated page between the surrounding matter"
-    pins := [check% recipeTitlePageChecks]
+    pins := [check% recipeTitlePageChecks, check% titlePageLifecycleChecks,
+      thm% Ir.PageState.opening_contract, thm% Ir.PageState.ship_contract,
+      thm% Ir.titlepage_empty_exact, thm% Ir.pageOpening_marker_exact]
     state := .guarded "a0aa65a1" .before .author },
   { id := "R71", date := "2026-10-02"
     what := "internal links around boxes kept their annotations but used URI fragments instead of destinations on the final PDF pages"

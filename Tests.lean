@@ -56,6 +56,7 @@ import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
+import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.DiagAudit
@@ -84,7 +85,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks)
+  overlaySetChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
+  inputUseChecks mathAlphaEntryChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -110,7 +112,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingHighlightChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
-  Tests.inputUseChecks ref
+  inputUseChecks ref
   backendChecks ref
   landmarkChecks ref
   pinChecks ref
@@ -186,6 +188,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   columnFlowChecks ref oneFace
   columnGeometryChecks ref oneFace
   recipeTitlePageChecks ref oneFace
+  titlePageLifecycleChecks ref oneFace
   recipeUlemChecks ref oneFace
   recipeLinkAffordChecks ref oneFace
   boxPosRowChecks ref oneFace
@@ -291,6 +294,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   picStateChecks ref oneFace
   ifxMeaningChecks ref oneFace
   macroUseChecks ref oneFace
+  macroLengthExecutionChecks ref oneFace
   macroBindingChecks ref oneFace
   macroArgumentChecks ref oneFace
   macroDefaultChecks ref oneFace
@@ -432,7 +436,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathChecks ref
   mathAlphaGeometryChecks ref
   mathAlphaSemanticsChecks ref
-  Tests.mathAlphaEntryChecks ref
+  mathAlphaEntryChecks ref
   isolatedHoleChecks ref
   mathSymChecks ref
   textSymChecks ref

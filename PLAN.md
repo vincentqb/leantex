@@ -24972,19 +24972,18 @@ command with its renamed control, so file-based commands are measured by
 their effect. This adds file inclusion to the existing Markdown dialect;
 it does not execute the package's Lua converter or arbitrary installed TeX.
 
-Review also reproduced a pre-existing input-expansion gap: a file input
+Review also reproduced an input-expansion gap: a file input
 inside an unused macro is read, and a filename supplied by a macro argument
 is treated as literal source. Eleven of fifteen additional artifact
 assertions fail for the two input surfaces; independent LuaLaTeX probes
 confirm that unused inputs stay inert and called inputs observe the
-caller's conditional state. Use-time file effects remain owed to the
-input expansion boundary. The prerequisite is a pure request/answer
-continuation carrying Compat's bindings, flags and scopes through the
-selected input, before conditional and provision decisions discard
-source. Preparing candidate files early or independently loses that
-state. The selected answer must also determine block/inline classification.
-This needs a shared execution boundary, not a second macro interpreter
-in the driver; the direct-inclusion contract above does not claim it.
+caller's conditional state. The recovery on 2026-10-02 closes this gap
+at the shared execution boundary: a pure request/answer continuation
+carries Compat's bindings, flags and scopes through the selected input,
+before conditional and provision decisions discard source. Preparing
+candidate files early or independently loses that state. The selected
+answer also determines block/inline classification. The direct-inclusion
+contract above is now joined by use-time artifact guards.
 
 ### 2026-09-30 — PDF imports do not depend on object storage form
 
@@ -25690,10 +25689,10 @@ scope entry. `Tests.linkMacroLayoutChecks` compares shipped glyph geometry
 and typed HTML across three definers, four wrapper names, local overrides
 and restoration. Its 42 failures at `4fec4fd2` pass after the correction.
 
-The title-page guard certifies isolation, declaration scope and vertical
-placement. It does not certify the article class's empty page style or page
-counter reset. Those still need a page-scoped furniture/counter representation;
-the existing flow-page lowering does not implement them.
+The original title-page guard certifies isolation, declaration scope and
+vertical placement. The recovery on 2026-10-02 adds the article class's empty
+page style and page-counter reset through `Ir.PageState`; the new lifecycle
+guard checks the furniture and logical folio on the shipped physical pages.
 
 ### 2026-10-02 — One frame count and explicit HTML slide labels
 
@@ -25792,3 +25791,76 @@ restoration and unequal multi-page flows. It failed 67 assertions on
 `d4ba7463`; copying the class gap and restoring a saved gap exposed further
 failures before the register default was readable. These checks and the
 native-setting parity check pass after the correction.
+
+### 2026-10-02 — Complete the interrupted recovery through shared contracts
+
+The recovered changes are reconciled against the current implementation,
+not replayed as older whole-file snapshots. Existing cancellation alignment,
+overlay selection, slide labels, listing colours, palette epochs, destinations
+and measured spacing remain covered by their registered artifact guards.
+
+File inclusion is an effect of an executed command. Compat's existing
+evaluator yields a bound request and resumes the parsed answer with its
+current definitions, conditionals and scopes. The driver passes the resulting
+`Compat.Executed` value into elaboration, so an input is neither prepared
+inside a dormant definition nor expanded a second time. Markdown answers
+remain syntax values, including literal code. `Tests.inputUseChecks` failed
+18 assertions with the eager loader and passes with this boundary; neighboring
+macro, scope, provision and input guards also pass.
+
+Length mutations belong to the same execution rule. A zero-argument macro
+containing an assignment must execute on every call, observing the successive
+register values. Adding the six existing declaration/arithmetic operations to
+the evaluator's live-operation predicate fixes that omission without another
+length interpreter. Independent direct controls and actual rule geometry
+cover assignment, addition, advance, multiplication and division; copied
+meanings, forwarding and skipped uses retain their behavior. The focused
+matrix failed 28 assertions before the predicate correction. The parallel
+column guard also checks repeated doubling of the gutter.
+
+Math alphabet resolution has a document-wide fixed point and a quiet
+diagnostic census. The proofs quantify over the IR constructors and compose
+through its shared walks; captions and reference values enter the same census
+as body text. Both public backend entries consume that resolved document,
+with `Layout.run_resolve_pages_agree` and `HtmlDoc.emitTree_resolve_agree`
+projecting the one resolution. The public-entry guards failed 17 assertions
+before this wiring; caption/reference coverage exposed eight further failures.
+These guards pass without restoring obsolete alphabet semantics or staged
+proof holes.
+
+Article title pages carry page-local furniture and logical folios through
+`Ir.PageOpening` and `Ir.PageState`. Opening, shipout and marker contracts
+state the transitions once. Empty page style expires on a real shipout, not
+on an empty break or the end of a group; oneside mode resets the following
+folio, while twoside mode keeps the running count. Physical page identity
+continues to govern destinations and furniture-start thresholds. Synthetic
+LuaLaTeX probes corroborate leading, middle, empty, repeated and overflowing
+title pages and class-option order. The shipped-page lifecycle guard failed
+48 assertions on `d4ba7463` and passes after the correction; continuous HTML
+preserves the body and consumes the control markers.
+
+SVG conversion completion includes the child exit and both captured streams.
+The bounded runner terminates the process group even when its leader exited
+while a descendant holds a pipe. Completed conversion bytes and evidenced
+failures share a content-keyed cache; incomplete attempts remain retryable.
+Font-dependent results bypass that cache and still convert. Publication and
+browser-face planning consume captured bytes, with no later reread of mutable
+source or cache paths. The planning values are shared by the driver and
+browser oracle. Captures account for every expected face identity, so a
+missing, duplicated or substituted image cannot certify a page.
+
+Focused process, cache, publication, source-deletion, repeated-preparation
+and native final-pose probes pass. `scripts/svg-check.lean` now runs the
+captured-source, publication and face-preparation guards with its existing
+terminal and validation checks. The combined `lake build` and `lake test`
+pass, as do declaration-commutation probes and the browser corpus matrix.
+The stricter browser source key invalidates previous captures; the combined
+tree's captures and corresponding tier have been regenerated. Compatibility
+and coverage gains are recorded through their tier producers.
+
+Source-only copies of the private reference corpus compile to both artifacts.
+Rendered PDF inspection and eight offline browser probes hold the previously
+missing vector figures to their visible screen, print and reduced-motion
+faces; the PDF and static browser face show the animation's final pose.
+Darwin process-group signal syntax was checked against its source; runtime
+validation so far is on Linux, and the browser run targets Chromium.

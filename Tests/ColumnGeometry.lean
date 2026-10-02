@@ -229,6 +229,11 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (columnGeomSource 200 columnGeomPair
       ("\\columnratio{.25}\n\\setlength{\\columnsep}{2\\columnsep}\n"))
     (pt 200) #[columnGeomExpected (pt 200) (pt 20) 1]
+  columnGeomCase ref oneFace "paracol repeated gap macro"
+    (columnGeomSource 200 columnGeomPair
+      ("\\columnratio{.25}\n\\newcommand{\\doublegap}{\\setlength{\\columnsep}{2\\columnsep}}\n" ++
+        "\\doublegap\\doublegap\n"))
+    (pt 200) #[columnGeomExpected (pt 200) (pt 40) 1]
   columnGeomCase ref oneFace "paracol saved class gap"
     (columnGeomSource 200 columnGeomPair
       ("\\columnratio{.25}\n\\newlength{\\savedgap}\\setlength{\\savedgap}{\\columnsep}\n" ++
