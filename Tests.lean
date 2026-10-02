@@ -52,6 +52,7 @@ import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
+import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.DiagAudit
 import Tests.MathSym
@@ -79,7 +80,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks mathAlphaSemanticsChecks)
+  overlaySetChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -168,10 +169,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   boxWidthChecks ref oneFace
   minipageRowChecks ref oneFace
   recipeLinkWrapperChecks ref oneFace
+  linkMacroLayoutChecks ref oneFace
   pdfDestinationChecks ref oneFace
   recipeParacolChecks ref oneFace
   recipeTabularxChecks ref oneFace
-  Tests.tableContextChecks ref oneFace
+  tableContextChecks ref oneFace
   tableFlexChecks ref oneFace
   columnFlowChecks ref oneFace
   recipeTitlePageChecks ref oneFace

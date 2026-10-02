@@ -25682,6 +25682,14 @@ and 13 column failures at `4fec4fd2`; all pass after these corrections.
 The PDF destination guard also covers targets in either column when its
 neighbour continues onto later pages.
 
+Linked box rows remain candidates until the elaborator resolves their
+wrapper names. An accepted macro or parameter owns its arguments; the
+native layout cannot consume them first. Unreferenced command arguments
+are consumed without elaboration, and linked block bodies use the shared
+scope entry. `Tests.linkMacroLayoutChecks` compares shipped glyph geometry
+and typed HTML across three definers, four wrapper names, local overrides
+and restoration. Its 42 failures at `4fec4fd2` pass after the correction.
+
 The title-page guard certifies isolation, declaration scope and vertical
 placement. It does not certify the article class's empty page style or page
 counter reset. Those still need a page-scoped furniture/counter representation;

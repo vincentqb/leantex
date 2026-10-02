@@ -8,6 +8,7 @@ import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
 import Tests.ColumnFlow
+import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -60,7 +61,8 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
-  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks)
+  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks
+  tableContextChecks linkMacroLayoutChecks)
 
 namespace Reports
 
@@ -450,7 +452,8 @@ def reports : List Report := [
     state := .guarded "41c36677" .before .reviewer },
   { id := "R66", date := "2026-10-01"
     what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
-    pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text,
+    pins := [check% recipeLinkWrapperChecks, check% linkMacroLayoutChecks,
+      thm% Ir.linkBlocks_text,
       thm% Ir.Styles.linkBodyAfford_text]
     state := .guarded "82e1e271" .before .author },
   { id := "R67", date := "2026-10-01"
@@ -460,7 +463,7 @@ def reports : List Report := [
     state := .guarded "b91c2555" .before .author },
   { id := "R68", date := "2026-10-01"
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
-    pins := [check% recipeTabularxChecks, check% Tests.tableContextChecks,
+    pins := [check% recipeTabularxChecks, check% tableContextChecks,
       check% tableFlexChecks, thm% Layout.table_natural_width_exact,
       thm% Layout.table_flex_span_width_contract]
     state := .guarded "8a9cf04a" .before .author },
