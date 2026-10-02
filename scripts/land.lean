@@ -695,27 +695,34 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
               | _, _ => pure (.garbled "rev-list counts are not numbers")
             | other => pure (.garbled s!"rev-list counts: {other.length} fields")
       | .rebase tip onto => do
-        -- In the gate tree, from the sha the tree was made at onto the sha
-        -- this run read for `main`, never a name: `git rebase <onto> <tip>`
-        -- switches the tree to `tip` first, so the rebase's input is that
-        -- sha whatever the tree's `HEAD` says, and a commit the owner makes
-        -- meanwhile is neither replayed nor lost. `--no-update-refs`: a
-        -- rebase that also moved a branch pointing into the replayed commits
-        -- would write a ref this run does not own.
+        -- A tip that already contains the base is the reviewed result,
+        -- including its merge resolutions. Rebase would flatten those
+        -- merges and could restore deliberately discarded side changes.
+        -- Otherwise replay only the captured sha, never a moving branch.
+        -- `--no-update-refs` keeps every owner's branch outside this write.
         let tree := treePath e
-        let r ← git e ctr "rebase"
-          #["rebase", "--no-update-refs", "--no-autosquash", "--no-autostash", onto, tip]
+        let contains ← git e ctr "rebase-base" #["merge-base", "--is-ancestor", onto, tip]
           (some tree)
+        -- premise: scenarioMergedTip — both retained and discarded side
+        -- changes keep the reviewed tip, tree and ancestry on the remote.
+        let r ← if contains.code == 0 then
+            git e ctr "rebase" #["checkout", "--detach", tip] (some tree)
+          else if contains.code == 1 then
+            git e ctr "rebase"
+              #["rebase", "--no-update-refs", "--no-autosquash", "--no-autostash", onto, tip]
+              (some tree)
+          else pure contains
         if r.code == 0 then
           let head ← revParse e ctr "rebase" "HEAD" (some tree)
           let clean? ← statusClean e ctr "rebase" tree
           let onRef ← git e ctr "rebase" #["symbolic-ref", "--quiet", "HEAD"] (some tree)
           let detached := onRef.code != 0
-          let ok := clean? == some true && detached
+          let ok := clean? == some true && detached && (contains.code != 0 || head == tip)
           say "rebase" (if ok && isSha head then "ok" else "fail")
             [("from", tip), ("onto", onto), ("tip", if head.isEmpty then "?" else head),
              ("dirty", if clean? == some true then "no" else "yes"),
-             ("detached", if detached then "yes" else "no")]
+             ("detached", if detached then "yes" else "no"),
+             ("mode", if contains.code == 0 then "preserve" else "replay")]
           pure (.rebaseOk head ok)
         else
           -- Any non-zero rebase: the unmerged paths, for the refusal, and an
@@ -2013,6 +2020,38 @@ def scenarioLands (self root : String) : IO Outcome := do
              && wts.size == 2
          , detail := s!"exit={code} gated={tip} main-after={after} worktrees={wts.size}" }
 
+/-- A branch that already contains `main` carries its reviewed merge result,
+including a side commit deliberately reconciled without its old content.
+Landing preserves that exact tip, its tree and its ancestry on the remote.
+Replaying such a merge used to flatten it and could restore discarded code. -/
+def scenarioMergedTip (self root : String) (reconciled : Bool) : IO Outcome := do
+  let name := if reconciled then "merge-reconciled" else "merge-kept"
+  let s ← mkScratch s!"{root}/{name}" name
+  let remote ← addRemote s
+  hgitOk #["checkout", "-q", "-b", "side", "main"] s.wt
+  IO.FS.writeFile s!"{s.wt}/side.txt" "side\n"
+  hgitOk #["add", "side.txt"] s.wt
+  hgitOk #["commit", "-qm", "Side work"] s.wt
+  let side ← revOf s.repo "refs/heads/side"
+  hgitOk #["checkout", "-q", s!"agent/{name}"] s.wt
+  let strategy := if reconciled then #["-s", "ours"] else #[]
+  hgitOk (#["merge", "-q", "--no-ff"] ++ strategy ++ #["side", "-m", "Reviewed merge"]) s.wt
+  let tip ← revOf s.repo s!"refs/heads/agent/{name}"
+  let tree ← revOf s.repo (tip ++ "^{tree}")
+  let (code, out) ← landIn self s.repo #[name, "--push"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  let onRemote ← revOf remote "refs/heads/main"
+  let afterTree ← revOf s.repo "main^{tree}"
+  let (ancestor, _) ← hgit #["merge-base", "--is-ancestor", side, "main"] s.repo
+  let branch ← revOf s.repo s!"refs/heads/agent/{name}"
+  let present ← System.FilePath.pathExists s!"{s.repo}/side.txt"
+  return { label := s!"an already-based {name} keeps its exact tree and ancestry when published"
+         , ok := code == 0 && after == tip && onRemote == tip && afterTree == tree
+             && ancestor == 0 && branch == tip && present == !reconciled
+             && says out "result=landed"
+         , detail := s!"exit={code} tip={tip} main={after} remote={onRemote} \
+tree={tree}->{afterTree} side-ancestor={ancestor == 0} side-file={present}" }
+
 /-- The branch's own commit adds `BAD`; a gate that refuses `BAD` must see
 it. The gates once ran in the branch worktree, whose owner switched it to
 another branch mid-landing, and `BAD` landed under a passing gate. -/
@@ -2252,19 +2291,28 @@ def ownerKept (s : Scratch) (branch : String) : IO (Bool × String) := do
     s!"owner-commit={oc} reachable={anc == 0} file={present} status=[{st}]")
 
 /-- The branch's owner commits in their own worktree after the landing read
-the branch and just before the rebase starts. The landing must keep that
+the branch and just before the gated tip is prepared. The landing must keep that
 commit: a run once replayed it, read it as drift, and put the branch back at
 the tip it read first — erasing the commit from the branch and the file from
-the owner's worktree. -/
-def scenarioOwnerCommitsBeforeRebase (self root : String) : IO Outcome := do
-  let s ← mkScratch s!"{root}/ownerbefore" "own"
+the owner's worktree. Both a preserved tip and a replay onto changed main
+must retain the owner's subsequent commit and refuse the landing. -/
+def scenarioOwnerCommitsBeforeRebase (self root : String) (diverged : Bool := false) :
+    IO Outcome := do
+  let name := if diverged then "ownerbefore-rebase" else "ownerbefore"
+  let s ← mkScratch s!"{root}/{name}" "own"
+  if diverged then
+    IO.FS.writeFile s!"{s.repo}/m.txt" "m\n"
+    hgitOk #["add", "m.txt"] s.repo
+    hgitOk #["commit", "-qm", "Main moves"] s.repo
   let (_, realGit) ← hrun "sh" #["-c", "command -v git"] none
-  let path ← gitWrapper s "[ \"$1\" = rebase ] && [ \"$2\" != --abort ]" (ownerCommit s realGit)
+  let cond := "{ { [ \"$1\" = rebase ] && [ \"$2\" != --abort ]; } || \
+{ [ \"$1\" = checkout ] && [ \"$2\" = --detach ]; }; }"
+  let path ← gitWrapper s cond (ownerCommit s realGit)
   let before ← revOf s.repo "refs/heads/main"
   let (code, out) ← landIn self s.repo #["own"] "t=true" #[("PATH", some path)]
   let after ← revOf s.repo "refs/heads/main"
   let (kept, facts) ← ownerKept s "refs/heads/agent/own"
-  return { label := "an owner's commit made as the rebase starts is kept, and the landing refused"
+  return { label := s!"an owner's commit made while preparing the tip is kept ({name})"
          , ok := code == 2 && kept && before == after && says out "moved during the"
          , detail := s!"exit={code} main={before}->{after} {facts}" }
 
@@ -2657,12 +2705,16 @@ def scratchSelftest : IO UInt32 := do
     [("hookdir", scenarioHookGitDir), ("incheckout", scenarioRootInCheckout)]
   let scenarios : List (String × (String → String → IO Outcome)) :=
     [ ("lands", scenarioLands), ("moves", scenarioBranchMoves), ("leaves", scenarioMainLeaves)
+    , ("merge-kept", fun self root => scenarioMergedTip self root false)
+    , ("merge-reconciled", fun self root => scenarioMergedTip self root true)
     , ("conflict", scenarioConflict), ("optin", scenarioNoOptIn), ("reserved", scenarioReserved)
     , ("stopped", scenarioStoppedRebase), ("switched", scenarioWorktreeSwitched)
     , ("treemoved", scenarioTreeMoved), ("pushtip", scenarioPushNamesTip)
     , ("pushff", scenarioPushNotFastForward), ("union", scenarioUnionDrift)
     , ("foreign", scenarioForeignGitDir), ("retain", scenarioRetention)
-    , ("killed", scenarioKilled), ("ownerbefore", scenarioOwnerCommitsBeforeRebase)
+    , ("killed", scenarioKilled)
+    , ("ownerbefore", fun self root => scenarioOwnerCommitsBeforeRebase self root false)
+    , ("ownerbefore-rebase", fun self root => scenarioOwnerCommitsBeforeRebase self root true)
     , ("ownerafter", scenarioOwnerCommitsAfterRebase), ("switchff", scenarioMainSwitchedAtMerge)
     , ("decoy", scenarioLsRemoteDecoy), ("reland", scenarioRelandRefused)
     , ("putback", scenarioMainPutBack)

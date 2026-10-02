@@ -25864,3 +25864,13 @@ missing vector figures to their visible screen, print and reduced-motion
 faces; the PDF and static browser face show the animation's final pose.
 Darwin process-group signal syntax was checked against its source; runtime
 validation so far is on Linux, and the browser run targets Chromium.
+
+Landing an already-based branch preserves its exact reviewed commit,
+including merge ancestry and deliberately reconciled side changes. An
+unconditional rebase flattened ordinary merges and could replay discarded
+content from a reconciled merge. `scenarioMergedTip` witnessed both failures
+before the correction and now checks the local and remote tip, tree and
+side ancestry. The driver uses Git's ancestor result to distinguish
+preservation from replay; an unreadable result refuses the operation.
+Both paths still check owner races, net content and the full gate plan.
+The pure landing selftest and all 31 guarded repository scenarios pass.
