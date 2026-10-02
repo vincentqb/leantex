@@ -33,6 +33,7 @@ import LeanTex.Cli.Boundary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
+import LeanTex.Cli.BrowserFaces
 
 open LeanTex.Core LeanTex.Cli
 
@@ -787,28 +788,7 @@ its SMIL stays intact in an image context, while print and reduced motion
 select the static poster. An absent or unusable companion leaves the PDF
 poster as the browser face. No generated script or inline XML is needed. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
-  let entries ← imgs.entries.mapM fun en => do
-    if en.src.startsWith Ir.picSrcPrefix then return en
-    let some plan := en.info | return en
-    if plan.form.isNone then return en
-    if let some svg := en.webSvg then
-      match ← ImageAssets.svgPoster svg en.page with
-      | .ok poster => return { en with posterSvg := some poster, webError := none }
-      | .error err => return { en with webError := some err }
-    -- The PDF bytes `fetchImage` already read, reused without rereading the
-    -- file (`fulfilOne_bytes`): the browser face converts exactly the bytes
-    -- the freshness key measured.
-    let some bytes := en.source | return en
-    match ← ImageAssets.pdfSvg bytes en.page with
-    | .error err => return { en with webError := some err }
-    | .ok poster =>
-      let static := { en with webSvg := some poster, webError := none }
-      if en.animated then
-        if let some svg := en.companion then
-          if (← ImageAssets.validateSvg svg).isOk then
-            return { static with webSvg := some svg, posterSvg := some poster }
-      return static
-  return { entries }
+  return { entries := ← imgs.entries.mapM BrowserFaces.prepare }
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
