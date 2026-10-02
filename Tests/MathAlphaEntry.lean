@@ -11,14 +11,16 @@ def mathAlphaEntryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathTextFaces
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let bold := "font-family: var(--font-body); font-weight: 700"
+  -- The nested symbol loss is pinned by mathSymbolResetAccountingChecks;
+  -- mathChecks pins unsupported calligraphic fallback to ordinary italic.
   let rows : Array (String × Array (Nat × Char) × Array (String × String) ×
       Array (Option String)) := #[
     ("\\symbf{A}", #[(6, '𝐀')], #[("𝐀", "")], #[]),
     ("\\mathbf{A}", #[(1, 'A')], #[("A", bold)], #[]),
-    ("\\mathbf{A\\mathcal{A}A}", #[(1, 'A'), (6, 'A'), (1, 'A')],
-      #[("A", bold), ("A", ""), ("A", bold)], #[some "math-alpha:cal"]),
-    ("\\mathcal{A}\\mathcal{A}", #[(6, 'A'), (6, 'A')],
-      #[("A", ""), ("A", "")], #[some "math-alpha:cal"])]
+    ("\\mathbf{A\\symsf{5}A}", #[(1, 'A'), (6, '5'), (1, 'A')],
+      #[("A", bold), ("5", ""), ("A", bold)], #[some "math-alpha:sf"]),
+    ("\\mathcal{A}\\mathcal{A}", #[(6, '𝐴'), (6, '𝐴')],
+      #[("𝐴", ""), ("𝐴", "")], #[some "math-alpha:cal"])]
   let notes (ds : Array Diag) := (ds.filter (·.code == "N0018")).map (·.subject)
   for (source, glyphs, leaves, subjects) in rows do
     let label := "math alphabet entry " ++ source
