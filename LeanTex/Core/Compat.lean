@@ -776,6 +776,9 @@ private structure St where
   (`\newlength`, `\setlength`, register arithmetic): what an `\advance` of
   it is evaluated from. -/
   lens : Array (String × String) := #[]
+  /-- Token sites assigned directly in this scope. Their opening values
+  are captured by the elaborator, where native declarations have resolved. -/
+  localLengths : Array String := #[]
   /-- Command names the rewrite walk has bound so far, in document order:
   what `\providecommand` and `\ProvideDocumentCommand` read. Separate from
   `binds`, which the conditional pass fills for the whole document
@@ -3775,6 +3778,9 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
 moves a line" (tokens := false)
     emit s!"\\page\{ {key} = {src} }"
   | .token t, _ =>
+    unless st.inDef do
+      write fun st => { st with localLengths :=
+        if st.localLengths.contains t then st.localLengths else st.localLengths.push t }
     -- premise: listLevelChecks — a named body setting under a kept \@listi
     -- ships the page the document ships without it: no list reads it here
     if !st.inDef && !preamble && !st.inList && reachesLists st n then
@@ -7193,7 +7199,8 @@ private def splitParacol (body : Array Raw) (start : Nat) :
 /-- Turn one paracol environment into the existing columns model, or keep
 its content in source order under one truthful refusal when it asks for a
 column family beyond the two-flow subset. -/
-private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos) : M Raw := do
+private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
+    (restores : Array Raw := #[]) : M Raw := do
   let (leftCount, j) := takeOpt body 0
   let (args, k) := takeGroups body j 1
   let count := (rawSrc (args.getD 0 #[])).trimAscii.toString.toNat?
@@ -7204,7 +7211,7 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos) : M Raw := d
     sayOnce "env:paracol:count" .W0104
       "only the two-column 'paracol' form is modelled; its content stays in source order" pos
       (help := "write \\begin{paracol}{2} for two independent columns")
-    return .group (body.extract k body.size) pos
+    return .group (body.extract k body.size ++ restores) pos
   let (left, right) ← splitParacol body k
   -- paracol.sty's `\pcol@setcolwidth@r` reserves the gap before applying
   -- ratios. Both the enclosing measure and its gap are read by the one
@@ -7214,8 +7221,8 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos) : M Raw := d
   became "\\begin{paracol}{2}...\\switchcolumn..."
     "\\begin{columns} with two independent column flows" pos
   return .env "columns"
-    #[.env "column" (#[width ratio] ++ left) pos,
-      .env "column" (#[width (1000 - ratio)] ++ right) pos] pos
+    (#[.env "column" (#[width ratio] ++ left) pos,
+      .env "column" (#[width (1000 - ratio)] ++ right) pos] ++ restores) pos
 
 /-- beamer's command form of a column: at the top level of a `{columns}`
 body, `\column{width}` starts a column where it stands, running to the
@@ -8133,20 +8140,21 @@ specs are not modelled")
 
 end
 
-/-- TeX restores local length assignments at a group's close (TeXbook
-ch. 24). Native token declarations are flow epochs, so the bridge writes
-the restored values explicitly. Only a known previous value and a token
-site can be restored here; an unmodelled parameter has no paint to undo. -/
-private def restoreLengths (before after : Array (String × String)) (p : Pos) :
-    M (Array Raw) := do
-  let mut out := #[]
-  for (n, value) in after do
-    let prior := ((before.find? (·.1 == n)).map (·.2)).orElse fun _ => kernelLength n
-    if let some old := prior then
-      if old != value then
-        if let .token key := (paramSites.lookup n).getD (.token n) then
-          out := out ++ (← synthAt s!"\\tokens\{ {key} = {old} }" p)
-  return out
+/-- A scope's trailing length metadata. A space cannot occur in a control
+word, so a document cannot spell this internal handoff. The keys identify
+token sites; only the elaborator knows their resolved opening values. -/
+def lengthRestoreKeys? (name : String) : Option (Array String) :=
+  let mark := "length restore "
+  if name.startsWith mark then
+    some ((name.drop mark.length).toString.splitOn ",").toArray
+  else none
+
+/-- TeX restores local assignments at the group's close (TeXbook ch. 24).
+Carry names, never saved expressions: a referenced register may have
+changed, and native token declarations are not in the rewrite's `lens`. -/
+private def restoreLengths (keys : Array String) (p : Pos) : Array Raw :=
+  if keys.isEmpty then #[]
+  else #[.ctrl ("length restore " ++ String.intercalate "," keys.toList) p]
 
 mutual
 
@@ -8200,18 +8208,20 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
     let savedLens := (← get).lens
+    let savedLengths := (← get).localLengths
     let savedTop := (← get).tableTop
     let savedDefTop := (← get).defTop
     let savedBound := (← get).bound
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
-                              tableTop := false, defTop := saved > 0 }
+                              tableTop := false, defTop := saved > 0, localLengths := #[] }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    let restores ← restoreLengths savedLens (← get).lens p
+    let restores := restoreLengths (← get).localLengths p
     -- A group's assignments end with it (TeXbook ch. 24: an assignment is
     -- local to the group it stands in). Translating stored replacement
     -- text likewise installs none of the definitions it contains.
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
-                              lens := savedLens, tableTop := savedTop, defTop := savedDefTop,
+                              lens := savedLens, localLengths := savedLengths,
+                              tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
     return .group (body' ++ restores) p
   | .env n body p => do
@@ -8296,10 +8306,10 @@ steps come from its body" p
         -- page behind. HTML drops the boundaries and their declarations, so
         -- the body stays one continuous semantic flow with no paged artifact.
         let st0 ← get
-        write fun st => { st with tableTop := false, defTop := false }
+        write fun st => { st with tableTop := false, defTop := false, localLengths := #[] }
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        let restores ← restoreLengths st0.lens (← get).lens p
-        write fun st => { st with lens := st0.lens,
+        let restores := restoreLengths (← get).localLengths p
+        write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
                                   tableTop := st0.tableTop, defTop := st0.defTop }
         became "\\begin{titlepage}…\\end{titlepage}"
           "an isolated flow page opening with empty running furniture and folio one" p
@@ -8307,7 +8317,7 @@ steps come from its body" p
           #[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageEndRole p]
           else #[Raw.ctrl "pagebreak" p]
         return .group (#[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageBeginRole p] ++
-          body' ++ restores ++ close) p
+          body' ++ close ++ restores) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment: only the arguments its
         -- signature reads reach the definition, as written; the body is
@@ -8322,14 +8332,15 @@ steps come from its body" p
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
                                   tableTop := tableEnvs.contains n, defTop := false,
-                                  inParacol := n == "paracol" }
+                                  inParacol := n == "paracol", localLengths := #[] }
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        let restores ← restoreLengths st0.lens (← get).lens p
-        write fun st => { st with lens := st0.lens, inList := st0.inList,
+        let restores := restoreLengths (← get).localLengths p
+        write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
+                                  inList := st0.inList,
                                   tableTop := st0.tableTop, defTop := st0.defTop,
                                   inParacol := st0.inParacol }
         if n == "paracol" then
-          paracolEnv st0.paracolRatio (body' ++ restores) p
+          paracolEnv st0.paracolRatio body' p restores
         else return .env n (body' ++ restores) p
   | r => pure r
 
