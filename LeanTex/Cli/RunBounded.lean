@@ -73,7 +73,10 @@ def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
     if code.isNone then code := (← child.tryWait.toBaseIO).toOption.getD none
     if (← finishedBad outT) || (← finishedBad errT) then break
     if code.isSome && (← IO.hasFinished outT) && (← IO.hasFinished errT) then
-      complete := true
+      -- Finished task results are stable; use the captures we will return,
+      -- since either task could have failed after `finishedBad` observed it.
+      complete := outT.get.toOption.any (·.complete) &&
+        errT.get.toOption.any (·.complete)
       break
     let elapsed := (← IO.monoMsNow) - start
     if elapsed ≥ budgetMs then break

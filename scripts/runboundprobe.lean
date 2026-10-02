@@ -39,6 +39,24 @@ def main : IO UInt32 := do
   let excess ← RunBounded.runBounded "/bin/sh" #["-c", "head -c 1025 /dev/zero"]
     (← IO.currentDir) 1000 100 1024
   check "capture: excess is incomplete, never a reusable prefix" (!excess.complete)
+  -- A capture can fail after the first completion observation and before
+  -- the final one. Every nonempty stream exceeds this zero-byte allowance;
+  -- concurrent quick exits exercise that window on the real task boundary.
+  let cwd ← IO.currentDir
+  let tasks ← (List.range 4).mapM fun _ => IO.asTask (do
+    let mut misreported := 0
+    for _ in [:500] do
+      let got ← RunBounded.runBounded "/bin/sh"
+        #["-c", "printf x; printf y >&2"] cwd 1000 0 0
+      if got.complete then misreported := misreported + 1
+    return misreported) Task.Priority.dedicated
+  let mut misreported := 0
+  for task in tasks do
+    match task.get with
+    | .ok count => misreported := misreported + count
+    | .error e => throw e
+  check s!"capture: failed final captures never complete ({misreported}/2000)"
+    (misreported == 0)
   let failed ← failures.get
   for failure in failed do IO.eprintln s!"FAIL: {failure}"
   IO.println s!"bounded conversion checks: {failed.size} failures"
