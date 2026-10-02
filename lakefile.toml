@@ -40,6 +40,14 @@ name = "Tests"
 root = "Tests"
 moreLeancArgs = ["-O0"]
 
+[[lean_exe]]
+name = "convProbe"
+root = "scripts.convprobe"
+
+[[lean_exe]]
+name = "runBoundProbe"
+root = "scripts.runboundprobe"
+
 # The gate scripts, compiled: the sh trampoline execs the precommit binary
 # when it is newer than the scripts (interpreting the 1,000-line script cost
 # ~1.9 s of a 2.1 s hook); the gate's own build step refreshes both. GateLib
