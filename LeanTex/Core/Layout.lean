@@ -11441,30 +11441,277 @@ private theorem keepAt_preservesGround (b : B) (fs : FontSet) (imgs : Image.Stor
     (keepAt b fs imgs staged si s).preservesGround = s.preservesGround := by
   cases s <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
 
+/-- A column row's opening cursor and its completed flows. A row that fits
+on one page keeps using `alignRow`; only an overflow needs a separate
+cursor, because its next column must revisit an earlier physical page. -/
+private structure ColumnFlow where
+  start : B
+  completed : Option B := none
+
+private structure FlowSt where
+  placed : StepSt
+  columns : List ColumnFlow := []
+
+/-- The next column owns new ink, starting at the row's original cursor.
+The first flow already owns the page prefix and its pending notes. -/
+private def restartColumn (start latest : B) : B :=
+  { start with cur := {}, shrinkAbove := #[], stretchAbove := #[], filsAbove := #[]
+               pinnedLines := 0, pinnedFills := 0, pendingNotes := #[]
+               opened := !start.fresh, freshStart := start.fresh
+               openLinks := start.openLinks.map LinkStart.nextPage, closedLinks := #[]
+               diags := latest.diags
+               pendingAnchors := latest.pendingAnchors }
+
+/-- Join ink on a physical page. A second flow's page ground precedes
+both flows' ink, so it cannot paint over the first flow's fills. -/
+private def mergeColumnPage (g : Geom) (a b : PageOut) : PageOut :=
+  let ground := match b.fills[0]? with
+    | some f => if f.x == -g.bleed && f.y == -g.bleed &&
+        f.w == g.pageW + 2 * g.bleed && f.h == g.pageH + 2 * g.bleed then 1 else 0
+    | none => 0
+  { a with lines := a.lines ++ b.lines, paths := a.paths ++ b.paths
+           links := a.links ++ b.links
+           fills := b.fills.extract 0 ground ++ a.fills ++ b.fills.extract ground b.fills.size }
+
+private def mergeColumnPages (g : Geom) (first : Nat)
+    (a b : Array PageOut) : Array PageOut :=
+  (Array.range (max a.size b.size)).filterMap fun i =>
+    match a[i]?, b[i]? with
+    | some p, some q => some (if i < first then p else mergeColumnPage g p q)
+    | some p, none => some p
+    | none, some q => some q
+    | none, none => none
+
+private def LinkSpan.afterPage (s : LinkSpan) (p : PageOut) : LinkSpan :=
+  { s with lineStart := p.lines.size + s.lineStart, lineEnd := p.lines.size + s.lineEnd
+           fillStart := p.fills.size + s.fillStart, fillEnd := p.fills.size + s.fillEnd
+           pathStart := p.paths.size + s.pathStart, pathEnd := p.paths.size + s.pathEnd }
+
+/-- Two unfinished columns on the same page retain their line ledgers
+and link ranges. The furthest box owns the cursor following the row. -/
+private def joinColumnCurrent (a b : B) : B :=
+  let endCursor := if a.y + a.prevDepth > b.y + b.prevDepth then a else b
+  let cur := { a.cur with
+    lines := a.cur.lines ++ b.cur.lines
+    fills := a.cur.fills ++ b.cur.fills
+    paths := a.cur.paths ++ b.cur.paths }
+  { endCursor with
+    cur := cur
+    shrinkAbove := a.shrinkAbove ++ b.shrinkAbove, pageShrink := max a.pageShrink b.pageShrink
+    stretchAbove := a.stretchAbove ++ b.stretchAbove, pageStretch := max a.pageStretch b.pageStretch
+    filsAbove := a.filsAbove ++ b.filsAbove, pageFils := max a.pageFils b.pageFils
+    needed := max a.needed b.needed
+    pendingNotes := a.pendingNotes ++ b.pendingNotes.map (fun l => { l with y := l.y + a.notesH })
+    notesH := a.notesH + b.notesH
+    closedLinks := a.closedLinks ++ a.openLinks.map (·.close a.cur) ++
+      (b.closedLinks ++ b.openLinks.map (·.close b.cur)).map (·.afterPage a.cur)
+    openLinks := b.openLinks.map (fun s =>
+      { s with lines := cur.lines.size, fills := cur.fills.size, paths := cur.paths.size }) }
+
+/-- Completed pages join by physical index; a shorter flow's last page
+closes before it joins. The last page remains open, so following content
+uses the furthest column's ordinary page builder and final distribution. -/
+private def joinColumn (first : Nat) (a b : B) : B :=
+  let left := if a.pages.size < b.pages.size then a.finishPage else a
+  let right := if b.pages.size < a.pages.size then b.finishPage else b
+  let endCursor := if a.pages.size < b.pages.size then b
+    else if b.pages.size < a.pages.size then
+      { a with closedLinks := a.closedLinks ++ a.openLinks.map (·.close a.cur)
+               openLinks := b.openLinks.map (fun s =>
+                 { s with lines := a.cur.lines.size, fills := a.cur.fills.size,
+                          paths := a.cur.paths.size }) }
+    else joinColumnCurrent a b
+  { endCursor with
+    pages := mergeColumnPages b.geom first left.pages right.pages
+    geom := b.geom, docBg := b.docBg
+    pendingAnchors := b.pendingAnchors
+    diags := b.diags ++ left.diags.extract a.diags.size left.diags.size ++
+      right.diags.extract b.diags.size right.diags.size }
+
+private def ColumnFlow.add (save : ColumnFlow) (b : B) : B :=
+  match save.completed with
+  | none => b
+  | some previous => joinColumn save.start.pages.size previous b
+
+/-- Once a row spans pages, an earlier page's larger y is not its bottom.
+The joined cursor already names the furthest physical page and box. -/
+private def columnEnd (save : ColumnFlow) (st : StepSt) : StepSt :=
+  let b := save.add st.b
+  let colSaves := if b.pages.size == save.start.pages.size then st.colSaves
+    else st.colSaves.modify (st.colSaves.size - 1) fun s =>
+      { s with bottomY := b.y, bottomDepth := b.prevDepth
+               bottomBelow := b.prevBelow, bottomRule := b.prevRuleOnly }
+  { st with b := b, colSaves := colSaves }
+
+/-- Page switching belongs to the flow driver. `stepStaged` continues to
+place a single cursor, also used by an unbreakable float replay. -/
+private def stepFlow (fs : FontSet) (imgs : Image.Store) (st : FlowSt)
+    (op : StagedOp) : FlowSt :=
+  match op, st.columns with
+  | .colOpen pos, _ =>
+    let placed := stepStaged fs imgs st.placed (.colOpen pos)
+    { placed := placed, columns := { start := placed.b } :: st.columns }
+  | .colNext, save :: rest =>
+    let placed := stepStaged fs imgs st.placed .colNext
+    if save.completed.isNone && st.placed.b.pages.size == save.start.pages.size then
+      { st with placed := placed }
+    else
+      { placed := { placed with b := restartColumn save.start st.placed.b }
+        columns := { save with completed := some (save.add st.placed.b) } :: rest }
+  | .colClose, save :: rest =>
+    { placed := stepStaged fs imgs (columnEnd save st.placed) .colClose, columns := rest }
+  | _, _ => { st with placed := stepStaged fs imgs st.placed op }
+
+/-- Rewinding a column revisits pages, so the append-only step fact is not
+enough: both the active cursor and every saved flow carry this page fact. -/
+private def Grounded (g : Geom) (declared : Bool) (b : B) : Prop :=
+  b.geom = g ∧ (declared = true →
+    b.docBg.isSome = true ∧ ∀ p ∈ b.pages, bgFilled g p)
+
+private theorem Grounded.step {g : Geom} {d : Bool} {a b : B}
+    (h : Grounded g d a) (hs : BgStep a b) : Grounded g d b := by
+  refine ⟨hs.1.trans h.1, fun hd => ?_⟩
+  obtain ⟨hb, hp⟩ := h.2 hd
+  refine ⟨hs.2.1 hb, fun p hpp => ?_⟩
+  rcases hs.2.2 hb p hpp with old | new
+  · exact hp p old
+  · exact h.1 ▸ new
+
+private theorem mergeColumnPage_ground (g : Geom) (a b : PageOut)
+    (ha : bgFilled g a) : bgFilled g (mergeColumnPage g a b) := by
+  obtain ⟨f, hf, shape⟩ := ha
+  refine ⟨f, ?_, shape⟩
+  simp only [mergeColumnPage, Array.toList_append, List.mem_append]
+  exact Or.inl (Or.inr hf)
+
+private theorem mergeColumnPages_ground (g : Geom) (first : Nat) (a b : Array PageOut)
+    (ha : ∀ p ∈ a, bgFilled g p) (hb : ∀ p ∈ b, bgFilled g p) :
+    ∀ p ∈ mergeColumnPages g first a b, bgFilled g p := by
+  intro p hp
+  obtain ⟨i, _, hp⟩ := Array.mem_filterMap.mp hp
+  cases ea : a[i]? with
+  | none =>
+    cases eb : b[i]? with
+    | none => simp [ea, eb] at hp
+    | some q =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      exact hb q (Array.mem_of_getElem? eb)
+  | some q =>
+    cases eb : b[i]? with
+    | none =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      exact ha q (Array.mem_of_getElem? ea)
+    | some r =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      split
+      · exact ha q (Array.mem_of_getElem? ea)
+      · exact mergeColumnPage_ground g q r (ha q (Array.mem_of_getElem? ea))
+
+private theorem joinColumn_ground {g : Geom} {d : Bool} (first : Nat) (a b : B)
+    (ha : Grounded g d a) (hb : Grounded g d b) :
+    Grounded g d (joinColumn first a b) := by
+  refine ⟨hb.1, fun hd => ⟨(hb.2 hd).1, ?_⟩⟩
+  have hl : Grounded g d (if a.pages.size < b.pages.size then a.finishPage else a) := by
+    split
+    · exact ha.step (bgStep_finishPage a)
+    · exact ha
+  have hr : Grounded g d (if b.pages.size < a.pages.size then b.finishPage else b) := by
+    split
+    · exact hb.step (bgStep_finishPage b)
+    · exact hb
+  change ∀ p ∈ mergeColumnPages b.geom first _ _, bgFilled g p
+  rw [hb.1]
+  exact mergeColumnPages_ground g first _ _ (hl.2 hd).2 (hr.2 hd).2
+
+private def ColumnFlow.grounded (g : Geom) (d : Bool) (save : ColumnFlow) : Prop :=
+  Grounded g d save.start ∧ ∀ b ∈ save.completed, Grounded g d b
+
+private theorem ColumnFlow.add_ground {g : Geom} {d : Bool} (save : ColumnFlow) (b : B)
+    (hs : save.grounded g d) (hb : Grounded g d b) : Grounded g d (save.add b) := by
+  unfold ColumnFlow.add
+  split
+  · exact hb
+  · next previous he =>
+    exact joinColumn_ground _ _ _ (hs.2 previous he) hb
+
+private def FlowGround (g : Geom) (d : Bool) (st : FlowSt) : Prop :=
+  Grounded g d st.placed.b ∧ ∀ save ∈ st.columns, save.grounded g d
+
+private theorem stepFlow_ground (fs : FontSet) (imgs : Image.Store)
+    (st : FlowSt) (op : StagedOp) {g : Geom} {d : Bool}
+    (h : FlowGround g d st) (hg : op.preservesGround = true) :
+    FlowGround g d (stepFlow fs imgs st op) := by
+  cases op with
+  | colOpen pos =>
+    have hp := h.1.step (bgStep_stepStaged fs imgs st.placed (.colOpen pos) hg)
+    refine ⟨hp, ?_⟩
+    simp only [stepFlow, List.forall_mem_cons]
+    exact ⟨⟨hp, by simp⟩, h.2⟩
+  | colNext =>
+    cases hc : st.columns with
+    | nil =>
+      simp only [stepFlow, hc, FlowGround]
+      exact ⟨h.1.step (bgStep_stepStaged fs imgs st.placed .colNext hg),
+        by simp⟩
+    | cons save rest =>
+      have hs := h.2 save (hc ▸ List.mem_cons_self)
+      have hr : ∀ s ∈ rest, s.grounded g d := fun s hm =>
+        h.2 s (hc ▸ List.mem_cons_of_mem _ hm)
+      simp only [stepFlow, hc]
+      split
+      · exact ⟨h.1.step (bgStep_stepStaged fs imgs st.placed .colNext hg),
+          by simpa only [hc] using h.2⟩
+      · refine ⟨hs.1, ?_⟩
+        simp only [List.forall_mem_cons, ColumnFlow.grounded, Option.mem_some]
+        exact ⟨⟨hs.1, fun _ he => he ▸ save.add_ground st.placed.b hs h.1⟩, hr⟩
+  | colClose =>
+    cases hc : st.columns with
+    | nil =>
+      simp only [stepFlow, hc, FlowGround]
+      exact ⟨h.1.step (bgStep_stepStaged fs imgs st.placed .colClose hg),
+        by simp⟩
+    | cons save rest =>
+      have hs := h.2 save (hc ▸ List.mem_cons_self)
+      have hb : Grounded g d (columnEnd save st.placed).b :=
+        save.add_ground st.placed.b hs h.1
+      simp only [stepFlow, hc, FlowGround]
+      refine ⟨hb.step (bgStep_stepStaged fs imgs (columnEnd save st.placed) .colClose hg), ?_⟩
+      exact fun s hm => h.2 s (hc ▸ List.mem_cons_of_mem _ hm)
+  | _ => exact ⟨h.1.step (bgStep_stepStaged fs imgs st.placed _ hg), h.2⟩
+
 /-- Placement, one op at a time (`stepStaged`) — except a float's ops,
 which travel as one unbreakable group between `floatOpen` and its
 matching close (`runFloat`). Explicit index recursion (the elabBlocks
 knot), so page invariants fold over three named calls: `runFloat`,
 `stepStaged`, and the recursion itself. -/
-private def placeFrom (fs : FontSet) (imgs : Image.Store)
-    (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
+private def placeFlowFrom (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : FlowSt) (si : Nat) : FlowSt :=
   if h : si < staged.size then
     match staged[si] with
     | .floatOpen =>
       let j := matchingClose staged (si + 1) 1
       have hj : si + 1 ≤ j := matchingClose_ge staged (si + 1) 1
-      placeFrom fs imgs staged (runFloat fs imgs st (staged.extract (si + 1) j))
+      placeFlowFrom fs imgs staged
+        { st with placed := runFloat fs imgs st.placed (staged.extract (si + 1) j) }
         (j + 1)
-    | s => placeFrom fs imgs staged (stepStaged fs imgs st (keepAt st.b fs imgs staged si s)) (si + 1)
+    | s => placeFlowFrom fs imgs staged
+        (stepFlow fs imgs st (keepAt st.placed.b fs imgs staged si s)) (si + 1)
   else st
 termination_by staged.size - si
 decreasing_by all_goals omega
 
-private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
-    (staged : Array StagedOp) (st : StepSt) (si : Nat)
-    (hg : ∀ op ∈ staged, op.preservesGround = true) :
-    BgStep st.b (placeFrom fs imgs staged st si).b := by
-  rw [placeFrom]
+private def placeFrom (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
+  (placeFlowFrom fs imgs staged { placed := st } si).placed
+
+private theorem placeFlowFrom_ground (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : FlowSt) (si : Nat) {g : Geom} {d : Bool}
+    (hg : ∀ op ∈ staged, op.preservesGround = true) (hs : FlowGround g d st) :
+    FlowGround g d (placeFlowFrom fs imgs staged st si) := by
+  rw [placeFlowFrom]
   split
   · rename_i h
     have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
@@ -11475,13 +11722,24 @@ private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
         intro op hop
         obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hop
         exact hg _ (Array.getElem_mem (by omega))
-      exact (bgStep_runFloat fs imgs st _ hgroup).trans (bgStep_placeFrom _ _ _ _ _ hg)
-    · apply (bgStep_stepStaged fs imgs st _ ?_).trans (bgStep_placeFrom _ _ _ _ _ hg)
+      exact placeFlowFrom_ground _ _ _ _ _ hg
+        ⟨hs.1.step (bgStep_runFloat fs imgs st.placed _ hgroup), hs.2⟩
+    · apply placeFlowFrom_ground _ _ _ _ _ hg (stepFlow_ground fs imgs st _ hs ?_)
       rw [keepAt_preservesGround]
       exact hg _ (Array.getElem_mem h)
-  · exact BgStep.refl _
+  · exact hs
 termination_by staged.size - si
 decreasing_by all_goals omega
+
+private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat)
+    (hg : ∀ op ∈ staged, op.preservesGround = true)
+    (hp : st.b.docBg.isSome = true → ∀ p ∈ st.b.pages, bgFilled st.b.geom p) :
+    BgStep st.b (placeFrom fs imgs staged st si).b := by
+  have h := (placeFlowFrom_ground fs imgs staged { placed := st } si hg
+    ⟨⟨rfl, fun hd => ⟨hd, hp hd⟩⟩, by simp⟩).1
+  exact ⟨h.1, fun hd => (h.2 hd).1,
+    fun hd p hm => Or.inr ((h.2 hd).2 p hm)⟩
 
 theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array StagedOp) (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
@@ -12337,7 +12595,8 @@ private theorem runCore_bg
     split
     · exact h.trans (bgStep_finishPage _)
     · exact h
-  refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch))) ?_ rfl q hq)
+  refine fin _ (key _ _ (bgStep_close _ _ _
+    (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q hq)
     ?_ ?_ ?_
   all_goals first
     | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, pdfView, hbg]

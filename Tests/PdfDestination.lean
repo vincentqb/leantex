@@ -41,6 +41,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   let pre := "\\usepackage{hyperref,paracol}\n" ++
     "\\page{width=260pt,height=220pt,hmargin=24pt,vmargin=24pt}\n"
   let longText := String.join (List.replicate 24 "Earlier words occupy the available lines. ")
+  let longColumn := String.join (List.replicate 24 "Earlier column words.\\par ")
   let targets : Array (String × String × String) := #[
     ("paragraph", "\\newpage\\hypertarget{destination}{TARGET words.}",
       "\\newpage TARGET words."),
@@ -59,7 +60,16 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
       "\\newpage\\begin{tabular}{ll}First&TARGET\\\\Next&Last\\end{tabular}"),
     ("column", "\\newpage\\begin{paracol}{2}Left.\\switchcolumn " ++
       "\\hypertarget{destination}{TARGET words.}\\end{paracol}",
-      "\\newpage\\begin{paracol}{2}Left.\\switchcolumn TARGET words.\\end{paracol}")
+      "\\newpage\\begin{paracol}{2}Left.\\switchcolumn TARGET words.\\end{paracol}"),
+    ("overflowing left column", "\\newpage\\begin{paracol}{2}" ++ longColumn ++
+      "\\switchcolumn\\hypertarget{destination}{TARGET words.}\\end{paracol}",
+      "\\newpage\\begin{paracol}{2}" ++ longColumn ++
+      "\\switchcolumn TARGET words.\\end{paracol}"),
+    ("overflowing right column", "\\newpage\\begin{paracol}{2}" ++
+      "\\hypertarget{destination}{TARGET words.}\\switchcolumn " ++ longColumn ++
+      "\\end{paracol}",
+      "\\newpage\\begin{paracol}{2}TARGET words.\\switchcolumn " ++ longColumn ++
+      "\\end{paracol}")
   ]
   for (name, target, bare) in targets do
     let link := "\\hyperlink{destination}{Jump to target.}\\par "

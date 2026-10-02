@@ -5,6 +5,9 @@ import Tests.Conditionals
 import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
+import Tests.TableContext
+import Tests.TableFlex
+import Tests.ColumnFlow
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -452,11 +455,14 @@ def reports : List Report := [
     state := .guarded "82e1e271" .before .author },
   { id := "R67", date := "2026-10-01"
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
-    pins := [check% recipeParacolChecks, thm% Ir.boxWidth_tracks_agree]
+    pins := [check% recipeParacolChecks, check% columnFlowChecks,
+      thm% Ir.boxWidth_tracks_agree]
     state := .guarded "b91c2555" .before .author },
   { id := "R68", date := "2026-10-01"
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
-    pins := [check% recipeTabularxChecks, thm% Layout.table_natural_width_exact]
+    pins := [check% recipeTabularxChecks, check% Tests.tableContextChecks,
+      check% tableFlexChecks, thm% Layout.table_natural_width_exact,
+      thm% Layout.table_flex_span_width_contract]
     state := .guarded "8a9cf04a" .before .author },
   { id := "R69", date := "2026-10-01"
     what := "strikeout was requested without a shared through-line geometry for both artifacts"

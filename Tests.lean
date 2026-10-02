@@ -49,6 +49,9 @@ import Tests.PackageOptions
 import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
+import Tests.TableContext
+import Tests.TableFlex
+import Tests.ColumnFlow
 import Tests.PackageCode
 import Tests.DiagAudit
 import Tests.MathSym
@@ -168,6 +171,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pdfDestinationChecks ref oneFace
   recipeParacolChecks ref oneFace
   recipeTabularxChecks ref oneFace
+  Tests.tableContextChecks ref oneFace
+  tableFlexChecks ref oneFace
+  columnFlowChecks ref oneFace
   recipeTitlePageChecks ref oneFace
   recipeUlemChecks ref oneFace
   recipeLinkAffordChecks ref oneFace

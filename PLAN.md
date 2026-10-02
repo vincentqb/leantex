@@ -25662,6 +25662,26 @@ a block target, a target after a paragraph continues onto another page, and
 a target inside a kerned word. Paired controls require identical shipped
 text and line geometry when the target is removed.
 
+Supported table environments share one context registry, so a nested table
+cannot escape its cell merely because the outer table uses a target width.
+Flexible widths are fitted after the span constraints are applied.
+`table_flex_span_width_contract` bounds the resulting widths and padding
+by the target whenever the minimum span constraints fit; impossible
+constraints retain their overflow rather than pretending to fit.
+`tableFlexChecks` reads shipped rules and cell positions, including nested
+widths, removed outer padding, and spans crossing natural and flexible columns.
+
+Independent columns now start from the same physical page and cursor.
+Their completed pages join by page index, and following content resumes
+after the furthest flow. The shared join retains lines, fills, links and
+page grounds; destination metadata travels on those lines. The page-ground
+proof covers the restarted flows. `columnFlowChecks` checks conservation,
+order, prefix preservation and invariance under swapping columns, including
+a nested table in the shorter flow. The review witnessed 18 width failures
+and 13 column failures at `4fec4fd2`; all pass after these corrections.
+The PDF destination guard also covers targets in either column when its
+neighbour continues onto later pages.
+
 The title-page guard certifies isolation, declaration scope and vertical
 placement. It does not certify the article class's empty page style or page
 counter reset. Those still need a page-scoped furniture/counter representation;
