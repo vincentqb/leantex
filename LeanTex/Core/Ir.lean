@@ -8590,9 +8590,16 @@ def Inline.anchorBearing : Inline → Bool
   | .pageNumber | .pageCount | .linebreak _ | .onSteps _ _ | .altSteps _ _ _
   | .image _ _ _ | .icon _ _ | .label _ => false
 
-/-- Whether a block body already contains an anchor-bearing construct. -/
-def hasBlockAnchor (xs : Array Block) : Bool :=
-  foldBlocks (fun found b => found || (b matches .link _ _))
+/-- Whether a block body already holds an interactive descendant — a node
+that takes keyboard focus or emits an anchor, so wrapping it in an outer
+link would make invalid nested interaction (WCAG SC 4.1.2). Three sources: a
+block link (`.link`), a listing/verbatim block (`.verbatim`, which the
+backend ships as a focusable `<pre tabindex="0">` scroll container), and an
+anchor-bearing inline leaf (`anchorBearing`: a link, reference, citation, or
+footnote, now or after resolution). -/
+def hasInteractiveDescendant (xs : Array Block) : Bool :=
+  foldBlocks
+    (fun found b => found || (b matches .link _ _) || (b matches .verbatim _ _ _))
     (fun found x => found || x.anchorBearing) false xs
 
 /-- Whether an inline leaf bears text ink a link affordance should mark. A
@@ -14070,7 +14077,7 @@ def linkBlocks (url : String) (xs : Array Block) : Array Block :=
 text-bearing run — through styling, colour and role wrappers alike — set in
 the kind's link ink and underlined, exactly as an inline link's body is,
 applied once per leaf. Built only where the body bears no anchor
-(`hasBlockAnchor` refuses the nested case first), so no span inside an inner
+(`hasInteractiveDescendant` refuses the nested case first), so no span inside an inner
 inline link is reached, and none is afforded twice. An image-only body — no
 text-bearing leaf — is returned carrying no decoration (`linkLeafAfford_id`).
 Both backends read this one afforded body: `Layout`'s `.decorated`/`.colored`

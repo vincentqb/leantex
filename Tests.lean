@@ -154,6 +154,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   boxWidthChecks ref oneFace
   minipageRowChecks ref oneFace
   recipeLinkWrapperChecks ref oneFace
+  recipeInteractiveNestingChecks ref oneFace
   recipeParacolChecks ref oneFace
   recipeTabularxChecks ref oneFace
   recipeTitlePageChecks ref oneFace

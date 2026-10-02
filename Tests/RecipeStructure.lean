@@ -692,3 +692,69 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
   t "HTML: an image-only block link is a reachable named anchor with no underline"
     (ihrefs == #["https://example.org"] && ialts.contains "Site logo" &&
       itrees.foldl (fun n tree => n + countTag "u" tree) 0 == 0)
+
+
+/-- **A block link refuses any interactive descendant and keeps the content.**
+Wrapping a focusable or anchor-bearing node in an outer link makes invalid
+nested interaction (WCAG SC 4.1.2) — an `<a>` inside an `<a>`, or an `<a>`
+around a `<pre tabindex="0">` — a keyboard trap. The genuine new gap over the
+already-refused nested links/references/citations/footnotes is a
+listing/verbatim block, which ships as a focusable `<pre>`. For each,
+`Ir.hasInteractiveDescendant` drops the outer wrapper (one W0104, keyed
+`link:nested`) while keeping the content; a legitimate block link keeps its
+one named, reachable anchor. The backstop fact
+`A11yFacts.interactiveInAnchor` is zero in every case. Assertions read
+Layout.Out, the typed HTML tree, and the accessibility facts — never a dump. -/
+def recipeInteractiveNestingChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let cascade := ["W0301", "W0302", "E0304", "E0336", "E0311"]
+  let a11yOf (trees : Array Html.Node) : HtmlDoc.A11yFacts :=
+    HtmlDoc.a11yFacts true false trees
+  -- The new gap: a block link wrapping a listing. The verbatim ships as a
+  -- focusable `<pre>`, so keeping the outer `<a>` would wrap a tab stop — the
+  -- case `hasInteractiveDescendant` did not detect before.
+  let (vdoc, vds) := elabStr (dvDoc "\\usepackage{hyperref}\n"
+    "\\hyperlink{spot}{\\begin{verbatim}\nlisting body here\n\\end{verbatim}}")
+  let vtrees := vdoc.body.map (HtmlDoc.blockNode {})
+  let vout := layoutOf oneFace vdoc
+  let (vhtml, _) := HtmlDoc.emit {} vdoc
+  t "a block link wrapping a listing is refused and ships the listing with no outer link"
+    ((vds.filter (·.code == "W0104")).size == 1 && vds.all (fun d => !cascade.contains d.code) &&
+      vtrees.foldl (fun n tree => n + countTag "a" tree) 0 == 0 &&
+      vtrees.foldl (fun n tree => n + countTag "pre" tree) 0 == 1 &&
+      hasStr vhtml "listing body here" &&
+      (vout.pages[0]?.map (·.links.size)).getD 1 == 0 &&
+      (a11yOf vtrees).interactiveInAnchor == 0)
+  -- Already refused before this change, re-asserted: a block link wrapping an
+  -- anchor-bearing inline (reference, citation, footnote). The inner anchor
+  -- survives; only the outer wrapper is dropped, so no anchor nests in
+  -- another, the outer target reaches no href, and the content stays.
+  let refusedInline (name body content : String) : IO Unit := do
+    let (rdoc, rds) := elabStr (dvDoc "\\usepackage{hyperref}\n"
+      ("\\hyperlink{spot}{" ++ body ++ "}"))
+    let trees := rdoc.body.map (HtmlDoc.blockNode {})
+    let hrefs := trees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+    let txt := " ".intercalate ((allLines (layoutOf oneFace rdoc)).toList.map lineText)
+    t s!"a block link wrapping a {name} is refused, keeps its content, and nests no anchor"
+      ((rds.filter (·.code == "W0104")).size == 1 && rds.all (fun d => !cascade.contains d.code) &&
+        hasStr txt content && !hrefs.contains "#spot" &&
+        trees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0 &&
+        (a11yOf trees).interactiveInAnchor == 0)
+  refusedInline "reference" "See \\ref{sec:x} here." "here."
+  refusedInline "citation" "See \\cite{key} here." "here."
+  refusedInline "footnote" "Body text\\footnote{a note}." "Body text"
+  -- A legitimate (non-interactive) block link is untouched: one named,
+  -- reachable anchor, and no interactive descendant inside it.
+  let (gdoc, gds) := elabStr (dvDoc "\\usepackage{hyperref}\n"
+    "\\hyperlink{spot}{\\begin{minipage}{.4\\textwidth}Legit panel words.\\end{minipage}}")
+  let gtrees := gdoc.body.map (HtmlDoc.blockNode {})
+  let ghrefs := gtrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  let gName := gtrees.foldl (fun s n => s ++ anchorInnerText false n) ""
+  t "a legitimate block link keeps its one named, reachable anchor and no nested interaction"
+    ((gds.filter (·.code == "W0104")).size == 0 &&
+      ghrefs.size == 1 && (ghrefs[0]?.map (·.startsWith "#")).getD false &&
+      ghrefs.all (fun h => HtmlDoc.tabbable "a" #[("href", h)]) &&
+      hasStr gName "Legit panel words." &&
+      (a11yOf gtrees).interactiveInAnchor == 0 &&
+      gtrees.foldl (fun n tree => n + anchorInAnchor false tree) 0 == 0)

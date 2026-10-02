@@ -7448,6 +7448,14 @@ structure A11yFacts where
   subtree: a keyboard stop assistive technology is told is not there —
   axe's `aria-hidden-focus`, SC 4.1.2. -/
   hiddenTabStops : Nat := 0
+  /-- Interactive descendants inside an `<a>` — a tab stop (`tabbable`: a
+  nested anchor, a `<pre tabindex="0">`, a control) under an ancestor
+  anchor: invalid nested interaction and a keyboard trap — axe's
+  `nested-interactive`, SC 4.1.2. The anchor itself stays named and
+  reachable; only a tabbable node *inside* one counts. The block-link
+  refusal (`Ir.hasInteractiveDescendant`) keeps this at zero on the shipped
+  corpus by dropping any outer link wrapping an interactive descendant. -/
+  interactiveInAnchor : Nat := 0
   imgs : Nat := 0
   /-- `<img>` with no non-blank `alt` and no declared decorative role
   (`presentation`/`none`), or a non-SVG `role="img"` with no accessible
@@ -7491,12 +7499,16 @@ def scrollReachable : Node → Bool
   | .style _ => false
   | .script _ _ => false
 
-/-- One element's own contribution to the facts, its children aside. -/
-def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
+/-- One element's own contribution to the facts, its children aside.
+`inAnchor` is whether an ancestor `<a>` encloses this node: a tabbable node
+inside one is invalid nested interaction (`interactiveInAnchor`). -/
+def a11yElem (own deck inAnchor : Bool) (tag : String) (attrs : Array (String × String))
     (kids : Array Node) (acc : A11yFacts) : A11yFacts :=
   let decorative := match attrOf? attrs "role" with
     | some "presentation" | some "none" => true
     | _ => false
+  let acc := if inAnchor && tabbable tag attrs then
+      { acc with interactiveInAnchor := acc.interactiveInAnchor + 1 } else acc
   let acc := if tag == "h1" then { acc with h1s := acc.h1s + 1 } else acc
   let acc := if tag == "img" || (tag != "svg" && attrOf? attrs "role" == some "img") then
       let named := if tag == "img" then nonBlank ((attrOf? attrs "alt").getD "")
@@ -7519,31 +7531,33 @@ mutual
 
 /-- The facts of one node onto `acc`; `hidden` is whether an ancestor took
 the subtree out of the accessibility tree, `inert` whether one took it out
-of rendering (the `hidden` attribute), where nothing takes focus. The list
-companion keeps the recursion structural. -/
-def a11yOne (own deck hidden inert : Bool) (acc : A11yFacts) : Node → A11yFacts
+of rendering (the `hidden` attribute), where nothing takes focus; `inAnchor`
+is whether an ancestor `<a>` encloses it. The list companion keeps the
+recursion structural. -/
+def a11yOne (own deck inAnchor hidden inert : Bool) (acc : A11yFacts) : Node → A11yFacts
   | .text _ => acc
   | .style _ => acc
   | .script _ _ => acc
   | .elem tag attrs kids =>
     let hid := hidden || attrOf? attrs "aria-hidden" == some "true"
     let inert := inert || (attrOf? attrs "hidden").isSome
-    let acc := if !hid then a11yElem own deck tag attrs kids acc
+    let acc := if !hid then a11yElem own deck inAnchor tag attrs kids acc
       else if !inert && tabbable tag attrs then
         { acc with hiddenTabStops := acc.hiddenTabStops + 1 }
       else acc
-    a11yList own deck hid inert acc kids.toList
+    a11yList own deck (inAnchor || tag == "a") hid inert acc kids.toList
 
-def a11yList (own deck hidden inert : Bool) (acc : A11yFacts) : List Node → A11yFacts
+def a11yList (own deck inAnchor hidden inert : Bool) (acc : A11yFacts) : List Node → A11yFacts
   | [] => acc
-  | k :: rest => a11yList own deck hidden inert (a11yOne own deck hidden inert acc k) rest
+  | k :: rest =>
+    a11yList own deck inAnchor hidden inert (a11yOne own deck inAnchor hidden inert acc k) rest
 
 end
 
 /-- The facts of a page body, under the stylesheet mode and page model it
 was emitted for. -/
 def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
-  a11yList own deck false false {} body.toList
+  a11yList own deck false false false {} body.toList
 
 /-- The four pairings one variant of the stylesheet creates, as data: body
 text on the page, marker text on the page, code text on its tint, the focus

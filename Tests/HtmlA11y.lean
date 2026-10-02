@@ -161,6 +161,13 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- are what fire it.
     t s!"html a11y {n}: no tab stop is hidden from assistive technology \
 ({f.hiddenTabStops})" (f.hiddenTabStops == 0)
+    -- No interactive node stands inside an `<a>`: the block-link refusal
+    -- (`Ir.hasInteractiveDescendant`) drops any outer link wrapping a
+    -- tabbable descendant, so no shipped anchor is a keyboard trap
+    -- (axe `nested-interactive`, SC 4.1.2). A floor over the shipped pages;
+    -- the probes below are what fire it.
+    t s!"html a11y {n}: no interactive node nests inside an anchor \
+({f.interactiveInAnchor})" (f.interactiveInAnchor == 0)
     -- No two stages share a name (a floor: the corpus repeats no title).
     let names := (stageMarks body).filterMap (·.2)
     t s!"html a11y {n}: no two stages share a name"
@@ -389,3 +396,22 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.attrOf? a "role", HtmlDoc.attrOf? a "aria-hidden")
   t s!"html a11y: an unlinked deck logo strip is declared decorative: {strips} {imgAlts udbody}"
     (strips == #[(some "presentation", some "true")] && imgAlts udbody == #[some ""])
+  -- interactive-in-anchor fires on exactly a tab stop inside an `<a>`, and
+  -- the anchor itself stays named and reachable. A nested anchor and a
+  -- `<pre tabindex="0">` inside a link each count one; a plain anchor over
+  -- text or an image counts none. This is what the per-page zero-hold above
+  -- secures, and what the block-link refusal keeps out of the shipped pages.
+  let aEl (tag : String) (attrs : Array (String × String) := #[])
+      (kids : Array Html.Node := #[]) : Html.Node := .elem tag attrs kids
+  let anchor (kids : Array Html.Node) := aEl "a" #[("href", "#x")] kids
+  t "html a11y: a nested anchor inside an anchor is one interactive-in-anchor"
+    ((HtmlDoc.a11yFacts true false #[anchor #[anchor #[.text "y"]]]).interactiveInAnchor == 1)
+  t "html a11y: a focusable code block inside an anchor is one interactive-in-anchor"
+    ((HtmlDoc.a11yFacts true false
+      #[anchor #[aEl "pre" #[("tabindex", "0")] #[.text "code"]]]).interactiveInAnchor == 1)
+  t "html a11y: an anchor over plain text nests no interaction, and stays a tab stop"
+    (let f := HtmlDoc.a11yFacts true false #[anchor #[.text "y"]]
+     f.interactiveInAnchor == 0 && HtmlDoc.tabbable "a" #[("href", "#x")])
+  t "html a11y: an anchor over an image nests no interaction"
+    ((HtmlDoc.a11yFacts true false
+      #[anchor #[aEl "img" #[("src", "a.png"), ("alt", "a chart")]]]).interactiveInAnchor == 0)

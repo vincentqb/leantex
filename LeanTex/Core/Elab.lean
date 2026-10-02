@@ -4703,8 +4703,8 @@ no extent is reserved for it" pos
             let acc ← if name == "hyperlink" then
                 if Ir.anyInline (·.anchorBearing) inner then do
                   warnOnce ctx "link:nested" .W0104
-                    "a link wrapper contains another link; the outer link is skipped" pos
-                    (help := "links cannot nest; move the inner link outside the outer wrapper")
+                    "a link wrapper contains an interactive element; the outer link is skipped" pos
+                    (help := "a link cannot wrap another interactive element; move it outside the link")
                   pure (acc ++ inner)
                 else
                   pure (acc.push (.link ("#".append anchor) (ctx.styles.linkInk "link" inner)))
@@ -10650,17 +10650,17 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         else
           let anchor := Ir.labelAnchor target
           let url := if n == "hyperlink" then "#".append anchor else target
-          let nested := Ir.hasBlockAnchor inner
+          let nested := Ir.hasInteractiveDescendant inner
           if nested then do
             warnOnce ctx "link:nested" .W0104
-              "a link wrapper contains another link; the outer link is skipped" pos
-              (help := "links cannot nest; move the inner link outside the outer wrapper")
+              "a link wrapper contains an interactive element; the outer link is skipped" pos
+              (help := "a link cannot wrap another interactive element; move it outside the link")
             pure inner
           else
             -- The nested text takes the inline link's two affordances — the
             -- kind's ink and an underline — from the one `Styles` door the
             -- inline arm uses: `link` for an internal `\hyperlink`, `url`
-            -- for `\href`/`\link`. `hasBlockAnchor` cleared the body of
+            -- for `\href`/`\link`. `hasInteractiveDescendant` cleared the body of
             -- every inner link above, so no span is afforded twice; an
             -- image-only body takes no decoration (`linkBodyAfford`).
             let kind := if n == "hyperlink" then "link" else "url"
