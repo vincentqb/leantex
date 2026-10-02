@@ -230,6 +230,101 @@ def macroUseChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (occurs figs "Small" == 1 && occurs figs "Large" == 1)
 
 
+private def macroLengthOps : List String :=
+  ["newlength", "setlength", "addtolength", "advance", "multiply", "divide"]
+
+private def macroLengthExecuted (source : String) : Compat.Executed :=
+  let raws := (Parse.parse "length-live.tex" (Lex.lex "length-live.tex" source).1).1
+  Elab.executeInputs (m := Id) (fun _ context => pure (none, context))
+    "length-live.tex" raws
+
+-- Only executed top-level controls count: a definition's stored operands
+-- remain groups, so merely finding an assignment inside its text cannot pass.
+private def topMacroLengthOps (raws : Array Parse.Raw) : Array String :=
+  raws.filterMap fun r => match r with
+    | .ctrl name _ => if macroLengthOps.contains name then some name else none
+    | _ => none
+
+private def topMacroLengthUses (raws : Array Parse.Raw) : Array String :=
+  raws.filterMap fun r => match r with
+    | .ctrl name _ => if ["doublegap", "copygap", "wrappergap"].contains name
+        then some name else none
+    | _ => none
+
+/-- A macro's length mutations must reach the scoped rewrite once per
+executed use, in source order, with their operands still readable there.
+Dormant definitions and skipped branches must contribute no mutation. -/
+def macroLengthExecutionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let setup := "\\newlength{\\probegap}\\setlength{\\probegap}{10pt}\n"
+  let rule := "Leadword\\rule{\\probegap}{1pt}Tailword."
+  let bad (ds : Array Diag) := ds.filter (·.severity != .note)
+  let html (doc : Ir.Doc) :=
+    let (head, tree, _) := HtmlDoc.emitTree {} doc
+    Html.document "en" head tree
+  for (label, operation, width) in [
+      ("setlength", "\\setlength{\\probegap}{2\\probegap}", Dim.pt 40),
+      ("addtolength", "\\addtolength{\\probegap}{\\probegap}", Dim.pt 40),
+      ("advance", "\\advance\\probegap by 10pt", Dim.pt 30),
+      ("multiply", "\\multiply\\probegap by 2", Dim.pt 40),
+      ("divide", "\\divide\\probegap by 2", Dim.pt 5 / 2)] do
+    let definition := "\\newcommand{\\doublegap}{" ++ operation ++ "}\n"
+    let repeated := operation ++ "\n" ++ operation ++ "\n"
+    let source := dvDoc (setup ++ definition ++ "\\doublegap\\doublegap\n") rule
+    let control := dvDoc (setup ++ repeated) rule
+    let actual := macroLengthExecuted source
+    let direct := macroLengthExecuted control
+    t s!"{label}: both use-time mutations reach the executor output in order"
+      (topMacroLengthOps actual.raws == topMacroLengthOps direct.raws &&
+        (topMacroLengthUses actual.raws).isEmpty)
+    let (doc, ds) := elabStr source
+    let (want, wantDs) := elabStr control
+    let out := layoutOf fonts doc
+    let wantOut := layoutOf fonts want
+    t s!"{label}: repeated macro and direct calls have no loss"
+      ((bad ds).isEmpty && (bad wantDs).isEmpty)
+    t s!"{label}: direct control ships the calculated rule width"
+      ((metricRuleSegs wantOut).map (·.1) == #[width])
+    t s!"{label}: repeated reads ship the calculated rule width"
+      ((metricRuleSegs out).map (·.1) == #[width])
+    t s!"{label}: macro and direct calls ship identical rule geometry"
+      (metricRuleSegs out == metricRuleSegs wantOut)
+    t s!"{label}: macro and direct calls ship the same typed HTML"
+      (html doc == html want)
+  let operation := "\\setlength{\\probegap}{2\\probegap}"
+  let definition := "\\newcommand{\\doublegap}{" ++ operation ++ "}\n"
+  for (label, extra, use) in [
+      ("copied meaning", "\\let\\copygap\\doublegap", "\\copygap\\copygap"),
+      ("zero-argument forwarder", "\\newcommand{\\wrappergap}{\\doublegap}",
+        "\\wrappergap\\wrappergap")] do
+    let actual := macroLengthExecuted
+      (dvDoc (setup ++ definition ++ extra ++ "\n" ++ use ++ "\n") rule)
+    let direct := macroLengthExecuted (dvDoc (setup ++ operation ++ operation) rule)
+    t s!"{label}: forwarding retains both executed length mutations"
+      (topMacroLengthOps actual.raws == topMacroLengthOps direct.raws &&
+        (topMacroLengthUses actual.raws).isEmpty)
+  for (label, use) in [("unused", ""), ("skipped", "\\iffalse\\doublegap\\fi")] do
+    let actual := macroLengthExecuted (dvDoc (setup ++ definition ++ use) rule)
+    let direct := macroLengthExecuted (dvDoc setup rule)
+    t s!"{label}: no dormant length mutation reaches the rewrite"
+      (topMacroLengthOps actual.raws == topMacroLengthOps direct.raws)
+  let declaration := "\\newlength{\\probegap}"
+  let actual := macroLengthExecuted (dvDoc
+    ("\\newcommand{\\makegap}{" ++ declaration ++ "}\\makegap") "Visibleword.")
+  let direct := macroLengthExecuted (dvDoc declaration "Visibleword.")
+  t "newlength: declaration reaches the rewrite at its macro use"
+    (topMacroLengthOps actual.raws == topMacroLengthOps direct.raws)
+  -- Column geometry reads the assignments later, so expansion must preserve
+  -- both use-time operands independently of the column lowering.
+  let gap := "\\setlength{\\columnsep}{2\\columnsep}"
+  let actual := macroLengthExecuted (dvDoc
+    ("\\newcommand{\\doublegap}{" ++ gap ++ "}\\doublegap\\doublegap") "Visibleword.")
+  t "columnsep: the exact failing source emits two unreduced assignments"
+    (topMacroLengthOps actual.raws == #["setlength", "setlength"] &&
+      (topMacroLengthUses actual.raws).isEmpty)
+
+
 /-- **A picture's macro-dependent values are the ones in force at its own
 site.** TeX expands a macro in a picture where the picture stands; the
 defect read every document macro in a picture from one table for the whole
