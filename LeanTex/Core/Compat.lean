@@ -610,6 +610,10 @@ private structure St where
   foot : Array (Nat × String) := #[]
   runPos : Pos := { line := 1, col := 1 }
   runFrom : Nat := 1
+  /-- article.cls resets the counter after titlepage only in oneside mode.
+  Its unstarred `\ProcessOptions` applies `twoside` after `oneside` when
+  both are present, irrespective of their order in the option list. -/
+  titlepageReset : Bool := true
   /-- Upcoming groups that are macro bodies, where `#k` names a parameter:
   one for a `\define`/`\newcommand` body, two for `\newenvironment`'s begin
   and end halves. Scoped: descending into a group consumes one and shields
@@ -6461,7 +6465,9 @@ and \\tokens declare the design directly")
       else if resumeClasses.contains cls then "resume"
       else if cls == "beamer" then "slides" else cls
     let flow := ((Ir.DocClass.ofString? native).map (·.record.model == .flow)).getD true
-    write fun st => { st with measureKnown := !flow, flowPage := flow }
+    write fun st => { st with
+      measureKnown := !flow, flowPage := flow,
+      titlepageReset := !((opt.getD "").splitOn ",").any (·.trimAscii.toString == "twoside") }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""
@@ -8208,18 +8214,19 @@ steps come from its body" p
         | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
       else if n == "titlepage" then
         -- article.cls's `titlepage` opens a fresh page, applies the empty
-        -- page style, and opens another at the close (classes.dtx,
-        -- `\titlepage`). One page model with no running furniture to clear:
-        -- its two boundaries are the `\pagebreak` the flow already names,
-        -- and the body between them is an ordinary block sequence scoped by
+        -- page style, and resets page to one. Its closing newpage resets
+        -- again only in oneside mode (classes.dtx, `\titlepage`). Both
+        -- declarations are shared IR page-opening marks: an empty style
+        -- lasts until a page ships, even when this body is empty.
+        -- The body is an ordinary block sequence scoped by
         -- the group that carries it — an environment is a group (ltmiscen.dtx:
         -- `\begin` opens one; TeXbook ch. 5), so a declaration inside ends at
         -- the close and the body elaborates through the top-level block
-        -- paths. No new page-opening path: the isolation is `\pagebreak`'s,
+        -- paths. The isolation is `\pagebreak`'s,
         -- whose vertical distribution and ground stand (`Layout.collectBlocks`,
         -- `.pagebreak`), and adjacent or boundary breaks close only a page
         -- holding content, so an empty or leading title page leaves no blank
-        -- page behind. HTML drops the boundary (`HtmlDoc`, `.pagebreak`), so
+        -- page behind. HTML drops the boundaries and their declarations, so
         -- the body stays one continuous semantic flow with no paged artifact.
         let st0 ← get
         write fun st => { st with tableTop := false, defTop := false }
@@ -8227,8 +8234,12 @@ steps come from its body" p
         write fun st => { st with lens := st0.lens,
                                   tableTop := st0.tableTop, defTop := st0.defTop }
         became "\\begin{titlepage}…\\end{titlepage}"
-          "an isolated flow page (\\pagebreak … \\pagebreak)" p
-        return .group (#[Raw.ctrl "pagebreak" p] ++ body' ++ #[Raw.ctrl "pagebreak" p]) p
+          "an isolated flow page opening with empty running furniture and folio one" p
+        let close := if st0.titlepageReset then
+          #[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageEndRole p]
+          else #[Raw.ctrl "pagebreak" p]
+        return .group (#[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageBeginRole p] ++
+          body' ++ close) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment: only the arguments its
         -- signature reads reach the definition, as written; the body is

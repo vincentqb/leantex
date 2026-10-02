@@ -6216,7 +6216,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       then { cfg with slotTitle := true } else cfg
     let kids := blockNodesInto cfg.into #[] body.toList
     -- A page-model mark (`Ir.pageMarkerRole`) is a fact of the page alone:
-    -- a continuous medium has no page top and no interline glue.
+    -- a continuous medium has no page top, interline glue, or running folio.
     if Ir.pageMarkerRole n then Html.text "" else
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
         kids.toList with
@@ -6582,6 +6582,16 @@ def listItem (cfg : Config) : List Block → Array Node
     else blockNodesInto cfg #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)] rest
 
 end
+
+/-- Continuous HTML projects the IR opening's content-free marker fact:
+it creates no wrapper, counter text, or page boundary in the typed tree.
+The titlepage's body remains the ordinary sibling flow. -/
+private theorem pageOpening_projects (cfg : Config) (acc : Array Node)
+    (n : String) (opening : Ir.PageOpening) (rest : List Block)
+    (h : Ir.pageOpeningOfRole? n = some opening) :
+    blockNodesInto cfg acc (.role n #[] :: rest) = blockNodesInto cfg acc rest := by
+  simp only [blockNodesInto, Ir.pageMarkerBlock, Array.isEmpty_empty,
+    Ir.pageOpening_marker_exact n opening h, Bool.true_and, ite_true]
 
 /-- Facts of the emitted tree that the landmark and anchor checks judge:
 the `<nav>` landmarks, the `id` anchors, and the in-page link targets
