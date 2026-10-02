@@ -25938,3 +25938,76 @@ fixed tree. `lake build --wfail`, `lake test` and the preamble commutation
 oracle pass. Both outputs of the private reference deck compile; the affected
 native PDF pages and local-file Firefox and Chromium views show the same text
 once per reveal, with decoration only on the selected reveals.
+
+### 2026-10-02 — Overlay contracts quantify over selectors and payloads
+
+A selector is a union of intervals over numbered reveals, independent of
+the operation carrying it. `OverlaySpec.numberedSteps_mem` and
+`numberedSteps_contract` give its finite projection membership and uniqueness;
+`pageSteps_partition_contract` gives exactly one alternative on every reveal.
+`pageOrder_select_exact` supplies the same source-order bridge for arbitrary
+payloads. Block alternation now uses that bridge just as inline alternation
+does. Structure numbering is unchanged under any selector, for both block
+and inline bodies (`Struct.onSteps_id`); alternate leaf identities project
+from the same stored pair (`Struct.alt_leaf_projects`).
+
+The HTML range animation is an optimization with a checked domain: one
+positive, ordered interval whose finite endpoint lies inside the frame.
+Zero-start, reversed and union selectors use exact finite membership.
+`overlay_pending_agree` and `overlay_alternation_agree` project the IR meaning
+for every numbered selector and every reveal in the frame. Their statements
+do not exclude the selectors that need the other representation.
+
+The boundary matters in rendered pages. On `e5a5428a`, equivalent selectors
+could produce different opacity, zero-start ranges stayed covered in Firefox,
+and an empty range selected the wrong alternative after the first reveal.
+Four Chromium assertions and eight Firefox assertions failed on the same
+four-reveal fixture. The corrected rendering passes both browser runs.
+These findings generalize the rule already used for backend comparisons:
+check the actual representation and its optimization premise, not only an
+idealized predicate that a backend is assumed to implement.
+
+A one-reveal section now declares its sole numbered state, and its deck
+emits the corresponding finite selector rules even without a scrolling
+track. Forty-six typed HTML assertions and six rendered Chromium assertions
+fail on the old tree and pass after the fix.
+
+Nested covering is conjunction of selection (`pending_nested_exact`).
+HTML used to multiply a pending ancestor's opacity by a pending child's,
+making the same text darker or fainter depending on its wrappers. The
+numbered state now resets descendant cover carriers when an ancestor is
+already pending. Range carriers expose the same finite membership as union
+carriers; the script-free floor remains fully readable. Four assertions
+fail on the preserved broken Chromium page and pass after the change.
+Thirteen Chromium screen, reduced-motion, print and script-free probes,
+and four Firefox numbered-state probes pass. These claims concern numbered
+states; they do not assert equality during scrolling between states.
+
+### 2026-10-02 — Structured diagnostics have one terminal formatter
+
+Document diagnostics remain typed `Diag` records through policy resolution
+and the final `Ui.diag` sink. The readable header is
+`Warning - Degraded [W0301] - chapter.tex:4:7 - message`, followed by an
+optional indented `help:` line. Its category comes from the existing six
+`Loss` constructors; its code and effective severity retain their separate
+meanings when a document accepts a loss. Filenames keep Unicode, message
+continuations stay indented, and terminal control characters are displayed
+as data. The formatter owns no trailing newline; the sink writes one.
+Porcelain diagnostic records keep their existing JSON representation.
+
+The pre-commit gate rejects direct diagnostic printing, early formatting,
+raw diagnostic fields at other terminal writers, and hand-written warning
+headlines. Its declared scope is the CLI's source convention, with audited
+status, startup and command-output writers; it is not interprocedural
+data-flow analysis. A deliberate direct-print mutation passed the old gate
+and fails the new one. The gate selftest checks bypasses, aliases, multiline
+calls, comments, help text and the allowed typed sink.
+
+The browser report reader now consumes porcelain records rather than human
+headers. A diagnostic code quoted in a message cannot manufacture a second
+record, and external-tool attribution stays within the diagnostic that
+reported it. Four reader assertions fail before that change and pass after.
+The format guards cover the whole diagnostic registry and real CLI output;
+377 assertions fail against the old formatter and pass with the new one.
+Python's warnings and logging documentation and Loguru's record/sink API
+inform this separation; their sources are recorded beside `Render.human`.

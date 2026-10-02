@@ -11394,8 +11394,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlockScope stepCtx ga
           let ib ← elabBlockScope ctx gb
-          let (firstPage, otherPage) := spec.pageOrder ia ib
-          blocks := blocks.push (.altSteps spec firstPage otherPage)
+          blocks := blocks.push (.alternate spec ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the

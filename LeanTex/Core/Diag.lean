@@ -101,9 +101,9 @@ def Loss.severity : Loss → Severity
   | .config => .warning
   | .info => .note
 
-/-- The class letter of a loss is its severity's letter — both halves of a
-rendered `error[E0333]` prefix come from the one declared `Loss`, so a
-prefix like `error[W…]` is unrepresentable. -/
+/-- The class letter of a loss is its declared severity's letter. An error
+code cannot acquire a warning letter at construction; accepting a loss
+changes its effective severity later, without changing this letter. -/
 def Loss.letter (l : Loss) : Char := l.severity.letter
 
 /-- The declared class as a machine reader sees it. A census bands on this,
@@ -473,13 +473,12 @@ theorem DiagCode.inks_iff_degraded (c : DiagCode) :
 
 /-- The one place a code's printed name is spelled: the class letter comes
 from the declared loss, the digits from the registry. A code whose letter
-disagrees with its severity cannot be written. -/
+disagrees with its declared severity cannot be written. -/
 def DiagCode.code (c : DiagCode) : String :=
   String.singleton c.loss.letter ++ c.digits
 
-/-- The rendered prefix agrees with the severity: the letter inside
-`error[E0333]` is the severity's own letter, for every code. `error[W0307]`
-was real output once; this statement is what made it unrepresentable. -/
+/-- Every code's letter agrees with its declared severity. This is a fact
+of the record, independent of the terminal format or later acceptance. -/
 theorem DiagCode.code_letter (c : DiagCode) :
     c.code.front = c.loss.severity.letter := by
   cases c <;> rfl
@@ -673,9 +672,8 @@ theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).severity = c.loss.severity := rfl
 
-/-- The whole rendered prefix is one declaration: the severity label and the
-code letter of a constructed diagnostic both come from the code's `Loss`,
-so `error[W…]` and `warning[E…]` cannot be constructed. -/
+/-- At construction, severity and code letter both come from the code's
+`Loss`. A caller cannot choose them independently. -/
 theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).code.front =

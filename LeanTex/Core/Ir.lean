@@ -2972,10 +2972,18 @@ def maxStep (s : OverlaySpec) : Nat :=
 
 def union (s t : OverlaySpec) : OverlaySpec := { s with more := s.more ++ t.ranges }
 
-/-- The finite projection HTML's attribute selectors read. Enumerating the
-frame, rather than the intervals, gives each selected step exactly once. -/
+/-- Enumerate the frame, not the selector's intervals: a numbered step
+appears once even when several intervals select it. -/
+def numberedSteps (steps : Nat) (p : Nat → Bool) : List Nat :=
+  ((List.range steps).map (· + 1)).filter p
+
 def selectedSteps (s : OverlaySpec) (steps : Nat) : List Nat :=
-  ((List.range steps).map (· + 1)).filter s.selects
+  numberedSteps steps s.selects
+
+/-- The finite projection of either arm in page-order storage. Visibility,
+replacement and conditional styling share these same numbered steps. -/
+def pageSteps (s : OverlaySpec) (steps : Nat) (first : Bool) : List Nat :=
+  numberedSteps steps fun k => s.showsFirst k == first
 
 theorem selects_exact (s : OverlaySpec) (k : Nat) :
     s.selects k = true ↔ ∃ r ∈ s.ranges, stepPending r.1 r.2 k = false := by
@@ -2992,6 +3000,12 @@ theorem union_self_id (s : OverlaySpec) (k : Nat) :
 theorem union_comm_agree (s t : OverlaySpec) (k : Nat) :
     (s.union t).selects k = (t.union s).selects k := by
   simp [union_selects_exact, Bool.or_comm]
+
+/-- Nested covering is conjunction of selection, regardless of which
+operations carry the selectors. A covered ancestor stays covered. -/
+theorem pending_nested_exact (s t : OverlaySpec) (k : Nat) :
+    (s.pending k || t.pending k) = !(s.selects k && t.selects k) := by
+  simp [pending, Bool.not_and]
 
 @[simp] theorem singleton_pending_exact (n : Nat) (last : Option Nat) (k : Nat) :
     (OverlaySpec.mk n last []).pending k = stepPending n last k := by
@@ -3016,15 +3030,41 @@ theorem pageOrder_select_exact {α : Type} (s : OverlaySpec) (k : Nat)
   by_cases hk : s.selects k = true <;> by_cases hfirst : s.selects 1 = true <;>
     simp_all [pageOrder, showsFirst, pending]
 
-/-- No numbered page is lost or added by the finite artifact projection. -/
-theorem selectedSteps_mem (s : OverlaySpec) (steps k : Nat) :
-    k ∈ s.selectedSteps steps ↔ 1 ≤ k ∧ k ≤ steps ∧ s.selects k = true := by
-  simp only [selectedSteps, List.mem_filter, List.mem_map, List.mem_range]
+/-- No numbered page is lost or added by a finite artifact projection. -/
+theorem numberedSteps_mem (steps k : Nat) (p : Nat → Bool) :
+    k ∈ numberedSteps steps p ↔ 1 ≤ k ∧ k ≤ steps ∧ p k = true := by
+  simp only [numberedSteps, List.mem_filter, List.mem_map, List.mem_range]
   constructor
   · rintro ⟨⟨i, hi, rfl⟩, hs⟩
     exact ⟨by omega, by omega, hs⟩
   · rintro ⟨h1, h2, hs⟩
     exact ⟨⟨k - 1, by omega, by omega⟩, hs⟩
+
+theorem numberedSteps_contract (steps : Nat) (p : Nat → Bool) :
+    (numberedSteps steps p).Nodup := by
+  apply List.Pairwise.filter
+  apply List.Pairwise.map (R := fun a b : Nat => a ≠ b) (fun n : Nat => n + 1)
+  · intro a b h
+    omega
+  · exact List.nodup_range
+
+theorem selectedSteps_mem (s : OverlaySpec) (steps k : Nat) :
+    k ∈ s.selectedSteps steps ↔ 1 ≤ k ∧ k ≤ steps ∧ s.selects k = true :=
+  numberedSteps_mem steps k s.selects
+
+theorem pageSteps_mem (s : OverlaySpec) (steps k : Nat) (first : Bool) :
+    k ∈ s.pageSteps steps first ↔
+      1 ≤ k ∧ k ≤ steps ∧ s.showsFirst k = first := by
+  simp [pageSteps, numberedSteps_mem]
+
+/-- Exactly one arm reaches each numbered page. This is independent of
+the arms' payload, so it also covers nested or newly added modifiers. -/
+theorem pageSteps_partition_contract (s : OverlaySpec) (steps k : Nat)
+    (hk : 1 ≤ k) (hsteps : k ≤ steps) :
+    ((s.pageSteps steps true).contains k || (s.pageSteps steps false).contains k) = true ∧
+    ((s.pageSteps steps true).contains k && (s.pageSteps steps false).contains k) = false := by
+  simp only [List.contains_eq_mem, pageSteps_mem, hk, hsteps, true_and]
+  cases s.showsFirst k <;> decide
 
 end OverlaySpec
 
@@ -5292,7 +5332,10 @@ inductive Block where
     (firstPage otherPage : Array Block) : Block :=
   .altSteps ⟨n, last, []⟩ firstPage otherPage
 
-
+/-- Block alternatives use the same source-order bridge as inline ones. -/
+def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block) : Block :=
+  let (firstPage, otherPage) := spec.pageOrder active otherwise
+  .altSteps spec firstPage otherPage
 
 /-- Is this inline a display formula — `\[…\]`, `{equation*}`, an
 alignment — whether modelled or carried as source? -/
@@ -9933,36 +9976,20 @@ def overlayRange (w : String) : Option OverlaySpec := do
     | (n, last) :: more => pure ⟨n, last, more⟩
     | [] => none
 
-/-- Which group of an overlay alternation does step \`k\` ink: the one stored
-first, or the other? The ONE decision behind alternation, named so that every
-consumer reads the same answer — the PDF page's own alternation arms
-(\`Layout.collectBlock\` and the inline flatten walk, which reference the leaf
-the structure tree gave the group they ink), the HTML deck's rules, and the
-census facts that hold the two artifacts to each other (the \`_agree\` shape). An artifact that decided this for itself could
-disagree with the other and no theorem would notice, which is the whole reason
-this is a definition and not an inlined test.
-
-Page-order storage is what makes it this simple: step \`k\` inks the group
-stored first exactly when it falls on step 1's side of the spec, so
-\`altShowsFirst n last 1\` is \`true\` by construction. -/
+/-- The single-interval projection of `OverlaySpec.showsFirst`. Actual
+overlay nodes carry the full selector, including disjoint intervals. -/
 def altShowsFirst (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
-  stepPending n last k == stepPending n last 1
+  (OverlaySpec.mk n last []).showsFirst k
 
 /-- Step 1 inks the group stored first: page order, as a fact rather than a
 convention a later reader has to trust. -/
 theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
-    altShowsFirst n last 1 = true := by
-  simp [altShowsFirst]
+    altShowsFirst n last 1 = true :=
+  OverlaySpec.showsFirst_id _
 
-/-- Does any step of a frame's window ink the group stored *second*? An
-alternation whose pendingness is constant over `[1, steps]` partitions
-nothing: it inks one group on every page of the frame and the other on none,
-which is an overlay increment the artifact loses and a step page that ships
-nothing its predecessor did not. The condition is decidable from the range
-and the window alone, which is why it is a definition here rather than a
-judgement each consumer makes. -/
+/-- Single-interval projection of the shared reachability decision. -/
 def altReachesOther (n : Nat) (last : Option Nat) (steps : Nat) : Bool :=
-  (List.range steps).any fun i => !altShowsFirst n last (i + 1)
+  (OverlaySpec.mk n last []).reachesOther steps
 
 /-- Is the group stored first the one a *pending* step inks? The side of the
 spec page order put it on, and the only per-node fact an artifact needs
@@ -9972,7 +9999,7 @@ each group's wrapper with this, because a stylesheet can test the range but
 not read a node's two groups — so both artifacts decide from the one
 arithmetic instead of each re-deriving the selection. -/
 def altFirstWhenPending (n : Nat) (last : Option Nat) : Bool :=
-  stepPending n last 1
+  (OverlaySpec.mk n last []).pending 1
 
 /-- The predicate, factored the way a per-step consumer can use it: whether
 step `k` inks the group stored first is whether `k`'s pending state matches
@@ -9981,8 +10008,8 @@ the PDF page tests `altShowsFirst` directly at layout's arms, the HTML deck
 tests `stepPending` in its own per-snap selectors and compares against the
 tagged side (`HtmlDoc.alt_backend_agree`). -/
 theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
-    altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) :=
-  rfl
+    altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) := by
+  simp [altShowsFirst, altFirstWhenPending, OverlaySpec.showsFirst]
 
 mutual
 

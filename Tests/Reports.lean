@@ -37,6 +37,9 @@ import Tests.InputUse
 import Tests.MathAlphaEntry
 import Tests.OverlaySets
 import Tests.OverlayStyles
+import Tests.OverlayContracts
+import Tests.OverlaySingletonHtml
+import Tests.DiagnosticFormat
 import Tests.SlideLabels
 import scripts.LandCore
 
@@ -68,6 +71,7 @@ open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
+  overlayContractChecks overlaySingletonHtmlChecks diagnosticFormatChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
 namespace Reports
@@ -507,7 +511,21 @@ def reports : List Report := [
     what := "numbered selectors on text modifiers appeared as literal angle text instead of applying the modifier on the selected reveals"
     pins := [check% overlayStyleChecks, thm% Ir.OverlaySpec.pageOrder_select_exact,
       .thm `Ir.exclusiveOccurrences_exact _ (@Ir.exclusiveOccurrences_exact.{0})]
-    state := .guarded "0358eb0d" .before .author }
+    state := .guarded "0358eb0d" .before .author },
+  { id := "R74", date := "2026-10-02"
+    what := "overlay contracts excluded zero and reversed selectors, one-reveal HTML frames lacked a numbered state, and nested covering multiplied dimming"
+    pins := [check% overlayContractChecks, check% overlaySingletonHtmlChecks,
+      thm% Ir.OverlaySpec.pageSteps_partition_contract, thm% Ir.OverlaySpec.pending_nested_exact,
+      thm% Struct.onSteps_id,
+      thm% HtmlDoc.overlayUsesRange_contract, thm% HtmlDoc.overlay_pending_agree,
+      thm% HtmlDoc.overlay_alternation_agree]
+    accept := ["rendered numbered states in both browser engines, plus reduced motion, print and script-free readings"]
+    state := .guarded "e5a5428a" .before .author },
+  { id := "R75", date := "2026-10-02"
+    what := "diagnostics lacked a compact fixed category and inline source position, while a report reader inferred warning records from human text"
+    pins := [check% diagnosticFormatChecks]
+    accept := ["the report reader selftest distinguishes diagnostic records from quoted codes and unrelated log text"]
+    state := .guarded "e5a5428a" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

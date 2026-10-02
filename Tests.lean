@@ -15,6 +15,8 @@ import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
 import Tests.OverlayStyles
+import Tests.OverlayContracts
+import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
 import Tests.Census
 import Tests.Backends
@@ -27,6 +29,7 @@ import Tests.PdfPageSelection
 import Tests.PdfReadObjects
 import Tests.RasterPages
 import Tests.Diag
+import Tests.DiagnosticFormat
 import Tests.Themes
 import Tests.SlideLabels
 import Tests.FontMath
@@ -86,7 +89,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks overlayStyleChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
+  overlaySetChecks overlayStyleChecks overlayContractChecks overlaySingletonHtmlChecks
+  diagnosticFormatChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -375,6 +379,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   xparseIgnoredOperandsChecks ref oneFace
   overlaySetChecks ref oneFace
   overlayStyleChecks ref oneFace
+  overlayContractChecks ref oneFace
+  overlaySingletonHtmlChecks ref
   frameHeadingScopeChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
@@ -505,6 +511,7 @@ def main (args : List String) : IO UInt32 := do
   utf8Checks ref
   argsChecks ref
   renderChecks ref
+  diagnosticFormatChecks ref
   lexChecks ref
   braceEolChecks ref
   nfcChecks ref
