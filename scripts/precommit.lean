@@ -1215,7 +1215,7 @@ def selftestFrameDebt : List (String × String) :=
   [("scripts/commonmark.lean", "its assertions push to a local array; each becomes a `no` call"),
    ("scripts/parity.lean", "its assertions push to a local array; each becomes a `no` call")]
 
-/-- The top-level `def` name a line binds, dots included, for the three
+/-- The top-level `def` name a line binds, dots included, for the
 gates that need to know which definition a line stands inside: only
 unindented `def`/`private def`, so a nested helper or a prose mention never
 counts. The name is the whole declared one — truncating it at the first dot
@@ -1228,6 +1228,100 @@ def topLevelDefName (l : String) : Option String :=
     let n := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
     if n.isEmpty then none else some n
   else none
+
+/-- CLI terminal output has a small, audited boundary. Document diagnostics
+remain Diag values until Ui.diag calls Render; other writers carry status,
+startup failures or a command's result (including the stable IR dump).
+This is a source convention check, not interprocedural data-flow analysis.
+Mask strings and nested block comments across lines so documentation and
+multiline help cannot look like output calls. -/
+def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat × String) := Id.run do
+  unless file == "Main.lean" || file.startsWith "LeanTex/Cli/" do return #[]
+  let writers := ["Ui.diag", "Ui.accepted", "Ui.phase", "Ui.summary", "Ui.done",
+    "Ui.werror", "main", "dump", "hyphenate"]
+  let names (s : String) := (s.split (fun c => !(isWordChar c || c == '.'))).toList.map
+    (·.toString) |>.filter (!·.isEmpty)
+  let projects (s : String) := (names s).any fun n =>
+    [".message", ".code", ".help", ".severity", ".span", ".subject", ".sites"].any fun f =>
+      n.endsWith f && n.length > f.length
+  let mut owner := ""
+  let mut depth := 0
+  let mut inStr := false
+  let mut esc := false
+  let mut out := #[]
+  for (line, row) in lines.zipIdx do
+    let cs := line.toList.toArray
+    let mut code := ""
+    let mut text := ""
+    let mut i := 0
+    while i < cs.size do
+      let c := cs[i]?.getD ' '
+      let next := cs[i + 1]?.getD ' '
+      if depth > 0 then
+        if c == '/' && next == '-' then
+          depth := depth + 1
+          i := i + 2
+        else if c == '-' && next == '/' then
+          depth := depth - 1
+          i := i + 2
+        else i := i + 1
+      else if inStr then
+        if esc then
+          esc := false
+          text := text.push c
+        else if c == '\\' then esc := true
+        else if c == '"' then inStr := false
+        else text := text.push c
+        i := i + 1
+      else if c == '-' && next == '-' then break
+      else if c == '/' && next == '-' then
+        depth := 1
+        code := code.push ' '
+        i := i + 2
+      else if c == '"' then
+        inStr := true
+        code := code.push ' '
+        i := i + 1
+      -- A quote character literal must not open a multiline string.
+      else if c == '\'' && cs[i + 2]? == some '\'' then
+        code := code.push ' '
+        i := i + 3
+      else
+        code := code.push c
+        i := i + 1
+    if code.trimAscii.isEmpty && text.trimAscii.isEmpty then continue
+    if let some n := topLevelDefName code then owner := n
+    let ns := names code
+    let writer := file == "Main.lean" && writers.contains owner
+    let sink := file == "Main.lean" && owner == "Ui.diag"
+    let terminal := ns.any fun n =>
+      ["IO.print", "IO.println", "IO.eprint", "IO.eprintln",
+        "print", "println", "eprint", "eprintln", "putStr", "putStrLn"].contains n ||
+      n.endsWith ".putStr" || n.endsWith ".putStrLn"
+    let rendered := ns.any fun n =>
+      n == "Render.human" || n == "Render.porcelainDiag" ||
+      n.endsWith ".Render.human" || n.endsWith ".Render.porcelainDiag"
+    let stream := ns.any fun n =>
+      ["IO.getStdout", "IO.getStderr", "getStdout", "getStderr"].contains n ||
+      n.endsWith ".outStream" || n.endsWith ".errStream"
+    -- The shared def-name reader stops before the apostrophe in Ui.mk'.
+    if (terminal && !writer) || (stream && !writer && !(file == "Main.lean" && owner == "Ui.mk")) then
+      out := out.push (row + 1, "terminal write or stream outside a UI/command handler")
+    if rendered && !sink && file != "LeanTex/Cli/Render.lean" then
+      out := out.push (row + 1, "diagnostic rendered before the typed sink")
+    if terminal && sink && !rendered then
+      out := out.push (row + 1, "typed sink must print a Render diagnostic directly")
+    -- Interpolation fields are inside the masked string, so inspect their
+    -- projections separately from literal text such as a documented IO call.
+    let interpolated := containsSub code "s!" &&
+      ((text.splitOn "{").drop 1).any (fun p => projects ((p.splitOn "}").headD ""))
+    if ((writer && !sink) || terminal) && (projects code || interpolated) then
+      out := out.push (row + 1, "diagnostic fields printed outside Render")
+    let headline := text.trimAscii.toString.toLower
+    if writer && ["warning:", "warning[", "warning - ", "error:", "error[", "error - ",
+        "note:", "note[", "note - "].any (fun pre => headline.startsWith pre) then
+      out := out.push (row + 1, "hand-written diagnostic headline")
+  return out
 
 /-- The selftests a tier producer frames by hand: the top-level definitions
 returning `IO UInt32` that its `--selftest` reaches — named on a line that
@@ -1949,6 +2043,71 @@ def selftest : IO UInt32 := do
     if got.toList != want then
       fails.modify (s!"selfFramed, {what}: got {got}, want {want}" :: ·)
 
+  -- Break the real output boundary, including aliases and multiline
+  -- calls; leave status/help/startup failures and structured builders legal.
+  let diagCases : List (String × String × List String × Bool) := [
+    ("direct stderr", "Main.lean",
+      ["def report (d : Diag) : IO Unit :=", "  IO.eprintln d.message"], true),
+    ("CLI module printing", "LeanTex/Cli/DriverDiag.lean",
+      ["def report (d : Diag) : IO Unit :=", "  IO.println d.code"], true),
+    ("opened IO namespace", "Main.lean",
+      ["open IO", "def report (d : Diag) := eprintln d.message"], true),
+    ("opened stream namespace", "LeanTex/Cli/DriverDiag.lean",
+      ["open IO.FS.Stream", "def report (s : IO.FS.Stream) := putStrLn s msg"], true),
+    ("multiline stream write", "Main.lean",
+      ["def report (ui : Ui) (d : Diag) : IO Unit := do", "  ui.errStream.putStrLn",
+       "    d.message"], true),
+    ("stream alias", "Main.lean",
+      ["def report (ui : Ui) := do", "  let s := ui.errStream", "  pure s"], true),
+    ("print alias", "Main.lean",
+      ["def report := do", "  let emit := IO.eprintln", "  emit msg"], true),
+    ("early human render", "LeanTex/Cli/Input.lean",
+      ["def text (d : Diag) := Render.human false d"], true),
+    ("early machine render", "Main.lean",
+      ["def text := Render.porcelainDiag"], true),
+    ("sink bypass", "Main.lean",
+      ["def Ui.diag (ui : Ui) (d : Diag) := do", "  IO.eprintln d.message"], true),
+    ("sink raw suffix", "Main.lean",
+      ["def Ui.diag (ui : Ui) (d : Diag) := do",
+       "  ui.errStream.putStrLn (Render.human ui.color d ++ d.message)"], true),
+    ("command field alias", "Main.lean",
+      ["def main := do", "  let msg := d.message", "  IO.println msg"], true),
+    ("status interpolation", "Main.lean",
+      ["def Ui.phase := do", "  IO.eprintln s!\"{d.code}: {d.message}\""], true),
+    ("literal diagnostic", "Main.lean",
+      ["def main := do", "  IO.eprintln \"warning: lost text\""], true),
+    ("typed sink", "Main.lean",
+      ["def Ui.diag (ui : Ui) (d : Diag) := do", "  if d.severity != .note then",
+       "    ui.errStream.putStrLn (Render.human ui.color d)",
+       "  ui.outStream.putStrLn (Render.porcelainDiag d)"], false),
+    ("status and verdict", "Main.lean",
+      ["def Ui.phase := IO.println s!\"{name}: {detail}\"", "def Ui.werror := do",
+       "  ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)"], false),
+    ("help and startup failure", "Main.lean",
+      ["def main := do", "  IO.println helpText", "  let stderr ← IO.getStderr",
+       "  stderr.putStrLn s!\"leantex: {msg}\"", "  stderr.putStrLn \"try 'leantex --help'\""], false),
+    ("command output", "Main.lean",
+      ["def dump := IO.print (Ir.dump front.doc front.diags)",
+       "def hyphenate := IO.println (showHyphens pats w)"], false),
+    ("structured builder and policy", "LeanTex/Cli/DriverDiag.lean",
+      ["def make := Diag.of .E0001 msg", "def fatal (d : Diag) := d.severity == .error"], false),
+    ("documentation", "LeanTex/Cli/Input.lean",
+      ["/-- Render.human is the formatter.", "IO.eprintln d.message", "-/",
+       "def doc := \"IO.eprintln (Render.human false d)\"",
+       "-- IO.eprintln d.message"], false),
+    ("multiline help", "LeanTex/Cli/Args.lean",
+      ["def helpText :=", "  \"leantex", "print the document; IO.eprintln is just text",
+       "Render.human -- /- quotes are not comments here", "end\""], false),
+    ("quote character", "LeanTex/Cli/Input.lean",
+      ["def isQuote (c : Char) := c == '\"'", "def report := IO.eprintln msg"], true),
+    ("inline nested comment", "Main.lean",
+      ["def report := do", "  /- outer /- inner -/ done -/ IO.eprintln msg"], true),
+    ("other tools are out of scope", "scripts/example.lean",
+      ["def main := IO.eprintln \"warning: a tool status\""], false)]
+  for (what, file, lines, bad) in diagCases do
+    let got := !(diagnosticOutputBypasses file lines.toArray).isEmpty
+    if got != bad then fails.modify (s!"diagnosticOutputBypasses {what}: got {got}, want {bad}" :: ·)
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -2199,6 +2358,11 @@ def main (args : List String) : IO UInt32 := do
   if (← System.FilePath.pathExists "Main.lean") then
     premiseTexts := premiseTexts.push
       ("Main.lean", ((← IO.FS.readFile "Main.lean").splitOn "\n").toArray)
+  for (f, lines) in premiseTexts do
+    for (row, why) in diagnosticOutputBypasses f lines do
+      say s!"pre-commit: diagnostic output bypass in {f}:{row}: {why}.
+  Keep document diagnostics as Diag values through Ui.diag; only Render formats them.
+  Status/help and command output belong in the audited UI and command handlers."
   let mut testDefs : List String := []
   let mut testText := ""
   for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap
