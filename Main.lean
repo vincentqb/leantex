@@ -54,6 +54,9 @@ def Ui.mk' (cfg : Config) : IO Ui := do
       pure (!noColor && tty)
   return ⟨cfg, color, errStream, ← IO.getStdout⟩
 
+/-- The sole terminal sink for document diagnostics: keep Diag values from
+DriverDiag and other producers structured through resolution, and render only
+when writing the chosen stream. The pre-commit rule rejects print bypasses. -/
 def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDiag d)
@@ -109,6 +112,14 @@ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0)
   else if !ui.cfg.quiet then
     let shown := if ui.cfg.verbosity ≥ 1 then 0 else notes
     ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
+
+/-- The --werror run verdict follows the written output. Keep its stream
+choice and quiet policy alongside the other UI writers. -/
+def Ui.werror (ui : Ui) (file : String) (warnings ms : Nat) : IO Unit := do
+  if ui.cfg.porcelain then
+    ui.outStream.putStrLn (Render.porcelainWerror file warnings ms)
+  else if !ui.cfg.quiet then
+    ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)
 
 /-- Every slot and variant mapped to one face: the shape of a single-font set. -/
 def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
@@ -1413,10 +1424,7 @@ in the HTML" (← since t)
       -- exit code, never the rendering — and the verdict line says why the
       -- build failed anyway.
       if ui.cfg.werror && warnings > 0 then
-        if ui.cfg.porcelain then
-          ui.outStream.putStrLn (Render.porcelainWerror file warnings (← since t0))
-        else if !ui.cfg.quiet then
-          ui.errStream.putStrLn (Render.humanWerror ui.color file warnings (← since t0))
+        ui.werror file warnings (← since t0)
       return exitFor 0 0 warnings ui.cfg.werror
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do
