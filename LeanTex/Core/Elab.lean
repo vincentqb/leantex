@@ -26,6 +26,10 @@ structure Param where
   name : String
   type : ParamType
   optional : Bool
+  /-- A command's replacement references this parameter. An unreferenced
+  argument is consumed without elaboration, as in TeX substitution.
+  Environment parameters conservatively retain the ordinary binding. -/
+  referenced : Bool := true
   deriving Repr, BEq
 
 structure UserCmd where
@@ -2187,6 +2191,31 @@ private theorem sliceMeas_splice_lt {μ : α → Nat} {raws : Array α} {i : Nat
   rw [hdrop, measList_append]
   omega
 
+/-- The non-increasing companion of the strict splice fact. Selecting a
+stored alternative removes its wrapper without introducing new content. -/
+private theorem sliceMeas_splice_le {μ : α → Nat} {raws : Array α} {i : Nat}
+    (h : i < raws.size) {seg : Array α}
+    (hseg : measList μ seg.toList ≤ μ raws[i]) :
+    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i
+      ≤ sliceMeas μ raws i := by
+  have hlen : (raws.extract 0 i).toList.length = i := by
+    simp [Array.length_toList]; omega
+  have hdrop : (raws.extract 0 i ++ seg
+      ++ raws.extract (i + 1) raws.size).toList.drop i
+      = seg.toList ++ (raws.extract (i + 1) raws.size).toList := by
+    simp only [Array.toList_append, List.append_assoc]
+    rw [List.drop_append_of_le_length (by omega)]
+    rw [List.drop_eq_nil_of_le (by omega)]
+    simp
+  have h1 := sliceMeas_here μ raws h
+  have h3 : measList μ (raws.extract (i + 1) raws.size).toList
+      ≤ measList μ (raws.toList.drop (i + 1)) := by
+    rw [Array.toList_extract]
+    exact measList_take_le ..
+  unfold sliceMeas at h1 ⊢
+  rw [hdrop, measList_append]
+  omega
+
 -- The weight component of the knot's measure.
 
 mutual
@@ -4243,7 +4272,9 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
           have hw : rawWeightList (raws.extract (j + 1) c).toList
               < sliceWeight raws start :=
             extract_lt_slice c (by omega) (by omega)
-          let v ← elabInlines { ctx with argBody := true } (raws.extract (j + 1) c)
+          let v ← if p.referenced then
+            elabInlines { ctx with argBody := true } (raws.extract (j + 1) c)
+            else pure #[]
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
           have hadv : sliceWeight raws (c + 1) < sliceWeight raws start :=
@@ -4256,7 +4287,9 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
           have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
               < sliceWeight raws start :=
             extract_lt_slice raws.size (by omega) (by omega)
-          let v ← elabInlines { ctx with argBody := true } (raws.extract (j + 1) raws.size)
+          let v ← if p.referenced then
+            elabInlines { ctx with argBody := true } (raws.extract (j + 1) raws.size)
+            else pure #[]
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
           have hadv : sliceWeight raws raws.size < sliceWeight raws start :=
@@ -4275,7 +4308,9 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
         have hjlt := getElem?_lt hj
         have hw : rawWeightList body.toList < sliceWeight raws start :=
           body_lt_slice hj (by simp only [rawWeight]; omega) hjge
-        let v ← elabInlines { ctx with argBody := true } body
+        let v ← if p.referenced then
+          elabInlines { ctx with argBody := true } body
+          else pure #[]
         if p.type == .text && !allText v then
           diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
@@ -4288,7 +4323,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
           sliceWeight_lt raws (by omega) (by omega)
         let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
-          pos (bindings.push (p.name, some (wordInlines ctx s pword)))
+          pos (bindings.push (p.name, some (if p.referenced then wordInlines ctx s pword else #[])))
         return (bs, ⟨j2, by omega⟩)
       | _ =>
         diag ctx .E0304 s!"missing argument '{p.name}' for '\\{name}'" pos
@@ -6781,7 +6816,7 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
           (help := "parameter names start with a letter")
       else
         match type? with
-        | some t => params := params.push ⟨name, t, optional⟩
+        | some t => params := params.push { name, type := t, optional }
         | none =>
           diag ctx .E0303 s!"unknown parameter type '{ty}' for '{name}'" pos
             (help := "types: text | content")
@@ -7288,6 +7323,20 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
           st := { st with after := some Ir.titleBlockAfter }
   return if st == ({} : Ir.ElementStyle) then none else some st
 
+private def referencesParam (name : String) : List Raw → Bool
+  | [] => false
+  | .ctrl n _ :: rest => n == name || referencesParam name rest
+  | .group body _ :: rest => referencesParam name body.toList || referencesParam name rest
+  | .env _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
+  | .math _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
+  | _ :: rest => referencesParam name rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
 /-- `\\define \\name(sig) {body}`, from the element after the `\\define`
 head: parses and validates the definition, returning the bound command and
 the index after its body. One door for the preamble walk and the body arm,
@@ -7325,6 +7374,7 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
             ≤ slicePars raws (j + 1) := hf.2.2
         let sigRaws := raws.extract (j + 1) (k' - 1)
         let params ← parseSig ctx (rawSrc sigRaws) pos
+        let params := params.map fun p => { p with referenced := referencesParam p.name b.toList }
         return ⟨(some ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩, k'), by
           refine ⟨show i ≤ k' by omega, ?_⟩
           intro cmd h
@@ -9916,6 +9966,88 @@ line is numbered" apos
 
 seal scanBracketArg Parse.inputEnvFile?
 
+/-- A proposed linked row is native only while every wrapper retains its
+native meaning. This reads the elaborator's accepted, visible definitions,
+not Compat's provisional names: refused definitions, local scopes and
+stored replacement text therefore use the ordinary precedence owner. -/
+private def nativeLinkedRow (ctx : Ctx) (body : Array Raw) : Bool :=
+  match (body[0]? : Option Raw) with
+  | some (.group source _) =>
+    !source.any fun
+      | .ctrl n _ =>
+        (n == "href" || n == "hyperlink") &&
+          ((lookupUser ctx n).isSome || ctx.args.any (·.1 == n))
+      | _ => false
+  | _ => false
+
+/-- A row conversion cannot consume a link name owned by an active macro
+or parameter. The lookup carries the ordinary source-order visibility. -/
+private theorem nativeLinkedRow_gated {ctx : Ctx} {body source : Array Raw} {pos : Pos}
+    (hg : body[0]? = some (.group source pos)) (h : nativeLinkedRow ctx body = true)
+    {name : String} {p : Pos} (hm : Raw.ctrl name p ∈ source)
+    (hn : name = "href" ∨ name = "hyperlink") :
+    lookupUser ctx name = none ∧ ctx.args.any (·.1 == name) = false := by
+  simp only [nativeLinkedRow, hg, Bool.not_eq_true', Array.any_eq_false'] at h
+  have hc := h (.ctrl name p) hm
+  rcases hn with rfl | rfl <;> simpa using hc
+
+/-- Select one stored alternative. Both are proper children of the
+candidate, so selection decreases the block walk's weight for every raw
+body, independently of which command meanings are active. -/
+private def linkedRowChoice (body : Array Raw) (native : Bool) :
+    { rs : Array Raw // rawWeightList rs.toList ≤ rawWeightList body.toList ∧
+      nestedParsList rs.toList ≤ rawParsList body.toList } :=
+  match h : (body[if native then 1 else 0]? : Option Raw) with
+  | some (.group chosen pos) =>
+    have hmem : Raw.group chosen pos ∈ body.toList := by
+      obtain ⟨hi, heq⟩ := Array.getElem?_eq_some_iff.mp h
+      exact heq ▸ Array.getElem_mem_toList hi
+    have hw := measList_mem_le (μ := rawWeight) hmem
+    have hp := measList_mem_le (μ := rawPars) hmem
+    have hn := nestedParsList_le chosen.toList
+    ⟨chosen, by
+        simp only [rawWeight, ← rawWeightList_eq] at hw
+        omega,
+      by
+        simp only [rawPars, ← rawParsList_eq] at hp
+        exact Nat.le_trans hn hp⟩
+  | _ => ⟨#[], by simp [rawWeightList, nestedParsList]⟩
+
+/-- The conversion is named only once its premise has been established at
+the use site. A discarded argument is not a translated row. -/
+private def noteLinkedRow (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Unit := do
+  warnOnce ctx "env:minipage-row" .N0100
+    "'\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…' → \
+one row of boxes, the fill between them" pos
+  if body.size > 2 then
+    warnOnce ctx "env:minipage-row-options" .N0102
+      "'minipage' [height] and [inner-pos] options are ignored in a row of boxes: each \
+box is as tall as its content" pos
+
+/-- Splicing a selected child removes the candidate wrapper, strictly in
+weight and non-increasingly in nested paragraph boundaries. -/
+private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
+    (h : i < raws.size) {body : Array Raw} {pos : Pos}
+    (hr : raws[i] = .env Compat.linkedBoxRowMark body pos) (native : Bool) :
+    let chosen := (linkedRowChoice body native).val
+    sliceWeight (raws.extract 0 i ++ chosen ++ raws.extract (i + 1) raws.size) i
+        < sliceWeight raws i ∧
+      slicePars (raws.extract 0 i ++ chosen ++ raws.extract (i + 1) raws.size) i
+        ≤ slicePars raws i := by
+  have hb := (linkedRowChoice body native).property
+  constructor
+  · simp only [sliceWeight_eq]
+    apply sliceMeas_splice_lt h
+    rw [hr]
+    simp only [rawWeight, ← rawWeightList_eq]
+    omega
+  · simp only [slicePars_eq]
+    apply sliceMeas_splice_le h
+    rw [hr]
+    simpa only [nestedPars, ← nestedParsList_eq] using hb.2
+
+seal nativeLinkedRow linkedRowChoice noteLinkedRow
+
 /-- Does the control sequence `n`, met at `raws[i]` with the current paragraph
 accumulator `cur`, open a block rather than continue the paragraph? Lifted
 whole out of the `elabBlocksGo` block knot — whose own `match` sits at the
@@ -9943,7 +10075,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (cur.isEmpty && n == Compat.pageColorResetMark)
     || (cur.isEmpty && n.startsWith "@lang:")
     || n == BeamerColor.marker || n == BeamerColor.starMarker
-    || linkWrapperTakesBlocks n raws i
+    || ((lookupUser ctx' n).isNone && !(ctx'.args.any (·.1 == n)) &&
+      linkWrapperTakesBlocks n raws i)
     || (n != "note" &&
       ((sectionLevel n).isSome
         || declCtrl.contains n || runningCtrl.contains n || n == "define"
@@ -10966,7 +11099,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         slicePars_le raws (by omega)
       have hb0 : sliceWeight body 0 = rawWeightList body.toList := sliceWeight_zero _
       have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
-      let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+      let inner ← elabBlockScope ctx body
       let target := argText ctx targetRaw
       let wrapped ←
         if n == "hypertarget" then pure (#[Block.para #[.label target]] ++ inner)
@@ -11300,6 +11433,15 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .env n body epos =>
+      if hn : n = Compat.linkedBoxRowMark then
+        -- premise: nativeLinkedRow_gated — active macros and parameters own their arguments.
+        if nativeLinkedRow ctx' body then noteLinkedRow ctx' body epos
+        let chosen := (linkedRowChoice body (nativeLinkedRow ctx' body)).val
+        have hd := linkedRowChoice_splice h (body := body) (pos := epos)
+          (by simpa only [hn] using hr) (nativeLinkedRow ctx' body)
+        return ← elabBlocksGo ctx'
+          (raws.extract 0 i ++ chosen ++ raws.extract (i + 1) raws.size)
+          i blocks cur gen'
       have hre : raws[i]? = some (.env n body epos) := by
         rw [Array.getElem?_eq_getElem h]; exact congrArg some hr
       have hew : rawWeightList body.toList + 1 ≤ sliceWeight raws i := by
@@ -11769,6 +11911,7 @@ unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
 unseal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBlock
 unseal scanBracketArg Parse.inputEnvFile?
+unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems ownBibList
 
