@@ -10657,7 +10657,14 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               (help := "links cannot nest; move the inner link outside the outer wrapper")
             pure inner
           else
-            pure (Ir.linkBlocks url inner)
+            -- The nested text takes the inline link's two affordances — the
+            -- kind's ink and an underline — from the one `Styles` door the
+            -- inline arm uses: `link` for an internal `\hyperlink`, `url`
+            -- for `\href`/`\link`. `hasBlockAnchor` cleared the body of
+            -- every inner link above, so no span is afforded twice; an
+            -- image-only body takes no decoration (`linkBodyAfford`).
+            let kind := if n == "hyperlink" then "link" else "url"
+            pure (Ir.linkBlocks url (ctx.styles.linkBodyAfford kind inner))
       return (blocks ++ wrapped, ⟨j2 + 1, by omega⟩)
     | _, _ =>
       diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos

@@ -5240,6 +5240,30 @@ theorem link_url_enters_attribute_position (cfg : Config) (acc : Array Node)
         #[("href", url), ("style", "color: inherit")]) := by
   simp [inlineNodeInto]
 
+/-- **The HTML projection of `Ir.Styles.linkLeafAfford_afford`.** A
+text-bearing link-body leaf emits as the kind's ink span wrapping a `<u>`
+element wrapping the leaf's own emission — the ink CSS and the underline tag
+together, the two affordances the inline `.colored`/`.decorated` arms carry
+(a named colour becomes a `var(--token, …)` reference, so a host page can
+restyle the ink). The HTML half of the one IR value both backends read
+(`Ir.Styles.linkBodyAfford`; Layout's `linkLeafAfford_projects` is the
+PDF half). -/
+theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
+    (s : Ir.Styles) (kind : String) (x : Inline) (h : x.bearsLinkText = true) :
+    inlineNodeInto cfg acc (s.linkLeafAfford kind x)
+      = (match (s.find? kind).bind (·.color) with
+         | some (c, n) =>
+             acc.push (Html.elem "span"
+               #[Html.elem "u" (inlineNodesInto cfg #[] [x])]
+               #[("style", match n with
+                  | some nm => s!"color: var(--{nm}, {cssColor c})"
+                  | none => s!"color: {cssColor c}")])
+         | none => acc.push (Html.elem "u" (inlineNodesInto cfg #[] [x]))) := by
+  rw [Ir.Styles.linkLeafAfford_afford s kind x h]
+  cases hc : (s.find? kind).bind (·.color) with
+  | none => simp [inlineNodeInto, inlineNodesInto]
+  | some p => obtain ⟨c, n⟩ := p; cases n <;> simp [inlineNodeInto, inlineNodesInto]
+
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
 private def hasFill (xs : Array Inline) : Bool :=

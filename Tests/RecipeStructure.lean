@@ -610,3 +610,85 @@ def recipeUlemChecks (ref : IO.Ref (List String))
     l.segs.any (· matches .decoration .lineThrough ..)
   t "the body strike paints exactly one through-line overlay (no double paint)"
     (bodyThrough.size == 1)
+
+
+/-- **A block link's nested text carries the inline link's two affordances;
+an image-only body carries none.** An inline link paints its body in the
+kind's declared ink (`Styles.linkInk`: `urlcolor` for `\href`, `linkcolor`
+for internal `\hyperlink`) and underlines it (`Layout`'s `.link` arm, WCAG
+2.2 SC 1.4.1 — never colour alone, never nothing). A block link's nested
+text must carry the same, applied once per text-bearing run, so the two
+backends read one afforded body. An image-only body has no text to mark, so
+it carries no invisible-only decoration: its affordance is the reachable,
+named `<a>` wrapping the `<img>`'s own name. These checks read `Layout.Out`,
+the typed HTML tree, and the PDF operators — never a dump. -/
+def recipeLinkAffordChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let cascade := ["W0301", "W0302", "E0304", "E0336", "E0311"]
+  let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
+  -- A multi-paragraph `\href` is a block link; under colorlinks its kind is
+  -- `url` (magenta). Its nested text must ship magenta and underlined.
+  let tsrc := dvDoc "\\usepackage[colorlinks]{hyperref}\n"
+    "\\href{https://example.org}{First linked line.\n\nSecond linked line.}"
+  let (tdoc, tds) := elabStr tsrc
+  t "a text block link elaborates with no unknown-command or wrapper cascade"
+    (tds.all fun d => !cascade.contains d.code && d.severity != .error)
+  let tout := layoutOf oneFace tdoc
+  let linkRunColors := (bodyLines tout).flatMap fun l => l.segs.filterMap fun s => match s with
+    | .run _ color _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then none else some color
+    | _ => none
+  let underlineSegs := (metricDecorationSegs tout).filter
+    fun (kind, _, _, _, _) => kind == .underline
+  -- Layout.Out: every glyph run of the link's body is in the kind's ink, and
+  -- the body is underlined — the two affordances, together.
+  t "PAGE: a text block link paints its nested text in link ink and underlines it"
+    (!linkRunColors.isEmpty && linkRunColors.all (· == magenta) && !underlineSegs.isEmpty)
+  -- Layout.Out: the block link still ships its one whole-block annotation.
+  t "PAGE: the text block link ships one link rectangle to its target"
+    (match tout.pages[0]?.bind (·.links[0]?) with
+     | some rect => (tout.pages[0]?.map (·.links.size == 1)).getD false &&
+         rect.target == "https://example.org"
+     | none => false)
+  -- PDF: the underline lowers to a fill of the link ink, and the annotation
+  -- carries the URL — decoration and annotation agree with the page.
+  let tree := Struct.ofDoc (Layout.pdfView tdoc)
+  let pdfFills := (Pdf.pageOps (Layout.Geom.ofPage tdoc.page) oneFace tout.pages {} tree).flatMap
+    fun ops => pdfFillsList #[] ops.toList
+  t "PDF: the underline becomes a fill of the link ink"
+    (underlineSegs.all fun (_, w, thickness, _, color) =>
+      color == magenta && pdfFills.contains (color, w, thickness))
+  let tpdf := Pdf.write (Layout.Geom.ofPage tdoc.page) oneFace tout.pages tdoc.info
+  t "PDF: the text block link carries one annotation to its target"
+    (pdfLinkTargets tpdf == .ok #["(https://example.org)".toUTF8])
+  -- HTML: the same two affordances — the anchor, the underline tag, and the
+  -- ink span — on the link's own text, so both backends agree.
+  let ttrees := tdoc.body.map (HtmlDoc.blockNode {})
+  let threfs := ttrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  let (thtml, _) := HtmlDoc.emit {} tdoc
+  t "HTML: a text block link carries href, an underline tag, and the ink span"
+    (threfs == #["https://example.org"] &&
+      ttrees.foldl (fun n tree => n + countTag "u" tree) 0 >= 1 &&
+      hasStr thtml (HtmlDoc.cssColor magenta))
+  -- An image-only block link: no text to mark, so no invisible-only
+  -- decoration — the affordance is the reachable, named anchor.
+  let isrc := dvDoc "\\usepackage{graphicx}\n\\usepackage[colorlinks]{hyperref}\n"
+    "\\href{https://example.org}{\\begin{center}\\includegraphics[alt={Site logo}]{logo.png}\\end{center}}"
+  let (idoc, ids) := elabStr isrc
+  t "an image-only block link elaborates with no unknown-command or wrapper cascade"
+    (ids.all fun d => !cascade.contains d.code && d.severity != .error)
+  let iout := layoutOf oneFace idoc
+  let iUnderline := (metricDecorationSegs iout).filter
+    fun (kind, _, _, _, _) => kind == .underline
+  t "PAGE: an image-only block link carries no underline and one link rectangle"
+    (iUnderline.isEmpty &&
+      (match iout.pages[0]?.bind (·.links[0]?) with
+       | some rect => (iout.pages[0]?.map (·.links.size == 1)).getD false &&
+           rect.target == "https://example.org"
+       | none => false))
+  let itrees := idoc.body.map (HtmlDoc.blockNode {})
+  let ihrefs := itrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
+  let ialts := itrees.foldl (fun acc n => acc ++ attrValuesOf (· == "img") "alt" n) #[]
+  t "HTML: an image-only block link is a reachable named anchor with no underline"
+    (ihrefs == #["https://example.org"] && ialts.contains "Site logo" &&
+      itrees.foldl (fun n tree => n + countTag "u" tree) 0 == 0)

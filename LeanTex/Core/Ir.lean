@@ -8595,6 +8595,63 @@ def hasBlockAnchor (xs : Array Block) : Bool :=
   foldBlocks (fun found b => found || (b matches .link _ _))
     (fun found x => found || x.anchorBearing) false xs
 
+/-- Whether an inline leaf bears text ink a link affordance should mark. A
+link's underline and ink ride text; an image, an anchor, pure spacing or a
+strut carry none, so they take no affordance — which is what leaves an
+image-only link body with no invisible underline (its reachable, named
+anchor is the affordance instead). The wrapper nodes are descended by the
+afford walk and never classified here. -/
+def Inline.bearsLinkText : Inline → Bool
+  | .text _ | .math _ _ | .formula _ _ _ | .ref _ _ _ _ | .cite _ _
+  | .icon _ _ | .pageNumber | .pageCount => true
+  | .image _ _ _ | .label _ | .fill | .hspace _ _ | .rule _ _ _
+  | .strut _ | .italicCorr _ | .linebreak _
+  | .styled _ _ | .colored _ _ _ | .role _ _ | .link _ _ | .decorated _ _
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => false
+
+/-- One link-body leaf given its kind's affordance: a text-bearing leaf is
+underlined (`Decoration.underline`) and, where the kind declares one, set in
+its ink (`Styles.linkInk`'s colour) — the two affordances an inline link
+already carries (`Layout`'s `.link` arm, WCAG 2.2 SC 1.4.1); a leaf that
+bears no text is left as it stands, so an image-only body carries no
+invisible-only decoration. A leaf rewrite, so the afford walk applies it
+exactly once per leaf. -/
+def Styles.linkLeafAfford (s : Styles) (kind : String) (x : Inline) : Inline :=
+  if x.bearsLinkText then
+    match (s.find? kind).bind (·.color) with
+    | some (c, n) => .colored c n #[.decorated .underline #[x]]
+    | none => .decorated .underline #[x]
+  else x
+
+/-- A text-bearing link-body leaf takes both affordances: it is underlined,
+and set in the kind's ink where one is declared. The IR half of the inline
+link's own `.link` + `linkInk` behaviour, now readable by both backends from
+one body. -/
+theorem Styles.linkLeafAfford_afford (s : Styles) (kind : String) (x : Inline)
+    (h : x.bearsLinkText = true) :
+    s.linkLeafAfford kind x
+      = (match (s.find? kind).bind (·.color) with
+         | some (c, n) => .colored c n #[.decorated .underline #[x]]
+         | none => .decorated .underline #[x]) := by
+  simp [Styles.linkLeafAfford, h]
+
+/-- A leaf that bears no text is untouched by the affordance: an image, an
+anchor or pure spacing takes no decoration, so an image-only link body
+carries no invisible-only wrap — its affordance is the named anchor. -/
+theorem Styles.linkLeafAfford_id (s : Styles) (kind : String) (x : Inline)
+    (h : x.bearsLinkText = false) : s.linkLeafAfford kind x = x := by
+  simp [Styles.linkLeafAfford, h]
+
+/-- The affordance conserves a leaf's census: underline and ink are both
+body-transparent wraps, so an afforded leaf ships exactly the text it had —
+the per-leaf hypothesis the body walk's `_text` instance reads. -/
+theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inline) :
+    plainTextOne (s.linkLeafAfford kind x) = plainTextOne x := by
+  rw [Styles.linkLeafAfford]
+  split
+  · split <;> simp [plainTextOne, plainTextList]
+  · rfl
+
 
 /-- The accessible reading of a block link, from the same generic fold that
 censuses the block tree. Wrapper nodes contribute nothing twice; leaf text,
@@ -14009,6 +14066,19 @@ def linkBlockList (url : String) (body : List Block) : List Block :=
 def linkBlocks (url : String) (xs : Array Block) : Array Block :=
   (linkBlockList url xs.toList).toArray
 
+/-- A block link's nested body given its kind's affordance: every
+text-bearing run — through styling, colour and role wrappers alike — set in
+the kind's link ink and underlined, exactly as an inline link's body is,
+applied once per leaf. Built only where the body bears no anchor
+(`hasBlockAnchor` refuses the nested case first), so no span inside an inner
+inline link is reached, and none is afforded twice. An image-only body — no
+text-bearing leaf — is returned carrying no decoration (`linkLeafAfford_id`).
+Both backends read this one afforded body: `Layout`'s `.decorated`/`.colored`
+arms lower it to a PDF underline fill and coloured glyphs, HtmlDoc's to a
+`<u>` and an ink span. -/
+def Styles.linkBodyAfford (s : Styles) (kind : String) (xs : Array Block) : Array Block :=
+  mapBlocks (s.linkLeafAfford kind) xs
+
 mutual
 
 /-- The census face of the map, per node: a leaf function that conserves
@@ -14442,6 +14512,15 @@ theorem linkBlockList_text (url : String) (xs : List Block) (acc : String) :
 theorem linkBlocks_text (url : String) : Conserves blocksText (linkBlocks url) := by
   intro xs
   simp [linkBlocks, blocksText, linkBlockList_text]
+
+/-- A block link's affordance conserves the body's census: it is the generic
+map under a leaf rewrite that conserves each leaf (`linkLeafAfford_text`), so
+neither underline nor ink adds or hides a character — the one census both
+backends read from the afforded body. -/
+theorem Styles.linkBodyAfford_text (s : Styles) (kind : String) :
+    Conserves blocksText (s.linkBodyAfford kind) := by
+  unfold Styles.linkBodyAfford
+  exact mapBlocks_text (s.linkLeafAfford kind) (s.linkLeafAfford_text kind)
 
 /-- A row of flow-transparent linked boxes: each tile's own content wrapped
 in exactly one link to the tile's target, the tiles gathered into one
