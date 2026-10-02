@@ -7437,7 +7437,7 @@ def tablePadding (colsep : Sp) (count : Nat) (padL padR : Bool) : Sp :=
 and fixed columns, inner gaps, and outer pads. This is tabularx's trial
 arithmetic as a value: X defaults to `p{width}`, and the final trial divides
 the remaining target among the X columns (`tabularx.sty`, `TX@arith`). -/
-def tableFlexWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
+def tableFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (bases : Array Sp) (padL padR : Bool) : Array Sp :=
   let count := cols.foldl (fun n c => if c.width matches .flex _ then n + 1 else n) 0
   match tableFlexTarget cols with
@@ -7446,11 +7446,30 @@ def tableFlexWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
     let fixed := cols.zipIdx.foldl (fun sum (c, j) => match c.width with
       | .flex _ => sum
       | .natural | .sized _ => sum + bases[j]?.getD 0) 0
-    let share := max 0 (target.resolve total - fixed -
-      tablePadding colsep cols.size padL padR) / max count 1
+    let remaining := target.resolve total - fixed - tablePadding colsep cols.size padL padR
+    -- tabularx.sty: TX@error@width is 1em when the fixed columns exceed
+    -- the target. The font in force supplies that em, not a fixed minimum.
+    let share := if remaining < 0 then max 0 fontSize else remaining / max count 1
     cols.mapIdx fun j c => match c.width with
       | .flex _ => share
       | .natural | .sized _ => bases[j]?.getD 0
+
+/-- Initial flexible widths agree before spanning cells impose their
+constraints. Unlike relative CSS hints, this calculation subtracts measured
+natural widths and padding from the physical target. -/
+theorem tableFlexWidths_flex_contract (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
+    (bases : Array Sp) (padL padR : Bool) (i j : Nat) (ci cj : Ir.ColSpec)
+    (ti tj : Ir.TableTarget) (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
+    (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
+    (tableFlexWidths colsep total fontSize cols bases padL padR)[i]? =
+      (tableFlexWidths colsep total fontSize cols bases padL padR)[j]? := by
+  unfold tableFlexWidths tableFlexTarget
+  split
+  · -- No flex target found: impossible, since column `i` is flexible.
+    rename_i hnone
+    exact absurd ((Array.findSome?_eq_none_iff.mp hnone) ci (Array.mem_of_getElem? hi))
+      (by rw [hwi]; simp)
+  · simp [hi, hj, hwi, hwj]
 
 /-- Bisect a trial interval, retaining a fitting lower endpoint. The
 measure is the remaining interval in sp, not an iteration limit. -/
@@ -7486,42 +7505,42 @@ def tableFlexTrial (colsep total : Sp) (cols : Array Ir.ColSpec)
     | .natural | .sized _ => colBase total spans nats j c
   (List.range cols.size).foldl (widenAt colsep total nats spans) bases
 
-/-- Fit the final span-expanded widths, retaining the minimum span widths
-when they alone exceed the target. Prefix sums in a trial are maxima of
+/-- Fit the final span-expanded widths. When the minimum span widths
+already exceed the target, each X column retains the one-em fallback. Prefix sums in a trial are maxima of
 earlier prefixes plus a fixed need or an X share, hence monotone in the
 share. The unspanned allocation bounds that share from above. -/
-def tableSpanFlexWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
+def tableSpanFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (allocated : Array Sp)
     (budget : Sp) : Array Sp :=
   let trial := tableFlexTrial colsep total cols nats spans
   let fits := fun share => decide ((trial share).foldl (· + ·) 0 ≤ budget)
   let upper := cols.zipIdx.foldl (fun m (c, j) =>
     if c.width matches .flex _ then max m (allocated[j]?.getD 0) else m) 0
-  trial (if fits 0 then fitTableShare fits 0 upper.toNat else 0)
+  trial (if fits 0 then fitTableShare fits 0 upper.toNat else fontSize.toNat)
 
 /-- A table's column widths. Natural tables enforce the span minimums;
 flexible tables fit those same constraints inside the declared target. -/
-def tableColWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
+def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
     (padL : Bool := true) (padR : Bool := true) : Array Sp :=
   let bases := cols.mapIdx fun j spec => colBase total spans nats j spec
-  let bases := tableFlexWidths colsep total cols bases padL padR
+  let bases := tableFlexWidths colsep total fontSize cols bases padL padR
   if spans.isEmpty then bases
   else match tableFlexTarget cols with
     | none => (List.range cols.size).foldl (widenAt colsep total nats spans) bases
-    | some target => tableSpanFlexWidths colsep total cols nats spans bases
+    | some target => tableSpanFlexWidths colsep total fontSize cols nats spans bases
         (target.resolve total - tablePadding colsep cols.size padL padR)
 
 /-- Artifact geometry: arbitrary nonempty spans stay inside the table's
 declared target whenever their minimum widths fit. Pads and inner gaps
 are charged to that same budget, rather than to the enclosing measure. -/
-theorem table_flex_span_width_contract (colsep total : Int) (cols : Array Ir.ColSpec)
+theorem table_flex_span_width_contract (colsep total fontSize : Int) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (padL padR : Bool)
     (target : Ir.TableTarget) (hs : spans.isEmpty = false)
     (ht : tableFlexTarget cols = some target)
     (hf : (tableFlexTrial colsep total cols nats spans 0).foldl (· + ·) 0 ≤
       target.resolve total - tablePadding colsep cols.size padL padR) :
-    (tableColWidths colsep total cols nats spans padL padR).foldl (· + ·) 0 +
+    (tableColWidths colsep total fontSize cols nats spans padL padR).foldl (· + ·) 0 +
       tablePadding colsep cols.size padL padR ≤ target.resolve total := by
   simp only [tableColWidths, hs, Bool.false_eq_true, ↓reduceIte, ht, tableSpanFlexWidths]
   have fit (hi : Nat) := fitTableShare_contract
@@ -7544,10 +7563,10 @@ theorem inSpan_nil (i j : Nat) : inSpan #[] i j = false := by
 /-- With no span, a table is exactly its finalized bases: natural columns
 at their widest cell, fixed columns at their declaration, and flexible
 columns at an equal share of their target remainder. -/
-theorem table_natural_width_exact (colsep total : Sp) (cols : Array Ir.ColSpec)
+theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (padL padR : Bool) :
-    tableColWidths colsep total cols nats #[] padL padR =
-      tableFlexWidths colsep total cols
+    tableColWidths colsep total fontSize cols nats #[] padL padR =
+      tableFlexWidths colsep total fontSize cols
         (cols.mapIdx fun j spec => colBase total #[] nats j spec) padL padR := by
   simp [tableColWidths]
 
@@ -7590,7 +7609,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
   a := { a with hyphCache := cache }
-  let widths := tableColWidths colsep total cols nats spans padL padR
+  let widths := tableColWidths colsep total size cols nats spans padL padR
   let lead : Sp := if padL then colsep else 0
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)

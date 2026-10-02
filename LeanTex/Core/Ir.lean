@@ -4371,6 +4371,61 @@ structure ColSpec where
   align : HAlign
   deriving Repr, BEq, Inhabited
 
+/-- Relative table-track hints, in permille of the flexible target. Natural
+columns measure their own content; sized columns with the target's reference
+have its relative width, and flexible columns split the remaining share.
+Unresolved expressions retain their affine track. These are structural hints,
+not final physical widths: padding, natural content, and spanning cells enter
+the backend's sizing algorithm separately. -/
+def tableColShares (cols : Array ColSpec) (target : TableTarget) : Array (Option Nat) :=
+  match target with
+  | .sized te =>
+    match te.refPermille with
+    | none => cols.map fun _ => none
+    | some (tm, tperm) =>
+      if tperm == 0 then cols.map fun _ => none
+      else
+        let count := cols.foldl (fun n c =>
+          if c.width matches .flex _ then n + 1 else n) 0
+        let sizedSum := cols.foldl (fun s c => match c.width with
+          | .sized e => match e.refPermille with
+            | some (m, p) => if m == tm then s + p * 1000 / tperm else s
+            | none => s
+          | .natural | .flex _ => s) 0
+        let flexShare := if count == 0 then 0 else (1000 - min 1000 sizedSum) / count
+        cols.map fun c => match c.width with
+          | .natural => none
+          | .sized e => e.refPermille.bind fun (m, p) =>
+            if m == tm then some (p * 1000 / tperm) else none
+          | .flex _ => some flexShare
+
+/-- `tableColShares` answers one share per column. -/
+theorem tableColShares_count_exact (cols : Array ColSpec) (target : TableTarget) :
+    (tableColShares cols target).size = cols.size := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp
+
+/-- A natural column is excluded from the target split: it carries no share
+(`none`), the typed statement of "naturals are left to `auto`". -/
+theorem tableColShares_natural_exact (cols : Array ColSpec) (target : TableTarget)
+    (j : Nat) (c : ColSpec) (hget : cols[j]? = some c) (hc : c.width = .natural) :
+    (tableColShares cols target)[j]? = some none := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp [hget, hc]
+
+/-- Flexible tracks receive equal relative hints. This does not claim equality
+of final widths after each backend measures content and applies span constraints. -/
+theorem tableColShares_flex_contract (cols : Array ColSpec) (target : TableTarget)
+    (i j : Nat) (ci cj : ColSpec) (ti tj : TableTarget)
+    (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
+    (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
+    (tableColShares cols target)[i]? = (tableColShares cols target)[j]? := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp [hi, hj, hwi, hwj]
+
 /-- A horizontal rule (or declared row gap) inside a table, booktabs'
 vocabulary: `top` and `bottom` draw at `heavyRuleWidth`, `mid` at
 `lightRuleWidth`, and each carries its documented padding

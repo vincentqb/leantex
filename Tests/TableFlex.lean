@@ -78,3 +78,21 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     t s!"tabularx {c.name}: valid input has no table or command refusal"
       ((ds ++ out.diags).all fun d =>
         !d.code.startsWith "E" && !#["W0301", "W0302", "W0337", "W0338"].contains d.code)
+
+/-- An impossible target keeps a one-em X column, as `TX@error@width`
+(tabularx.sty). Its size follows the font in force; no fixed minimum or
+zero-width placeholder can satisfy these shipped-rule witnesses. -/
+def tableFlexOverflowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for points in #[8, 12, 18] do
+    let (doc, _) := elabStr (dvDoc "\\usepackage{tabularx,booktabs}\n"
+      "\\begin{tabularx}{200pt}{p{210pt}X}\\toprule Left & Tail\\\\\\bottomrule\\end{tabularx}")
+    let doc := { doc with page := { doc.page with fontSize := pt points } }
+    let out := layoutOf oneFace doc
+    let widths := flexRuleWidths out
+    let expected := pt (210 + points) + 4 * Ir.tabColSep.sp
+    t s!"impossible tabularx at {points}pt: X retains one em in the shipped rules"
+      (widths.size == 2 && widths.all (· == expected))
+    t s!"impossible tabularx at {points}pt: both cells still ship"
+      ((censusText (censusOf #[] out) |>.splitOn "Left").length == 2 &&
+        (censusText (censusOf #[] out) |>.splitOn "Tail").length == 2)

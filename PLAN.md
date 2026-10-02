@@ -25745,3 +25745,31 @@ test`, and every target cell and browser-face capture across the browser
 oracle's 86 fixtures in Chromium. Firefox cannot launch on this host and
 remains untested. The private reference deck compiles to both artifacts;
 its HTML carries unique labels and a contiguous shared content count.
+
+### 2026-10-02 — Recover and unify table width contracts
+
+The remaining table branch changes are integrated through the existing
+column specification and width resolver. Array's supported alignment
+modifiers use one decoder for both sides of a column, with last declaration
+winning; an unsupported modifier still has a named refusal. The compatibility
+index names the documented command family rather than a single example.
+
+`Ir.tableColShares` supplies both the HTML column hints and their projection
+contracts. Natural columns remain unwrapped, while flexible columns divide
+the remaining relative share. These are relative CSS hints, not a claim that
+browser font measurement and native PDF table layout are identical.
+`table_flex_span_width_contract` retains its explicit premise that the
+minimum span constraints fit the target.
+
+An impossible target does not collapse its flexible columns to zero or use
+an arbitrary fixed minimum. The installed `tabularx.sty` defines
+`TX@error@width` as one em; the native resolver reads the current font size
+for that fallback. Synthetic LuaLaTeX probes at 8, 12 and 18 points confirm
+the rule. `tableFlexOverflowChecks` independently reads the emitted rule
+widths and retained cell text at each size.
+
+The recovered HTML width and array-alignment guards failed on `d4ba7463`;
+the expanded modifier check exposed seven failures before the decoder was
+restored. The three overflow geometry guards also failed on that base.
+Focused checks pass after the changes. No physical-width theorem is inferred
+from an elaboration dump or a CSS percentage.

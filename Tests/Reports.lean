@@ -465,7 +465,11 @@ def reports : List Report := [
   { id := "R68", date := "2026-10-01"
     what := "a target-width table wrapper kept its cells as loose text and treated flexible columns as unknown"
     pins := [check% recipeTabularxChecks, check% tableContextChecks,
-      check% tableFlexChecks, thm% Layout.table_natural_width_exact,
+      check% tableFlexChecks, check% tableFlexOverflowChecks,
+      check% recipeTabularxSharesChecks, check% recipeColModChecks,
+      thm% Ir.tableColShares_flex_contract,
+      thm% HtmlDoc.tableColEls_share_projects,
+      thm% Layout.table_natural_width_exact,
       thm% Layout.table_flex_span_width_contract]
     state := .guarded "8a9cf04a" .before .author },
   { id := "R69", date := "2026-10-01"

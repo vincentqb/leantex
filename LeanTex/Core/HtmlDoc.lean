@@ -206,7 +206,7 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "bt-light-above", "bt-nowrap", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -4447,6 +4447,15 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"tr.bt-pre > td, tr.bt-pre > th \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
   s!"td.bt-cmid, th.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
+  -- A natural `l`/`c`/`r` column is left to `auto`: the browser measures it,
+  -- as the PDF path measures it from the fonts. CSS reality: `white-space`
+  -- set on a `<col>` has no effect — only `width`, `background`, `border`
+  -- and `visibility` apply to a column (CSS Tables §17.3). So the nowrap
+  -- that stops auto-layout squeezing a natural column to min-content lands
+  -- on its cells (`bt-nowrap`, placed in `tableCellNode`), inside `:where()`
+  -- so it never outranks an authored rule.
+  ":where(table.booktabs td.bt-nowrap, table.booktabs th.bt-nowrap)" ++
+  " { white-space: nowrap; }\n" ++
   -- Float and caption gaps: the same tokens the PDF path reads, the
   -- defaults this context's own rhythm multiples of the declared rows
   -- (`Ir.rhythmGapQuanta`; the boundary rules live in `blockGapCss`).
@@ -5066,8 +5075,20 @@ def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat �
   let al := match sp with
     | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
     | none => al
-  let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
-    then al.push ("class", "bt-cmid") else al
+  -- A natural `l`/`c`/`r` column is left to CSS `auto`; its cells carry
+  -- `bt-nowrap` so auto table layout cannot squeeze the column to
+  -- min-content (the `:where(... td.bt-nowrap ...)` rule above). `white-space`
+  -- on the `<col>` itself would do nothing (CSS Tables §17.3), so the class
+  -- lands here, on the cell. Combined with `bt-cmid` into one class value, as
+  -- a cell carries at most one `class` attribute.
+  let isNatural : Bool := match sp with
+    | some s => (s.spec.width matches .natural)
+    | none => ((cols[j]?.map (·.width)).getD .natural matches .natural)
+  let cmid := cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
+  let classes : Array String :=
+    (if cmid then #["bt-cmid"] else #[]) ++ (if isNatural then #["bt-nowrap"] else #[])
+  let attrs := if classes.isEmpty then al
+    else al.push ("class", " ".intercalate classes.toList)
   let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
   let content := inlines cfg cell
   -- Chromium does not resolve query units against a table-cell container.
@@ -5111,6 +5132,39 @@ theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     simp only [tableCellNode, Html.elem, Html.Node.tag?, Option.some.injEq]
     exact tableCellTag_th_iff headerRows i
 
+/-- Project a relative track hint to CSS, falling back to the declared affine
+width or natural sizing. CSS table layout still measures content and padding. -/
+def colElOf (shares : Array (Option Nat)) (j : Nat) (c : Ir.ColSpec) : Node :=
+  match shares[j]? with
+  | some (some p) => Html.elem "col" #[] #[("style", s!"width: {Ir.percentCss p}")]
+  | _ => match c.width with
+    | .sized e => Html.elem "col" #[] #[("style", s!"width: {Ir.Track.css (.affine e)}")]
+    | .flex _ | .natural => Html.elem "col" #[] #[]
+
+/-- One column node per typed column, preserving order. Relative hints use
+`Ir.tableColShares`; tables without a flexible target keep their declared widths. -/
+def tableColEls (cols : Array Ir.ColSpec) (target : Option Ir.TableTarget) : Array Node :=
+  let shares : Array (Option Nat) := match target with
+    | some t => Ir.tableColShares cols t
+    | none => cols.map fun _ => none
+  cols.mapIdx (colElOf shares)
+
+/-- The CSS width spelling is the projection of the IR's relative hint.
+This is a tree-emission fact, not a claim about the browser's measured width. -/
+theorem tableColEls_share_projects (shares : Array (Option Nat)) (j : Nat)
+    (c : Ir.ColSpec) (p : Nat) (h : shares[j]? = some (some p)) :
+    colElOf shares j c = Html.elem "col" #[] #[("style", s!"width: {Ir.percentCss p}")] := by
+  simp [colElOf, h]
+
+/-- A natural column is projected to a bare `<col>` with no width — CSS `auto`
+— the HTML half of "naturals are excluded from the target split"
+(`Ir.tableColShares_natural_exact` gives it the `some none` share; the nowrap that
+keeps it from collapsing lands on its cells, `tableCellNode`). -/
+theorem tableColEls_natural_projects (shares : Array (Option Nat)) (j : Nat)
+    (c : Ir.ColSpec) (hc : c.width = .natural) (h : shares[j]? = some none) :
+    colElOf shares j c = Html.elem "col" #[] #[] := by
+  simp [colElOf, h, hc]
+
 /-- booktabs' formal table. Rules land as border classes on the row they
 precede (`-below` on the last row for a rule written after it), and the
 stylesheet draws each class at the sourced weight with its declared
@@ -5131,12 +5185,10 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
   let drawn (r : Ir.TableRule) : Bool := match r with
     | .gap _ => false
     | .top | .mid | .bottom | .cmid .. => true
-  let colEls := cols.filterMap fun c =>
-    match c.width with
-    | .sized e => some (Html.elem "col" #[] #[
-        ("style", s!"width: {Ir.Track.css (.affine e)}")])
-    | .flex _ => some (Html.elem "col" #[] #[("style", "width: 100%")])
-    | .natural => some (Html.elem "col" #[] #[])
+  let target := cols.findSome? fun c => match c.width with
+    | .flex t => some t
+    | .natural | .sized _ => none
+  let colEls := tableColEls cols target
   let rowEls := rows.mapIdx fun i row =>
     let cls := Id.run do
       let mut cls : Array String := #[]
@@ -5168,9 +5220,6 @@ def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
     if headerRows < rows.size then
       kids := kids.push (Html.elem "tbody" (rowEls.extract headerRows rowEls.size))
     return kids
-  let target := cols.findSome? fun c => match c.width with
-    | .flex t => some t
-    | .natural | .sized _ => none
   let attrs := match target with
     | some t => #[("class", cls), ("style", "width: " ++ t.css)]
     | none => #[("class", cls)]

@@ -273,6 +273,19 @@ def anyRef (p : α → Bool) : Affine α → Bool
   | .scale _ _ e => anyRef p e
   | .add a b | .sub a b => anyRef p a || anyRef p b
 
+/-- The reference, and its coefficient in permille, when the expression is
+exactly a non-negative rational multiple of a single `.ref` with no literal,
+sum, or difference part: a bare `.ref m` is `(m, 1000)`; `scale num den
+(.ref m)` is `(m, num·1000/den)`. Anything else — a literal, a sum, a nested
+scale, a different shape, a zero denominator, or a negative coefficient — is
+`none`, the signal to a share computation that this length does not reduce to
+a clean fraction of a shared measure and must fall back to its affine form. -/
+def refPermille : Affine α → Option (α × Nat)
+  | .ref m => some (m, 1000)
+  | .scale num den (.ref m) =>
+    if den == 0 || num < 0 then none else some (m, num.toNat * 1000 / den)
+  | _ => none
+
 /-- Whether every literal is rigid glue. -/
 def rigid : Affine α → Bool
   | .lit g => !g.fil && g.stretch == {} && g.shrink == {}

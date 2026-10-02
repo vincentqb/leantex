@@ -2564,8 +2564,10 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let cmidCells := cellFactsOne "" #[] cmid
   t "cmidrule and addlinespace head nothing: nine td, no th, no thead"
     (cmidCells.size == 9 && cmidCells.all (fun c => c.tag == "td" && c.group == "tbody"))
-  t "the cmid cell class is where it was"
-    (cmidCells.map (·.cls) == #["", "", "", "bt-cmid", "bt-cmid", "", "", "", ""])
+  t "the cmid cells carry bt-cmid and every natural cell carries bt-nowrap"
+    (cmidCells.map (·.cls) ==
+      #["bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-cmid bt-nowrap", "bt-cmid bt-nowrap",
+        "bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-nowrap"])
   t "no header: colgroup and tbody only"
     (tableGroupsOne #[] cmid == #[#["colgroup", "tbody"]])
   -- Bare tabular, no rules at all.
