@@ -2463,6 +2463,10 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
       ["input", "include", "markdownInput"].contains n ||
+      -- Length declarations and mutations execute at each use. Their
+      -- operands reach the later scoped rewrite in execution order, so
+      -- repeated assignments read the value the preceding one left.
+      ["newlength", "setlength", "addtolength", "advance", "multiply", "divide"].contains n ||
       groupPrimitives.any (fun p => p.1 == n || p.2 == n) ||
       (match condValueOf binds n with
        | some (some v) => v.live
