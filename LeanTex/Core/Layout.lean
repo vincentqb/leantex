@@ -1094,6 +1094,9 @@ structure LinkRect where
   deriving Repr, BEq, Inhabited
 
 structure PageOut where
+  /-- The shared logical folio and running style at shipment. Physical
+  page indices and `from` gates keep their separate meaning. -/
+  pageState : Ir.PageState := {}
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
   /-- One placed rectangle per page segment of a block link. -/
@@ -4863,6 +4866,9 @@ private structure B where
   xHeight : Sp := 0
   pages : Array PageOut := #[]
   cur : PageOut := {}
+  /-- Page-local lifecycle declarations survive boundaries that ship no
+  content. `finishPage` records this state and advances it exactly once. -/
+  pageState : Ir.PageState := {}
   /-- Baseline of the last line placed, at natural glue. -/
   y : Sp := 0
   /-- Ink depth of the last line placed (metric descent per run): what
@@ -5366,12 +5372,13 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
   -- The bottom-anchored flush: the pending notes (and their rule) join
   -- the page after the vertical distribution moved the body lines, so
   -- the distribution can never move a note.
-  { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
+  { b with pages := b.pages.push { pageState := b.pageState,
+                                   lines := lines ++ b.noteLines, fills := fills,
                                    links := links, paths := paths, foot := b.curFoot,
                                    footBox := b.footBox,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, band := b.curBand },
-           cur := {}, curBand := none,
+           cur := {}, curBand := none, pageState := b.pageState.ship,
            shrinkAbove := #[], pageShrink := 0, stretchAbove := #[], pageStretch := 0,
            needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
@@ -5379,6 +5386,16 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
            openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
            pendingNotes := #[], notesH := 0, opened := false,
            diags := diags }
+
+/-- The shipped page records the IR lifecycle before shipment, and the
+builder advances by the shared `PageState.ship` transition. The geometry
+and distribution that close the page cannot change either projection. -/
+private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool) :
+    ((b.finishPage owed flush).pages.back?.map (·.pageState)) = some b.pageState ∧
+      (b.finishPage owed flush).pageState = b.pageState.ship := by
+  constructor
+  · simp [B.finishPage]
+  · rfl
 
 /-- A y-only rewrite keeps every line's segs: the projection both closing
 transformations (the shrink zip and the distribution `mapIdx`) satisfy. -/
@@ -6504,6 +6521,9 @@ private inductive Op where
   | linkClose
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
+  /-- The folio and running style declared at a boundary. Geometry remains
+  the preceding boundary's explicit distribution and ground. -/
+  | pageOpening (opening : Ir.PageOpening)
   /-- Column markers, kept flat so staging stays a map: `colOpen` saves the
   vertical position, `colNext` rewinds to it for the next column, `colClose`
   resumes below the tallest column. Nesting works through a stack. `pos` is
@@ -9140,6 +9160,9 @@ private def collectBlock (r : Rd) (a : Acc)
   -- the space stands above and below where the role stands, as a list's
   -- topsep does, so the value lives once, upstream, never at use sites.
   | .role n body =>
+    if let some opening := Ir.pageOpeningOfRole? n then
+      { a with ops := a.ops.push (.pageOpening opening) }
+    else
     -- A display's context (`Ir.DisplayCtx`): where TeX's placement reads it.
     if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
     else
@@ -9473,11 +9496,23 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   have hpa : (n == Ir.pageAnchorRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1
   have hni : (n == Ir.noInterlineRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.2
-  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, hpa, hni, hdc,
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.2
+  have hop : Ir.pageOpeningOfRole? n = none := by
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
+    exact Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hpm.2)
+  simp only [collectBlock, Rd.style, hst, Option.getD, h, h', hth, hpa, hni, hdc, hop,
     Bool.false_eq_true, ite_false]
+
+/-- Collection carries the shared opening value to placement verbatim:
+the backend has no second reading of the titlepage's boundary spelling. -/
+private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
+    (opening : Ir.PageOpening) (indent : Sp)
+    (h : Ir.pageOpeningOfRole? n = some opening) :
+    collectBlock r a (.role n #[]) indent =
+      { a with ops := a.ops.push (.pageOpening opening) } := by
+  simp only [collectBlock, h]
 
 /-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
 be provably correct: intervals sorted, pairwise disjoint (half-open
@@ -10132,6 +10167,7 @@ private inductive StagedOp where
   | skipAlt (long short : Glue)
   | bodyOpen (g : Glue)
   | brk
+  | pageOpening (opening : Ir.PageOpening)
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | pageGround (bg : Option Ir.Color)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
@@ -10511,8 +10547,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
     -- A boundary closes a page only when the page holds something: two
-    -- adjacent frames share one boundary, not an empty page. A style set
-    -- for a page that never got content dies with the boundary. Fills
+    -- adjacent frames share one boundary, not an empty page. Frame ground
+    -- and distribution clear at an empty boundary; running style waits
+    -- for shipment (`emptyBreak_pageState`). Fills
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
       b := { b.finishPage b.closingOwed with
@@ -10523,6 +10560,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
                     frameBreak := none, spillWarned := false, opened := false }
   | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
+  | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
   | .foot c fr look =>
@@ -10684,6 +10722,21 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := b.placeSlot fs save spec
   return { b := b, colSaves := colSaves, slotSaves := slotSaves, logoSpans := logoSpans,
            prose := prose }
+
+/-- Page openings apply the shared IR transition without shipping a page.
+Only `finishPage` consumes the one-shipment empty style. -/
+private theorem pageOpening_step_projects (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (opening : Ir.PageOpening) :
+    (stepStaged fs imgs st (.pageOpening opening)).b.pageState =
+      st.b.pageState.applyOpening opening ∧
+    (stepStaged fs imgs st (.pageOpening opening)).b.pages = st.b.pages := by
+  exact ⟨rfl, rfl⟩
+
+private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (hl : st.b.cur.lines.isEmpty = true)
+    (hf : st.b.cur.fills.isEmpty = true) :
+    (stepStaged fs imgs st .brk).b.pageState = st.b.pageState := by
+  simp [stepStaged, hl, hf]
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
 are (a float body is a `\vbox` — placed on one page or deferred, never
@@ -11864,6 +11917,26 @@ private theorem furnishFrom_keeps {σ : Type}
     simp only [h, reduceDIte] at hp
     exact ⟨p, hp, rfl, rfl, rfl, rfl, rfl⟩
 
+/-- Adding running lines preserves the logical folio and empty-style
+decision recorded at shipment, page for page and in physical order. -/
+private theorem furnishFrom_lifecycle_projects {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (pages : Array PageOut) (s : σ) (i : Nat) :
+    (furnishFrom f pages s i).1.map (·.pageState) = pages.map (·.pageState) := by
+  induction pages, s, i using furnishFrom.induct f with
+  | case1 pages s i h ls s' heq ih =>
+    rw [furnishFrom]
+    simp only [h, reduceDIte, heq]
+    rw [ih]
+    apply Array.ext
+    · simp
+    · intro j hj hj'
+      simp only [Array.getElem_map, Array.getElem_set]
+      split <;> simp_all
+  | case2 pages s i h =>
+    rw [furnishFrom]
+    simp only [h, reduceDIte]
+
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
 and the resolved outline. Everything it reads arrives in `Shipped`; the
@@ -12021,17 +12094,17 @@ private def runPost (sh : Shipped) : Out := Id.run do
     -- chrome footer is frame furniture on the frame model: whether a page
     -- carries it is decided by its frame's number, and a physical
     -- declaration must not silently gate it.
-    let headOn := doc.headFrom ≤ i + 1
-    let footOn := doc.footFrom ≤ i + 1
+    let headOn := page.pageState.furniture && doc.headFrom ≤ i + 1
+    let footOn := page.pageState.furniture && doc.footFrom ≤ i + 1
     if headOn then
       if let some content := doc.head then
-        let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
+        let (l?, ds, c) := runLine content page.pageState.folio headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
     if footOn then
       if let some content := doc.foot then
-        let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
+        let (l?, ds, c) := runLine content page.pageState.folio footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
@@ -12040,7 +12113,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
         -- the engine's spelling of `\hfil\thepage\hfil` (ltpage.dtx,
         -- `\ps@plain`), centred by the same setter every declared foot
         -- runs through.
-        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (i + 1) footY
+        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] page.pageState.folio footY
           geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
@@ -12190,6 +12263,14 @@ private theorem runPost_pages (sh : Shipped) :
   unfold runPost at hp
   dsimp only [Id.run, bind, pure, Id] at hp
   exact furnishFrom_keeps _ _ _ _ p hp
+
+/-- The logical page lifecycle carried at shipment reaches `Out` unchanged
+through the running-furniture projection. -/
+private theorem runPost_lifecycle_projects (sh : Shipped) :
+    (runPost sh).pages.map (·.pageState) = sh.b.pages.map (·.pageState) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  exact furnishFrom_lifecycle_projects _ _ _ _
 
 /-- The marks step, the one seam after the furniture pass: every shipped
 page takes the derived cut-mark fills, appended after its own fills so
@@ -12406,6 +12487,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .skipAlt l sh => .skipAlt l sh
     | .bodyOpen g => .bodyOpen g
     | .brk => .brk
+    | .pageOpening opening => .pageOpening opening
     | .pageStyle bg c => .pageStyle bg c
     | .pageGround bg => .pageGround bg
     | .titleBar color pad strut => .titleBar color pad strut

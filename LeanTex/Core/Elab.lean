@@ -10116,6 +10116,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
+    || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
@@ -10291,6 +10292,7 @@ private def pageMark? (n : String) : Option Block :=
   if n == "pagebreak" then some .pagebreak
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
+  else if (Ir.pageOpeningOfRole? n).isSome then some (.role n #[])
   else none
 
 mutual

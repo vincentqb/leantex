@@ -99,6 +99,10 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
       for i in [0:c.pages.size] do
         t s!"{label}: body on physical page {i + 1}"
           (TitlePageLifecycle.bodyText out i == c.pages[i]!)
+        let state : Ir.PageState :=
+          { folio := c.folios[i]!.getD 1, furniture := c.folios[i]!.isSome }
+        t s!"{label}: shipped lifecycle on physical page {i + 1}"
+          (out.pages[i]?.map (·.pageState) == some state)
         let expected := match c.folios[i]! with
           | none => #[]
           | some n => if custom then #[s!"Head{n}", s!"Foot{n}/{c.pages.size}"]
@@ -114,6 +118,29 @@ def titlePageLifecycleChecks (ref : IO.Ref (List String))
       t (label ++ ": continuous typed HTML keeps the control's element structure")
         (TitlePageLifecycle.tagsList #[] tree.toList ==
           TitlePageLifecycle.tagsList #[] controlTree.toList)
+  -- Unstarred ProcessOptions in article.cls applies oneside, then twoside,
+  -- in class declaration order. Both written orders therefore keep twoside.
+  for options in ["oneside", "twoside", "oneside,twoside", "twoside,oneside"] do
+    let reset := options == "oneside"
+    let body :=
+      "Before.\\newpage Prior.\\begin{titlepage}Title.\\end{titlepage}After.\\newpage Later."
+    let source := s!"\\documentclass[{options}]" ++ "{article}" ++
+      TitlePageLifecycle.page ++
+      "\\runninghead{Head\\pagenumber}\\runningfoot{Foot\\pagenumber}" ++
+      "\\begin{document}" ++ body ++ "\\end{document}"
+    let (doc, ds) := elabStr source
+    let out := layoutOf oneFace doc
+    let folios := if reset then #[1, 2, 1, 1, 2] else #[1, 2, 1, 2, 3]
+    t s!"titlepage lifecycle {options}: no recovery cascade"
+      (ds.all fun d => d.severity != .error &&
+        !["W0301", "W0302", "E0336", "E0311"].contains d.code)
+    t s!"titlepage lifecycle {options}: physical pages stay fixed" (out.pages.size == 5)
+    for i in [0:folios.size] do
+      let expected := if i == 2 then #[] else #[s!"Head{folios[i]!}", s!"Foot{folios[i]!}"]
+      t s!"titlepage lifecycle {options}: glyphs on physical page {i + 1}"
+        (TitlePageLifecycle.furniture out i == expected)
+      t s!"titlepage lifecycle {options}: logical folio on physical page {i + 1}"
+        (out.pages[i]?.map (·.pageState.folio) == some folios[i]!)
   -- Physical `from` gates and total pages keep their existing meaning when
   -- the folio resets: after the titlepage, page four is still physical four.
   let (gdoc, _) := elabStr (dvDoc

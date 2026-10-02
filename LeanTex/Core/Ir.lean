@@ -855,9 +855,78 @@ def pageAnchorRole : String := "page-anchor"
 interline glue (TeXbook ch. 12). A fact of the paged artifact alone. -/
 def noInterlineRole : String := "no-interline"
 
+/-- A declaration at a page boundary, independent of the page's ground and
+vertical distribution. `empty` suppresses running furniture on one shipped
+page; a boundary that ships nothing cannot spend that suppression.
+Source: article.cls's `titlepage` sets `\thispagestyle{empty}` and page 1
+on entry, then page 1 again after the closing `\newpage` in oneside mode. -/
+structure PageOpening where
+  folio : Option Nat := none
+  empty : Bool := false
+  deriving Repr, BEq, Inhabited
+
+/-- The logical folio and running style of the page being built. Physical
+page indices and the total page count are separate: resetting the folio
+does not remove or renumber an already shipped sheet. -/
+structure PageState where
+  folio : Nat := 1
+  furniture : Bool := true
+  deriving Repr, BEq, Inhabited
+
+/-- Apply only the opening's declarations. A reset does not restore an
+empty style that has not yet reached shipout (`ltoutput.dtx`'s special
+page-style flag is consumed by `\@outputpage`, not by `\newpage`). -/
+def PageState.applyOpening (s : PageState) (opening : PageOpening) : PageState :=
+  { folio := opening.folio.getD s.folio
+    furniture := s.furniture && !opening.empty }
+
+/-- Ship one physical page: advance its logical folio and restore the
+ordinary running style, as `\@outputpage` does. -/
+def PageState.ship (s : PageState) : PageState :=
+  { folio := s.folio + 1, furniture := true }
+
+/-- A page opening changes exactly its declared counter and can only
+suppress furniture; an unspent empty style survives a counter-only reset. -/
+theorem PageState.opening_contract (s : PageState) (opening : PageOpening) :
+    (s.applyOpening opening).folio = opening.folio.getD s.folio ∧
+      (s.applyOpening opening).furniture = (s.furniture && !opening.empty) :=
+  ⟨rfl, rfl⟩
+
+/-- Shipment, rather than an empty boundary, advances the folio and
+consumes the page-local style. The paged artifact projects this transition. -/
+theorem PageState.ship_contract (s : PageState) :
+    s.ship.folio = s.folio + 1 ∧ s.ship.furniture = true := ⟨rfl, rfl⟩
+
+/-- Reserved roles for article titlepage's two boundary declarations. A
+space makes either name impossible as an authored control word. -/
+def titlePageBeginRole : String := "titlepage begin"
+def titlePageEndRole : String := "titlepage end"
+
+/-- The one shared reading of titlepage's boundary roles. The end role is
+emitted only in oneside mode; twoside keeps the post-titlepage folio. -/
+def pageOpeningOfRole? (n : String) : Option PageOpening :=
+  if n == titlePageBeginRole then some { folio := some 1, empty := true }
+  else if n == titlePageEndRole then some { folio := some 1 }
+  else none
+
+/-- Even an empty titlepage requests an empty first shipped page: its
+closing counter reset cannot cancel the opening style. -/
+theorem titlepage_empty_exact (s : PageState) :
+    (s.applyOpening { folio := some 1, empty := true }).applyOpening
+        { folio := some 1 } = { folio := 1, furniture := false } := by
+  simp [PageState.applyOpening]
+
 /-- The engine roles that mark a fact of the page model and carry no
 content: HTML, markdown and the structure tree read them as nothing. -/
-def pageMarkerRole (n : String) : Bool := n == pageAnchorRole || n == noInterlineRole
+def pageMarkerRole (n : String) : Bool :=
+  n == pageAnchorRole || n == noInterlineRole || (pageOpeningOfRole? n).isSome
+
+/-- Every declared opening is a page-model mark, with no continuous-medium
+content of its own. HTML projects this fact instead of interpreting a
+titlepage's spelling independently. -/
+theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
+    (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
+  simp [pageMarkerRole, h]
 
 /-- The inline role a description item's label rides in, first in the item's
 first paragraph and followed by `\labelsep` (latex.ltx `description`:
