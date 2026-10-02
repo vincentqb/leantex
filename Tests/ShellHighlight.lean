@@ -1,4 +1,5 @@
 import Tests.ListingHighlight
+import LeanTex.Core.ListingReply
 
 open LeanTex.Core
 
@@ -102,9 +103,180 @@ def minted (language : String) (style : Ir.ListingStyle) (source : String) :
     ("\\begin{minted}[style=" ++ styleName ++ "]{" ++ language ++ "}\n" ++
       source ++ "\n\\end{minted}"))
 
+def shellTokenJson (offset : Nat) (kind text : String) : Lean.Json :=
+  Lean.Json.mkObj [("offset", Lean.toJson offset),
+    ("kind", Lean.toJson kind), ("text", Lean.toJson text)]
+
+def shellSuccessJson (request : ListingReply.Request)
+    (tokens : Array Lean.Json) : Lean.Json :=
+  Lean.Json.mkObj [("language", Lean.toJson request.language),
+    ("source", Lean.toJson request.source), ("tokens", .arr tokens)]
+
+def shellFailureJson (request : ListingReply.Request) (error : String) : Lean.Json :=
+  Lean.Json.mkObj [("language", Lean.toJson request.language),
+    ("source", Lean.toJson request.source), ("error", Lean.toJson error)]
+
+def shellBatchJson (answers : Array Lean.Json)
+    (provider : String := "Pygments") (version : Nat := 1) : String :=
+  (Lean.Json.mkObj [("version", Lean.toJson version),
+    ("provider", Lean.toJson provider),
+    ("providerVersion", Lean.toJson "fixture"), ("answers", .arr answers)]).compress
+
+def shellDecodeRejected (requests : Array ListingReply.Request) (body : String) : Bool :=
+  match ListingReply.decode requests body with
+  | .error _ => true
+  | .ok _ => false
+
 end Tests.ShellHighlight
 
 namespace Tests
+
+/-- The external boundary is tested as data: arbitrary class names cannot
+inject markup or paint, and neither token offsets nor text may change source.
+No installed Python module or document code runs in this check. -/
+def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let project := ListingReply.projectKind
+  for (name, kind) in [
+      ("Token.Keyword.Reserved", .keyword), ("Token.Comment.Hashbang", .comment),
+      ("Token.Literal.String.Double", .string), ("Token.Literal.Number.Hex", .number),
+      ("Token.Name.Builtin.Pseudo", .builtin), ("Token.Name.Variable.Global", .name),
+      ("Token.Operator.Word", .operator), ("Token.Name.Builtinish", .name),
+      ("Token.Punctuation", .plain), ("Token.Error", .plain),
+      ("Token.Text.Whitespace", .plain), ("Token.Generic.Deleted", .plain),
+      ("Token.Names.Builtin", .plain), ("Token.Keywordish", .plain),
+      ("Other.Keyword", .plain), ("color:red", .plain), ("<script>", .plain),
+      ("", .plain)] do
+    t s!"listing reply: whole token ancestry {name}" (project name == kind)
+  let normalized := ListingReply.Request.ofSource " BaSh " "\r\n\n\techo λ\r\n  \r\n"
+  t "listing reply: normalize once, retaining the second leading blank"
+    (normalized == { language := "bash", source := "\n\techo λ" } &&
+      normalized.lines == #["", "\techo λ"])
+  let request : ListingReply.Request :=
+    { language := "bash", source := "echo\t\"λ😀\"\n\n$HOME" }
+  let records := #[
+    ShellHighlight.shellTokenJson 0 "Token.Name.Builtin" "echo",
+    ShellHighlight.shellTokenJson 4 "Token.Text" "\t",
+    ShellHighlight.shellTokenJson 5 "Token.Literal.String.Double" "\"λ😀\"",
+    ShellHighlight.shellTokenJson 9 "Token.Text" "\n\n",
+    ShellHighlight.shellTokenJson 11 "Token.Name.Variable" "$HOME"]
+  let answer := ShellHighlight.shellSuccessJson request records
+  let body := ShellHighlight.shellBatchJson #[answer]
+  let .ok (answers, ds) := ListingReply.decode #[request] body
+    | failures ref "listing reply: valid Unicode, tab and blank-line reply rejected"
+  t "listing reply: Unicode character offsets, source and classes agree"
+    (ds.isEmpty && answers.size == 1 && answers.all fun a =>
+      a.request == request && a.tokens.map LeanTex.Core.ListingHighlight.lineText ==
+        #["echo\t\"λ😀\"", "", "$HOME"] &&
+      a.tokens.flatten.map (·.kind) == #[.builtin, .plain, .string, .name])
+  t "listing reply: lookup validates the original raw source"
+    ((ListingReply.lookup answers " BASH " ("\n" ++ request.source ++ "\n")).isSome &&
+      (ListingReply.lookup answers "sh" request.source).isNone &&
+      (ListingReply.lookup answers "bash" (request.source ++ " changed")).isNone)
+  let forged : ListingReply.Answer :=
+    { request, tokens := #[#[{ kind := .keyword, text := "changed" }]] }
+  t "listing reply: matching cache key cannot authorize changed token text"
+    ((ListingReply.lookup #[forged] "bash" request.source).isNone)
+  let rawLines : Array String := #[
+    "", " ", "\n\n\techo x\r\n\r\n", "echo \"unfinished\t${HOME",
+    "echo 'open\n\t$HOME # literal", "echo tail\\", "cat <<'END'\n$HOME\nEND",
+    "echo \"$(printf '%s' \"$HOME\")\"", "x#y\n# comment", "<tag>&\"λ😀\""]
+  for raw in rawLines do
+    let r := ListingReply.Request.ofSource "bash" raw
+    let pieces := if r.source.isEmpty then #[] else
+      #[ShellHighlight.shellTokenJson 0 "Token.Unknown.Future" r.source]
+    let .ok (as, _) := ListingReply.decode #[r]
+        (ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson r pieces])
+      | failures ref "listing reply: source-conserving plain classification rejected"
+    t "listing reply: empty, unclosed and multiline content survives exactly"
+      (as.all fun a => a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
+    t "listing reply: unknown token classes leave plain paint"
+      (as.all fun a => a.tokens.flatten.all (·.kind == .plain))
+  let encoded := ListingReply.encode #[normalized, request, { language := "", source := "" }]
+  let .ok json := Lean.Json.parse encoded | failures ref "listing reply: encoding invalid JSON"
+  let .ok encodedRequests := json.getObjValAs? (Array Lean.Json) "requests"
+    | failures ref "listing reply: encoding missing requests"
+  t "listing reply: request JSON round-trips every field, including empty values"
+    (json.getObjValAs? Nat "version" == .ok 1 &&
+      encodedRequests.map (fun j =>
+        (j.getObjValAs? String "language", j.getObjValAs? String "source")) ==
+      #[(.ok normalized.language, .ok normalized.source),
+        (.ok request.language, .ok request.source), (.ok "", .ok "")])
+  t "listing reply: empty batch is a valid complete response"
+    (match ListingReply.decode #[] (ShellHighlight.shellBatchJson #[]) with
+      | .ok (as, errors) => as.isEmpty && errors.isEmpty
+      | .error _ => false)
+  let brokenRecords := [
+    records.set! 1 (ShellHighlight.shellTokenJson 99 "Token.Text" "\t"),
+    records.set! 1 (ShellHighlight.shellTokenJson 4 "Token.Text" "    "),
+    records.set! 2 (ShellHighlight.shellTokenJson 5 "Token.Literal.String" "\"λ\""),
+    records.set! 3 (ShellHighlight.shellTokenJson 13 "Token.Text" "\n\n"),
+    records.push (ShellHighlight.shellTokenJson 16 "Token.Text" "\n"),
+    records.extract 1 records.size,
+    records.reverse]
+  for bad in brokenRecords do
+    t "listing reply: gaps, byte offsets, expanded tabs, lost and inserted text rejected"
+      (ShellHighlight.shellDecodeRejected #[request]
+        (ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson request bad]))
+  let malformed := [
+    "{}",
+    ShellHighlight.shellBatchJson #[answer] (version := 2),
+    ShellHighlight.shellBatchJson #[answer] (provider := "Other"),
+    ShellHighlight.shellBatchJson #[],
+    ShellHighlight.shellBatchJson #[answer, answer],
+    ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson normalized records],
+    ShellHighlight.shellBatchJson #[Lean.Json.mkObj [
+      ("language", Lean.toJson request.language), ("source", Lean.toJson request.source),
+      ("tokens", .arr records), ("error", Lean.toJson "failed")]],
+    ShellHighlight.shellBatchJson #[ShellHighlight.shellFailureJson request ""],
+    ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson request
+      #[Lean.Json.mkObj [("offset", Lean.toJson (-1 : Int)),
+        ("kind", Lean.toJson "Token.Text"), ("text", Lean.toJson request.source)]]]]
+  for bad in malformed do
+    t "listing reply: malformed or foreign batch is rejected atomically"
+      (ShellHighlight.shellDecodeRejected #[request] bad)
+  let other : ListingReply.Request := { language := "ruby", source := "puts 7" }
+  let otherAnswer := ShellHighlight.shellSuccessJson other
+    #[ShellHighlight.shellTokenJson 0 "Token.Text" other.source]
+  t "listing reply: reordered content keys are rejected"
+    (ShellHighlight.shellDecodeRejected #[request, other]
+      (ShellHighlight.shellBatchJson #[otherAnswer, answer]))
+  t "listing reply: a valid prefix cannot hide a malformed later answer"
+    (ShellHighlight.shellDecodeRejected #[other, request]
+      (ShellHighlight.shellBatchJson #[otherAnswer,
+        ShellHighlight.shellSuccessJson request (records.extract 1 records.size)]))
+  for error in ["unsupported", "unavailable", "failed", "<unsafe>\nprivate details"] do
+    let refusal := ShellHighlight.shellBatchJson #[ShellHighlight.shellFailureJson request error]
+    let .ok (plain, failures) := ListingReply.decode #[request] refusal
+      | failures ref "listing reply: completed per-request refusal was not recorded"
+    let expected : ListingReply.Failure := match error with
+      | "unsupported" => .unsupported
+      | "unavailable" => .unavailable
+      | _ => .rejected
+    t "listing reply: refusal carries exact plain source and a keyed typed failure"
+      (plain == #[ListingReply.plainAnswer request] &&
+        failures == #[(request, expected)] &&
+        failures.all fun (_, failure) =>
+          !hasStr failure.reason "<unsafe>" && !hasStr failure.reason "private details")
+    t "listing reply: repeated refusal replays the identical typed failure"
+      (match ListingReply.decode #[request] refusal with
+        | .ok (_, replay) => replay == failures
+        | .error _ => false)
+  let native := ListingHighlight.sourceDoc "python" "print(7)"
+  let lean := ListingHighlight.sourceDoc "lean4" "def n := 7"
+  let bash := (ShellHighlight.minted "bash" .default "echo x").1
+  let friendly := (ShellHighlight.minted "bash" .friendly "echo x").1
+  let markdown := (elabMd "```bash\necho x\n```").1
+  let ruby := ListingHighlight.sourceDoc "ruby" "puts 7"
+  let combined := { bash with
+    body := native.body ++ lean.body ++
+      #[.center (bash.body ++ #[.quote (friendly.body ++ markdown.body)] ++ ruby.body)] }
+  let collected := ListingReply.requests combined
+  t "listing reply: generic fold finds nested requests, dedupes surfaces and styles"
+    (collected == #[{ language := "bash", source := "echo x" },
+      { language := "ruby", source := "puts 7" }])
+  t "listing reply: native Lean and Python need no external request"
+    ((ListingReply.requests native).isEmpty && (ListingReply.requests lean).isEmpty)
 
 /-- Fail-before artifact guard, independent of native versus external lexing.
 The optional fulfiller is the CLI's effects-as-data seam; the default reads
