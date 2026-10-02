@@ -1720,31 +1720,54 @@ private def modifierStyle? (name : String) : Option Style :=
   if name == Compat.alertMark true || name == Compat.alertMark false then some .bold
   else argStyles.lookup name
 
-/-- A text modifier may have an overlay before its ordinary arguments.
-Consume that head independently of the argument reader: a selector is never
-text to underline, colour, or set in another face. -/
-private def modifierHead (raws : Array Raw) (start : Nat) : Option String × Nat :=
+/-- Every supported command family receives the canonical selector head
+from Compat.overlayInputs. Consume it independently of ordinary arguments:
+a selector can never become a title, target, label or styled text. -/
+private def selectorHead (raws : Array Raw) (start : Nat) : Option String × Nat :=
   let j := skipSpaces raws start
   match raws[j]?.bind specWord? with
   | some w => (some w, skipSpaces raws (j + 1))
   | none => (none, j)
 
-private theorem modifierHead_monotone (raws : Array Raw) (start : Nat) :
-    start ≤ (modifierHead raws start).2 := by
+private theorem selectorHead_monotone (raws : Array Raw) (start : Nat) :
+    start ≤ (selectorHead raws start).2 := by
   have h := skipSpaces_ge raws start
   have h' := skipSpaces_ge raws (skipSpaces raws start + 1)
-  unfold modifierHead
+  unfold selectorHead
   dsimp only
   split <;> dsimp <;> omega
 
+/-- Only Beamer's native target wrappers advertise selector slots. General
+href/link keep their ordinary two-group signature in block and inline use. -/
+private def linkSelectorHead (name : String) (raws : Array Raw) (start : Nat) :
+    Option String × Nat :=
+  if name == "hyperlink" || name == "hypertarget" then selectorHead raws start
+  else (none, skipSpaces raws start)
+
+private theorem linkSelectorHead_monotone (name : String) (raws : Array Raw) (start : Nat) :
+    start ≤ (linkSelectorHead name raws start).2 := by
+  unfold linkSelectorHead
+  split
+  · exact selectorHead_monotone raws start
+  · exact skipSpaces_ge raws start
+
 /-- A modifier changes only its selected reading. With no numbered
 selector, its ordinary styled reading remains; unsupported syntax is
-accounted by `modifierSpec` before this constructor is called. -/
+accounted by `selectorSpec` before this constructor is called. -/
 private def pushModifier (acc : Array Inline) (spec : Option OverlaySpec)
     (active otherwise : Array Inline) : Array Inline :=
   match spec with
   | some s => acc.push (.alternate s active otherwise)
   | none => acc ++ active
+
+/-- Cover is shared by inline content, blocks and whole items. The selector
+is already an Ir.OverlaySpec; empty content never opens an artifact wrapper. -/
+private def selectedCover {α : Type} (wrap : OverlaySpec → Array α → α)
+    (spec : Option OverlaySpec) (body : Array α) : Array α :=
+  if body.isEmpty then #[] else
+  match spec with
+  | some spec => #[wrap spec body]
+  | none => body
 
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
@@ -4151,13 +4174,30 @@ specs are not modelled")
 /-- Number a modifier's optional selector with the same reader as every
 other overlay. Refused selectors retain the ordinary styled reading and
 are named by the existing overlay diagnostic. -/
-private def modifierSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Option OverlaySpec) := do
+private def selectorSpec (ctx : Ctx) (head : Option String) (pos : Pos) : EM (Option OverlaySpec) := do
   match head with
   | none => return none
   | some w =>
     let spec := Ir.overlayRange w
     unless spec.isSome do warnOverlaySpec ctx w pos
     return spec
+
+/-- Resolve a native link wrapper once, then cover that whole result. The
+body has already been elaborated, so neither selection nor a nested-link
+refusal can duplicate its effects. -/
+private def targetInlines (ctx : Ctx) (name key : String)
+    (spec : Option OverlaySpec) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
+  let wrapped ← if name == "hyperlink" then
+      if Ir.anyInline (·.anchorBearing) inner then do
+        warnOnce ctx "link:nested" .W0104
+          "a link wrapper contains another link; the outer link is skipped" pos
+          (help := "links cannot nest; move the inner link outside the outer wrapper")
+        pure inner
+      else
+        pure #[.link ("#".append (Ir.labelAnchor key)) (ctx.styles.linkInk "link" inner)]
+    else
+      pure (#[.label key] ++ inner)
+  return selectedCover Inline.onSteps spec wrapped
 
 /-- The one W0105 for `\alt` without a numbered specification, outside
 the knot. An alternation inks exactly one alternative per step page, and
@@ -4193,7 +4233,7 @@ def refFormNeedsKind : Ir.RefForm → Bool
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
-seal warnPaletteMiss warnOverlaySpec warnAltSpec
+seal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 seal argText skipBracketRun bracketRunSrc
 seal imageArm
 seal warnUnclosed warnDroppedArgs
@@ -4715,6 +4755,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               Nat.lt_of_le_of_lt (sliceWeight_le raws hj) hadv1
             elabInlinesFrom ctx raws j acc ""
         | none =>
+        let name := Compat.overlayName name
         if name == "hfill" then
           let acc := flushText acc sb
           elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
@@ -4796,16 +4837,16 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx raws (i + 1) acc
             (sb ++ (Lex.textSymbols.lookup name).getD "")
         else if let some style := modifierStyle? name then
-          let head := modifierHead raws (i + 1)
+          let head := selectorHead raws (i + 1)
           let j := head.2
-          have hjge : i + 1 ≤ j := modifierHead_monotone raws (i + 1)
+          have hjge : i + 1 ≤ j := selectorHead_monotone raws (i + 1)
           -- beamerbaseoverlay.sty: the font wrappers take a leading selector;
           -- only emph, declared with newcommand<>, also takes a trailing one.
           let tailSpec := if name == "emph" && head.1.isNone then
               raws[j + 1]?.bind specWord? else none
           let next := j + 1 + if tailSpec.isSome then 1 else 0
           have hnext : j + 1 ≤ next := Nat.le_add_right _ _
-          let spec ← modifierSpec ctx (head.1.orElse fun _ => tailSpec) pos
+          let spec ← selectorSpec ctx (head.1.orElse fun _ => tailSpec) pos
           -- Beamer presentation emphasis selects italic (beamerbaseoverlay.sty
           -- emph), while the flow class retains LaTeX's alternating emphasis.
           let style := if name == "emph" && ctx.slides then .italic else style
@@ -4841,10 +4882,10 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if let some decoration := decorationCtrls.lookup name then
-          let head := modifierHead raws (i + 1)
+          let head := selectorHead raws (i + 1)
           let j := head.2
-          have hjge : i + 1 ≤ j := modifierHead_monotone raws (i + 1)
-          let spec ← modifierSpec ctx head.1 pos
+          have hjge : i + 1 ≤ j := selectorHead_monotone raws (i + 1)
+          let spec ← selectorSpec ctx head.1 pos
           match hj : raws[j]? with
           | some (.group body _) =>
             have hjlt := getElem?_lt hj
@@ -4994,10 +5035,12 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "hyperlink" || name == "hypertarget" then
-          -- hyperref.sty defines both as two-group content wrappers: the
-          -- first group names a destination, the second is set unchanged.
-          let j := skipSpaces raws (i + 1)
-          have hjge := skipSpaces_ge raws (i + 1)
+          -- Beamer's native two-group wrappers cover the complete link or
+          -- destination body. All documented selector slots reach this head.
+          let head := selectorHead raws (i + 1)
+          let j := head.2
+          have hjge : i + 1 ≤ j := selectorHead_monotone raws (i + 1)
+          let spec ← selectorSpec ctx head.1 pos
           let j2 := skipSpaces raws (j + 1)
           have hj2ge := skipSpaces_ge raws (j + 1)
           match hj : raws[j]?, hj2 : raws[j2]? with
@@ -5008,20 +5051,11 @@ no extent is reserved for it" pos
             let key := argText ctx keyRaw
             let inner ← elabInlines ctx body
             let acc := flushText acc sb
-            let anchor := Ir.labelAnchor key
-            let acc ← if name == "hyperlink" then
-                if Ir.anyInline (·.anchorBearing) inner then do
-                  warnOnce ctx "link:nested" .W0104
-                    "a link wrapper contains another link; the outer link is skipped" pos
-                    (help := "links cannot nest; move the inner link outside the outer wrapper")
-                  pure (acc ++ inner)
-                else
-                  pure (acc.push (.link ("#".append anchor) (ctx.styles.linkInk "link" inner)))
-              else
-                pure ((acc.push (.label key)) ++ inner)
+            let wrapped ← targetInlines ctx name key spec inner pos
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j2 + 1) acc ""
+            elabInlinesFrom ctx raws (j2 + 1)
+              (acc ++ wrapped) ""
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{target}\{content}" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5197,10 +5231,10 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if name == "pagecount" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
   else if name == "textcolor" then
-    let head := modifierHead raws (i + 1)
+    let head := selectorHead raws (i + 1)
     let j0 := head.2
-    have hj0ge := modifierHead_monotone raws (i + 1)
-    let spec ← modifierSpec ctx head.1 pos
+    have hj0ge := selectorHead_monotone raws (i + 1)
+    let spec ← selectorSpec ctx head.1 pos
     let model := (bracketRunSrc raws j0).map fun opt =>
       (rawSrc opt).trimAscii.toString
     let j := skipBracketRun raws j0
@@ -5681,7 +5715,7 @@ unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
-unseal warnPaletteMiss warnOverlaySpec warnAltSpec
+unseal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 unseal argText skipBracketRun bracketRunSrc
 unseal imageArm
 unseal warnUnclosed warnDroppedArgs
@@ -6010,8 +6044,8 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
 /-- Does a two-group content wrapper carry block-shaped content in its second
 argument? Hyperref's `\\hyperlink` and `\\hypertarget` use exactly this
 signature; the first group names the destination and the second is content. -/
-private def contentWrapperTakesBlocks (raws : Array Raw) (i : Nat) : Bool :=
-  let j := skipSpaces raws (i + 1)
+private def contentWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
+  let j := (linkSelectorHead n raws (i + 1)).2
   let j2 := skipSpaces raws (j + 1)
   match raws[j]?, raws[j2]? with
   | some (.group _ _), some (.group body _) => bodyIsBlock body
@@ -6023,7 +6057,7 @@ literal and the `contentWrapperTakesBlocks` call compile once, outside the
 knot whose own `match` is at the LCNF compiler's heartbeat budget. -/
 private def linkWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
   (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget")
-    && contentWrapperTakesBlocks raws i
+    && contentWrapperTakesBlocks n raws i
 
 /-- The number an unstarred heading takes, stepped in flow order — or
 `none`, which is also the answer for every heading of a class that does
@@ -8986,7 +9020,7 @@ private def closeBlockMacros (ctx : Ctx) (blocks : Array Block) :
 resolves and there is no content group. A malformed spec still takes the
 ordinary recovery arm; it cannot transfer the caller's ownership. -/
 private def openBlockOverlay (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) : Bool :=
-  if !overlayCtrls.contains n || (lookupUser ctx n).isSome then false
+  if !overlayCtrls.contains (Compat.overlayName n) || (lookupUser ctx n).isSome then false
   else
     let j := skipSpaces raws (i + 1)
     match raws[j]?.bind specWord? with
@@ -9445,6 +9479,18 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para head] ++ item)
   return out
 
+/-- Apply an item's selector after its description label has joined the
+body. Beamer's actionenv encloses the entire item (beamerbaseoverlay.sty,
+beamer@parseitem), including its label; pause bases retain their old policy. -/
+private def coverItems (ctx : Ctx) (steps : Array (Option OverlaySpec))
+    (pauses : Array Nat) (items : Array (Array Block)) : Array (Array Block) :=
+  items.mapIdx fun i inner =>
+    let spec := (steps[i]?).getD none
+    let p := (pauses[i]?).getD 0
+    match spec with
+    | some _ => selectedCover Block.onSteps spec inner
+    | none => if p > 0 then #[.step (ctx.stepBase + p + 1) none inner] else inner
+
 /-- A raw run with its edge spaces and paragraph ends dropped, and a
 paragraph end inside it read as a space: a `\bibitem`'s text. -/
 private def entryRaws (raws : Array Raw) : Array Raw :=
@@ -9497,7 +9543,7 @@ private def ownBibList (ctx : Ctx) (body : Array Raw) : EM (Array Block) := do
     items := items.push { key := k, marker := l, content := ← elabInlines ctx (entryRaws raws) }
   return #[.section 1 true none #[.text ctx.locale.references], .bibliography "" none items]
 
-seal thmOf? thmEnv thmOpen thmClose descItems ownBibList
+seal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
@@ -10205,6 +10251,8 @@ LCNF compiler's heartbeat budget — so this decision compiles as one unit
 outside it (`isDeclBlock` is sealed here, so the call stays opaque). -/
 private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Bool :=
+  let sourceName := n
+  let n := Compat.overlayName n
   n == "par" || n == "block" || n == "centering" || n == "pause"
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
@@ -10226,13 +10274,13 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (cur.isEmpty && n == Compat.pageColorResetMark)
     || (cur.isEmpty && n.startsWith "@lang:")
     || n == BeamerColor.marker || n == BeamerColor.starMarker
-    || ((lookupUser ctx' n).isNone && !(ctx'.args.any (·.1 == n)) &&
+    || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
       linkWrapperTakesBlocks n raws i)
     || (n != "note" &&
       ((sectionLevel n).isSome
         || declCtrl.contains n || runningCtrl.contains n || n == "define"
         || counterCtrl n
-        || (match lookupUser ctx' n with
+        || (match lookupUser ctx' sourceName with
             | some (_, cmd) => bodyIsBlock cmd.body
             | none =>
               ((overlayCtrls.contains n || n == "alt") &&
@@ -10520,18 +10568,13 @@ private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
           ∧ nestedParsList a.toList ≤ itemsP items.toList } ←
       pure ⟨items[m], itemsW_elem_le (Array.getElem?_eq_getElem hm),
         itemsP_elem_le (Array.getElem?_eq_getElem hm)⟩
-    let st? := (steps[m]?).getD none
     let p := (itemPauses[m]?).getD 0
     have hw1 : sliceWeight it 0 = rawWeightList it.toList := sliceWeight_zero _
     have hp1 : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
     let ⟨stepCtx, hm2⟩ : MCtx ctx ←
       pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
     let inner ← elabBlockScope stepCtx it
-    let acc := acc.push (match st? with
-      | some spec => #[.onSteps spec inner]
-      | none =>
-        if p > 0 then #[.step (ctx.stepBase + p + 1) none inner]
-        else inner)
+    let acc := acc.push inner
     elabItemsGo ctx items steps itemPauses (m + 1) acc bound pbound hb hpb
   else return acc
 termination_by (ctx.envLimit, noteFlag ctx,
@@ -10929,7 +10972,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       (by omega) (by omega)
     let elabItems ← if n == "description" then descItems ctx lbody elabItems
       else pure elabItems
-    blocks := blocks.push (.list (n == "enumerate") elabItems)
+    blocks := blocks.push (.list (n == "enumerate") (coverItems ctx steps itemPauses elabItems))
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep` around its scope;
@@ -10982,9 +11025,10 @@ the text width; the box takes the whole measure" pos
       if n == "alertblock" then .alert
       else if n == "exampleblock" then .example
       else .block
-    let k := skipSpaces body 0
+    let (head, k) := selectorHead body 0
+    let spec ← selectorSpec ctx head pos
     let mut title : Array Inline := #[]
-    let mut m := 0
+    let mut m := k
     match body[k]? with
     | some (.group t _) =>
       title ← elabInlines ctx t
@@ -11000,8 +11044,8 @@ the text width; the box takes the whole measure" pos
         = rawWeightList (body.extract m body.size).toList := sliceWeight_zero _
     have hx1 : slicePars (body.extract m body.size) 0
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
-    blocks := blocks.push (.titled kind title
-      (← elabBlockScope ctx (body.extract m body.size)))
+    let inner ← elabBlockScope ctx (body.extract m body.size)
+    blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
   else if thmEnv (← get).ctr.thm n then
     -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
     -- counter, the label target and the body font are the scope's own,
@@ -11234,6 +11278,8 @@ path consumes at least the control word itself. -/
 private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (h : i < raws.size) (n : String) (pos : Pos) (blocks : Array Block) :
     EM (Array Block × { j : Nat // i < j }) := do
+  let sourceName := n
+  let n := Compat.overlayName n
   have hslw : sliceWeight raws (i + 1) < sliceWeight raws i :=
     sliceWeight_lt raws h (by omega)
   have hslp : slicePars raws (i + 1) ≤ slicePars raws i :=
@@ -11268,9 +11314,11 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   -- fails, so a document's redefinition shadows it — the same precedence
   -- the inline dispatch keeps, now kept here too.
   else if ["href", "link", "hyperlink", "hypertarget"].contains n
-      && (lookupUser ctx n).isNone then
-    let j := skipSpaces raws (i + 1)
-    have hjge := skipSpaces_ge raws (i + 1)
+      && (lookupUser ctx sourceName).isNone then
+    let head := linkSelectorHead n raws (i + 1)
+    let j := head.2
+    have hjge : i + 1 ≤ j := linkSelectorHead_monotone n raws (i + 1)
+    let spec ← selectorSpec ctx head.1 pos
     let j2 := skipSpaces raws (j + 1)
     have hj2ge := skipSpaces_ge raws (j + 1)
     match hj : raws[j]?, hj2 : raws[j2]? with
@@ -11312,12 +11360,12 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
             -- image-only body takes no decoration (`linkBodyAfford`).
             let kind := if n == "hyperlink" then "link" else "url"
             pure (Ir.linkBlocks url (ctx.styles.linkBodyAfford kind inner))
-      return (blocks ++ wrapped, ⟨j2 + 1, by omega⟩)
+      return (blocks ++ selectedCover Block.onSteps spec wrapped, ⟨j2 + 1, by omega⟩)
     | _, _ =>
       diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos
       return (blocks, ⟨i + 1, by omega⟩)
   else
-  match hlk : lookupUser ctx n with
+  match hlk : lookupUser ctx sourceName with
   | some (k, cmd) =>
     -- Block-producing user command: bind its arguments, then
     -- elaborate the body as blocks so `\block` inside a definition
@@ -12120,7 +12168,7 @@ unseal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBloc
 unseal scanBracketArg Parse.inputEnvFile?
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
-unseal thmOf? thmEnv thmOpen thmClose descItems ownBibList
+unseal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
