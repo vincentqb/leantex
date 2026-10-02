@@ -4378,6 +4378,74 @@ structure ColSpec where
   align : HAlign
   deriving Repr, BEq, Inhabited
 
+/-- The explicit `<col>` share each table column takes of the flexible
+`target`, measure-free, in permille — the one typed value both backends read
+for the sized and flexible columns. A `natural` column takes `none`: it has
+no target share and measures its own content (CSS `auto` on the web; the PDF
+path measures it from the fonts), which is why only sized and flexible
+columns reach an explicit width. A `sized` column whose width and the target
+both reduce to a rational multiple of one shared measure (`Affine.refPermille`)
+takes that ratio, `sizedFraction / targetFraction`; a `flex` column takes an
+equal part of what the sized columns leave of the target,
+`(1 − Σ sized/target) / count`. The `\tabcolsep` pads and inner gaps are
+**not** subtracted here — they render as the cell padding, separately — so a
+share is a function of the typed column widths and the target alone, never of
+font metrics. A column whose width (or the target) does not reduce to a clean
+single-reference ratio takes `none`, and the backend falls back to the affine
+track. This is the IR value `HtmlDoc.tableColEls` projects (its `<col>`
+percentage is `percentCss` of the entry) and the share the PDF
+`Layout.tableFlexWidths` splits a flexible column into. -/
+def tableColShares (cols : Array ColSpec) (target : TableTarget) : Array (Option Nat) :=
+  match target with
+  | .sized te =>
+    match te.refPermille with
+    | none => cols.map fun _ => none
+    | some (tm, tperm) =>
+      if tperm == 0 then cols.map fun _ => none
+      else
+        let count := cols.foldl (fun n c =>
+          if c.width matches .flex _ then n + 1 else n) 0
+        let sizedSum := cols.foldl (fun s c => match c.width with
+          | .sized e => match e.refPermille with
+            | some (m, p) => if m == tm then s + p * 1000 / tperm else s
+            | none => s
+          | .natural | .flex _ => s) 0
+        let flexShare := if count == 0 then 0 else (1000 - min 1000 sizedSum) / count
+        cols.map fun c => match c.width with
+          | .natural => none
+          | .sized e => e.refPermille.bind fun (m, p) =>
+            if m == tm then some (p * 1000 / tperm) else none
+          | .flex _ => some flexShare
+
+/-- `tableColShares` answers one share per column. -/
+theorem tableColShares_size (cols : Array ColSpec) (target : TableTarget) :
+    (tableColShares cols target).size = cols.size := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp
+
+/-- A natural column is excluded from the target split: it carries no share
+(`none`), the typed statement of "naturals are left to `auto`". -/
+theorem tableColShares_natural (cols : Array ColSpec) (target : TableTarget)
+    (j : Nat) (c : ColSpec) (hget : cols[j]? = some c) (hc : c.width = .natural) :
+    (tableColShares cols target)[j]? = some none := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp [hget, hc]
+
+/-- Every flexible column receives the identical share — tabularx's defining
+rule that the X columns split the remainder equally. The invariant the PDF
+`tableFlexWidths` honours too (`Layout.tableFlexWidths_flex_uniform`); the two
+together are `Layout.tableFlex_shares_agree`. -/
+theorem tableColShares_flex_uniform (cols : Array ColSpec) (target : TableTarget)
+    (i j : Nat) (ci cj : ColSpec) (ti tj : TableTarget)
+    (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
+    (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
+    (tableColShares cols target)[i]? = (tableColShares cols target)[j]? := by
+  unfold tableColShares
+  repeat' split
+  all_goals simp [hi, hj, hwi, hwj]
+
 /-- A horizontal rule (or declared row gap) inside a table, booktabs'
 vocabulary: `top` and `bottom` draw at `heavyRuleWidth`, `mid` at
 `lightRuleWidth`, and each carries its documented padding

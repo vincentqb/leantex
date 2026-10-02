@@ -7226,6 +7226,47 @@ theorem table_natural_width_exact (colsep total : Sp) (cols : Array Ir.ColSpec)
     | cons j rest ih => intro ws; simp only [List.foldl, widenAt_nil, ih]
   rw [tableColWidths, hfold]
 
+/-- Every flexible column resolves to the identical width — the PDF half of
+tabularx's equal-split rule (`Ir.tableColShares_flex_uniform` is the IR half).
+`tableFlexWidths` assigns the one `share` to every `.flex` column, whatever
+its index, so any two of them agree. -/
+theorem tableFlexWidths_flex_uniform (colsep total : Sp) (cols : Array Ir.ColSpec)
+    (bases : Array Sp) (padL padR : Bool) (i j : Nat) (ci cj : Ir.ColSpec)
+    (ti tj : Ir.TableTarget) (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
+    (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
+    (tableFlexWidths colsep total cols bases padL padR)[i]? =
+      (tableFlexWidths colsep total cols bases padL padR)[j]? := by
+  unfold tableFlexWidths
+  split
+  · -- No flex target found: impossible, since column `i` is flexible.
+    rename_i hnone
+    exact absurd ((Array.findSome?_eq_none_iff.mp hnone) ci (Array.mem_of_getElem? hi))
+      (by rw [hwi]; simp)
+  · simp [hi, hj, hwi, hwj]
+
+/-- **The share both backends split a flexible column into agrees.** With no
+natural column assumed and `\tabcolsep` left to cell padding, a bit-exact
+`pt`-equality between the measure-free HTML share and the `pt`-resolved PDF
+width is blocked by two independent integer divisions (the permille `/count`
+and the `pt` `rem / count`), so the honest shared fact is the *equal-split*
+invariant tabularx is defined by: every flexible column takes the same width
+as every other, in the typed HTML shares (`Ir.tableColShares`) and in the PDF
+resolution (`tableFlexWidths`) alike. Naturals carry no share either way
+(`Ir.tableColShares_natural`; the PDF leaves them at their measured base) —
+the "naturals excluded" exclusion is that neither path hands a natural column
+a slice of the target. The `backend_gaps_agree` shape, stated over the one IR
+`ColSpec`/`TableTarget` both artifacts read. -/
+theorem tableFlex_shares_agree (colsep total : Sp) (cols : Array Ir.ColSpec)
+    (bases : Array Sp) (padL padR : Bool) (target : Ir.TableTarget)
+    (i j : Nat) (ci cj : Ir.ColSpec) (ti tj : Ir.TableTarget)
+    (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
+    (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
+    (Ir.tableColShares cols target)[i]? = (Ir.tableColShares cols target)[j]? ∧
+      (tableFlexWidths colsep total cols bases padL padR)[i]? =
+        (tableFlexWidths colsep total cols bases padL padR)[j]? :=
+  ⟨Ir.tableColShares_flex_uniform cols target i j ci cj ti tj hi hj hwi hwj,
+   tableFlexWidths_flex_uniform colsep total cols bases padL padR i j ci cj ti tj hi hj hwi hwj⟩
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
