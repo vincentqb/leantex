@@ -12,18 +12,49 @@ private def severityColor : Severity → String
   | .warning => "1;33"
   | .note => "1;36"
 
+/-- Keep a diagnostic's continuations attached to its header. A filename
+uses a literal newline escape; message/help use indented continuation lines.
+Terminal controls are data, including an escape supplied by an external tool. -/
+private def humanText (newline : String) (s : String) : String :=
+  s.foldl (init := "") fun acc c =>
+    match c with
+    | '\n' => acc ++ newline
+    | '\r' => acc ++ "\\r"
+    | '\t' => acc ++ "\\t"
+    | c =>
+      if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
+        let hex := String.ofList (Nat.toDigits 16 c.toNat)
+        acc ++ "\\x" ++ (if hex.length < 2 then "0" else "") ++ hex
+      else acc.push c
+
+/-- The human presentation of a typed diagnostic. Severity remains the
+record's effective severity; the category is the declared Loss label,
+capitalized for reading. Codes and acceptance policy are unchanged.
+
+Formatting is separate from filtering, as in Python warnings and logging:
+https://docs.python.org/3/library/warnings.html#warnings.formatwarning
+https://docs.python.org/3/library/logging.html#formatter-objects
+Loguru likewise keeps record fields, format, filtering and serialization
+separate: https://loguru.readthedocs.io/en/stable/api/logger.html
+Only the renderer supplies terminal styling. Message text is never a format
+template. Like a Loguru callable format, newline ownership is explicit:
+this returns no final newline; the CLI sink supplies exactly one. -/
 def human (color : Bool) (d : Diag) : String :=
-  let head := sgr color (severityColor d.severity) s!"{d.severity.label}[{d.code}]"
-  -- A once-per-document loss shows one line, so the line carries the total:
-  -- the further sites ride beside it as notes and read under -v.
+  let head := sgr color (severityColor d.severity)
+    s!"{d.severity.label.capitalize} - {d.kind.loss.label.capitalize} [{d.code}]"
+  let location := match d.span with
+    | some sp => " - " ++ sgr color "1;34"
+        s!"{humanText "\\n" sp.file}:{sp.pos.line}:{sp.pos.col}"
+    | none => ""
+  -- The first carrier of a censused loss keeps its total; later sites
+  -- retain their existing note/verbosity policy at the typed CLI sink.
   let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
-  let base := s!"{head}: {d.message}{count}"
-  let withSpan := match d.span with
-    | some sp => base ++ "\n" ++ sgr color "1;34" "  --> " ++ s!"{sp.file}:{sp.pos.line}:{sp.pos.col}"
-    | none => base
+  let base := head ++ location ++ " - " ++
+    humanText "\n  " (d.message.replace "\r\n" "\n") ++ count
   match d.help with
-  | some h => withSpan ++ "\n  " ++ sgr color "1" "help:" ++ " " ++ h
-  | none => withSpan
+  | some h => base ++ "\n  " ++ sgr color "1" "help:" ++ " " ++
+      humanText "\n    " (h.replace "\r\n" "\n")
+  | none => base
 
 def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
   if errors == 0 then
