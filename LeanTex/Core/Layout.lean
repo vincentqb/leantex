@@ -12454,8 +12454,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
       let steps := Ir.frameSteps blk
       if steps ≤ 1 then
+        -- A one-page frame still evaluates its selectors: <0> covers at step one.
         acc := collectBlock rd acc
-          (.frame title standout valign breakable (Ir.unwrapItemSteps body)) 0
+          (.frame title standout valign breakable
+            (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
       else
         -- The tree numbers the frame once; every step's pages name the same
         -- leaves, so the counter rewinds to the frame's start per step
