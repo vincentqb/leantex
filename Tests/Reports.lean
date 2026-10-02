@@ -38,6 +38,7 @@ import Tests.MathAlphaEntry
 import Tests.OverlaySets
 import Tests.OverlayStyles
 import Tests.OverlayContracts
+import Tests.OverlayInputs
 import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.DiagnosticFormat
@@ -72,7 +73,7 @@ open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
-  overlayContractChecks overlaySingletonHtmlChecks diagnosticFormatChecks
+  overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
 namespace Reports
@@ -510,8 +511,9 @@ def reports : List Report := [
     state := .guarded "7214eeb2" .before .reviewer },
   { id := "R73", date := "2026-10-02"
     what := "numbered selectors on text modifiers appeared as literal angle text instead of applying the modifier on the selected reveals"
-    pins := [check% overlayStyleChecks, thm% Ir.OverlaySpec.pageOrder_select_exact,
+    pins := [check% overlayStyleChecks, check% overlayInputChecks, thm% Ir.OverlaySpec.pageOrder_select_exact,
       .thm `Ir.exclusiveOccurrences_exact _ (@Ir.exclusiveOccurrences_exact.{0})]
+    accept := ["selector fragments, final-slot precedence and once-only body effects reproduced on e5a5428a and f6d3a50f before correction"]
     state := .guarded "0358eb0d" .before .author },
   { id := "R74", date := "2026-10-02"
     what := "overlay contracts excluded zero and reversed selectors, one-reveal frames failed to evaluate selectors, and nested covering multiplied dimming"

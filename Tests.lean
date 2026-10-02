@@ -16,6 +16,7 @@ import Tests.XparseIgnoredOperands
 import Tests.OverlaySets
 import Tests.OverlayStyles
 import Tests.OverlayContracts
+import Tests.OverlayInputs
 import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
@@ -90,7 +91,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
-  overlaySetChecks overlayStyleChecks overlayContractChecks overlaySingletonHtmlChecks
+  overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
   diagnosticFormatChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks)
 
@@ -381,6 +382,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   overlaySetChecks ref oneFace
   overlayStyleChecks ref oneFace
   overlayContractChecks ref oneFace
+  overlayInputChecks ref oneFace
   overlaySingletonChecks ref oneFace
   overlaySingletonHtmlChecks ref
   frameHeadingScopeChecks ref oneFace
