@@ -546,99 +546,166 @@ const deckLinks = async (page, url) => {
   const info = await page.evaluate(() => {
     if (!document.documentElement.hasAttribute('data-deck-script')) return null;
     const snaps = [...document.querySelectorAll('[data-snap]')];
-    const frames = [...document.querySelectorAll('[data-frame-number]')];
-    const unique = frames.filter((f, i) =>
-      frames.findIndex(g => g.dataset.frameNumber === f.dataset.frameNumber) === i);
-    const frame = f => ({ id: f.id, n: f.dataset.frameNumber });
-    const stepped = unique.find(f => f.querySelectorAll('[data-snap]').length > 1);
-    return { snaps: snaps.length,
-      next: snaps.findIndex(s => (s.closest('.slide-track') || s) === unique[0]) + 1,
-      frames: unique.map(frame), stepped: stepped ? frame(stepped) : null };
+    const stageOf = s => s.closest('.slide-track') || s;
+    // Frame numbers can restart: group by stage identity, never by number.
+    const stages = [...new Set(snaps.map(stageOf))];
+    const labels = snaps.map(s => s.dataset.slideLabel);
+    const routes = new Map(labels.map((label, i) => [label, i]));
+    labels.forEach((label, i) => {
+      if (label?.endsWith('.1')) routes.set(label.slice(0, -2), i);
+    });
+    const ids = [...document.querySelectorAll('[id]')].map(el => el.id);
+    // Canonical routes take priority over a colliding native title or spacer ID.
+    const aliases = [...new Set([...snaps, ...stages])].filter(el => el.id)
+      .map(el => ({id: el.id, i: snaps.findIndex(s => s === el || stageOf(s) === el)}))
+      .filter(({id, i}) => ids.filter(other => other === id).length === 1 &&
+        (!routes.has(id) || routes.get(id) === i));
+    return {labels, aliases,
+      stages: stages.map(stage => snaps.flatMap((s, i) => stageOf(s) === stage ? [i] : []))};
   });
-  if (!info || info.snaps === 0) return { n: 0 };
-  const at = async id => page.waitForFunction(id => {
-    const stage = document.getElementById(id);
-    if (!stage) return false;
-    const snap = stage.querySelector('[data-snap]');
-    const el = snap && snap.getBoundingClientRect().width === 0
-      ? stage.querySelector('section.slide') : stage;
-    return el && Math.abs(el.getBoundingClientRect().left) < 1;
-  }, id, { timeout: 2500 });
-  const hash = async h => page.waitForFunction(h => location.hash === h, h, { timeout: 2500 });
+  if (!info || info.labels.length === 0) return {n: 0};
+  const hash = async label => page.waitForFunction(h => location.hash === h,
+    '#' + encodeURIComponent(label), {timeout: 2500});
   const atSnap = async i => page.waitForFunction(i => {
     const snap = document.querySelectorAll('[data-snap]')[i];
     if (!snap) return false;
-    const el = snap.getBoundingClientRect().width > 0 ? snap
-      : snap.closest('.slide-track').querySelector('section.slide');
-    return Math.abs(el.getBoundingClientRect().left) < 1;
-  }, i, { timeout: 2500 });
-  let phase = 'initial fragment';
+    const track = snap.closest('.slide-track');
+    const el = snap.getBoundingClientRect().width > 0 ? snap : track.querySelector('section.slide');
+    const step = track ? [...track.querySelectorAll('[data-snap]')].indexOf(snap) + 1 : 0;
+    return Math.abs(el.getBoundingClientRect().left) < 1 &&
+      (!track || track.dataset.snapped === String(step));
+  }, i, {timeout: 2500});
+  const expect = async (i, label = info.labels[i]) => {
+    await atSnap(i);
+    await hash(label);
+  };
+  const visit = async (i, label = info.labels[i], base = url) => {
+    await page.goto(base + '#' + encodeURIComponent(label));
+    await expect(i, label);
+  };
+  const stepped = info.stages.find(s => s.length > 1);
+  let phase = 'emitted labels';
+  let floorFile = null;
   try {
-    if (!new URL(page.url()).hash) throw new Error('the initial slide has no fragment');
-    if (!info.frames.length) return { ok: true, n: 1 };
-    const first = info.frames[0];
-    phase = 'numbered link and reload';
-    await page.goto(url + '#' + first.n);
-    await at(first.id);
+    if (info.labels.some(label => typeof label !== 'string' || !label.trim()))
+      throw new Error('a snap has no data-slide-label');
+    if (new Set(info.labels).size !== info.labels.length)
+      throw new Error('canonical slide labels are not unique');
+    phase = 'initial fragment';
+    await expect(0);
+    for (let i = 0; i < info.labels.length; i++) {
+      phase = 'canonical fragment ' + info.labels[i];
+      await visit(i);
+    }
+    phase = 'canonical reload';
     await page.reload();
-    await at(first.id);
-    await hash('#' + first.n);
-    // Authored title anchors still point to the same frame, in both directions.
-    const last = info.frames[info.frames.length - 1];
-    phase = 'title anchors';
-    await page.goto(url + '#' + last.id);
-    await at(last.id);
-    await page.goto(url + '#' + first.id);
-    await at(first.id);
-    await page.goto(url + '#' + first.n);
-    if (info.frames.length > 1 || info.stepped?.id === first.id) {
+    await expect(info.labels.length - 1);
+    for (let i = 0; i < info.labels.length; i++) {
+      if (!info.labels[i].endsWith('.1')) continue;
+      const bare = info.labels[i].slice(0, -2);
+      phase = 'bare first reveal ' + bare;
+      await visit(i, bare);
+      await page.reload();
+      await expect(i, bare);
+    }
+    for (const {id, i} of info.aliases) {
+      phase = 'native alias ' + id;
+      await visit(i, id);
+    }
+    if (info.labels.length > 1) {
+      phase = 'keyboard next';
+      await visit(0);
       await page.keyboard.press('ArrowRight');
-      await page.waitForFunction(h => location.hash !== h, '#' + first.n, { timeout: 2500 });
-      await atSnap(info.next);
-      const nextHash = new URL(page.url()).hash;
+      await expect(1);
       phase = 'history back';
-      await page.goBack();
-      await hash('#' + first.n);
-      await at(first.id);
+      await page.goBack(); await expect(0);
       phase = 'history forward';
-      await page.goForward();
-      await hash(nextHash);
-      await atSnap(info.next);
-      await page.reload();
-      await hash(nextHash);
-      await atSnap(info.next);
+      await page.goForward(); await expect(1);
+      await page.reload(); await expect(1);
     }
-    if (info.stepped) {
-      phase = 'reveal fragment';
-      const f = info.stepped;
-      await page.goto(url + '#' + f.n + '.2');
-      await page.waitForFunction(id => {
-        const track = document.getElementById(id);
-        const snap = track.querySelectorAll('[data-snap]')[1];
-        const el = snap.getBoundingClientRect().width > 0 ? snap : track.querySelector('section.slide');
-        return track.dataset.snapped === '2' && Math.abs(el.getBoundingClientRect().left) < 1;
-      }, f.id, { timeout: 2500 });
-      phase = 'reduced-motion reveal';
-      await page.emulateMedia({ reducedMotion: 'reduce' });
-      await page.reload();
-      await at(f.id);
-      await hash('#' + f.n + '.2');
-      await page.emulateMedia({ reducedMotion: 'no-preference' });
-    }
-    if (info.frames.length > 1) {
+    const lastStage = info.stages[info.stages.length - 1][0];
+    if (info.stages.length > 1) {
       phase = 'native scroll';
-      await page.goto(url + '#' + first.n);
-      await at(first.id);
-      await page.evaluate(id => document.getElementById(id).scrollIntoView({
-        behavior: 'instant', inline: 'start', block: 'nearest' }), last.id);
-      await hash('#' + last.n);
-      await at(last.id);
+      await visit(0);
+      await page.evaluate(i => {
+        const snap = document.querySelectorAll('[data-snap]')[i];
+        const el = snap.getBoundingClientRect().width > 0 ? snap :
+          snap.closest('.slide-track').querySelector('section.slide');
+        el.scrollIntoView({behavior: 'instant', inline: 'start', block: 'nearest'});
+      }, lastStage);
+      await expect(lastStage);
     }
-    return { ok: true, n: 1 };
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await page.reload();
+    const middle = info.stages.findIndex((s, i) => s.length > 1 && i > 0 && i + 1 < info.stages.length);
+    if (middle >= 0) {
+      const [a, b, c] = info.stages.slice(middle - 1, middle + 2).map(s => s[0]);
+      phase = 'reduced-motion forward through a stepped stage';
+      await visit(a);
+      await page.keyboard.press('ArrowRight'); await expect(b);
+      await page.keyboard.press('ArrowRight'); await expect(c);
+      phase = 'reduced-motion history';
+      await page.goBack(); await expect(b);
+      await page.goForward(); await expect(c);
+      await page.reload(); await expect(c);
+      phase = 'reduced-motion reverse through a stepped stage';
+      await page.keyboard.press('ArrowLeft'); await expect(b);
+      await page.keyboard.press('ArrowLeft'); await expect(a);
+    }
+    phase = 'reduced-motion End and Home';
+    await visit(0);
+    await page.keyboard.press('End'); await expect(lastStage);
+    await page.keyboard.press('Home'); await expect(0);
+    if (stepped) {
+      phase = 'reduced-motion explicit reveal and reload';
+      await visit(stepped[1]);
+      await page.reload(); await expect(stepped[1]);
+      const stage = info.stages.indexOf(stepped);
+      if (stage + 1 < info.stages.length) {
+        phase = 'reduced-motion next stage from an explicit reveal';
+        await page.keyboard.press('ArrowRight'); await expect(info.stages[stage + 1][0]);
+      }
+      if (stage > 0) {
+        phase = 'reduced-motion previous stage from an explicit reveal';
+        await visit(stepped[1]);
+        await page.keyboard.press('ArrowLeft'); await expect(info.stages[stage - 1][0]);
+      }
+      await page.emulateMedia({reducedMotion: 'no-preference'});
+      phase = 'hidden-spacer floor';
+      const fs = require('fs');
+      const source = fs.readFileSync(new URL(url), 'utf8');
+      // Force the emitted fallback rules before script startup, including on reload.
+      const floor = source.replace(/@supports (not )?\(animation-timeline: view\(\)\)/g,
+        '@supports $1(ltx-oracle-no-timeline: none)');
+      if (floor === source) throw new Error('no view-timeline gate to exercise the floor');
+      const floorUrl = new URL(url);
+      floorUrl.pathname += '.floor-' + process.pid + '.html';
+      fs.writeFileSync(floorUrl, floor, {flag: 'wx'});
+      floorFile = floorUrl;
+      await visit(stepped[0], info.labels[stepped[0]], floorUrl.href);
+      const hidden = await page.evaluate(indices => indices.every(i =>
+        document.querySelectorAll('[data-snap]')[i].getBoundingClientRect().width === 0) &&
+        !matchMedia('(prefers-reduced-motion: reduce)').matches, stepped);
+      if (!hidden) throw new Error('the floor did not collapse the stepped spacers');
+      await page.keyboard.press('ArrowRight'); await expect(stepped[1]);
+      phase = 'hidden-spacer history back';
+      await page.goBack(); await expect(stepped[0]);
+      phase = 'hidden-spacer history forward';
+      await page.goForward(); await expect(stepped[1]);
+      phase = 'hidden-spacer reload and scroll sync';
+      await page.reload(); await expect(stepped[1]);
+      await page.evaluate(async () => {
+        dispatchEvent(new Event('scroll'));
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      });
+      await expect(stepped[1]);
+    }
+    return {ok: true, n: 1};
   } catch (e) {
-    return { ok: false, n: 1, why: phase + ': ' + clean(e.message) };
+    return {ok: false, n: 1, why: phase + ': ' + clean(e.message)};
   } finally {
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    if (floorFile) require('fs').unlinkSync(floorFile);
+    await page.emulateMedia({reducedMotion: 'no-preference'});
     await page.goto(url);
     await page.evaluate(() => document.fonts.ready);
   }
