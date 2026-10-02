@@ -7183,7 +7183,11 @@ def tableFlexWidths (colsep total : Sp) (cols : Array Ir.ColSpec)
       | .natural | .sized _ => sum + bases[j]?.getD 0) 0
     let outer := (if padL then colsep else 0) + (if padR then colsep else 0)
     let inner := 2 * colsep * ((cols.size : Int) - 1)
-    let share := max 0 (target.resolve total - fixed - outer - inner) / max count 1
+    let rem := target.resolve total - fixed - outer - inner
+    -- On overflow the remainder is negative: clamp the flexible share to a
+    -- documented minimum (`Ir.tableFlexMin`) rather than collapsing it to
+    -- zero. The table then overflows the measure and W0338 names it.
+    let share := if rem < 0 then Ir.tableFlexMin.sp else rem / max count 1
     cols.mapIdx fun j c => match c.width with
       | .flex _ => share
       | .natural | .sized _ => bases[j]?.getD 0

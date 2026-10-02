@@ -158,6 +158,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recipeParacolChecks ref oneFace
   recipeTabularxChecks ref oneFace
   recipeColModChecks ref
+  recipeTableOverflowChecks ref
   recipeTitlePageChecks ref oneFace
   recipeUlemChecks ref oneFace
   recipeLinkAffordChecks ref oneFace

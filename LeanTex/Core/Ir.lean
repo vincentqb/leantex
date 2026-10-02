@@ -682,6 +682,13 @@ columns in a tabular environment are separated by 2\tabcolsep", 6pt
 (classes.dtx §Array and tabular). An `@{}` in the column spec deletes the
 outer pad, as in LaTeX. -/
 def tabColSep : Dim.Length := { sp := Dim.pt 6 }
+/-- The least width a flexible (`X`) column keeps when the fixed columns and
+gaps already fill or exceed the table's target width: half an inch, a
+readable minimum, rather than collapsing the column to nothing. The table
+then overflows the measure and says so (W0338) instead of silently hiding a
+column. A token, so the floor is one named value both the layout and its
+tests read, never a bare number inside the allocator. -/
+def tableFlexMin : Dim.Length := { sp := Dim.pt 36 }
 /-- Two stacked full rules separate by LaTeX's `\doublerulesep`, 2pt
 (classes.dtx §Array and tabular) — drawn, but warned: "never use double
 rules" (booktabs.dtx §The layout of formal tables). -/

@@ -411,6 +411,31 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
        cols.size == 1 && padR == false && ds6.all (fun d => !cascade.contains d.code)
      | none => false)
 
+/-- **A flexible column overflow clamps to a documented minimum, never
+zero.** When the fixed columns and gaps already fill or exceed the table's
+target, the flexible (`X`) share would otherwise collapse to nothing. It is
+clamped to `Ir.tableFlexMin` instead, so the column keeps a readable width
+and the table overflows the measure and says so (W0338) rather than hiding a
+column. Just under the target the column keeps the small remainder; exactly
+at the target it is empty; over it, it is the minimum. Assertions read the
+resolved widths `Layout.tableColWidths` returns — the same widths the PDF
+layout resolves. -/
+def recipeTableOverflowChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let cols : Array Ir.ColSpec :=
+    #[{ width := .natural, align := .left },
+      { width := .flex (.frac 1000), align := .left }]
+  -- Just under: a positive remainder reaches the flexible column.
+  t "fixed columns and gaps just under the target leave the flex column the remainder"
+    (Layout.tableColWidths 10 1000 cols #[#[940, 0]] #[] == #[940, 20])
+  -- Exactly at: no remainder, the flexible column is empty, the table fits.
+  t "fixed columns and gaps exactly at the target leave the flex column empty"
+    (Layout.tableColWidths 10 1000 cols #[#[960, 0]] #[] == #[960, 0])
+  -- Over: the flexible column is the minimum, never zero or negative.
+  t "fixed columns and gaps over the target clamp the flex column to the minimum, not zero"
+    (Layout.tableColWidths 10 1000 cols #[#[1100, 0]] #[] == #[1100, Ir.tableFlexMin.sp] &&
+      Ir.tableFlexMin.sp > 0)
+
 /-- **The article `titlepage` environment is an isolated flow page.** The
 installed class opens a fresh page, applies the empty page style, and opens
 another at the close (`classes.dtx`, `\titlepage`). This engine lowers the
