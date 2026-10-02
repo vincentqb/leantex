@@ -3,9 +3,9 @@ import Tests.Support
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open LeanTex.Core.PdfRead (Obj)
 
-private def pdfLinkTargets (pdf : ByteArray) : Except String (Array ByteArray) := do
+private def pdfLinkTargets (pdf : ByteArray) : Except String (Array Obj) := do
   let es ← PdfRead.objects pdf
-  let mut out : Array ByteArray := #[]
+  let mut out : Array Obj := #[]
   for e in es.val do
     if PdfCensus.kindOf e.val == .page then
       match PdfCensus.deref es.val ((e.val.get? "Annots").getD .null) with
@@ -14,7 +14,9 @@ private def pdfLinkTargets (pdf : ByteArray) : Except String (Array ByteArray) :
           let annot := PdfCensus.deref es.val raw
           if PdfCensus.kindOf annot == .annot "Link" then
             let action := PdfCensus.deref es.val ((annot.get? "A").getD .null)
-            if let some (Obj.str target) := action.get? "URI" then
+            if let some target := (annot.get? "Dest").orElse fun _ =>
+                if action.get? "S" == some (.name "GoTo") then action.get? "D"
+                else action.get? "URI" then
               out := out.push target
       | _ => pure ()
   return out
@@ -95,8 +97,10 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   t "the typed HTML tree carries exactly one matching internal link"
     (ids.contains "panel" && hrefs == #["#panel"])
   let pdf := Pdf.write (Layout.Geom.ofPage doc.page) oneFace out.pages doc.info
-  t "the PDF artifact carries exactly one matching block-link annotation"
-    (pdfLinkTargets pdf == .ok #["(#panel)".toUTF8])
+  t "the PDF artifact carries exactly one resolved internal block-link annotation"
+    (match pdfLinkTargets pdf with
+     | .ok targets => targets.size == 1 && (targets[0]? matches some (Obj.arr _))
+     | .error _ => false)
   t "the typed HTML tree keeps both nested tables"
     (trees.foldl (fun n tree => n + countTag "table" tree) 0 == 2)
   let (nestedDoc, nestedDs) := elabStr (dvDoc "\\usepackage{hyperref}\n"
@@ -140,7 +144,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
      | none => false)
   let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) oneFace mout.pages mdoc.info
   t "the multi-paragraph link is exactly one PDF annotation, siblings carry none"
-    (pdfLinkTargets mpdf == .ok #["(#multi)".toUTF8])
+    (pdfLinkTargets mpdf == .ok #[.str "(multi)".toUTF8])
   let mtrees := mdoc.body.map (HtmlDoc.blockNode {})
   let mhrefs := mtrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let mAnchorText := mtrees.foldl (fun s n => s ++ anchorInnerText false n) ""
@@ -175,8 +179,8 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   -- A `\hfill` run of `\hyperlink`-wrapped minipages is ONE columns row: the
   -- flow-transparent wrapper is read through for the row (width and row
   -- participation from the minipage inside) while the wrapper stays around
-  -- the tile's content, so each column is one `.link` to its own target
-  -- (`Ir.linkedBoxRow_text`, `Ir.linkedBoxRow_links`). The row stands at the
+  -- the tile's content, so each column is one `.link` to its own target.
+  -- The row stands at the
   -- same baseline and column origins as the unlinked three-minipage row, and
   -- each tile gets one link rectangle over its OWN ink only — not the gutter
   -- or a neighbour (`Layout.Out`), with one `<a>` per tile (typed HTML).
@@ -194,7 +198,9 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
   t "a hfill run of linked minipages is one columns row of three linked columns"
     (match lcols with
      | some cs => cs.size == 3 &&
-         Ir.colLinkTargets cs.toList == [some "#ta", some "#tb", some "#tc"]
+         (cs.map fun c => match c.2.toList with
+           | [.link target _] => some target
+           | _ => none) == #[some "#ta", some "#tb", some "#tc"]
      | none => false)
   t "the linked row has three block links and no unknown-command cascade"
     (lds.all (fun d => !cascade.contains d.code) &&
@@ -336,8 +342,10 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
       tableStyles.contains "width: 100%" && colStyles.contains "width: 100%")
 
 /-- **The article `titlepage` environment is an isolated flow page.** The
-installed class opens a fresh page, applies the empty page style, and opens
-another at the close (`classes.dtx`, `\titlepage`). This engine lowers the
+installed class opens a fresh page and another at the close
+(`classes.dtx`, `\titlepage`). Its empty page style and page-counter reset
+are not covered here; the engine still owes those page-scoped settings.
+This engine lowers the
 environment before the block knot to the `\pagebreak` the flow already names
 around the body carried in a group — so there is no unknown-environment
 cascade, the body elaborates through the ordinary top-level block paths at
@@ -542,7 +550,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   | .error e => failures ref s!"ulem link PDF: {e}"
   | .ok targets =>
     t "a link inside strikeout remains one PDF link annotation"
-      (targets == #["(https://example.org)".toUTF8])
+      (targets == #[.str "(https://example.org)".toUTF8])
 
   let multiline (body : String) : Layout.Out :=
     layoutOf oneFace (elabStr (dvDoc
@@ -660,7 +668,7 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
       color == magenta && pdfFills.contains (color, w, thickness))
   let tpdf := Pdf.write (Layout.Geom.ofPage tdoc.page) oneFace tout.pages tdoc.info
   t "PDF: the text block link carries one annotation to its target"
-    (pdfLinkTargets tpdf == .ok #["(https://example.org)".toUTF8])
+    (pdfLinkTargets tpdf == .ok #[.str "(https://example.org)".toUTF8])
   -- HTML: the same two affordances — the anchor, the underline tag, and the
   -- ink span — on the link's own text, so both backends agree.
   let ttrees := tdoc.body.map (HtmlDoc.blockNode {})

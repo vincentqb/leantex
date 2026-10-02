@@ -989,7 +989,7 @@ def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.S
   | .cidFontType0 => (keepFaces fs pages).any fun k => (fs.get k).isCff
   | .cidFontType2 => (keepFaces fs pages).any fun k => !(fs.get k).isCff
   | .linkURI =>
-    pages.any (fun p => !(linkRects geom p).isEmpty)
+    pages.any (fun p => (linkRects geom p).any (fun r => !r.2.2.2.2.startsWith "#"))
       || outline.any (fun e => e.page.isNone && e.url.isSome)
   | .outlines => outline.size > 0
   | .xmp => true
@@ -1240,6 +1240,23 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         ("ItalicAngle", .int italicAngle), ("Ascent", .int ascent1000),
         ("Descent", .int descent1000), ("CapHeight", .int capHeight1000),
         ("StemV", .int stemV), (fontFileKey, .ref (t.fileId k) 0)])]
+  -- Internal fragments name PDF destinations, never URI actions. Resolve
+  -- from the final lines so columns, spills, and vertical glue cannot leave
+  -- an annotation pointing at the page where collection first saw its name
+  -- (ISO 32000-2 §§12.3.2, 12.6.4.2).
+  let linkTarget (url : String) : String × PdfRead.Obj :=
+    if url.startsWith "#" then
+      let name := (url.drop 1).toString
+      match Layout.destination? pages name with
+      | some (page, line) =>
+        let above := (Layout.segsInk fs line.segs).1
+        ("Dest", .arr #[.ref (t.pageId page) 0, .name "XYZ",
+          ptObj (line.x + geom.bleed),
+          ptObj (geom.pageH + geom.bleed - (line.y - above)), .null])
+      | none =>
+        ("A", .dict #[("S", .name "GoTo"), ("D", litObj (pdfTextString name))])
+    else
+      ("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString url})")])
   let annots (i : Nat) : Array (String × PdfRead.Obj) :=
     let rects := linkRects geom pages[i]!
     if rects.isEmpty then #[] else
@@ -1247,7 +1264,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         .dict #[("Type", .name "Annot"), ("Subtype", .name "Link"),
           ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
           ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4),
-          ("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString url})")])]))]
+          linkTarget url]))]
   let pageDict (i : Nat) : PdfRead.Obj :=
     -- With bleed the medium is larger than the finished page, and the
     -- boxes follow from the declared trim size and bleed (`pageBoxes`,

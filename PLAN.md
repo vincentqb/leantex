@@ -25637,3 +25637,32 @@ The 160 Layout/PDF artifacts from 80 unrelated math cases remain byte
 identical, and all 12 scoreboard tiers pass without baseline changes.
 Rendered checks cover the four steep-arrow room/thickness combinations
 and the rebuilt private reference corpus's reported cancellation pages.
+
+### 2026-10-02 — Integrate the completed document-structure work
+
+Thirteen completed commits add block-shaped internal links, parallel columns,
+flexible target-width tables, underline and strikeout, and isolated title-page
+flow. Integration preserves main's intervening shaping and attachment fixes.
+The review removes unused parallel implementations of linked box rows and
+their proofs; the report now pins the shared link-affordance walk production
+actually uses. Report identities remain sequential.
+
+A link rectangle is not sufficient evidence of PDF navigation. The incoming
+writer emitted an internal fragment as a URI action. Targets now travel as
+zero-ink line metadata through shaping, line breaking and page placement;
+they never split a word or introduce glue. Internal annotations resolve to
+explicit PDF page destinations after the final page order is known. The
+document outline reads that same resolver. External links retain URI
+actions, and unresolved internal names retain named GoTo actions.
+
+`pdfDestinationChecks` reads the emitted PDF objects and checks the destination
+against the page carrying the target. Four cases fail on the integrated
+incoming tree at `4fec4fd2` and pass after the correction: a forward target,
+a block target, a target after a paragraph continues onto another page, and
+a target inside a kerned word. Paired controls require identical shipped
+text and line geometry when the target is removed.
+
+The title-page guard certifies isolation, declaration scope and vertical
+placement. It does not certify the article class's empty page style or page
+counter reset. Those still need a page-scoped furniture/counter representation;
+the existing flow-page lowering does not implement them.

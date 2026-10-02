@@ -4,6 +4,7 @@ import Tests.Census
 import Tests.Conditionals
 import Tests.BoxRow
 import Tests.RecipeStructure
+import Tests.PdfDestination
 import Tests.PackageCode
 import Tests.Artifact
 import Tests.HtmlTokens
@@ -447,7 +448,7 @@ def reports : List Report := [
   { id := "R66", date := "2026-10-01"
     what := "internal link and target wrappers around boxes kept words but lost navigation and demoted nested tables"
     pins := [check% recipeLinkWrapperChecks, thm% Ir.linkBlocks_text,
-      thm% Ir.linkedBoxRow_text, thm% Ir.linkedBoxRow_links]
+      thm% Ir.Styles.linkBodyAfford_text]
     state := .guarded "82e1e271" .before .author },
   { id := "R67", date := "2026-10-01"
     what := "a parallel-column wrapper kept switch commands as prose and lost its declared widths and independent flows"
@@ -462,10 +463,14 @@ def reports : List Report := [
     pins := [check% recipeUlemChecks, thm% Ir.decorated_text,
       thm% Layout.lineThroughRaise_exact]
     state := .guarded "b2a4a435" .before .author },
-  { id := "R69", date := "2026-10-01"
+  { id := "R70", date := "2026-10-01"
     what := "a title page environment kept its body as loose text under an unknown-environment warning instead of an isolated page between the surrounding matter"
     pins := [check% recipeTitlePageChecks]
-    state := .guarded "a0aa65a1" .before .author }
+    state := .guarded "a0aa65a1" .before .author },
+  { id := "R71", date := "2026-10-02"
+    what := "internal links around boxes kept their annotations but used URI fragments instead of destinations on the final PDF pages"
+    pins := [check% pdfDestinationChecks, check% recipeLinkWrapperChecks]
+    state := .guarded "4fec4fd2" .before .reviewer }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

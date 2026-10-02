@@ -803,6 +803,9 @@ structure LineOut where
   floated box, not galley lines), footnotes (insertions), bare rule ink,
   picture labels and furniture are not counted. -/
   counted : Bool := false
+  /-- Zero-ink destinations carried by this line through fitting, page
+  reordering and final vertical placement. -/
+  anchors : Array String := #[]
   /-- The preorder index of the `Struct.leaves (Struct.ofDoc (pdfView doc))`
   entry whose text this line paints — the first leaf of the block the line
   sets (a footnote's lines name the note's first leaf; a picture's label
@@ -1123,6 +1126,14 @@ structure PageOut where
   band : Option Sp := none
   deriving Repr, Inhabited
 
+/-- Resolve a destination from finalized lines, after page fitting,
+column assembly, and vertical distribution. This is an artifact fact:
+the first shipped declaration owns the target, and its line supplies
+both its page and its final coordinates. -/
+def destination? (pages : Array PageOut) (name : String) : Option (Nat × LineOut) :=
+  (pages.zipIdx).findSome? fun (page, i) =>
+    (page.lines.find? (fun line => line.anchors.contains name)).map (i, ·)
+
 /-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): a link of
 an unpinned navigation landmark. An in-document target that resolved
 carries the 0-based index of the page holding its section heading; an
@@ -1192,6 +1203,7 @@ private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
 
 private inductive Tk where
   | word (style : TextStyle) (chars : Array Char) (attr : Attribution)
+  | anchor (name : String)
   | space (style : TextStyle)
   | fill
   | hskip (style : TextStyle) (glue : Affine Measure) (keep : Bool)
@@ -1229,7 +1241,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
+  | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
 
 /-- The Layout-private marker a decorating site wraps its declared content
 in: `.role leafRole content`. A role is transparent to layout
@@ -1480,7 +1492,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   match x with
   | .text s => pushText st sty s
   -- an anchor ships no ink; a resolved reference ships its number
-  | .label _ => st
+  | .label name => { st with toks := st.toks.push (.anchor name) }
   | .ref _ _ text _ => pushText st sty text
   -- An unresolved citation sets its marks as plain text: something stands
   -- here, and the diagnostic that let it through has already said why.
@@ -1764,7 +1776,12 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
       ∀ tk ∈ (flattenOne mathOk noteOk st sty x).toks, tk ∈ st.toks ∨ tk.attributed = true := by
   match x with
   | .text s => exact pushText_toks st sty s h
-  | .label _ => exact ⟨h, fun tk hm => Or.inl hm⟩
+  | .label name =>
+    refine ⟨h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
   | .ref _ _ text _ => exact pushText_toks st sty text h
   | .cite _ keys => exact pushText_toks st sty (Ir.citeMarks keys) h
   | .footnote num body =>
@@ -2013,7 +2030,8 @@ word crosses transparent inline boundaries: shape and hyphenate first,
 then split boxes by owner without losing the kern at a leaf boundary.
 The last result maps each owner fragment to its natural offset in the
 original box: expansion must round from that same origin. Hyphenation,
-fallback faces and fixed spaces still start fresh boxes. -/
+fallback faces and fixed spaces still start fresh boxes. The final array maps
+source scalars to the items that carry them, for zero-ink destinations. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
@@ -2022,26 +2040,30 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp := Id.run do
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
   let mut missing := missing
   let mut substs := substs
   let mut cache := cache
   let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
   let mut items : Array Item := #[]
   let mut wordOffsets : Std.HashMap Nat Sp := {}
+  let mut sources : Array (Nat × Nat) := #[]
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxOwners : Array Attribution := #[]
+  let mut boxSources : Array Nat := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (offsets : Std.HashMap Nat Sp)
-      (box : Array (Nat × Char × Sp)) (boxOwners : Array Attribution) (w : Sp) :
-      Array Item × Std.HashMap Nat Sp := Id.run do
-    if box.isEmpty then return (items, offsets)
+      (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
+      (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
+      Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
+    if box.isEmpty then return (items, offsets, sources)
     let first := boxOwners[0]?.getD attr
     if boxOwners.all (· == first) then
       return (items.push (.box w fontIdx color link box size leading decorations 0 ground first),
-        offsets)
+        offsets, sources ++ boxSources.map (·, items.size))
     let mut items := items
     let mut offsets := offsets
+    let mut sources := sources
     let mut offset := 0
     let mut run := #[]
     let mut runW := 0
@@ -2057,9 +2079,10 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         owner := next
       run := run.push g
       runW := runW + g.2.2
+      sources := sources.push (boxSources[k]!, items.size)
     if offset != 0 then offsets := offsets.insert items.size offset
     return (items.push (.box runW fontIdx color link run size leading decorations 0 ground owner),
-      offsets)
+      offsets, sources)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -2094,11 +2117,13 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | none => pure ()
         for (c', k) in run.zipIdx do
           if breaks.contains k then
-            let (out, offsets) := flush items wordOffsets box boxOwners boxW
+            let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
             items := out
             wordOffsets := offsets
+            sources := srcs
             box := #[]
             boxOwners := #[]
+            boxSources := #[]
             boxW := 0
             items := items.push
               (.pen hyphW hyphenPenalty true fontIdx color (hyphenGlyph size font))
@@ -2107,17 +2132,21 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             let ks := kernVal Ir.features size font box g.1
             box := (kernApply box ks).push g
             boxOwners := boxOwners.push (owners[i + k]?.getD attr)
+            boxSources := boxSources.push (i + k)
             boxW := boxW + ks + g.2.2
           | none =>
             match fs.fallbackFor c' |>.bind fun fb =>
                 (glyphOfSc smallcaps size (fs.get fb) c').map (fb, ·) with
             | some (fb, g) =>
-              let (out, offsets) := flush items wordOffsets box boxOwners boxW
+              let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
               items := out
               wordOffsets := offsets
+              sources := srcs
               box := #[]
               boxOwners := #[]
+              boxSources := #[]
               boxW := 0
+              sources := sources.push (i + k, items.size)
               items := items.push (.box g.2.2 fb color link #[g] size leading decorations 0 ground
                 (owners[i + k]?.getD attr))
               unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
@@ -2131,12 +2160,15 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | some (num, den) =>
           -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
           -- become a place to end a line.
-          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
           items := out
           wordOffsets := offsets
+          sources := srcs
           box := #[]
           boxOwners := #[]
+          boxSources := #[]
           boxW := 0
+          sources := sources.push (i, items.size)
           items := items.push
             (.box (size * num / den) fontIdx color link #[] size leading decorations 0 ground
               (owners[i]?.getD attr))
@@ -2144,12 +2176,15 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         | none =>
         if c == '\u00a0' then
           -- A no-break space is an interword space that is not glue.
-          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
           items := out
           wordOffsets := offsets
+          sources := srcs
           box := #[]
           boxOwners := #[]
+          boxSources := #[]
           boxW := 0
+          sources := sources.push (i, items.size)
           items := items.push
             (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size leading decorations 0
               ground (owners[i]?.getD attr))
@@ -2160,17 +2195,21 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           let ks := kernVal Ir.features size font box g.1
           box := (kernApply box ks).push g
           boxOwners := boxOwners.push (owners[i]?.getD attr)
+          boxSources := boxSources.push i
           boxW := boxW + ks + g.2.2
         | none =>
           match fs.fallbackFor c |>.bind fun fb =>
               (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
           | some (fb, g) =>
-            let (out, offsets) := flush items wordOffsets box boxOwners boxW
+            let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
             items := out
             wordOffsets := offsets
+            sources := srcs
             box := #[]
             boxOwners := #[]
+            boxSources := #[]
             boxW := 0
+            sources := sources.push (i, items.size)
             items := items.push (.box g.2.2 fb color link #[g] size leading decorations 0 ground
               (owners[i]?.getD attr))
             unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
@@ -2180,17 +2219,19 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               missing := missing.push (fontIdx, c)
         i := i + 1
         if c == '-' then
-          let (out, offsets) := flush items wordOffsets box boxOwners boxW
+          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
           items := out
           wordOffsets := offsets
+          sources := srcs
           box := #[]
           boxOwners := #[]
+          boxSources := #[]
           boxW := 0
           items := items.push (.pen 0 hyphenPenalty false fontIdx color #[])
     else
       break
-  let (out, offsets) := flush items wordOffsets box boxOwners boxW
-  return (out, missing, substs, cache, offsets)
+  let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
+  return (out, missing, substs, cache, offsets, srcs)
 
 /-- Interword glue: the face's space advance, stretching by half and
 shrinking by a third. The proportions are TeX's plain-font fontdimens
@@ -3554,6 +3595,9 @@ user. `substs` (W0009) and `unstyled` (W0016) are the reported
 substitutions: set from another face, never lost. -/
 private structure ItemsAcc where
   items : Array Item := #[]
+  /-- Destinations indexed by the items their source position becomes.
+  Metadata never becomes a breakable item or a shaping boundary. -/
+  anchors : Array (String × Nat) := #[]
   /-- Each footnote met: the index of its mark item, its number, its body,
   and the body's first leaf (`Tk.note`'s `bodyLeaf`). -/
   notes : Array (Nat × Nat × Array Inline × Option Nat) := #[]
@@ -3705,7 +3749,8 @@ every token's ink becomes items, an entry in `dropped`, or a note body
 carried whole, and nothing else. -/
 private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
-    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution) : ItemsAcc :=
+    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
+    (anchors : Array (String × Nat)) : ItemsAcc :=
   match tk with
   | .word sty chars attr =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
@@ -3720,7 +3765,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    let (ws, m, s, c', offsets) :=
+    let (ws, m, s, c', offsets, sources) :=
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners
@@ -3734,7 +3779,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let n := acc.items.size
     { acc with items := widenLast acc.items rk ++ ws, dropped := m, substs := s, cache := c'
                wordOffsets := offsets.fold (fun os k v => os.insert (n + k) v) acc.wordOffsets
+               anchors := acc.anchors ++ anchors.map (fun (name, k) =>
+                 (name, n + ((sources.find? (fun (src, _) => k ≤ src)).map (·.2)).getD ws.size))
                wordEnd := if ws.isEmpty then acc.wordEnd else n + ws.size }
+  | .anchor name => { acc with anchors := acc.anchors.push (name, acc.items.size) }
   | .icon sty c attr =>
     -- The styled face first (an icon font declared as the body face is
     -- legal), then the fallback chain; either hit is the icon's own face
@@ -3888,8 +3936,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 
 /-- Adjacent word tokens with the same complete style are one shaping and
 hyphenation input. Semantic leaf boundaries are carried per scalar, never
-turned into font boundaries. Spaces, corrections and every non-word token
-flush the pending word before their ordinary item step. -/
+turned into font boundaries. Anchors ride at source-scalar positions without
+interrupting shaping; spaces and other non-word tokens flush the word. -/
 private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (toks : Array Tk) : ItemsAcc := Id.run do
@@ -3897,8 +3945,13 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   let mut acc := acc
   let mut pending : Option (TextStyle × Array Char × Attribution) := none
   let mut owners : Array Attribution := #[]
+  let mut anchors : Array (String × Nat) := #[]
   for tk in toks do
     match tk with
+    | .anchor name =>
+      match pending with
+      | some (_, word, _) => anchors := anchors.push (name, word.size)
+      | none => acc := step acc tk #[] #[]
     | .word sty chars attr =>
       match pending with
       | some (prev, word, first) =>
@@ -3906,20 +3959,22 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           pending := some (prev, word ++ chars, first)
           owners := chars.foldl (fun os _ => os.push attr) owners
         else
-          acc := step acc (.word prev word first) owners
+          acc := step acc (.word prev word first) owners anchors
           pending := some (sty, chars, attr)
           owners := chars.map (fun _ => attr)
+          anchors := #[]
       | none =>
         pending := some (sty, chars, attr)
         owners := chars.map (fun _ => attr)
     | _ =>
       if let some (sty, word, attr) := pending then
-        acc := step acc (.word sty word attr) owners
+        acc := step acc (.word sty word attr) owners anchors
       pending := none
       owners := #[]
-      acc := step acc tk #[]
+      anchors := #[]
+      acc := step acc tk #[] #[]
   if let some (sty, word, attr) := pending then
-    acc := step acc (.word sty word attr) owners
+    acc := step acc (.word sty word attr) owners anchors
   return acc
 
 /-- Inlines to breakable items: `itemsOfToks` over the flatten
@@ -3931,8 +3986,8 @@ The fourth returned component maps the index of a forced-break penalty
 to extra vertical space the document asked for there (`\\[1ex]`); it
 rides beside the items because the line breaker has no use for it, and
 putting it in `Item` would make every pattern carry a field only the
-page builder reads. The last component carries the original shaping
-offset of a word box split only for semantic ownership. -/
+page builder reads. The final components carry original shaping offsets
+for ownership fragments and zero-ink destinations indexed by item. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
@@ -3941,7 +3996,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (roleMetrics : List (String × (Sp × Option Sp)) := []) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) ×
-      Std.HashMap Nat Sp := Id.run do
+      Std.HashMap Nat Sp × Array (String × Nat) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
   let acc := itemsOfToks pats size xHeight fs imgs textW textH { cache := cache } st.toks
@@ -3971,7 +4026,7 @@ with \\allow{E0405}"))
 (U+{hex c.toNat}); a stand-in keeps the letter"
       (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
       (subject := some ("math-alpha:" ++ a.name)))
-  return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets)
+  return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets, acc.anchors)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -4941,12 +4996,9 @@ private structure B where
   final vertical placement before their rectangles are measured. -/
   openLinks : Array LinkStart := #[]
   closedLinks : Array LinkSpan := #[]
-  /-- Anchors owed to the next committed line: `commit` records each with
-  the index of the page that line lands on. -/
+  /-- Anchors owed to the next committed line. Its final page, after columns
+  rejoin, supplies their destination. -/
   pendingAnchors : Array String := #[]
-  /-- Each resolved anchor with its 0-based page index, first declaration
-  first — the table the outline's in-document targets resolve against. -/
-  anchors : Array (String × Nat) := #[]
   /-- The resolved `\skip\footins` gap for this run — `Ir.footinsDefault`
   or the document's `\tokens{ footins = ... }` — fixed at `Layout.run`. -/
   footins : Sp := 0
@@ -5561,8 +5613,8 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
   -- space survives the break), and fil width is zero, so counting it
   -- costs nothing when unused.
   let fils := b.pageFils + (if b.skip.fil then 1 else 0)
+  let line := { line with anchors := b.pendingAnchors ++ line.anchors }
   { b with cur := { b.cur with lines := b.cur.lines.push line }
-           anchors := b.anchors ++ b.pendingAnchors.map ((·, b.pages.size))
            pendingAnchors := #[]
            shrinkAbove := b.shrinkAbove.push above
            stretchAbove := b.stretchAbove.push stretch
@@ -6047,7 +6099,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
     (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
-    (display : Option DisplayJob := none) (opens : Bool := false) : B :=
+    (display : Option DisplayJob := none) (opens : Bool := false)
+    (anchors : Array String := #[]) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
@@ -6074,7 +6127,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let bottom := noteFloor b.bottom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
-      hang := hang, expand := expand, counted := counted, leaf := leaf }
+      hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors }
   -- The distance from the band above: TeX's interline glue on either side
   -- of display math (`texBaselineGap`), over the empty line amsmath's `$$`
   -- sets first where it opens a paragraph; the metric rule everywhere else.
@@ -6335,6 +6388,7 @@ private structure ParaJob where
   items : Array Item
   extras : Std.HashMap Nat Sp
   wordOffsets : Std.HashMap Nat Sp := {}
+  anchors : Array (String × Nat) := #[]
   diags : Array Diag
   target : Sp
   indent : Sp
@@ -7030,6 +7084,13 @@ private def Acc.chromeFoot (a : Acc) (standout : Bool := false) :
     { footerLeft := a.chromeL, footerRight := a.chromeR, standoutNote := a.standoutNote }
   chrome.frameFootBand a.frameFoot a.curSection a.frameNum a.frameCount standout
 
+/-- Zero-ink targets follow the line carrying their next item. A target
+at the selected break rides the next line; trailing targets stay on the
+last line rather than creating a blank one. -/
+private def lineAnchors (anchors : Array (String × Nat)) (prev brk : Nat)
+    (first last : Bool) : Array String :=
+  (anchors.filter fun (_, i) => (first || prev ≤ i) && (i < brk || last)).map (·.1)
+
 private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
@@ -7058,7 +7119,7 @@ private def collectPara (r : Rd) (a : Acc)
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground }
-  let (items, ds, cache, extras, rawNotes, wordOffsets) :=
+  let (items, ds, cache, extras, rawNotes, wordOffsets, anchors) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
@@ -7094,7 +7155,7 @@ private def collectPara (r : Rd) (a : Acc)
     -- the note's leaves count from the note node's first leaf, read off the
     -- counter where the mark stood (`Tk.note`'s `bodyLeaf`)
     for (markIdx, num, body, noteLeaf) in rawNotes do
-      let (nitems0, nds, cache2, _, _) :=
+      let (nitems0, nds, cache2, _, _, _, nanchors) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
           cache (LeafCtr.of noteLeaf (leafCount body) body) r.imgs r.geom.textWidth
           r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
@@ -7125,7 +7186,9 @@ private def collectPara (r : Rd) (a : Acc)
           r.geom.leading noteSize lsegs
         let y := if first then max box.above sep else yPrev + belowPrev + box.above
         lines := lines.push { x := r.geom.hmargin, y := y, size := noteSize,
-                              segs := lsegs, setWidth := lw, note := true, leaf := noteLeaf }
+                              segs := lsegs, setWidth := lw, note := true, leaf := noteLeaf,
+                              anchors := lineAnchors (nanchors.map (fun (n, i) => (n, i + 1)))
+                                prev brk first (brk == breaks.back?.getD 0) }
         hgt := y + box.inkBelow
         yPrev := y
         belowPrev := box.below
@@ -7149,16 +7212,17 @@ private def collectPara (r : Rd) (a : Acc)
   -- A hanging indent opens the items with its kern; what is indexed by
   -- item position (a forced break's extra space, a footnote mark) moves
   -- with them.
-  let (items, extras, noteBlocks, wordOffsets) :=
-    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets)
+  let (items, extras, noteBlocks, wordOffsets, anchors) :=
+    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors)
     else (#[Item.box (-hangIndent) 0 a.fg none #[] size none {} 0 a.ground .unattributed] ++ items,
       extras.fold (fun m k v => m.insert (k + 1) v) {},
       noteBlocks.map (fun (i, nb) => (i + 1, nb)),
-      wordOffsets.fold (fun m k v => m.insert (k + 1) v) {})
+      wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
+      anchors.map (fun (n, i) => (n, i + 1)))
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
-      items := items, extras := extras, wordOffsets := wordOffsets, diags := ds
+      items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors, diags := ds
       target := measure
       indent := indent, center := center, size := size
       firstBaseline := firstBaseline
@@ -8011,7 +8075,10 @@ private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (dj : DisplayJob) (ho
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph holding only label anchors ships no ink: no line and no
   -- gap, or a \label on its own source line would open a blank line.
-  if !content.isEmpty && content.all (fun x => x matches .label _) then a
+  if !content.isEmpty && content.all (fun x => x matches .label _) then
+    { a with ops := a.ops ++ content.filterMap (fun x => match x with
+        | .label name => some (.anchor name)
+        | _ => none) }
   else
     let (a, leaf) := a.leafRange (leafCount content)
     collectPara r a content indent false r.geom.fontSize
@@ -8037,13 +8104,13 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
   -- Image fractions resolve against the current measure, as collectPara's.
   let target := (a.measure.getD r.geom.textWidth) - indent
-  let (citems, ds1, cache1, extras, _, cOffsets) :=
+  let (citems, ds1, cache1, extras, _, cOffsets, cAnchors) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
       r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
   -- the number's leaves follow the content's
   let numLeaf := leaf.map (· + leafCount content)
-  let (nitems, ds2, cache2, _, _, nOffsets) :=
+  let (nitems, ds2, cache2, _, _, nOffsets, nAnchors) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
       cache1 (LeafCtr.of numLeaf (leafCount num) num) r.imgs target r.geom.textHeight
       (ladder := r.geom.scale)
@@ -8056,6 +8123,8 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let wordOffsets := cOffsets.fold (fun m k v => m.insert (k + 2) v) {}
   let wordOffsets := nOffsets.fold
     (fun m k v => m.insert (k + citems.size + 3) v) wordOffsets
+  let anchors := cAnchors.map (fun (n, i) => (n, i + 2)) ++
+    nAnchors.map (fun (n, i) => (n, i + citems.size + 3))
   let numW := (measure nitems 0 nitems.size).natural
   -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
@@ -8069,7 +8138,8 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   return ({ a with
     hyphCache := cache2
     ops := a.ops.push (.para {
-      items := items, extras := extras, wordOffsets := wordOffsets, diags := ds1 ++ ds2
+      items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors,
+      diags := ds1 ++ ds2
       target := target
       indent := indent, center := false, size := r.geom.fontSize
       justify := true
@@ -9832,7 +9902,9 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   (placeParaTrailer fs j brk g.1
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
-      (display := j.display) (opens := st.2.2)), brk, false)
+      (display := j.display) (opens := st.2.2)
+      (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))),
+    brk, false)
 
 /-- How many lines the document declared for a paragraph: one per forced
 break in its items. Every paragraph carries a trailing forced break —
@@ -10780,8 +10852,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
   simp only [B.placeLine]
   exact fitCommit_extends ..
 
@@ -10790,16 +10863,18 @@ the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).pages = b.pages := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).pages = b.pages := by
   simp only [B.placeLine]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).noBreak = true := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).noBreak = true := by
   simp only [B.placeLine]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -10820,8 +10895,8 @@ extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
-    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) :=
+    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -10922,11 +10997,12 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).pages = b.pages ∧
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).noBreak = true :=
-  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op h,
-   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op h⟩
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).pages = b.pages ∧
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).noBreak = true :=
+  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors h,
+   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors h⟩
 
 /-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
@@ -11103,8 +11179,9 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op) := by
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
   simp only [B.placeLine]
   exact bgStep_fitCommit ..
 
@@ -11745,13 +11822,12 @@ slot yields in place: shorten the content or drop a slot"))
       else
         unique := unique.push d
   -- The document outline, resolved: an in-document target (`#anchor`)
-  -- resolves against the level-1 heading anchors the builder recorded —
-  -- the first declaration wins, exactly the section an in-page `#anchor`
-  -- link reaches — and any other target rides as its URL.
+  -- resolves against finalized lines, just like a PDF link annotation;
+  -- any other target rides as its URL.
   let outline := sh.navEntries.map fun (title, target) =>
     if target.startsWith "#" then
       { title := title
-        page := (b.anchors.find? (·.1 == (target.drop 1).toString)).map (·.2) }
+        page := (destination? out (target.drop 1).toString).map (·.1) }
     else ({ title := title, url := some target } : OutlineEntry)
   return { pages := out, diags := unique, outline := outline }
 
