@@ -470,8 +470,8 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
 
 
 /-- One fulfilled boundary picture: its image-source spelling, the drawn
-PDF's bytes, and where the cache holds it (the HTML branch converts from
-that file). -/
+PDF's captured bytes, and where the boundary cache holds it. Both artifacts
+read the captured bytes. -/
 structure PicResult where
   src : String
   bytes : ByteArray
@@ -814,20 +814,19 @@ def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
 /-- A boundary picture's HTML face, converted into the picture cache and
-not yet published: the cached SVG, and the name it takes beside the page. -/
+not yet published: the captured SVG, and the name it takes beside the page. -/
 structure Publication where
-  cached : System.FilePath
+  bytes : ByteArray
   name : String
 
-/-- The HTML face of the boundary: each drawn picture converts once, by
-pinned `pdftocairo -svg`, into the picture cache beside the PDF it came
-from — keyed by that file's stem, so the tool version in the PDF's key
-governs the SVG too — and the store's `href` points the `<img>` at the
-name the picture will have beside the page. The function receives the
+/-- The HTML face of the boundary converts the captured PDF bytes through
+the same bounded, content-keyed conversion cache as image faces. An unkeyed
+sibling file cannot answer for them, and the store's `href` points the
+`<img>` at the name the picture will have beside the page. The function receives the
 asset directory's *relative* name and never the page's location: no path
 under the output can be formed here, which is what keeps the conversion
-on the cache side of the assertion gate; `publish` copies each returned
-`Publication` into place after it. `pdftocairo` missing or failing is
+on the cache side of the assertion gate; `publish` writes each captured
+`Publication` atomically after it. `pdftocairo` missing or failing is
 W0378 for this artifact only — the PDF is unaffected — and the sources it
 failed on are returned: a picture the rendered subset draws in part is
 drawn by the subset on the page (`Boundary.htmlWithdraw`), and any other
@@ -842,28 +841,15 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
   for r in pics do
     let hash := (r.src.drop Ir.picSrcPrefix.length).toString
     let svgName := hash ++ ".svg"
-    let svgPath := r.cached.withExtension "svg"
-    let ok ← do
-      if ← svgPath.pathExists then pure true
-      else
-        try
-          let out ← IO.Process.output { cmd := "pdftocairo"
-                                        args := #["-svg", r.cached.toString,
-                                          svgPath.toString] }
-          if out.exitCode == 0 then pure true
-          else do
-            diags := diags.push (DriverDiag.boundarySvgMissing
-              s!"exit code {out.exitCode}")
-            pure false
-        catch e =>
-          diags := diags.push (DriverDiag.boundarySvgMissing (toString e))
-          pure false
-    if ok then
-      pubs := pubs.push { cached := svgPath, name := svgName }
+    match ← ImageAssets.picFace r.bytes with
+    | .ok bytes =>
+      pubs := pubs.push { bytes, name := svgName }
       entries := entries.map fun en =>
         if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
         else en
-    else unconverted := unconverted.push r.src
+    | .error why =>
+      diags := diags.push (DriverDiag.boundarySvgMissing why)
+      unconverted := unconverted.push r.src
   return ({ entries }, pubs, diags, unconverted)
 
 /-- An image publication: captured browser bytes and their source path.
@@ -908,7 +894,7 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
       let dir := parent / assetsDir
       IO.FS.createDirAll dir
       for pub in pubs do
-        IO.FS.writeBinFile (dir / pub.name) (← IO.FS.readBinFile pub.cached)
+        ConvCache.atomicWrite (dir / pub.name) pub.bytes
       ui.phase "boundary-svg" s!"{pubs.size} pictures ({assetsDir})" (← since t)
     -- Images publish the captured bytes their content keys name.
     unless rasters.isEmpty do
