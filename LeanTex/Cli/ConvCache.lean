@@ -51,8 +51,9 @@ def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
     else none
 
 def slotName (source : ByteArray) (recipe identity : String) : String :=
+  -- v1 could remember an interrupted process as a refusal.
   let variant := Flate.contentKey (String.intercalate "\u0000"
-    ["vector-cache-v1", LeanTex.version, recipe, identity]).toUTF8
+    ["vector-cache-v2", LeanTex.version, recipe, identity]).toUTF8
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
 
 def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=

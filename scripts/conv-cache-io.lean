@@ -33,6 +33,40 @@ def main (args : List String) : IO UInt32 := do
   let probe ← IO.FS.realPath ".lake/build/bin/convProbe"
   let path := (← IO.getEnv "PATH").getD ""
   let first := face "M0 0L20 20"
+  IO.FS.withTempDir fun dir => do
+    let bin := dir / "bin"
+    let cache := dir / "cache"
+    let count := dir / "count"
+    IO.FS.createDirAll bin
+    writeTool (bin / "pdftocairo") (stub first)
+    let run := RunBounded.runBounded probe.toString #[] dir 4000 100
+      (env := #[("PATH", some (bin.toString ++ ":" ++ path)),
+        ("XDG_CACHE_HOME", some cache.toString), ("COUNT", some count.toString)])
+    let a ← run
+    let saved ← slots cache
+    check "cache migration: fresh conversion" (a.complete && a.out.startsWith "OK " &&
+      saved.size == 1 && (← calls count) == 1)
+    if let some slot := saved[0]? then
+      let cacheDir := cache / "leantex" / "convs"
+      let memo ← IO.FS.readFile
+        (cacheDir / ("tool-" ++ LeanTex.Core.Flate.contentKey "pdftocairo".toUTF8 ++ ".ver"))
+      if let some (stamp, version) := PicCache.readVersionMemo memo then
+        -- Freeze the old key and envelope: v1 could record a killed process
+        -- as a refusal. Correcting new attempts must also retire that answer.
+        let recipe := "pdftocairo -svg -f 1 -l 1 <input> <output>\n<svg preserveAspectRatio=\"none\" "
+        let identity := "pdftocairo\n" ++ stamp ++ "\n" ++ version
+        let variant := LeanTex.Core.Flate.contentKey (String.intercalate "\u0000"
+          ["vector-cache-v1", LeanTex.version, recipe, identity]).toUTF8
+        let legacy := cacheDir /
+          (((slot.fileName.getD "").take 32 |>.toString) ++ "-" ++ variant ++ ".answer")
+        IO.FS.removeFile slot
+        IO.FS.writeBinFile legacy (ConvCache.encode (.error "pdftocairo exited 137: interrupted"))
+        let b ← run
+        let c ← run
+        check "cache migration: interrupted v1 answer is retried"
+          (b.complete && c.complete && b.out == a.out && c.out == a.out && (← calls count) == 2)
+        check "cache migration: replacement is separate and reusable" ((← slots cache).size == 2)
+      else check "cache migration: version witness" false
   for (label, tail, expectedRuns, success) in #[
       ("warm", "", 1, true),
       ("refusal", "echo \"${out%/*}/source.pdf: refused input\" >&2\nexit 3\n", 1, false),
