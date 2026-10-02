@@ -219,6 +219,78 @@ def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (rejected, _) ← prepareHtml (dir / "source.tex").toString mutated doc
       t ("contained publication: exact SVG validation refuses " ++ name) (!rejected.isOk)
 
+/-- Numeric color presentation attributes, including converter output, must
+cross the same exact-byte closure gate as authored SVG. The raster oracle
+reads the published carrier and compares it with separately authored colors;
+it never treats successful conversion as resource-closure evidence. -/
+def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let red := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
+  let blue := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
+  let raster (svg : ByteArray) : IO ByteArray := IO.FS.withTempDir fun dir => do
+    let input := dir / "input.svg"
+    let output := dir / "output.png"
+    IO.FS.writeBinFile input svg
+    let run ← IO.Process.output { cmd := "rsvg-convert", args := #[
+      "--format=png", "--width=20", "--height=20", "--output", output.toString, input.toString] }
+    unless run.exitCode == 0 do throw <| IO.userError "the SVG color oracle requires rsvg-convert"
+    IO.FS.readBinFile output
+  let poster ← LeanTex.Cli.ImageAssets.svgPoster blue
+  let converted ← LeanTex.Cli.ImageAssets.pdfSvg svgCanvasPdf .last
+  IO.FS.withTempDir fun dir => do
+    let doc := (elabStr "\\includegraphics[alt={Captured color square}]{figure.svg}").1
+    for (name, result, expected, isPoster) in [
+        ("integer RGB", .ok (svgDocument
+          "<rect width=\"20\" height=\"20\" fill=\"rgb(255,0,0)\"/>"), red, false),
+        ("percentage RGB", .ok (svgDocument
+          "<rect width=\"20\" height=\"20\" fill=\"rgb(46.666667%,46.666667%,46.666667%)\"/>"),
+          svgDocument "<rect width=\"20\" height=\"20\" fill=\"#777777\"/>", false),
+        ("alpha RGBA", .ok (svgDocument
+          "<rect width=\"20\" height=\"20\" fill=\"rgba(255,0,0,0.5)\"/>"),
+          svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\" fill-opacity=\"0.5\"/>", false),
+        ("decoded stroke RGB", .ok (svgDocument
+          "<rect width=\"20\" height=\"20\" fill=\"none\" stroke=\"RGB(0,0,&#x32;55)\" stroke-width=\"4\"/>"),
+          svgDocument "<rect width=\"20\" height=\"20\" fill=\"none\" stroke=\"blue\" stroke-width=\"4\"/>", false),
+        ("rsvg poster", poster, blue, true),
+        ("PDF conversion", converted, red, false)] do
+      match result with
+      | .error why => t ("contained SVG color: conversion failed for " ++ name ++ ": " ++ why) false
+      | .ok svg =>
+        let cfg : HtmlDoc.Config := { imgs := { entries := #[
+          { src := "figure.svg", source := some (if isPoster then blue else svg),
+            posterSvg := if isPoster then some svg else none,
+            info := some { pxW := 20, pxH := 20 } }] } }
+        let (closed, _) ← prepareHtml (dir / "source.tex").toString cfg doc
+        match closed with
+        | .error why => t ("contained SVG color: preparation failed for " ++ name ++ ": " ++ why) false
+        | .ok page =>
+          let output := dir / name
+          let target := output / "page.html"
+          let _ ← publish none (some (target.toString, page)) none none
+          let html ← IO.FS.readFile target
+          let (_, captured) ← svgPublishedAsset html output
+            (if isPoster then "source" else "img") (if isPoster then "srcset" else "src")
+          t ("contained SVG color: exact published bytes for " ++ name) (captured == svg)
+          t ("contained SVG color: single-file publication for " ++ name)
+            (html == page.render && (← output.readDir).map (·.fileName) == #["page.html"])
+          let actual ← raster captured
+          let wanted ← raster expected
+          t ("contained SVG color: independently authored raster for " ++ name)
+            (!actual.isEmpty && actual == wanted)
+    for (name, body) in [
+        ("trailing local URL", "<rect fill=\"rgb(255,0,0) url(#paint)\"/>"),
+        ("trailing external URL", "<rect fill=\"rgb(255,0,0) url(outside.svg#paint)\"/>"),
+        ("nested variable", "<rect fill=\"rgb(var(--red),0,0)\"/>"),
+        ("nested URL", "<rect fill=\"rgb(255,0,url(outside.svg#paint))\"/>"),
+        ("decoded trailing URL", "<rect fill=\"rgb(255,0,0) &#x75;rl(outside.svg#paint)\"/>"),
+        ("style resource", "<rect style=\"fill:rgb(255,0,0);filter:url(outside.svg#paint)\"/>"),
+        ("image resource", "<rect fill=\"rgb(255,0,0)\"/><image href=\"outside.png\"/>")] do
+      let cfg : HtmlDoc.Config := { imgs := { entries := #[
+        { src := "figure.svg", source := some (svgDocument body),
+          info := some { pxW := 20, pxH := 20 } }] } }
+      let (closed, _) ← prepareHtml (dir / "source.tex").toString cfg doc
+      t ("contained SVG color: refuses " ++ name) (svgBoundaryError closed)
+
 /-- Refusal precedes the CLI's output writes, including best-effort mode.
 These cases wrote unresolved pages before checked publication was installed. -/
 def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
