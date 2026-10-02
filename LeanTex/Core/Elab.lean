@@ -10504,7 +10504,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
-  else if n == "tabular" || n == "tabular*" || n == "tabularx" then
+  else if Compat.tableEnvs.contains n then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)

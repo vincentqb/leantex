@@ -273,6 +273,9 @@ inductive ParamSite where
 follow its level's parameters (ltlists.dtx). -/
 def listEnvs : List String := ["itemize", "enumerate", "description"]
 
+/-- Environments whose bodies the elaborator reads as table cells. -/
+def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
+
 /-- The kernel and booktabs length parameters, each with its site. A name
 not here is a length of the document's own: a token of its name. -/
 def paramSites : List (String × ParamSite) :=
@@ -8226,7 +8229,7 @@ steps come from its body" p
         -- parameter set there is that list's own.
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
-                                  tableTop := n == "tabular" || n == "tabular*", defTop := false }
+                                  tableTop := tableEnvs.contains n, defTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with lens := st0.lens, inList := st0.inList,
                                   tableTop := st0.tableTop, defTop := st0.defTop }
