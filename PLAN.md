@@ -26170,6 +26170,18 @@ all payloads and resource evidence. Seventeen guards failed before this
 change. Ordinary HTML styles, the declared deck script, inert JSON data,
 and escaped foreign text retain their supported behavior.
 
+The branch audit extends the same admission boundary to CSS token boundaries,
+active attribution attributes, and script tokenizer escape states. An
+at-keyword starts at `@` regardless of the preceding token. Attribution
+sources are refused independently of their carrier or captured resources;
+raw script control syntax is checked before MIME or constant-script
+exceptions. Literal `<!--` is conservatively refused in raw scripts, while
+JSON passed through the existing escaper remains supported. The added guards
+failed 28 and 30 assertions before their respective fixes and pass afterward.
+Intercepted browser requests and a swallowed following paragraph corroborate
+the failures on the exact serialized trees. Safe controls, full builds,
+`lake test`, and the normal commit hooks pass.
+
 The kernel checks this typed-tree/resource model. SVG validation, image and
 font decoding, and browser parsing are external evidence, not kernel-proved
 semantics. Offline acceptance covers copied reference artifacts in Chromium
