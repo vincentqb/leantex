@@ -26234,3 +26234,19 @@ control characters and Unicode line separators.
 
 The complete `lake build --wfail`, `lake test` and all twelve scoreboard
 tiers pass. The convention tree check also passes without an exception.
+
+
+### 2026-10-03 — Human diagnostics use three severity labels
+
+The human header now contains `Error`, `Warning` or `Info`, the stable code,
+output scope and source evidence. Internal loss categories no longer occupy
+the header. Completion summaries call the same informational records “info
+messages”. The typed record, loss-to-severity policy, acceptance rules and
+porcelain JSON remain unchanged.
+
+The existing registry-wide formatter checks cover every code both before and
+after acceptance. Updating their expected presentation first produced 388
+failures on the previous formatter; all pass with the smaller header. The
+focused suite also checks actual CLI streams, exits, output filtering,
+control-character escaping and byte-identical porcelain. The diagnostics
+golden was regenerated through its existing witness harness.

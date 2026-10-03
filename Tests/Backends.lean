@@ -1945,7 +1945,7 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- render: human, no color
   t "human diag plain" (Render.human false d ==
-    "Error - Dropped [E0002] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
+    "Error [E0002] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

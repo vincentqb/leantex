@@ -303,7 +303,7 @@ browser-face: figures missing-fields\n"
     (browserFaceFailures "figures"
       (message "W0301" "warning[W0605]: rsvg-convert exited 2\n" ++ "\n" ++
        "{\"event\":\"summary\",\"code\":\"W0605\",\"message\":\"pdftocairo\"}\n" ++
-       "Warning - Degraded [W0605] - unrelated human output\n") == #[])
+       "Warning [W0605] - unrelated human output\n") == #[])
   no "browser failure: escaped lines cannot manufacture another diagnostic"
     (browserFaceFailures "figures"
       (message "W0605" "pdftocairo exited 2\nwarning[W0605]: more detail") ==

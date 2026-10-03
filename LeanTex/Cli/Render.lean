@@ -29,9 +29,9 @@ private def humanText (newline : String) (s : String) : String :=
         acc ++ "\\x" ++ (if hex.length < 2 then "0" else "") ++ hex
       else acc.push c
 
-/-- The human presentation of a typed diagnostic. Severity remains the
-record's effective severity; the category is the declared Loss label,
-capitalized for reading. Codes and acceptance policy are unchanged.
+/-- The human presentation of a typed diagnostic uses Error, Warning and
+Info for the record's effective severity. Internal loss categories stay in
+porcelain records; codes and acceptance policy are unchanged.
 
 Formatting is separate from filtering, as in Python warnings and logging:
 https://docs.python.org/3/library/warnings.html#warnings.formatwarning
@@ -42,8 +42,11 @@ Only the renderer supplies terminal styling. Message text is never a format
 template. Like a Loguru callable format, newline ownership is explicit:
 this returns no final newline; the CLI sink supplies exactly one. -/
 def human (color : Bool) (d : Diag) : String :=
-  let head := sgr color (severityColor d.severity)
-    s!"{d.severity.label.capitalize} - {d.kind.loss.label.capitalize} [{d.code}]"
+  let label := match d.severity with
+    | .error => "Error"
+    | .warning => "Warning"
+    | .note => "Info"
+  let head := sgr color (severityColor d.severity) s!"{label} [{d.code}]"
   let scope := match d.output with
     | some output => s!" ({output.label.toUpper})"
     | none => ""
@@ -90,7 +93,7 @@ def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Na
   -- A translated idiom is not a problem, so it does not print by default; the
   -- count says there is something to read, and -v is where to read it.
   let hint := if notes == 0 then "" else
-    sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
+    sgr color "2" s!" · {notes} info {if notes == 1 then "message" else "messages"} (-v)"
   s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
 
 def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
