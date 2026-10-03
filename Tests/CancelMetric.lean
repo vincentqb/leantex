@@ -114,10 +114,13 @@ def signedRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       check ref s!"cancel metric signed room: {operand}/{opts} carries operand ink beyond advance"
         (measured.any fun m => bodyRoomAgrees fonts out m spec)
 
+end CancelMetric
+
+open CancelMetric in
 /-- A backend callback must measure the same operand, target, style and
 font as the native assembly. Shipped polygons, glyph ink and the current
 math em witness that agreement across aspect ratios and package options. -/
-def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def CancelMetric.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   check ref "cancel metric refuses an absent math face"
     ((Layout.cancelMetric {} oneFace #[] (.text false) {} .nil .nil).isNone)
@@ -144,5 +147,3 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
 
   contextChecks ref fonts
   signedRoomChecks ref fonts
-
-end CancelMetric

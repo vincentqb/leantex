@@ -106,6 +106,8 @@ structure Config where
   by the same font environment and assembly as the native backend. -/
   cancelMetric : Array Ir.Style → Math.MathStyle → Math.CancelSpec →
     Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ => none
+  /-- The same run's font unit for explicitly sized math lengths. -/
+  mathEm : Array Ir.Style → Math.MathStyle → Option Int := fun _ _ => none
   /-- The native resolver folds this ordered history; the HTML walk carries
   declarations without implementing another font or size interpreter. -/
   mathStyles : Array Ir.Style := #[]
@@ -122,7 +124,8 @@ of an em — its overbar rule and clearance, the two quantities the PDF lays
 the marks with — when the page ships its faces; TeX's own stand-ins
 (`MathMl.Marks`' defaults) where it does not. -/
 def mathMarks (cfg : Config) : MathMl.Marks :=
-  let marks : MathMl.Marks := { metric := cfg.cancelMetric cfg.mathStyles }
+  let marks : MathMl.Marks := {
+    metric := cfg.cancelMetric cfg.mathStyles, em := cfg.mathEm cfg.mathStyles }
   match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
   | some f =>
     match f.math with

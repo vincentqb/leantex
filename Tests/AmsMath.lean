@@ -107,7 +107,9 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   t "amsmath alignment: an inline aligned cell sets in display style"
     ((elabStr alignedFrac).2.isEmpty && oneSize (glyphSizes alignedFrac))
   t "amsmath alignment: the HTML table restores display style inline"
-    (hasStr (HtmlDoc.emit {} (elabStr alignedFrac).1).1 "<mtable displaystyle=\"true\">")
+    (let (_, html, _) := HtmlDoc.emitTree {} (elabStr alignedFrac).1
+     (elemAttrsList (· == "mtable") #[] html.toList).any fun (_, attrs) =>
+       attrs.contains ("displaystyle", "true"))
   -- A lone fence never grows: TeX stretches a delimiter only under
   -- `\left`/`\right`, while MathML Core's operator dictionary makes every
   -- fence stretchy, so beside a grown brace `f(x)`'s parentheses ballooned.
@@ -172,9 +174,11 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     t "amsmath smallmatrix: rows stand 6\\ex@ apart, or 1.5\\ex@ clear"
       (((pitchOf (small "a\\\\c")).map permille).any (near 600) &&
        ((pitchOf (small "a&b\\\\c&d")).map permille).any (near 697))
-  t "amsmath smallmatrix: the HTML table sets its cells a script level down"
-    (hasStr (HtmlDoc.emit {} (elabStr (small "a&b\\\\c&d")).1).1
-      "<mtable scriptlevel=\"1\"")
+  t "amsmath smallmatrix: the HTML table sets its cells at script size exactly once"
+    (let (_, html, _) := HtmlDoc.emitTree {} (elabStr (small "a&b\\\\c&d")).1
+     (elemAttrsList (· == "mtable") #[] html.toList).any fun (_, attrs) =>
+       attrs.contains ("scriptlevel", "+0") && attrs.contains ("displaystyle", "false") &&
+       attrs.contains ("style", "font-size: 0.700000em; padding-inline: 0.238em"))
 
 /-- `\tag{t}` stands in the number's place — `(t)`, or `t` under `\tag*` —
 and steps no counter; a label binds to the tag, so `\eqref` reads it
@@ -424,7 +428,11 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       hasStr (html "$\\binom{n}{k}$") "minsize=\"1.01em\" maxsize=\"1.01em\">(</mo>" &&
       hasStr (html "\\[ \\binom{n}{k} \\]") "minsize=\"2.4em\" maxsize=\"2.4em\">(</mo>")
   t "amsmath dfrac: the MathML declares the display style"
-    (hasStr (html "$\\dfrac{a}{b}$") "<mrow displaystyle=\"true\" scriptlevel=\"0\"><mfrac>")
+    (let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr (dvDoc "" "$\\dfrac{a}{b}$")).1
+     (elemNodesList (· == "mrow") #[] nodes.toList).any fun n => match n with
+       | .elem _ attrs #[.elem "mfrac" _ _] => attrs.contains ("displaystyle", "true") &&
+         attrs.contains ("scriptlevel", "+0") && attrs.contains ("style", "font-size: 1.000000em")
+       | _ => false)
 
 /-- amsmath's modulo commands are their definitions (amsmath.sty), measured
 on the laid line: each formula is as wide as the definition spelled with

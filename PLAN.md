@@ -26441,3 +26441,37 @@ commutation oracle pass. Twelve real CLI probes cover ordinary, verbose,
 strict-warning, retired-code, structured and explicit-AA runs in both
 formats; PDF and HTML bytes match the baseline. Independent implementation
 review found no further acceptance or attribution issue.
+
+
+### 2026-10-03 — Measured cancellation attachments in both artifacts
+
+An arrowhead retains its full triangle at every operand aspect ratio. Its
+proportions come from the resolved math rule, and its shaft joins the head's
+base. Clipping the wings to the operand's rectangle flattened shallow heads
+into bars. The reserved envelope now includes every painted vertex as well
+as the target's measured ink and advance.
+
+The target's ink centre lies beyond the tip along the arrow's forward ray,
+with clearance derived from the font's rule and gap. Bounds distinguish ink,
+advance and baseline: nonpainting spacing moves the pen without becoming
+attachment ink. Universal contracts hold the head's shape, the envelope,
+forward placement, clearance and translation; coordinate rounding supplies
+their tolerance.
+
+HTML reads the same native font and style measurements through a pure
+provider. It projects the shared geometry into an inline SVG while keeping
+the operand and target as selectable MathML. One native style resolver also
+supplies physical math lengths. Explicit relative script transitions apply
+the font's MATH percentages once and respect the scriptscript floor. The
+SVG uses its full measured viewport and an explicit bottom baseline;
+absolute positioning depended on browser-specific ink bearings.
+
+Report R84 pins the failing arrow, shared-provider, style and baseline
+guards. Before their fixes, seventy-two provider assertions, 320 fraction
+style assertions, 352 script-scale assertions and ninety-eight baseline
+projection assertions failed. The focused checks now pass. Actual Firefox
+and Chromium screen and print probes preserve the geometry; forty-two
+script-size cases per browser pass. The native and browser PDFs retain all
+seven synthetic heads and targets. The external cancellation differential,
+five-repeat repository benchmark and private reference acceptance builds
+also pass. No private source enters the fixtures.

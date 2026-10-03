@@ -1,6 +1,4 @@
-import LeanTex.Core.MathMl
-import LeanTex.Core.HtmlDoc
-import LeanTex.Core.Decl
+import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Math
 
@@ -101,18 +99,6 @@ private def cancelSetChild (i : Nat) (child : Html.Node) : Html.Node → Html.No
   | .elem tag attrs kids => .elem tag attrs (kids.set! i child)
   | other => other
 
-mutual
-private def cancelFind (tag : String) (acc : Array Html.Node) : Html.Node → Array Html.Node
-  | .elem name attrs kids =>
-    cancelFindList tag (if name == tag then acc.push (.elem name attrs kids) else acc) kids.toList
-  | _ => acc
-
-private def cancelFindList (tag : String) (acc : Array Html.Node) :
-    List Html.Node → Array Html.Node
-  | [] => acc
-  | n :: ns => cancelFindList tag (cancelFind tag acc n) ns
-end
-
 /-- Coordinates read from the emitted SVG viewport and the actual native
 MathML placement boxes. The SVG's downward y is mapped to the parent
 baseline; changing a viewBox, viewport, or offset changes this reading. -/
@@ -127,7 +113,7 @@ private structure CancelHtmlRead where
   svg : Html.Node
 
 private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := do
-  if cancelTag node != "mpadded" || cancelCss "position" node != "relative" then none else do
+  if cancelTag node != "mpadded" || !(cancelCss "position" node).isEmpty then none else do
     let width ← cancelReadEm em (cancelAttr "width" node)
     let top ← cancelReadEm em (cancelAttr "height" node)
     let depth ← cancelReadEm em (cancelAttr "depth" node)
@@ -143,34 +129,40 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
         let vx ← cancelReadEm em (cancelAttr "lspace" v)
         let vy ← cancelReadEm em (cancelAttr "voffset" v)
         let target ← (cancelKids v)[0]?
-        let svgs := cancelFind "svg" #[] node
-        if svgs.size != 1 then none else do
-          let svg ← svgs[0]?
-          if cancelCss "position" svg != "absolute" ||
-              cancelCss "overflow" svg != "visible" ||
-              cancelAttr "preserveAspectRatio" svg != "none" then none else do
-            let sx ← cancelReadEm em (cancelCss "left" svg)
-            let sy ← cancelReadEm em (cancelCss "top" svg)
-            let sw ← cancelReadEm em (cancelCss "width" svg)
-            let sh ← cancelReadEm em (cancelCss "height" svg)
-            let vb ← ((cancelAttr "viewBox" svg).splitOn " ").mapM String.toInt?
-            match vb with
-            | [x0, y0, w, h] =>
-              if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 then none else do
-                let polys ← (cancelKids svg).mapM fun poly => do
-                  if cancelTag poly != "polygon" || !(cancelKids poly).isEmpty then none else do
-                    let pts ← ((cancelAttr "points" poly).splitOn " ").mapM fun p => do
-                      match p.splitOn "," with
-                      | [xs, ys] =>
-                        let x ← xs.toInt?
-                        let y ← ys.toInt?
-                        return (sx + (x - x0) * sw / w, top - sy - (y - y0) * sh / h)
-                      | _ => none
-                    return pts.toArray
-                return {
-                  width, top, bot := -depth, body := (bx, by_), value := (vx, vy)
-                  polys, target, svg }
-            | _ => none
+        let overlay ← (cancelKids node)[2]?
+        let text ← (cancelKids overlay)[0]?
+        let svg ← (cancelKids text)[0]?
+        if cancelTag overlay != "mpadded" || cancelTag text != "mtext" ||
+            cancelTag svg != "svg" || cancelAttr "width" overlay != "0" ||
+            cancelAttr "height" overlay != "0" || cancelAttr "depth" overlay != "0" ||
+            !(cancelCss "position" svg).isEmpty || !(cancelCss "left" svg).isEmpty ||
+            !(cancelCss "top" svg).isEmpty || cancelCss "vertical-align" svg != "baseline" ||
+            cancelCss "overflow" svg != "visible" ||
+            cancelAttr "preserveAspectRatio" svg != "none" then none else do
+          let ox ← cancelReadEm em (cancelAttr "lspace" overlay)
+          let oy ← cancelReadEm em (cancelAttr "voffset" overlay)
+          let sx ← cancelReadEm em (cancelCss "margin-left" text)
+          let sw ← cancelReadEm em (cancelCss "width" svg)
+          let sh ← cancelReadEm em (cancelCss "height" svg)
+          let vb ← ((cancelAttr "viewBox" svg).splitOn " ").mapM String.toInt?
+          match vb with
+          | [x0, y0, w, h] =>
+            if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 then none else do
+              let polys ← (cancelKids svg).mapM fun poly => do
+                if cancelTag poly != "polygon" || !(cancelKids poly).isEmpty then none else do
+                  let pts ← ((cancelAttr "points" poly).splitOn " ").mapM fun p => do
+                    match p.splitOn "," with
+                    | [xs, ys] =>
+                      let x ← xs.toInt?
+                      let y ← ys.toInt?
+                      return (ox + sx + (x - x0) * sw / w,
+                        oy + sh - (y - y0) * sh / h)
+                    | _ => none
+                  return pts.toArray
+              return {
+                width, top, bot := -depth, body := (bx, by_), value := (vx, vy)
+                polys, target, svg }
+          | _ => none
 
 /-- Six decimal em serialization and this reader's nearest-unit rounding
 can each lose half a provider unit. This is arithmetic slack, not a
@@ -352,11 +344,11 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
             let ts := spec.size.style st
             let relative := cancelReadEm (Math.sizeFor mk.scales 100 st)
               (cancelCss "font-size" r.target)
-            t s!"cancel HTML measured {label}: target explicitly sets its size and depth once"
+            t s!"cancel HTML measured {label}: target sets its size without browser rescaling"
               (cancelAttr "scriptlevel" r.target == "+0" &&
-                cancelCss "math-depth" r.target == toString (cancelStyleDepth ts) &&
+                (cancelCss "math-depth" r.target).isEmpty &&
                 relative == some (Math.sizeFor mk.scales 100 ts) &&
-                (cancelFind "msup" #[] node).isEmpty)
+                (elemNodesOne (· == "msup") #[] node).isEmpty)
             let a := HtmlDoc.a11yFacts false false #[node]
             t s!"cancel HTML measured {label}: native text stays visible; SVG is decorative"
               (MathMl.nodeChars #[] node == #['x', '7'] &&
@@ -374,7 +366,9 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
               (let bad := cancelRead em (cancelSetAttr "height" "0" node)
                bad.isSome && !(bad.any (cancelContained metric room)))
             let svg := cancelSetAttr "viewBox" s!"0 0 {em} {em}" r.svg
-            let overlay := MathMl.cancelAt em 0 0 (.elem "mtext" #[] #[svg])
+            let overlay := (cancelKids node)[2]!
+            let text := (cancelKids overlay)[0]!
+            let overlay := cancelSetChild 0 (cancelSetChild 0 svg text) overlay
             t s!"cancel HTML measured {label}: parity judge rejects a changed SVG origin"
               (let bad := cancelRead em (cancelSetChild 2 overlay node)
                bad.isSome && !(bad.any (cancelProjection em input room)))
@@ -430,11 +424,11 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (label, expected, item) in contexts do
       let mk := { accepts expected with style := st }
       t s!"cancel HTML style callback {repr st}/{label}: exact context and arguments"
-        ((cancelFind "svg" #[] (MathMl.itemNode mk (st.rank == 3) item)).size == 1)
+        ((elemNodesOne (· == "svg") #[] (MathMl.itemNode mk (st.rank == 3) item)).size == 1)
     for display in [false, true] do
       let expected := if display then MathStyle.display false else .text false
       t s!"cancel HTML formula seeds {display} independently of inherited {repr st}"
-        ((cancelFind "svg" #[] (MathMl.formula display #[] cell
+        ((elemNodesOne (· == "svg") #[] (MathMl.formula display #[] cell
           { accepts expected with style := st })).size == 1)
 
   for em in [0, -1] do
@@ -442,7 +436,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let node := MathMl.nucNode mk false .ord cn
     t s!"cancel HTML nonpositive em {em}: readable explicitly unmeasured fallback"
       (cancelAttr "data-cancel-metric" node == "unmeasured" &&
-        (cancelFind "svg" #[] node).isEmpty &&
+        (elemNodesOne (· == "svg") #[] node).isEmpty &&
         MathMl.nodeChars #[] node == #['x', '7'])
 
   let size : Dim.SymGlue := { width := { sp := 24 * 65536 } }
@@ -463,13 +457,46 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       cancelMetric := fun ss st sp b v =>
         if ss == expected then (accepts (.text false)).metric st sp b v else none }
     t s!"cancel HTML {name}: provider receives ordered ambient style history"
-      ((cancelFind "svg" #[] (HtmlDoc.blockNode cfg (.para #[content]))).size == 1)
+      ((elemNodesOne (· == "svg") #[] (HtmlDoc.blockNode cfg (.para #[content]))).size == 1)
   let font : Font.Font := { (default : Font.Font) with
     unitsPerEm := 1000
     math := some { (default : Font.MathConsts) with scales := { script := 73, scriptscript := 47 } } }
   let cfg : HtmlDoc.Config := {
     fonts := some { fonts := #[font], math := some 0 }
-    cancelMetric := fun _ _ _ _ _ => some metric }
+    cancelMetric := fun _ _ _ _ _ => some metric
+    mathEm := fun _ _ => some metric.em }
   t "cancel HTML font MATH scales and metric callback both reach the formula"
     ((HtmlDoc.mathMarks cfg).scales == { script := 73, scriptscript := 47 } &&
-      ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome)
+      ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome &&
+      (HtmlDoc.mathMarks cfg).em (.text false) == some metric.em)
+
+  -- Explicit fraction styles are absolute in the IR, but their browser
+  -- transition is relative to the surrounding style. Physical rule widths
+  -- must use that same measured em so responsive pages scale them together.
+  let scales : ScriptScales := { script := 73, scriptscript := 47 }
+  for ambient in allStyles do
+    for chosen in allStyles do
+      let em := Math.sizeFor scales (19 * 65536) chosen
+      let mk : MathMl.Marks := {
+        style := ambient, scales
+        em := fun st => some (Math.sizeFor scales (19 * 65536) st) }
+      for rule in [none, some 0, some (-65536), some (8 * 65536)] do
+        let fraction : FracSpec := { style := some chosen, rule }
+        let node := MathMl.nucNode mk (ambient.rank == 3) .ord
+          (.frac fraction (one 'x') (one 'z'))
+        let label := s!"{repr ambient}/{repr chosen}/{repr rule}"
+        let parentSize := Math.sizeFor scales 100 ambient
+        t s!"math HTML fraction {label}: parent uses the resolved style transition"
+          (cancelReadEm parentSize (cancelCss "font-size" node) ==
+              some (Math.sizeFor scales 100 chosen) &&
+            cancelAttr "scriptlevel" node == "+0" &&
+            (cancelCss "math-depth" node).isEmpty)
+        let bars := elemNodesOne (· == "mfrac") #[] node
+        t s!"math HTML fraction {label}: one rule scales with its measured em"
+          (bars.size == 1 && bars.any fun bar =>
+            match rule with
+            | none => (cancelAttr "linethickness" bar).isEmpty
+            | some width => (cancelReadEm em (cancelAttr "linethickness" bar)).any
+                (fun actual => cancelNear (cancelEpsilon em) actual (max 0 width)))
+        t s!"math HTML fraction {label}: style and rule preserve readable operands"
+          (MathMl.nodeChars #[] node == #['x', 'z'])

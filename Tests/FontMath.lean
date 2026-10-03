@@ -1844,8 +1844,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       (.cons (.atom .ord (.styled { slot := .sans } 'k') .nil .nil false) .nil) .nil false) .nil
   let nestedTree := MathMl.listNodes {} false none #[] nestedStyled
   t "nested styled sans scalar in a subscript keeps its family, mathvariant normal and letter"
-    (styleOne (.elem "mrow" #[] nestedTree) == some "font-family: var(--font-sans)" &&
-      (nodeTextOne "" (.elem "mrow" #[] nestedTree)).toList.contains 'k')
+    ((elemNodesList (· == "mi") #[] nestedTree.toList).any fun n =>
+      leafFacts n == some ("mi", some "font-family: var(--font-sans)", some "normal", "k"))
 
   -- Blocker 1, Part A: source provenance decides the source, not just the
   -- alphabet. On a face that carries the math sans range, `\symsf` (forced

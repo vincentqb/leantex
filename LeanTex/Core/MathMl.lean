@@ -93,14 +93,24 @@ def bigMoSize (step : Nat) : String :=
   s!"{t / 1000}.{frac}em"
 
 /-- A fraction's declared rule as `mfrac`'s `linethickness` (MathML Core
-§3.3.2), in points to the thousandth; nothing for the face's own. -/
-def ruleAttrs : Option Int → Array (String × String)
+§3.3.2). The measured em carries physical lengths into the same responsive
+coordinate system as glyphs and attachments. A caller without font metrics
+keeps the physical length; an undeclared rule belongs to the face. -/
+def ruleAttrs (rule : Option Int) (em : Option Int) : Array (String × String) :=
+  match rule with
   | none => #[]
   | some t =>
-    let m := max t 0 * 1000 / 65536
+    let width := max t 0
+    let length := match em with
+      | some size => if 0 < size then measuredEm width size else points width
+      | none => points width
+    #[("linethickness", length)]
+where
+  points (width : Int) : String :=
+    let m := width * 1000 / 65536
     let fs := toString (m % 1000)
-    #[("linethickness", if m == 0 then "0"
-      else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt")]
+    if m == 0 then "0"
+    else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt"
 
 /-- A style switch as MathML Core's `displaystyle` and absolute
 `scriptlevel` (§2.1.6): `\displaystyle`, `\textstyle`, `\scriptstyle` and
@@ -122,15 +132,6 @@ def fracKids (disp : Bool) (spec : FracSpec) (bar : Html.Node) : Array Html.Node
   match spec.right with
   | some c => (opened.push bar).push (sizedMo c size)
   | none => opened.push bar
-
-/-- The fraction schema, separate from its recursive children and their
-style transitions, so its text contract need not inspect the math walk. -/
-def fracNode (disp : Bool) (spec : FracSpec) (num den : Array Html.Node)
-    (numAttrs denAttrs : Array (String × String)) : Html.Node :=
-  let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
-    #[.elem "mrow" numAttrs num, .elem "mrow" denAttrs den]
-  if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
-  else .elem "mrow" (styleAttrs spec.style) (fracKids disp spec bar)
 
 /-- The script schema around a base: `msub`/`msup`/`msubsup` take children
 base, subscript, superscript (MathML Core §3.4.1.1), and a limit-taking
@@ -187,6 +188,9 @@ mille) and rule 9's clearance of three rules. -/
 structure Marks where
   rule : Nat := 40
   gap : Nat := 120
+  /-- Resolved font units for physical math lengths, through the same native
+  run resolver as the attachment measurement. -/
+  em : MathStyle → Option Int := fun _ => none
   /-- The current style's em and the exact measured input, in the same
   coordinate units. A missing measurement keeps the semantic fallback. -/
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
@@ -204,18 +208,28 @@ def milliEm (m : Nat) : String :=
 
 /-- An explicit transition between the same styles the native walk reads.
 The relative font size performs the size change exactly once; `+0` removes
-the script slot's implicit change, and CSS math-depth sets the context for
-scripts inside this child. MathML Core §2.1.6 and CSS Fonts §math-depth:
-an explicit font-size does not undergo font-size: math's automatic scaling.
-This also clamps further scripts at scriptscript style, as TeX does. -/
+MathML's implicit script step. Descendant transitions go through this same
+resolver, including TeX's scriptscript floor. Do not also set CSS math-depth:
+Firefox applies its automatic scaling and minimum size on top of these
+resolved sizes (the rendered script-size matrix holds this boundary). -/
 def relativeStyle (mk : Marks) (st : MathStyle) : Array (String × String) :=
-  let depth := match st with
-    | .display _ | .text _ => 0
-    | .script _ => 1
-    | .scriptscript _ => 2
   #[("scriptlevel", "+0"), ("displaystyle", if st.rank == 3 then "true" else "false"),
     ("style", s!"font-size: {measuredEm (sizeFor mk.scales 100 st)
-      (sizeFor mk.scales 100 mk.style)}; math-depth: {depth}")]
+      (sizeFor mk.scales 100 mk.style)}")]
+
+/-- The fraction schema owns its parent and child style transitions.
+The IR's absolute style is expressed relative to its enclosing browser style,
+so the browser cannot shrink a declared script style a second time. -/
+def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
+    (num den : Array Html.Node) : Html.Node :=
+  let st := spec.style.getD mk.style
+  let fm := { mk with style := st }
+  let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule (mk.em st))
+    #[.elem "mrow" (relativeStyle fm st.fracNum) num,
+      .elem "mrow" (relativeStyle fm st.fracDen) den]
+  if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
+  else .elem "mrow" (if spec.style.isSome then relativeStyle mk st else #[])
+    (fracKids disp spec bar)
 
 /-- A colour as CSS reads it on a MathML element: the palette's custom
 property with the literal as its fallback when the colour came from a
@@ -337,11 +351,12 @@ def cancelAt (em x y : Int) (child : Html.Node) : Html.Node :=
   .elem "mpadded" #[("width", "0"), ("height", "0"), ("depth", "0"),
     ("lspace", measuredEm x em), ("voffset", measuredEm y em)] #[child]
 
-/-- Artifact placement: one SVG user unit is one measured input unit. A
-one-em square viewport with visible overflow avoids a degenerate viewport
-for zero-advance content. Its viewBox starts at the reserved top, so the
-outer mpadded baseline is y=0 in the native geometry. No glyph is replaced
-by outlines: body and value remain selectable MathML. -/
+/-- Artifact placement: one SVG user unit is one measured input unit. The
+viewport contains the whole measured reach, with its bottom on an explicit
+MathML baseline. Its mtext owns the horizontal displacement: browsers clamp
+negative mpadded lspace and disagree on absolutely positioned SVG bearings.
+At least one em in each dimension keeps zero-advance content nondegenerate.
+Body and value remain selectable MathML. -/
 def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
     (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   let em := metric.em
@@ -354,12 +369,16 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
   let ink := match spec.color with
     | some (c, n) => inkCss c n
     | none => "currentColor"
+  let sw := max em (reach.right - reach.left)
+  let sh := max em (reach.top - reach.bot)
+  let sx := reach.left + pad
+  let y0 := -reach.bot - sh
   let svg := Html.Node.elem "svg"
     #[("xmlns", "http://www.w3.org/2000/svg"),
-      ("viewBox", s!"0 {-reach.top} {em} {em}"), ("preserveAspectRatio", "none"),
+      ("viewBox", s!"{sx} {y0} {sw} {sh}"), ("preserveAspectRatio", "none"),
       ("aria-hidden", "true"), ("focusable", "false"),
-      ("style", "position: absolute; left: 0; top: 0; width: 1em; height: 1em; \
-overflow: visible; pointer-events: none")]
+      ("style", s!"width: {measuredEm sw em}; height: {measuredEm sh em}; \
+vertical-align: baseline; overflow: visible; pointer-events: none")]
     (g.polys.map (cancelPolygon ink pad))
   let body := cancelAt em (g.shift + pad) 0 (.elem "mrow" #[] struck)
   let value := cancelAt em (g.valueX + pad) g.valueY
@@ -368,8 +387,9 @@ overflow: visible; pointer-events: none")]
   let kids := if visible then #[body, value] else #[body]
   .elem "mpadded" #[("width", measuredEm width em),
     ("height", measuredEm reach.top em), ("depth", measuredEm (-reach.bot) em),
-    ("style", "position: relative"), ("data-cancel-metric", "measured")]
-    (kids.push (cancelAt em 0 0 (.elem "mtext" #[] #[svg])))
+    ("data-cancel-metric", "measured")]
+    (kids.push (cancelAt em 0 reach.bot
+      (.elem "mtext" #[("style", s!"margin-left: {measuredEm sx em}")] #[svg])))
 
 /-- The font provider is the sole source of measured bounds. A nonpositive
 em cannot define a CSS projection and takes the named semantic fallback. -/
@@ -460,11 +480,9 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
     .elem "merror" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let st := spec.style.getD mk.style
-    let fm := { mk with style := st }
-    fracNode disp spec
+    fracNode mk disp spec
       (listNodes { mk with style := st.fracNum } false none #[] num)
       (listNodes { mk with style := st.fracDen } false none #[] den)
-      (relativeStyle fm st.fracNum) (relativeStyle fm st.fracDen)
   | .rad deg body =>
     radNode (listNodes { mk with style := mk.style.cramp } disp none #[] body)
       (listNodes { mk with style := .scriptscript mk.style.cramped } false none #[] deg)
@@ -836,9 +854,9 @@ theorem radNode_chars (body deg : Array Html.Node) (degAttrs : Array (String × 
 
 /-- Fraction delimiters enclose numerator then denominator in the native
 text order; the child styles and rule never contribute text. -/
-theorem fracNode_chars (disp : Bool) (spec : FracSpec) (num den : Array Html.Node)
-    (numAttrs denAttrs : Array (String × String)) (c : Array Char) :
-    nodeChars c (fracNode disp spec num den numAttrs denAttrs) =
+theorem fracNode_chars (mk : Marks) (disp : Bool) (spec : FracSpec)
+    (num den : Array Html.Node) (c : Array Char) :
+    nodeChars c (fracNode mk disp spec num den) =
       let opened := match spec.left with | some ch => c.push ch | none => c
       let withBar := nodeListChars (nodeListChars opened num.toList) den.toList
       match spec.right with | some ch => withBar.push ch | none => withBar := by
@@ -915,10 +933,10 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     rw [listNodes_chars mk disp none body #[] c]
     rfl
   | .frac spec num den, c => by
-    show nodeChars c (fracNode disp spec
+    show nodeChars c (fracNode mk disp spec
         (listNodes { mk with style := (spec.style.getD mk.style).fracNum } false none #[] num)
-        (listNodes { mk with style := (spec.style.getD mk.style).fracDen } false none #[] den)
-        _ _) = nucChars c (.frac spec num den)
+        (listNodes { mk with style := (spec.style.getD mk.style).fracDen } false none #[] den))
+      = nucChars c (.frac spec num den)
     rw [fracNode_chars]
     dsimp only
     rw [listNodes_chars _ false none num #[], listNodes_chars _ false none den #[]]

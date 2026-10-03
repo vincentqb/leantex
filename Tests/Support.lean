@@ -1523,22 +1523,33 @@ def pdfCensusOf (pdf : ByteArray) : Except String PdfCensus.Census :=
 
 mutual
 
-/-- Every element of a tree whose tag `want` accepts, with its attributes,
-in document order. -/
-def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String × String))) :
-    Html.Node → Array (String × Array (String × String))
+/-- Every element of a tree whose tag `want` accepts, in document order.
+Keep the typed node so guards can inspect child order as well as attributes. -/
+def elemNodesOne (want : String → Bool) (acc : Array Html.Node) :
+    Html.Node → Array Html.Node
   | .elem tag attrs kids =>
-    elemAttrsList want (if want tag then acc.push (tag, attrs) else acc) kids.toList
+    elemNodesList want (if want tag then acc.push (.elem tag attrs kids) else acc) kids.toList
   | .text _ => acc
   | .style _ => acc
   | .script _ _ => acc
 
-def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String))) :
-    List Html.Node → Array (String × Array (String × String))
+def elemNodesList (want : String → Bool) (acc : Array Html.Node) :
+    List Html.Node → Array Html.Node
   | [] => acc
-  | k :: rest => elemAttrsList want (elemAttrsOne want acc k) rest
+  | k :: rest => elemNodesList want (elemNodesOne want acc k) rest
 
 end
+
+/-- Attribute guards are a projection of the same element census. -/
+def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String)))
+    (nodes : List Html.Node) : Array (String × Array (String × String)) :=
+  (elemNodesList want #[] nodes).foldl (fun a n => match n with
+    | .elem tag attrs _ => a.push (tag, attrs)
+    | _ => a) acc
+
+def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String × String)))
+    (node : Html.Node) : Array (String × Array (String × String)) :=
+  elemAttrsList want acc [node]
 
 /-- Every value the elements `want` accepts declare for attribute `key`, in
 document order: `elemAttrsOne`'s elements, read for one attribute. -/

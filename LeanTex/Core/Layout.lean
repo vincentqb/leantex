@@ -3766,6 +3766,24 @@ private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) 
   let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
   (size, leading)
 
+/-- Resolve one surrounding text style through the native run resolver.
+Math lengths and attachment measurements share this environment. -/
+private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
+    (styles : Array Ir.Style) : Option MathEnv := do
+  let (idx, font, consts) ← fs.mathFont?
+  let sty := styles.foldl (applyStyle geom.scale) {}
+  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+  let (runSize, _) := sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight
+  let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
+  pure (MathEnv.forRun fs idx font consts around runSize)
+
+/-- A physical math length's current em, from the same font environment as
+native glyphs. No MATH face means no measured unit. -/
+def mathEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
+    (st : Math.MathStyle) : Option Int := do
+  let e ← MathEnv.forStyles geom fs styles
+  if e.sizeAt st ≤ 0 then none else some (e.sizeAt st)
+
 /-- Font-measured cancellation for another backend, resolved through the
 same text-style and math walks as native placement. Style history is outermost
 first; named sizes, explicit sizes and face changes reach the existing resolver.
@@ -3773,12 +3791,7 @@ The operand's horizontal ink travels separately from its logical advance. -/
 def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
   (st : Math.MathStyle) (spec : Math.CancelSpec) (body value : Math.MList) :
   Option Math.CancelMetric := do
-  let (idx, font, consts) ← fs.mathFont?
-  let sty := styles.foldl (applyStyle geom.scale) {}
-  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
-  let (runSize, _) := sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight
-  let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
-  let e := MathEnv.forRun fs idx font consts around runSize
+  let e ← MathEnv.forStyles geom fs styles
   if e.sizeAt st ≤ 0 then none else
     let (bs, missing) := layMathTail e st 0
       (Math.degrade body.classes) none (#[], #[]) body
@@ -3794,7 +3807,7 @@ theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (h : fs.mathFont? = none) :
     cancelMetric geom fs styles st spec body value = none := by
-  simp [cancelMetric, h]
+  simp [cancelMetric, MathEnv.forStyles, h]
 
 /-- A measured answer has a positive em, so converting its coordinates to
 relative font units never divides by zero. The attachment contracts belong
@@ -3804,15 +3817,31 @@ theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     (body value : Math.MList) (metric : Math.CancelMetric)
     (h : cancelMetric geom fs styles st spec body value = some metric) :
     0 < metric.em := by
-  cases hf : fs.mathFont? with
-  | none => simp [cancelMetric, hf] at h
-  | some found =>
-    rcases found with ⟨idx, font, consts⟩
-    simp only [cancelMetric, hf, bind, Option.bind] at h
+  cases he : MathEnv.forStyles geom fs styles with
+  | none => simp [cancelMetric, he] at h
+  | some e =>
+    simp only [cancelMetric, he, bind, Option.bind] at h
     split at h
     · contradiction
     · cases h
       exact Int.not_le.mp (by assumption)
+
+/-- The HTML unit and the native attachment's unit are the same measured
+font value, for every surrounding style and operands. This is a font-boundary
+projection, not a new rule about the IR's attachment geometry. -/
+theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
+    (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
+    (body value : Math.MList) (metric : Math.CancelMetric)
+    (h : cancelMetric geom fs styles st spec body value = some metric) :
+    mathEm geom fs styles st = some metric.em := by
+  cases he : MathEnv.forStyles geom fs styles with
+  | none => simp [cancelMetric, he] at h
+  | some e =>
+    simp only [cancelMetric, he, bind, Option.bind] at h
+    split at h
+    · contradiction
+    · cases h
+      simp [mathEm, he, Int.not_le.mp (by assumption)]
 
 def lineThroughRaise (xHeight : Sp) : Sp := max 0 xHeight * 55 / 100
 

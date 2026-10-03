@@ -20,28 +20,57 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
   let has (body frag : String) : Bool :=
     ((page body).splitOn frag).length ≥ 2
+  let elements (body tag : String) : Array Html.Node :=
+    let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr (dvDoc "" body)).1
+    elemNodesList (· == tag) #[] nodes.toList
+  let mathKids (body : String) : Array Html.Node :=
+    match (elements body "math")[0]? with
+    | some (Html.Node.elem _ _ kids) => kids
+    | _ => #[]
+  let token (tag text : String) (n : Html.Node) : Bool :=
+    match n with
+    | .elem name attrs #[.text s] => name == tag && s == text &&
+        (tag != "mi" || attrs.contains ("mathvariant", "normal"))
+    | _ => false
+  let hasAttrs (body tag : String) (wanted : Array (String × String)) : Bool :=
+    (elements body tag).any fun n => match n with
+    | .elem _ attrs _ => wanted.all attrs.contains
+    | _ => false
   -- One row per construct: the MathML shape on the page.
   t "inline math is an inline math element"
     (has "$x$" "<math class=\"math\" data-tex=\"x\"><mi mathvariant=\"normal\">𝑥</mi></math>")
   t "display math is a block math element with the display class"
     (has "\\[ x \\]" "<math display=\"block\" class=\"math math-display\"")
   t "a superscript is msup with an mrow script"
-    (has "$x^2$" "<msup><mi mathvariant=\"normal\">𝑥</mi><mrow><mn>2</mn></mrow></msup>")
+    (match mathKids "$x^2$" with
+      | #[.elem "msup" _ #[base, .elem "mrow" _ #[sup]]] =>
+        token "mi" "𝑥" base && token "mn" "2" sup
+      | _ => false)
   t "a stacked pair is msubsup in base, sub, sup order"
-    (has "$a_i^2$"
-      "<msubsup><mi mathvariant=\"normal\">𝑎</mi><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mn>2</mn></mrow></msubsup>")
+    (match mathKids "$a_i^2$" with
+      | #[.elem "msubsup" _ #[base, .elem "mrow" _ #[sub], .elem "mrow" _ #[sup]]] =>
+        token "mi" "𝑎" base && token "mi" "𝑖" sub && token "mn" "2" sup
+      | _ => false)
   t "a fraction is mfrac with two mrow children"
-    (has "$\\frac{1}{2}$" "<mfrac><mrow><mn>1</mn></mrow><mrow><mn>2</mn></mrow></mfrac>")
+    (match mathKids "$\\frac{1}{2}$" with
+      | #[.elem "mfrac" _ #[.elem "mrow" _ #[num], .elem "mrow" _ #[den]]] =>
+        token "mn" "1" num && token "mn" "2" den
+      | _ => false)
   t "a square root is msqrt"
     (has "$\\sqrt{x}$" "<msqrt><mi mathvariant=\"normal\">𝑥</mi></msqrt>")
   t "an indexed radical is mroot: base then index"
-    (has "$\\sqrt[3]{x}$" "<mroot><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mrow><mn>3</mn></mrow></mroot>")
+    (match mathKids "$\\sqrt[3]{x}$" with
+      | #[.elem "mroot" _ #[.elem "mrow" _ #[base], .elem "mrow" _ #[degree]]] =>
+        token "mi" "𝑥" base && token "mn" "3" degree
+      | _ => false)
   t "a grown pair is stretchy symmetric mo delimiters"
     (has "$\\left( x \\right)$"
       "<mrow><mo stretchy=\"true\" symmetric=\"true\">(</mo><mi mathvariant=\"normal\">𝑥</mi><mo stretchy=\"true\" symmetric=\"true\">)</mo></mrow>")
   t "display limits are munderover: base, under, over"
-    (has "\\[ \\sum_{i}^{n} \\]"
-      "<munderover><mo stretchy=\"false\">∑</mo><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mi mathvariant=\"normal\">𝑛</mi></mrow></munderover>")
+    (match mathKids "\\[ \\sum_{i}^{n} \\]" with
+      | #[.elem "munderover" _ #[base, .elem "mrow" _ #[sub], .elem "mrow" _ #[sup]]] =>
+        token "mo" "∑" base && token "mi" "𝑖" sub && token "mi" "𝑛" sup
+      | _ => false)
   t "inline limits ride beside as msubsup"
     (has "$\\sum_{i}^{n}$" "<msubsup><mo stretchy=\"false\">∑</mo>")
   t "an accent is mover accent=true, non-stretching for \\hat"
@@ -51,14 +80,14 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has "$\\overline{x}$"
       "<mover accent=\"false\"><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mo stretchy=\"true\">‾</mo></mover>")
   t "a display alignment is mtable with displaystyle restored"
-    (has "\\begin{align*} a &= b \\\\ c &= d \\end{align*}"
-      "<mtable displaystyle=\"true\">")
+    (hasAttrs "\\begin{align*} a &= b \\\\ c &= d \\end{align*}"
+      "mtable" #[("displaystyle", "true")])
   t "align columns alternate right and left through mtd CSS"
     (has "\\begin{align*} a &= b \\end{align*}"
       "<mtd style=\"text-align: right; text-align: -webkit-right; padding-right: 0\">")
-  t "an array takes text style: no displaystyle on its mtable"
-    (has "\\[ \\begin{array}{cc} 1 & 2 \\\\ 3 & 4 \\end{array} \\]"
-      "<mtable><mtr>")
+  t "an array declares text style on its mtable"
+    (hasAttrs "\\[ \\begin{array}{cc} 1 & 2 \\\\ 3 & 4 \\end{array} \\]"
+      "mtable" #[("displaystyle", "false")])
   t "a numbered display keeps its number beside the math, never inside"
     (let p := page "\\begin{equation} e = mc^2 \\end{equation}"
      let inMath := (((p.splitOn "<math").getD 1 "").splitOn "</math>").headD ""
@@ -66,11 +95,12 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((p.splitOn "eqnum").length ≥ 2) &&
        ((inMath.splitOn "eqnum").length == 1))
   t "an explicit space is mspace at its mu width"
-    (has "$a\\quad b$" "<mspace width=\"1em\">") -- 18 mu is one em
+    (hasAttrs "$a\\quad b$" "mspace" #[("width", "1.000000em")]) -- 18 mu is one em
   t "a thin space is three eighteenths of an em"
-    (has "$a\\, b$" "<mspace width=\"0.166em\">")
-  t "a negative kern declares the zero floor"
-    (has "$a\\! b$" "<mspace width=\"0em\">")
+    (hasAttrs "$a\\, b$" "mspace" #[("width", "0.166667em")])
+  t "a negative kern uses a signed margin with zero MathML width"
+    (hasAttrs "$a\\! b$" "mspace"
+      #[("width", "0"), ("style", "margin-inline-end: -0.166667em")])
   t "a function name is a multi-character upright mi"
     (has "$\\sin x$" "<mi>sin</mi>")
   t "an unparsed construct stays source text with its data-tex hook"
