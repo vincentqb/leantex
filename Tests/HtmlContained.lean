@@ -5,10 +5,64 @@ open LeanTex.Core LeanTex.Cli.Publication
 
 namespace Tests
 
+/-- Raw style/script payloads owe an HTML raw-text parsing context. Foreign
+content and title RCDATA can reinterpret the payload as markup; a void
+element discards its children. Refuse those placements rather than certify
+the dependency reading of bytes the browser does not read as CSS or script. -/
+def htmlContainedRawContextChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let close (head body : Array Html.Node) :=
+    HtmlResource.close #[] #[] HtmlDoc.deckScript "en" head body
+  let escape := "</svg><img src=\"https://remote.invalid/closure.png\">"
+  let witness := #[Html.elem "svg" #[Html.Node.style escape]]
+  let expected := "<!DOCTYPE html>\n<html lang=\"en\">\n  <head></head>\n  <body>\n" ++
+    "    <svg>\n      <style>\n</svg><img src=\"https://remote.invalid/closure.png\">\n" ++
+    "      </style>\n    </svg>\n  </body>\n</html>\n"
+  t "contained raw context: exact serialized foreign-content witness"
+    (Html.document "en" #[] witness == expected)
+  t "contained raw context: SVG escape cannot become a closed page"
+    (!(close #[] witness).isOk)
+  for (name, tag, payload) in [
+      ("SVG", "svg", escape),
+      ("mixed-case SVG", "SvG", escape),
+      ("MathML", "math", "</math><img src=\"https://remote.invalid/closure.png\">"),
+      ("title RCDATA", "title", "</title><img src=\"https://remote.invalid/closure.png\">"),
+      ("void child", "img", "p { color: red }")] do
+    for (kind, node) in [("style", Html.Node.style payload),
+        ("JSON data script", Html.Node.script #[("type", "application/ld+json")] payload)] do
+      t ("contained raw context: refuses " ++ kind ++ " below " ++ name)
+        (!(close #[] #[Html.elem tag #[node]]).isOk)
+  for (tag, child) in [("svg", "g"), ("math", "mrow"), ("title", "span")] do
+    for node in [Html.Node.style "p { color: red }", Html.Node.script #[] HtmlDoc.deckScript] do
+      t ("contained raw context: ordinary descendants cannot reset " ++ tag)
+        (!(close #[] #[Html.elem tag #[Html.elem child #[Html.elem "div" #[node]]]]).isOk)
+  for tag in ["textarea", "xmp", "iframe", "noembed", "noframes", "noscript", "plaintext"] do
+    t ("contained raw context: unsupported text context remains refused: " ++ tag)
+      (!(close #[] #[Html.elem tag #[Html.Node.style escape]]).isOk)
+  let css := "p { color: rgb(1, 2, 3) }"
+  let head := #[Html.Node.style css,
+    Html.Node.script #[("type", "application/ld+json")] "{\"name\":\"Contained\"}"]
+  let body := #[Html.elem "svg", Html.elem "math", Html.elem "p" #[Html.text "Contained"],
+    Html.Node.script #[] HtmlDoc.deckScript]
+  match close head body with
+  | .error _ => t "contained raw context: head style and body deck script remain supported" false
+  | .ok page =>
+    t "contained raw context: valid raw payloads survive checked serialization"
+      (hasStr page.render css && hasStr page.render HtmlDoc.deckScript &&
+        hasStr page.render "{\"name\":\"Contained\"}")
+  t "contained raw context: ordinary HTML nesting remains supported"
+    ((close #[] #[Html.elem "section" #[Html.elem "div"
+      #[Html.Node.style css, Html.Node.script #[] HtmlDoc.deckScript]]]).isOk)
+  let quoted := #[Html.elem "svg" #[Html.elem "text" #[Html.text escape]]]
+  t "contained raw context: escaped foreign text remains supported"
+    ((close #[] quoted).isOk &&
+      hasStr (Html.document "en" #[] quoted) "&lt;/svg&gt;&lt;img")
+
 /-- A single HTML file carries the exact captured rendering bytes in its
 actual typed carriers. These assertions fail on the sibling-file emitter;
 closure of nested SVG/CSS references is a separate, stricter obligation. -/
 def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  htmlContainedRawContextChecks ref
   let t := check ref
   let moving := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
   let poster := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
