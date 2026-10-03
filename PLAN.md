@@ -26211,6 +26211,15 @@ without source evidence does not invent line 1. `eraseLocations_text` states
 the common content invariant; shipped glyph positions, PDF bytes and typed
 HTML checks hold the annotations to their diagnostic-only role.
 
+The follow-up source audit strengthens this from content conservation to
+exact inline-erasure transparency. `eraseLocationInlines_located_exact`
+quantifies over any span, nested body, and surrounding siblings, including
+text coalescing across the wrapper. Its proof reuses the existing traversal
+through `mapInlineList_finish_exact` and the location combiner's accumulator
+algebra; the old map equation becomes a specialization. Runtime definitions
+are unchanged. Independent review, the warnings-as-failures build, the full
+test suite, and the normal commit checks pass.
+
 The design follows the separation of records and handlers in Python logging,
 the structured record and formatter in Loguru, Clang's source-oriented
 diagnostics, and OpenTelemetry's separation of severity, body and attributes.
