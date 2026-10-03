@@ -29,7 +29,7 @@ end Tests.ListingProvider
 namespace Tests
 
 /-- Checked replies must reach real frontend listings and both artifacts.
-Missing, stale and forged replies keep the exact source without class paint;
+Missing, stale, foreign and forged replies keep the source without class paint;
 completed refusals retain their typed, keyed diagnostic on re-elaboration. -/
 def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -88,11 +88,14 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
             color.any fun css => hasStr css (HtmlDoc.cssColor ink))
     let forged := answers.map fun a => { a with tokens := #[#[{ text := "changed" }]] }
     let stale := answers.map fun a => { a with request := { a.request with source := "stale" } }
-    for rejected in [#[], forged, stale] do
+    -- Exact source still belongs to the language that requested its classes.
+    let foreign := answers.map fun a =>
+      { a with request := { a.request with language := "foreign-language" } }
+    for rejected in [#[], forged, stale, foreign] do
       let (plain, _, _) := Elab.runPrepared "listing" { base with listingReplies := rejected } earlier
       let (_, plainBody, _) := HtmlDoc.emitTree {} plain
       let (_, coldBody, _) := HtmlDoc.emitTree {} cold
-      t "listing provider: missing, stale and forged answers ship the original plain page"
+      t "listing provider: missing, stale, foreign and forged answers ship the original plain page"
         (plainBody.map (Html.render · 0) == coldBody.map (Html.render · 0) &&
           reprStr (layoutOf fonts plain).pages == reprStr (layoutOf fonts cold).pages)
     let .ok (plainReplies, refused) := ListingReply.decode requests

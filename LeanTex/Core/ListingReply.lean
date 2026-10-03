@@ -20,7 +20,7 @@ open LeanTex.Core.ListingHighlight (Token Kind lineText)
 structure Request where
   language : String
   source : String
-  deriving BEq, Repr
+  deriving BEq, ReflBEq, LawfulBEq, Repr
 
 /-- Normalize only at the frontend boundary. Calling `verbatimLines` on
 `request.source` again would discard a retained initial blank line. -/
@@ -65,18 +65,32 @@ def lookup (answers : Array Answer) (language : String)
       some answer.tokens
     else none
 
-/-- A lookup is installable only for the original listing's exact lines. -/
-theorem lookup_source_exact (answers : Array Answer) (language : String)
+/-- Every installed classification comes from the snapshot's exact language
+and source key, and reproduces the original lines. Text equality alone would
+admit another language's classification of the same source. -/
+theorem lookup_contract (answers : Array Answer) (language : String)
     (source : String) (highlight : Array (Array Token))
     (h : lookup answers language source = some highlight) :
+    (∃ answer ∈ answers, answer.request = Request.ofSource language source ∧
+      answer.tokens = highlight) ∧
     highlight.map lineText = Ir.verbatimLines source := by
   dsimp only [lookup] at h
   split at h
   · contradiction
-  · split at h
+  · rename_i answer found
+    split at h
     · cases Option.some.inj h
-      assumption
+      have key : answer.request = Request.ofSource language source := by
+        simpa using Array.find?_some found
+      exact ⟨⟨answer, Array.mem_of_find?_eq_some found, key, rfl⟩, by assumption⟩
     · contradiction
+
+/-- A lookup is installable only for the original listing's exact lines. -/
+theorem lookup_source_exact (answers : Array Answer) (language : String)
+    (source : String) (highlight : Array (Array Token))
+    (h : lookup answers language source = some highlight) :
+    highlight.map lineText = Ir.verbatimLines source :=
+  (lookup_contract answers language source highlight h).2
 
 inductive Failure where
   | unavailable | unsupported | rejected | invalidReply | sourceMismatch | budget
