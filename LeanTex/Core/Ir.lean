@@ -14385,14 +14385,20 @@ theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
         (fun a => some ("math-alpha:" ++ a.name)) := by
   simp [resolveMathAlphas, Diag.of, Array.map_map, Function.comp]
 
-/-- Accumulator equations expose the existing maps without changing their walks. -/
-theorem mapInlineList_toList (f : Inline → Inline) :
-    ∀ (out : Array Inline) (xs : List Inline),
-      (mapInlineList f out xs).toList = out.toList ++ xs.map (mapInline f)
-  | _, [] => by simp [mapInlineList]
-  | out, x :: rest => by
-    rw [mapInlineList, mapInlineList_toList f (out.push (mapInline f x)) rest]
+/-- Expose the completed-region combiner without changing the generic map's walk. -/
+theorem mapInlineList_finish_exact (f : Inline → Inline) (out : Array Inline)
+    (xs : List Inline) (finish : Array Inline → Array Inline) :
+    mapInlineList f out xs finish =
+      finish (out.toList ++ xs.map (mapInline f · finish)).toArray := by
+  induction xs generalizing out with
+  | nil => simp [mapInlineList]
+  | cons x xs ih =>
+    rw [mapInlineList, ih]
     simp [Array.toList_push, List.append_assoc]
+
+theorem mapInlineList_toList (f : Inline → Inline) (out : Array Inline) (xs : List Inline) :
+    (mapInlineList f out xs).toList = out.toList ++ xs.map (mapInline f) := by
+  simp only [mapInlineList_finish_exact, id_eq, List.toList_toArray]
 
 mutual
 
@@ -15516,6 +15522,69 @@ def eraseLocationInlines (xs : Array Inline) : Array Inline :=
 
 theorem eraseLocationInlines_text : Conserves plainText eraseLocationInlines :=
   mapInlinesFinish_text id (fun _ => rfl) finishLocations finishLocations_text
+
+private theorem joinLocationBody_append (out xs ys : List Inline) :
+    joinLocationBody out (xs ++ ys) =
+      joinLocationBody (joinLocationBody out xs) ys := by
+  induction xs generalizing out with
+  | nil => rfl
+  | cons x xs ih => simp only [List.cons_append, joinLocationBody, ih]
+
+private theorem pushLocationText_append (out : List Inline) (s t : String) :
+    pushLocationText (pushLocationText out (.text s)) (.text t) =
+      pushLocationText out (.text (s ++ t)) := by
+  cases out with
+  | nil => rfl
+  | cons x xs => cases x <;> simp [pushLocationText, String.append_assoc]
+
+private theorem joinLocationBody_push (out acc : List Inline) (x : Inline) :
+    joinLocationBody out (pushLocationText acc x).reverse =
+      pushLocationText (joinLocationBody out acc.reverse) x := by
+  cases x <;>
+    try simp only [pushLocationText, List.reverse_cons, joinLocationBody_append, joinLocationBody]
+  rename_i s
+  cases acc with
+  | nil => rfl
+  | cons y rest =>
+    cases y <;>
+      try simp only [pushLocationText, List.reverse_cons, joinLocationBody_append, joinLocationBody]
+    rename_i t
+    exact (pushLocationText_append (joinLocationBody out rest.reverse) t s).symm
+
+private theorem joinLocationBody_join (out acc xs : List Inline) :
+    joinLocationBody out (joinLocationBody acc xs).reverse =
+      joinLocationBody (joinLocationBody out acc.reverse) xs := by
+  induction xs generalizing acc with
+  | nil => rfl
+  | cons x xs ih => simp only [joinLocationBody, ih, joinLocationBody_push]
+
+private theorem joinLocationBody_splice (out acc xs : List Inline) :
+    joinLocationBody out (spliceLocations acc xs).reverse =
+      spliceLocations (joinLocationBody out acc.reverse) xs := by
+  induction xs generalizing acc with
+  | nil => rfl
+  | cons x xs ih =>
+    cases x <;> simp only [spliceLocations, ih, spliceLocationOne,
+      joinLocationBody_join, joinLocationBody_push]
+
+private theorem spliceLocations_append (out xs ys : List Inline) :
+    spliceLocations out (xs ++ ys) =
+      spliceLocations (spliceLocations out xs) ys := by
+  induction xs generalizing out with
+  | nil => rfl
+  | cons x xs ih => simp only [List.cons_append, spliceLocations, ih]
+
+/-- A diagnostic wrapper anywhere in a region leaves its erased value
+unchanged, for arbitrary nested content and sibling regions. -/
+theorem eraseLocationInlines_located_exact (span : Span)
+    (before body after : Array Inline) :
+    eraseLocationInlines (before ++ #[.located span body] ++ after) =
+      eraseLocationInlines (before ++ body ++ after) := by
+  simp only [eraseLocationInlines, mapInlines, mapInlineList_finish_exact,
+    Array.toList_append, List.map_append, List.map_cons, List.map_nil,
+    List.nil_append, mapInline]
+  simp only [finishLocations, spliceLocations_append,
+    spliceLocations, spliceLocationOne, joinLocationBody_splice, List.reverse_nil, joinLocationBody]
 
 private def eraseLocationPicture (pic : Pic.Picture) : Pic.Picture :=
   { pic with shapes := pic.shapes.map fun shape =>

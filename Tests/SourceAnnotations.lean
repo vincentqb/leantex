@@ -8,6 +8,11 @@ open LeanTex.Core LeanTex.Core.Ir
 
 namespace Tests
 
+example (span : Span) (before body after : Array Inline) :
+    Ir.eraseLocationInlines (before ++ #[.located span body] ++ after) =
+      Ir.eraseLocationInlines (before ++ body ++ after) :=
+  Ir.eraseLocationInlines_located_exact span before body after
+
 private def annotationCheck (ref : IO.Ref (List String)) (name : String)
     (ok : Bool) : IO Unit :=
   unless ok do ref.modify (name :: ·)
