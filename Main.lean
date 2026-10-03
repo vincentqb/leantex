@@ -1222,8 +1222,12 @@ in the HTML" (← since t)
           -- A picture's `viewBox` is the box the PDF reserves: the same
           -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
-          cancelMetric := Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs
-          mathEm := Layout.mathEm (Layout.Geom.ofPage doc.page) fs
+          cancelMetric := fun measures ss st spec body value =>
+            Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
+          mathEm := fun measures ss st =>
+            Layout.mathEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
+          mathTextEm := fun measures ss st =>
+            Layout.mathTextEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) hdiags)

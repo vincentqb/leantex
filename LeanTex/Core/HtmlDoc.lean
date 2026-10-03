@@ -66,6 +66,10 @@ structure Config where
   every dimension as a share of the stage (`deckStageMilli`), never a
   print length on a screen. -/
   page : Ir.PageSpec := {}
+  /-- The resolved local measurement context. A box replaces the horizontal
+  measures while retaining the page's text height; outside a box, `none`
+  reads the document's text area. Providers share the native vocabulary. -/
+  measures : Option MeasureValues := none
   /-- The accumulated custom-property redefinitions the siblings from here
   on carry on their own style attribute. Properties on an element inherit
   into it, so styling each following sibling realizes "from here on"
@@ -104,10 +108,13 @@ structure Config where
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
   /-- Measured cancellation in the resolved surrounding text style, supplied
   by the same font environment and assembly as the native backend. -/
-  cancelMetric : Array Ir.Style → Math.MathStyle → Math.CancelSpec →
-    Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ => none
+  cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
+    Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ _ => none
   /-- The same run's font unit for explicitly sized math lengths. -/
-  mathEm : Array Ir.Style → Math.MathStyle → Option Int := fun _ _ => none
+  mathEm : MeasureValues → Array Ir.Style → Math.MathStyle → Option Int := fun _ _ _ => none
+  /-- Text-sourced math alphabets keep the ambient text em, before the math
+  face's x-height matching. Read only at a styled math leaf. -/
+  mathTextEm : MeasureValues → Array Ir.Style → Math.MathStyle → Option Int := fun _ _ _ => none
   /-- The native resolver folds this ordered history; the HTML walk carries
   declarations without implementing another font or size interpreter. -/
   mathStyles : Array Ir.Style := #[]
@@ -117,6 +124,18 @@ structure Config where
   it in `cqi` against the row, which then declares itself the container. -/
   inFillRow : Bool := false
 
+/-- The current physical text area, before relative lengths resolve.
+An explicit local context wins over the page's ordinary text area. -/
+def Config.measureValues (cfg : Config) : MeasureValues :=
+  cfg.measures.getD (MeasureValues.horizontal
+    (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
+
+/-- Enter a box with the same horizontal-measure convention as native
+paragraphs. Descendant widths resolve against it; siblings keep their own
+context because only the child's configuration changes. -/
+def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
+  { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight) }
+
 def cssColor (c : Color) : String := c.css
 
 /-- What a formula's cancel marks read from the math face, in thousandths
@@ -125,7 +144,9 @@ the marks with — when the page ships its faces; TeX's own stand-ins
 (`MathMl.Marks`' defaults) where it does not. -/
 def mathMarks (cfg : Config) : MathMl.Marks :=
   let marks : MathMl.Marks := {
-    metric := cfg.cancelMetric cfg.mathStyles, em := cfg.mathEm cfg.mathStyles }
+    metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
+    em := cfg.mathEm cfg.measureValues cfg.mathStyles
+    textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles }
   match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
   | some f =>
     match f.math with
@@ -5300,7 +5321,14 @@ def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat �
   let attrs := if classes.isEmpty then al
     else al.push ("class", " ".intercalate classes.toList)
   let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
-  let content := inlines cfg cell
+  let width : Ir.ColWidth := match sp with
+    | some s => s.spec.width
+    | none => (cols[j]?.map (·.width)).getD .natural
+  let child := match width with
+    | .sized e => cfg.atMeasure
+      (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
+    | .natural | .flex _ => cfg
+  let content := inlines child cell
   -- Chromium does not resolve query units against a table-cell container.
   -- A block inside the cell has the same content measure and works in both
   -- screen and print; emit it only where a descendant actually reads cqi.
@@ -6536,7 +6564,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- A lone box takes its scope's side (`alignScopeRule`), as the page
     -- gives it the side's share of its slack; a row spreads.
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
-    Html.elem "div" (columnNodesInto cfg.into #[] cols.toList)
+    let total := cfg.measureValues.lineWidth
+    let declared := cols.foldl (fun s c => s + (c.1.resolve total).getD 0) 0
+    let unspecified := cols.foldl (fun n c => if c.1.declared then n else n + 1) 0
+    let share := if unspecified > 0 then max 0 (total - declared) / unspecified else 0
+    Html.elem "div" (columnNodesInto cfg.into total share #[] cols.toList)
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           s!"justify-content: {justify}")]
@@ -6785,7 +6817,7 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
     else blockNodesInto (cfg.afterFrame b)
       (acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))) rest
 
-private def columnNodesInto (cfg : Config) (acc : Array Node) :
+private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
   | [] => acc
   | (w, body) :: rest =>
@@ -6801,8 +6833,9 @@ private def columnNodesInto (cfg : Config) (acc : Array Node) :
       | .last => "align-self: last baseline"
     let style := if align.isEmpty then "container-type: inline-size"
       else "container-type: inline-size; " ++ align
-    columnNodesInto cfg
-      (acc.push (Html.elem "div" (blockNodesInto cfg #[] body.toList)
+    let child := cfg.atMeasure ((w.resolve total).getD share)
+    columnNodesInto cfg total share
+      (acc.push (Html.elem "div" (blockNodesInto child #[] body.toList)
         #[("class", "column"), ("style", style)])) rest
 
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node

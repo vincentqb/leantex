@@ -464,7 +464,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
        ("ordinary role", Ir.Inline.role "test" #[formula], history)] do
     let cfg : HtmlDoc.Config := {
       styles, mathStyles := history
-      cancelMetric := fun ss st sp b v =>
+      cancelMetric := fun _ ss st sp b v =>
         if ss == expected then (accepts (.text false)).metric st sp b v else none }
     t s!"cancel HTML {name}: provider receives ordered ambient style history"
       ((elemNodesOne (· == "svg") #[] (HtmlDoc.blockNode cfg (.para #[content]))).size == 1)
@@ -473,8 +473,8 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     math := some { (default : Font.MathConsts) with scales := { script := 73, scriptscript := 47 } } }
   let cfg : HtmlDoc.Config := {
     fonts := some { fonts := #[font], math := some 0 }
-    cancelMetric := fun _ _ _ _ _ => some metric
-    mathEm := fun _ _ => some metric.em }
+    cancelMetric := fun _ _ _ _ _ _ => some metric
+    mathEm := fun _ _ _ => some metric.em }
   t "cancel HTML font MATH scales and metric callback both reach the formula"
     ((HtmlDoc.mathMarks cfg).scales == { script := 73, scriptscript := 47 } &&
       ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome &&
