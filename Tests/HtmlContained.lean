@@ -1,7 +1,7 @@
 import Tests.Support
-import Main
+import LeanTex.Cli.Publication
 
-open LeanTex.Core
+open LeanTex.Core LeanTex.Cli.Publication
 
 namespace Tests
 

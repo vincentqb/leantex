@@ -24,7 +24,7 @@ private structure GraphicsPage where
   diags : Array Diag
 
 /-- Read the two artifacts after elaboration. Synthetic store entries
-have distinct request identities and browser paths, so a source-only
+have distinct request identities and captured browser bytes, so a source-only
 lookup cannot accidentally satisfy a page-selection check. -/
 private def graphicsPage (fonts : Font.FontSet) (imgs : Image.Store)
     (pre body : String) : GraphicsPage :=
@@ -33,9 +33,13 @@ private def graphicsPage (fonts : Font.FontSet) (imgs : Image.Store)
   let (_, tree, _) := HtmlDoc.emitTree { imgs } doc
   { images := animatedImageSegs out, ink := graphicsInk out, tree, diags }
 
+private def graphicsPngBytes (w h : Nat) (label : String := "") : ByteArray :=
+  mkPng (pngChunk "IHDR" (pngIhdr w h 8 2 0) ++
+    pngChunk "tEXt" ("Probe\u0000" ++ label).toUTF8.data.toList ++
+    pngChunk "IDAT" [1, 2, 3] ++ pngChunk "IEND" [])
+
 private def graphicsPng (w h : Nat) : Option Image.Plan :=
-  (Image.decode (mkPng (pngChunk "IHDR" (pngIhdr w h 8 2 0) ++
-    pngChunk "IDAT" [1, 2, 3] ++ pngChunk "IEND" []))).toOption
+  (Image.decode (graphicsPngBytes w h)).toOption
 
 private def graphicsSizingAttrs (p : GraphicsPage) : Array (Array (String × String)) :=
   (elemAttrsList (· == "img") #[] p.tree.toList).map fun (_, attrs) =>
@@ -54,20 +58,29 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let t := check ref
   let info := graphicsPng 64 40
   t "animation regression has a decoded image" info.isSome
+  let svg (label : String) := svgDocument s!"<rect id=\"{label}\" width=\"32\" height=\"20\"/>" 64 40
   let imgs : Image.Store := { entries := #[
-    { src := "animation-probe", animated := true, href := "animation-probe.svg", info },
-    { src := "animation-probe", href := "page-default.png", info },
+    { src := "animation-probe", animated := true, href := "animation-probe.svg",
+      source := some (svg "moving"), info },
+    { src := "animation-probe", href := "page-default.png",
+      source := some (graphicsPngBytes 64 40 "default"), info },
     { src := "animation-probe", animated := true, page := .number 1,
-      href := "poster-zero.svg", info },
+      href := "poster-zero.svg", source := some (svg "zero"), info },
     { src := "animation-probe", animated := true, page := .number 2,
-      href := "poster-one.svg", info },
+      href := "poster-one.svg", source := some (svg "one"), info },
     { src := "animation-probe", animated := true, page := .last,
-      href := "poster-last.svg", info },
-    { src := "animation-probe", page := .number 1, href := "page-one.png", info },
+      href := "poster-last.svg", source := some (svg "last"), info },
+    { src := "animation-probe", page := .number 1, href := "page-one.png",
+      source := some (graphicsPngBytes 64 40 "one"), info },
     { src := "animation-probe", page := .number 2,
-      href := "page-two.png", info := graphicsPng 48 96 },
+      href := "page-two.png", source := some (graphicsPngBytes 48 96 "two"),
+      info := graphicsPng 48 96 },
     { src := "animation-probe", page := .number 3,
-      href := "page-three.png", info := graphicsPng 80 20 }] }
+      href := "page-three.png", source := some (graphicsPngBytes 80 20 "three"),
+      info := graphicsPng 80 20 }] }
+  let hrefs ← imgs.entries.mapM fun en =>
+    htmlDataOracle (if Image.isSvg en.href then "image/svg+xml" else "image/png")
+      (en.source.getD ByteArray.empty)
   let source := dvDoc "" "Lead \\animategraphics[width=32pt,alt={Moving square}]\
     {17}{animation-probe}{}{} Tail"
   let control := dvDoc "" "Lead \\includegraphics[width=32pt,alt={Moving square}]\
@@ -113,7 +126,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let text (p : GraphicsPage) := shownTextList "" p.tree.toList
   let selected (p : GraphicsPage) (idx : Nat) (w h : Dim.Sp) : Bool :=
     p.images == #[(some idx, w, h)] &&
-      imageSrcs p == #["assets/" ++ HtmlDoc.imageAssetName idx (imgs.entries[idx]!).href]
+      imageSrcs p == #[hrefs[idx]!]
 
   -- animate manual §§5–6.1: first is the default; numbers count frames
   -- from zero. The exact identities also distinguish numeric zero from
@@ -158,8 +171,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       (some 4, Dim.pt 16, Dim.pt 10), (some 6, Dim.pt 16, Dim.pt 32),
       (some 1, Dim.pt 16, Dim.pt 10), (some 0, Dim.pt 16, Dim.pt 10)])
   t "typed HTML keeps the four scoped requests in source order"
-    (imageSrcs localChoices == #["assets/i4-poster-last.svg", "assets/i6-page-two.png",
-      "assets/i1-page-default.png", "assets/i0-animation-probe.svg"])
+    (imageSrcs localChoices == #[hrefs[4]!, hrefs[6]!, hrefs[1]!, hrefs[0]!])
 
   let sizes : Array (String × Int × Int) := #[
     ("width=32pt", 32, 20), ("height=10pt", 16, 10),

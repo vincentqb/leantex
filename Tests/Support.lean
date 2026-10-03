@@ -36,6 +36,27 @@ def htmlDataOracle (mime : String) (data : ByteArray) : IO String :=
       throw <| IO.userError "the HTML containment byte oracle requires base64"
     return "data:" ++ mime ++ ";base64," ++ out.stdout
 
+/-- Independently read an artifact's captured bytes, including binary font
+programs. The pipe stays binary: decoding through a `String` would replace
+invalid UTF-8 and corrupt the very program whose metadata the tests inspect. -/
+def htmlDataDecode (href : String) : IO (String × ByteArray) := do
+  let [header, payload] := href.splitOn "," |
+    throw <| IO.userError "expected one embedded resource"
+  let [media, "base64"] := header.splitOn ";" |
+    throw <| IO.userError "expected a base64 resource"
+  let ["data", mime] := media.splitOn ":" |
+    throw <| IO.userError "expected a data resource"
+  IO.FS.withTempDir fun dir => do
+    let file := dir / "payload"
+    IO.FS.writeFile file payload
+    let child ← IO.Process.spawn {
+      cmd := "base64", args := #["-d", file.toString],
+      stdin := .null, stdout := .piped, stderr := .null }
+    let data ← child.stdout.readBinToEnd
+    unless (← child.wait) == 0 do
+      throw <| IO.userError "the published resource contains invalid base64"
+    return (mime, data)
+
 /-- Follow the emitted inline SVG reference and independently decode its
 bytes. These synthetic pages have one image per role; no sidecar can supply it. -/
 def svgPublishedAsset (html : String) (_output : System.FilePath)
@@ -48,15 +69,10 @@ def svgPublishedAsset (html : String) (_output : System.FilePath)
     throw <| IO.userError s!"expected exactly one {attr} on <{tag}>"
   let href :: _ :: _ := value.splitOn "\"" |
     throw <| IO.userError s!"unclosed {attr} on <{tag}>"
-  let ["data:image/svg+xml;base64", payload] := href.splitOn "," |
+  let (mime, data) ← htmlDataDecode href
+  unless mime == "image/svg+xml" do
     throw <| IO.userError "expected an embedded SVG reference"
-  IO.FS.withTempDir fun dir => do
-    let file := dir / "payload"
-    IO.FS.writeFile file payload
-    let decoded ← IO.Process.output { cmd := "base64", args := #["-d", file.toString] }
-    unless decoded.exitCode == 0 do
-      throw <| IO.userError "the published SVG contains invalid base64"
-    return (href, decoded.stdout.toUTF8)
+  return (href, data)
 
 /-- A synthetic two-page sequence: a wide blue first frame and a tall red
 poster. No fonts or outside resources participate in its conversion. -/

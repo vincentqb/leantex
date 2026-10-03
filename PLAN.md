@@ -26034,3 +26034,94 @@ Its 102 space-coverage assertions fail on `75c71d1e` and pass after correction.
 It exercises automatic links, explicit underlines, authored spacing, wrapping,
 composition with strikeout, style changes, and shared footers over reveals.
 Signed-space and ordinary-text controls hold text placement unchanged.
+
+### 2026-10-02 — Native overlay families share the selector boundary
+
+The numbered-selector reader now covers native link and target commands,
+item labels, titled blocks, and Beamer's starred and plus `\onslide` forms.
+Argument positions follow the installed Beamer declarations. Literal angle
+text inside an item label remains label content. A saved native command
+retains its original operation after a later redefinition, through a reserved
+internal name that an authored control word cannot spell.
+
+Selection is still an IR value: modifiers select two appearances of one body,
+covering selects visibility, and links and targets select the body or empty
+content. Beamer implements `\hyperlink` and `\hypertarget` with `\only`;
+excluded reveals must therefore have neither their glyphs nor their active
+links and destinations. The first implementation covered them instead.
+`overlayInputChecks` witnessed 208 failing artifact assertions on `27023d85`;
+the corrected branch passes. The cases compare both inline and block paths,
+three selector positions, singleton and union selectors, and every reveal.
+The existing arbitrary-selector membership and alternative-partition
+theorems cover these operations through their shared IR constructors.
+
+### 2026-10-02 — Installed listing lexers return checked source data
+
+Languages beyond the native Lean and Python lexers can now use installed
+Pygments classification. The driver discovers requests after elaboration,
+when package options, includes, macros and Markdown have settled the source
+and language. It captures one bounded reply batch and reuses that snapshot
+for later font measurement and picture recovery.
+
+`ListingReply` is the pure boundary. Replies must match the ordered request
+keys, contiguous Unicode character offsets, complete source, and original
+lines. `lookup_source_exact` and `plainAnswer_source_exact` quantify over
+arbitrary answers and source, rather than a language-specific sample.
+Classification reaches the existing shared painter, so PDF and HTML keep
+the same selected style, contrast policy, tab columns and source content.
+No package execution or generated HTML enters a renderer.
+
+The external adapter uses an isolated Python process and the installed
+built-in lexer registry, with plugin discovery disabled and explicit input,
+output, token and time bounds. A completed refusal carries a checked plain
+answer and keyed W0393; missing or incomplete attempts produce no reusable
+answer. The immutable input snapshot carries diagnostics through every
+re-elaboration. This is not a persistent external-answer cache.
+
+The hermetic protocol guards reject forged keys, reordered batches, gaps,
+overlaps, truncated source and invalid Unicode offsets. `listingProviderChecks`
+exercises minted, listings and Markdown through real elaboration and both
+artifacts. Disabling reply consumption fails 36 Layout, PDF and typed HTML
+paint assertions; restoring it passes them. Installed lexer accuracy is a
+separate acceptance run, so the normal suite needs neither Python nor
+Pygments.
+
+
+### 2026-10-02 — HTML publication requires captured resource closure
+
+The HTML publisher accepts a checked page, not an unchecked string. Fonts,
+primary images, static animation posters, converted picture faces and the
+favicon use data URLs built from captured bytes. A declared local stylesheet
+is read once and inserted after the engine's rules. Publication serializes
+that same checked tree without rereading sources or copying sidecar files.
+Ordinary hyperlinks and the Markdown alternate are navigation, not rendering
+resources.
+
+`HtmlResource.close_covers` and `HtmlDoc.emitClosed_covers` quantify over the
+actual typed tree and its captured resources. Successful closure implies
+that the page serialized for publication is exactly the emitted page and
+that every rendering request found by the closed vocabulary resolves.
+The vocabulary rejects unknown resource-bearing syntax, remote stylesheets,
+CSS imports and unapproved scripts. SVG validation attests the exact bytes
+through the existing parsed-XML boundary; image/font decoding and browser
+semantics remain outside the kernel proof.
+
+Independent review found that fragment syntax is context-sensitive: SVG
+paint and local-use references can stay within the drawing, whereas a CSS
+URL or a srcset candidate is not certified merely by starting with `#`.
+The checker distinguishes those contexts. Capturing a UTF-8 stylesheet also
+removes its single leading byte-order mark before it becomes inline CSS.
+
+E0606 refuses an unresolved page before any output is created, even under
+`--best-effort`. The output plan also checks destination independence before
+publication: literal aliases, directory and file symlinks, and hard links
+cannot let another format overwrite verified HTML. This filesystem check
+is a preflight, not a guarantee against concurrent filesystem changes.
+Fourteen real CLI assertions fail without it and pass with it; distinct
+HTML, PDF and Markdown outputs still publish. E0003 names that refusal.
+
+The regression guards read typed carriers, captured bytes and actual files.
+They include changing or deleting source assets between capture and publish,
+refused-resource preservation of existing output, and every shipped corpus
+page. The browser acceptance run moves only the HTML file into a fresh
+directory and checks its images, fonts and rendering requests offline.

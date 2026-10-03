@@ -34,8 +34,11 @@ import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
+import LeanTex.Cli.ListingHighlight
+import LeanTex.Cli.PublicationPaths
+import LeanTex.Cli.Publication
 
-open LeanTex.Core LeanTex.Cli
+open LeanTex.Core LeanTex.Cli LeanTex.Cli.Publication
 
 structure Ui where
   cfg : Config
@@ -821,67 +824,6 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store) :
       unconverted := unconverted.push r.src
   return ({ entries }, diags, unconverted)
 
-private def htmlLocalBytes (file name : String) : IO (Except String ByteArray) := do
-  if name.isEmpty || name.startsWith "//" || name.contains ':' then
-    return .error "a declared HTML resource must name a local file"
-  let path := System.FilePath.mk name
-  let path := if path.isAbsolute then path else
-    (System.FilePath.mk file).parent.getD "." / path
-  try return .ok (← IO.FS.readBinFile path)
-  catch _ => return .error "a declared HTML resource could not be read"
-
-/-- Capture local head resources, attest exact SVG bytes through the existing
-parsed-XML/converter boundary, then check the tree that publication will render.
-No URL is fetched and no output directory exists at this point. -/
-def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
-    IO (Except String HtmlDoc.ClosedPage × Array Diag) := do
-  let mut cfg := cfg
-  if let some name := doc.output.stylesheet then
-    let .ok bytes ← htmlLocalBytes file name | return (.error
-      ("the declared stylesheet " ++ HtmlResource.referenceLabel name ++
-        " could not be captured from a local file"), #[])
-    let some css := String.fromUTF8? bytes | return (.error
-      ("the declared stylesheet " ++ HtmlResource.referenceLabel name ++ " is not UTF-8"), #[])
-    let css := if css.startsWith "\uFEFF" then (css.drop 1).toString else css
-    cfg := { cfg with stylesheet := some (name, css) }
-  if let some name := doc.info.favicon then
-    let .ok bytes ← htmlLocalBytes file name | return (.error
-      ("the declared favicon " ++ HtmlResource.referenceLabel name ++
-        " could not be captured from a local file"), #[])
-    let media := if Image.isSvg name then HtmlResource.Media.svg
-      else if ({ media := .png, bytes } : HtmlResource.Embedded).ready #[] then .png
-      else if ({ media := .ico, bytes } : HtmlResource.Embedded).ready #[] then .ico
-      else .jpeg
-    cfg := { cfg with favicon := some (name, { media, bytes }) }
-  let mut svgChecked : Array ByteArray := #[]
-  for resource in HtmlDoc.resources cfg do
-    if resource.media == .svg && !svgChecked.contains resource.bytes then
-      match ← ImageAssets.validateSvg resource.bytes with
-      | .ok _ => svgChecked := svgChecked.push resource.bytes
-      | .error why => return (.error ("an embedded SVG failed resource validation: " ++ why), #[])
-  return HtmlDoc.emitClosed cfg doc svgChecked
-
-/-- The only artifact write site, after acceptance. An HTML publication
-requires a checked tree and writes its own serialization, with no sidecars
-or rereads of resources captured before the gate. -/
-def publish (outDir : Option String) (html : Option (String × HtmlDoc.ClosedPage))
-    (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
-    IO (Array String) := do
-  let mut written : Array String := #[]
-  if let some o := outDir then
-    IO.FS.createDirAll o
-  if let some (path, page) := html then
-    IO.FS.createDirAll ((System.FilePath.mk path).parent.getD ".")
-    IO.FS.writeFile path page.render
-    written := written.push path
-  if let some (path, text) := md then
-    IO.FS.writeFile path text
-    written := written.push path
-  if let some (path, bytes) := pdf then
-    IO.FS.writeBinFile path bytes
-    written := written.push path
-  return written
-
 /-- **Elaborate, against whatever face the caller has.** Everything from the
 elaborator on is a function of the prepared source and one measurement
 (`Ir.Pic.LabelMetric`), which is why the driver can resolve a face *before*
@@ -1017,6 +959,22 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
           pure (some scan, some m)
     let (doc, diags, reqSpans) ←
       elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
+    -- Discover through the elaborated document: package options, markdown,
+    -- macros and includes have already settled the language and source. The
+    -- provider returns data only; every later elaboration reuses this exact
+    -- snapshot, including font remeasurement and picture withdrawal.
+    let requests := LeanTex.Core.ListingReply.requests doc
+    let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
+        pure (doc, diags, reqSpans, prepared, earlier)
+      else do
+        let t ← IO.monoMsNow
+        let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil file requests
+        ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
+        let prepared := { prepared with listingReplies := replies }
+        let earlier := earlier ++ listingDiags
+        let (doc, diags, reqSpans) ← elaborate ui file prepared earlier spliced
+          (provisional.getD (fun _ _ => {})) (phases := false)
+        pure (doc, diags, reqSpans, prepared, earlier)
     return some { doc := doc, diags := diags, spans := reqSpans
                   prepared := prepared, earlier := earlier, spliced := spliced
                   cache := cache, scan := scan, provisional := provisional }
@@ -1169,6 +1127,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let htmlPath := outPath ui.cfg.output outIsDir file .html
       let mdPath := mdOutPath ui.cfg.output outIsDir file doc.output.md
       let pdfPath := outPath ui.cfg.output outIsDir file .pdf
+      let destinations := (if emit.contains .html then #[ ("HTML", htmlPath) ] else #[]) ++
+        (if emit.contains .md then #[ ("Markdown", mdPath) ] else #[]) ++
+        (if emit.contains .pdf then #[ ("PDF", pdfPath) ] else #[])
+      -- premise: publicationPathChecks — distinct formats publish, while
+      -- colliding names and filesystem aliases leave all outputs untouched.
+      if let some detail ← PublicationPaths.conflict destinations then
+        ui.diag (DriverDiag.outputPathsConflict detail)
+        ui.summary file 1 (← since t0)
+        return 1
       -- Phase 2, the build, in memory: every artifact's bytes exist before
       -- any is judged, so the assertion gate reads the file that would
       -- ship (the PDF census) and a failing document leaves nothing

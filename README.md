@@ -28,8 +28,9 @@ leantex doc.tex --watch         rebuild on every change
 
 Supported LaTeX commands and package interfaces translate into the engine's
 native document model. Document-local `.sty` files are read through that
-same translation; leantex does not execute arbitrary TeX packages, Lua code,
-or external syntax highlighters. Unsupported constructs produce diagnostics
+same translation; leantex does not execute arbitrary TeX packages or Lua code.
+Installed Pygments lexers can supply checked syntax classifications, as
+described below. Unsupported constructs produce diagnostics
 where they occur. The command-level contracts live in
 [`tests/compat-index`](tests/compat-index).
 
@@ -51,6 +52,21 @@ Paths resolve from the main document's directory, as for `\input`; errors
 inside the fragment name its `.md` file and line. Package-specific Markdown
 extensions, options, inline environments and renderer customizations are
 not implemented and remain diagnosed.
+
+## Self-contained HTML
+
+A successful HTML build produces one movable `.html` file. Selected embedded
+fonts, images, animation posters and the favicon are data URLs; local declared
+stylesheets are captured into the file. No neighboring asset directory is
+needed. Ordinary hyperlinks and an optional Markdown alternate remain links.
+
+Publication requires a checked page whose rendering references resolve to its
+captured bytes (`HtmlResource.close_covers`, `HtmlDoc.emitClosed_covers`).
+Unresolved resources, external stylesheets, CSS imports and unsupported
+resource-bearing CSS cause E0606 before output is written, including under
+`--best-effort`. To use Bulma, declare a readable local framework stylesheet.
+The proof covers the emitted tree and captured-resource contract; SVG
+validation, font/image decoding and browser behavior remain external checks.
 
 ## Fonts
 
@@ -93,8 +109,7 @@ they build on any machine:
 
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
 machine's default sans. `images.tex` shows `\includegraphics` and `figure`:
-the synthetic PNG/JPEG fixtures beside it embed into the PDF and link from
-the HTML. Self-contained SVG images work too. Building one requires
+the synthetic PNG/JPEG fixtures beside it embed into both artifacts. Self-contained SVG images work too. Building one requires
 `xmllint` and `rsvg-convert` at document-build time: libxml checks the
 supported subset, librsvg supplies the static vector face, and HTML publishes
 the original SVG. Fragment references and plain CSS are supported; a paint
@@ -152,8 +167,8 @@ PDF 2.0 does not play SVG animations natively.
 
 If browser conversion fails, HTML shows a labelled placeholder and reports
 the converter error; the native PDF image remains available.
-Published images and print posters carry content keys in their filenames,
-so rebuilding changed bytes gives the browser a new image URL.
+HTML embeds captured image and print-poster bytes as data URLs, so rebuilding
+changed bytes updates the image without a neighboring asset directory.
 
 The converter oracle uses synthetic SVGs, including resources a converter
 would silently omit, and builds both outputs from SVG sources alone: build
@@ -183,7 +198,11 @@ scoped `\lstset` and `\setminted` defaults, line numbers, font sizes, tab
 stops and wrapping. Lean and Python listings receive native syntax colors
 in PDF and HTML; minted accepts `style=default` and `style=friendly`.
 Keywords are bold and comments italic, and the colors adapt to the page
-background. Other languages keep their source as plain code.
+background. Other languages, including `bash` and `sh`, use the built-in
+lexers of an installed Pygments (`python3 -m pip install Pygments`).
+The compiler checks each reply against the complete original source before
+applying colors through the same painter. If classification is unavailable,
+it preserves the source as plain code and reports W0393.
 `math-cancel.tex` shows cancellation strokes and raised arrow targets,
 including fractions and scoped colors, in both artifacts.
 The siunitx spellings (`\num`, `\qty`, `\si`, `\ang`) provide locale-grouped

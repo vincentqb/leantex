@@ -15,6 +15,7 @@ import Tests.PackageCode
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
+import Tests.HtmlContained
 import Tests.Settings
 import Tests.Redefine
 import Tests.Images
@@ -33,6 +34,8 @@ import Tests.BeamerHooks
 import Tests.BeamerColors
 import Tests.MintedSettings
 import Tests.ListingHighlight
+import Tests.ListingProvider
+import Tests.PublicationPaths
 import Tests.MarkdownInput
 import Tests.InputUse
 import Tests.MathAlphaEntry
@@ -72,6 +75,8 @@ promoted.
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
+  shellReplyChecks listingProviderChecks publicationPathChecks
+  htmlContainedChecks htmlContainedPublicationChecks htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks
@@ -536,7 +541,21 @@ def reports : List Report := [
     pins := [check% underlineSpacingChecks, thm% Layout.appendUnderline_exact,
       thm% Layout.appendUnderline_covers]
     accept := ["native reference-deck footer inspected before and after the spacing correction"]
-    state := .guarded "75c71d1e" .before .author }
+    state := .guarded "75c71d1e" .before .author },
+  { id := "R77", date := "2026-10-02"
+    what := "shell listings retained their text but lacked language classification and the resulting syntax colors in both artifacts"
+    pins := [check% shellReplyChecks, check% listingProviderChecks,
+      thm% ListingReply.lookup_source_exact, thm% ListingReply.plainAnswer_source_exact]
+    accept := ["disabling consumption of checked replies fails 36 actual PDF and typed HTML paint assertions; installed language accuracy is checked separately"]
+    state := .guarded "07e3714e" .before .author },
+  { id := "R78", date := "2026-10-02"
+    what := "HTML output depended on neighboring font and image files and external styles instead of being one movable, self-contained file"
+    pins := [check% htmlContainedChecks, check% htmlContainedPublicationChecks,
+      check% htmlContainedCliChecks, check% htmlContainedCorpusChecks, check% publicationPathChecks,
+      thm% HtmlResource.close_covers, thm% HtmlDoc.emitClosed_covers]
+    accept := ["capture guards failed on the earlier publisher; publication uses the checked bytes after source files change or disappear",
+      "fourteen publication checks failed before destination validation; colliding formats and filesystem aliases cannot overwrite the verified page"]
+    state := .guarded "e5a5428a" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

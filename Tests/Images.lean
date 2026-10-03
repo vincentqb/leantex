@@ -274,9 +274,9 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       (Image.decode (jpgData.extract 0 (jpgData.size * k / 64))).isOk).length == 64)
 
   let store : Image.Store := { entries := #[
-    { src := "rects.png", info := pngInfo.toOption },
-    { src := "rects.jpg", info := jpgInfo.toOption },
-    { src := "rects-alpha.png", info := alphaInfo.toOption }] }
+    { src := "rects.png", source := some pngData, info := pngInfo.toOption },
+    { src := "rects.jpg", source := some jpgData, info := jpgInfo.toOption },
+    { src := "rects-alpha.png", source := some alphaData, info := alphaInfo.toOption }] }
   let geom : Layout.Geom := {}
   let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Sp × Dim.Sp) := Id.run do
     let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
@@ -428,9 +428,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- attributes so the page never reflows, the caption as alt, the requested
   -- fraction as a percentage.
   let hcfg : HtmlDoc.Config := { imgs := store }
-  let (figHtml, _) := HtmlDoc.emit hcfg figDoc
+  let (_, figTree, _) := HtmlDoc.emitTree hcfg figDoc
+  let pngHref ← htmlDataOracle "image/png" pngData
   t "html figure image with alt and intrinsic size"
-    ((figHtml.splitOn "<img src=\"assets/i0-rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
+    (elemAttrsList (· == "img") #[] figTree.toList ==
+      #[("img", #[("src", pngHref), ("alt", "A mark"), ("width", "64"), ("height", "40")])])
   let (twDoc, _) := Elab.run "t" "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let (twHtml, _) := HtmlDoc.emit hcfg twDoc
   t "html width fraction becomes a percentage"
@@ -482,12 +484,13 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "source candidates try the written name first"
     ((Image.sourceCandidates "figures/plot").take 3 ==
       ["figures/plot", "figures/plot.pdf", "figures/plot.png"])
-  t "html names the resolved file, not the bare spelling"
+  t "html embeds the resolved file's bytes for a bare spelling"
     (let store2 : Image.Store := { entries := #[
-      { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
-     let (h, _) := HtmlDoc.emit { imgs := store2 }
+      { src := "figures/plot", href := "figures/plot.png", source := some pngData,
+        info := pngInfo.toOption }] }
+     let (_, tree, _) := HtmlDoc.emitTree { imgs := store2 }
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
-     (h.splitOn "<img src=\"assets/i0-plot.png\"").length == 2)
+     HtmlDoc.imgSrcsList #[] tree.toList == #[pngHref])
 
 /-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
 types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`

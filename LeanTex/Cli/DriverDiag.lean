@@ -15,6 +15,11 @@ open LeanTex.Core
 def unreadableInput (file err : String) : Diag :=
   Diag.of .E0001 s!"cannot read '{file}': {err}"
 
+/-- E0003: distinct artifacts would overwrite the same file. -/
+def outputPathsConflict (detail : String) : Diag :=
+  Diag.of .E0003 s!"cannot publish output: {detail}"
+    (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
+
 /-- E0402: `LEANTEX_FONT` names a file that does not parse as a font. -/
 def envFontUnusable (path err : String) : Diag :=
   Diag.of .E0402 s!"cannot use LEANTEX_FONT '{path}': {err}"
@@ -194,6 +199,20 @@ def boundarySvgMissing (err : String) : Diag :=
 artifact: {err}"
     (help := "install poppler's pdftocairo, or \\allow{W0378} accepts the \
 loss; the PDF artifact is unaffected")
+
+/-- W0393: the external classifier supplied no usable answer. The source
+still ships, and the language is the key for counting repeated refusals. -/
+def listingHighlightUnavailable (language reason : String) : Diag :=
+  Diag.of .W0393
+    s!"cannot highlight '{language}'; the listing is set as plain text"
+    (subject := some ("listing-language:" ++ language))
+    (help := s!"check `python3 -m pygments -L lexers`, or install Pygments for `python3` ({reason})")
+
+/-- E0606: the page failed the resource-closure check. This names a failed
+publication, never an instruction to write the unchecked page anyway. -/
+def htmlResourceUnavailable (detail : String) : Diag :=
+  Diag.of .E0606 s!"cannot publish self-contained HTML: {detail}"
+    (help := "use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies")
 
 /-- E0502: an included source file is not there; its content is absent. -/
 def inputMissing (name : String) (span : Option Span) (command : String := "input") : Diag :=

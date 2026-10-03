@@ -4,6 +4,9 @@ import Tests.Themes
 import Tests.FontMath
 import Tests.Surface
 import Tests.Kernel
+import Tests.ListingProvider
+import Tests.PublicationPaths
+import Tests.HtmlContained
 import scripts.Rung
 
 /-!
@@ -28,6 +31,7 @@ no row binds, charged in its provenance to the modules that apply them.
 -/
 
 open LeanTex.Core
+open Tests (listingProviderChecks htmlContainedCliChecks publicationPathChecks)
 
 namespace DiagAudit
 
@@ -132,7 +136,11 @@ def registry : List AuditRow :=
    ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩,
    -- A `\qedhere` on an alignment's row or under a number: set the row's
    -- tag natively (amsthm's `\tag*{\qedsymbol}`) and the code leaves.
-   ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩]
+   ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩,
+   -- A refused external classification keeps the source and names its loss.
+   ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
+   ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
+   ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

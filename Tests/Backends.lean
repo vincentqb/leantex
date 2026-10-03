@@ -1432,8 +1432,12 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- spellings; a `--frametitle…` token var is not a timeline.)
     (!has deckPage "ltx-uncover" && !has deckPage "--frame x" &&
      !has deckPage "animation-timeline: --frame" &&
-     !has deckPage "data-snapped" && !has deckPage "scroll-state" &&
+     !has deckPage "scroll-state" &&
      !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"")
+  t "a stepless frame owns its only reveal state on its snap page"
+    ((elemAttrsList (· == "section") #[] deckBody.toList).filterMap (fun (_, attrs) =>
+      if attrs.contains ("data-snap", "") then
+        attrs.find? (·.1 == "data-snapped") else none) == #[("data-snapped", "1")])
   -- The gate, both directions: no deck rule and no script outside the
   -- slides class.
   for (name, src) in [

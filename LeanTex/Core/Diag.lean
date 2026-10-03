@@ -196,7 +196,7 @@ letter itself is derived from the declared `Loss` at the one construction
 site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
 equal. -/
 inductive DiagCode where
-  | E0001 | E0002
+  | E0001 | E0002 | E0003
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
@@ -262,6 +262,8 @@ inductive DiagCode where
   | W0392
   | N0419
   | W0435
+  | W0393
+  | E0606
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -272,6 +274,7 @@ written here: `DiagCode.code` derives it from the loss. -/
 def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
   | .E0002 => ("0002", .dropped, "input is not valid UTF-8")
+  | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("0102", .dropped, "unclosed verbatim environment")
   | .E0111 => ("0111", .dropped, "beamer template body carrying content dropped")
@@ -447,6 +450,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
   | .N0419 => ("0419", .info, "a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it")
   | .W0435 => ("0435", .degraded, "a \\qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display")
+  | .W0393 => ("0393", .degraded, "the installed syntax highlighter cannot classify a listing; its source is set as plain text")
+  | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

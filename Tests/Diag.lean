@@ -178,6 +178,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
     match Utf8.validate (ByteArray.mk #[0xC3, 0x28]) with
     | some e => #[e.toDiag "doc.tex"]
     | none => #[]
+  | .E0003 => #[DriverDiag.outputPathsConflict "HTML and Markdown both name 'out.html'"]
   | .E0101 => dvE "a\\"
   | .E0102 => dvE "\\begin{verbatim}\nx"
   | .E0111 => dvE (dvDeck "" ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
@@ -503,6 +504,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- artifact embeds as vectors and no browser decodes in an <img>. The
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
   | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
+  | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
+  | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""

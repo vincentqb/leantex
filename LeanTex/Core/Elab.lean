@@ -12,6 +12,7 @@ import LeanTex.Core.Picture
 import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
 import LeanTex.Core.PdfContract
+import LeanTex.Core.ListingReply
 
 namespace LeanTex.Core.Elab
 
@@ -223,6 +224,9 @@ private def moveMacroRuns (wrap : String → Array α → α)
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
   file : String
+  /-- Source-checked highlighting replies captured once by the driver. These
+  are immutable across body scopes and font remeasurement. -/
+  listingReplies : Array ListingReply.Answer := #[]
   user : Array UserCmd := #[]
   limit : Nat := 0
   /-- Document-defined environments; `envLimit` bounds the visible prefix,
@@ -8437,8 +8441,8 @@ listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
 `linenos`, `language` (normalized through `Ir.listingLang?` to the token
 both text artifacts carry; Lean and Python receive native lexical classes,
-other names remain plain, and a spelling outside the token grammar is
-named W0110 and carries nothing), minted's
+other names consume source-checked driver replies or remain plain, and a
+spelling outside the token grammar is named W0110 and carries nothing), minted's
 `fontsize` (a named size command or `auto`) and `style` (`default` or
 `friendly`), listings' `basicstyle`
 (`\ttfamily` and named size commands), `tabsize` and `breaklines`.
@@ -8590,7 +8594,8 @@ size commands; the current style stands" (some pos)
       pure spec
   let highlight := match spec.langToken.bind ListingHighlight.language? with
     | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
-    | none => #[]
+    | none => (spec.langToken.bind fun language =>
+        ListingReply.lookup ctx.listingReplies language content).getD #[]
   return .verbatim none content { spec with highlight }
 
 /-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)
@@ -14904,7 +14909,8 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (picWithdrawn : Array String := #[]) :
+    (picWithdrawn : Array String := #[])
+    (listingReplies : Array ListingReply.Answer := #[]) :
     EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -14956,7 +14962,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
       | _ => fam) (← get).urlFamily
   modify fun st => { st with urlFamily := urlFamily0 }
   let s ← decls.foldlM applyDecl
-    { ctx := { file := file
+    { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
                         sets := picSets.map (·.2) } } }
@@ -15367,6 +15373,9 @@ structure Prepared where
   picMacros : Array (String × String)
   warned : Array String
   compatDiags : Array Diag
+  /-- One external highlighter snapshot for every elaboration of this input.
+  Pure callers need no provider; unsupported languages keep their source. -/
+  listingReplies : Array ListingReply.Answer := #[]
 
 /-- The name a definer's head binds, when its next item (past spaces and a
 `*`) is a one-word group. -/
@@ -15566,7 +15575,8 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   let ((doc, table), st) :=
-    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric picWithdrawn).run
+    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
+      p.listingReplies).run
       { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both

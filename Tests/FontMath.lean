@@ -2671,14 +2671,14 @@ def faceSetting (runs : Array (String × String × Int × Option Bool)) (needle 
     Option (String × Int × Option Bool) :=
   (runs.find? fun (_, s, _, _) => hasStr s needle).map fun (nm, _, fl, p) => (nm, fl, p)
 
-/-- The file a page sets a slot in: walk the slot's `--font-<slot>` stack
+/-- The resource a page sets a slot in: walk the slot's `--font-<slot>` stack
 — the last declaration, which is the one the cascade keeps — to the first
 family that has an `@font-face` rule at the regular weight and upright
 style, as the browser's per-family walk does (CSS Fonts 4 §5.2: a
 synthetic family with no rule names no face, and the walk moves on), and
-return that rule's `src` file. `none`: no family of the stack has a rule,
+return that rule's `src`. `none`: no family of the stack has a rule,
 so the page ships no face for the slot. -/
-def htmlSlotFile (html slot : String) : Option String := do
+def htmlSlotSource (html slot : String) : Option String := do
   let parts := html.splitOn ("--font-" ++ slot ++ ": ")
   if parts.length < 2 then none
   let decl ← parts.getLast?
@@ -2748,13 +2748,17 @@ text in {textRes}"
       | _, _ => oracle := s!"pdf: the run or the text is not in the file: {runs.map (·.2.1)}"
   if r.art == .htmlEmbedded then
     let html ← IO.FS.readFile (out / s!"row{i}.html")
-    match htmlSlotFile html r.slot, htmlSlotFile html "body" with
-    | some runFile, some textFile =>
-      let same := runFile == textFile
+    match htmlSlotSource html r.slot, htmlSlotSource html "body" with
+    | some runSource, some textSource =>
+      let same := runSource == textSource
       textFace := same
-      let pitch := (postIsFixedPitch (← IO.FS.readBinFile (out / runFile))).getD false
+      let (media, program) ← htmlDataDecode runSource
+      unless media.startsWith "font/" do
+        throw <| IO.userError "the slot's embedded program has no font media type"
+      let pitch := (postIsFixedPitch program).getD false
       lost := if r.slot == "mono" then !pitch else same
-      oracle := s!"html: run in {runFile} (fixed {pitch}), text in {textFile}"
+      oracle := s!"html: embedded {media}, {program.size} bytes, fixed {pitch}, \
+same as running text {same}"
     | _, _ => oracle := "html: the page ships no face for the slot or the text"
   return { exit := p.exitCode, log := p.stdout ++ p.stderr, reports, lost, textFace,
            flagsAgree, oracle }
@@ -2762,7 +2766,7 @@ text in {textRes}"
 /-- **W0390 fires exactly when an artifact sets a slot's runs in a face
 not of the slot's kind, and the document declared no family for the
 slot.** For mono the kind is fixed pitch, read from the face program the
-artifact carries — the PDF's embedded program, the page's shipped file —
+artifact carries — the PDF's or HTML's embedded program —
 through its `post` table directly (`postIsFixedPitch`), never through the
 engine's classifier, which is what the report rests on; and every PDF's
 descriptor must declare the pitch its own program does. For sans the kind

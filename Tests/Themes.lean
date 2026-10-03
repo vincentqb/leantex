@@ -2854,7 +2854,11 @@ def deckRangeEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       HtmlDoc.htmlStepPendingAt 4 2 (some 3) (i + 1) == pageCovered c i "Middle only.")
   t "the declared end rides its own carrier in the markup"
     (has "<span class=\"step-end\" data-step-last=\"3\" style=\"--step-last: 3\">" &&
-     has "<span class=\"step\" data-step=\"2\" data-step-last=\"3\" style=\"--step: 2\">")
+     (let (_, tree, _) := HtmlDoc.emitTree {} doc
+      (elemAttrsList (· == "span") #[] tree.toList).any fun (_, attrs) =>
+        attrs.contains ("class", "step") && attrs.contains ("data-step", "2") &&
+        attrs.contains ("data-step-last", "3") && attrs.contains ("style", "--step: 2") &&
+        attrs.contains ("data-steps", "2 3")))
   t "the end carrier dims again past the range, on both paths"
     (has "@keyframes ltx-recover { from { opacity: 100% } to { opacity: " &&
      has ".step-end { animation: ltx-recover linear both; animation-timeline: --frame;" &&

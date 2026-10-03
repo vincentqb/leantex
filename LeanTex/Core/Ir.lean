@@ -2268,11 +2268,9 @@ structure OutputSpec where
   owns the table they index. -/
   profiles : Array String := #[]
   css : Option String := none
-  /-- A stylesheet the HTML page links, resolved by the browser relative to
-  the page. `css = none` promised "bring your own stylesheet" but gave the
-  document no way to name it; this is that way, and it composes with every
-  css mode (the link comes after the inline styles, so the named sheet wins
-  ties). -/
+  /-- A local stylesheet the driver captures relative to the document.
+  Its rules follow the engine's styles, so the named sheet wins ties.
+  Checked HTML publication refuses uncaptured rendering dependencies. -/
   stylesheet : Option String := none
   /-- The markdown twin's written file name (`md = "llms.txt"`): the twin
   exists for the llms.txt convention (llmstxt.org), whose name is fixed,

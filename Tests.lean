@@ -8,6 +8,8 @@ import Tests.BeamerHooks
 import Tests.BeamerColors
 import Tests.MintedSettings
 import Tests.ListingHighlight
+import Tests.ListingProvider
+import Tests.PublicationPaths
 import Tests.Markdown
 import Tests.MarkdownInput
 import Tests.InputUse
@@ -44,6 +46,7 @@ import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.CompatGate
 import Tests.HtmlTokens
+import Tests.HtmlContained
 import Tests.HtmlA11y
 import Tests.Conditionals
 import Tests.MacroBinding
@@ -88,6 +91,8 @@ import Tests.LinkColor
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
+  shellReplyChecks listingProviderChecks publicationPathChecks
+  htmlContainedChecks htmlContainedPublicationChecks htmlContainedCliChecks htmlContainedCorpusChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
@@ -118,6 +123,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingLanguageChecks ref
   mintedSettingsChecks ref
   listingHighlightChecks ref
+  shellReplyChecks ref
+  listingProviderChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
   inputUseChecks ref
@@ -139,6 +146,10 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   contentOpsChecks ref
   outputContractChecks ref
   htmlAssetChecks ref
+  htmlContainedPublicationChecks ref
+  htmlContainedCliChecks ref
+  htmlContainedCorpusChecks ref
+  publicationPathChecks ref
   anchorCostChecks ref
   htmlTokenClosureChecks ref
   htmlSourcedGapChecks ref
@@ -154,6 +165,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
+  htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
   pdfFaceChecks ref geom oneFace font
