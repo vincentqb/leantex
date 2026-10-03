@@ -1241,10 +1241,27 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     "Ui.werror", "main", "dump", "hyphenate"]
   let names (s : String) := (s.split (fun c => !(isWordChar c || c == '.'))).toList.map
     (·.toString) |>.filter (!·.isEmpty)
-  let projects (s : String) := (names s).any fun n =>
-    [".message", ".code", ".help", ".severity", ".span", ".subject", ".sites"].any fun f =>
-      n.endsWith f && n.length > f.length
+  -- Output is also a configuration/path field. Only associate it with
+  -- receivers explicitly bound as Diag or built by Diag.of in this def;
+  -- a mention of Diag must not taint unrelated status/output values.
+  let diagBindings (s : String) :=
+    (s.split (fun c => c == '(' || c == ')' || c == '{' || c == '}')).toList.flatMap fun part =>
+      match part.toString.splitOn ":" with
+      | lhs :: rhs :: _ =>
+        let bound := (names lhs).filter fun n => !["def", "private", "let", "mut"].contains n
+        let head := (names rhs).headD ""
+        if ["Diag", "Core.Diag", "LeanTex.Core.Diag"].contains head then bound
+        else if (names lhs).headD "" == "let" &&
+            ["Diag.of", "Core.Diag.of", "LeanTex.Core.Diag.of"].contains head then bound
+        else []
+      | _ => []
+  let projects (diags : List String) (s : String) := (names s).any fun n =>
+    ([".message", ".code", ".help", ".severity", ".span", ".subject", ".sites",
+      ".trigger", ".recovery"].any fun f =>
+        (n.endsWith f || containsSub n (f ++ ".")) && n.length > f.length) ||
+      diags.any (fun d => n == d ++ ".output" || n.startsWith (d ++ ".output."))
   let mut owner := ""
+  let mut diags : List String := []
   let mut depth := 0
   let mut inStr := false
   let mut esc := false
@@ -1290,7 +1307,10 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
         code := code.push c
         i := i + 1
     if code.trimAscii.isEmpty && text.trimAscii.isEmpty then continue
-    if let some n := topLevelDefName code then owner := n
+    if let some n := topLevelDefName code then
+      owner := n
+      diags := []
+    diags := diags ++ diagBindings code
     let ns := names code
     let writer := file == "Main.lean" && writers.contains owner
     let sink := file == "Main.lean" && owner == "Ui.diag"
@@ -1314,8 +1334,8 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     -- Interpolation fields are inside the masked string, so inspect their
     -- projections separately from literal text such as a documented IO call.
     let interpolated := containsSub code "s!" &&
-      ((text.splitOn "{").drop 1).any (fun p => projects ((p.splitOn "}").headD ""))
-    if ((writer && !sink) || terminal) && (projects code || interpolated) then
+      ((text.splitOn "{").drop 1).any (fun p => projects diags ((p.splitOn "}").headD ""))
+    if ((writer && !sink) || terminal) && (projects diags code || interpolated) then
       out := out.push (row + 1, "diagnostic fields printed outside Render")
     let headline := text.trimAscii.toString.toLower
     if writer && ["warning:", "warning[", "warning - ", "error:", "error[", "error - ",
@@ -2090,7 +2110,22 @@ def selftest : IO UInt32 := do
       ["def dump := IO.print (Ir.dump front.doc front.diags)",
        "def hyphenate := IO.println (showHyphens pats w)"], false),
     ("structured builder and policy", "LeanTex/Cli/DriverDiag.lean",
-      ["def make := Diag.of .E0001 msg", "def fatal (d : Diag) := d.severity == .error"], false),
+      ["def make := Diag.of .E0001 msg", "def fatal (d : Diag) := d.severity == .error",
+       "def scope (d : Diag) := d.output"], false),
+    ("output paths beside a diagnostic", "Main.lean",
+      ["def Ui.phase (d : Diag) (cfg : Config) := do", "  ui.diag d",
+       "  IO.println cfg.output", "  IO.println s!\"{ui.cfg.output}\""], false),
+    ("output context ends at the next definition", "Main.lean",
+      ["def Ui.phase (d : Diag) := ui.diag d",
+       "def main (d : Config) := IO.println d.output"], false),
+    ("output type names are exact", "Main.lean",
+      ["def main (cfg : Diag.Config) := IO.println cfg.output"], false),
+    ("output status and subprocess", "Main.lean",
+      ["def main := do", "  let result ← IO.Process.output command",
+       "  IO.println result.stdout", "  IO.println s!\"wrote {doc.output.formats}\""], false),
+    ("output context ignores documentation", "Main.lean",
+      ["def main := do", "  /- (cfg : Diag) -/", "  let help := \"(cfg : Diag)\"",
+       "  IO.println cfg.output"], false),
     ("documentation", "LeanTex/Cli/Input.lean",
       ["/-- Render.human is the formatter.", "IO.eprintln d.message", "-/",
        "def doc := \"IO.eprintln (Render.human false d)\"",
@@ -2103,7 +2138,26 @@ def selftest : IO UInt32 := do
     ("inline nested comment", "Main.lean",
       ["def report := do", "  /- outer /- inner -/ done -/ IO.eprintln msg"], true),
     ("other tools are out of scope", "scripts/example.lean",
-      ["def main := IO.eprintln \"warning: a tool status\""], false)]
+      ["def main := IO.eprintln \"warning: a tool status\""], false)] ++
+    ["trigger", "recovery", "output"].flatMap fun field =>
+      -- All use permitted writers: the field rule itself must reject them,
+      -- not the independent rule against an unaudited terminal writer.
+      [(s!"structured {field} direct", "Main.lean",
+        ["def Ui.phase (d : Diag) := IO.eprintln (reprStr d." ++ field ++ ")"], true),
+       (s!"structured {field} accessor", "Main.lean",
+        ["def Ui.phase (d : Diag) := IO.eprintln (reprStr d." ++ field ++ ".isSome)"], true),
+       (s!"structured {field} alias", "Main.lean",
+        ["def main := do", "  let d : Diag := make",
+         "  let text := reprStr d." ++ field, "  IO.println text"], true),
+       (s!"structured {field} interpolation", "Main.lean",
+        ["def Ui.phase", "    (notice : LeanTex.Core.Diag) :=",
+         "  IO.eprintln s!\"{reprStr notice." ++ field ++ "}\""], true),
+       (s!"structured {field} constructor", "Main.lean",
+        ["def main := do", "  let d := Diag.of .E0001 msg",
+         "  IO.println (reprStr d." ++ field ++ ")"], true),
+       (s!"structured {field} sink suffix", "Main.lean",
+        ["def Ui.diag (d : Diag) :=",
+         "  IO.eprintln (Render.human false d ++ reprStr d." ++ field ++ ")"], true)]
   for (what, file, lines, bad) in diagCases do
     let got := !(diagnosticOutputBypasses file lines.toArray).isEmpty
     if got != bad then fails.modify (s!"diagnosticOutputBypasses {what}: got {got}, want {bad}" :: ·)
