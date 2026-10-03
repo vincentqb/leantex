@@ -76,7 +76,8 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   shellReplyChecks listingProviderChecks publicationPathChecks
-  htmlContainedChecks htmlContainedPublicationChecks htmlContainedCliChecks htmlContainedCorpusChecks
+  htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
+  htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks
@@ -550,7 +551,7 @@ def reports : List Report := [
     state := .guarded "07e3714e" .before .author },
   { id := "R78", date := "2026-10-02"
     what := "HTML output depended on neighboring font and image files and external styles instead of being one movable, self-contained file"
-    pins := [check% htmlContainedChecks, check% htmlContainedPublicationChecks,
+    pins := [check% htmlContainedChecks, check% htmlContainedPublicationChecks, check% htmlContainedSvgColorChecks,
       check% htmlContainedCliChecks, check% htmlContainedCorpusChecks, check% publicationPathChecks,
       thm% HtmlResource.close_covers, thm% HtmlDoc.emitClosed_covers]
     accept := ["capture guards failed on the earlier publisher; publication uses the checked bytes after source files change or disappear",

@@ -92,7 +92,8 @@ import Tests.LinkColor
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
   shellReplyChecks listingProviderChecks publicationPathChecks
-  htmlContainedChecks htmlContainedPublicationChecks htmlContainedCliChecks htmlContainedCorpusChecks
+  htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
+  htmlContainedCliChecks htmlContainedCorpusChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
@@ -147,6 +148,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   outputContractChecks ref
   htmlAssetChecks ref
   htmlContainedPublicationChecks ref
+  htmlContainedSvgColorChecks ref
   htmlContainedCliChecks ref
   htmlContainedCorpusChecks ref
   publicationPathChecks ref

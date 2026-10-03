@@ -3,7 +3,7 @@ import Tests.Support
 
 namespace Tests
 
-open LeanTex.Core
+open LeanTex.Core LeanTex.Cli.Publication
 
 /-- A boundary face is the conversion of captured PDF bytes. A stale
 unkeyed sibling cannot answer for it, and a cache replacement between
