@@ -13342,7 +13342,7 @@ def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
 
 /-- Every inline region a backend sets beside the body — the running head
 and foot, the logo state, the headline band, the corner logos, and each
-style's templates, marker and title-slot parts — as one list, so a walk
+style's templates, author font, marker and title-slot parts — as one list, so a walk
 over "the whole document" is declared once: `foldDoc` reads these,
 `mapDoc` rewrites them, and a resolver and a census cannot disagree on
 what the document is. -/
@@ -13353,7 +13353,7 @@ def furnitureInlines (doc : Doc) : Array (Array Inline) :=
       | none => #[]) ++
     optRegion doc.logoLeft ++ optRegion doc.logoRight ++
     doc.styles.entries.flatMap fun (_, st) =>
-      optRegion st.font ++ optRegion st.marker ++
+      optRegion st.font ++ optRegion st.authorFont ++ optRegion st.marker ++
         st.slots.flatMap fun slot =>
           slot.parts.flatMap fun part => #[part.content] ++ optRegion part.font
 where
@@ -13387,6 +13387,7 @@ def mapDoc (fi : Array Inline → Array Inline) (fb : Array Block → Array Bloc
     styles := { doc.styles with entries := doc.styles.entries.map fun (nm, st) =>
       (nm, { st with
         font := st.font.map fi
+        authorFont := st.authorFont.map fi
         marker := st.marker.map fi
         slots := st.slots.map fun slot =>
           { slot with parts := slot.parts.map fun part =>
