@@ -69,7 +69,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
   let path ← if ← candidate.pathExists then pure candidate else pure (dir / name)
   if ← path.pathExists then
     match ← readSource path.toString with
-    | .error d => return (#[], #[d])
+    | .error d => return (#[], #[{ d with span := some ⟨file, pos⟩ }])
     | .ok bytes =>
       if let some err := Utf8.validate bytes then
         return (#[], #[err.toDiag path.toString])
@@ -136,7 +136,8 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
   if !input && records.isEmpty then return (none, context)
   match depth with
   | 0 =>
-    modify fun log => { log with diags := log.diags.push DriverDiag.inputTooDeep }
+    let d := { DriverDiag.inputTooDeep with span := some ⟨request.file, request.pos⟩ }
+    modify fun log => { log with diags := log.diags.push d }
     return (none, context)
   | depth + 1 =>
     let (sub, diags) ← if !input then pure (style, #[])
@@ -198,7 +199,7 @@ def resolveBibliography (file : String) (doc : Ir.Doc)
   let (doc, applyDiags) := Bib.apply sources doc
   return (doc, diags ++ applyDiags)
 
-/-- The data request a parsed document states (`Data.fileRefs`), fulfilled
+/-- The data request a parsed document states (`Data.fileRefsAt`), fulfilled
 before elaboration — the expansion needs the records where
 `\begin{foreach}` stands, so this is the `resolveBibliography` shape moved
 ahead of `Elab.runRaws`. Each named `.bib` resolves beside the document,
@@ -207,18 +208,18 @@ wanted its records say what stayed unresolved. -/
 def resolveData (file : String) (raws : Array Parse.Raw) :
     IO (Array Parse.Raw × Array Diag) := do
   unless Data.hasData raws do return (raws, #[])
-  let requested := Data.fileRefs raws
+  let requested := Data.fileRefsAt file raws
   let dir := (System.FilePath.mk file).parent.getD "."
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
-  for (src, pos) in requested do
+  for (src, span) in requested do
     let name := Data.sourceName src
     let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
       else dir / name
     if ← path.pathExists then
       sources := sources.push (src, ← IO.FS.readFile path)
     else
-      diags := diags.push (DriverDiag.dataMissing src path.toString (some ⟨file, pos⟩))
+      diags := diags.push (DriverDiag.dataMissing src path.toString (some span))
   let (raws, expandDiags) := Data.expandData file sources raws
   return (raws, diags ++ expandDiags)
 

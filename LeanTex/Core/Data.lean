@@ -15,7 +15,7 @@ functions, no recursion, no indices; expansion is a bounded fold over the
 finite record list, so the designed-terminating property of the language
 survives by construction.
 
-Reading the file is the driver's effect (`fileRefs` is the request value,
+Reading the file is the driver's effect (`fileRefsAt` is the request value,
 the `Ir.bibRefs` shape); this module only ever sees the text. -/
 
 namespace LeanTex.Core.Data
@@ -42,18 +42,24 @@ def dataDecl? (body : Array Raw) : Option (String ⊕ String) :=
       else none
     | _ => none
 
-private def refsList (out : Array (String × Pos)) : List Raw → Array (String × Pos)
+/-- This surface scan pairs a command with its operand and carries the
+input filename across wrappers; an IR leaf fold cannot read those siblings. -/
+private def refsList (file : String) (out : Array (String × Span)) :
+    List Raw → Array (String × Span)
   | [] => out
   | .ctrl "data" pos :: .group body _ :: rest
   | .ctrl "data" pos :: .space :: .group body _ :: rest =>
     match dataDecl? body with
     | some (.inl name) =>
-      let out := if out.any (·.1 == name) then out else out.push (name, pos)
-      refsList out rest
-    | _ => refsList out rest
-  | .group body _ :: rest | .env _ body _ :: rest =>
-    refsList (refsList out body.toList) rest
-  | _ :: rest => refsList out rest
+      let out := if out.any (·.1 == name) then out else out.push (name, ⟨file, pos⟩)
+      refsList file out rest
+    | _ => refsList file out rest
+  | .group body _ :: rest =>
+    refsList file (refsList file out body.toList) rest
+  | .env name body _ :: rest =>
+    let innerFile := (Parse.inputEnvFile? name).getD file
+    refsList file (refsList innerFile out body.toList) rest
+  | _ :: rest => refsList file out rest
 termination_by l => sizeOf l
 decreasing_by
   all_goals simp_wf
@@ -61,13 +67,25 @@ decreasing_by
   all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
 /-- Every `.bib` source the document's `\data` declarations name, in
-document order, deduplicated, each with its declaration site: the request
-value the CLI driver fulfils by reading each file beside the document —
-`Ir.bibRefs`' shape, stated before elaboration because the expansion needs
-the records where `\begin{foreach}` stands. Files are effects, so the core
-never opens one. -/
+first-appearance order, deduplicated, with the complete first declaration
+span. Input wrappers change the filename only within their own contents.
+The driver fulfils these requests before elaboration, where the expansion
+needs the records where `\begin{foreach}` stands. Files are effects, so
+the core never opens one. -/
+def fileRefsAt (file : String) (raws : Array Raw) : Array (String × Span) :=
+  refsList file #[] raws.toList
+
+/-- A file wrapper's requests are exactly its body's requests under the
+included filename, independent of the caller's filename and wrapper position. -/
+theorem fileRefsAt_input_exact (caller file name : String) (body : Array Raw) (pos : Pos)
+    (h : Parse.inputEnvFile? name = some file) :
+    fileRefsAt caller #[.env name body pos] = fileRefsAt file body := by
+  simp [fileRefsAt, refsList, h]
+
+/-- The filename-free view for callers that only load the named sources.
+Diagnostics use `fileRefsAt` with the actual root filename. -/
 def fileRefs (raws : Array Raw) : Array (String × Pos) :=
-  refsList #[] raws.toList
+  (fileRefsAt "" raws).map fun (name, span) => (name, span.pos)
 
 private def hasDataList : List Raw → Bool
   | [] => false
