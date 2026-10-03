@@ -768,6 +768,11 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
         let (res, fromCache) ← decodeImageCached params bytes
         return (.decoded href res none none (some bytes) none, fromCache)
 
+/-- Use the first executed image request only when the producer has no
+location of its own. Missing provenance remains absent. -/
+private def imageDiagAt (imageSpans : Array (String × Span)) (src : String) (d : Diag) : Diag :=
+  { d with span := d.span <|> (imageSpans.find? (·.1 == src)).map (·.2) }
+
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
 decides what each read means (`Image.fulfil`) — an entry with a payload,
@@ -776,9 +781,12 @@ one entry per requested source (`fulfil_covers`) — and every fact a plan
 did not carry is named after it (`Image.lossDiags`, W0603/W0604;
 `plan_losses_accounts` says the ledger is complete). The plan parameters
 are the defaults until a declaration projects them (the profile slices'
-one line). The `Nat` returned is the cache-hit count, for the phase line. -/
+one line). The `Nat` returned is the cache-hit count, for the phase line.
+Image diagnostics inherit the executed request span; located boundary
+refusals keep their own span. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
-    (refused : Array (String × Diag) := #[]) :
+    (refused : Array (String × Diag) := #[])
+    (imageSpans : Array (String × Span) := #[]) :
     IO (Image.Store × Array Diag × Nat) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
@@ -793,6 +801,10 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   for en in store.entries do
     if let some pl := en.info then
       diags := diags ++ Image.lossDiags en.src pl
+  diags := diags.map fun d =>
+    match d.subject with
+    | some src => imageDiagAt imageSpans src d
+    | none => d
   return (store, diags, hits)
 
 /-- PDF sources receive a browser image of their selected page, converted
@@ -809,7 +821,8 @@ def countErrors (diags : Array Diag) : Nat :=
 
 /-- Convert the captured boundary PDF to captured browser SVG. Conversion
 failure retains the existing named fallback; no output path is consulted. -/
-def picsToSvg (pics : Array PicResult) (imgs : Image.Store) :
+def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
+    (imageSpans : Array (String × Span) := #[]) :
     IO (Image.Store × Array Diag × Array String) := do
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
@@ -820,7 +833,7 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store) :
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
     | .error why =>
-      diags := diags.push (DriverDiag.boundarySvgMissing why)
+      diags := diags.push (imageDiagAt imageSpans r.src (DriverDiag.boundarySvgMissing why))
       unconverted := unconverted.push r.src
   return ({ entries }, diags, unconverted)
 
@@ -1077,7 +1090,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1
       let t ← IO.monoMsNow
-      let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused
+      let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused reqSpans.images
       -- The alt judge's picture face, after fulfilment: a picture the
       -- tool failed on ships a placeholder box, not an image, and E0382
       -- has named that loss — one loss, named once.
@@ -1197,7 +1210,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
-        let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs
+        let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs reqSpans.images
         let imgs ← imageBrowserFaces imgs
         let rS ← ui.resolve doc.allow allowAll svgDiags
         fired := fired ++ rS.fired
