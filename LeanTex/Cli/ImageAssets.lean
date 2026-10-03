@@ -12,8 +12,11 @@ open LeanTex.Core
 
 /-- A deliberately narrow support boundary, evaluated over libxml's parsed
 XML, never the source spelling. Only fragment references are supported.
-CSS is plain declarations/rules without functions, escapes or at-rules;
-presentation attributes admit exactly `url(#ASCII-id)`, without paint-server
+CSS is plain declarations/rules without functions, escapes or at-rules.
+Color presentation attributes also admit wholly numeric `rgb()`/`rgba()`
+(CSS Color, numeric RGB notation); their alphabet cannot name a resource. This checks
+resource closure, not the validity of every numeric color spelling. Other
+presentation functions are exactly `url(#ASCII-id)`, without paint-server
 fallback syntax such as `url(#id) red`. Transforms and SMIL timing have their
 own non-resource function syntax. Animated resource/style assignments,
 scripts and foreign objects are refused. This is a refusal boundary, not a
@@ -24,6 +27,15 @@ private def supportedSvg : String :=
     "string-length(normalize-space(.))>6 and " ++
     "translate(substring(normalize-space(.),6,string-length(normalize-space(.))-6)," ++
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-','')='')"
+  let color := "translate(normalize-space(.),'RGBA','rgba')"
+  let channels := "substring-before(substring-after(" ++ color ++ ",'('),')')"
+  let numericColor :=
+    "((local-name()='fill' or local-name()='stroke' or local-name()='color' or " ++
+      "local-name()='stop-color' or local-name()='flood-color' or local-name()='lighting-color') and " ++
+      "(" ++ color ++ "=concat('rgb('," ++ channels ++ ",')') or " ++
+        color ++ "=concat('rgba('," ++ channels ++ ",')')) and " ++
+      "string-length(" ++ channels ++ ")>0 and " ++
+      "translate(" ++ channels ++ ",'0123456789.%eE+-,/ ','')='')"
   let cssSyntax := "(contains(.,'(') or contains(.,'\\') or contains(.,'@'))"
   let unsupported :=
     "//processing-instruction() | " ++
@@ -33,7 +45,7 @@ private def supportedSvg : String :=
     "//*[local-name()='style'][" ++ cssSyntax ++ "] | " ++
     "//@*[not(local-name()='transform' or local-name()='gradientTransform' or " ++
       "local-name()='patternTransform' or local-name()='begin' or local-name()='end')]" ++
-      "[" ++ cssSyntax ++ " and not(" ++ localUrl ++ ")] | " ++
+      "[" ++ cssSyntax ++ " and not(" ++ localUrl ++ " or " ++ numericColor ++ ")] | " ++
     "//@*[local-name()='attributeName'][" ++
       "normalize-space(.)='href' or substring-after(normalize-space(.),':')='href' or " ++
       "normalize-space(.)='src' or substring-after(normalize-space(.),':')='src' or " ++
@@ -203,7 +215,7 @@ private def checkSvgFile (runTool : IO.Process.SpawnArgs → IO IO.Process.Outpu
     | .ok hasDtd => pure hasDtd
   let result ← runChecked runTool "xmllint" (xpathArgs input)
   if result.trimAscii.toString == "false" then
-    throw <| .refused "SVG resource boundary requires fragment-only references and plain CSS; paint servers must be exactly url(#id), without fallback syntax; DTD declarations, scripts, foreign objects, base URIs, CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
+    throw <| .refused "SVG resource boundary requires fragment-only references and plain CSS; color attributes permit numeric rgb()/rgba(), and paint servers must be exactly url(#id) without fallback syntax; DTD declarations, scripts, foreign objects, base URIs, other CSS functions/escapes/at-rules and animated resource/style assignments are unsupported"
   unless result.trimAscii.toString == "true" do
     throw <| .inconclusive "SVG validation received no Boolean result"
   if hasDtd then
