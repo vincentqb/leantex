@@ -1444,35 +1444,71 @@ theorem mem_map_clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 �
   obtain ⟨q, _, rfl⟩ := hp
   exact clampBox_between x0 y0 x1 y1 hw hh q
 
-/-- The arrowhead of `\cancelto`: four strokes long and three wide (the
-rule is the one length every mark counts in), its tip in the mark box's
-top-right corner and its axis on the diagonal; `(tip, one wing, the
-other)`, each vertex clamped into the box so a wing never overprints a
-neighbour. -/
+/-- Axial depth of a cancellation head. Its base is three rule widths
+across and at least four rules behind the tip. At a shallow or steep
+angle that base needs more axial room to fit inside the operand box:
+`depth * 2w ≥ 3rh` and `depth * 2h ≥ 3rw`. Taking the least integer depth
+satisfying those constraints preserves both wings instead of clipping
+one into a bar. The shaft reads this same depth. -/
+def cancelHeadDepth (w h rule : Int) : Int :=
+  max (4 * rule) (max
+    ((3 * rule * h + 2 * max 1 w - 1) / (2 * max 1 w))
+    ((3 * rule * w + 2 * max 1 h - 1) / (2 * max 1 h)))
+
+/-- For positive box dimensions the head has its declared minimum depth
+and sufficient axial room for both perpendicular wings. This constraint
+is independent of angle, font, style, or the target annotation. -/
+theorem cancelHeadDepth_covers (w h rule : Int) (hw : 0 < w) (hh : 0 < h) :
+    4 * rule ≤ cancelHeadDepth w h rule ∧
+    3 * rule * h ≤ cancelHeadDepth w h rule * (2 * w) ∧
+    3 * rule * w ≤ cancelHeadDepth w h rule * (2 * h) := by
+  have ceil_le (n d : Int) (hd : 0 < d) : n ≤ ((n + d - 1) / d) * d := by
+    have he := Int.emod_add_mul_ediv (n + d - 1) d
+    have hm := Int.emod_lt_of_pos (n + d - 1) hd
+    rw [Int.mul_comm]
+    omega
+  have hw' : max 1 w = w := by omega
+  have hh' : max 1 h = h := by omega
+  have hx : (3 * rule * h + 2 * w - 1) / (2 * w) ≤ cancelHeadDepth w h rule := by
+    simp only [cancelHeadDepth, hw', hh']; omega
+  have hy : (3 * rule * w + 2 * h - 1) / (2 * h) ≤ cancelHeadDepth w h rule := by
+    simp only [cancelHeadDepth, hw', hh']; omega
+  refine ⟨by simp only [cancelHeadDepth]; omega, ?_, ?_⟩
+  · exact Int.le_trans (ceil_le _ (2 * w) (by omega))
+      (Int.mul_le_mul_of_nonneg_right hx (by omega))
+  · exact Int.le_trans (ceil_le _ (2 * h) (by omega))
+      (Int.mul_le_mul_of_nonneg_right hy (by omega))
+
+/-- The arrowhead of `\cancelto`: three strokes wide, its depth resolved
+from the diagonal and that width (`cancelHeadDepth`), its tip at the box's
+top-right corner. The clamp remains for degenerate or undersized boxes;
+ordinary heads fit without shaving either perpendicular wing. -/
 def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
-  let bx := x1 - 4 * rule * w / l
-  let by_ := y1 - 4 * rule * h / l
+  let depth := cancelHeadDepth w h rule
+  let bx := x1 - depth * w / l
+  let by_ := y1 - depth * h / l
   (#[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
     (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]).map (clampBox x0 y0 x1 y1)
 
 /-- The arrow's shaft: the rising band from the mark box's bottom-left
 corner to the head's base, cut square there — or nothing, when the box is
-too small for a shaft to stand before the head. Each vertex is clamped into
-the box, as the head's is. -/
+too small for a shaft to stand before the head. Both parts resolve the
+same axial depth; each vertex is clamped into the box. -/
 def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
+  let depth := cancelHeadDepth w h rule
   let dx := min w (rule * l / (2 * h))
   let dy := min h (rule * l / (2 * w))
-  let bx := x1 - 4 * rule * w / l
-  let by_ := y1 - 4 * rule * h / l
+  let bx := x1 - depth * w / l
+  let by_ := y1 - depth * h / l
   let sx := rule * h / (2 * l)
   let sy := rule * w / (2 * l)
-  if (l - 4 * rule) * l ≥ dx * w && (l - 4 * rule) * l ≥ dy * h then
+  if (l - depth) * l ≥ dx * w && (l - depth) * l ≥ dy * h then
     (#[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy),
       (x0, y0 + dy)]).map (clampBox x0 y0 x1 y1)
   else #[]

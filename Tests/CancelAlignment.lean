@@ -119,6 +119,54 @@ def shaftTail (polys : Array (Array (Dim.Sp × Dim.Sp))) :
   let tail := shaft.foldl (fun (x, y) q => (min x q.1, min y q.2)) p
   if shaft.contains tail then some tail else none
 
+/-- A triangular head retains both wings about the shipped shaft's ray.
+The full transverse width is three font rule thicknesses. Symmetry is
+judged across and along the ray: cross-products alone cannot detect a
+wing sliding along the shaft. Each coordinate's division error is below
+one sp, so a wing-to-wing projection errs by at most twice the sum of
+the direction coordinates. A merely nonzero triangle is not enough. -/
+def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
+  match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
+  | .ok tip, some tail, some head =>
+    let dx := tip.1 - tail.1
+    let dy := tip.2 - tail.2
+    let cross := fun p : Int × Int => dx * (p.2 - tip.2) - dy * (p.1 - tip.1)
+    let a := cross head[1]!
+    let b := cross head[2]!
+    let along := dx * (head[1]!.1 - head[2]!.1) + dy * (head[1]!.2 - head[2]!.2)
+    let length := (Nat.sqrt (dx.natAbs ^ 2 + dy.natAbs ^ 2) : Int)
+    let rounding := 2 * (dx.natAbs + dy.natAbs)
+    a > 0 && b < 0 && (a + b).natAbs ≤ rounding && along.natAbs ≤ rounding &&
+      a - b + rounding ≥ 3 * rule * length
+  | _, _, _ => false
+
+/-- Read the head and thickness from actual shipped pages over shallow,
+steep and ordinary operands, all four math styles and both room policies.
+Only nondegenerate operands are used: a zero-area box cannot hold wings. -/
+def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let fonts ← mathSetOf oneFace
+  for (shape, operand) in [("ordinary", "x"), ("wide", "x+x+x+x+x+x"),
+      ("tall", "\\frac{x}{\\frac{x}{x}}") ] do
+    for (style, before, after) in [("text", "$", "$"), ("display", "\\[", "\\]"),
+        ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")] do
+      for thick in [false, true] do
+        for room in [false, true] do
+          let options := (if thick then "thicklines," else "") ++
+            (if room then "makeroom" else "overlap")
+          let (doc, _) := elabStr (dvDoc ("\\usepackage[" ++ options ++ "]{cancel}")
+            (before ++ "u\\cancelto{0}{" ++ operand ++ "}v" ++ after))
+          let out := layoutOf fonts doc
+          let #[line] := bodyLines out | check ref "cancel wings: missing body line" false
+          let #[anchor] := (shippedBodyGlyphs out).filter (·.scalar == '𝑢') |
+            check ref "cancel wings: missing style witness" false
+          let some font := fonts.fonts[anchor.face]? |
+            check ref "cancel wings: missing font" false
+          let some math := font.math | check ref "cancel wings: missing MATH table" false
+          let rule := math.overbarRuleThickness * anchor.size / (font.unitsPerEm : Int) *
+            (if thick then 2 else 1)
+          check ref s!"cancel wings: {shape}/{style}/{options} keeps full symmetric wings"
+            (headHasWings (polygonsAt line) rule)
+
 structure Witness where
   tip : Dim.Sp × Dim.Sp
   tail : Option (Dim.Sp × Dim.Sp)
@@ -648,6 +696,15 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     let high : RoomWitness := { moved with assembly := moved.assembly.map (fun b => b.shift 0 4) }
     check ref "cancel room judge: vertical separation clears neighbours but not overhang"
       (!high.containsInk && high.clearsBefore && high.clearsAfter)
+  let shaft : Array (Int × Int) := #[(0, 0), (3, 0), (323, 236), (317, 244), (0, 4)]
+  let head : Array (Int × Int) := #[(400, 300), (311, 252), (329, 228)]
+  check ref "cancel wing judge: accepts a symmetric head at full rule width"
+    (headHasWings #[shaft, head] 10)
+  for wing in [1, 2] do
+    for (dx, dy) in [(-40, -30), (40, 30)] do
+      let slipped := head.modify wing (fun (x, y) => (x + dx, y + dy))
+      check ref "cancel wing judge: rejects a wing sliding along the shaft"
+        (!headHasWings #[shaft, slipped] 10)
   check ref "cancel alignment judge: an absent head cannot certify alignment"
     (match arrowTip #[] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: a zero-area head cannot certify alignment"
@@ -667,6 +724,7 @@ open CancelAlignment in
 font outlines; no expected offset comes from `Math.cancelGeom`. -/
 def CancelAlignment.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   judgeChecks ref oneFace
+  headWingChecks ref oneFace
   nonpaintingChecks ref oneFace
   nestedMarkChecks ref oneFace
   let fonts ← mathSetOf oneFace
