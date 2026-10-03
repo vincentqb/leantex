@@ -163,13 +163,16 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
     (box.above == 900 && box.below == 300 && box.inkAbove == 900 && box.inkBelow == 300)
 
-/-- Every shipped mark stays inside the ordinary strike's corner-to-corner
-box, on both axes. The control is an actual `Layout.Out` band: its corner
-theorem determines the box independently of the arrow's clamp. Wide and
-tall arrows fail this check with the clamp removed. Zero-area operands,
+/-- Ordinary strikes stay inside the control band's corner-to-corner box;
+arrows stay inside the full `Math.cancelEnvelope`, including perpendicular
+wings beyond that box. The control is a shipped `Layout.Out` band, and the
+following glyph supplies the actual style's font rule. Zero-area operands,
 all four math sizes, both room modes and both rule weights share the same
-judge; `Math.cancelGeom_envelope_between` supplies the universal bound.
-Clearance compares absolute positions after accumulating segment advances. -/
+judge, which rejects a vertex escaping any one edge or a missing mark.
+`Math.cancelGeom_envelope_between` supplies the universal reservation bound.
+Clearance compares absolute positions after accumulating segment advances;
+`CancelAlignment.checks` independently holds the target to its forward ray
+and resolved font gap. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -190,6 +193,12 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let glyphsAt (l : Layout.LineOut) :=
     shippedBodyGlyphs { pages := #[{ lines := #[l] }], diags := #[] }
   let targetGlyphs (l : Layout.LineOut) := (glyphsAt l).filter (·.scalar == '7')
+  let inside (bounds : CancelAlignment.InkBounds)
+      (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+    !polys.isEmpty && polys.all fun pts =>
+      (CancelAlignment.polygonHull pts).any fun mark =>
+        bounds.left ≤ mark.left && mark.right ≤ bounds.right &&
+          bounds.bottom ≤ mark.bottom && mark.top ≤ bounds.top
   -- Outline hulls conservatively enclose ink. Require a positive gap on
   -- either axis against every mark; touching hulls do not count as clear.
   let clearsInk (ink : CancelAlignment.InkBounds)
@@ -227,9 +236,25 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           (bodyLines (layoutOf fonts doc), ds)
         let label := s!"{shape}/{size}/{opts}"
         let (control, _) := build "cancel"
-        let some band := control[0]?.bind (fun l => (polygons l)[0]?) |
+        let some controlLine := control[0]? |
+          t s!"cancel box: {label} ships the control line" false
+          continue
+        let some band := (polygons controlLine)[0]? |
           t s!"cancel box: {label} ships the control band" false
           continue
+        let #[style] := (glyphsAt controlLine).filter (·.scalar == '𝑦') |
+          t s!"cancel box: {label} ships one style witness" false
+          continue
+        let some font := fonts.fonts[style.face]? |
+          t s!"cancel box: {label} resolves the style face" false
+          continue
+        let some math := font.math |
+          t s!"cancel box: {label} has the font's MATH constants" false
+          continue
+        let rule := math.overbarRuleThickness * style.size / (font.unitsPerEm : Int) *
+          (if hasStr opts "thicklines" then 2 else 1)
+        t s!"cancel box: {label} has a positive font rule"
+          (font.unitsPerEm > 0 && rule > 0)
         let some first := band[0]? |
           t s!"cancel box: {label} control band has vertices" false
           continue
@@ -244,9 +269,24 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           let placed := polygonsAt line
           let polys := placed.map (·.2)
           let points := polys.flatten
+          let (left, bottom, right, top) := if cmd == "cancelto{7}" then
+              Math.cancelEnvelope x0 y0 x1 y1 rule
+            else (x0, y0, x1, y1)
+          let bounds : CancelAlignment.InkBounds := { left, bottom, right, top }
           t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
-            (!points.isEmpty && points.all fun (x, y) =>
-              x0 ≤ x && x ≤ x1 && y0 ≤ y && y ≤ y1)
+            (inside bounds polys)
+          -- Mutate actual emitted polygons against the fixed expected box.
+          -- One sp is the coordinate grid, not a perceptual tolerance.
+          for (edge, escaped) in [("left", (left - 1, bottom)),
+              ("right", (right + 1, bottom)), ("bottom", (left, bottom - 1)),
+              ("top", (left, top + 1))] do
+            let mutant := polys.mapIdx fun n pts =>
+              if n == 0 then pts.mapIdx (fun i p => if i == 0 then escaped else p)
+              else pts
+            t s!"cancel box: {label}/{cmd} rejects escape through {edge}"
+              (!inside bounds mutant)
+          t s!"cancel box: {label}/{cmd} rejects missing marks"
+            (!inside bounds #[] && !inside bounds (polys.push #[]))
           t s!"cancel box: {label}/{cmd} keeps its marks and diagonal corners"
             (if cmd == "cancelto{7}" then
               (polys.size == 1 || polys.size == 2) && points.contains (x1, y1)
