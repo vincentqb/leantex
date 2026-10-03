@@ -441,41 +441,51 @@ private def markerColorDecl (c : Ir.Color) (name : Option String) : String :=
   | some n => s!"color: var(--{n}, {cssColor c});"
   | none => s!"color: {cssColor c};"
 
+mutual
+
 /-- The plain text of a marker whose every element is text — anything else
-is not `::marker` content. Explicit arms: a new `Inline` constructor must
-answer here (the obligation table; no wildcard in a backend's IR walk). -/
-private def markerTextInto (acc : String) : List Inline → Option String
-  | [] => some acc
-  | .text s :: rest => markerTextInto (acc ++ s) rest
-  | .math _ _ :: _ => none
-  | .formula _ _ _ :: _ => none
-  | .styled _ _ :: _ => none
-  | .colored _ _ _ :: _ => none
-  | .role _ _ :: _ => none
-  | .link _ _ :: _ => none
-  | .decorated _ _ :: _ => none
-  | .fill :: _ => none
-  | .hspace _ _ :: _ => none
-  | .rule _ _ _ :: _ => none
-  | .strut _ :: _ => none
+is not `::marker` content. Diagnostic locations only group those elements.
+This reader stops at a semantic wrapper, unlike the generic text census.
+Explicit arms: a new `Inline` constructor must answer here. -/
+private def markerTextOne (acc : String) : Inline → Option String
+  | .text s => some (acc ++ s)
+  | .math _ _ => none
+  | .formula _ _ _ => none
+  | .styled _ _ => none
+  | .colored _ _ _ => none
+  | .located _ body => markerTextInto acc body.toList
+  | .role _ _ => none
+  | .link _ _ => none
+  | .decorated _ _ => none
+  | .fill => none
+  | .hspace _ _ => none
+  | .rule _ _ _ => none
+  | .strut _ => none
   -- a text command's italic correction is a kern: no ::marker content
-  | .italicCorr _ :: rest => markerTextInto acc rest
-  | .pageNumber :: _ => none
-  | .pageCount :: _ => none
-  | .linebreak _ :: _ => none
-  | .onSteps _ _ :: _ => none
-  | .altSteps _ _ _ :: _ => none
-  | .image _ _ _ :: _ => none
+  | .italicCorr _ => some acc
+  | .pageNumber => none
+  | .pageCount => none
+  | .linebreak _ => none
+  | .onSteps _ _ => none
+  | .altSteps _ _ _ => none
+  | .image _ _ _ => none
   -- a `content` string cannot carry the icon's accessible name, so an icon
   -- marker is inexpressible here and diagnosed (W0331), never defaulted
-  | .icon _ _ :: _ => none
+  | .icon _ _ => none
   -- an anchor or a reference in a marker has no ::marker expression
-  | .label _ :: _ => none
-  | .ref _ _ _ _ :: _ => none
+  | .label _ => none
+  | .ref _ _ _ _ => none
   -- a citation resolves to links, which no ::marker can carry
-  | .cite _ _ :: _ => none
+  | .cite _ _ => none
   -- a footnote's mark is a link, which no ::marker can carry
-  | .footnote _ _ :: _ => none
+  | .footnote _ _ => none
+
+private def markerTextInto (acc : String) : List Inline → Option String
+  | [] => some acc
+  | x :: rest =>
+    (markerTextOne acc x).bind fun next => markerTextInto next rest
+
+end
 
 mutual
 
@@ -494,6 +504,7 @@ def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     | _ => none
   | .colored c name body =>
     markerCssList scale (decls.push (markerColorDecl c name)) body.toList
+  | .located _ body => markerCssList scale decls body.toList
   -- a role's class has no ::marker expression; the content passes through,
   -- as it does on the PDF marker path
   | .role _ body => markerCssList scale decls body.toList
@@ -534,19 +545,40 @@ end
 
 def markerCss? (m : Array Inline)
     (scale : List (String × Nat) := Ir.sizeScale) : Option MarkerCss :=
-  markerCssList scale #[] m.toList
+  -- Wrapper boundaries cannot change whether a style covers the whole
+  -- marker, or turn several text leaves into an inexpressible mixture.
+  markerCssList scale #[] (Ir.eraseLocationInlines m).toList
 
-private theorem markerTextInto_text (xs : List Inline) :
-    ∀ acc t, markerTextInto acc xs = some t → t = acc ++ Ir.plainTextList xs := by
-  induction xs with
-  | nil =>
-    intro acc t h
+mutual
+
+private theorem markerTextOne_text (x : Inline) (acc t : String)
+    (h : markerTextOne acc x = some t) : t = acc ++ Ir.plainTextOne x := by
+  match x with
+  | .text _ | .italicCorr _ =>
+    simp [markerTextOne] at h
+    simp [← h, Ir.plainTextOne]
+  | .located _ body => exact markerTextInto_text body.toList acc t h
+  | .math _ _ | .formula _ _ _ | .styled _ _
+  | .colored _ _ _ | .role _ _ | .link _ _
+  | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .strut _ | .pageNumber | .pageCount | .linebreak _
+  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+    simp [markerTextOne] at h
+
+private theorem markerTextInto_text (xs : List Inline) (acc t : String)
+    (h : markerTextInto acc xs = some t) : t = acc ++ Ir.plainTextList xs := by
+  match xs with
+  | [] =>
     simp [markerTextInto] at h
     simp [← h, Ir.plainTextList]
-  | cons x rest ih =>
-    intro acc t h
-    cases x <;> simp [markerTextInto] at h <;>
-      (rw [ih _ _ h]; simp [Ir.plainTextList, Ir.plainTextOne, String.append_assoc])
+  | x :: rest =>
+    simp only [markerTextInto, Option.bind_eq_some_iff] at h
+    obtain ⟨next, hb, hr⟩ := h
+    rw [markerTextInto_text rest next t hr, markerTextOne_text x acc next hb]
+    simp [Ir.plainTextList, String.append_assoc]
+
+end
 
 private theorem markerCorrOne_text (x : Inline) (h : markerCorr x = true) :
     Ir.plainTextOne x = "" := by
@@ -590,6 +622,10 @@ theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
+  | .located _ body =>
+    rw [markerCssOne] at h
+    rw [Ir.plainTextOne]
+    exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
@@ -626,8 +662,11 @@ end
 
 theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
     (scale : List (String × Nat) := Ir.sizeScale)
-    (h : markerCss? m scale = some r) : r.text = Ir.plainText m :=
-  Ir.plainText.eq_def m ▸ markerCssList_text scale #[] m.toList r h
+    (h : markerCss? m scale = some r) : r.text = Ir.plainText m := by
+  calc
+    r.text = Ir.plainText (Ir.eraseLocationInlines m) :=
+      markerCssList_text scale #[] (Ir.eraseLocationInlines m).toList r h
+    _ = Ir.plainText m := Ir.eraseLocationInlines_text m
 
 /-- A CSS string value: the two characters that could end the string or
 start an escape are escaped (CSS Syntax 3 §4.3.7), so a declared marker's
@@ -5059,6 +5098,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       | some n => s!"color: var(--{n}, {cssColor c})"
       | none => s!"color: {cssColor c}"
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) #[("style", value)])
+  | .located _ body => inlineNodesInto cfg acc body.toList
   | .link url body =>
     acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
@@ -5192,7 +5232,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
     found || readsInlineMeasure height || readsInlineMeasure raise
   | .image _ size _ => found || size.height.any fun l =>
     readsInlineMeasure l.value && !l.value.anyRef (· == .textHeight)
-  | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .role _ _
+  | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .located _ _ | .role _ _
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _
@@ -6069,6 +6109,7 @@ def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[paint])
   | .role n body =>
     acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
+  | .located _ body => labelNodesList f acc body.toList
   | .italicCorr _ => acc
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
@@ -7623,7 +7664,11 @@ def emitTree (cfg : Config) (doc : Doc) :
   let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
     |>.map (·.family) |>.getD "math face"
   let (doc, diags) := Ir.resolveMathAlphas coverage family doc
-  let (head, body, backendDiags) := emitTreeCore cfg doc
+  -- Rendering reads the canonical source-free shape: locations must not
+  -- hide a display formula, a description label, or a flex-row separator
+  -- from the backend's structural classifiers. The caller's spanned IR
+  -- remains available for diagnostics.
+  let (head, body, backendDiags) := emitTreeCore cfg (Ir.eraseLocations doc)
   (head, body, diags ++ backendDiags)
 
 /-- Both tree projections read the IR resolver's one fixed point. -/
