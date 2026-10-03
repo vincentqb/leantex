@@ -3084,6 +3084,10 @@ inductive Inline where
   /-- `name` is the palette entry this came from, when it had one, so the
   HTML backend can emit `var(--name)` and let a host page override it. -/
   | colored (color : Color) (name : Option String) (body : Array Inline)
+  /-- Diagnostic provenance only. Every semantic reading traverses `body`
+  unchanged; the span neither styles content nor adds a semantic leaf.
+  Source-free compilation removes this wrapper with `eraseLocations`. -/
+  | located (span : Span) (body : Array Inline)
   /-- An authored role: the expansion of a document-defined command with at
   least one parameter (`\muted{...}` under `\define \muted(word: content)`),
   wrapped so the name survives into the artifact as an addressable
@@ -5042,6 +5046,9 @@ class and the markdown fence's info string both project (`htmlClass`,
 classes, assigned once during elaboration; both backends consume the same
 segments. A bare `{verbatim}` is the default value everywhere. -/
 structure ListingSpec where
+  /-- Authentic source start for diagnostics on listing lines and tokens.
+  It does not participate in highlighting, sizing, or backend emission. -/
+  source : Option Span := none
   caption : Option (Nat × Array Inline) := none
   numbers : Bool := false
   language : Option ListingLang := none
