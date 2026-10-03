@@ -213,33 +213,45 @@ private def attrRequests (tag : String) (attrs : Array (String × String)) : Arr
 
 mutual
   /-- A typed artifact walk, not an IR walk: declarations and nested children
-  contribute to the same dependency list, including hidden/media-selected nodes. -/
-  def nodeRequests (acc : Array Request) : Html.Node → Array Request
+  contribute to the same dependency list, including hidden/media-selected nodes.
+  Raw payloads are checked only in HTML parsing contexts. SVG/MathML, title
+  RCDATA, and discarded void children do not have the raw-text semantics this
+  projection relies on. The refusal latches through their whole subtree,
+  conservatively including foreign-content integration points. -/
+  def nodeRequests (rawTextAllowed : Bool) (acc : Array Request) : Html.Node → Array Request
     | .text _ => acc
     | .style css =>
-      let refs := cssRequests css
-      acc ++ refs
+      if !rawTextAllowed then
+        acc.push (.refused "raw HTML style is inside an unsupported parsing context")
+      else
+        let refs := cssRequests css
+        acc ++ refs
     | .script attrs js =>
-      let acc := acc ++ attrRequests "script" attrs
-      let acc := if (attrs.any fun a => a.1.toLower == "src") ||
-          (js.toLower.splitOn "</script").length > 1 then
-        acc.push (.refused "a script carries a source or raw-text terminator") else acc
-      if attr attrs "type" == "application/ld+json" then acc
-      else acc.push (.script js)
+      if !rawTextAllowed then
+        acc.push (.refused "raw HTML script is inside an unsupported parsing context")
+      else
+        let acc := acc ++ attrRequests "script" attrs
+        let acc := if (attrs.any fun a => a.1.toLower == "src") ||
+            (js.toLower.splitOn "</script").length > 1 then
+          acc.push (.refused "a script carries a source or raw-text terminator") else acc
+        if attr attrs "type" == "application/ld+json" then acc
+        else acc.push (.script js)
     | .elem tag attrs kids =>
       let tag := tag.toLower
       let acc := acc ++ attrRequests tag attrs
       let acc := if passiveTag tag then acc else
         acc.push (.refused ("unsupported active HTML element: " ++ tag))
-      listRequests acc kids.toList
+      let rawTextAllowed := rawTextAllowed && passiveTag tag &&
+        !["svg", "math", "title"].contains tag && !Html.voidTags.contains tag
+      listRequests rawTextAllowed acc kids.toList
 
-  def listRequests (acc : Array Request) : List Html.Node → Array Request
+  def listRequests (rawTextAllowed : Bool) (acc : Array Request) : List Html.Node → Array Request
     | [] => acc
-    | node :: rest => listRequests (nodeRequests acc node) rest
+    | node :: rest => listRequests rawTextAllowed (nodeRequests rawTextAllowed acc node) rest
 end
 
 def requests (head body : Array Html.Node) : Array Request :=
-  listRequests (listRequests #[] head.toList) body.toList
+  listRequests true (listRequests true #[] head.toList) body.toList
 
 def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) : Request → Bool
@@ -248,6 +260,21 @@ def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
       !value.toList.any Char.isWhitespace
   | .script value => !deckScript.isEmpty && value == deckScript
   | .refused _ => false
+
+/-- Artifact-specific: no resource evidence can certify a raw style in a
+context where the dependency projection does not model its parsing. -/
+theorem style_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+    (deckScript : String) (acc : Array Request) (css : String) :
+    (nodeRequests false acc (.style css)).all (resolves resources svgChecked deckScript) = false := by
+  simp [nodeRequests, resolves]
+
+/-- The same context refusal holds for every script payload and MIME type,
+including an otherwise admitted deck script or inert JSON data block. -/
+theorem script_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+    (deckScript : String) (acc : Array Request) (attrs : Array (String × String)) (js : String) :
+    (nodeRequests false acc (.script attrs js)).all
+      (resolves resources svgChecked deckScript) = false := by
+  simp [nodeRequests, resolves]
 
 /-- Publication owns this checked tree. The constructor owes the computed
 closure check, not a claim about a different tree or a sidecar manifest. -/
