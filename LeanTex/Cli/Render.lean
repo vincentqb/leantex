@@ -13,7 +13,7 @@ private def severityColor : Severity → String
   | .note => "1;36"
 
 /-- Keep a diagnostic's continuations attached to its header. A filename
-uses a literal newline escape; message/help use indented continuation lines.
+and trigger use literal newline escapes; other fields use indented continuations.
 Terminal controls are data, including an escape supplied by an external tool. -/
 private def humanText (newline : String) (s : String) : String :=
   s.foldl (init := "") fun acc c =>
@@ -21,6 +21,8 @@ private def humanText (newline : String) (s : String) : String :=
     | '\n' => acc ++ newline
     | '\r' => acc ++ "\\r"
     | '\t' => acc ++ "\\t"
+    | '\u2028' => acc ++ "\\u2028"
+    | '\u2029' => acc ++ "\\u2029"
     | c =>
       if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
         let hex := String.ofList (Nat.toDigits 16 c.toNat)
@@ -42,19 +44,35 @@ this returns no final newline; the CLI sink supplies exactly one. -/
 def human (color : Bool) (d : Diag) : String :=
   let head := sgr color (severityColor d.severity)
     s!"{d.severity.label.capitalize} - {d.kind.loss.label.capitalize} [{d.code}]"
+  let scope := match d.output with
+    | some output => s!" ({output.label.toUpper})"
+    | none => ""
   let location := match d.span with
     | some sp => " - " ++ sgr color "1;34"
         s!"{humanText "\\n" sp.file}:{sp.pos.line}:{sp.pos.col}"
     | none => ""
+  let trigger := match d.trigger with
+    | some text => if text.isEmpty then "" else " - " ++ humanText "\\n" text
+    | none => ""
   -- The first carrier of a censused loss keeps its total; later sites
   -- retain their existing note/verbosity policy at the typed CLI sink.
   let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
-  let base := head ++ location ++ " - " ++
-    humanText "\n  " (d.message.replace "\r\n" "\n") ++ count
-  match d.help with
-  | some h => base ++ "\n  " ++ sgr color "1" "help:" ++ " " ++
-      humanText "\n    " (h.replace "\r\n" "\n")
-  | none => base
+  let reason := if d.message.isEmpty then "" else
+    "\n  " ++ humanText "\n  " (d.message.replace "\r\n" "\n")
+  let recovery := match d.recovery with
+    | none => ""
+    | some .ignored => "\n  ignored"
+    | some .skipped => "\n  skipped"
+    | some (.replacedBy text) =>
+        if text.isEmpty then "\n  replaced" else
+          "\n  " ++ sgr color "1" "replaced by:" ++ " " ++
+            humanText "\n    " (text.replace "\r\n" "\n")
+  let suggestion := match d.help with
+    | some text => if text.isEmpty then "" else
+        "\n  " ++ sgr color "1" "suggestion:" ++ " " ++
+          humanText "\n    " (text.replace "\r\n" "\n")
+    | none => ""
+  head ++ scope ++ location ++ trigger ++ count ++ reason ++ recovery ++ suggestion
 
 def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
   if errors == 0 then
@@ -92,8 +110,10 @@ private def jsonEscape (s : String) : String :=
     | '\n' => acc ++ "\\n"
     | '\r' => acc ++ "\\r"
     | '\t' => acc ++ "\\t"
+    | '\u2028' => acc ++ "\\u2028"
+    | '\u2029' => acc ++ "\\u2029"
     | c =>
-      if c.toNat < 0x20 then
+      if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
         let hex := "0123456789abcdef".toList
         acc ++ "\\u00" ++ String.ofList [hex[c.toNat >>> 4]!, hex[c.toNat &&& 0xF]!]
       else
@@ -103,6 +123,12 @@ private def jstr (s : String) : String := "\"" ++ jsonEscape s ++ "\""
 
 private def obj (fields : List (String × String)) : String :=
   "{" ++ String.intercalate "," (fields.map fun (k, v) => jstr k ++ ":" ++ v) ++ "}"
+
+private def recoveryJson : Diag.Recovery → String
+  | .ignored => obj [("kind", jstr "ignored")]
+  | .skipped => obj [("kind", jstr "skipped")]
+  | .replacedBy replacement =>
+      obj [("kind", jstr "replacedBy"), ("replacement", jstr replacement)]
 
 /-- One diagnostic as a JSON line. `loss` is the declared class, so a reader
 bands without a table and without trusting `severity`, which demotion
@@ -125,6 +151,15 @@ def porcelainDiag (d : Diag) : String :=
     | some s => all ++ [("subject", jstr s)]
     | none => all
   let all := if d.sites == 1 then all else all ++ [("sites", toString d.sites)]
+  let all := match d.trigger with
+    | some text => all ++ [("trigger", jstr text)]
+    | none => all
+  let all := match d.recovery with
+    | some recovery => all ++ [("recovery", recoveryJson recovery)]
+    | none => all
+  let all := match d.output with
+    | some output => all ++ [("output", jstr output.label)]
+    | none => all
   obj all
 
 def porcelainPhase (name detail : String) (ms : Nat) : String :=
