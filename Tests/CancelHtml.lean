@@ -1,4 +1,6 @@
 import LeanTex.Core.MathMl
+import LeanTex.Core.HtmlDoc
+import LeanTex.Core.Decl
 
 open LeanTex.Core LeanTex.Core.Math
 
@@ -75,6 +77,160 @@ private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
     cancelCss "clip-path" head == "polygon(0 50%, 100% 0, 50% 100%)" &&
     !cancelHasStr css "offset-" && !cancelHasStr css "transform" &&
     (cancelKids head).isEmpty
+
+/-- Read a CSS length back into the provider's units, rounding only after
+parsing the file's decimal. Unitless zero is legal; missing or foreign
+units are not a measurement. -/
+private def cancelReadEm (em : Int) (s : String) : Option Int := do
+  if s == "0" then return 0
+  if !s.endsWith "em" then none else do
+    let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
+    return (n * em + (d : Int) / 2) / d
+
+private def cancelTag : Html.Node → String
+  | .elem tag _ _ => tag
+  | _ => ""
+
+/-- Mutations change the emitted artifact before its coordinates are read,
+so they exercise the parser and judge together. -/
+private def cancelSetAttr (key value : String) : Html.Node → Html.Node
+  | .elem tag attrs kids => .elem tag ((attrs.filter (·.1 != key)).push (key, value)) kids
+  | other => other
+
+private def cancelSetChild (i : Nat) (child : Html.Node) : Html.Node → Html.Node
+  | .elem tag attrs kids => .elem tag attrs (kids.set! i child)
+  | other => other
+
+mutual
+private def cancelFind (tag : String) (acc : Array Html.Node) : Html.Node → Array Html.Node
+  | .elem name attrs kids =>
+    cancelFindList tag (if name == tag then acc.push (.elem name attrs kids) else acc) kids.toList
+  | _ => acc
+
+private def cancelFindList (tag : String) (acc : Array Html.Node) :
+    List Html.Node → Array Html.Node
+  | [] => acc
+  | n :: ns => cancelFindList tag (cancelFind tag acc n) ns
+end
+
+/-- Coordinates read from the emitted SVG viewport and the actual native
+MathML placement boxes. The SVG's downward y is mapped to the parent
+baseline; changing a viewBox, viewport, or offset changes this reading. -/
+private structure CancelHtmlRead where
+  width : Int
+  top : Int
+  bot : Int
+  body : Int × Int
+  value : Int × Int
+  polys : Array (Array (Int × Int))
+  target : Html.Node
+  svg : Html.Node
+
+private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := do
+  if cancelTag node != "mpadded" || cancelCss "position" node != "relative" then none else do
+    let width ← cancelReadEm em (cancelAttr "width" node)
+    let top ← cancelReadEm em (cancelAttr "height" node)
+    let depth ← cancelReadEm em (cancelAttr "depth" node)
+    let b ← (cancelKids node)[0]?
+    let v ← (cancelKids node)[1]?
+    if cancelTag b != "mpadded" || cancelTag v != "mpadded" ||
+        (MathMl.nodeChars #[] b) != #['x'] ||
+        (MathMl.nodeChars #[] v) != #['7'] then none else do
+      if [b, v].any (fun n => cancelAttr "width" n != "0" ||
+          cancelAttr "height" n != "0" || cancelAttr "depth" n != "0") then none else do
+        let bx ← cancelReadEm em (cancelAttr "lspace" b)
+        let by_ ← cancelReadEm em (cancelAttr "voffset" b)
+        let vx ← cancelReadEm em (cancelAttr "lspace" v)
+        let vy ← cancelReadEm em (cancelAttr "voffset" v)
+        let target ← (cancelKids v)[0]?
+        let svgs := cancelFind "svg" #[] node
+        if svgs.size != 1 then none else do
+          let svg ← svgs[0]?
+          if cancelCss "position" svg != "absolute" ||
+              cancelCss "overflow" svg != "visible" ||
+              cancelAttr "preserveAspectRatio" svg != "none" then none else do
+            let sx ← cancelReadEm em (cancelCss "left" svg)
+            let sy ← cancelReadEm em (cancelCss "top" svg)
+            let sw ← cancelReadEm em (cancelCss "width" svg)
+            let sh ← cancelReadEm em (cancelCss "height" svg)
+            let vb ← ((cancelAttr "viewBox" svg).splitOn " ").mapM String.toInt?
+            match vb with
+            | [x0, y0, w, h] =>
+              if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 then none else do
+                let polys ← (cancelKids svg).mapM fun poly => do
+                  if cancelTag poly != "polygon" || !(cancelKids poly).isEmpty then none else do
+                    let pts ← ((cancelAttr "points" poly).splitOn " ").mapM fun p => do
+                      match p.splitOn "," with
+                      | [xs, ys] =>
+                        let x ← xs.toInt?
+                        let y ← ys.toInt?
+                        return (sx + (x - x0) * sw / w, top - sy - (y - y0) * sh / h)
+                      | _ => none
+                    return pts.toArray
+                return {
+                  width, top, bot := -depth, body := (bx, by_), value := (vx, vy)
+                  polys, target, svg }
+            | _ => none
+
+/-- Six decimal em serialization and this reader's nearest-unit rounding
+can each lose half a provider unit. This is arithmetic slack, not a
+perceptual alignment allowance. -/
+private def cancelEpsilon (em : Int) : Int := (em + 1999999) / 2000000 + 1
+
+private def cancelNear (eps a b : Int) : Bool := (a - b).natAbs ≤ eps.toNat
+
+/-- Source parity is a projection check: compare the points actually
+mapped by SVG with the shared geometry, after the one common room
+translation read from the operand. It does not certify the geometry
+formula; the independent ray and containment checks below judge that
+projection's attachment and bounds. -/
+private def cancelProjection (em : Int) (i : CancelIn) (room : Bool)
+    (r : CancelHtmlRead) : Bool :=
+  let g := Math.cancelGeom .to room i
+  let pad := r.body.1 - g.shift
+  let eps := cancelEpsilon em
+  r.polys.size == g.polys.size &&
+    (List.zip r.polys.toList g.polys.toList).all (fun (got, want) =>
+      got.size == want.size &&
+      (List.zip got.toList want.toList).all (fun (p, q) =>
+        cancelNear eps p.1 (q.1 + pad) && cancelNear eps p.2 q.2)) &&
+    cancelNear eps r.body.2 0 &&
+    cancelNear eps r.value.1 (g.valueX + pad) && cancelNear eps r.value.2 g.valueY
+
+private def cancelRay (em : Int) (i : CancelIn) (r : CancelHtmlRead) : Bool := Id.run do
+  let some shaft := r.polys[0]? | return false
+  let some head := r.polys.back? | return false
+  let some tail := shaft[0]? | return false
+  let some tip := head[0]? | return false
+  let dx := tip.1 - tail.1
+  let dy := tip.2 - tail.2
+  let cx := 2 * r.value.1 + i.vleft + i.vright - 2 * tip.1
+  let cy := 2 * r.value.2 + i.vbot + i.vtop - 2 * tip.2
+  let eps := cancelEpsilon em
+  -- The direction and centre both contain serialized coordinates. Bound
+  -- their propagated cross-product error rather than choosing a slope band.
+  let bound := max dx dy + eps *
+    (4 * (dx.natAbs + dy.natAbs : Nat) + 2 * (cx.natAbs + cy.natAbs : Nat))
+  return head.size == 3 && dx > 0 && dy > 0 &&
+    (dx * cy - dy * cx).natAbs ≤ bound.toNat &&
+    dx * cx + dy * cy > 0 &&
+    (r.value.1 + i.vleft + 2 * eps ≥ tip.1 + i.gap ||
+      r.value.2 + i.vbot + 2 * eps ≥ tip.2 + i.gap)
+
+private def cancelContained (metric : CancelMetric) (room : Bool)
+    (r : CancelHtmlRead) : Bool :=
+  let i := metric.input
+  let eps := cancelEpsilon metric.em
+  let points := r.polys.foldl (· ++ ·) #[]
+  let points := points ++ #[(r.body.1, i.bot), (r.body.1 + i.w, i.top),
+    (r.body.1 + metric.bodyLeft, i.bot), (r.body.1 + metric.bodyRight, i.top),
+    (r.value.1 + i.vleft, r.value.2 + i.vbot),
+    (r.value.1 + i.vright, r.value.2 + i.vtop),
+    (r.value.1, r.value.2), (r.value.1 + i.vw, r.value.2)]
+  points.all (fun (x, y) =>
+    y + eps ≥ r.bot && y - eps ≤ r.top &&
+      (!room || (x + eps ≥ 0 && x - eps ≤ r.width))) &&
+    (room || (cancelNear eps r.width (max 0 i.w) && cancelNear eps r.body.1 0))
 
 /-- Room allocation cannot change a cancellation target's font-size level.
 The expected level comes from the same IR style rule the PDF layout reads.
@@ -162,3 +318,158 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"cancel HTML: {repr mark}/room={room} thicklines changes the painted band"
         (cancelAttr "style" (boxOf mark (emit mark room true)) !=
           cancelAttr "style" (boxOf mark (emit mark room false)))
+
+  -- Invented, asymmetric target ink: its baseline and advance are neither
+  -- its ink centre nor its near edge. The callback is synthetic; the
+  -- separate shared-provider checks establish what real font ink supplies.
+  let input : CancelIn := {
+    rule := 28, gap := 85, w := 1000, top := 710, bot := -190
+    vw := 610, vleft := -35, vright := 540, vtop := 370, vbot := -120, space := 45 }
+  for em in [1000, 655360] do
+    let metric : CancelMetric := { em, input, bodyLeft := -20, bodyRight := 1030 }
+    for room in [false, true] do
+      for st in allStyles do
+        for size in [CancelSize.same, .step, .sup] do
+          let spec : CancelSpec := { room, size }
+          let mk : MathMl.Marks :=
+            { style := st, scales := { script := 73, scriptscript := 47 }
+              metric := fun s sp b v =>
+                if s == st && sp == spec && b == one 'x' && v == one '7' then
+                  some metric else none }
+          let node := MathMl.nucNode mk (st.rank == 3) .ord
+            (.cancel .to spec (one '7') (one 'x'))
+          let label := s!"{em}/{repr st}/{repr size}/room={room}"
+          let read := cancelRead em node
+          t s!"cancel HTML measured {label}: emitted polygons and placements are readable"
+            read.isSome
+          if let some r := read then
+            t s!"cancel HTML measured {label}: SVG mapping projects shared geometry"
+              (cancelProjection em input room r)
+            t s!"cancel HTML measured {label}: target ink centre follows the emitted ray"
+              (cancelRay em input r)
+            t s!"cancel HTML measured {label}: emitted room contains the measured reach"
+              (cancelContained metric room r)
+            let ts := spec.size.style st
+            let relative := cancelReadEm (Math.sizeFor mk.scales 100 st)
+              (cancelCss "font-size" r.target)
+            t s!"cancel HTML measured {label}: target explicitly sets its size and depth once"
+              (cancelAttr "scriptlevel" r.target == "+0" &&
+                cancelCss "math-depth" r.target == toString (cancelStyleDepth ts) &&
+                relative == some (Math.sizeFor mk.scales 100 ts) &&
+                (cancelFind "msup" #[] node).isEmpty)
+            let a := HtmlDoc.a11yFacts false false #[node]
+            t s!"cancel HTML measured {label}: native text stays visible; SVG is decorative"
+              (MathMl.nodeChars #[] node == #['x', '7'] &&
+                cancelAttr "aria-hidden" node != "true" &&
+                cancelAttr "aria-hidden" r.target != "true" &&
+                cancelAttr "aria-hidden" r.svg == "true" &&
+                cancelAttr "focusable" r.svg == "false" &&
+                a.svgsUnnamed == 0 && a.hiddenTabStops == 0)
+            t s!"cancel HTML measured {label}: ray judge rejects a lowered target"
+              (let value := cancelSetAttr "voffset"
+                  (MathMl.measuredEm (r.value.2 - 200) em) (cancelKids node)[1]!
+               let bad := cancelRead em (cancelSetChild 1 value node)
+               bad.isSome && !(bad.any (cancelRay em input)))
+            t s!"cancel HTML measured {label}: bounds judge rejects clipped height"
+              (let bad := cancelRead em (cancelSetAttr "height" "0" node)
+               bad.isSome && !(bad.any (cancelContained metric room)))
+            let svg := cancelSetAttr "viewBox" s!"0 0 {em} {em}" r.svg
+            let overlay := MathMl.cancelAt em 0 0 (.elem "mtext" #[] #[svg])
+            t s!"cancel HTML measured {label}: parity judge rejects a changed SVG origin"
+              (let bad := cancelRead em (cancelSetChild 2 overlay node)
+               bad.isSome && !(bad.any (cancelProjection em input room)))
+
+  -- Trailing negative mu can leave the operand's advance far inside its
+  -- visible glyph hull. Both its left overhang and right ink must reserve
+  -- room, even when the arrow and value fit well inside that hull.
+  let metric : CancelMetric := {
+    em := 1000, input := { input with w := 120 }, bodyLeft := -2300, bodyRight := 5100 }
+  for room in [false, true] do
+    let mk : MathMl.Marks := { metric := fun _ _ _ _ => some metric }
+    let node := MathMl.nucNode mk false .ord
+      (.cancel .to { room } (one '7') (one 'x'))
+    t s!"cancel HTML body ink overhang/room={room}: measured hull is reserved"
+      ((cancelRead metric.em node).any fun r =>
+        cancelContained metric room r &&
+          (!room || (cancelNear 2 (r.body.1 + metric.bodyLeft) 0 &&
+            cancelNear 2 r.width (metric.bodyRight - metric.bodyLeft))))
+
+  for mu in [-12, -3, 0, 3, 18] do
+    let node := MathMl.itemNode {} false (.space mu)
+    let width := cancelReadEm 1800000 (cancelAttr "width" node)
+    let margin := if mu < 0 then
+        cancelReadEm 1800000 (cancelCss "margin-inline-end" node)
+      else some 0
+    t s!"cancel HTML signed mu {mu}: emitted advance keeps sign and precision"
+      (cancelTag node == "mspace" && (cancelKids node).isEmpty &&
+        width.isSome && margin.isSome &&
+        cancelNear 1 (width.getD 0 + margin.getD 0) (mu * 100000) &&
+        (mu ≥ 0 || width == some 0))
+
+  let spec : CancelSpec := {}
+  let cn : MNucleus := .cancel .to spec (one '7') (one 'x')
+  let cell : MList := .cons (.atom .ord cn .nil .nil false) .nil
+  let rows : MRows := .cons (.cons cell .nil) .nil
+  let accepts (st : MathStyle) : MathMl.Marks := {
+    metric := fun s sp b v =>
+      if s == st && sp == spec && b == one 'x' && v == one '7' then some metric else none }
+  for st in allStyles do
+    let contexts : List (String × MathStyle × MItem) := [
+      ("sup", st.sup, .atom .ord (.sym 'z') cell .nil false),
+      ("sub", st.sub, .atom .ord (.sym 'z') .nil cell false),
+      ("num", st.fracNum, .atom .ord (.frac {} cell (one 'z')) .nil .nil false),
+      ("den", st.fracDen, .atom .ord (.frac {} (one 'z') cell) .nil .nil false),
+      ("radicand", st.cramp, .atom .ord (.rad .nil cell) .nil .nil false),
+      ("degree", .scriptscript st.cramped,
+        .atom .ord (.rad cell (one 'z')) .nil .nil false),
+      ("accent", st.cramp, .atom .ord (.accent '^' false cell) .nil .nil false),
+      ("smallmatrix", .script false, .atom .ord (.grid .small rows) .nil .nil false),
+      ("align", .display false, .atom .ord (.grid .align rows) .nil .nil false),
+      ("array", if st.rank == 3 then .text st.cramped else st,
+        .atom .ord (.grid (.array #[.center] 1000) rows) .nil .nil false)]
+    for (label, expected, item) in contexts do
+      let mk := { accepts expected with style := st }
+      t s!"cancel HTML style callback {repr st}/{label}: exact context and arguments"
+        ((cancelFind "svg" #[] (MathMl.itemNode mk (st.rank == 3) item)).size == 1)
+    for display in [false, true] do
+      let expected := if display then MathStyle.display false else .text false
+      t s!"cancel HTML formula seeds {display} independently of inherited {repr st}"
+        ((cancelFind "svg" #[] (MathMl.formula display #[] cell
+          { accepts expected with style := st })).size == 1)
+
+  for em in [0, -1] do
+    let mk : MathMl.Marks := { metric := fun _ _ _ _ => some { metric with em } }
+    let node := MathMl.nucNode mk false .ord cn
+    t s!"cancel HTML nonpositive em {em}: readable explicitly unmeasured fallback"
+      (cancelAttr "data-cancel-metric" node == "unmeasured" &&
+        (cancelFind "svg" #[] node).isEmpty &&
+        MathMl.nodeChars #[] node == #['x', '7'])
+
+  let size : Dim.SymGlue := { width := { sp := 24 * 65536 } }
+  let leading : Dim.SymGlue := { width := { sp := 28 * 65536 } }
+  let sized := Ir.Style.fontSize (.lit size) (.lit leading)
+  let role := Ir.titlePartRole 0 0
+  let part : Ir.TitlePart := {
+    datum := none, size := some size, leading := some leading }
+  let styles : Ir.Styles := { entries := #[("titlepage", { slots := #[{ parts := #[part] }] })] }
+  let formula : Ir.Inline := .formula false "" cell
+  let history := #[Ir.Style.italic]
+  for (name, content, expected) in
+      [("styled", Ir.Inline.styled .sans #[.styled sized #[formula]], history ++ #[.sans, sized]),
+       ("title role", Ir.Inline.role role #[.styled .sans #[formula]], history ++ #[sized, .sans]),
+       ("ordinary role", Ir.Inline.role "test" #[formula], history)] do
+    let cfg : HtmlDoc.Config := {
+      styles, mathStyles := history
+      cancelMetric := fun ss st sp b v =>
+        if ss == expected then (accepts (.text false)).metric st sp b v else none }
+    t s!"cancel HTML {name}: provider receives ordered ambient style history"
+      ((cancelFind "svg" #[] (HtmlDoc.blockNode cfg (.para #[content]))).size == 1)
+  let font : Font.Font := { (default : Font.Font) with
+    unitsPerEm := 1000
+    math := some { (default : Font.MathConsts) with scales := { script := 73, scriptscript := 47 } } }
+  let cfg : HtmlDoc.Config := {
+    fonts := some { fonts := #[font], math := some 0 }
+    cancelMetric := fun _ _ _ _ _ => some metric }
+  t "cancel HTML font MATH scales and metric callback both reach the formula"
+    ((HtmlDoc.mathMarks cfg).scales == { script := 73, scriptscript := 47 } &&
+      ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome)

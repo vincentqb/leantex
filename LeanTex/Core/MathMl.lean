@@ -39,18 +39,22 @@ def leafTag (cls : MathClass) (c : Char) : String :=
   | .op | .bin | .rel | .opening | .closing | .punct => "mo"
   | .ord | .inner => if c.isDigit then "mn" else "mi"
 
-/-- An `mspace` width: mu over 18ths of an em (TeXbook p. 168), printed in
-milli-em. The width attribute is a presentational hint whose negative
-values are invalid CSS (MathML Core §3.2.5), so `\!`'s negative kern
-declares the honest floor 0 instead of an ignored attribute. -/
-def muWidth (mu : Int) : String :=
-  let m := max mu 0 * 1000 / 18
-  let whole := m / 1000
-  let frac := (m % 1000).toNat
-  if frac == 0 then s!"{whole}em"
-  else
-    let fs := toString frac
-    s!"{whole}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
+/-- A measured coordinate divided by its provider's em. Six decimal places
+bound serialization error by half a millionth of that em; the integer SVG
+points themselves lose no precision. This is decimal serialization, not a
+font-size or attachment constant. -/
+def measuredEm (n em : Int) : String :=
+  let d := (max 1 em).toNat
+  let m := (n.natAbs * 1000000 + d / 2) / d
+  let fs := toString (m % 1000000)
+  (if n < 0 && m != 0 then "-" else "") ++
+    s!"{m / 1000000}." ++ "".pushn '0' (6 - fs.length) ++ fs ++ "em"
+
+/-- Signed mu over 18ths of the current em (TeXbook p. 168).
+Negative spacing is emitted as an inline margin: MathML Core §3.2.5's
+width hint rejects negative values, whereas CSS margins preserve the
+following glyph displacement and the row's advance. -/
+def muWidth (mu : Int) : String := measuredEm mu 18
 
 /-- The padding a stretched array's cells add above and below, so its rows
 stand `\arraystretch` times the one-baseline pitch apart: half the stretch
@@ -119,6 +123,15 @@ def fracKids (disp : Bool) (spec : FracSpec) (bar : Html.Node) : Array Html.Node
   | some c => (opened.push bar).push (sizedMo c size)
   | none => opened.push bar
 
+/-- The fraction schema, separate from its recursive children and their
+style transitions, so its text contract need not inspect the math walk. -/
+def fracNode (disp : Bool) (spec : FracSpec) (num den : Array Html.Node)
+    (numAttrs denAttrs : Array (String × String)) : Html.Node :=
+  let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
+    #[.elem "mrow" numAttrs num, .elem "mrow" denAttrs den]
+  if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
+  else .elem "mrow" (styleAttrs spec.style) (fracKids disp spec bar)
+
 /-- The script schema around a base: `msub`/`msup`/`msubsup` take children
 base, subscript, superscript (MathML Core §3.4.1.1), and a limit-taking
 atom in display style takes `munder`/`mover`/`munderover` instead
@@ -127,29 +140,44 @@ atom in display style takes `munder`/`mover`/`munderover` instead
 empty child array is exactly an absent script. Scripts wrap in `mrow`,
 laid out identically to a lone child (§3.3.1). -/
 def scriptNode (limits : Bool) (base : Html.Node)
-    (sub sup : Array Html.Node) : Html.Node :=
+    (sub sup : Array Html.Node) (subAttrs supAttrs : Array (String × String) := #[]) :
+    Html.Node :=
   match sup.isEmpty, sub.isEmpty with
   | true, true => base
   | false, true =>
     .elem (if limits then "mover" else "msup") #[]
-      #[base, .elem "mrow" #[] sup]
+      #[base, .elem "mrow" supAttrs sup]
   | true, false =>
     .elem (if limits then "munder" else "msub") #[]
-      #[base, .elem "mrow" #[] sub]
+      #[base, .elem "mrow" subAttrs sub]
   | false, false =>
     .elem (if limits then "munderover" else "msubsup") #[]
-      #[base, .elem "mrow" #[] sub, .elem "mrow" #[] sup]
+      #[base, .elem "mrow" subAttrs sub, .elem "mrow" supAttrs sup]
 
 /-- A radical: `msqrt` takes any number of children as an implied row,
 `mroot` exactly the base then the index (MathML Core §3.3.3) — the
 renderer draws the surd, so no U+221A glyph enters the tree, as none
 enters `Math.MList.scalarsList`. -/
-def radNode (body deg : Array Html.Node) : Html.Node :=
+def radNode (body deg : Array Html.Node) (degAttrs : Array (String × String) := #[]) :
+    Html.Node :=
   match deg.isEmpty with
   | true => .elem "msqrt" #[] body
   | false =>
     .elem "mroot" #[]
-      #[.elem "mrow" #[] body, .elem "mrow" #[] deg]
+      #[.elem "mrow" #[] body, .elem "mrow" degAttrs deg]
+
+/-- The accent schema over an already emitted base. U+0305 uses the
+overline operator; every other accent keeps its own scalar. -/
+def accentNode (mark : Char) (stretch : Bool) (body : Array Html.Node) : Html.Node :=
+  let base := Html.Node.elem "mrow" #[] body
+  match mark == '\u0305' with
+  | true =>
+    .elem "mover" #[("accent", "false")]
+      #[base, .elem "mo" #[("stretchy", "true")] #[.text (charText overlineChar)]]
+  | false =>
+    .elem "mover" #[("accent", "true")]
+      #[base, .elem "mo" #[("stretchy", if stretch then "true" else "false")]
+        #[.text (charText mark)]]
 
 /-- What a formula's cancel marks read beyond the AST, in thousandths of an
 em: the math face's overbar rule and clearance when the page ships its
@@ -159,12 +187,35 @@ mille) and rule 9's clearance of three rules. -/
 structure Marks where
   rule : Nat := 40
   gap : Nat := 120
-  deriving Repr, BEq, Inhabited
+  /-- The current style's em and the exact measured input, in the same
+  coordinate units. A missing measurement keeps the semantic fallback. -/
+  metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
+    fun _ _ _ _ => none
+  style : MathStyle := .text false
+  /-- Font MATH percentages; the unmeasured default is plain TeX's 7/5 pt
+  script sizes at its 10 pt base. -/
+  scales : ScriptScales := { script := 70, scriptscript := 50 }
+  deriving Inhabited
 
 /-- A length in thousandths of an em, as CSS reads it. -/
 def milliEm (m : Nat) : String :=
   let fs := toString (m % 1000)
   s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
+
+/-- An explicit transition between the same styles the native walk reads.
+The relative font size performs the size change exactly once; `+0` removes
+the script slot's implicit change, and CSS math-depth sets the context for
+scripts inside this child. MathML Core §2.1.6 and CSS Fonts §math-depth:
+an explicit font-size does not undergo font-size: math's automatic scaling.
+This also clamps further scripts at scriptscript style, as TeX does. -/
+def relativeStyle (mk : Marks) (st : MathStyle) : Array (String × String) :=
+  let depth := match st with
+    | .display _ | .text _ => 0
+    | .script _ => 1
+    | .scriptscript _ => 2
+  #[("scriptlevel", "+0"), ("displaystyle", if st.rank == 3 then "true" else "false"),
+    ("style", s!"font-size: {measuredEm (sizeFor mk.scales 100 st)
+      (sizeFor mk.scales 100 mk.style)}; math-depth: {depth}")]
 
 /-- A colour as CSS reads it on a MathML element: the palette's custom
 property with the literal as its fallback when the colour came from a
@@ -200,20 +251,11 @@ def cancelBand (corner ink half : String) : String :=
   s!"linear-gradient(to {corner}, transparent calc(50% - {half}), {ink} calc(50% - {half}), \
 {ink} calc(50% + {half}), transparent calc(50% + {half}))"
 
-/-- A cancel mark over its emitted struck row and value: CSS over the struck
-row's padded box, the box the PDF strikes corner to corner — `padding` the
-clearance, the gradient the band (`cancelBand`), and the arrowhead a corner
-triangle whose width and height cannot exceed that box. Its four-stroke
-extent reuses the PDF head's length; the half-edge base points make a
-symmetric rising tip inside its containing rectangle. Absolute right/top
-placement anchors it to the padded operand. MathML Core has no `menclose`,
-and this needs no script. The value is the
-row's superscript, a clearance from the head, in the style the package's
-table names — a superscript steps one level down, which `smaller` keeps
-except over a display base (text style there) and `samesize` never takes —
-and in the marks' colour, as cancel.sty colours it. Overlapping
-(cancel.sty's `overlap`), negative margins give the marks' room back and
-the value takes none. -/
+/-- Readable, explicitly unmeasured cancellation when no font measurement
+is available. CSS strikes and a superscript preserve the semantic content;
+they make no claim about measured ink, ray alignment or reserved reach.
+The measured path below replaces both the corner head and superscript
+placement when the provider supplies an actual math em and input. -/
 def cancelNode (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   let ink := match spec.color with
@@ -248,7 +290,96 @@ clip-path: polygon(0 50%, 100% 0, 50% 100%); {print}")] #[]
   -- preserves the size its mpadded parent already received.
   let valueNode := if spec.room then valueRow else
     .elem "mpadded" (level.push ("width", "0")) #[valueRow]
-  if mark == .to || shown then .elem "msup" #[] #[base, valueNode] else base
+  if mark == .to || shown then
+    .elem "msup" #[("data-cancel-metric", "unmeasured")] #[base, valueNode]
+  else
+    match base with
+    | .elem t attrs kids => .elem t (attrs.push ("data-cancel-metric", "unmeasured")) kids
+    | .text s => .text s
+    | .style css => .style css
+    | .script attrs js => .script attrs js
+
+/-- Baseline-inclusive reach of the measured body, target ink and advance,
+and every painted polygon vertex. Only the final common x translation
+reserves left overhang; overlap mode keeps the body's advance. -/
+private structure CancelReach where
+  left : Int
+  right : Int
+  top : Int
+  bot : Int
+
+private def CancelReach.point (r : CancelReach) (p : Int × Int) : CancelReach :=
+  { left := min r.left p.1, right := max r.right p.1
+    top := max r.top p.2, bot := min r.bot p.2 }
+
+private def cancelReach (metric : CancelMetric) (g : CancelGeom) (shown : Bool) : CancelReach :=
+  let i := metric.input
+  let body : CancelReach := {
+    left := g.shift + min metric.bodyLeft (min 0 i.w)
+    right := g.shift + max metric.bodyRight (max 0 i.w)
+    top := max 0 i.top, bot := min 0 i.bot }
+  let body := if shown then
+      ((body.point (g.valueX + i.vleft, g.valueY + i.vbot)).point
+        (g.valueX + i.vright, g.valueY + i.vtop)).point
+        (g.valueX, g.valueY) |>.point (g.valueX + i.vw, g.valueY)
+    else body
+  g.polys.foldl (fun r ps => ps.foldl CancelReach.point r) body
+
+/-- One source polygon, with the common room translation and SVG's y-axis
+reversal. All coordinates remain integers in the provider's original unit. -/
+def cancelPolygon (ink : String) (pad : Int) (ps : Array (Int × Int)) : Html.Node :=
+  let points := String.intercalate " " (ps.toList.map fun (x, y) => s!"{x + pad},{-y}")
+  .elem "polygon" #[("points", points), ("fill", ink)] #[]
+
+/-- A zero-size placement box uses offsets in the parent's current-style
+em, outside any font-size change applied to the visible native child. -/
+def cancelAt (em x y : Int) (child : Html.Node) : Html.Node :=
+  .elem "mpadded" #[("width", "0"), ("height", "0"), ("depth", "0"),
+    ("lspace", measuredEm x em), ("voffset", measuredEm y em)] #[child]
+
+/-- Artifact placement: one SVG user unit is one measured input unit. A
+one-em square viewport with visible overflow avoids a degenerate viewport
+for zero-advance content. Its viewBox starts at the reserved top, so the
+outer mpadded baseline is y=0 in the native geometry. No glyph is replaced
+by outlines: body and value remain selectable MathML. -/
+def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
+    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
+  let em := metric.em
+  let i := metric.input
+  let g := Math.cancelGeom mark spec.room i
+  let visible := mark == .to || shown
+  let reach := cancelReach metric g visible
+  let (pad, width) := if spec.room then inkRoom reach.left reach.right g.advance
+    else (0, max 0 g.advance)
+  let ink := match spec.color with
+    | some (c, n) => inkCss c n
+    | none => "currentColor"
+  let svg := Html.Node.elem "svg"
+    #[("xmlns", "http://www.w3.org/2000/svg"),
+      ("viewBox", s!"0 {-reach.top} {em} {em}"), ("preserveAspectRatio", "none"),
+      ("aria-hidden", "true"), ("focusable", "false"),
+      ("style", "position: absolute; left: 0; top: 0; width: 1em; height: 1em; \
+overflow: visible; pointer-events: none")]
+    (g.polys.map (cancelPolygon ink pad))
+  let body := cancelAt em (g.shift + pad) 0 (.elem "mrow" #[] struck)
+  let value := cancelAt em (g.valueX + pad) g.valueY
+    (paint (spec.color.map fun (c, n) => inkCss c n)
+      (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals))
+  let kids := if visible then #[body, value] else #[body]
+  .elem "mpadded" #[("width", measuredEm width em),
+    ("height", measuredEm reach.top em), ("depth", measuredEm (-reach.bot) em),
+    ("style", "position: relative"), ("data-cancel-metric", "measured")]
+    (kids.push (cancelAt em 0 0 (.elem "mtext" #[] #[svg])))
+
+/-- The font provider is the sole source of measured bounds. A nonpositive
+em cannot define a CSS projection and takes the named semantic fallback. -/
+def cancelWithMetric (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
+    (body value : MList) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
+  match mk.metric mk.style spec body value with
+  | some metric =>
+    if 0 < metric.em then measuredCancelNode mk metric mark spec struck vals shown
+    else cancelNode mk disp mark spec struck vals shown
+  | none => cancelNode mk disp mark spec struck vals shown
 
 mutual
 
@@ -269,11 +400,16 @@ nucleus under its script schema (`scriptNode`). `disp` goes false inside
 scripts, as the script styles are never display. A colour switch is read
 by its list (`listNodes`) and emits nothing of its own. -/
 def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
-  | .space mu => .elem "mspace" #[("width", muWidth mu)] #[]
+  | .space mu =>
+    .elem "mspace" (if mu < 0 then
+      #[("width", "0"), ("style", s!"margin-inline-end: {muWidth mu}")]
+      else #[("width", muWidth mu)]) #[]
   | .ink _ _ => .elem "mrow" #[] #[]
   | .atom cls nuc sup sub lim =>
     scriptNode (lim && disp) (nucNode mk disp cls nuc)
-      (listNodes mk false none #[] sub) (listNodes mk false none #[] sup)
+      (listNodes { mk with style := mk.style.sub } false none #[] sub)
+      (listNodes { mk with style := mk.style.sup } false none #[] sup)
+      (relativeStyle mk mk.style.sub) (relativeStyle mk mk.style.sup)
 
 /-- One nucleus as one element. A lone scalar is final — elaboration
 already remapped variables into the Mathematical Alphanumeric block — so a
@@ -323,13 +459,16 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
     -- The body still renders inside, so no content is lost.
     .elem "merror" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
-    let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule)
-      #[.elem "mrow" #[] (listNodes mk false none #[] num),
-        .elem "mrow" #[] (listNodes mk false none #[] den)]
-    if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
-    else .elem "mrow" (styleAttrs spec.style) (fracKids disp spec bar)
+    let st := spec.style.getD mk.style
+    let fm := { mk with style := st }
+    fracNode disp spec
+      (listNodes { mk with style := st.fracNum } false none #[] num)
+      (listNodes { mk with style := st.fracDen } false none #[] den)
+      (relativeStyle fm st.fracNum) (relativeStyle fm st.fracDen)
   | .rad deg body =>
-    radNode (listNodes mk disp none #[] body) (listNodes mk false none #[] deg)
+    radNode (listNodes { mk with style := mk.style.cramp } disp none #[] body)
+      (listNodes { mk with style := .scriptscript mk.style.cramped } false none #[] deg)
+      (relativeStyle mk (.scriptscript mk.style.cramped))
   | .delim l r body =>
     let opened := match l with
       | some c => #[delimMo c]
@@ -344,33 +483,24 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
     | some c => sizedMo c (bigMoSize step)
     | none => .elem "mrow" #[] #[]
   | .accent mark stretch body =>
-    let base := Html.Node.elem "mrow" #[] (listNodes mk disp none #[] body)
-    match mark == '\u0305' with
-    | true =>
-      .elem "mover" #[("accent", "false")]
-        #[base, .elem "mo" #[("stretchy", "true")]
-          #[.text (charText overlineChar)]]
-    | false =>
-      .elem "mover" #[("accent", "true")]
-        #[base, .elem "mo" #[("stretchy", if stretch then "true" else "false")]
-          #[.text (charText mark)]]
+    accentNode mark stretch (listNodes { mk with style := mk.style.cramp } disp none #[] body)
   | .grid kind rows =>
-    let cellDisp := match kind with
-      | .array _ _ => false
-      | .small => false
-      | .align => true
-      | .gather => true
+    let st := match kind with
+      | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
+      | .small => .script false
+      | .align | .gather => .display false
     -- `smallmatrix` sets its cells in script style, a thin space each side:
     -- 3 mu of the text size, in the script size's em at a 70% script scale.
-    let attrs : Array (String × String) := match kind with
-      | .array _ _ => #[]
-      | .small => #[("scriptlevel", "1"), ("style", "padding-inline: 0.238em")]
-      | .align => #[("displaystyle", "true")]
-      | .gather => #[("displaystyle", "true")]
-    .elem "mtable" attrs (rowsNodes mk cellDisp kind #[] rows)
+    let attrs := relativeStyle mk st
+    let attrs := if kind == .small then attrs.map fun (k, v) =>
+      (k, if k == "style" then v ++ "; padding-inline: 0.238em" else v)
+      else attrs
+    .elem "mtable" attrs (rowsNodes { mk with style := st } (st.rank == 3) kind #[] rows)
   | .cancel mark spec value body =>
-    cancelNode mk disp mark spec (listNodes mk disp none #[] body)
-      (listNodes mk (spec.size == .same && disp) none #[] value) (value matches .cons _ _)
+    let st := spec.size.style mk.style
+    cancelWithMetric mk disp mark spec body value (listNodes mk disp none #[] body)
+      (listNodes { mk with style := st } (st.rank == 3) none #[] value)
+      (value matches .cons _ _)
 
 /-- The `mtd` cells of one row. A cell's alignment is the grid kind's for
 its column (`GridKind.colAlign`), declared as CSS `text-align` — MathML
@@ -439,7 +569,8 @@ def formula (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "math"
     ((if display then #[("display", "block")] else #[]) ++ extra)
-    (listNodes mk display none #[] body)
+    (listNodes { mk with style := if display then .display false else .text false }
+      display none #[] body)
 
 -- The glyph-text fold: what the emission's token leaves spell, in
 -- document order, as a pure fold over the AST — the exposed statement of
@@ -592,6 +723,40 @@ theorem paint_chars (ink : Option String) (n : Html.Node) (c : Array Char) :
   | style s => rfl
   | script a j => rfl
 
+/-- SVG polygons carry only attributes, regardless of their measured
+points. Their census is empty; hiding them never hides native MathML. -/
+theorem cancelPolygons_chars (ink : String) (pad : Int)
+    (ps : List (Array (Int × Int))) (c : Array Char) :
+    nodeListChars c (ps.map (cancelPolygon ink pad)) = c := by
+  induction ps with
+  | nil => rfl
+  | cons p ps ih => simpa [cancelPolygon, nodeChars, nodeListChars] using ih
+
+/-- The measured artifact's text is the native body followed by its target.
+Placement offsets, dimensions and SVG never enter the text census. -/
+theorem measuredCancelNode_chars (mk : Marks) (metric : CancelMetric)
+    (mark : CancelMark) (spec : CancelSpec) (struck vals : Array Html.Node)
+    (shown : Bool) (c : Array Char) :
+    nodeChars c (measuredCancelNode mk metric mark spec struck vals shown) =
+      if mark == .to || shown then nodeListChars (nodeListChars c struck.toList) vals.toList
+      else nodeListChars c struck.toList := by
+  cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
+    simp [measuredCancelNode, hm, cancelAt, nodeChars, nodeListChars,
+      Array.toList_map, paint_chars, cancelPolygons_chars]
+
+/-- Either provider result preserves exactly the same native glyph census;
+this quantifies over arbitrary metric callbacks, including missing inputs. -/
+theorem cancelWithMetric_chars (mk : Marks) (disp : Bool) (mark : CancelMark)
+    (spec : CancelSpec) (body value : MList) (struck vals : Array Html.Node)
+    (shown : Bool) (c : Array Char) :
+    nodeChars c (cancelWithMetric mk disp mark spec body value struck vals shown) =
+      if mark == .to || shown then nodeListChars (nodeListChars c struck.toList) vals.toList
+      else nodeListChars c struck.toList := by
+  unfold cancelWithMetric
+  split
+  · split <;> first | exact measuredCancelNode_chars .. | exact cancelNode_chars ..
+  · exact cancelNode_chars ..
+
 /-- An emitted list grows the accumulator: one element per atom or space,
 none removed — the fact that lets `scriptNode` and `radNode` read `.nil`
 (no script, no degree) off an empty child array. -/
@@ -638,35 +803,57 @@ theorem listChars_of_empty (mk : Marks) (disp : Bool) :
 scripts ride beside (`msub` family) or above and below (`munder` family):
 the two schemas share their child order. -/
 theorem scriptNode_chars (limits : Bool) (base : Html.Node)
-    (sub sup : Array Html.Node) (c : Array Char) :
-    nodeChars c (scriptNode limits base sub sup)
+    (sub sup : Array Html.Node) (subAttrs supAttrs : Array (String × String)) (c : Array Char) :
+    nodeChars c (scriptNode limits base sub sup subAttrs supAttrs)
       = nodeListChars (nodeListChars (nodeChars c base) sub.toList)
           sup.toList := by
   unfold scriptNode
   cases hsup : sup.isEmpty <;> cases hsub : sub.isEmpty
-  · show nodeListChars c [base, .elem "mrow" #[] sub, .elem "mrow" #[] sup]
+  · show nodeListChars c [base, .elem "mrow" subAttrs sub, .elem "mrow" supAttrs sup]
         = _
     rfl
   · rw [toList_of_isEmpty hsub]
-    show nodeListChars c [base, .elem "mrow" #[] sup] = _
+    show nodeListChars c [base, .elem "mrow" supAttrs sup] = _
     rfl
   · rw [toList_of_isEmpty hsup]
-    show nodeListChars c [base, .elem "mrow" #[] sub] = _
+    show nodeListChars c [base, .elem "mrow" subAttrs sub] = _
     rfl
   · rw [toList_of_isEmpty hsub, toList_of_isEmpty hsup]
     rfl
 
 /-- A radical's text is its body then its degree, `msqrt` and `mroot`
 alike. -/
-theorem radNode_chars (body deg : Array Html.Node) (c : Array Char) :
-    nodeChars c (radNode body deg)
+theorem radNode_chars (body deg : Array Html.Node) (degAttrs : Array (String × String))
+    (c : Array Char) :
+    nodeChars c (radNode body deg degAttrs)
       = nodeListChars (nodeListChars c body.toList) deg.toList := by
   unfold radNode
   cases hdeg : deg.isEmpty
-  · show nodeListChars c [.elem "mrow" #[] body, .elem "mrow" #[] deg] = _
+  · show nodeListChars c [.elem "mrow" #[] body, .elem "mrow" degAttrs deg] = _
     rfl
   · rw [toList_of_isEmpty hdeg]
     rfl
+
+/-- Fraction delimiters enclose numerator then denominator in the native
+text order; the child styles and rule never contribute text. -/
+theorem fracNode_chars (disp : Bool) (spec : FracSpec) (num den : Array Html.Node)
+    (numAttrs denAttrs : Array (String × String)) (c : Array Char) :
+    nodeChars c (fracNode disp spec num den numAttrs denAttrs) =
+      let opened := match spec.left with | some ch => c.push ch | none => c
+      let withBar := nodeListChars (nodeListChars opened num.toList) den.toList
+      match spec.right with | some ch => withBar.push ch | none => withBar := by
+  rcases spec with ⟨l, r, rule, style⟩
+  cases l <;> cases r <;> cases style <;>
+    simp [fracNode, fracKids, nodeChars, nodeListChars, sizedMo, pushChars_charText]
+
+/-- An accent emits its base followed by the declared accent scalar. -/
+theorem accentNode_chars (mark : Char) (stretch : Bool) (body : Array Html.Node)
+    (c : Array Char) :
+    nodeChars c (accentNode mark stretch body) =
+      (nodeListChars c body.toList).push
+        (match mark == '\u0305' with | true => overlineChar | false => mark) := by
+  cases h : mark == '\u0305' <;>
+    simp [accentNode, h, nodeChars, nodeListChars, pushChars_charText]
 
 mutual
 
@@ -701,11 +888,12 @@ theorem itemNode_chars (mk : Marks) (disp : Bool) :
   | .ink _ _, c => rfl
   | .atom cls nuc sup sub lim, c => by
     show nodeChars c (scriptNode (lim && disp) (nucNode mk disp cls nuc)
-        (listNodes mk false none #[] sub) (listNodes mk false none #[] sup))
+        (listNodes { mk with style := mk.style.sub } false none #[] sub)
+        (listNodes { mk with style := mk.style.sup } false none #[] sup) _ _)
       = listChars (listChars (nucChars c nuc) sub) sup
     rw [scriptNode_chars, nucNode_chars mk disp cls nuc c,
-      listNodes_chars mk false none sub #[] (nucChars c nuc),
-      listNodes_chars mk false none sup #[]]
+      listNodes_chars _ false none sub #[] (nucChars c nuc),
+      listNodes_chars _ false none sup #[]]
     rfl
 
 theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
@@ -726,22 +914,21 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
     rw [listNodes_chars mk disp none body #[] c]
     rfl
-  | .frac ⟨l, r, rule, style⟩ num den, c => by
-    have bar : ∀ c', nodeListChars (nodeListChars c' (listNodes mk false none #[] num).toList)
-        (listNodes mk false none #[] den).toList = listChars (listChars c' num) den := by
-      intro c'
-      rw [listNodes_chars mk false none num #[] c', listNodes_chars mk false none den #[]]
-      rfl
-    have mo : ∀ (m : Char) (s : String) (c' : Array Char),
-        nodeChars c' (sizedMo m s) = c'.push m :=
-      fun m s c' => moLeaf_chars "mo" _ m c'
-    cases l <;> cases r <;> cases style <;>
-      simp [nucNode, nucChars, fracKids, nodeChars, nodeListChars, bar, mo]
+  | .frac spec num den, c => by
+    show nodeChars c (fracNode disp spec
+        (listNodes { mk with style := (spec.style.getD mk.style).fracNum } false none #[] num)
+        (listNodes { mk with style := (spec.style.getD mk.style).fracDen } false none #[] den)
+        _ _) = nucChars c (.frac spec num den)
+    rw [fracNode_chars]
+    dsimp only
+    rw [listNodes_chars _ false none num #[], listNodes_chars _ false none den #[]]
+    rfl
   | .rad deg body, c => by
-    show nodeChars c (radNode (listNodes mk disp none #[] body)
-        (listNodes mk false none #[] deg)) = listChars (listChars c body) deg
-    rw [radNode_chars, listNodes_chars mk disp none body #[] c,
-      listNodes_chars mk false none deg #[]]
+    show nodeChars c (radNode (listNodes { mk with style := mk.style.cramp } disp none #[] body)
+        (listNodes { mk with style := .scriptscript mk.style.cramped } false none #[] deg) _)
+      = listChars (listChars c body) deg
+    rw [radNode_chars, listNodes_chars _ disp none body #[] c,
+      listNodes_chars _ false none deg #[]]
     rfl
   | .delim l r body, c => by
     cases l with
@@ -781,33 +968,26 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     | none => rfl
     | some ch => exact moLeaf_chars "mo" _ ch c
   | .accent mark stretch body, c => by
-    cases h : mark == '\u0305' <;> simp only [nucNode, nucChars, h]
-    · show nodeChars
-          (nodeListChars c (listNodes mk disp none #[] body).toList)
-          (.elem "mo" #[("stretchy", if stretch then "true" else "false")]
-            #[.text (charText mark)]) = _
-      rw [listNodes_chars mk disp none body #[] c, moLeaf_chars]
-      rfl
-    · show nodeChars
-          (nodeListChars c (listNodes mk disp none #[] body).toList)
-          (.elem "mo" #[("stretchy", "true")]
-            #[.text (charText overlineChar)]) = _
-      rw [listNodes_chars mk disp none body #[] c, moLeaf_chars]
-      rfl
+    show nodeChars c (accentNode mark stretch
+        (listNodes { mk with style := mk.style.cramp } disp none #[] body))
+      = (listChars c body).push _
+    rw [accentNode_chars, listNodes_chars _ disp none body #[] c]
+    rfl
   | .grid kind rows, c => by
-    cases kind <;>
-      simp only [nucNode, nucChars] <;>
-      show nodeListChars c (rowsNodes mk _ _ #[] rows).toList = rowsChars c rows <;>
-      rw [rowsNodes_chars] <;>
-      rfl
+    show nodeListChars c (rowsNodes _ _ kind #[] rows).toList = rowsChars c rows
+    rw [rowsNodes_chars]
+    rfl
   | .cancel mark spec value body, c => by
-    show nodeChars c (cancelNode mk disp mark spec (listNodes mk disp none #[] body)
-        (listNodes mk (spec.size == .same && disp) none #[] value) (value matches .cons _ _))
+    show nodeChars c (cancelWithMetric mk disp mark spec body value
+        (listNodes mk disp none #[] body)
+        (listNodes { mk with style := spec.size.style mk.style }
+          ((spec.size.style mk.style).rank == 3) none #[] value) (value matches .cons _ _))
       = listChars (listChars c body) value
     have hs := listNodes_chars mk disp none body #[] c
-    have hv := listNodes_chars mk (spec.size == .same && disp) none value #[]
+    have hv := listNodes_chars { mk with style := spec.size.style mk.style }
+      ((spec.size.style mk.style).rank == 3) none value #[]
     simp only [nodeListChars] at hs hv
-    rw [cancelNode_chars, hs, hv]
+    rw [cancelWithMetric_chars, hs, hv]
     cases value with
     | nil => simp [listChars]
     | cons _ _ => simp
@@ -852,15 +1032,15 @@ pure glyph-text fold over the same math list, for either display mode,
 whatever backend attributes ride on the element and whatever the marks'
 measures are. What this holds fixed: the projection to MathML drops no
 glyph the AST carries and invents none beyond it — a colour switch paints,
-a cancel mark's strike and arrowhead are CSS and an empty element, text of
-neither; the fold's agreement with the PDF's coverage census
+a cancel mark's strike and arrowhead are decorative SVG polygons (CSS in
+the unmeasured fallback), text of neither; the fold's agreement with the PDF's coverage census
 (`Math.MList.scalarsList` — same scalars, its order, overline excepted)
 is pinned by test in `mathmlChecks`. -/
 theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
   simp only [formula, nodeChars]
-  rw [listNodes_chars mk display none body #[] #[]]
+  rw [listNodes_chars _ display none body #[] #[]]
   rfl
 
 /-- The HTML projection consumes the same resolved math list the PDF layout

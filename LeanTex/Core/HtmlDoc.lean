@@ -102,6 +102,13 @@ structure Config where
   (`Pdf.picture_box_agree`). The default answers nothing — a caller with no
   font environment sizes a picture by its declared box and node borders. -/
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- Measured cancellation in the resolved surrounding text style, supplied
+  by the same font environment and assembly as the native backend. -/
+  cancelMetric : Array Ir.Style → Math.MathStyle → Math.CancelSpec →
+    Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ => none
+  /-- The native resolver folds this ordered history; the HTML walk carries
+  declarations without implementing another font or size interpreter. -/
+  mathStyles : Array Ir.Style := #[]
   /-- Inside a fill row's group (`fillRow`): a fraction of the text width is
   a fraction of the row, the line the fill spans, as in TeX — never of the
   group, whose width that same fraction decides. The image emission states
@@ -115,14 +122,16 @@ of an em — its overbar rule and clearance, the two quantities the PDF lays
 the marks with — when the page ships its faces; TeX's own stand-ins
 (`MathMl.Marks`' defaults) where it does not. -/
 def mathMarks (cfg : Config) : MathMl.Marks :=
+  let marks : MathMl.Marks := { metric := cfg.cancelMetric cfg.mathStyles }
   match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
   | some f =>
     match f.math with
     | some mc =>
       let per (v : Int) : Nat := (v * 1000 / (max 1 f.unitsPerEm : Int)).toNat
-      { rule := per mc.overbarRuleThickness, gap := per mc.overbarVerticalGap }
-    | none => {}
-  | none => {}
+      { marks with rule := per mc.overbarRuleThickness, gap := per mc.overbarVerticalGap
+                   scales := mc.scales }
+    | none => marks
+  | none => marks
 
 /-- The class an authored role wears in the artifact: verbatim after a
 fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
@@ -5058,7 +5067,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)] body (mathMarks cfg))
   | .styled st body =>
-    let kids := inlineNodesInto cfg #[] body.toList
+    let kids := inlineNodesInto { cfg with mathStyles := cfg.mathStyles.push st } #[] body.toList
     match st with
     | .bold => acc.push (Html.elem "strong" kids)
     | .italic => acc.push (Html.elem "em" kids)
@@ -5083,13 +5092,24 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- The class hook survives as an addressable class. A title-part role
     -- also projects its exact size and baseline skip from the one IR part;
     -- ordinary authored roles remain style-free.
-    let style := (Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n).bind fun p =>
+    let part := Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n
+    let style := part.bind fun p =>
       let decls :=
         (p.size.map fun z => s!"font-size:{fontLengthCss cfg (.lit z)};").toList ++
         (p.leading.map fun z => s!"line-height:{fontLengthCss cfg (.lit z)};").toList
       if decls.isEmpty then none else some (String.join decls)
     let attrs := #[some ("class", roleClass n), style.map ("style", ·)].filterMap id
-    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) attrs)
+    let inner := match part with
+      | some p =>
+        match p.size with
+        | some size =>
+          -- Cancellation reads the size component of TextStyle.metrics;
+          -- a missing title leading contributes no attachment dimension.
+          let st := Ir.Style.fontSize (.lit size) (.lit (p.leading.getD size))
+          { cfg with mathStyles := cfg.mathStyles.push st }
+        | none => cfg
+      | none => cfg
+    acc.push (Html.elem "span" (inlineNodesInto inner #[] body.toList) attrs)
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
