@@ -123,11 +123,11 @@ the cache holds no earlier render. The placeholder box ships; one per
 picture, at its span, so the census gate can match each to its loss. -/
 def boundaryToolUnavailable (tool : String) (span : Option Span := none) : Diag :=
   Diag.of .W0379
-    s!"no boundary tool is available for this picture outside the rendered \
-subset; a placeholder box marks its place"
+    "no boundary tool is available for this picture outside the rendered subset"
     span
     (help := s!"install {tool}, or \\pictures\{ tool = none } accepts the \
 placeholder; a warm cache needs no tool")
+    (recovery := some (.replacedBy "a placeholder box"))
 
 /-- **E0382: a boundary render that failed is a dropped loss, not a
 degraded one** — where nothing else can stand in its place. `degraded` is
@@ -198,7 +198,8 @@ def boundarySvgMissing (err : String) : Diag :=
     s!"cannot run 'pdftocairo' to convert boundary pictures for the HTML \
 artifact: {err}"
     (help := "install poppler's pdftocairo, or \\allow{W0378} accepts the \
-loss; the PDF artifact is unaffected")
+loss")
+    (output := some .html)
 
 /-- W0393: the external classifier supplied no usable answer. The source
 still ships, and the language is the key for counting repeated refusals. -/
@@ -213,6 +214,7 @@ publication, never an instruction to write the unchecked page anyway. -/
 def htmlResourceUnavailable (detail : String) : Diag :=
   Diag.of .E0606 s!"cannot publish self-contained HTML: {detail}"
     (help := "use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies")
+    (output := some .html)
 
 /-- E0502: an included source file is not there; its content is absent. -/
 def inputMissing (name : String) (span : Option Span) (command : String := "input") : Diag :=

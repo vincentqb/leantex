@@ -1,4 +1,5 @@
 import Tests.Support
+import Lean.Data.Json.Parser
 
 open LeanTex.Core LeanTex.Cli
 
@@ -13,24 +14,24 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let span : Span := ⟨"chapters/example file.tex", { line := 4, col := 7 }⟩
   let d := Diag.of .W0301 "unknown command '\\oddity'; its text is kept"
     (some span) (help := "define '\\oddity' before using it") (subject := "ctrl:oddity")
-  let plain := "Warning - Degraded [W0301] - chapters/example file.tex:4:7 - " ++
-    "unknown command '\\oddity'; its text is kept\n  help: define '\\oddity' before using it"
+  let plain := "Warning - Degraded [W0301] - chapters/example file.tex:4:7\n  " ++
+    "unknown command '\\oddity'; its text is kept\n  suggestion: define '\\oddity' before using it"
   t "diagnostic format: location and fixed category on the first line"
     (Render.human false d == plain)
-  t "diagnostic format: no invented location or help"
+  t "diagnostic format: no invented location or suggestion"
     (Render.human false (Diag.of .E0001 "cannot read input") ==
-      "Error - Dropped [E0001] - cannot read input")
+      "Error - Dropped [E0001]\n  cannot read input")
   let unicodeSpan : Span := ⟨"résumé [draft].tex", { line := 2, col := 3 }⟩
   t "diagnostic format: Unicode and punctuation in a path survive"
     (Render.human false { d with span := some unicodeSpan, help := none } ==
-      "Warning - Degraded [W0301] - résumé [draft].tex:2:3 - " ++
+      "Warning - Degraded [W0301] - résumé [draft].tex:2:3\n  " ++
       "unknown command '\\oddity'; its text is kept")
   for (kind, head) in [(DiagCode.E0101, "Error - Dropped [E0101]"),
       (.W0307, "Warning - Pending [W0307]"), (.W0301, "Warning - Degraded [W0301]"),
       (.W0201, "Warning - Standard [W0201]"), (.W0101, "Warning - Config [W0101]"),
       (.N0100, "Note - Info [N0100]")] do
     t s!"diagnostic format: {kind.code} displays its declared category"
-      (Render.human false (Diag.of kind "detail") == head ++ " - detail")
+      (Render.human false (Diag.of kind "detail") == head ++ "\n  detail")
   -- Future registry entries must take the same projection, including an
   -- accepted error whose effective severity is a note but code stays E….
   for kind in DiagCode.all do
@@ -38,13 +39,13 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     for resolved in [raw, (Diag.accept #[raw.code] false raw).1] do
       let head := s!"{resolved.severity.label.capitalize} - {kind.loss.label.capitalize} [{raw.code}]"
       t s!"diagnostic format: registry/policy projection {raw.code}/{resolved.severity.label}"
-        (Render.human false resolved == head ++ " - detail")
+        (Render.human false resolved == head ++ "\n  detail")
   let accepted := (Diag.accept #["W0301"] false d).1
   t "diagnostic format: accepted loss retains code and category"
     (Render.human false accepted == plain.replace "Warning - " "Note - ")
   t "diagnostic format: repeated sites keep their total"
     (Render.human false { d with sites := 3 } ==
-      plain.replace "its text is kept\n" "its text is kept (3 sites)\n")
+      plain.replace "4:7\n" "4:7 (3 sites)\n")
   t "diagnostic format: a non-carrier does not acquire a false site count"
     (Render.human false { d with sites := 0 } == plain)
   let multi := Diag.of .E0001 "first\r\nError - not another record\n\nlast\rline\tend\x1b[31m"
@@ -52,13 +53,13 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     (help := "run <red>{command}</red>\r\nthen retry\n")
   t "diagnostic format: multiline text is indented and controls cannot forge a record"
     (Render.human false multi ==
-      "Error - Dropped [E0001] - part\\nforged\\r\\x1b.tex:1:2 - " ++
+      "Error - Dropped [E0001] - part\\nforged\\r\\x1b.tex:1:2\n  " ++
       "first\n  Error - not another record\n  \n  last\\rline\\tend\\x1b[31m\n" ++
-      "  help: run <red>{command}</red>\n    then retry\n    ")
+      "  suggestion: run <red>{command}</red>\n    then retry\n    ")
   let controls := String.ofList ['\x00', '\x07', '\x08', '\x7f', '\x85', '\x9b']
   t "diagnostic format: terminal controls are visible text"
     (Render.human false (Diag.of .E0001 controls) ==
-      "Error - Dropped [E0001] - \\x00\\x07\\x08\\x7f\\x85\\x9b")
+      "Error - Dropped [E0001]\n  \\x00\\x07\\x08\\x7f\\x85\\x9b")
   -- Strip only the SGR sequences the renderer emits, not arbitrary escapes
   -- in a diagnostic. The latter must have been spelled out as data.
   for sample in [d, multi, { d with sites := 3 }, accepted] do
@@ -82,6 +83,130 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Render.porcelainDiag (Diag.accept #[machine.code] false machine).1 ==
       json.replace "\"severity\":\"warning\"" "\"severity\":\"note\"")
 
+/-- The record carries source spelling, actual recovery and suggested action
+independently. Scope is identity: one artifact's notices cannot count or
+accept losses in another. Empty and hostile payloads are ordinary data. -/
+def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let d := Diag.of .W0301 "command is unknown"
+    (some ⟨"example.tex", { line := 4, col := 7 }⟩)
+    (help := "define the command") (subject := "ctrl:oddity")
+    (refused := "oddity") (trigger := "\\oddity")
+    (recovery := some (.replacedBy "its argument text")) (output := some .html)
+  let header := "Warning - Degraded [W0301] (HTML) - example.tex:4:7 - \\oddity"
+  t "diagnostic record: header, reason, recovery and action are separate"
+    (Render.human false d == header ++ "\n  command is unknown\n" ++
+      "  replaced by: its argument text\n  suggestion: define the command")
+  for (recovery, line) in [(Diag.Recovery.ignored, "ignored"),
+      (.skipped, "skipped"), (.replacedBy "plain text", "replaced by: plain text")] do
+    t "diagnostic record: recovery without a suggestion occupies only its own line"
+      (Render.human false { d with recovery := some recovery, help := none } ==
+        header ++ "\n  command is unknown\n  " ++ line)
+  t "diagnostic record: suggestion alone is not recovery"
+    (Render.human false { d with recovery := none } ==
+      header ++ "\n  command is unknown\n  suggestion: define the command")
+  t "diagnostic record: no trigger is inferred from subject, refused name or prose"
+    (Render.human false { d with
+        trigger := none
+        recovery := none
+        help := none
+        output := none
+        message := "replaced by: this is only a reason" } ==
+      "Warning - Degraded [W0301] - example.tex:4:7\n  replaced by: this is only a reason")
+  let empty := Diag.of .W0301 "" (help := "") (trigger := "")
+  t "diagnostic record: absent or empty optional text adds no blank lines"
+    (Render.human false empty == "Warning - Degraded [W0301]" &&
+      Render.human false { empty with recovery := some (.replacedBy "") } ==
+        "Warning - Degraded [W0301]\n  replaced")
+  let payload := "\\oddity\r\nError - forged\t\x1b[31m\x9b0m\u2028\u2029"
+  let safe := "\\oddity\\r\\nError - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"
+  let hostile := { d with
+    trigger := some payload
+    recovery := some (.replacedBy payload)
+    help := none }
+  t "diagnostic record: trigger cannot create a line or terminal escape"
+    ((Render.human false hostile).splitOn "\n" ==
+      ["Warning - Degraded [W0301] (HTML) - example.tex:4:7 - " ++ safe,
+        "  command is unknown", "  replaced by: \\oddity",
+        "    Error - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"])
+  for sample in [d, hostile, empty] do
+    let stripped := ["\x1b[1;31m", "\x1b[1;33m", "\x1b[1;36m", "\x1b[1;34m",
+      "\x1b[1m", "\x1b[0m"].foldl (fun s code => s.replace code "") (Render.human true sample)
+    t "diagnostic record: styling does not change structured content"
+      (stripped == Render.human false sample && !stripped.contains '\x1b')
+  let json := Render.porcelainDiag d
+  t "diagnostic record: new JSON keys are additive, recovery is structured"
+    (json == "{\"event\":\"diagnostic\",\"severity\":\"warning\",\"code\":\"W0301\"," ++
+      "\"loss\":\"degraded\",\"message\":\"command is unknown\",\"file\":\"example.tex\"," ++
+      "\"line\":4,\"col\":7,\"help\":\"define the command\",\"subject\":\"ctrl:oddity\"," ++
+      "\"trigger\":\"\\\\oddity\",\"recovery\":{\"kind\":\"replacedBy\",\"replacement\":\"its argument text\"}," ++
+      "\"output\":\"html\"}")
+  for (recovery, kind) in [(Diag.Recovery.ignored, "ignored"), (.skipped, "skipped")] do
+    let parsed := Lean.Json.parse (Render.porcelainDiag { empty with recovery := some recovery })
+    let actual := parsed.bind fun j => (j.getObjVal? "recovery").bind fun r =>
+      (r.getObjVal? "kind").bind Lean.Json.getStr?
+    t "diagnostic record: each recovery has its own JSON kind" (actual.toOption == some kind)
+  -- Round-trip every serialized text field empty, then with all terminal
+  -- control bytes and both Unicode line separators, through a real JSON reader.
+  let controls := String.ofList ((List.range 32 ++ (List.range 33).map (· + 127) ++
+    [0x2028, 0x2029]).map Char.ofNat)
+  for text in ["", "\"\\" ++ controls] do
+    let sample := Diag.of .W0301 text
+      (some ⟨text, { line := 0, col := 0 }⟩) (help := text) (subject := text)
+      (trigger := text) (recovery := some (.replacedBy text)) (output := some .pdf)
+    let encoded := Render.porcelainDiag sample
+    let parsed := Lean.Json.parse encoded
+    for key in ["message", "file", "help", "subject", "trigger"] do
+      let actual := parsed.bind fun j => (j.getObjVal? key).bind Lean.Json.getStr?
+      t s!"diagnostic record: JSON round-trip {key}" (actual.toOption == some text)
+    let actual := parsed.bind fun j => (j.getObjVal? "recovery").bind fun r =>
+      (r.getObjVal? "replacement").bind Lean.Json.getStr?
+    t "diagnostic record: JSON round-trip empty or hostile replacement"
+      (actual.toOption == some text)
+    let output := parsed.bind fun j => (j.getObjVal? "output").bind Lean.Json.getStr?
+    t "diagnostic record: JSON retains output scope" (output.toOption == some "pdf")
+    t "diagnostic record: JSON is one safe physical line"
+      (!encoded.toList.any fun c => c.toNat < 0x20 ||
+        (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029')
+  let pdf := { d with output := some .pdf }
+  let html := { d with output := some .html }
+  let common := { d with output := none }
+  let ds := #[pdf, html, pdf, common, html]
+  t "diagnostic record: scopes are distinct loss identities"
+    (!Diag.sameLoss pdf html && !Diag.sameLoss pdf common &&
+      !Diag.sameLoss html common && Diag.sameLoss pdf pdf)
+  t "diagnostic record: census cannot merge output-specific losses"
+    ((Diag.tallySites ds).map (·.sites) == #[2, 2, 0, 1, 0])
+  t "diagnostic record: output projection preserves order and unscoped records"
+    (Diag.forOutputs #[.pdf] ds == #[pdf, pdf, common] &&
+      Diag.forOutputs #[.html] ds == #[html, common, html] &&
+      Diag.forOutputs #[.pdf, .html] ds == ds && Diag.forOutputs #[] ds == #[common])
+  for outputs in [#[], #[Diag.Output.pdf], #[.html], #[.pdf, .html], #[.html, .html]] do
+    let projected := Diag.forOutputs outputs ds
+    t "diagnostic record: projecting again neither drops nor duplicates records"
+      (Diag.forOutputs outputs projected == projected)
+    t "diagnostic record: output filtering commutes with site census"
+      (Diag.forOutputs outputs (Diag.tallySites ds) == Diag.tallySites projected)
+  let projected := Diag.forOutputs #[.pdf] #[html]
+  let resolved := Diag.resolveAll #[] false projected
+  t "diagnostic record: excluded output contributes no firing, warning or acceptance"
+    (resolved.diags.isEmpty && resolved.fired.isEmpty && resolved.accepted.isEmpty &&
+      resolved.errors == 0 && resolved.warnings == 0)
+  for raw in [pdf, html, common, Diag.demote d] do
+    for all in [false, true] do
+      for allowed in [#[], #[raw.code]] do
+        let resolved := (Diag.accept allowed all raw).1
+        t "diagnostic record: acceptance preserves the entire payload"
+          (Diag.demote resolved == Diag.demote raw)
+    t "diagnostic record: explicit demotion agrees with acceptance"
+      (Diag.demote raw == (Diag.accept #[raw.code] true raw).1)
+  for (raw, counted) in ds.toList.zip (Diag.tallySites ds).toList do
+    t "diagnostic record: census preserves the entire payload"
+      ({ counted with sites := raw.sites } == raw)
+  t "diagnostic record: HTML driver failures are scoped to HTML"
+    ((DriverDiag.boundarySvgMissing "unavailable").output == some .html &&
+      (DriverDiag.htmlResourceUnavailable "missing resource").output == some .html)
+
 /-- Exercise the emitted stderr, stream routing and exits of the built CLI.
 The malformed synthetic inputs stop before fonts or external tools are
 needed. In particular the warning must still fire beside a fatal error,
@@ -97,10 +222,10 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     let file := (dir / "invalid.tex").toString
     IO.FS.writeBinFile file ⟨#[0xFF]⟩
     let bad ← run #["dump", file, "--color=never"]
-    t "diagnostic format: emitted error has inline location, help, newline and failure exit"
+    t "diagnostic format: emitted error separates location, reason and suggestion and keeps failure exit"
       (bad.exitCode == 1 && bad.stdout.isEmpty && bad.stderr ==
-        s!"Error - Dropped [E0002] - {file}:1:1 - invalid UTF-8: invalid start byte 0xFF at byte offset 0\n" ++
-        "  help: every input is read as UTF-8; `iconv -t utf-8` re-encodes the file\n")
+        s!"Error - Dropped [E0002] - {file}:1:1\n  invalid UTF-8: invalid start byte 0xFF at byte offset 0\n" ++
+        "  suggestion: every input is read as UTF-8; `iconv -t utf-8` re-encodes the file\n")
     let porcelain ← run #["dump", file, "--porcelain"]
     t "diagnostic format: emitted porcelain stays JSONL on stdout"
       (porcelain.exitCode == 1 && porcelain.stderr.isEmpty && porcelain.stdout ==
@@ -133,19 +258,20 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         let result ← run (#[source, "--color=never"] ++
           if verbose then #["-v"] else #["-q"])
         let lines := result.stderr.splitOn "\n"
-        let expected := s!"{if allow then "Note" else "Warning"} - Degraded [W0301] - {source}:4:1 - " ++
+        let expected := s!"{if allow then "Note" else "Warning"} - Degraded [W0301] - {source}:4:1\n  " ++
           "unknown command '\\oddity'; its {...} arguments were kept as text"
         t s!"diagnostic format: emitted warning and acceptance {allow}/{verbose}"
           (result.exitCode == 1 && result.stdout.isEmpty &&
-           if !allow || verbose then lines.contains expected &&
-             lines.contains "  help: \\define \\name(...) {body} declares it"
+           if !allow || verbose then (result.stderr.splitOn expected).length == 2 &&
+             lines.contains "  suggestion: \\define \\name(...) {body} declares it"
            else lines.all fun line => (line.splitOn "[W0301]").length ≤ 1)
         t s!"diagnostic format: fatal error is never suppressed {allow}/{verbose}"
-          (lines.any (·.startsWith s!"Error - Dropped [E0202] - {source}:5:1 - "))
+          (lines.any (·.startsWith s!"Error - Dropped [E0202] - {source}:5:1"))
 
 /-- Suite entrypoint: pure text contracts and actual CLI emissions. -/
 def diagnosticFormatChecks (ref : IO.Ref (List String)) : IO Unit := do
   diagnosticFormatTextChecks ref
+  diagnosticRecordChecks ref
   diagnosticFormatCliChecks ref
 
 end Tests

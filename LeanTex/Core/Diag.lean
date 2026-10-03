@@ -562,6 +562,24 @@ def DiagCode.retired : List (String × Option String) :=
    -- occur.
    ("W0344", none)]
 
+/-- An artifact whose diagnostics apply only when that output is requested. -/
+inductive Diag.Output where
+  | pdf
+  | html
+  deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq
+
+def Diag.Output.label : Diag.Output → String
+  | .pdf => "pdf"
+  | .html => "html"
+
+/-- What the engine actually did after a loss. A proposed action belongs in
+`Diag.help`; neither field is reconstructed from message prose. -/
+inductive Diag.Recovery where
+  | ignored
+  | skipped
+  | replacedBy (replacement : String)
+  deriving Repr, BEq, DecidableEq
+
 /-- A diagnostic as delivered: `kind` is the registered code, and both the
 rendered code string and the severity are its projections — no free
 severity or code field exists, so a diagnostic disagreeing with its
@@ -600,6 +618,12 @@ structure Diag where
   parses a sentence holds only until the sentence is reworded. -/
   refused : Option String := none
   sites : Nat := 1
+  /-- Literal source spelling supplied by the emitter, independent of the census key. -/
+  trigger : Option String := none
+  /-- Actual handling of this loss, distinct from a suggested action in `help`. -/
+  recovery : Option Diag.Recovery := none
+  /-- `none` applies to every output; a scoped loss applies only to that artifact. -/
+  output : Option Diag.Output := none
   deriving Repr, BEq
 
 /-- **Is this code's loss part of the site census?** A `degraded` or
@@ -654,13 +678,17 @@ def Diag.severity (d : Diag) : Severity :=
 /-- The one door a diagnostic is made through. -/
 def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
     (help : Option String := none) (subject : Option String := none)
-    (refused : Option String := none) : Diag :=
+    (refused : Option String := none) (trigger : Option String := none)
+    (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none) : Diag :=
   { kind := c
     message := message
     span := span
     help := help
     subject := subject
-    refused := refused }
+    refused := refused
+    trigger := trigger
+    recovery := recovery
+    output := output }
 
 /-- A refusal carries the name it refuses structurally, never as a reading of
 its own words: what the door was handed is what comes back out. The fact the
@@ -685,6 +713,30 @@ theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Spa
       (Diag.of c message span help subject).severity.letter :=
   c.code_letter
 
+/-- Unscoped diagnostics always apply. A scoped diagnostic requires its artifact. -/
+def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
+  match d.output with
+  | none => true
+  | some output => outputs.contains output
+
+/-- Stable projection for the driver, before acceptance and exit accounting.
+An empty output set still retains common diagnostics. -/
+-- premise: Diag.forOutputs_mem — only diagnostics of disabled artifacts are removed.
+def Diag.forOutputs (outputs : Array Diag.Output) (ds : Array Diag) : Array Diag :=
+  ds.filter (Diag.appliesTo outputs)
+
+/-- Projection retains exactly the original records whose scope applies. -/
+theorem Diag.forOutputs_mem (outputs : Array Diag.Output) (ds : Array Diag) (d : Diag) :
+    d ∈ Diag.forOutputs outputs ds ↔
+      d ∈ ds ∧ (∀ output, d.output = some output → output ∈ outputs) := by
+  simp only [Diag.forOutputs, Array.mem_filter]
+  cases h : d.output <;> simp [Diag.appliesTo, h]
+
+/-- Repeated projection cannot duplicate or further change a diagnostic. -/
+theorem Diag.forOutputs_id (outputs : Array Diag.Output) (ds : Array Diag) :
+    Diag.forOutputs outputs (Diag.forOutputs outputs ds) = Diag.forOutputs outputs ds := by
+  simp [Diag.forOutputs, Array.filter_filter]
+
 /-- The escape hatch: `\allow{W0307, ...}` in a document's preamble accepts
 the named losses for that document alone; `--best-effort` (`allowAll`)
 accepts every loss — port mode. Rust's lint levels (allow/warn/deny per
@@ -700,6 +752,13 @@ def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × 
     ({ d with demoted := true }, true)
   else (d, false)
 
+/-- Acceptance changes only the policy bit, preserving the entire record,
+including present and future structured fields. -/
+theorem Diag.accept_record_exact (allowed : Array String) (allowAll : Bool) (d : Diag) :
+    { (Diag.accept allowed allowAll d).1 with demoted := d.demoted } = d := by
+  unfold Diag.accept
+  split <;> rfl
+
 /-- The spliced-`.sty` demotion: a TeX internal the engine correctly
 refuses inside a style file the author did not write is per-line correct
 and per-line unactionable — "'\\z@' is unknown" helps nobody holding only
@@ -711,28 +770,39 @@ function of the declared loss and of policy declared in this module,
 never of a call site. -/
 def Diag.demote (d : Diag) : Diag := { d with demoted := true }
 
+/-- Explicit policy demotion preserves the entire record apart from its policy bit. -/
+theorem Diag.demote_record_exact (d : Diag) :
+    { Diag.demote d with demoted := d.demoted } = d := rfl
+
 /-- Two diagnostics are sites of the *same* loss when they carry the same
-code and the same structured subject. The code alone would merge two
-unrelated constructs refused for the same reason; the subject alone would
-merge two codes that happen to name one key. -/
+code, structured subject and output scope. A PDF loss and an HTML loss
+must remain distinct even when they name the same construct, so filtering
+one artifact cannot inherit the other's count. -/
 def Diag.sameLoss (a b : Diag) : Bool :=
-  decide (a.kind = b.kind) && decide (a.subject = b.subject) && a.subject.isSome
+  (decide (a.kind = b.kind) && decide (a.output = b.output)) &&
+    decide (a.subject = b.subject) && a.subject.isSome
 
 private theorem Diag.sameLoss_iff (a b : Diag) :
     Diag.sameLoss a b = true ↔
-      a.kind = b.kind ∧ a.subject = b.subject ∧ a.subject.isSome = true := by
+      (a.kind = b.kind ∧ a.output = b.output) ∧
+        a.subject = b.subject ∧ a.subject.isSome = true := by
   simp [Diag.sameLoss, and_assoc]
 
 private theorem Diag.sameLoss_symm {a b : Diag} (h : Diag.sameLoss a b = true) :
     Diag.sameLoss b a = true := by
   obtain ⟨hk, hs, hi⟩ := (Diag.sameLoss_iff a b).mp h
-  exact (Diag.sameLoss_iff b a).mpr ⟨hk.symm, hs.symm, hs ▸ hi⟩
+  exact (Diag.sameLoss_iff b a).mpr ⟨⟨hk.1.symm, hk.2.symm⟩, hs.symm, hs ▸ hi⟩
 
 private theorem Diag.sameLoss_trans {a b c : Diag} (h₁ : Diag.sameLoss a b = true)
     (h₂ : Diag.sameLoss b c = true) : Diag.sameLoss a c = true := by
   obtain ⟨hk, hs, hi⟩ := (Diag.sameLoss_iff a b).mp h₁
   obtain ⟨hk', hs', _⟩ := (Diag.sameLoss_iff b c).mp h₂
-  exact (Diag.sameLoss_iff a c).mpr ⟨hk.trans hk', hs.trans hs', hi⟩
+  exact (Diag.sameLoss_iff a c).mpr
+    ⟨⟨hk.1.trans hk'.1, hk.2.trans hk'.2⟩, hs.trans hs', hi⟩
+
+/-- A census group cannot cross output scopes. -/
+theorem Diag.sameLoss_output_exact (a b : Diag) (h : Diag.sameLoss a b = true) :
+    a.output = b.output := ((Diag.sameLoss_iff a b).mp h).1.2
 
 /-- The index whose line carries a diagnostic's count: the first diagnostic
 of its loss, or its own index when it names no subject. -/
@@ -747,7 +817,7 @@ undercounts — ten lines standing for fifty losses is how a document full of
 silent drops reads as nearly clean.
 
 This is the one writer of `sites`: the first diagnostic of each loss carries
-the number of diagnostics sharing its code and subject, every later one
+the number of diagnostics sharing its code, subject and output, every later one
 carries 0, and a diagnostic with no subject is its own one site — so the
 counts on a log add up to its length (`tallySites_sum_exact`). Stamping the
 total on every site squared it for any reader who summed them. Nothing else
@@ -766,7 +836,7 @@ private theorem Diag.carrier_lt (ds : List Diag) (i : Nat) (h : i < ds.length) :
   unfold Diag.carrier
   split
   · rename_i hs
-    have := Diag.findIdx_le_of_true h ((Diag.sameLoss_iff _ _).mpr ⟨rfl, rfl, hs⟩)
+    have := Diag.findIdx_le_of_true h ((Diag.sameLoss_iff _ _).mpr ⟨⟨rfl, rfl⟩, rfl, hs⟩)
     omega
   · exact h
 
@@ -911,6 +981,13 @@ theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
       d.help = (ds[i]).help ∧ d.demoted = (ds[i]).demoted ∧
       d.subject = (ds[i]).subject :=
   ⟨_, Diag.tallySites_getElem? ds i h, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Counting preserves the entire record except `sites`, including all
+structured fields; this remains true when the record gains another field. -/
+theorem Diag.tallySites_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+    ((Diag.tallySites ds)[i]?).map (fun d => { d with sites := ds[i].sites }) = some ds[i] := by
+  rw [Diag.tallySites_getElem? ds i h]
+  rfl
 
 /-- **The counts on a log add up to its length.** Summing `sites` over every
 record of a run gives the number of records, whatever the run — the claim a
