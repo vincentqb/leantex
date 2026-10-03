@@ -67,14 +67,15 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
     ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
-/-- One phase's diagnostics resolved against the document's acceptance
-(`\allow` and `--best-effort`) and printed. -/
+/-- Resolve and print one phase against the document's acceptance
+(`\allow` and `--best-effort`). Return its accounting without retaining
+already-emitted messages. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
   let r := Diag.resolveAll allowed allowAll (Diag.forOutputs outputs ds)
   for d in r.diags do
     ui.diag d
-  return r
+  return { r with diags := #[] }
 
 /-- Codes with their multiplicities, first appearance first. -/
 def tally (xs : Array String) : List (String × Nat) := Id.run do
@@ -1029,16 +1030,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let doc := front.doc
     let diags := front.diags
     let reqSpans := front.spans
-    let mut fired : Array String := #[]
-    let mut accepted : Array String := #[]
-    let mut warnings : Nat := 0
-    let r0 ← ui.resolve doc.allow allowAll (outputs := outputs) diags
-    fired := fired ++ r0.fired
-    accepted := accepted ++ r0.accepted
-    warnings := warnings + r0.warnings
-    if r0.errors > 0 then
-      ui.accepted accepted
-      ui.summary file r0.errors (← since t0)
+    let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
+    if resolved.errors > 0 then
+      ui.accepted resolved.accepted
+      ui.summary file resolved.errors (← since t0)
       return 1
     let t ← IO.monoMsNow
     -- The host's answer is taken once. The directories to look in are the
@@ -1057,13 +1052,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, doc, fontDiags, paths) =>
-      let r1 ← ui.resolve doc.allow allowAll (outputs := outputs) fontDiags
-      fired := fired ++ r1.fired
-      accepted := accepted ++ r1.accepted
-      warnings := warnings + r1.warnings
-      if r1.errors > 0 then
-        ui.accepted accepted
-        ui.summary file r1.errors (← since t0)
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) fontDiags)
+      if resolved.errors > 0 then
+        ui.accepted resolved.accepted
+        ui.summary file resolved.errors (← since t0)
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
@@ -1105,10 +1097,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
         (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
       let imgDiags := (imgDiags ++ picAlts).map front.prepared.sourceTriggers.attribute
-      let r2 ← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags
-      fired := fired ++ r2.fired
-      accepted := accepted ++ r2.accepted
-      warnings := warnings + r2.warnings
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
         let cached := if imgHits == 0 then "" else s!", {imgHits} cached"
         ui.phase "images" s!"{imgs.entries.size} files{cached}" (← since t)
@@ -1122,17 +1111,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs pats doc imgs
-      let r3 ← ui.resolve doc.allow allowAll (outputs := outputs) out.diags
-      fired := fired ++ r3.fired
-      accepted := accepted ++ r3.accepted
-      warnings := warnings + r3.warnings
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) out.diags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- An unaccepted error anywhere before the writers means no output: a
       -- failing document must not produce one (the assertion contract, held
       -- for every dropped loss).
-      if r2.errors + r3.errors > 0 then
-        ui.accepted accepted
-        ui.summary file (r2.errors + r3.errors) (← since t0)
+      if resolved.errors > 0 then
+        ui.accepted resolved.accepted
+        ui.summary file resolved.errors (← since t0)
         return 1
       -- Phase 1, the plan: what to build and where it would land, as pure
       -- computation over the flags and the document — the one read is
@@ -1184,10 +1170,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- than decorative.
       let slotDiags := SlotLoss.diags doc.fonts fs doc
         (SlotLoss.carries emit doc.fontPolicy)
-      let rSlot ← ui.resolve doc.allow allowAll (outputs := outputs) slotDiags
-      fired := fired ++ rSlot.fired
-      accepted := accepted ++ rSlot.accepted
-      warnings := warnings + rSlot.warnings
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) slotDiags)
       -- The declared contract, held against each emitted artifact's
       -- realization record: a fact the artifact cannot yet realize is one
       -- W0701 per artifact, per fact — warnings, resolved before the gate
@@ -1199,10 +1182,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if emit.contains .html then
         contractWarnings := contractWarnings ++
           Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
-      let rC ← ui.resolve doc.allow allowAll (outputs := outputs) contractWarnings
-      fired := fired ++ rC.fired
-      accepted := accepted ++ rC.accepted
-      warnings := warnings + rC.warnings
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) contractWarnings)
       let mut htmlBuilt : Option HtmlDoc.ClosedPage := none
       if emit.contains .html then
         let t ← IO.monoMsNow
@@ -1219,11 +1199,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- keeps the boundary's drawing.
         let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs reqSpans.images
         let imgs ← imageBrowserFaces imgs
-        let rS ← ui.resolve doc.allow allowAll (outputs := outputs)
-          (svgDiags.map front.prepared.sourceTriggers.attribute)
-        fired := fired ++ rS.fired
-        accepted := accepted ++ rS.accepted
-        warnings := warnings + rS.warnings
+        resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
+          (svgDiags.map front.prepared.sourceTriggers.attribute))
         let htmlOnly := Boundary.htmlWithdraw reqSpans.fallbacks unconverted
         let htmlDoc ← if htmlOnly.isEmpty then pure doc else do
           let t ← IO.monoMsNow
@@ -1247,14 +1224,11 @@ in the HTML" (← since t)
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
-        let r4 ← ui.resolve doc.allow allowAll (outputs := outputs) hdiags
-        fired := fired ++ r4.fired
-        accepted := accepted ++ r4.accepted
-        warnings := warnings + r4.warnings
+        resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) hdiags)
         match result with
         | .error detail =>
           ui.diag (DriverDiag.htmlResourceUnavailable detail)
-          ui.accepted accepted
+          ui.accepted resolved.accepted
           ui.summary file 1 (← since t0)
           return 1
         | .ok page =>
@@ -1352,27 +1326,25 @@ in the HTML" (← since t)
       if !failures.isEmpty then
         for d in failures do
           ui.diag d
-        ui.accepted accepted
+        ui.accepted resolved.accepted
         ui.summary file failures.size (← since t0)
-        return exitFor 0 failures.size warnings ui.cfg.werror
+        return exitFor 0 failures.size resolved.warnings ui.cfg.werror
       let written ← publish outDir (htmlBuilt.map (htmlPath, ·))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.
-      let r5 ← ui.resolve doc.allow allowAll (outputs := outputs)
-        ((Diag.unfired doc.allow fired).map DriverDiag.allowUnfired)
-      accepted := accepted ++ r5.accepted
-      warnings := warnings + r5.warnings
-      ui.accepted accepted
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
+        ((Diag.unfired doc.allow resolved.fired).map DriverDiag.allowUnfired))
+      ui.accepted resolved.accepted
       let notes := (Diag.forOutputs outputs diags).foldl
         (fun n d => if d.severity == .note then n + 1 else n) 0
       ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
       -- `--werror`: the outputs above were written — the flag turns the
       -- exit code, never the rendering — and the verdict line says why the
       -- build failed anyway.
-      if ui.cfg.werror && warnings > 0 then
-        ui.werror file warnings (← since t0)
-      return exitFor 0 0 warnings ui.cfg.werror
+      if ui.cfg.werror && resolved.warnings > 0 then
+        ui.werror file resolved.warnings (← since t0)
+      return exitFor 0 0 resolved.warnings ui.cfg.werror
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do
   match ← frontend ui file with

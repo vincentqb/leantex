@@ -1067,9 +1067,9 @@ theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.s
   rw [Diag.count_mapIdx_eq_one (Diag.carrier ds.toList) i i hl
     fun j hj => Diag.carrier_eq_iff_self ds.toList i j hl hj (by simpa using hn)]
 
-/-- One phase's diagnostics resolved against the document's acceptance,
-with the counts the driver's exit contract reads: errors and warnings are
-counted after acceptance, so an accepted loss is neither. -/
+/-- Diagnostics resolved against the document's acceptance, with the counts
+of every resolved phase. Counts follow acceptance, so an accepted loss is
+neither an error nor a warning. -/
 structure Resolution where
   diags : Array Diag := #[]
   fired : Array String := #[]
@@ -1078,18 +1078,74 @@ structure Resolution where
   warnings : Nat := 0
   deriving Repr, BEq
 
+/-- Phase accounting keeps the rendered records, acceptance and exit counts
+in one value. `resolveAll_append_exact` holds this operation to resolving the
+same stream at once, including its order and repeated diagnostic codes. -/
+def Resolution.append (a b : Resolution) : Resolution :=
+  { diags := a.diags ++ b.diags
+    fired := a.fired ++ b.fired
+    accepted := a.accepted ++ b.accepted
+    errors := a.errors + b.errors
+    warnings := a.warnings + b.warnings }
+
+@[simp] theorem Resolution.empty_append_id (r : Resolution) :
+    ({} : Resolution).append r = r := by
+  cases r
+  simp [append]
+
+@[simp] theorem Resolution.append_empty_id (r : Resolution) :
+    r.append {} = r := by
+  cases r
+  simp [append]
+
+/-- Grouping phases never changes their diagnostic records or verdict. -/
+theorem Resolution.append_assoc_exact (a b c : Resolution) :
+    (a.append b).append c = a.append (b.append c) := by
+  simp [append, Array.append_assoc, Nat.add_assoc]
+
+private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Resolution :=
+  { diags := r.diags.push d
+    fired := r.fired.push d.code
+    accepted := if accepted then r.accepted.push d.code else r.accepted
+    errors := r.errors + (if d.severity == .error then 1 else 0)
+    warnings := r.warnings + (if d.severity == .warning then 1 else 0) }
+
+private theorem Resolution.record_append (a b : Resolution) (d : Diag) (accepted : Bool) :
+    (a.append b).record d accepted = a.append (b.record d accepted) := by
+  cases accepted <;> simp [record, append, -Array.push_append, Array.append_push, Nat.add_assoc]
+
 def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) : Resolution := Id.run do
   let mut r : Resolution := {}
   for d0 in ds do
     let (d, acc) := Diag.accept allowed allowAll d0
-    r := { r with
-      diags := r.diags.push d
-      fired := r.fired.push d.code
-      accepted := if acc then r.accepted.push d.code else r.accepted
-      errors := r.errors + (if d.severity == .error then 1 else 0)
-      warnings := r.warnings + (if d.severity == .warning then 1 else 0) }
+    r := r.record d acc
   return r
+
+/-- The actual imperative resolver's fold reading; no second runtime walk. -/
+private theorem Diag.resolveAll_fold (allowed : Array String) (allowAll : Bool)
+    (ds : Array Diag) :
+    Diag.resolveAll allowed allowAll ds = ds.foldl (fun r d0 =>
+      let (d, acc) := Diag.accept allowed allowAll d0
+      r.record d acc) {} := by
+  simp [resolveAll]
+
+/-- Resolving consecutive phases equals resolving their combined stream.
+The record equality covers diagnostic order, fired and accepted codes, and
+both exit counts under the same acceptance policy. -/
+theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
+    (xs ys : Array Diag) :
+    Diag.resolveAll allowed allowAll (xs ++ ys) =
+      (Diag.resolveAll allowed allowAll xs).append (Diag.resolveAll allowed allowAll ys) := by
+  rw [resolveAll_fold, Array.foldl_append, resolveAll_fold, resolveAll_fold]
+  let step (r : Resolution) (d0 : Diag) : Resolution :=
+    let (d, acc) := Diag.accept allowed allowAll d0
+    r.record d acc
+  have h := Array.foldl_hom (Resolution.append (xs.foldl step {}))
+    (g₁ := step) (g₂ := step) (xs := ys) (init := ({} : Resolution))
+    (fun r d0 => Resolution.record_append _ r
+      (Diag.accept allowed allowAll d0).1 (Diag.accept allowed allowAll d0).2)
+  simpa [step] using h
 
 /-- The `\allow` entries no emitted diagnostic ever matched: each is stale
 acceptance the document no longer needs, and warning about it is one of the

@@ -26366,3 +26366,23 @@ command, and both artifacts are byte-identical to the earlier builds.
 Validation: the focused origin checks, full `lake build`, full `lake test`,
 and the required five-repeat `scripts/bench.lean` run pass. Diagnostic goldens
 were regenerated through the harness; only their trigger headers changed.
+
+
+### 2026-10-03 — Diagnostic phase accounting composes
+
+The driver now combines one resolved accounting value at each phase instead
+of separately maintaining fired codes, accepted codes, and warning totals.
+The UI releases each phase's diagnostic records after printing them; only
+codes and counts persist through publication. Acceptance, output filtering,
+message order, and the existing exit gates remain unchanged.
+
+`Diag.resolveAll_append_exact` proves that resolving consecutive diagnostic
+streams gives the same full record as resolving their concatenation under
+the same acceptance policy. The composition has identity and associativity
+contracts. The proof reads the existing imperative resolver through its fold
+equation; there is no second runtime pass.
+
+Validation: the warning-clean default build and `leantex`/`Tests` targets,
+full `lake test`, and the five-repeat repository benchmark pass. The
+benchmark's bibliography growth check remains below its declared bound.
+Independent review of the final accounting and driver changes is clean.
