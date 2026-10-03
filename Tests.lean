@@ -34,6 +34,8 @@ import Tests.PdfReadObjects
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
+import Tests.DiagnosticTrigger
+import Tests.DiagnosticImageOrigins
 import Tests.DiagnosticFontScope
 import Tests.DiagnosticOrigins
 import Tests.SourceAnnotations
@@ -104,7 +106,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
   overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
-  diagnosticFormatChecks diagnosticFontScopeChecks diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
+  diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks)
 
@@ -538,6 +540,8 @@ def main (args : List String) : IO UInt32 := do
   argsChecks ref
   renderChecks ref
   diagnosticFormatChecks ref
+  diagnosticTriggerChecks ref
+  diagnosticImageOriginChecks ref
   diagnosticFontScopeChecks ref
   diagnosticOriginChecks ref
   sourceAnnotationChecks ref

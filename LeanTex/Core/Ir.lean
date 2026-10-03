@@ -13981,23 +13981,27 @@ def pictureSansAltHelp : String :=
 /-- The text-alternative judge's file-image and native-picture face (WCAG
 2.2 SC 1.1.1, Non-text Content). One diagnostic per distinct object; a
 file source or native-picture key provides the structured subject and its
-recorded span. Boundary pictures are judged by `picAltDiags` after the
-driver has fulfilled them. -/
+recorded span. File-image labels stay generic because requests do not
+preserve source command spellings. Boundary pictures are judged by
+`picAltDiags` after the driver has fulfilled them. -/
 def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
     Array Diag :=
   ((imagesSansAlt doc).filter fun src => !src.startsWith picSrcPrefix).map fun src =>
+    let span := spanOf src
     if src.startsWith picKeyPrefix then
-      Diag.of .W0376 pictureSansAltMessage (spanOf src)
+      Diag.of .W0376 pictureSansAltMessage span
         (help := some pictureSansAltHelp) (subject := some src)
+        (trigger := span.map (fun _ => "picture"))
     else
       Diag.of .W0376
         (s!"image '{src}' ships no text alternative; assistive technology " ++
           "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
-        (spanOf src)
+        span
         (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
           "mark it decorative with [artifact], or caption its figure: the " ++
           "caption becomes the alternative"))
         (subject := some src)
+        (trigger := span.map (fun _ => "image"))
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
@@ -14007,8 +14011,10 @@ def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
   ((imagesSansAlt doc).filter fun src =>
       src.startsWith picSrcPrefix && shipped src).map fun src =>
-    Diag.of .W0376 pictureSansAltMessage (spanOf src)
+    let span := spanOf src
+    Diag.of .W0376 pictureSansAltMessage span
       (help := some pictureSansAltHelp) (subject := some src)
+      (trigger := span.map (fun _ => "picture"))
 
 private theorem length_filter_partition (p : α → Bool) :
     ∀ l : List α, (l.filter p).length + (l.filter (fun a => !p a)).length = l.length

@@ -1,765 +1,765 @@
 ── E0001 (dropped) cannot read an input file
-Error [E0001]
+✖ [E0001]
   cannot read 'doc.tex': no such file or directory (error code: 2)
 ── E0002 (dropped) input is not valid UTF-8
-Error [E0002]
+✖ [E0002]
   invalid UTF-8: invalid continuation byte 0x28 at byte offset 0
   suggestion: every input is read as UTF-8; `iconv -t utf-8` re-encodes the file
 ── E0003 (dropped) output formats do not have independent destinations; publication is refused
-Error [E0003]
+✖ [E0003]
   cannot publish output: HTML and Markdown both name 'out.html'
   suggestion: choose separate files with -o and \output{ md = ... }; use destinations without hard links
 ── E0101 (dropped) lone backslash at end of input
-Error [E0101]
+✖ [E0101]
   lone backslash at end of input
 ── E0102 (dropped) unclosed verbatim environment
-Error [E0102]
+✖ [E0102]
   unclosed {verbatim}: expected '\end{verbatim}'
 ── E0111 (dropped) beamer template body carrying content dropped
-Error [E0111]
+✖ [E0111] - \setbeamertemplate
   '\setbeamertemplate{footline}' is dropped with its template body, which carries content
   suggestion: 'frame footer' translates to \framefoot{...}; \style{element}{...} styles elements; \runningfoot sets a document footer; \allow{E0111} accepts the loss
 ── E0112 (dropped) \titlegraphic content dropped
-Error [E0112]
+✖ [E0112] - \titlegraphic
   '\titlegraphic' declares title-page content the engine does not place; the content is dropped
   suggestion: \logo places an image on running pages; \allow{E0112} accepts the loss
 ── E0113 (dropped) unrecognised \sectionlinesformat body dropped
-Error [E0113]
+✖ [E0113] - \renewcommand
   '\sectionlinesformat' body is not the rule idiom; it is dropped
   suggestion: \style{section}{ rule = <colour> } declares the section rule; \allow{E0113} accepts the loss
 ── E0201 (dropped) unclosed group or environment at end of input
-Error [E0201]
+✖ [E0201]
   unclosed: expected '}'
 ── E0202 (dropped) unexpected closer
-Error [E0202]
+✖ [E0202]
   unexpected '}'
 ── E0205 (dropped) malformed or mismatched environment name
-Error [E0205]
+✖ [E0205]
   expected an environment name
 ── E0303 (dropped) malformed \define signature
-Error [E0303]
+✖ [E0303] - \define
   malformed signature '(a b'
   suggestion: expected (name: type, ..., opt?: type)
 ── E0304 (dropped) missing argument for a command
-Error [E0304]
+✖ [E0304] - \page
   '\page' needs a {...} block
 ── E0305 (dropped) parameter expects text
-Error [E0305]
+✖ [E0305] - \role
   parameter 'who' of '\role' expects text
 ── E0306 (dropped) unknown parameter reference in a definition body
-Error [E0306]
+✖ [E0306] - \x
   unknown parameter '\b'
 ── E0309 (dropped) unknown document class
-Error [E0309]
+✖ [E0309] - \documentclass
   unknown document class 'proseplate'
   suggestion: classes: article, slides, card, resume, webpage
 ── E0310 (dropped) content before the first \item in a list
-Error [E0310]
+✖ [E0310] - \begin{itemize}
   content before the first '\item'
 ── E0311 (dropped) reserved character in text
-Error [E0311]
+✖ [E0311]
   reserved character '&'
   suggestion: escape it as '\&'
 ── E0312 (dropped) block-level command used inline
-Error [E0312]
+✖ [E0312] - \section
   '\section' is not allowed here
   suggestion: it is a block-level command: use it between paragraphs, not inside inline content
 ── E0313 (dropped) only declarations may appear before \begin{document}
-Error [E0313]
+✖ [E0313]
   only declarations may appear before '\begin{document}'
 ── E0316 (dropped) unclosed optional argument
-Error [E0316]
+✖ [E0316] - \x
   unclosed optional argument for '\x'
 ── E0320 (dropped) invalid key or missing value in a declaration block
-Error [E0320]
+✖ [E0320] - \page
   'oops' in '\page' has no value
   suggestion: entries look like: key = value
 ── E0321 (dropped) unreadable value for a declaration key
-Error [E0321]
+✖ [E0321] - \includegraphics
   'scale' needs a number, got "big"
 ── E0322 (dropped) unknown key in a declaration block
-Error [E0322]
+✖ [E0322] - \page
   '\page' has no key 'zoom'
   suggestion: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap
 ── E0323 (dropped) declaration key value has the wrong type
-Error [E0323]
+✖ [E0323] - \page
   'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
-Error [E0324]
+✖ [E0324] - \page
   unknown page size 'quarto'
   suggestion: known sizes: letter, legal, a4, a5, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
 ── E0325 (dropped) unreadable \assert expression
-Error [E0325]
+✖ [E0325] - \assert
   cannot read assertion: "pages =~ 1"
   suggestion: '=~' is not a comparison (== != <= < >= >)
 ── E0326 (dropped) name not in the palette where a colour is required
-Error [E0326]
+✖ [E0326] - \palette
   'missingname' is not in the palette
   suggestion: aliases read earlier entries: declare \palette{ missingname = #RRGGBB } first
 ── E0327 (dropped) not a \page key
-Error [E0327]
+✖ [E0327] - \page
   'header' is not a '\page' key
   suggestion: \runninghead{...} declares it; \hfill pushes content to the right
 ── E0328 (dropped) not a styleable element
-Error [E0328]
+✖ [E0328] - \style
   'banana' is not a styleable element or a '\define'd name
   suggestion: elements: section, subsection, subsubsection, abstract, itemize, enumerate, frametitle, sectionpage, standout, titlepage, nav, logo, link, url, cite; list levels: itemize2..4, enumerate2..4
 ── E0329 (dropped) unknown diagnostic code in \allow
-Error [E0329]
+✖ [E0329] - \allow
   '\allow' names no diagnostic code 'W9999'
   suggestion: codes look like 'E0333'; each names the one loss it accepts
 ── E0330 (dropped) layout assertion failed against the shipped pages
-Error [E0330]
+✖ [E0330]
   assertion failed: pages == 1 (actual: 2)
   suggestion: the document shipped this; change the source or the \assert
 ── E0331 (dropped) unreadable length
-Error [E0331]
+✖ [E0331] - \includegraphics
   cannot read a length from 'banana'
   suggestion: image sizes look like 3cm or 0.8\textwidth
 ── E0332 (dropped) covered fraction outside 1–99 percent
-Error [E0332]
+✖ [E0332] - \palette
   covered fraction must be 1–99 percent, got '100\%'
   suggestion: the fraction of each covered colour kept over the page; the default is 38\%
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
-Error [E0333]
+✖ [E0333] - \begin{tikzpicture}
   in '\fill', unknown macro '\nope'; the shape is not drawn
   suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── E0334 (dropped) \begin{ifbackend} content addressed to no backend
-Error [E0334]
+✖ [E0334] - \begin{ifbackend}
   this content is addressed to no backend; no output will carry it
   suggestion: name at least one of pdf, html, md; a nested '\begin{ifbackend}' intersects with its enclosing one; \allow{E0334} accepts the loss
 ── E0336 (dropped) {...} groups went with an unknown wrapper
-Error [E0336]
+✖ [E0336] - \begin{banner}
   1 {...} group on the '\begin{banner}' line went with the unknown wrapper
   suggestion: content, not an argument? put it after the '\begin' line
 ── E0340 (dropped) unknown icon name; nothing is rendered
-Error [E0340]
+✖ [E0340] - \faIcon
   unknown icon 'no-such-icon'; nothing is rendered
   suggestion: icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'
 ── E0347 (dropped) a running head or foot declared in the body is dropped with its content
-Error [E0347]
+✖ [E0347] - \runninghead
   '\runninghead' in the body is dropped with its content
   suggestion: declare it in the preamble, before '\begin{document}'
-Error [E0347]
+✖ [E0347] - \runningfoot
   '\runningfoot' in the body is dropped with its content
   suggestion: declare it in the preamble, before '\begin{document}'
 ── E0359 (dropped) a \note nested inside another note's frame is dropped
-Error [E0359]
+✖ [E0359] - \note
   a '\note' inside this note's frame is dropped: one note cannot carry another
   suggestion: move the inner '\note' out of the enclosing '\note', beside its frame
 ── E0365 (dropped) \data file not found; its records are absent
-Error [E0365]
+✖ [E0365]
   '\data' file 'records' is not there; its records are absent
   suggestion: looked at: ./records.bib; \allow{E0365} accepts the loss
 ── E0375 (dropped) \dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped
-Error [E0375]
+✖ [E0375] - \setlength
   '\dimexpr' division rounds to nearest; this engine's length arithmetic truncates toward zero as TeX's '\divide' does
   suggestion: divide outside '\dimexpr': '(\a - \b) / 2' truncates as TeX does
 ── E0382 (dropped) the boundary tool ran and drew nothing for a picture; the page would carry an empty box
-Error [E0382]
+✖ [E0382]
   'lualatex' drew nothing for this picture; the page would carry an empty box
   suggestion: lualatex says: ! Undefined control sequence. · l.7 \nope
-Error [E0382]
+✖ [E0382]
   'lualatex' did not finish this picture; the page would carry an empty box
   suggestion: exit code 3; nothing is remembered, so a rebuild asks lualatex again; \allow{E0382} accepts the empty box
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
-Error [E0390]
+✖ [E0390]
   raw HTML in markdown is refused: document content can never become markup here
   suggestion: quote the text as a code span with `...`, or delete the tag
 ── E0401 (dropped) no usable font found on the host
-Error [E0401]
+✖ [E0401]
   no usable font found
   suggestion: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
 ── E0402 (dropped) LEANTEX_FONT is unusable
-Error [E0402]
+✖ [E0402]
   LEANTEX_FONT 'face.ttf' does not exist
-Error [E0402]
+✖ [E0402]
   cannot use LEANTEX_FONT 'README.md': unsupported font format (need TrueType or CFF OpenType)
 ── E0403 (dropped) no installed font family by that name
-Error [E0403]
+✖ [E0403]
   no installed font family named 'Sourse Serif Pro'
   suggestion: did you mean: Source Serif Pro? — `leantex fonts` lists every family
-Error [E0403]
+✖ [E0403]
   no installed font family named 'Kaputt Grotesk'
   suggestion: 12 families are installed — `leantex fonts` lists every family
 ── E0404 (dropped) a font file could not be used
-Error [E0404]
+✖ [E0404]
   cannot use 'fonts/Broken-Regular.otf': not a TrueType or OpenType file
 ── E0405 (dropped) font has no glyph for a character; dropped
-Error [E0405] (PDF) - ⟨
+✖ [E0405] - ⟨
   'Open Sans' has no glyph for U+27E8
   skipped
   suggestion: declare a face that covers it in \fonts, or accept the loss with \allow{E0405}
 ── E0501 (dropped) \input nesting too deep
-Error [E0501]
+✖ [E0501]
   '\input' nesting deeper than 8 files; is a file including itself?
 ── E0502 (dropped) \input file not found; skipped
-Error [E0502]
+✖ [E0502]
   '\input' file 'chapter1.tex' is not there; its content is absent
   suggestion: \allow{E0502} accepts the loss
 ── E0503 (dropped) \bibliography file not found; the reference list is empty
-Error [E0503]
+✖ [E0503]
   '\bibliography' file 'references' is not there; the reference list is empty
   suggestion: looked at: ./references.bib; \allow{E0503} accepts the loss
 ── E0606 (dropped) the HTML page has unresolved rendering resources; publication is refused
-Error [E0606] (HTML)
+✖ [E0606]
   cannot publish self-contained HTML: an image still names 'figures/plot.svg'
   suggestion: use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies
 ── N0016 (info) no math face declared; the engine picked one and says which
-Info [N0016]
+ℹ [N0016]
   math is set in 'Fira Math', the designed companion of 'Fira Sans'
   suggestion: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
-Info [N0016]
+ℹ [N0016]
   math is set in 'Fira Math', the first installed face with an OpenType MATH table
   suggestion: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 ── N0017 (info) no document class declared; the article page model is assumed
-Info [N0017]
+ℹ [N0017]
   no '\documentclass'; the article page model is assumed
   suggestion: declare \documentclass{article} (or slides, card, resume, webpage, poster) to choose it
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
-Info [N0018]
+ℹ [N0018]
   'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand
   suggestion: write \fonts{ math = "..." } with a face that carries this alphabet
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
-Info [N0019]
+ℹ [N0019] - \begin{ifbackend}
   content addressed per backend encodes a per-medium decision by hand
   suggestion: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── N0020 (info) a local style file is read as part of the preamble
-Info [N0020]
+ℹ [N0020]
   'venueguide.sty' beside the document is read into the preamble — honoured: 2, named: 1, TeX internals refused: 1
 ── N0021 (info) header and footer gaps differ as declared; equal gaps are the default
-Info [N0021]
+ℹ [N0021]
   header and footer gaps differ by 10pt as declared; equal gaps are the default
 ── N0022 (info) a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)
-Info [N0022]
+ℹ [N0022]
   'alert' is realized lighter (#EE7C38) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
-Info [N0023]
+ℹ [N0023] - \begin{tikzpicture}
   this picture is drawn by lualatex at the boundary; its text is not in the document's census
   suggestion: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
 ── N0100 (info) LaTeX idiom translated to its native declaration
-Info [N0100]
+ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
-Info [N0102]
+ℹ [N0102] - \begin{frame}
   frame option 'plain' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
-Info [N0103]
+ℹ [N0103] - \section
   '\section[short]' short title is unused: nothing consumes it yet
 ── N0104 (info) a frame declared for another mode ships no page in this one
-Info [N0104]
+ℹ [N0104] - \begin{frame}
   '<presentation:0>' declares no presentation slides; this frame ships no page
 ── N0105 (info) \allow names a retired code; its successor answers
-Info [N0105]
+ℹ [N0105] - \allow
   '\allow' names the retired code 'W0341'; its loss is a clause of 'W0301' now, so this accepts nothing
   suggestion: \allow{W0301} accepts every 'W0301', this loss among them
-Info [N0105]
+ℹ [N0105] - \allow
   '\allow' names the retired code 'W0344'; the loss it named cannot occur
 ── N0114 (info) a TeX conditional resolved from the document's own definitions and loads
-Info [N0114]
+ℹ [N0114] - \ifdefined
   '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
-Info [N0114]
+ℹ [N0114] - \ifdefined
   '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept
-Info [N0114]
+ℹ [N0114] - \@ifpackageloaded
   '\@ifpackageloaded': 'booktabs' is loaded here, so the first branch is kept
-Info [N0114]
+ℹ [N0114] - \IfPackageLoadedF
   '\IfPackageLoadedF': no package 'wideframe' is loaded here, so its branch is kept
 ── N0200 (info) page set short: its skips gave their shrink
-Info [N0200]
+ℹ [N0200]
   page 1 set 6pt short: its skips gave 40% of their 16pt of shrink
 ── N0419 (info) a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it
-Info [N0419]
+ℹ [N0419]
   no boundary tool drew this picture, so the rendered subset draws it; what the subset leaves out is named beside it
   suggestion: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
 ── W0001 (config) content after \end{document} is ignored
-Warning [W0001]
+⚠ [W0001]
   content after '\end{document}' is ignored
 ── W0003 (degraded) no math face available; math set as plain text
-Warning [W0003]
+⚠ [W0003]
   no math font is available; math is set as plain text
   suggestion: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
 ── W0005 (degraded) overfull line, no feasible break
-Warning [W0005]
+⚠ [W0005]
   overfull line; no feasible break
 ── W0006 (degraded) declared face variant missing; another face substitutes
-Warning [W0006]
+⚠ [W0006]
   'Demo Serif' has no bold face; 'Demo Serif Regular' substitutes
-Warning [W0006]
+⚠ [W0006]
   'Demo Serif' declares 'DemoSerif-Bold.otf' as its bold face, which is not installed; 'Demo Serif Regular' substitutes
 ── W0007 (degraded) paged-media furniture omitted from HTML
-Warning [W0007]
+⚠ [W0007]
   running head/foot is paged-media furniture; omitted from HTML
   suggestion: body content reaches both backends: move the masthead there
 ── W0008 (config) \fonts dir is not a directory
-Warning [W0008]
+⚠ [W0008]
   '\fonts' dir 'fonts' is not a directory (./fonts); looking elsewhere
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
-Warning [W0009] (PDF) - ∀
+⚠ [W0009] - ∀
   'Open Sans' has no glyph for U+2200
   replaced by: a glyph from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
-Warning [W0010]
+⚠ [W0010]
   lists nest four levels; level 5 reuses the fourth's marker
   suggestion: LaTeX errors here ('Too deeply nested'); flatten the nesting
 ── W0011 (degraded) declared math face has no OpenType MATH table
-Warning [W0011]
+⚠ [W0011]
   'Open Sans' (tests/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
   suggestion: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as its text content
-Warning [W0012]
+⚠ [W0012]
   math with \overset is not rendered yet; the formula sets as its text content
-Warning [W0012]
+⚠ [W0012]
   math with \overset is not rendered yet; the formula sets as a placeholder: it has no text content
 ── W0013 (config) an \allow'd code never fired
-Warning [W0013]
+⚠ [W0013]
   '\allow' lists E0333, which never fired
   suggestion: the document no longer needs it; drop the entry from \allow
 ── W0014 (degraded) alignment row disagrees with its grid's columns; padded
-Warning [W0014]
+⚠ [W0014] - \begin{align*}
   '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty cells
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
-Warning [W0015]
+⚠ [W0015] - \begin{align}
   equation numbers are not rendered yet; '{align}' sets unnumbered
   suggestion: '{align*}' spells the unnumbered form, which renders the same
 ── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
-Warning [W0016] (PDF) - 𝔸
+⚠ [W0016] - 𝔸
   'Fira Math' has no double-struck glyph for U+1D538
   replaced by: the base letter 'A'
   suggestion: declare a math face that carries this alphabet: \fonts{ math = ... }
 ── W0101 (config) preamble keys without a native equivalent dropped
-Warning [W0101]
+⚠ [W0101] - \usepackage
   geometry keys without a native equivalent were dropped: voffset
 ── W0102 (degraded) unsupported colour model
-Warning [W0102]
+⚠ [W0102] - \definecolor
   colour model 'hsb' is not supported; use HTML, RGB, rgb, gray, cmyk
 ── W0103 (config) unsupported package skipped
-Warning [W0103]
+⚠ [W0103] - \usepackage
   package 'nosuchpkg' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
-Warning [W0104]
+⚠ [W0104] - \directlua
   '\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped
   suggestion: \allow{W0104} accepts the skip
-Warning [W0104]
+⚠ [W0104] - \sloppy
   '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own and an overfull line warns by itself
-Warning [W0104]
+⚠ [W0104] - \pagestyle
   '\pagestyle{headings}' names running furniture the engine does not model; ignored
   suggestion: plain, empty, and fancy are modelled; \runninghead / \runningfoot declare the furniture directly
-Warning [W0104]
+⚠ [W0104] - \ifx
   TeX conditional ('\ifx' … '\fi') is not supported; skipped whole
-Warning [W0104]
+⚠ [W0104] - \usecolortheme
   '\usecolortheme' is beamer configuration the engine does not have; skipped
   suggestion: \theme{name} selects a token bundle; \palette overrides its entries
-Warning [W0104]
+⚠ [W0104] - \titlegraphic
   '\titlegraphic{}' clears beamer configuration the engine does not have; skipped
 ── W0105 (degraded) overlay specification does not name a step
-Warning [W0105]
+⚠ [W0105] - \uncover
   overlay specification '<zz>' does not name a step; its content is shown on every step
   suggestion: write a numbered spec: <2>, <2->, or <2-3>; incremental specs are not modelled
 ── W0106 (config) expl3 code skipped
-Warning [W0106]
+⚠ [W0106] - \ExplSyntaxOn
   expl3 code (\ExplSyntaxOn … \ExplSyntaxOff) is not supported; skipped
 ── W0108 (degraded) \centering is inert inside an argument
-Warning [W0108]
+⚠ [W0108] - \centering
   '\centering' centres nothing inside an argument; content stays left-aligned
   suggestion: move '\centering' to the start of the group or environment body
 ── W0110 (degraded) unsupported command option; ignored
-Warning [W0110]
+⚠ [W0110] - \includegraphics
   '\includegraphics' option 'angle=45' is not modelled; ignored
   suggestion: modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact
 ── W0111 (config) a styling declaration names no styleable element; ignored
-Warning [W0111]
+⚠ [W0111] - \setkomafont
   '\setkomafont{banana}' names no styleable element; ignored
   suggestion: \style{element}{ font = {...} } styles the elements the engine draws
 ── W0201 (standard) measure outside the readable band
-Warning [W0201]
+⚠ [W0201]
   the measure holds about 98 characters per line, outside the readable 45–90 band
   suggestion: narrow the text block (\page{ hmargin = ... }; 66 characters is the ideal) or declare \page{ measure = free }
 ── W0202 (standard) heading sets more space below than above
-Warning [W0202]
+⚠ [W0202]
   'section' sets more space below the heading (10pt) than above it (2pt)
   suggestion: a heading binds to the text it introduces: in \style{section}{...} keep 'after' at most 'before'
 ── W0301 (degraded) unknown command; {...} arguments kept as text
-Warning [W0301]
+⚠ [W0301] - \mystery
   unknown command '\mystery'; its {...} arguments were kept as text
   suggestion: \define \name(...) {body} declares it
-Warning [W0301]
+⚠ [W0301] - \mystery
   unknown command '\mystery'; its [...] options were dropped and its {...} arguments were kept as text
   suggestion: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
-Warning [W0301] (2 sites)
+⚠ [W0301] - \mystery (2 sites)
   unknown command '\mystery'; any [...] options were dropped and its {...} arguments were kept as text
   suggestion: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
-Info [W0301]
+ℹ [W0301] - \mystery
   unknown command '\mystery'; its {...} arguments were kept as text
 ── W0302 (degraded) unknown environment; body kept
-Warning [W0302]
+⚠ [W0302] - \begin{banner}
   unknown environment '{banner}'; its body is kept
   suggestion: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) built-in name cannot be redefined
-Warning [W0303]
+⚠ [W0303] - \underline
   '\underline' is built in; this definition is ignored
   suggestion: the built-in already does this; \define it under another name
 ── W0304 (degraded) colour name not in the palette; content kept uncoloured
-Warning [W0304]
+⚠ [W0304] - \textcolor
   'nope' is not in the palette; content kept uncoloured
   suggestion: declare colours with \palette{ name = #RRGGBB }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
-Warning [W0307]
+⚠ [W0307] - \begin{external}
   '{external}' is not implemented yet; its content is not rendered
 ── W0309 (config) \maketitle with nothing declared
-Warning [W0309]
+⚠ [W0309] - \maketitle
   '\maketitle' with nothing declared; no title is set
   suggestion: declare \title{...} (and \author, \date, ...) before it
 ── W0310 (degraded) '[' never closes; not an argument
-Warning [W0310]
+⚠ [W0310]
   '[' after '\section' never closes; it is not an argument
   suggestion: add the matching ']'
 ── W0311 (degraded) a second \frametitle replaces the first
-Warning [W0311]
+⚠ [W0311] - \frametitle
   this '\frametitle' replaces the frame's earlier title
   suggestion: the last one wins; remove the other '\frametitle'
 ── W0312 (degraded) no {...} group after a command; skipped
-Warning [W0312]
+⚠ [W0312] - \title
   no {...} group after '\title'; it is skipped
   suggestion: write \title{...}
 ── W0314 (degraded) column width is not a fraction of the text width
-Warning [W0314]
+⚠ [W0314] - \begin{column}
   column width 'banana' is not a fraction of the text width; the column shares the leftover
   suggestion: write a factor like {0.5\textwidth}
 ── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
-Warning [W0315]
+⚠ [W0315]
   text coloured 'yellow!50' (#FFFF80) reads at 1.01:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
   suggestion: no weight of this mix meets its ground: name it in \palette{ <name> = #FFFF80 } to have it met on its ground, or declare that entry under \palette[decorative] to keep it low
 ── W0316 (config) unknown option in \palette; block skipped
-Warning [W0316]
+⚠ [W0316] - \palette
   unknown option in '\palette': "dark"; block skipped
   suggestion: options: decorative
 ── W0317 (config) a card carries no running head or foot; declaration dropped
-Warning [W0317]
+⚠ [W0317]
   a card carries no running head or foot; the declaration is dropped
 ── W0318 (config) \chrome outside the slides class; ignored
-Warning [W0318]
+⚠ [W0318] - \chrome
   '\chrome' is slides furniture; the article class never draws it
   suggestion: \runninghead / \runningfoot are the page furniture
 ── W0319 (degraded) unknown theme; the document is unthemed
-Warning [W0319]
+⚠ [W0319] - \theme
   unknown theme 'banana'; the document is unthemed
   suggestion: themes: moloch, plain, daylight, gemini
 ── W0320 (degraded) heading levels skip a step (HTML §4.3.11, WCAG G141)
-Warning [W0320]
+⚠ [W0320]
   heading levels skip a step: '\section' is followed by '\subsubsection'
   suggestion: descend one level at a time — here \subsection (HTML §4.3.11, WCAG G141); a screen reader reads the gap as a broken outline
 ── W0321 (degraded) the document title follows another heading
-Warning [W0321]
+⚠ [W0321]
   the document title follows another heading
   suggestion: put \maketitle before the first \section, so the outline starts at its top
 ── W0322 (config) a second \maketitle is ignored; the title is typeset once
-Warning [W0322]
+⚠ [W0322] - \maketitle
   a second '\maketitle' is ignored; the title is typeset once
   suggestion: LaTeX's \maketitle disables itself after use (classes.dtx)
 ── W0323 (config) unknown backend name in \begin{ifbackend}; ignored
-Warning [W0323]
+⚠ [W0323]
   unknown backend 'banana' in '\begin{ifbackend}'; ignored
   suggestion: backends: pdf, html, md
 ── W0325 (degraded) more than one <nav> landmark on one page
-Warning [W0325]
+⚠ [W0325]
   2 unlabeled <nav> landmarks on one page are indistinguishable to assistive technology
   suggestion: repeated landmarks need unique labels (ARIA Landmark Regions): give each one a name, \begin{nav}[label = Site]
 ── W0326 (degraded) in-page link with no target anchor on the page
-Warning [W0326]
+⚠ [W0326]
   in-page link '#nowhere' has no target anchor on this page
   suggestion: this page has no anchors: a level-1 \section title becomes one in the article class
 ── W0327 (degraded) two distinct section titles fold to the same anchor
-Warning [W0327]
+⚠ [W0327]
   sections "Signal Path" and "Signal, Path" share the anchor 'signal-path'; the second becomes 'signal-path-2'
   suggestion: an in-page link '#signal-path' reaches only the first; retitle one section, or link to '#signal-path-2'
 ── W0328 (degraded) running content wraps; only its first line is kept
-Warning [W0328]
+⚠ [W0328]
   running content wraps at the text width; only its first line is kept
   suggestion: the head, foot, and chrome bands hold one line each: shorten the content
 ── W0329 (config) reserved layout-only construct skipped; no content is affected
-Warning [W0329]
+⚠ [W0329] - \fontfallback
   '\fontfallback' is not implemented yet; skipped
 ── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
-Warning [W0330]
+⚠ [W0330]
   declared page #18181B keeps the defaulted #000000 ink: 1.18:1, below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
   suggestion: a declared surface chooses its ink: declare \palette{ fg = ... } beside bg
 ── W0331 (degraded) declared marker not expressible in this backend; default substituted
-Warning [W0331]
+⚠ [W0331]
   the declared 'itemize' marker is not expressible in HTML; the level default marks these items
   suggestion: marker = {...} reaches HTML as text with colour and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay step does not
 ── W0332 (degraded) footer mixes the frame and physical page sequences undeclared
-Warning [W0332]
+⚠ [W0332]
   the footer mixes the physical page number with the frame number; a stepped frame advances one and not the other
   suggestion: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot
 ── W0333 (degraded) band slots collide; the lower-priority slot is painted over
-Warning [W0333]
+⚠ [W0333]
   the footer's slots collide on page 2: framenumber yields, painted over by the \framefoot note
   suggestion: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
-Warning [W0334]
+⚠ [W0334] - \begin{tikzpicture}
   '\draw' continues with 'circle', outside the rendered picture subset; the edge is not drawn
   suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
-Warning [W0335]
+⚠ [W0335]
   the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page
   suggestion: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
-Warning [W0336]
+⚠ [W0336]
   1 pair(s) of node labels overlap: a relative placement parts node centres, not the text they set
   suggestion: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
-Warning [W0337]
+⚠ [W0337] - \begin{tabular}
   a row carries 3 cells but the column spec declares 2; the grid widens
   suggestion: declare one column type per cell: l, c, r, or p{width}
-Warning [W0337]
+⚠ [W0337] - \begin{tabular}
   a row carries fewer cells than the column spec; it is padded with empty cells
-Warning [W0337]
+⚠ [W0337] - \multicolumn
   '\multicolumn' span is not a numeral the engine reads: its text fills one cell in its column's alignment
-Warning [W0337]
+⚠ [W0337] - \multicolumn
   '\multicolumn' opens no tabular cell here: its text stays in place, without its span or alignment
   suggestion: write \multicolumn first in a tabular cell
 ── W0338 (degraded) table is wider than the measure
-Warning [W0338]
+⚠ [W0338]
   the table is 211.2pt wider than the measure
   suggestion: narrow the p{...} column widths, or widen the text block
 ── W0340 (config) a declaration in the document body is ignored
-Warning [W0340]
+⚠ [W0340] - \page
   '\page' is a declaration; in the body it is ignored
   suggestion: declare it in the preamble, before '\begin{document}'
-Warning [W0340]
+⚠ [W0340] - \usepackage
   '\usepackage' is a preamble declaration; in the body it is ignored
   suggestion: load the package in the preamble, before '\begin{document}'
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
-Warning [W0342]
+⚠ [W0342] - \muted
   '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it
   suggestion: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, muted, progressfg, progressbg, separator, standoutfg, standoutbg
 ── W0343 (config) one setting is given two different values; the later declaration wins
-Warning [W0343]
+⚠ [W0343] - \page
   'margin' in '\page' was already set to '20pt'; this later value wins
   suggestion: one value per key: keep the 'margin = ...' you mean
-Warning [W0343]
+⚠ [W0343] - \runningfoot
   a second '\runningfoot' replaces the first
   suggestion: one '\runningfoot' declares the line; delete the one you do not mean
 ── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
-Warning [W0345]
+⚠ [W0345]
   covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
   suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0346 (config) a declaration inside inline content is ignored
-Warning [W0346]
+⚠ [W0346] - \palette
   '\palette' is a declaration; inside inline content it is ignored
   suggestion: write '\palette' between paragraphs, after a blank line; there it applies from where it stands
-Warning [W0346]
+⚠ [W0346] - \page
   '\page' is a declaration; inside inline content it is ignored
   suggestion: declare it in the preamble, before '\begin{document}'
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
-Warning [W0348]
+⚠ [W0348] - \theme
   theme 'moloch' replaces the document's earlier 'alert' from '\palette'
   suggestion: overrides go after '\theme': move the declaration below it
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
-Warning [W0349]
+⚠ [W0349]
   no \label{nowhere} in the document; set as '??'
   suggestion: declare \label{nowhere} after the numbered thing it names
 ── W0350 (config) a key is \label'ed more than once; the first wins
-Warning [W0350]
+⚠ [W0350] - \label
   'twice' is already a \label'ed key; the first wins
   suggestion: one \label{twice} per key: give this one its own name
 ── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
-Warning [W0351]
+⚠ [W0351]
   citation 'ghost' has no entry in the bibliography; it shows as '?'
   suggestion: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
-Warning [W0351]
+⚠ [W0351] - \cite
   citation 'ghost' has no bibliography to resolve against; it shows as '?'
   suggestion: the document declares no bibliography; \bibliography{file} names the .bib file
 ── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
-Warning [W0352]
+⚠ [W0352]
   malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs' is kept
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
-Warning [W0353]
+⚠ [W0353]
   bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat'
   suggestion: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv
 ── W0354 (config) a caption option the engine does not honour; named and ignored
-Warning [W0354]
+⚠ [W0354] - \captionsetup
   '\captionsetup[table]' key 'labelfont' is not honoured; the caption keeps its declared layout
   suggestion: \tokens{ captionsep = ... } declares the caption gap
 ── W0355 (config) a theme's slides furniture cannot draw under the class in force
-Warning [W0355]
+⚠ [W0355] - \theme
   theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
   suggestion: the palette and tokens apply either way; \documentclass{slides} draws the furniture
 ── W0356 (degraded) document class option refused by name; the document renders without it
-Warning [W0356]
+⚠ [W0356]
   class option 'twocolumn' asks for a two-column page; the text is set in one column
-Warning [W0356]
+⚠ [W0356]
   class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
 ── W0357 (config) a definition is expansion-time TeX; refused by design
-Warning [W0357]
+⚠ [W0357] - \edef
   '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
   suggestion: \define \name(...) {body} declares typed commands
-Warning [W0357]
+⚠ [W0357] - \def
   '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
   suggestion: \define \name(...) {body} declares typed commands
 ── W0358 (degraded) a float taller than the text block overruns its page
-Warning [W0358]
+⚠ [W0358]
   a figure or table is 287.93pt taller than the text block; it overruns its page
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
-Warning [W0361]
+⚠ [W0361] - \newcommand
   the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), which the engine cannot run; the built-in stands
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
-Warning [W0362]
+⚠ [W0362] - \begin{tikzpicture}
   no part of this picture is inside the rendered subset; a placeholder box marks its place
   suggestion: the box holds the diagram's place; \allow{W0362} accepts the loss
 ── W0363 (degraded) a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place
-Warning [W0363]
+⚠ [W0363] - \setbeamertemplate
   the title-page template's title node is not pinned to the page; the title sets in the title page's flow
   suggestion: pin the node to a point of the page: \node[anchor=west] at (current page.west) {\inserttitle}
 ── W0364 (degraded) an unresolved data path; nothing renders in its place
-Warning [W0364]
+⚠ [W0364]
   'end' is absent in job[1]; its entries carry: role, start
   suggestion: '\ifdata{j.end}{…}' renders content only when the field is present
-Warning [W0364]
+⚠ [W0364]
   'k' is not bound here
   suggestion: '\begin{foreach}{k}{kind}' binds it over the '@kind' records
-Warning [W0364]
+⚠ [W0364]
   no '@trip' records in the data; it carries: @job
 ── W0366 (degraded) a named font weight is not installed; the nearest installed weight substitutes
-Warning [W0366]
+⚠ [W0366]
   'Demo Sans Light' asks for weight 300, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
   suggestion: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
-Warning [W0366]
+⚠ [W0366]
   'Demo Sans Medium' asks for weight 500, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
   suggestion: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
 ── W0367 (config) a beamerposter option outside the poster model; named and ignored
-Warning [W0367]
+⚠ [W0367] - \usepackage
   beamerposter options outside the poster model: debug; ignored
   suggestion: size, orientation, scale, and custom width/height carry over; \page{ ... } declares anything further
 ── W0368 (degraded) a language the engine ships no locale for; English captions and patterns stand in
-Warning [W0368]
+⚠ [W0368] - \usepackage
   no locale for language 'klingon'; English captions and patterns stand in
   suggestion: the engine ships locale records for: en, fr, de
-Warning [W0368]
+⚠ [W0368] - \pdfmeta
   no locale for language 'xx'; English captions and patterns stand in
   suggestion: the engine ships locale records for: en, fr, de
 ── W0369 (degraded) a per-language font binding; one face serves every language, so the binding is dropped
-Warning [W0369]
+⚠ [W0369] - \babelfont
   '\babelfont[french]' binds a font per language; one face serves every language, so the binding is dropped
   suggestion: \fonts{ body = "..." } names the face every language uses
 ── W0370 (pending) \footnotemark and \footnotetext are not paired yet; kept as text
-Warning [W0370]
+⚠ [W0370] - \footnotemark
   '\footnotemark' is not paired with its partner yet; its text is kept in place
   suggestion: \footnote{...} where the mark should stand sets the note at the page foot
-Warning [W0370]
+⚠ [W0370] - \footnotemark
   '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place
   suggestion: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
 ── W0371 (degraded) a paragraph break inside \footnote is set as a space
-Warning [W0371]
+⚠ [W0371] - \footnote
   a paragraph break inside '\footnote' is set as a space
   suggestion: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
-Warning [W0372]
+⚠ [W0372]
   a footnote is 64.488pt taller than the text block; it overruns its page
   suggestion: shorten the note, or raise the text height (\page{ vmargin = ... })
 ── W0373 (degraded) \thanks is kept inline in the title block
-Warning [W0373]
+⚠ [W0373] - \thanks
   '\thanks' content is kept inline in the title block
   suggestion: a plain \footnote in the body text renders as a page footnote
 ── W0374 (degraded) a footnote on a card face is kept inline; a face has no note apparatus
-Warning [W0374]
+⚠ [W0374] - \footnote
   a footnote on this card is kept inline; a card face has no note apparatus
   suggestion: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
 ── W0376 (standard) an image ships no text alternative (WCAG 2.2)
-Warning [W0376]
+⚠ [W0376] - image
   image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   suggestion: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
-Warning [W0376]
+⚠ [W0376]
   this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   suggestion: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
-Warning [W0377]
+⚠ [W0377]
   link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   suggestion: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0378 (degraded) the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives
-Warning [W0378] (HTML)
+⚠ [W0378]
   cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
   suggestion: install poppler's pdftocairo, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
-Warning [W0379]
+⚠ [W0379]
   no boundary tool is available for this picture outside the rendered subset
   replaced by: a placeholder box
   suggestion: install lualatex, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
-Warning [W0380]
+⚠ [W0380] - \cref
   'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set
   suggestion: reference it with \ref, or move the \label after the numbered thing it should name
 ── W0381 (degraded) a unit outside the siunitx table; set as its ASCII spelling
-Warning [W0381]
+⚠ [W0381] - \qty
   no unit symbol for '\banana'; set as its ASCII spelling
   suggestion: write the symbol as literal text in the unit braces: \qty{1}{kPa}
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
-Warning [W0383]
+⚠ [W0383] - \lIf
   '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
-Warning [W0384]
+⚠ [W0384]
   frame 1 is 3.437pt taller than its page; it continues on the next page
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
-Warning [W0385]
+⚠ [W0385]
   '\textbf' inside math sets in the surrounding style
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
-Warning [W0386]
+⚠ [W0386]
   a declared line break did not hold: 2 lines were declared, 4 ship
   suggestion: shorten the declared line, reduce \page{ hmargin = ... } to widen the measure, or declare a narrower face
 ── W0387 (config) a known construct was read and had no effect
-Warning [W0387]
+⚠ [W0387] - \thispagestyle
   '\thispagestyle' was read and had no effect
   suggestion: \allow{W0387} accepts the skip
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
-Warning [W0388]
+⚠ [W0388]
   the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
   suggestion: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
-Warning [W0389]
+⚠ [W0389]
   math with \raisebox is not rendered yet; its content operand sets in its place
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
-Warning [W0390]
+⚠ [W0390]
   nothing declares a 'mono' family; typewriter runs set in the body face, which is not fixed-pitch
   suggestion: \fonts{ mono = "<family>" } gives the slot its own face; `leantex fonts` lists the installed families
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
-Info [W0391]
+ℹ [W0391] - \@venueprobe
   unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text
   suggestion: \define \name(...) {body} declares it
 ── W0392 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
-Warning [W0392]
+⚠ [W0392]
   a link's title is not carried: the link sets without it
 ── W0393 (degraded) the installed syntax highlighter cannot classify a listing; its source is set as plain text
-Warning [W0393]
+⚠ [W0393]
   cannot highlight 'bash'; the listing is set as plain text
   suggestion: check `python3 -m pygments -L lexers`, or install Pygments for `python3` (Pygments is unavailable)
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
-Warning [W0435]
+⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display
   suggestion: an unnumbered \[ ... \] sets it beside the formula
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
-Warning [W0601]
+⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place
   suggestion: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
-Warning [W0601]
+⚠ [W0601]
   cannot read image 'figures/plot.png': permission denied (error code: 13); a placeholder box holds its place
 ── W0602 (degraded) image format unusable; placeholder box placed
-Warning [W0602]
+⚠ [W0602]
   cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
 ── W0603 (degraded) an image's embedded colour profile is dropped; the page reads it as device colour
-Warning [W0603]
+⚠ [W0603]
   image 'figures/plot.png' carries an embedded colour profile; the page reads its samples as device colour
   suggestion: re-export the image without the profile, or accept the device reading with \allow{W0603}
 ── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
-Warning [W0604]
+⚠ [W0604]
   image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
   suggestion: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
 ── W0605 (degraded) an image has no usable browser face; the web page shows a placeholder instead
-Warning [W0605]
+⚠ [W0605]
   image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
-Warning [W0701]
+⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel
   suggestion: drop 'alternatives = required' from '\output', or build a format that carries it

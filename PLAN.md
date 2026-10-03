@@ -26250,3 +26250,85 @@ failures on the previous formatter; all pass with the smaller header. The
 focused suite also checks actual CLI streams, exits, output filtering,
 control-character escaping and byte-identical porcelain. The diagnostics
 golden was regenerated through its existing witness harness.
+
+
+### 2026-10-03 — Diagnostic headers share the completion style
+
+The human header uses `⚠`, `✖` and `ℹ` for the record's effective severity,
+followed by its stable code, source position and literal trigger when known.
+The problem, recovery and suggested action stay on indented lines. Single
+format runs omit the format label; mixed runs retain it on scoped records.
+This decision reads the distinct requested formats, including Markdown,
+not just the formats with a diagnostic scope. Routine notes remain hidden
+by default and the completion line again says `N notes (-v)`.
+
+Updating the formatter guards first produced 405 failures on the earlier
+presentation. Two additional real CLI cases exposed the missing command
+in compatibility warnings. Review then exposed two mixed-output cases in
+which dropping Markdown from the diagnostic-scope list also incorrectly
+removed the other format's header label. The presentation tests cover these
+through the real CLI as well as the formatter, preserving output filtering,
+acceptance, warning policy and terminal escaping.
+
+Compatibility diagnostics obtain their trigger from a source index keyed by
+file, line and column, built before commands are consumed or synthesized.
+Nested commands, macro-use relocation and deferred hooks therefore keep
+their own source instead of borrowing a mutable last-command value. The
+text pass also restores the filename after each include. Twenty-three
+attribution guards failed before the fix and pass after it;
+`Compat.atSource_record_exact` states that attribution changes no other
+diagnostic field. The terminal-sink convention check now recognizes icon
+headers and spaced severity labels: twelve new fail-first cases pass while
+ordinary completion summaries remain legal.
+
+Deferred Beamer colour warnings now retain a file and position for each
+declared key. Resolution failures and inheritance cycles keep the earlier
+key's location when a later declaration changes an unrelated channel.
+Twelve assertions across seven invented cases failed before this change;
+all pass with the declaring command on the warning. Four further fail-first
+cases cover cycles through implicit defaults: those edges have no authored
+site, so the warning names an explicit relationship within the same cycle,
+not an unrelated later colour declaration.
+
+Review reproduced a source collision: a replacement body from an included
+file could inherit an unrelated command at the same coordinates in its
+caller. Replacement tokens and omitted defaults now relocate to the use
+before written arguments are bound. Included files retain their own sites,
+and returning restores the caller's context. Nine new fail-first assertions
+pass; the expanded guard also covers distinct stored definitions and nested
+includes. `Compat.rebase_source_exact` proves that relocation preserves the
+serialized raw source, independently of the coordinate mapping. Execution
+and attribution behavior are covered by the expansion guards.
+
+The delayed image-alternative judge now includes `image` or `picture` when
+a source span exists. The IR retains the construct and span, not necessarily
+the authored command: an animation inside a macro must not claim that its
+expansion was written at the macro's use. Ten initial assertions failed
+before adding the label; a further macro guard exposed that false spelling.
+The guards preserve alternative accounting, acceptance, source spans and
+output scope. Both reference output builds also reproduced the missing image
+trigger before this correction.
+
+Ordinary elaborator macros use the same ownership rule through one scoped
+call-site value. Immediate diagnostics and stored image, colour, citation,
+bibliography, listing and glyph sources project their span from it; written
+arguments are elaborated before entering that scope. Four immediate warning
+guards and one delayed image guard failed before the change. Nested calls,
+block-producing replacements and included definitions now name the outer
+written call. `Elab.Ctx.sourceSpan_call_projects` states the shared span
+projection; the executable guards check expansion and argument ownership.
+
+The prepared surface retains execution's source index as well: macros
+expanded during the initial space scan otherwise reached the elaborator
+with the correct call position but the replacement command's name. The
+same original index attributes immediate elaboration diagnostics on both
+file-free and input-fulfilling paths. The public
+`Compat.SourceTriggers.attribute_record_exact` theorem holds every other
+record field unchanged; included-file and written-argument checks hold the
+source lookup to the command the document actually wrote.
+
+Validation: the full build and test suite pass, as do the preamble
+commutation oracle and the focused source-origin guards. Reference PDF and
+HTML builds pass with byte-identical artifacts; only their diagnostic
+presentation changes. The diagnostic and source-position goldens were
+regenerated through the test harness.

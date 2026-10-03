@@ -52,8 +52,16 @@ structure Element where
   uses : List String := []
   reset : Bool := false
   declared : Bool := true
-  pos : Pos := {}
+  span : Span := ⟨"", {}⟩
+  sites : List (String × Span) := []
   deriving Inhabited
+
+private def Element.site (e : Element) (key : String) : Span :=
+  (e.sites.lookup key).getD e.span
+
+structure Issue where
+  message : String
+  span : Span
 
 /-- Flow palette and named declarations share one elaborator state field.
 `opening` remembers the native values displaced by resolution, so a later
@@ -78,14 +86,15 @@ private def names (s : String) : List String :=
 /-- Update only the keys that occur, except that the starred form first
 clears both channels and both relationships (beamerbasecolor.sty). -/
 def State.declare (s : State) (name : String) (star : Bool) (src : String)
-    (pos : Pos) : State × List String := Id.run do
-  let mut e := if star then { name := name, reset := true, pos := pos }
+    (span : Span) : State × List String := Id.run do
+  let mut e := if star then { name := name, reset := true, span := span }
     else { ((s.elements.find? (·.name == name)).getD { name := name }) with
-      pos := pos, declared := true }
+      span := span, declared := true }
   let mut unsupported := []
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | some (key, v) =>
+      e := { e with sites := e.sites.filter (·.1 != key) ++ [(key, span)] }
       match key with
       | "fg" => e := { e with fg := some (.source (unbrace v)) }
       | "bg" => e := { e with bg := some (.source (unbrace v)) }
@@ -115,7 +124,7 @@ private structure Reading where
   fg : Option (Option Color) := none
   bg : Option (Option Color) := none
   reached : List String := []
-  issues : List String := []
+  issues : List Issue := []
   changed : Bool := false
 
 private def Reading.over (a b : Reading) : Reading :=
@@ -131,10 +140,14 @@ private def own (pal : Palette) (name : String) : Reading :=
 /-- DFS removes the current element before descending. A path detects a
 cycle, and the shrinking declaration list proves termination without fuel.
 Only colour declarations are visited, never document content. -/
-private def read (pal : Palette) (path : List String) (es : List Element)
+private def read (pal : Palette) (path : List (String × Option Span)) (es : List Element)
     (name : String) : Reading := Id.run do
-  if path.contains name then
-    return { issues := [s!"colour inheritance cycle at '{name}'"] }
+  if let some (_, span) := path.find? (·.1 == name) then
+    -- Default edges have no authored site. Choose an explicit edge inside
+    -- this cycle, never an unrelated channel or the path that entered it.
+    let span := span.orElse fun _ =>
+      (path.takeWhile (·.1 != name)).findSome? (·.2)
+    return { issues := [⟨s!"colour inheritance cycle at '{name}'", span.getD ⟨"", {}⟩⟩] }
   let i := es.findIdx (·.name == name)
   if h : i < es.length then
     let e := es[i]
@@ -144,17 +157,17 @@ private def read (pal : Palette) (path : List String) (es : List Element)
     -- beamer@thc@docolor runs `use` before `parent`. Empty used channels
     -- bind the current foreground/background, rather than no alias.
     for used in e.uses do
-      let u := read aliases (name :: path) rest used
+      let u := read aliases ((name, e.sites.lookup "use") :: path) rest used
       let current := Design.ofPalette aliases
       aliases := aliases.declare (used ++ ".fg") (u.fg.join.getD current.fg)
       aliases := aliases.declare (used ++ ".bg") (u.bg.join.getD current.bg)
       r := { r with reached := r.reached ++ u.reached,
                     issues := r.issues ++ u.issues }
     for parent in e.parents.getD (if e.reset then [] else defaultParents name) do
-      r := r.over (read aliases (name :: path) rest parent)
+      r := r.over (read aliases ((name, e.sites.lookup "parent") :: path) rest parent)
     let defaults := if e.reset then ({} : Reading) else own pal name
     let channel (key : String) (v : Option Value) (fallback : Option (Option Color)) :
-        Option (Option Color) × List String :=
+        Option (Option Color) × List Issue :=
       match v with
       | none => (fallback, [])
       | some (.native c) => (some (some c), [])
@@ -162,7 +175,7 @@ private def read (pal : Palette) (path : List String) (es : List Element)
       | some (.source src) =>
         match aliases.resolveSource none src with
         | .ok (some c) => (some (some c), [])
-        | _ => (none, [s!"'{name}' {key} colour '{src}' cannot be resolved"])
+        | _ => (none, [⟨s!"'{name}' {key} colour '{src}' cannot be resolved", e.site key⟩])
     let (fg, fgIssues) := channel "fg" e.fg defaults.fg
     let (bg, bgIssues) := channel "bg" e.bg defaults.bg
     return { r.over { fg := fg, bg := bg } with
@@ -178,7 +191,7 @@ decreasing_by all_goals
 Later explicit aliases of one native site win. `use` makes temporary xcolor
 aliases available to expressions, but contributes no inherited channel.
 Missing parents contribute nothing, as in Beamer. -/
-def State.resolve (s : State) (pal : Palette) : State × Palette × List String := Id.run do
+def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
   let base := s.painted.foldl (fun p key => p.restore s.opening key) pal
   let mut s := s
   let mut out := base

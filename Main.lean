@@ -45,6 +45,7 @@ structure Ui where
   color : Bool
   errStream : IO.FS.Stream
   outStream : IO.FS.Stream
+  showOutput : Bool := false
 
 def Ui.mk' (cfg : Config) : IO Ui := do
   let errStream ← IO.getStderr
@@ -55,7 +56,7 @@ def Ui.mk' (cfg : Config) : IO Ui := do
       let noColor := (← IO.getEnv "NO_COLOR").isSome
       let tty ← errStream.isTty
       pure (!noColor && tty)
-  return ⟨cfg, color, errStream, ← IO.getStdout⟩
+  return ⟨cfg, color, errStream, ← IO.getStdout, false⟩
 
 /-- The sole terminal sink for document diagnostics: keep Diag values from
 DriverDiag and other producers structured through resolution, and render only
@@ -64,7 +65,7 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDiag d)
   else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
-    ui.errStream.putStrLn (Render.human ui.color d)
+    ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
 /-- One phase's diagnostics resolved against the document's acceptance
 (`\allow` and `--best-effort`) and printed. -/
@@ -1005,6 +1006,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let allowAll := ui.cfg.bestEffort
     let emit := ui.cfg.effectiveEmit front.doc.output.formats
     let outputs := diagnosticOutputs emit
+    let ui := { ui with showOutput := emit.toList.eraseDups.length > 1 }
     -- **The boundary answers before the document's diagnostics are read.**
     -- A request no tool drew, for a picture the rendered subset draws in
     -- part, is withdrawn (`Boundary.withdraw`) and the document elaborated

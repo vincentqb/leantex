@@ -599,9 +599,53 @@ private def LinkSetup.native (l : LinkSetup) : String :=
       s!"\\style\{cite}\{ color = {l.cite} }"
   else ""
 
+/-- Written commands indexed before execution; generated commands inherit the
+written call's coordinates and therefore its spelling. -/
+abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
+
+/-- Restore a downstream diagnostic's written trigger, retaining an explicit
+construct label when no source command owns its span. -/
+def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
+  { d with trigger := (d.span.bind fun s =>
+      sources[(s.file, s.pos.line, s.pos.col)]?).orElse (fun _ => d.trigger) }
+
+/-- Attribution changes presentation only, including for accepted or scoped
+records; every other diagnostic field is exactly the input field. -/
+theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Diag) :
+    { sources.attribute d with trigger := d.trigger } = d := rfl
+
+mutual
+
+/-- Capture source spellings before compatibility consumes or synthesizes
+commands. Input wrappers change only their contents' filename. Positions
+stay useful after nesting, macro-use relocation and deferred hook replay;
+no ambient "last command" has to survive those walks. -/
+-- conserves: none — an index of the parsed surface, before IR exists.
+private def sourceTriggers (file : String) (acc : SourceTriggers) :
+    List Raw → SourceTriggers
+  | [] => acc
+  | r :: rest => sourceTriggers file (sourceTrigger file acc r) rest
+
+private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → SourceTriggers
+  | .ctrl n p =>
+    if n.contains ' ' then acc else acc.insertIfNew (file, p.line, p.col) ("\\" ++ n)
+  | .group body _ | .math _ body _ => sourceTriggers file acc body.toList
+  | .env n body p =>
+    match Parse.inputEnvFile? n with
+    | some child => sourceTriggers child acc body.toList
+    | none =>
+      -- Split-definition wrappers are synthetic names, too.
+      let acc := if n.contains ' ' then acc
+        else acc.insertIfNew (file, p.line, p.col) ("\\begin{" ++ n ++ "}")
+      sourceTriggers file acc body.toList
+  | .word _ _ | .space | .par _ | .sym _ _ | .verb _ _ _ => acc
+
+end
+
 private structure St where
   file : String
   diags : Array Diag := #[]
+  sourceTriggers : SourceTriggers := {}
   /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`,
   landing as one declaration once the preamble ends. Slot 0 inner, 1 centre,
   2 outer — one entry per slot: a same-slot repeat replaces, as fancyhdr
@@ -977,6 +1021,15 @@ cannot, and N0020 already names that file once. -/
 def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
 
+/-- Attribute a diagnostic by its source site, preserving an explicit trigger. -/
+private def atSource (st : St) (pos : Pos) (d : Diag) : Diag :=
+  { d with trigger := d.trigger.orElse fun _ => st.sourceTriggers[(st.file, pos.line, pos.col)]? }
+
+/-- Source attribution changes only the trigger, for every diagnostic;
+the loss, acceptance policy, census and output scope retain their record. -/
+theorem atSource_record_exact (st : St) (pos : Pos) (d : Diag) :
+    { atSource st pos d with trigger := d.trigger } = d := rfl
+
 /-- The one door a diagnostic lands through here: a push, never a write —
 the silence guard reads `diags.size` growth on its own. `subject` is the
 census key of the loss, so "this loss is named" stays a lookup and
@@ -986,7 +1039,7 @@ private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option Stri
     (refused : Option String := none) : M Unit :=
   modify fun st => { st with
     diags := st.diags.push (
-      let d := Diag.of code msg (some ⟨st.file, pos⟩) help subject refused
+      let d := atSource st pos (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused)
       if demote then d.demote else d) }
 
 /-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
@@ -1133,27 +1186,55 @@ private def synth (s : String) : M (Array Raw) := do
 
 mutual
 
-/-- Point every position in a synthesised tree at the command it came from, so
-a diagnostic inside translated content names the LaTeX that produced it. -/
-private def rebase (p : Pos) : Raw → Raw
-  | .word s _ => .word s p
+/-- Relocate token sites without changing their spelling. Group delimiters
+can retain the distinct identities that `condPatchRaw` matches; they emit
+no compatibility diagnostic. An input wrapper owns another file's sites. -/
+private def rebase (mapPos : Pos → Pos) (groups : Bool) : Raw → Raw
+  | .word s p => .word s (mapPos p)
   | .space => .space
-  | .par _ => .par p
-  | .ctrl n _ => .ctrl n p
-  | .sym c _ => .sym c p
-  | .group body _ => .group (rebaseList p body.toList).toArray p
-  | .math d body _ => .math d (rebaseList p body.toList).toArray p
-  | .env n body _ => .env n (rebaseList p body.toList).toArray p
-  | .verb env s _ => .verb env s p
+  | .par p => .par (mapPos p)
+  | .ctrl n p => .ctrl n (mapPos p)
+  | .sym c p => .sym c (mapPos p)
+  | .group body p =>
+    .group (rebaseList mapPos groups body.toList).toArray (if groups then mapPos p else p)
+  | .math d body p => .math d (rebaseList mapPos groups body.toList).toArray (mapPos p)
+  | .env n body p => .env n
+      (if (Parse.inputEnvFile? n).isSome then body else (rebaseList mapPos groups body.toList).toArray)
+      (mapPos p)
+  | .verb env s p => .verb env s (mapPos p)
 
-private def rebaseList (p : Pos) : List Raw → List Raw
+private def rebaseList (mapPos : Pos → Pos) (groups : Bool) : List Raw → List Raw
   | [] => []
-  | r :: rest => rebase p r :: rebaseList p rest
+  | r :: rest => rebase mapPos groups r :: rebaseList mapPos groups rest
+
+end
+
+mutual
+
+private theorem rebaseArray_source (mapPos : Pos → Pos) (groups : Bool) (raws : Array Raw) :
+    rawSrc (rebaseList mapPos groups raws.toList).toArray = rawSrc raws := by
+  simp only [rawSrc]
+  rw [rebaseList_source]
+
+private theorem rebaseList_source (mapPos : Pos → Pos) (groups : Bool) (rs : List Raw) :
+    rawSrcList (rebaseList mapPos groups rs) = rawSrcList rs := by
+  cases rs with
+  | nil => rfl
+  | cons r rest =>
+    simp only [rebaseList, rawSrcList]
+    rw [rebase_source_exact, rebaseList_source]
+
+/-- Source relocation preserves every token's spelling and boundary,
+including nested groups, math and file wrappers. -/
+theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
+    rawSrcOne (rebase mapPos groups r) = rawSrcOne r := by
+  cases r <;> simp only [rebase, rawSrcOne, rebaseArray_source]
+  split <;> simp only [rebaseArray_source]
 
 end
 
 private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
-  return (← synth s).map (rebase pos)
+  return (← synth s).map (rebase (fun _ => pos) true)
 
 mutual
 
@@ -3481,12 +3562,12 @@ private def condOne [Monad m]
       if !(← get).condInDoc && f.endsWith ".sty" then
         let pkg := (f.dropEnd ".sty".length).toString
         write fun st => { st with loads := st.loads.addPkg pkg none }
-      let saved := (← get).file
-      write fun st => { st with file := f }
+      let saved ← get
+      write fun st => { st with file := f, useSite := none }
       let top ← swapTop true
       let body' ← condList ex [] body #[] #[] [] body.toList 0 0
       let _ ← swapTop top
-      write fun st => { st with file := saved }
+      write fun st => { st with file := saved.file, useSite := saved.useSite }
       return .env n body'.raws p
     | none =>
       if n == "document" then
@@ -3591,6 +3672,13 @@ on a conditional this engine cannot decide; the call is left unexpanded"
       return none
     let serial := max v.serial body.serial
     let textSerial := max v.textSerial body.textSerial
+    -- Replacement text and omitted defaults come from the definition, but
+    -- execute in this file. Relocate them before binding written arguments
+    -- or reading includes, whose tokens keep their own source coordinates.
+    -- Retain semantic ancestry from any already-settled child expansions.
+    let usePos := site.getD pos
+    let atUse := fun p : Pos => { p with line := usePos.line, col := usePos.col }
+    let defaultArg := v.optional.map fun (_, arg) => arg.map (rebase atUse false)
     -- premise: Tests.macroHookScopeChecks — copied texts execute locally
     -- while aliases keep direct calls to helpers renewed before the use.
     let descends := serial < bound || textSerial < textBound
@@ -3598,11 +3686,11 @@ on a conditional this engine cannot decide; the call is left unexpanded"
     -- without recursion, including copied meanings and discarded arguments;
     -- an out-of-order effectful call still names its lost execution.
     let terminal := !descends &&
-      (takeCondArgs raws start body.arity (v.optional.map (·.2))).any
+      (takeCondArgs raws start body.arity defaultArg).any
         (fun (args, _, _) => args.size == body.arity &&
           condTerminalList (bindRawArgsList args #[] body.raws.toList).toList)
     if descends || terminal then
-      let call := (takeCondArgs raws start body.arity (v.optional.map (·.2))).filter
+      let call := (takeCondArgs raws start body.arity defaultArg).filter
         fun (args, _, _) => args.size == body.arity
       let some (args, stop, tail) := call | do
         -- premise: macroForwardArgumentsChecks — an incomplete stored forwarder
@@ -3618,7 +3706,7 @@ the argument boundary is unread here, so its optional selection and state change
       -- must retain the executed child's provenance within that body.
       let origin : Option MacroOrigin := if body.arity > 0 && !inPic
         then some { id := st.macroClock, name := n } else none
-      let body := bindRawArgsList args #[] body.raws.toList
+      let body := bindRawArgsList args #[] (rebaseList atUse false body.raws.toList)
       let following := tail ++ raws.extract stop raws.size
       let nextBound := if serial < bound then serial else bound
       write fun s => { s with
@@ -3690,7 +3778,9 @@ def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
     (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
   let (run, state) ←
     (condList (condTopExpand (some reader)) [] raws #[] #[] [] raws.toList 0 0).run
-      { context.state with diags := context.state.diags ++ diags }
+      { context.state with
+        diags := context.state.diags ++ diags
+        sourceTriggers := sourceTriggers context.state.file context.state.sourceTriggers raws.toList }
   return (run.raws, { state := state })
 
 /-- Run `act` and put the definition state back as it was: a definition's
@@ -6477,10 +6567,10 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
   else
     ((), { st with
       warned := st.warned.push ("silent:" ++ name)
-      diags := s0.diags.push (Diag.of .W0387
+      diags := s0.diags.push (atSource st pos (Diag.of .W0387
         s!"'\\{name}' was read and had no effect" (some ⟨st.file, pos⟩)
         (help := "\\allow{W0387} accepts the skip")
-        (subject := some ("ctrl:" ++ name))) })
+        (subject := some ("ctrl:" ++ name)))) })
 
 /-- The mark the rewrite sets before a deck's `\appendix` when appendixnumberbeamer is
 loaded: the frame count starts over there (`appendixnumberbeamer.sty`: its `\appendix`
@@ -8693,6 +8783,10 @@ structure Executed where
   raws : Array Raw
   private state : St
 
+/-- The original source index survives execution and included-file fulfilment. -/
+def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
+  executed.state.sourceTriggers
+
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)
     (warned : Array String) (inherited : List String) (diags : Array Diag) :
@@ -8708,10 +8802,17 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
     condDocument reader raws
   let (raws, state) ← go.run
     { file := file, provideKeeps := provideKeeps, warned := warned, diags := diags,
+      sourceTriggers := sourceTriggers file {} raws.toList,
       fileTop := reader.isSome,
       boundaryOpen := !boundaryRefused raws,
       wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
   return { raws := raws, state := state }
+
+/-- Execute a file-free surface once, retaining the same source evidence as
+the input-fulfilling path. Compatibility and elaboration can share it. -/
+def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
+    (warned : Array String := #[]) (inherited : List String := []) : Executed :=
+  executeBy (m := Id) none file raws provideKeeps warned inherited #[]
 
 /-- Execute the document with a driver that fulfils file requests at their
 uses. All macro recursion retains its existing binding-order bound; the
@@ -8810,7 +8911,7 @@ definitions inside the fragment still replace and restore them normally. -/
 def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) :
     Array Raw × Array Diag × Array String :=
-  rewriteExecuted (executeBy (m := Id) none file raws provideKeeps warned inherited #[])
+  rewriteExecuted (execute file raws provideKeeps warned inherited)
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
 own rule made literal (ltfiles.dtx `\\@onefilewithoptions`: find `p.sty` on
@@ -9668,10 +9769,14 @@ private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
     let (body, inner) ← textList loc st body #[] body.toList 0 0
     return (.group body p, { st with defined := inner.defined })
   | .env n body p => do
+    if let some file := Parse.inputEnvFile? n then
+      let savedFile := (← get).file
+      write fun s => { s with file := file }
+      let (body, inner) ← textList loc st body #[] body.toList 0 0
+      write fun s => { s with file := savedFile }
+      return (.env n body p, inner)
     let (body, inner) ← textList loc st body #[] body.toList 0 0
-    let next := if (Parse.inputEnvFile? n).isSome then inner
-      else { st with defined := inner.defined }
-    return (.env n body p, next)
+    return (.env n body p, { st with defined := inner.defined })
   | r => return (r, st)
 
 end
@@ -9736,7 +9841,8 @@ def rewriteText (file : String) (raws : Array Raw) (warned : Array String := #[]
   let go : M (Array Raw) := do
     let (out, _) ← textList loc {} raws #[] raws.toList 0 0
     return out
-  let (out, st) := go.run { file := file, warned := warned }
+  let (out, st) := go.run
+    { file := file, warned := warned, sourceTriggers := sourceTriggers file {} raws.toList }
   (out, st.diags, st.warned)
 
 end LeanTex.Core.Compat

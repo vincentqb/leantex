@@ -1338,8 +1338,14 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     if ((writer && !sink) || terminal) && (projects diags code || interpolated) then
       out := out.push (row + 1, "diagnostic fields printed outside Render")
     let headline := text.trimAscii.toString.toLower
-    if writer && ["warning:", "warning[", "warning - ", "error:", "error[", "error - ",
-        "note:", "note[", "note - "].any (fun pre => headline.startsWith pre) then
+    let headerAfter (label : String) (marks : List String) :=
+      headline.startsWith label &&
+        marks.any (fun mark => (headline.drop label.length).trimAsciiStart.toString.startsWith mark)
+    -- Diagnostic icons lead into a code bracket; plain ✔/✖ run summaries
+    -- remain legal. Word labels also cover the legacy headline spellings.
+    if writer && (
+        ["warning", "error", "note", "info"].any (fun word => headerAfter word [":", "[", "- "]) ||
+        ["⚠", "✖", "ℹ"].any (fun icon => headerAfter icon ["["])) then
       out := out.push (row + 1, "hand-written diagnostic headline")
   return out
 
@@ -2096,10 +2102,32 @@ def selftest : IO UInt32 := do
       ["def Ui.phase := do", "  IO.eprintln s!\"{d.code}: {d.message}\""], true),
     ("literal diagnostic", "Main.lean",
       ["def main := do", "  IO.eprintln \"warning: lost text\""], true),
+    ("warning icon headline", "Main.lean",
+      ["def Ui.phase := IO.eprintln \"⚠ [W0301] lost text\""], true),
+    ("error icon headline", "Main.lean",
+      ["def Ui.phase := IO.eprintln \"✖ [E0001] lost text\""], true),
+    ("info icon headline", "Main.lean",
+      ["def Ui.phase := IO.eprintln \"ℹ [N0100] translated text\""], true),
+    ("icon headline interpolation", "Main.lean",
+      ["def Ui.phase := IO.eprintln s!\"⚠ [{code}] lost text\""], true),
+    ("multiline icon headline", "Main.lean",
+      ["def Ui.phase := do", "  IO.eprintln", "    \"⚠[W0301] lost text\""], true),
     ("typed sink", "Main.lean",
       ["def Ui.diag (ui : Ui) (d : Diag) := do", "  if d.severity != .note then",
        "    ui.errStream.putStrLn (Render.human ui.color d)",
+       "    ui.errStream.putStrLn (Render.human ui.color d ui.showOutput)",
        "  ui.outStream.putStrLn (Render.porcelainDiag d)"], false),
+    ("literal status summaries", "Main.lean",
+      ["def Ui.done := IO.println \"✔ demo.tex → demo.pdf — 1 page (1 ms) · 2 notes (-v)\"",
+       "def Ui.summary := IO.eprintln \"✖ demo.tex — 1 error (1 ms)\"",
+       "def Ui.werror := IO.eprintln \"✖ demo.tex — 1 warning (--werror) (1 ms)\""], false),
+    ("headline word boundaries", "Main.lean",
+      ["def Ui.phase := IO.println \"information: scanning fonts\"",
+       "def Ui.summary := IO.println \"warnings: 2\""], false),
+    ("commented headlines", "Main.lean",
+      ["def Ui.phase := do", "  /- IO.eprintln \"⚠ [W0301] lost text\" -/",
+       "  -- IO.eprintln \"Info [N0100] translated text\"",
+       "  IO.println \"finished\""], false),
     ("status and verdict", "Main.lean",
       ["def Ui.phase := IO.println s!\"{name}: {detail}\"", "def Ui.werror := do",
        "  ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)"], false),
@@ -2139,6 +2167,10 @@ def selftest : IO UInt32 := do
       ["def report := do", "  /- outer /- inner -/ done -/ IO.eprintln msg"], true),
     ("other tools are out of scope", "scripts/example.lean",
       ["def main := IO.eprintln \"warning: a tool status\""], false)] ++
+    (["Warning", "ERROR", "note", "Info"].flatMap fun label =>
+      [": lost text", "[W0301] lost text", " [W0301] lost text", " - lost text"].map fun tail =>
+        (s!"literal {label}{tail}", "Main.lean",
+          ["def Ui.phase := IO.eprintln \"" ++ label ++ tail ++ "\""], true)) ++
     ["trigger", "recovery", "output"].flatMap fun field =>
       -- All use permitted writers: the field rule itself must reject them,
       -- not the independent rule against an unaudited terminal writer.

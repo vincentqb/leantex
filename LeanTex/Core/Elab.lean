@@ -224,6 +224,9 @@ private def moveMacroRuns (wrap : String → Array α → α)
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
   file : String
+  /-- Stored replacement code is attributed to the outer written call.
+  Arguments are bound before entering this scope; input wrappers clear it. -/
+  callSite : Option (Span × String) := none
   /-- Source-checked highlighting replies captured once by the driver. These
   are immutable across body scopes and font remeasurement. -/
   listingReplies : Array ListingReply.Answer := #[]
@@ -310,6 +313,22 @@ structure Ctx where
   /-- The semantic ancestry of executed compatibility macros, independent
   of command visibility and of the token scanner's argument boundaries. -/
   macroRoles : MacroRoles := {}
+
+/-- The source of replacement code is its call; ordinary tokens retain
+their own file and position. Diagnostics and content-source collectors share
+this projection. -/
+def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
+  (ctx.callSite.map (·.1)).getD ⟨ctx.file, pos⟩
+
+/-- Enter stored replacement code without losing an enclosing written call. -/
+private def Ctx.atCall (ctx : Ctx) (name : String) (pos : Pos) : Ctx :=
+  { ctx with callSite := ctx.callSite.orElse (fun _ =>
+      some (⟨ctx.file, pos⟩, "\\" ++ name)) }
+
+/-- Source collectors share the written call's span for every replacement
+position. This changes attribution, not content or its styling. -/
+theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : String) (pos : Pos) :
+    ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := rfl
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -671,7 +690,9 @@ private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Po
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
     (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none) : Diag :=
-  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject refused trigger recovery output
+  let trigger := if pos.isSome then (ctx.callSite.map (·.2)).orElse (fun _ => trigger)
+    else trigger
+  Diag.of code msg (pos.map ctx.sourceSpan) help subject refused trigger recovery output
 
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (refused : Option String := none) : EM Unit :=
@@ -799,7 +820,7 @@ top-level helper so the inline knot carries a call, not a closure. -/
 private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Unit :=
   modify fun st => { st with spans := keys.foldl (fun sp k =>
     if sp.cites.any (·.1 == k) then sp
-    else { sp with cites := sp.cites.push (k, ⟨ctx.file, pos⟩) }) st.spans }
+    else { sp with cites := sp.cites.push (k, ctx.sourceSpan pos) }) st.spans }
 
 /-- Record a non-text object's census key and span. File and boundary
 images use their source; every native picture uses a positional
@@ -809,7 +830,7 @@ private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st =>
     if st.spans.images.any (·.1 == src) then st
     else { st with spans :=
-      { st.spans with images := st.spans.images.push (src, ⟨ctx.file, pos⟩) } }
+      { st.spans with images := st.spans.images.push (src, ctx.sourceSpan pos) } }
 
 private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
@@ -822,7 +843,7 @@ private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool
   modify fun st =>
     if st.spans.colors.any (·.1 == expr) then st
     else { st with spans :=
-      { st.spans with colors := st.spans.colors.push (expr, c, role, ⟨ctx.file, pos⟩) } }
+      { st.spans with colors := st.spans.colors.push (expr, c, role, ctx.sourceSpan pos) } }
 
 /-- The one W0304: a palette name that resolves to nothing keeps its
 content uncoloured. Every colour door — the inline `\textcolor` arm, the
@@ -847,7 +868,7 @@ def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
 /-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
   modify fun st => { st with spans :=
-    { st.spans with bib := st.spans.bib.push (src, ⟨ctx.file, pos⟩) } }
+    { st.spans with bib := st.spans.bib.push (src, ctx.sourceSpan pos) } }
 
 /-- **url.sty's `\urlstyle` values, as the family each names.** `tt`, `rm`
 and `sf` name the mono, roman and sans families; `same` asks for the face in
@@ -1643,7 +1664,7 @@ private def mathEnv (ctx : Ctx) : MathParse.Env :=
 /-- Source annotations follow the token that contributed content. They carry
 no style and introduce no grouping or shaping boundary. -/
 private def sourceInline (ctx : Ctx) (pos : Pos) (inline : Inline) : Inline :=
-  .located ⟨ctx.file, pos⟩ #[inline]
+  .located (ctx.sourceSpan pos) #[inline]
 
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as its text content with a warning naming the construct when it cannot —
@@ -4637,7 +4658,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
       if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
-        let inner ← elabInlines { ctx with file := f } body
+        let inner ← elabInlines { ctx with file := f, callSite := none } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -4759,7 +4780,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           have hto : sliceWeight raws (i + 1) < sliceWeight raws i := hadv1
           let acc := flushText acc sb
           let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
-          let callCtx : Ctx := { ctx with limit := k, args := bindings }
+          let callCtx : Ctx := { ctx.atCall name pos with limit := k, args := bindings }
           let expanded ← elabInlines callCtx cmd.body
           -- A parameterized command is a classifier of its argument — a
           -- semantic role — and its name survives into the artifact as an
@@ -6912,24 +6933,28 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
   modify fun st => { st with flowPalette := colors }
   if settle then
     for issue in issues do
-      warnOnce ctx ("beamercolor:" ++ issue) .W0104
-        ("'\\setbeamercolor': " ++ issue ++ "; the unresolved value is ignored") {}
+      let origin := { ctx with file := issue.span.file, callSite := none }
+      warnOnce origin ("beamercolor:" ++ issue.message) .W0104
+        ("'\\setbeamercolor': " ++ issue.message ++ "; the unresolved value is ignored") issue.span.pos
+        (trigger := "\\setbeamercolor")
   return pal
 
 private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
     (star : Bool) (src : String) (pos : Pos) : EM Palette := do
   let name := name.trimAscii.toString
-  let (colors, unsupported) := (← get).flowPalette.declare name star src pos
+  let (colors, unsupported) := (← get).flowPalette.declare name star src (ctx.sourceSpan pos)
   modify fun st => { st with flowPalette := colors }
   for key in unsupported do
     warnOnce ctx ("beamercolor:key:" ++ name ++ ":" ++ key) .W0104
       s!"'\\setbeamercolor' key '{key}' on '{name}' is unsupported; the key is dropped" pos
+      (trigger := "\\setbeamercolor")
   if let some (fg, bg) := BeamerColor.roles.lookup name then
     for entry in Decl.splitEntries src do
       if let some (key, _) := Decl.splitEntry entry then
         if (key == "fg" && fg.isEmpty) || (key == "bg" && bg.isEmpty) then
           warnOnce ctx ("beamercolor:channel:" ++ name ++ ":" ++ key) .W0104
             s!"'\\setbeamercolor' {key} on '{name}' has no paint site; that channel is kept only for inheritance" pos
+            (trigger := "\\setbeamercolor")
   resolveBeamerColors ctx pal
 
 /-- Keep declaration parsing and state updates outside the block knot;
@@ -6959,9 +6984,10 @@ private def finishBeamerColors (ctx : Ctx) : EM Unit := do
     -- premise: beamerColorsChecks — changing a consumed parent changes
     -- heading ink on Layout.Out; an unsupported placement changes none.
     if e.declared && !(colors.reached.contains e.name) then
-      warnOnce ctx ("beamercolor:element:" ++ e.name) .W0104
-        s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.pos
-        (help := Compat.beamerNative.lookup "setbeamercolor")
+      let origin := { ctx with file := e.span.file, callSite := none }
+      warnOnce origin ("beamercolor:element:" ++ e.name) .W0104
+        s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.span.pos
+        (help := Compat.beamerNative.lookup "setbeamercolor") (trigger := "\\setbeamercolor")
 
 /-- Native colour declarations update the same epoch as named Beamer
 colours. Later explicit native declarations retain their precedence. -/
@@ -8514,7 +8540,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let sourceStart := ("\\begin{" ++ env ++ "}").foldl
     (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s { fontSize := inherited, source := some ⟨ctx.file, sourceStart⟩ }
+    return .verbatim none s { fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -8631,7 +8657,7 @@ size commands; the current style stands" (some pos)
     fontSize := fontSize
     tabSize := tabSize
     breakLines := breakLines
-    source := some ⟨ctx.file, contentPos⟩ }
+    source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
       let num := (← get).ctr.lstNum + 1
@@ -10929,7 +10955,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- An \input file's blocks, elaborated under its own name so a
     -- diagnostic points at the file that holds the construct.
     let ⟨fileCtx, hm⟩ : MCtx ctx ←
-      pure ⟨{ ctx with file := f }, rfl, rfl, rfl, rfl⟩
+      pure ⟨{ ctx with file := f, callSite := none }, rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← elabBlockScope fileCtx body)
   else if let some numbered := displayMathEnvs.lookup n then
     blocks ← displayMathArm ctx numbered body pos blocks
@@ -11447,7 +11473,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         ∧ noteFlag c = noteFlag ctx
         ∧ visParsGo c.user c.limit = visParsGo ctx.user k
         ∧ visWeightGo c.user c.limit = visWeightGo ctx.user k } ←
-      pure ⟨{ ctx with limit := k, args := bindings }, rfl, rfl, rfl, rfl⟩
+      pure ⟨{ ctx.atCall sourceName pos with limit := k, args := bindings }, rfl, rfl, rfl, rfl⟩
     have hpe := visPars_expand hlk
     have hwe := visWeight_expand hlk
     have hp1 : slicePars cmd.body 0 ≤ rawParsList cmd.body.toList := by
@@ -13926,7 +13952,7 @@ the built-in's heading and margins stand{replaced}"
       diag s.ctx .E0303 "expected '\\defineenv {name}(...) {begin} {end}'" pos
       return s
   | .fileMark f =>
-    return { s with ctx := { s.ctx with file := f } }
+    return { s with ctx := { s.ctx with file := f, callSite := none } }
   | .running name opts body pos =>
     -- `[from = 2]` keeps the opening page clean, as a title page is.
     -- The option is this declaration's own: it gates the head or foot
@@ -15432,6 +15458,8 @@ structure Prepared where
   picMacros : Array (String × String)
   warned : Array String
   compatDiags : Array Diag
+  /-- Original spellings remain available after compatibility expands macros. -/
+  sourceTriggers : Compat.SourceTriggers := {}
   /-- One external highlighter snapshot for every elaboration of this input.
   Pure callers need no provider; unsupported languages keep their source. -/
   listingReplies : Array ListingReply.Answer := #[]
@@ -15535,7 +15563,8 @@ def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
-    picMacros := picMacros, warned := warned, compatDiags := compatDiags ++ textDiags }
+    picMacros := picMacros, warned := warned, compatDiags := compatDiags ++ textDiags
+    sourceTriggers := executed.sourceTriggers }
 
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
@@ -15545,12 +15574,14 @@ def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
-  let (raws, compatDiags, warned) :=
-    Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
+  let executed := Compat.execute file raws
+    (provideKeeps := renderedBuiltins ++ structuralNames)
+  let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
-    compatDiags := splitDiags ++ compatDiags ++ textDiags }
+    compatDiags := splitDiags ++ compatDiags ++ textDiags
+    sourceTriggers := executed.sourceTriggers }
 
 /-- What a source's own pictures could ask a face for. `draws` is whether an
 environment the native subset draws stands anywhere in the rewritten tree;
@@ -15649,7 +15680,8 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   (doc, Diag.tallySites
-    (earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences),
+    (earlier ++ compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
+      contrast ++ outline ++ alt ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
       fallbacks := st.spans.fallbacks

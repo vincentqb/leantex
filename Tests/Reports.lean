@@ -46,6 +46,8 @@ import Tests.OverlayInputs
 import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.DiagnosticFormat
+import Tests.DiagnosticTrigger
+import Tests.DiagnosticImageOrigins
 import Tests.DiagnosticFontScope
 import Tests.DiagnosticOrigins
 import Tests.SourceAnnotations
@@ -85,7 +87,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
-  overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticFontScopeChecks
+  overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
   diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
@@ -586,7 +588,23 @@ def reports : List Report := [
       "synthetic PDF and HTML builds reproduced mixed-format notices before output filtering; the convention gate checks diagnostic sinks",
       "forty-two real CLI assertions failed before native glyph output scoping; publication, acceptance, refusal and warning policy now follow the selected outputs",
       "six census checks and two CLI note-count checks failed before scope-aware accounting; repeated common records count once and independent output losses remain distinct"]
-    state := .guarded "7d46cc5d" .before .author }
+    state := .guarded "7d46cc5d" .before .author },
+  { id := "R81", date := "2026-10-03"
+    what := "diagnostic headers repeated the requested output format, omitted compatibility command triggers and used a different visual style from completion summaries"
+    pins := [check% diagnosticFormatChecks, check% diagnosticTriggerChecks,
+      check% diagnosticImageOriginChecks, check% beamerColorOriginChecks,
+      thm% Compat.SourceTriggers.attribute_record_exact,
+      thm% Compat.atSource_record_exact, thm% Compat.rebase_source_exact,
+      thm% Elab.Ctx.sourceSpan_call_projects]
+    accept := ["formatter checks failed 405 assertions before the icon and scope projection changed",
+      "two real CLI guards failed before compatibility warnings carried their command; two mixed-output guards failed before Markdown counted in the presentation context",
+      "twenty-three source-attribution guards failed before commands were indexed by their parsed source sites",
+      "twelve colour-origin assertions failed before deferred warnings retained their per-key declaration sites across includes and later updates; four further cases failed before implicit-default cycles named an authored relationship within the cycle",
+      "nine expansion assertions failed before included macro bodies and omitted defaults named their actual uses without relocating written arguments or newly read files",
+      "ten image-origin assertions and both reference output builds failed before delayed alternative warnings carried an object label; a macro guard then failed before that label stopped guessing the authored command",
+      "four immediate macro-origin guards and one delayed image-origin guard failed before ordinary replacement code used the written call; arguments retain their own sites",
+      "routine notes stay hidden by default, remain available in verbose output and match the completion count"]
+    state := .guarded "3d7169d0" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

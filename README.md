@@ -24,6 +24,13 @@ leantex doc.tex -o out.html     the output name picks the backend
 leantex doc.tex --watch         rebuild on every change
 ```
 
+Diagnostic headers use `⚠` for warnings, `✖` for errors and `ℹ` for information,
+followed by a stable code, the source position and the triggering construct
+when available. Format labels appear only when a run builds several output
+formats. Routine notes stay hidden: the completion line counts them, and `-v`
+shows them. Use `--porcelain` for structured JSON records instead of parsing
+terminal text.
+
 ## LaTeX compatibility
 
 Supported LaTeX commands and package interfaces translate into the engine's

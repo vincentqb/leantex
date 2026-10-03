@@ -27,6 +27,41 @@ private def colorTree (doc : Ir.Doc) : Html.Node :=
   let (head, body, _) := HtmlDoc.emitTree {} doc
   .elem "html" #[] (head ++ body)
 
+/-- Immediate and deferred colour warnings keep the declaring command's
+file and position, even when resolution happens after returning from an
+included theme. A lookup failure is attributed to its declaration too. -/
+def beamerColorOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let parse (file text : String) := (Parse.parse file (Lex.lex file text).1).1
+  let child := "theme.sty"
+  for (name, source, lines) in [
+      ("unpainted channel", "\n\\setbeamercolor{framesubtitle}{bg=red}", [2]),
+      ("unsupported key", "\n\\setbeamercolor{frametitle}{probe=red}", [2]),
+      ("unused element", "\n\\setbeamercolor{unpainted}{fg=red}", [2]),
+      ("unresolved value", "\n\\setbeamercolor{frametitle}{fg=MissingInk}", [2]),
+      ("earlier unresolved channel", "\n\\setbeamercolor{frametitle}{fg=MissingInk}\n" ++
+        "\\setbeamercolor{frametitle}{bg=red}", [2]),
+      ("cycle", "\n\\setbeamercolor{frametitle}{parent=source}\n" ++
+        "\\setbeamercolor{source}{parent=frametitle}", [2, 3]),
+      ("earlier cyclic parent", "\n\\setbeamercolor{frametitle}{parent=source}\n" ++
+        "\\setbeamercolor{source}{parent=frametitle}\n" ++
+        "\\setbeamercolor{frametitle}{fg=red}\n\\setbeamercolor{source}{fg=red}", [2, 3]),
+      ("implicit subtitle parent cycle", "\n\\setbeamercolor{frametitle}{parent=framesubtitle}", [2]),
+      ("implicit cycle with an unrelated channel", "\n\\setbeamercolor{frametitle}{parent=framesubtitle}\n" ++
+        "\\setbeamercolor{framesubtitle}{fg=red}", [2]),
+      ("implicit cycle through a use edge", "\n\\setbeamercolor{frametitle}{use=framesubtitle}", [2]),
+      ("implicit section chain cycle", "\n\\setbeamercolor{normal text}{parent=section title}", [2])] do
+    let raws := parse "root.tex" "\\documentclass{beamer}\n" ++
+      #[Parse.Raw.env (Parse.inputEnv child) (parse child source) {}] ++
+      parse "root.tex" "\\begin{document}\\begin{frame}{Heading}Body\\end{frame}\\end{document}"
+    let ds := (Elab.runRawsSpanned "root.tex" raws).2.1.filter (·.kind == .W0104)
+    t s!"beamer color origin: {name} is still diagnosed" (!ds.isEmpty)
+    t s!"beamer color origin: {name} names its command"
+      (ds.all (·.trigger == some "\\setbeamercolor"))
+    t s!"beamer color origin: {name} names its included declaration"
+      (ds.all fun d => d.span.any fun span =>
+        span.file == child && lines.contains span.pos.line && span.pos.col == 1)
+
 /-- Source-based paint invariants for Beamer colour inheritance and the
 bounded native furniture sites. The synthetic LuaLaTeX oracle uses
 beamerbasecolor.sty's parent order, independent channels, late lookup,
@@ -34,6 +69,7 @@ beamerbasecolor.sty's parent order, independent channels, late lookup,
 fixtures. Both the supported effect and the unsupported no-effect are
 judged on shipped layout or the typed HTML tree. -/
 def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  beamerColorOriginChecks ref
   let t := check ref
   let ink : Ir.Color := { r := 0x17, g := 0x3B, b := 0x58 }
   let other : Ir.Color := { r := 0x58, g := 0x23, b := 0x47 }
