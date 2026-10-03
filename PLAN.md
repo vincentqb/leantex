@@ -26227,7 +26227,10 @@ The default five-run benchmark passes its bibliography growth check
 classes compile to PDF and HTML with animation notices scoped to the
 requested output and glyph reports carrying source positions. Corpus IR
 goldens remain unchanged; the diagnostic golden records the intended
-structured presentation.
+structured presentation. The same terminal escaping covers source and output
+paths in completion, failure and warning summaries. Twenty plain/colored
+summary assertions failed before that reuse and pass afterward, including
+control characters and Unicode line separators.
 
 The complete `lake build --wfail`, `lake test` and all twelve scoreboard
 tiers pass. The convention tree check also passes without an exception.
