@@ -14082,31 +14082,35 @@ theorem links_judged_complete (doc : Doc) :
 
 mutual
 
-/-- One leaf-parameterised map hosts every leaf-rewrite walk over the tree:
-`f` rewrites each childless node — applied to the node itself, never to a
-wrapper, whose body recurses below so the checker sees the recursion, as
-`foldInline`'s shape does. `setAltBlocks`, `resolveRefs`, and
-`Layout.substPage` are its leaf functions: a leaf function carries the one
-rewrite, and the explicit-arm obligation lives here, once. -/
-def mapInlines (f : Inline → Inline) (xs : Array Inline) : Array Inline :=
-  mapInlineList f #[] xs.toList
+/-- One leaf-parameterised map hosts every leaf rewrite over the tree.
+`f` rewrites childless nodes. `finish` combines a completed sibling array,
+after its children have been mapped, so a transparent wrapper can be
+spliced out without a second structural walk. The default keeps every
+wrapper and sibling unchanged. -/
+def mapInlines (f : Inline → Inline) (xs : Array Inline)
+    (finish : Array Inline → Array Inline := id) : Array Inline :=
+  mapInlineList f #[] xs.toList finish
 
-def mapInlineList (f : Inline → Inline) (out : Array Inline) :
-    List Inline → Array Inline
-  | [] => out
-  | x :: rest => mapInlineList f (out.push (mapInline f x)) rest
+def mapInlineList (f : Inline → Inline) (out : Array Inline) (xs : List Inline)
+    (finish : Array Inline → Array Inline := id) : Array Inline :=
+  match xs with
+  | [] => finish out
+  | x :: rest => mapInlineList f (out.push (mapInline f x finish)) rest finish
 
-def mapInline (f : Inline → Inline) : Inline → Inline
-  | .styled st body => .styled st (mapInlineList f #[] body.toList)
-  | .colored c n body => .colored c n (mapInlineList f #[] body.toList)
-  | .located n body => .located n (mapInlineList f #[] body.toList)
-  | .role n body => .role n (mapInlineList f #[] body.toList)
-  | .link u body => .link u (mapInlineList f #[] body.toList)
-  | .decorated kind body => .decorated kind (mapInlineList f #[] body.toList)
-  | .onSteps spec body => .onSteps spec (mapInlineList f #[] body.toList)
+def mapInline (f : Inline → Inline) (x : Inline)
+    (finish : Array Inline → Array Inline := id) : Inline :=
+  match x with
+  | .styled st body => .styled st (mapInlineList f #[] body.toList finish)
+  | .colored c n body => .colored c n (mapInlineList f #[] body.toList finish)
+  | .located span body => .located span (mapInlineList f #[] body.toList finish)
+  | .role n body => .role n (mapInlineList f #[] body.toList finish)
+  | .link u body => .link u (mapInlineList f #[] body.toList finish)
+  | .decorated kind body => .decorated kind (mapInlineList f #[] body.toList finish)
+  | .onSteps spec body => .onSteps spec (mapInlineList f #[] body.toList finish)
   | .altSteps spec firstPage otherPage =>
-    .altSteps spec (mapInlineList f #[] firstPage.toList) (mapInlineList f #[] otherPage.toList)
-  | .footnote n body => .footnote n (mapInlineList f #[] body.toList)
+    .altSteps spec (mapInlineList f #[] firstPage.toList finish)
+      (mapInlineList f #[] otherPage.toList finish)
+  | .footnote n body => .footnote n (mapInlineList f #[] body.toList finish)
   | .text s => f (.text s)
   | .math d src => f (.math d src)
   | .formula d src body => f (.formula d src body)
@@ -14126,91 +14130,105 @@ def mapInline (f : Inline → Inline) : Inline → Inline
 
 end
 
-def mapTableCells (f : Inline → Inline) (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
+def mapTableCells (f : Inline → Inline) (out : Array (Array Inline))
+    (cells : List (Array Inline)) (finish : Array Inline → Array Inline := id) :
+    Array (Array Inline) :=
+  match cells with
   | [] => out
-  | cell :: rest => mapTableCells f (out.push (mapInlines f cell)) rest
+  | cell :: rest =>
+    mapTableCells f (out.push (mapInlines f cell finish)) rest finish
 
-def mapTableRows (f : Inline → Inline) (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
+def mapTableRows (f : Inline → Inline) (out : Array (Array (Array Inline)))
+    (rows : List (Array (Array Inline))) (finish : Array Inline → Array Inline := id) :
+    Array (Array (Array Inline)) :=
+  match rows with
   | [] => out
-  | row :: rest => mapTableRows f (out.push (mapTableCells f #[] row.toList)) rest
+  | row :: rest =>
+    mapTableRows f (out.push (mapTableCells f #[] row.toList finish)) rest finish
 
-def mapBibItems (f : Inline → Inline) (out : Array BibItem) :
-    List BibItem → Array BibItem
+def mapBibItems (f : Inline → Inline) (out : Array BibItem) (items : List BibItem)
+    (finish : Array Inline → Array Inline := id) : Array BibItem :=
+  match items with
   | [] => out
   | i :: rest =>
-    mapBibItems f (out.push { i with content := mapInlines f i.content }) rest
+    mapBibItems f (out.push { i with content := mapInlines f i.content finish }) rest finish
 
-mutual
-
-/-- The block face of the map: every inline region — a paragraph's content,
-a title, a caption, each table cell, a formatted bibliography entry, the
-running furniture — is mapped, and every block wrapper keeps its shape.
-One descent for the whole leaf-rewrite family, so a rewrite cannot
-silently skip a region a sibling walk reaches: two of the three hand-rolled
-copies this map replaced skipped real ones. -/
-def mapAlgLines (f : Inline → Inline) (out : Array AlgLine) :
-    List AlgLine → Array AlgLine
+def mapAlgLines (f : Inline → Inline) (out : Array AlgLine) (ls : List AlgLine)
+    (finish : Array Inline → Array Inline := id) : Array AlgLine :=
+  match ls with
   | [] => out
   | l :: rest =>
     mapAlgLines f (out.push
       { depth := l.depth
         kind := l.kind
-        content := mapInlines f l.content
-        comment := l.comment.map (mapInlines f) }) rest
+        content := mapInlines f l.content finish
+        comment := l.comment.map (mapInlines f · finish) }) rest finish
 
-/-- The block face of the leaf-parameterised map: `gp` rewrites each
-native picture, and `f` each childless inline. Existing inline-only callers
-use `mapBlocks`, whose picture function is identity. -/
+mutual
+
+/-- The block face of the generic map: `gp` rewrites native pictures, `f`
+childless inlines, `finish` completed inline regions, and `listing` the
+listing specification after its caption is mapped. Every block wrapper
+keeps its shape and ordering. Existing leaf-only callers use the identity
+defaults; annotation erasure uses the same descent. -/
 def mapBlocksPic (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (xs : Array Block) : Array Block :=
-  mapBlockList gp f #[] xs.toList
+    (xs : Array Block) (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array Block :=
+  mapBlockList gp f #[] xs.toList finish listing
 
-def mapBlocks (f : Inline → Inline) (xs : Array Block) : Array Block :=
-  mapBlocksPic id f xs
+def mapBlocks (f : Inline → Inline) (xs : Array Block)
+    (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array Block :=
+  mapBlocksPic id f xs finish listing
 
 def mapBlockList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (out : Array Block) : List Block → Array Block
+    (out : Array Block) (bs : List Block) (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array Block :=
+  match bs with
   | [] => out
-  | b :: rest => mapBlockList gp f (out.push (mapBlock gp f b)) rest
+  | b :: rest =>
+    mapBlockList gp f (out.push (mapBlock gp f b finish listing)) rest finish listing
 
-def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) : Block → Block
-  | .para content => .para (mapInlines f content)
-  | .equation n content => .equation (mapInlines f n) (mapInlines f content)
-  | .section l st n title => .section l st n (mapInlines f title)
-  | .list o items => .list o (mapBlockItems gp f #[] items.toList)
-  | .center body => .center (mapBlockList gp f #[] body.toList)
-  | .ragged s body => .ragged s (mapBlockList gp f #[] body.toList)
-  | .quote body => .quote (mapBlockList gp f #[] body.toList)
-  | .abstract body => .abstract (mapBlockList gp f #[] body.toList)
+def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) (b : Block)
+    (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Block :=
+  match b with
+  | .para content => .para (mapInlines f content finish)
+  | .equation n content => .equation (mapInlines f n finish) (mapInlines f content finish)
+  | .section l st n title => .section l st n (mapInlines f title finish)
+  | .list o items => .list o (mapBlockItems gp f #[] items.toList finish listing)
+  | .center body => .center (mapBlockList gp f #[] body.toList finish listing)
+  | .ragged s body => .ragged s (mapBlockList gp f #[] body.toList finish listing)
+  | .quote body => .quote (mapBlockList gp f #[] body.toList finish listing)
+  | .abstract body => .abstract (mapBlockList gp f #[] body.toList finish listing)
   | .titled kind title body =>
-    .titled kind (mapInlines f title) (mapBlockList gp f #[] body.toList)
-  | .role n body => .role n (mapBlockList gp f #[] body.toList)
-  | .link target body => .link target (mapBlockList gp f #[] body.toList)
-  | .spaced g body => .spaced g (mapBlockList gp f #[] body.toList)
-  | .columns cols => .columns (mapBlockCols gp f #[] cols.toList)
-  | .onSteps spec body => .onSteps spec (mapBlockList gp f #[] body.toList)
+    .titled kind (mapInlines f title finish) (mapBlockList gp f #[] body.toList finish listing)
+  | .role n body => .role n (mapBlockList gp f #[] body.toList finish listing)
+  | .link target body => .link target (mapBlockList gp f #[] body.toList finish listing)
+  | .spaced g body => .spaced g (mapBlockList gp f #[] body.toList finish listing)
+  | .columns cols => .columns (mapBlockCols gp f #[] cols.toList finish listing)
+  | .onSteps spec body => .onSteps spec (mapBlockList gp f #[] body.toList finish listing)
   | .altSteps spec firstPage otherPage =>
-    .altSteps spec (mapBlockList gp f #[] firstPage.toList)
-      (mapBlockList gp f #[] otherPage.toList)
-  | .only targets body => .only targets (mapBlockList gp f #[] body.toList)
-  | .nav spec body => .nav spec (mapBlockList gp f #[] body.toList)
-  | .note body => .note (mapBlockList gp f #[] body.toList)
+    .altSteps spec (mapBlockList gp f #[] firstPage.toList finish listing)
+      (mapBlockList gp f #[] otherPage.toList finish listing)
+  | .only targets body => .only targets (mapBlockList gp f #[] body.toList finish listing)
+  | .nav spec body => .nav spec (mapBlockList gp f #[] body.toList finish listing)
+  | .note body => .note (mapBlockList gp f #[] body.toList finish listing)
   | .frame title st v br body =>
-    .frame (mapInlines f title) st v br (mapBlockList gp f #[] body.toList)
-  | .framefoot content => .framefoot (mapInlines f content)
+    .frame (mapInlines f title finish) st v br (mapBlockList gp f #[] body.toList finish listing)
+  | .framefoot content => .framefoot (mapInlines f content finish)
   | .float k num ca body caption =>
-    .float k num ca (mapBlockList gp f #[] body.toList) (mapInlines f caption)
+    .float k num ca (mapBlockList gp f #[] body.toList finish listing)
+      (mapInlines f caption finish)
   | .table c pl pr rows rules spans =>
-    .table c pl pr (mapTableRows f #[] rows.toList) rules spans
-  | .algorithm n sm lines => .algorithm n sm (mapAlgLines f #[] lines.toList)
-  | .logo content => .logo (mapInlines f content)
+    .table c pl pr (mapTableRows f #[] rows.toList finish) rules spans
+  | .algorithm n sm ls => .algorithm n sm (mapAlgLines f #[] ls.toList finish)
+  | .logo content => .logo (mapInlines f content finish)
   | .bibliography src style items =>
-    .bibliography src style (mapBibItems f #[] items.toList)
+    .bibliography src style (mapBibItems f #[] items.toList finish)
   | .verbatim c s spec =>
-    .verbatim c s { spec with caption := spec.caption.map fun (n, cap) =>
-      (n, mapInlines f cap) }
+    .verbatim c s (listing { spec with caption := spec.caption.map fun (n, cap) =>
+      (n, mapInlines f cap finish) })
   | .setPalette pal => .setPalette pal
   | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
@@ -14218,17 +14236,24 @@ def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) : Block 
   | .picture pic => .picture (gp pic)
 
 def mapBlockItems (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (out : Array (Array Block)) : List (Array Block) → Array (Array Block)
+    (out : Array (Array Block)) (items : List (Array Block))
+    (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array (Array Block) :=
+  match items with
   | [] => out
   | item :: rest =>
-    mapBlockItems gp f (out.push (mapBlockList gp f #[] item.toList)) rest
+    mapBlockItems gp f (out.push (mapBlockList gp f #[] item.toList finish listing))
+      rest finish listing
 
 def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (out : Array (BoxWidth × Array Block)) :
-    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
+    (out : Array (BoxWidth × Array Block)) (cols : List (BoxWidth × Array Block))
+    (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array (BoxWidth × Array Block) :=
+  match cols with
   | [] => out
   | (w, body) :: rest =>
-    mapBlockCols gp f (out.push (w, mapBlockList gp f #[] body.toList)) rest
+    mapBlockCols gp f (out.push (w, mapBlockList gp f #[] body.toList finish listing))
+      rest finish listing
 
 end
 
@@ -14873,87 +14898,109 @@ each node's own census conserves every node's. `mapInlines_text` and
 `mapBlocks_text` are the walk-level schema; a leaf-rewrite states its
 census fact as their one-line instance instead of one hand induction per
 walk. -/
-theorem mapInline_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (x : Inline) :
-    plainTextOne (mapInline f x) = plainTextOne x := by
+theorem mapInlineFinish_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (x : Inline) :
+    plainTextOne (mapInline (finish := finish) f x) = plainTextOne x := by
   match x with
   | .styled st body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .colored c n body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .located n body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .role n body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .link u body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .decorated kind body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .onSteps spec body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .altSteps spec firstPage otherPage =>
-    show plainTextList (mapInlineList f #[] firstPage.toList).toList
-        ++ plainTextList (mapInlineList f #[] otherPage.toList).toList = _
-    rw [mapInlineList_text f hf firstPage.toList #[],
-      mapInlineList_text f hf otherPage.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] firstPage.toList).toList
+        ++ plainTextList (mapInlineList (finish := finish) f #[] otherPage.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish firstPage.toList #[],
+      mapInlineListFinish_text f hf finish hfinish otherPage.toList #[]]
     simp [plainTextList, plainTextOne]
   | .footnote n body =>
-    show plainTextList (mapInlineList f #[] body.toList).toList = _
-    rw [mapInlineList_text f hf body.toList #[]]
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => exact hf _
 
-theorem mapInlineList_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (xs : List Inline)
+theorem mapInlineListFinish_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (xs : List Inline)
     (out : Array Inline) :
-    plainTextList (mapInlineList f out xs).toList
+    plainTextList (mapInlineList (finish := finish) f out xs).toList
       = plainTextList out.toList ++ plainTextList xs := by
   match xs with
-  | [] => simp [mapInlineList, plainTextList]
+  | [] => simpa [mapInlineList, plainText, plainTextList] using hfinish out
   | x :: rest =>
-    rw [mapInlineList, mapInlineList_text f hf rest (out.push (mapInline f x))]
+    rw [mapInlineList, mapInlineListFinish_text f hf finish hfinish rest (out.push (mapInline (finish := finish) f x))]
     rw [Array.toList_push, plainTextList_append]
-    simp [plainTextList, mapInline_text f hf x, String.append_assoc]
+    simp [plainTextList, mapInlineFinish_text f hf finish hfinish x, String.append_assoc]
 
 end
 
 /-- The `Conserves` schema over the generic map, inline face: whatever the
 leaf function, if it conserves each node's census the walk conserves the
 content's. -/
-theorem mapInlines_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
-    Conserves plainText (mapInlines f) := fun xs => by
-  show plainTextList (mapInlineList f #[] xs.toList).toList = _
-  rw [mapInlineList_text f hf xs.toList #[]]
+theorem mapInlinesFinish_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) :
+    Conserves plainText (mapInlines (finish := finish) f) := fun xs => by
+  show plainTextList (mapInlineList (finish := finish) f #[] xs.toList).toList = _
+  rw [mapInlineListFinish_text f hf finish hfinish xs.toList #[]]
   simp [plainTextList, plainText]
 
+/-- The default map preserves text when its leaf function does. -/
+theorem mapInline_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (x : Inline) :
+    plainTextOne (mapInline f x) = plainTextOne x :=
+  mapInlineFinish_text f hf id (fun _ => rfl) x
+
+theorem mapInlineList_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (xs : List Inline)
+    (out : Array Inline) :
+    plainTextList (mapInlineList f out xs).toList
+      = plainTextList out.toList ++ plainTextList xs :=
+  mapInlineListFinish_text f hf id (fun _ => rfl) xs out
+
+theorem mapInlines_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
+    Conserves plainText (mapInlines f) :=
+  mapInlinesFinish_text f hf id (fun _ => rfl)
+
 private theorem mapAlgLines_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (ls : List AlgLine)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (ls : List AlgLine)
     (out : Array AlgLine) (acc : String) :
-    algLineText acc (mapAlgLines f out ls).toList
+    algLineText acc (mapAlgLines (finish := finish) f out ls).toList
       = algLineText (algLineText acc out.toList) ls := by
   match ls with
   | [] => simp [mapAlgLines, algLineText]
   | l :: rest =>
-    rw [mapAlgLines, mapAlgLines_text f hf rest]
+    rw [mapAlgLines, mapAlgLines_text f hf finish hfinish rest]
     rw [Array.toList_push, algLineText_chain]
-    have hm : ∀ xs, plainText (mapInlines f xs) = plainText xs := mapInlines_text f hf
+    have hm : ∀ xs, plainText (mapInlines (finish := finish) f xs) = plainText xs := mapInlinesFinish_text f hf finish hfinish
     cases hc : l.comment <;> simp [algLineText, hc, hm]
 
 
@@ -15101,206 +15148,382 @@ theorem mapInlines_id (f : Inline → Inline) (p : Inline → Bool)
   simp
 
 private theorem mapTableCells_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (cells : List (Array Inline))
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (cells : List (Array Inline))
     (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (mapTableCells f out cells).toList
+    blockTextTableCells acc (mapTableCells (finish := finish) f out cells).toList
       = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
   match cells with
   | [] => simp [mapTableCells, blockTextTableCells]
   | cell :: rest =>
-    rw [mapTableCells, mapTableCells_text f hf rest]
+    rw [mapTableCells, mapTableCells_text f hf finish hfinish rest]
     rw [Array.toList_push, blockTextTableCells_chain]
-    simp [blockTextTableCells, mapInlines_text f hf cell]
+    simp [blockTextTableCells, mapInlinesFinish_text f hf finish hfinish cell]
 
 private theorem mapTableRows_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
     (rows : List (Array (Array Inline)))
     (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (mapTableRows f out rows).toList
+    blockTextTableRows acc (mapTableRows (finish := finish) f out rows).toList
       = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
   match rows with
   | [] => simp [mapTableRows, blockTextTableRows]
   | row :: rest =>
-    rw [mapTableRows, mapTableRows_text f hf rest]
+    rw [mapTableRows, mapTableRows_text f hf finish hfinish rest]
     rw [Array.toList_push, blockTextTableRows_chain]
-    simp [blockTextTableRows, blockTextTableCells, mapTableCells_text f hf row.toList #[]]
+    simp [blockTextTableRows, blockTextTableCells, mapTableCells_text f hf finish hfinish row.toList #[]]
 
 private theorem mapBibItems_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List BibItem)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (items : List BibItem)
     (out : Array BibItem) (acc : String) :
-    blockTextBibItems acc (mapBibItems f out items).toList
+    blockTextBibItems acc (mapBibItems (finish := finish) f out items).toList
       = blockTextBibItems (blockTextBibItems acc out.toList) items := by
   match items with
   | [] => simp [mapBibItems, blockTextBibItems]
   | i :: rest =>
-    rw [mapBibItems, mapBibItems_text f hf rest]
+    rw [mapBibItems, mapBibItems_text f hf finish hfinish rest]
     rw [Array.toList_push, blockTextBibItems_chain]
-    simp [blockTextBibItems, mapInlines_text f hf i.content]
+    simp [blockTextBibItems, mapInlinesFinish_text f hf finish hfinish i.content]
 
 mutual
 
-theorem mapBlock_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (acc : String) (b : Block) :
-    blockTextOne acc (mapBlock gp f b) = blockTextOne acc b := by
+theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText) (acc : String) (b : Block) :
+    blockTextOne acc (mapBlock (finish := finish) (listing := listing) gp f b) = blockTextOne acc b := by
   match b with
-  | .para content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .para content => simp [mapBlock, blockTextOne, mapInlinesFinish_text f hf finish hfinish content]
   | .equation n content =>
-    simp [mapBlock, blockTextOne, mapInlines_text f hf content, mapInlines_text f hf n]
+    simp [mapBlock, blockTextOne, mapInlinesFinish_text f hf finish hfinish content, mapInlinesFinish_text f hf finish hfinish n]
   | .section l st n title =>
-    simp [mapBlock, blockTextOne, mapInlines_text f hf title]
+    simp [mapBlock, blockTextOne, mapInlinesFinish_text f hf finish hfinish title]
   | .list o items =>
-    show blockTextItems acc (mapBlockItems gp f #[] items.toList).toList = _
-    rw [mapBlockItems_text gp f hf items.toList #[]]
+    show blockTextItems acc (mapBlockItems (finish := finish) (listing := listing) gp f #[] items.toList).toList = _
+    rw [mapBlockItemsWith_text gp f hf finish hfinish listing hlisting items.toList #[]]
     rfl
   | .center body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .ragged _ body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .quote body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .abstract body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .titled kind title body =>
-    show blockTextList (acc ++ plainText (mapInlines f title))
-      (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapInlines_text f hf title, mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList (acc ++ plainText (mapInlines (finish := finish) f title))
+      (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapInlinesFinish_text f hf finish hfinish title, mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .role n body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .link target body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .spaced g body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .columns cols =>
-    show blockTextColumns acc (mapBlockCols gp f #[] cols.toList).toList = _
-    rw [mapBlockCols_text gp f hf cols.toList #[]]
+    show blockTextColumns acc (mapBlockCols (finish := finish) (listing := listing) gp f #[] cols.toList).toList = _
+    rw [mapBlockColsWith_text gp f hf finish hfinish listing hlisting cols.toList #[]]
     rfl
   | .onSteps spec body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .altSteps spec firstPage otherPage =>
     show blockTextList (blockTextList acc
-        (mapBlockList gp f #[] firstPage.toList).toList)
-        (mapBlockList gp f #[] otherPage.toList).toList = _
-    rw [mapBlockList_text gp f hf firstPage.toList #[],
-      mapBlockList_text gp f hf otherPage.toList #[]]
+        (mapBlockList (finish := finish) (listing := listing) gp f #[] firstPage.toList).toList)
+        (mapBlockList (finish := finish) (listing := listing) gp f #[] otherPage.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting firstPage.toList #[],
+      mapBlockListWith_text gp f hf finish hfinish listing hlisting otherPage.toList #[]]
     rfl
   | .only targets body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .nav spec body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .note body =>
-    show blockTextList acc (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .frame title st v _ body =>
-    show blockTextList (acc ++ plainText (mapInlines f title))
-      (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapInlines_text f hf title, mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList (acc ++ plainText (mapInlines (finish := finish) f title))
+      (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapInlinesFinish_text f hf finish hfinish title, mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .framefoot content =>
-    simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+    simp [mapBlock, blockTextOne, mapInlinesFinish_text f hf finish hfinish content]
   | .float k num ca body caption =>
-    show blockTextList (acc ++ plainText (mapInlines f caption))
-      (mapBlockList gp f #[] body.toList).toList = _
-    rw [mapInlines_text f hf caption, mapBlockList_text gp f hf body.toList #[]]
+    show blockTextList (acc ++ plainText (mapInlines (finish := finish) f caption))
+      (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
+    rw [mapInlinesFinish_text f hf finish hfinish caption, mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .table c pl pr rows rules spans =>
-    show blockTextTableRows acc (mapTableRows f #[] rows.toList).toList = _
-    rw [mapTableRows_text f hf rows.toList #[]]
+    show blockTextTableRows acc (mapTableRows (finish := finish) f #[] rows.toList).toList = _
+    rw [mapTableRows_text f hf finish hfinish rows.toList #[]]
     rfl
   | .algorithm n sm lines =>
-    show algLineText acc (mapAlgLines f #[] lines.toList).toList = _
-    rw [mapAlgLines_text f hf lines.toList #[]]
+    show algLineText acc (mapAlgLines (finish := finish) f #[] lines.toList).toList = _
+    rw [mapAlgLines_text f hf finish hfinish lines.toList #[]]
     rfl
-  | .logo content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .logo content => simp [mapBlock, blockTextOne, mapInlinesFinish_text f hf finish hfinish content]
   | .bibliography src style items =>
-    show blockTextBibItems acc (mapBibItems f #[] items.toList).toList = _
-    rw [mapBibItems_text f hf items.toList #[]]
+    show blockTextBibItems acc (mapBibItems (finish := finish) f #[] items.toList).toList = _
+    rw [mapBibItems_text f hf finish hfinish items.toList #[]]
     rfl
   | .verbatim _ _ spec =>
+    simp only [mapBlock, blockTextOne, hlisting]
     cases hc : spec.caption with
-    | none => simp [mapBlock, blockTextOne, ListingSpec.capText, hc]
+    | none => simp [ListingSpec.capText, hc]
     | some p =>
-      simp [mapBlock, blockTextOne, ListingSpec.capText, hc,
-        mapInlines_text f hf p.2]
+      simp [ListingSpec.capText, hc,
+        mapInlinesFinish_text f hf finish hfinish p.2]
   | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ => rfl
 
-theorem mapBlockList_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (bs : List Block)
+theorem mapBlockListWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText) (bs : List Block)
     (out : Array Block) (acc : String) :
-    blockTextList acc (mapBlockList gp f out bs).toList
+    blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f out bs).toList
       = blockTextList (blockTextList acc out.toList) bs := by
   match bs with
   | [] => simp [mapBlockList, blockTextList]
   | b :: rest =>
-    rw [mapBlockList, mapBlockList_text gp f hf rest]
+    rw [mapBlockList, mapBlockListWith_text gp f hf finish hfinish listing hlisting rest]
     rw [Array.toList_push, blockTextList_chain]
-    simp [blockTextList, mapBlock_text gp f hf]
+    simp [blockTextList, mapBlockWith_text gp f hf finish hfinish listing hlisting]
 
-theorem mapBlockItems_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List (Array Block))
+theorem mapBlockItemsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (mapBlockItems gp f out items).toList
+    blockTextItems acc (mapBlockItems (finish := finish) (listing := listing) gp f out items).toList
       = blockTextItems (blockTextItems acc out.toList) items := by
   match items with
   | [] => simp [mapBlockItems, blockTextItems]
   | item :: rest =>
-    rw [mapBlockItems, mapBlockItems_text gp f hf rest]
+    rw [mapBlockItems, mapBlockItemsWith_text gp f hf finish hfinish listing hlisting rest]
     rw [Array.toList_push, blockTextItems_chain]
     simp [blockTextItems, blockTextList,
-      mapBlockList_text gp f hf item.toList #[]]
+      mapBlockListWith_text gp f hf finish hfinish listing hlisting item.toList #[]]
 
-theorem mapBlockCols_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+theorem mapBlockColsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText)
     (cols : List (BoxWidth × Array Block))
     (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (mapBlockCols gp f out cols).toList
+    blockTextColumns acc (mapBlockCols (finish := finish) (listing := listing) gp f out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
   | [] => simp [mapBlockCols, blockTextColumns]
   | (w, body) :: rest =>
-    rw [mapBlockCols, mapBlockCols_text gp f hf rest]
+    rw [mapBlockCols, mapBlockColsWith_text gp f hf finish hfinish listing hlisting rest]
     rw [Array.toList_push, blockTextColumns_chain]
     simp [blockTextColumns, blockTextList,
-      mapBlockList_text gp f hf body.toList #[]]
+      mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
 
 end
 
 /-- The `Conserves` schema over the picture- and inline-parameterised map.
 A picture rewrite cannot change text, so only the inline leaf hypothesis is
 needed. -/
+theorem mapBlocksPicWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText) :
+    Conserves blocksText (mapBlocksPic (finish := finish) (listing := listing) gp f) := fun xs => by
+  show blockTextList "" (mapBlockList (finish := finish) (listing := listing) gp f #[] xs.toList).toList = _
+  rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting xs.toList #[]]
+  rfl
+
+theorem mapBlocksWith_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText) :
+    Conserves blocksText (mapBlocks (finish := finish) (listing := listing) f) :=
+  mapBlocksPicWith_text id f hf finish hfinish listing hlisting
+
+/-- The default block map is the text-preserving instance of the
+region-combining map. Pictures have no entry in `blocksText`. -/
+theorem mapBlock_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (acc : String) (b : Block) :
+    blockTextOne acc (mapBlock gp f b) = blockTextOne acc b :=
+  mapBlockWith_text gp f hf id (fun _ => rfl) id (fun _ => rfl) acc b
+
+theorem mapBlockList_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (bs : List Block)
+    (out : Array Block) (acc : String) :
+    blockTextList acc (mapBlockList gp f out bs).toList
+      = blockTextList (blockTextList acc out.toList) bs :=
+  mapBlockListWith_text gp f hf id (fun _ => rfl) id (fun _ => rfl) bs out acc
+
+theorem mapBlockItems_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List (Array Block))
+    (out : Array (Array Block)) (acc : String) :
+    blockTextItems acc (mapBlockItems gp f out items).toList
+      = blockTextItems (blockTextItems acc out.toList) items :=
+  mapBlockItemsWith_text gp f hf id (fun _ => rfl) id (fun _ => rfl) items out acc
+
+theorem mapBlockCols_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (cols : List (BoxWidth × Array Block))
+    (out : Array (BoxWidth × Array Block)) (acc : String) :
+    blockTextColumns acc (mapBlockCols gp f out cols).toList
+      = blockTextColumns (blockTextColumns acc out.toList) cols :=
+  mapBlockColsWith_text gp f hf id (fun _ => rfl) id (fun _ => rfl) cols out acc
+
 theorem mapBlocksPic_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
-    Conserves blocksText (mapBlocksPic gp f) := fun xs => by
-  show blockTextList "" (mapBlockList gp f #[] xs.toList).toList = _
-  rw [mapBlockList_text gp f hf xs.toList #[]]
-  rfl
+    Conserves blocksText (mapBlocksPic gp f) :=
+  mapBlocksPicWith_text gp f hf id (fun _ => rfl) id (fun _ => rfl)
 
 theorem mapBlocks_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
+
+/- Source erasure uses the map's completed-region combiner. The reverse
+list accumulator joins only neighbouring text leaves; it never crosses a
+style, link, overlay, footnote, or other semantic boundary. -/
+private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
+  match x with
+  | .text s =>
+    match out with
+    | .text t :: rest => .text (t ++ s) :: rest
+    | _ => x :: out
+  | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _ | .located _ _
+  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
+  | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
+  | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
+  | .icon _ _ | .cite _ _ | .footnote _ _ => x :: out
+
+private def joinLocationBody (out : List Inline) : List Inline → List Inline
+  | [] => out
+  | x :: rest => joinLocationBody (pushLocationText out x) rest
+
+private def spliceLocationOne (out : List Inline) (x : Inline) : List Inline :=
+  match x with
+  | .located _ body => joinLocationBody out body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
+  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
+  | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
+  | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
+  | .icon _ _ | .cite _ _ | .footnote _ _ => pushLocationText out x
+
+private def spliceLocations (out : List Inline) : List Inline → List Inline
+  | [] => out
+  | x :: rest => spliceLocations (spliceLocationOne out x) rest
+
+private def finishLocations (xs : Array Inline) : Array Inline :=
+  (spliceLocations [] xs.toList).reverse.toArray
+
+private theorem pushLocationText_reading (out : List Inline) (x : Inline) :
+    plainTextList (pushLocationText out x).reverse =
+      plainTextList out.reverse ++ plainTextOne x := by
+  cases x <;>
+    try simp [pushLocationText, List.reverse_cons, plainTextList_append,
+      plainTextList]
+  cases out with
+  | nil => simp [plainTextList, plainTextOne]
+  | cons y rest =>
+    cases y <;> simp [List.reverse_cons, plainTextList_append,
+      plainTextList, plainTextOne, String.append_assoc]
+
+private theorem joinLocationBody_reading (xs : List Inline) (out : List Inline) :
+    plainTextList (joinLocationBody out xs).reverse =
+      plainTextList out.reverse ++ plainTextList xs := by
+  match xs with
+  | [] => simp [joinLocationBody, plainTextList]
+  | x :: rest =>
+    rw [joinLocationBody, joinLocationBody_reading rest, pushLocationText_reading]
+    simp [plainTextList, String.append_assoc]
+
+private theorem spliceLocations_reading (xs : List Inline) (out : List Inline) :
+    plainTextList (spliceLocations out xs).reverse =
+      plainTextList out.reverse ++ plainTextList xs := by
+  match xs with
+  | [] => simp [spliceLocations, plainTextList]
+  | x :: rest =>
+    cases x <;>
+      simp [spliceLocations, spliceLocationOne, spliceLocations_reading rest, joinLocationBody_reading,
+        pushLocationText_reading, plainTextList, plainTextOne, String.append_assoc]
+
+private theorem finishLocations_text : Conserves plainText finishLocations := by
+  intro xs
+  simp [finishLocations, plainText, spliceLocations_reading, plainTextList]
+
+/-- Erase diagnostic wrappers and join adjacent text throughout an inline
+region. The generic map owns recursion; its combiner sees already-mapped
+children, so splicing an annotation cannot leave a nested one behind. -/
+def eraseLocationInlines (xs : Array Inline) : Array Inline :=
+  mapInlines id xs finishLocations
+
+theorem eraseLocationInlines_text : Conserves plainText eraseLocationInlines :=
+  mapInlinesFinish_text id (fun _ => rfl) finishLocations finishLocations_text
+
+private def eraseLocationPicture (pic : Pic.Picture) : Pic.Picture :=
+  { pic with shapes := pic.shapes.map fun shape =>
+    match shape with
+    | .label x y content c scale align =>
+      .label x y (eraseLocationInlines content) c scale align
+    | .rect x y w h c => .rect x y w h c
+    | .circle x y r stroke fill => .circle x y r stroke fill
+    | .frame x y w h stroke fill => .frame x y w h stroke fill
+    | .edge segs stroke tip => .edge segs stroke tip }
+
+private def eraseListingSource (spec : ListingSpec) : ListingSpec :=
+  { spec with source := none }
+
+/-- The source-free view of a compiled document. Erase only diagnostic
+provenance, including listing starts, in every body and furniture region.
+Adjacent text rejoins after annotations disappear, recursively; semantic
+wrappers, block ordering, design, and picture geometry remain intact. -/
+def eraseLocations (doc : Doc) : Doc :=
+  mapDoc eraseLocationInlines
+    (mapBlocksPic eraseLocationPicture id · finishLocations eraseListingSource) doc
+
+/-- Source erasure conserves the body's text census and every furniture
+region's text, including style templates and markers. This is the actual
+erasure pass, with text coalescing, instantiated through the generic maps. -/
+theorem eraseLocations_text :
+    Conserves (fun doc : Doc =>
+      (blocksText doc.body, (furnitureInlines doc).map plainText)) eraseLocations := by
+  intro doc
+  apply Prod.ext
+  · exact mapBlocksPicWith_text eraseLocationPicture id (fun _ => rfl)
+      finishLocations finishLocations_text eraseListingSource (fun _ => rfl) doc.body
+  · simp only [eraseLocations, furnitureInlines_mapDoc, Array.map_map, Function.comp_def]
+    congr 1
+    funext xs
+    exact eraseLocationInlines_text xs
 
 /-- The List wrapper changes navigation, never content. -/
 theorem linkBlockList_text (url : String) (xs : List Block) (acc : String) :
