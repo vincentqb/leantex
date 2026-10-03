@@ -26086,6 +26086,14 @@ paint assertions; restoring it passes them. Installed lexer accuracy is a
 separate acceptance run, so the normal suite needs neither Python nor
 Pygments.
 
+The 2026-10-03 audit strengthens this boundary with `lookup_contract`: every
+installed classification is drawn from the captured answers under the exact
+language-and-source request key and reproduces its original lines. The old
+source-only contract remains a projection. A source-only lookup mutation
+passes the old theorem but fails the ownership proof; the artifact guard
+also checks foreign-language replies with identical source. Full build and
+tests pass, with no runtime change.
+
 
 ### 2026-10-02 — HTML publication requires captured resource closure
 
