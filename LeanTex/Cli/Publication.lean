@@ -41,11 +41,21 @@ def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
     cfg := { cfg with favicon := some (name, { media, bytes }) }
   return .ok cfg
 
+/-- The bytes measured and published are one serialization of the checked
+tree. The erased witness retains resource closure without retaining the tree
+or its captured resource buffers at runtime. -/
+structure HtmlArtifact where
+  render : String
+  render_exact : ∃ page : HtmlDoc.ClosedPage, render = page.render
+
+def HtmlArtifact.ofPage (page : HtmlDoc.ClosedPage) : HtmlArtifact :=
+  { render := page.render, render_exact := ⟨page, rfl⟩ }
+
 /-- Capture local head resources, attest exact SVG bytes through the existing
 parsed-XML/converter boundary, then check the tree that publication will render.
 No URL is fetched and no output directory exists at this point. -/
 def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
-    IO (Except String HtmlDoc.ClosedPage × Array Diag) := do
+    IO (Except String HtmlArtifact × Array Diag) := do
   let cfg ← match ← captureHtmlResources file cfg doc with
     | .ok cfg => pure cfg
     | .error why => return (.error why, #[])
@@ -55,12 +65,13 @@ def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
       match ← ImageAssets.validateSvg resource.bytes with
       | .ok _ => svgChecked := svgChecked.push resource.bytes
       | .error why => return (.error ("an embedded SVG failed resource validation: " ++ why), #[])
-  return HtmlDoc.emitClosed cfg doc svgChecked
+  let (page, diags) := HtmlDoc.emitClosed cfg doc svgChecked
+  return (page.map HtmlArtifact.ofPage, diags)
 
 /-- The only artifact write site, after acceptance. An HTML publication
 requires a checked tree and writes its own serialization, with no sidecars
 or rereads of resources captured before the gate. -/
-def publish (outDir : Option String) (html : Option (String × HtmlDoc.ClosedPage))
+def publish (outDir : Option String) (html : Option (String × HtmlArtifact))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String) := do
   let mut written : Array String := #[]

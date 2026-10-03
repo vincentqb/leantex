@@ -1183,7 +1183,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         contractWarnings := contractWarnings ++
           Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) contractWarnings)
-      let mut htmlBuilt : Option HtmlDoc.ClosedPage := none
+      let mut htmlBuilt : Option HtmlArtifact := none
       if emit.contains .html then
         let t ← IO.monoMsNow
         let cssMode := match css with

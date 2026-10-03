@@ -314,9 +314,7 @@ def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
         { doc with output := { doc.output with stylesheet := some "local.css" } }
       t ("contained stylesheet: decoding preserves selector text for " ++ name)
         (match result with
-         | .ok page => page.head.any (fun n => match n with
-           | .style actual => actual == expected
-           | _ => false)
+         | .ok page => hasStr page.render ("<style>\n" ++ expected ++ "\n")
          | .error _ => false)
     IO.FS.writeBinFile (dir / "invalid.css") ⟨#[255]⟩
     let invalidCssDoc := { doc with output := { doc.output with stylesheet := some "invalid.css" } }
