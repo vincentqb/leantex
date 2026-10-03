@@ -71,6 +71,8 @@ private structure Witness where
   baseline : Int
   nativeAdvance : Int
   line : Layout.LineOut
+  lineExtents : Array Int
+  flowBaselines : Array Int
   glyphs : Array ShippedGlyph
   node : Html.Node
 
@@ -86,6 +88,15 @@ private def docWitness (fonts : Font.FontSet) (doc : Ir.Doc) (ds : Array Diag) :
       d.code == "W0012" || d.code == "W0301" || d.code == "W0302") then
     throw "source unexpectedly refused"
   let #[line] := bodyLines out | throw "expected one native body line"
+  let font := fonts.body
+  let scale (u : Int) := u * geom.fontSize / font.unitsPerEm
+  let box := Layout.lineExtent fonts geom.fontSize (scale font.ascent)
+    (scale font.capHeight) (scale (-font.descent)) geom.leading line.size line.segs
+  let flowDoc : Ir.Doc := { doc with
+    body := #[.para #[.text "a"]] ++ doc.body ++ #[.para #[.text "b"]] }
+  let flow := layoutOf fonts flowDoc geom
+  if flow.pages.size != 1 then throw "expected one native flow page"
+  let #[above, middle, below] := bodyLines flow | throw "expected three native flow lines"
   let glyphs := shippedBodyGlyphs out
   let #[anchor] := glyphs.filter (·.scalar == '𝑢') | throw "missing native em witness"
   let (left, right) ← CancelAlignment.constructEndpoints out
@@ -93,7 +104,10 @@ private def docWitness (fonts : Font.FontSet) (doc : Ir.Doc) (ds : Array Diag) :
     (rootAttribute "data-cancel-metric" · == "measured") | throw "missing measured HTML construct"
   return {
     em := anchor.size, origin := left, baseline := anchor.y
-    nativeAdvance := right - left, line, glyphs, node }
+    nativeAdvance := right - left, line
+    lineExtents := #[box.above, box.below, box.inkAbove, box.inkBelow]
+    flowBaselines := #[middle.y - above.y, below.y - middle.y]
+    glyphs, node }
 
 private def witness (fonts : Font.FontSet) (options before body target after : String) :
     Except String Witness :=
@@ -137,11 +151,40 @@ private def reservation (w : Witness) : Option (Int × Int) := do
   let #[top, bot] := struts | none
   return (top, bot)
 
-private def reachAgrees (w : Witness) : Bool := (do
-  let (top, bot) ← reservation w
+private def htmlReservation (w : Witness) : Option (Int × Int) := do
   let h ← readEm w.em (rootAttribute "height" w.node)
   let d ← readEm w.em (rootAttribute "depth" w.node)
-  return near w.em h top && near w.em (-d) bot).getD false
+  return (h, -d)
+
+private def reachAgrees (w : Witness) : Bool := (do
+  let (top, bot) ← reservation w
+  let (h, bot') ← htmlReservation w
+  return near w.em h top && near w.em bot' bot).getD false
+
+/-- A plain script witnesses target spacing without cancellation geometry
+or either metric callback supplying the expected pen displacement. -/
+private def targetSpacePen (fonts : Font.FontSet) (source : String) :
+    Except String (Int × Int) := do
+  let (doc, ds) := elabStr (dvDoc "" ("$z^{u" ++ source ++ "v}$"))
+  let out := layoutOf fonts doc (Layout.Geom.ofPage doc.page)
+  if (ds ++ out.diags).any (fun d =>
+      d.code == "W0012" || d.code == "W0301" || d.code == "W0302") then
+    throw "plain spacing control unexpectedly refused"
+  let #[anchor] := (shippedBodyGlyphs out).filter (·.scalar == '𝑢') |
+    throw "missing plain script em witness"
+  let (left, right) ← CancelAlignment.constructEndpoints out
+  return (anchor.size, right - left)
+
+private def targetSpaceAdvance (w : Witness) : Option (Int × Int) := do
+  let placed ← (children w.node)[1]?
+  let styled ← (children placed)[0]?
+  let em ← readEm w.em (css "font-size" styled)
+  let spaces := elemNodesOne (· == "mspace") #[] styled
+  if spaces.isEmpty then none else do
+    let mut total : Int := 0
+    for node in spaces do
+      total := total + (← advance em node)
+    return (em, total)
 
 private def readerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let placed (lspace style : String) := Html.Node.elem "mpadded"
@@ -171,12 +214,15 @@ end CancelReview
 open CancelReview in
 /- check: CancelReview.checks -/
 /-- Guard the native-to-HTML cancellation boundary with actual shipped
-neighbour pens, target baselines and reservation struts. The signed-offset
-reader models the independently observed browser disagreement explicitly. -/
+neighbour pens, target baselines, reservation struts and line spacing.
+The signed-offset reader models the independently observed browser
+disagreement explicitly. -/
 def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fonts ← mathSetOf oneFace
   readerChecks ref
   for options in ["overlap", "makeroom"] do
+    let empty := (witness fonts options "$" "x" "" "$").toOption
+    check ref s!"cancel review spacing {options}: empty reservation control" empty.isSome
     for (style, before, after) in [
         ("text", "$", "$"), ("script", "$z^{", "}$")] do
       for body in ["x", "x\\!\\!\\!\\!\\!\\!", "\\!\\!x\\!\\!\\!\\!"] do
@@ -210,6 +256,26 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         check ref s!"cancel review empty {options}/{target}: empty to-value node retained"
           ((children w.node).size == 3 &&
             (MathMl.nodeChars #[] ((children w.node)[1]!)).isEmpty)
+        if ["\\,", "\\!", "\\color{red}\\,"].contains target then
+          check ref s!"cancel review spacing {options}/{target}: native height ignores spacing"
+            (empty.any fun e => (reservation e).any fun expected =>
+              reservation w == some expected)
+          check ref s!"cancel review spacing {options}/{target}: native line extent ignores spacing"
+            (empty.any fun e => w.lineExtents == e.lineExtents)
+          check ref s!"cancel review spacing {options}/{target}: native line baselines ignore spacing"
+            (empty.any fun e => w.flowBaselines == e.flowBaselines)
+          check ref s!"cancel review spacing {options}/{target}: HTML height ignores spacing"
+            (empty.any fun e => (htmlReservation e).any fun expected =>
+              (htmlReservation w).any fun actual =>
+                near w.em actual.1 expected.1 && near w.em actual.2 expected.2)
+          match targetSpacePen fonts target with
+          | .error err => check ref s!"cancel review spacing {options}/{target}: {err}" false
+          | .ok (em, expected) =>
+            check ref s!"cancel review spacing {options}/{target}: signed target advance retained"
+              ((targetSpaceAdvance w).any fun (actualEm, actual) =>
+                near w.em actualEm em && near em actual expected)
+            check ref s!"cancel review spacing {options}/{target}: signed control is nonzero"
+              (if target == "\\!" then expected < 0 else expected > 0)
     for (name, value) in [
         ("zero-mu", Math.MList.cons (.space 0) .nil),
         ("balanced-mu", .cons (.space 18) (.cons (.space (-18)) .nil))] do
@@ -220,3 +286,16 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
           (reachAgrees w)
         check ref s!"cancel review zero extent {options}/{name}: native advance retained"
           (advanceAgrees w)
+        check ref s!"cancel review zero extent {options}/{name}: native height ignores spacing"
+          (empty.any fun e => (reservation e).any fun expected =>
+            reservation w == some expected)
+        check ref s!"cancel review zero extent {options}/{name}: native line extent ignores spacing"
+          (empty.any fun e => w.lineExtents == e.lineExtents)
+        check ref s!"cancel review zero extent {options}/{name}: native line baselines ignore spacing"
+          (empty.any fun e => w.flowBaselines == e.flowBaselines)
+        check ref s!"cancel review zero extent {options}/{name}: HTML height ignores spacing"
+          (empty.any fun e => (htmlReservation e).any fun expected =>
+            (htmlReservation w).any fun actual =>
+              near w.em actual.1 expected.1 && near w.em actual.2 expected.2)
+        check ref s!"cancel review zero extent {options}/{name}: zero net target advance retained"
+          ((targetSpaceAdvance w).any (·.2 == 0))
