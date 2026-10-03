@@ -603,8 +603,8 @@ private def LinkSetup.native (l : LinkSetup) : String :=
 written call's coordinates and therefore its spelling. -/
 abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
 
-/-- Restore a downstream diagnostic's written trigger, retaining an explicit
-construct label when no source command owns its span. -/
+/-- Restore a downstream diagnostic's written trigger from lexical evidence,
+retaining an explicit trigger when no source command owns its span. -/
 def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
   { d with trigger := (d.span.bind fun s =>
       sources[(s.file, s.pos.line, s.pos.col)]?).orElse (fun _ => d.trigger) }
@@ -616,10 +616,11 @@ theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Di
 
 mutual
 
-/-- Capture source spellings before compatibility consumes or synthesizes
-commands. Input wrappers change only their contents' filename. Positions
-stay useful after nesting, macro-use relocation and deferred hook replay;
-no ambient "last command" has to survive those walks. -/
+/-- Capture lexical evidence before compatibility consumes or synthesizes
+commands. Input wrappers change only their contents' filename. A desugared
+Markdown command has no lexical evidence, so its generated TeX spelling is
+never reported as authored. Environments keep the literal opening control
+word, without reconstructing braces or whitespace the parser consumed. -/
 -- conserves: none — an index of the parsed surface, before IR exists.
 private def sourceTriggers (file : String) (acc : SourceTriggers) :
     List Raw → SourceTriggers
@@ -627,18 +628,20 @@ private def sourceTriggers (file : String) (acc : SourceTriggers) :
   | r :: rest => sourceTriggers file (sourceTrigger file acc r) rest
 
 private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → SourceTriggers
-  | .ctrl n p =>
-    if n.contains ' ' then acc else acc.insertIfNew (file, p.line, p.col) ("\\" ++ n)
+  | .ctrl _ p | .verb _ _ p =>
+    match p.command with
+    | some command => acc.insertIfNew (file, p.line, p.col) command
+    | none => acc
   | .group body _ | .math _ body _ => sourceTriggers file acc body.toList
   | .env n body p =>
     match Parse.inputEnvFile? n with
     | some child => sourceTriggers child acc body.toList
     | none =>
-      -- Split-definition wrappers are synthetic names, too.
-      let acc := if n.contains ' ' then acc
-        else acc.insertIfNew (file, p.line, p.col) ("\\begin{" ++ n ++ "}")
+      let acc := match p.command with
+        | some command => acc.insertIfNew (file, p.line, p.col) command
+        | none => acc
       sourceTriggers file acc body.toList
-  | .word _ _ | .space | .par _ | .sym _ _ | .verb _ _ _ => acc
+  | .word _ _ | .space | .par _ | .sym _ _ => acc
 
 end
 

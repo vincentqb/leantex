@@ -109,5 +109,9 @@ exit 19\n"
           record.getObjValAs? String "file" == .ok chapter.toString &&
           record.getObjValAs? Nat "line" == .ok line &&
           record.getObjValAs? Nat "col" == .ok 1)
+      let command := if code == "W0378" then "\\begin" else "\\includegraphics"
+      t s!"image origins: {code} quotes the written command through the driver"
+        (named.length == 1 && named.all fun record =>
+          record.getObjValAs? String "trigger" == .ok command)
 
 end Tests

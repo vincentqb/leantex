@@ -54,7 +54,7 @@
   unknown document class 'proseplate'
   suggestion: classes: article, slides, card, resume, webpage
 ── E0310 (dropped) content before the first \item in a list
-✖ [E0310] - \begin{itemize}
+✖ [E0310] - \begin
   content before the first '\item'
 ── E0311 (dropped) reserved character in text
 ✖ [E0311]
@@ -121,15 +121,15 @@
   covered fraction must be 1–99 percent, got '100\%'
   suggestion: the fraction of each covered colour kept over the page; the default is 38\%
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
-✖ [E0333] - \begin{tikzpicture}
+✖ [E0333] - \begin
   in '\fill', unknown macro '\nope'; the shape is not drawn
   suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── E0334 (dropped) \begin{ifbackend} content addressed to no backend
-✖ [E0334] - \begin{ifbackend}
+✖ [E0334] - \begin
   this content is addressed to no backend; no output will carry it
   suggestion: name at least one of pdf, html, md; a nested '\begin{ifbackend}' intersects with its enclosing one; \allow{E0334} accepts the loss
 ── E0336 (dropped) {...} groups went with an unknown wrapper
-✖ [E0336] - \begin{banner}
+✖ [E0336] - \begin
   1 {...} group on the '\begin{banner}' line went with the unknown wrapper
   suggestion: content, not an argument? put it after the '\begin' line
 ── E0340 (dropped) unknown icon name; nothing is rendered
@@ -221,7 +221,7 @@
   'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand
   suggestion: write \fonts{ math = "..." } with a face that carries this alphabet
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
-ℹ [N0019] - \begin{ifbackend}
+ℹ [N0019] - \begin
   content addressed per backend encodes a per-medium decision by hand
   suggestion: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── N0020 (info) a local style file is read as part of the preamble
@@ -234,20 +234,20 @@
 ℹ [N0022]
   'alert' is realized lighter (#EE7C38) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
-ℹ [N0023] - \begin{tikzpicture}
+ℹ [N0023] - \begin
   this picture is drawn by lualatex at the boundary; its text is not in the document's census
   suggestion: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
-ℹ [N0102] - \begin{frame}
+ℹ [N0102] - \begin
   frame option 'plain' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
 ℹ [N0103] - \section
   '\section[short]' short title is unused: nothing consumes it yet
 ── N0104 (info) a frame declared for another mode ships no page in this one
-ℹ [N0104] - \begin{frame}
+ℹ [N0104] - \begin
   '<presentation:0>' declares no presentation slides; this frame ships no page
 ── N0105 (info) \allow names a retired code; its successor answers
 ℹ [N0105] - \allow
@@ -315,10 +315,10 @@
   '\allow' lists E0333, which never fired
   suggestion: the document no longer needs it; drop the entry from \allow
 ── W0014 (degraded) alignment row disagrees with its grid's columns; padded
-⚠ [W0014] - \begin{align*}
+⚠ [W0014] - \begin
   '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty cells
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
-⚠ [W0015] - \begin{align}
+⚠ [W0015] - \begin
   equation numbers are not rendered yet; '{align}' sets unnumbered
   suggestion: '{align*}' spells the unnumbered form, which renders the same
 ── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
@@ -391,7 +391,7 @@
 ℹ [W0301] - \mystery
   unknown command '\mystery'; its {...} arguments were kept as text
 ── W0302 (degraded) unknown environment; body kept
-⚠ [W0302] - \begin{banner}
+⚠ [W0302] - \begin
   unknown environment '{banner}'; its body is kept
   suggestion: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) built-in name cannot be redefined
@@ -403,7 +403,7 @@
   'nope' is not in the palette; content kept uncoloured
   suggestion: declare colours with \palette{ name = #RRGGBB }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
-⚠ [W0307] - \begin{external}
+⚠ [W0307] - \begin
   '{external}' is not implemented yet; its content is not rendered
 ── W0309 (config) \maketitle with nothing declared
 ⚠ [W0309] - \maketitle
@@ -422,7 +422,7 @@
   no {...} group after '\title'; it is skipped
   suggestion: write \title{...}
 ── W0314 (degraded) column width is not a fraction of the text width
-⚠ [W0314] - \begin{column}
+⚠ [W0314] - \begin
   column width 'banana' is not a fraction of the text width; the column shares the leftover
   suggestion: write a factor like {0.5\textwidth}
 ── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
@@ -496,7 +496,7 @@
   the footer's slots collide on page 2: framenumber yields, painted over by the \framefoot note
   suggestion: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
-⚠ [W0334] - \begin{tikzpicture}
+⚠ [W0334] - \begin
   '\draw' continues with 'circle', outside the rendered picture subset; the edge is not drawn
   suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
@@ -508,10 +508,10 @@
   1 pair(s) of node labels overlap: a relative placement parts node centres, not the text they set
   suggestion: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
-⚠ [W0337] - \begin{tabular}
+⚠ [W0337] - \begin
   a row carries 3 cells but the column spec declares 2; the grid widens
   suggestion: declare one column type per cell: l, c, r, or p{width}
-⚠ [W0337] - \begin{tabular}
+⚠ [W0337] - \begin
   a row carries fewer cells than the column spec; it is padded with empty cells
 ⚠ [W0337] - \multicolumn
   '\multicolumn' span is not a numeral the engine reads: its text fills one cell in its column's alignment
@@ -605,7 +605,7 @@
 ⚠ [W0361] - \newcommand
   the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), which the engine cannot run; the built-in stands
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
-⚠ [W0362] - \begin{tikzpicture}
+⚠ [W0362] - \begin
   no part of this picture is inside the rendered subset; a placeholder box marks its place
   suggestion: the box holds the diagram's place; \allow{W0362} accepts the loss
 ── W0363 (degraded) a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place
@@ -667,7 +667,7 @@
   a footnote on this card is kept inline; a card face has no note apparatus
   suggestion: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
 ── W0376 (standard) an image ships no text alternative (WCAG 2.2)
-⚠ [W0376] - image
+⚠ [W0376] - \includegraphics
   image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   suggestion: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
 ⚠ [W0376]

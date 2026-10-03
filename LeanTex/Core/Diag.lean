@@ -12,15 +12,23 @@ structure Pos where
   col : Nat := 1
   /-- Enclosing macro invocations, outermost first. -/
   origins : List MacroOrigin := []
+  /-- The exact control token read by the TeX lexer, including its backslash.
+  Desugared or otherwise synthetic positions have no written command. -/
+  command : Option String := none
   deriving Repr
 
-/-- Source-location identity ignores expansion provenance. Consumers that
+/-- Source-location identity ignores expansion and token provenance. Consumers that
 need macro ancestry read `Pos.origins` explicitly. -/
 instance : BEq Pos where
   beq p q := p.line == q.line && p.col == q.col
 
 theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
     ({ p with origins := xs } == { q with origins := ys }) = (p == q) := rfl
+
+/-- Source-token evidence, like macro ancestry, is presentation metadata:
+changing it cannot change source-location identity. -/
+theorem Pos.beq_command_exact (p q : Pos) (xs ys : Option String) :
+    ({ p with command := xs } == { q with command := ys }) = (p == q) := rfl
 
 def Pos.next (p : Pos) (newline : Bool) : Pos :=
   if newline then { p with line := p.line + 1, col := 1 }

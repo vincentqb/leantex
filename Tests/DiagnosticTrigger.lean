@@ -171,7 +171,7 @@ def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let env := triggerDiags file
     "\\begin{otherlanguage}{triggerunknown}\\directlua{}\\end{otherlanguage}"
   t "diagnostic trigger: a parent emission after descent keeps the parent's source"
-    (triggerAt env .W0368 file 1 1 "\\begin{otherlanguage}")
+    (triggerAt env .W0368 file 1 1 "\\begin")
   let silent := triggerDiags file
     "\\thispagestyle{plain}\n\\begin{document}x\\end{document}"
   t "diagnostic trigger: attribution does not count as an effect for the silence guard"

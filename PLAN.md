@@ -26300,14 +26300,12 @@ includes. `Compat.rebase_source_exact` proves that relocation preserves the
 serialized raw source, independently of the coordinate mapping. Execution
 and attribution behavior are covered by the expansion guards.
 
-The delayed image-alternative judge now includes `image` or `picture` when
-a source span exists. The IR retains the construct and span, not necessarily
-the authored command: an animation inside a macro must not claim that its
-expansion was written at the macro's use. Ten initial assertions failed
-before adding the label; a further macro guard exposed that false spelling.
-The guards preserve alternative accounting, acceptance, source spans and
-output scope. Both reference output builds also reproduced the missing image
-trigger before this correction.
+The delayed image-alternative judge retains the construct's subject and
+source span. Its trigger is resolved from the same authored-command index
+as immediate diagnostics; the later source-token correction below replaces
+the initial generic object labels. An animation inside a macro names the
+written macro invocation, and included commands name their included source.
+Alternative accounting, acceptance and output scope remain unchanged.
 
 Ordinary elaborator macros use the same ownership rule through one scoped
 call-site value. Immediate diagnostics and stored image, colour, citation,
@@ -26332,3 +26330,39 @@ commutation oracle and the focused source-origin guards. Reference PDF and
 HTML builds pass with byte-identical artifacts; only their diagnostic
 presentation changes. The diagnostic and source-position goldens were
 regenerated through the test harness.
+
+
+### 2026-10-03 — Diagnostic triggers quote authored tokens
+
+A source position alone does not establish what a document wrote. The lexer
+now records the exact control-token slice on its position; the compatibility
+source index reads this evidence instead of constructing a command name from
+a parsed node. Spelling comes from the original input even when NFC changes
+it. On changed input, disjoint slices between escape characters transport
+those sites into the normalized stream. The guard checks the escape-boundary
+premise against the shipped normalization tables and exercises every canonical
+decomposition; source-coordinate and token semantics remain unchanged.
+Environment warnings quote the literal opening control word,
+so whitespace between the command and the environment name is not rewritten.
+Markdown desugaring and directly constructed IR carry no such evidence and
+therefore never claim a generated TeX command was authored.
+
+Delayed alternative, image-loading and picture-conversion diagnostics use
+the prepared surface's same source index. Asset paths remain the structured
+subject and stay in the explanation. A macro's diagnostic names its written
+call, not a command in its replacement. The source-attribution theorem holds
+every other diagnostic field unchanged; `Pos.beq_command_exact` holds source
+identity unchanged by lexical evidence.
+
+The new report R82 records twenty-five failing assertions on `4527e7af`
+before the fix. These include real CLI image failures, direct and included
+commands, macro calls, reused assets, whitespace in environment openings,
+and the absence of invented triggers on Markdown and raw IR. All twenty-five
+pass after the fix. Review added six failing assertions for escaped CRLF
+and canonically normalized command spellings before the original-input
+transport was added. Reference PDF and HTML builds now quote their authored
+command, and both artifacts are byte-identical to the earlier builds.
+
+Validation: the focused origin checks, full `lake build`, full `lake test`,
+and the required five-repeat `scripts/bench.lean` run pass. Diagnostic goldens
+were regenerated through the harness; only their trigger headers changed.

@@ -1101,9 +1101,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- The alt judge's picture face, after fulfilment: a picture the
       -- tool failed on ships a placeholder box, not an image, and E0382
       -- has named that loss — one loss, named once.
-      let imgDiags := imgDiags ++ Ir.picAltDiags doc
+      let picAlts := Ir.picAltDiags doc
         (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
         (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
+      let imgDiags := (imgDiags ++ picAlts).map front.prepared.sourceTriggers.attribute
       let r2 ← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags
       fired := fired ++ r2.fired
       accepted := accepted ++ r2.accepted
@@ -1218,7 +1219,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- keeps the boundary's drawing.
         let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs reqSpans.images
         let imgs ← imageBrowserFaces imgs
-        let rS ← ui.resolve doc.allow allowAll (outputs := outputs) svgDiags
+        let rS ← ui.resolve doc.allow allowAll (outputs := outputs)
+          (svgDiags.map front.prepared.sourceTriggers.attribute)
         fired := fired ++ rS.fired
         accepted := accepted ++ rS.accepted
         warnings := warnings + rS.warnings

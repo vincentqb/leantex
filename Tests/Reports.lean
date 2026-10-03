@@ -604,7 +604,17 @@ def reports : List Report := [
       "ten image-origin assertions and both reference output builds failed before delayed alternative warnings carried an object label; a macro guard then failed before that label stopped guessing the authored command",
       "four immediate macro-origin guards and one delayed image-origin guard failed before ordinary replacement code used the written call; arguments retain their own sites",
       "routine notes stay hidden by default, remain available in verbose output and match the completion count"]
-    state := .guarded "3d7169d0" .before .author }
+    state := .guarded "3d7169d0" .before .author },
+  { id := "R82", date := "2026-10-03"
+    what := "delayed image diagnostics labeled the trigger with an invented object name instead of the command written at the reported source position"
+    pins := [check% diagnosticImageOriginChecks, check% diagnosticTriggerChecks,
+      check% imageOriginsChecks, thm% Compat.SourceTriggers.attribute_record_exact,
+      thm% Pos.beq_command_exact]
+    accept := ["twenty-five focused assertions failed before source-token evidence reached delayed image diagnostics, including real CLI image failures and conversion warnings",
+      "the guards cover direct commands, macro calls, included files, repeated assets and environment whitespace; synthetic and Markdown inputs never invent an authored TeX command",
+      "six further assertions failed before original-input evidence preserved escaped line endings and Unicode command spellings through normalization",
+      "source attribution preserves the diagnostic subject, acceptance, scope and alternative accounting"]
+    state := .guarded "4527e7af" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

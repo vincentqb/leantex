@@ -154,6 +154,33 @@ private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
       s := s.push cs[j]
   return s
 
+/-- The written control token, before NFC changes any spelling. A control
+word ends with its name; a control symbol includes its character, including
+both characters of a CRLF line end. -/
+private def writtenControl (source : Array Char) (i : Nat) : Option String := do
+  guard (source[i]? == some '\\')
+  let c ← source[i + 1]?
+  let stop := if nameChar c then scanWhile source (i + 1) nameChar
+    else if c == '\r' && source[i + 2]? == some '\n' then i + 3 else i + 2
+  return strFrom source i stop
+
+/-- NFC can change a control name or the number of preceding scalars. Escape
+characters are normalization boundaries (UAX #15), so normalizing the disjoint
+slices between them transports their offsets without re-normalizing prefixes.
+Only the original array supplies a spelling. Ordinary NFC input needs no map.
+The table premise and transported offsets are held by diagnosticImageOriginChecks. -/
+private def writtenControls (source : Array Char) : Std.HashMap Nat String := Id.run do
+  let mut out := {}
+  let mut start := 0
+  let mut normalized := 0
+  for i in [0:source.size] do
+    if source[i]? == some '\\' then
+      normalized := normalized + (Nfc.normalizeChars (source.extract start i)).size
+      if let some command := writtenControl source i then
+        out := out.insert normalized command
+      start := i
+  return out
+
 /-- The lexically blind environments: their bodies are code, captured raw
 in one token — `{verbatim}`, and the listing environments that differ from
 it only by their declared apparatus (listings' `{lstlisting}`, minted's
@@ -170,8 +197,10 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
   -- every downstream consumer — hyphenation, slugs, font cmap lookups,
   -- both backends — sees one canonical spelling (UAX #15; Nfc.lean says
   -- why input is the right place).
-  let cs : Array Char := Nfc.normalizeChars
-    (input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize))
+  let source := input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize)
+  let cs := Nfc.normalizeChars source
+  let unchanged := source == cs
+  let written := if unchanged then {} else writtenControls source
   let mut toks : Array Token := #[]
   let mut diags : Array Diag := #[]
   let mut i := 0
@@ -205,6 +234,8 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
         pos := posOver cs i k pos
         i := k
       else if c == '\\' then
+        let here := { here with command :=
+          if unchanged then writtenControl source i else written[i]? }
         if h' : i + 1 < cs.size then
           let c1 := cs[i + 1]
           if nameChar c1 then

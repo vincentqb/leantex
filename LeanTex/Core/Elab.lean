@@ -15681,7 +15681,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   let sequences := Ir.footerSequenceDiags doc
   (doc, Diag.tallySites
     (earlier ++ compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
-      contrast ++ outline ++ alt ++ links ++ sequences),
+      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
       fallbacks := st.spans.fallbacks
