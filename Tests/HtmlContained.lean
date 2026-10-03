@@ -58,11 +58,38 @@ def htmlContainedRawContextChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((close #[] quoted).isOk &&
       hasStr (Html.document "en" #[] quoted) "&lt;/svg&gt;&lt;img")
 
+/-- A CSS at-keyword starts at `@`, even beside another token. In particular,
+HTML's legacy CSS comment opener must not hide an import from the dependency
+policy: the browser ignores the opener and still fetches the stylesheet. -/
+def htmlContainedCssAtRuleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let close (head body : Array Html.Node) :=
+    HtmlResource.close #[] #[] HtmlDoc.deckScript "en" head body
+  let imported := "@import \"https://example.invalid/style.css\";"
+  let css := "<!--" ++ imported ++ "-->"
+  let tree := #[Html.Node.style css]
+  t "contained CSS at-keyword: serialized comment opener preserves the import"
+    (hasStr (Html.document "en" tree #[]) ("<style>\n" ++ css ++ "\n"))
+  t "contained CSS at-keyword: browser-active legacy comment import is refused"
+    (!(close tree #[]).isOk)
+  for leading in ["", "<!--", "--", "token", "1", "@media"] do
+    for rule in [imported, "@IMPORT 'missing.css';", "@namespace 'missing.svg';"] do
+      t ("contained CSS at-keyword: preceding token cannot absorb @: " ++ leading)
+        (HtmlResource.cssRequests (leading ++ rule) == HtmlResource.cssRequests rule)
+      t ("contained CSS at-keyword: style attribute shares the policy: " ++ leading)
+        (!(close #[] #[Html.elem "p" #[] #[("style", leading ++ rule)]]).isOk)
+  for css in ["<!--@media screen { p { color: red } }-->",
+      "/* <!--@import 'missing.css'; */ p { color: red }",
+      "p::before { content: \"<!--@import 'missing.css';\" }"] do
+    t "contained CSS at-keyword: supported rules and inert mentions remain accepted"
+      ((close #[.style css] #[]).isOk)
+
 /-- A single HTML file carries the exact captured rendering bytes in its
 actual typed carriers. These assertions fail on the sibling-file emitter;
 closure of nested SVG/CSS references is a separate, stricter obligation. -/
 def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   htmlContainedRawContextChecks ref
+  htmlContainedCssAtRuleChecks ref
   let t := check ref
   let moving := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
   let poster := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"

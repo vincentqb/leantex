@@ -93,7 +93,10 @@ private def flushWord (s : CssScan) : CssScan :=
       s.requests.push (.refused ("unsupported CSS at-rule: " ++ word)) else s.requests }
 
 private def cssPlain (s : CssScan) (c : Char) : CssScan :=
-  if c.isAlphanum || c == '-' || c == '_' || c == '@' then
+  -- An at-keyword starts a token, even after the hyphens of HTML's CSS
+  -- comment opener. Absorbing @ into that word would hide a string import.
+  if c == '@' then { flushWord s with word := "@" }
+  else if c.isAlphanum || c == '-' || c == '_' then
     { s with word := s.word.push c }
   else if c == '(' then
     let word := s.word.toLower
