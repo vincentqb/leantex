@@ -195,7 +195,8 @@ private def attrRequests (tag : String) (attrs : Array (String × String)) : Arr
       acc.push (.refused "unsupported HTML attribute name")
     else
     let name := name.toLower
-    if name.startsWith "on" || ["srcdoc", "xml:base", "http-equiv", "is"].contains name then
+    if name.startsWith "on" ||
+        ["srcdoc", "xml:base", "http-equiv", "is", "attributionsrc"].contains name then
       acc.push (.refused ("unsupported active HTML attribute: " ++ name))
     else if svgReferenceAttr tag name then
       let refs := if name == "href" || name == "xlink:href" then #[Request.url value]
@@ -234,9 +235,12 @@ mutual
         acc.push (.refused "raw HTML script is inside an unsupported parsing context")
       else
         let acc := acc ++ attrRequests "script" attrs
+        -- HTML comment openers enter script escape states even in JSON data;
+        -- in the double-escaped state the closing tag becomes payload.
+        let raw := js.toLower
         let acc := if (attrs.any fun a => a.1.toLower == "src") ||
-            (js.toLower.splitOn "</script").length > 1 then
-          acc.push (.refused "a script carries a source or raw-text terminator") else acc
+            ["</script", "<!--"].any (fun marker => (raw.splitOn marker).length > 1) then
+          acc.push (.refused "a script carries a source or HTML raw-text control syntax") else acc
         if attr attrs "type" == "application/ld+json" then acc
         else acc.push (.script js)
     | .elem tag attrs kids =>

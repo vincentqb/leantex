@@ -84,12 +84,52 @@ def htmlContainedCssAtRuleChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "contained CSS at-keyword: supported rules and inert mentions remain accepted"
       ((close #[.style css] #[]).isOk)
 
+/-- Active attribution requests are not rendering resources, and script escape
+states can consume following HTML even for JSON or an approved constant.
+Admission owes both boundaries independently of the current emitter. -/
+def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let bytes := svgDocument "<rect width=\"1\" height=\"1\"/>"
+  let image : HtmlResource.Embedded := { media := .svg, bytes }
+  let close := HtmlResource.close #[image] #[bytes] HtmlDoc.deckScript "en"
+  for name in ["attributionsrc", "AtTrIbUtIoNsRc"] do
+    for (kind, value) in [("empty", ""), ("single URL", "https://example.invalid/attribution"),
+        ("URL list", "https://example.invalid/first https://example.invalid/second"),
+        ("captured URL", image.uri)] do
+      for (tag, node) in [
+          ("img", Html.elem "img" #[] #[("src", image.uri), (name, value)]),
+          ("a", Html.elem "a" #[] #[("href", "https://example.invalid/reading"), (name, value)]),
+          ("script", Html.Node.script #[("type", "application/ld+json"), (name, value)] "{}")] do
+        t ("contained attribution refuses " ++ name ++ " on " ++ tag ++ ": " ++ kind)
+          (!(close #[] #[node]).isOk)
+  t "contained attribution: similarly named data and inert attributes remain supported"
+    ((close #[] #[Html.elem "img" #[] #[("src", image.uri), ("alt", "Captured square"),
+      ("data-attributionsrc", "https://example.invalid/attribution"),
+      ("title", "attributionsrc <!--<script>"), ("loading", "lazy")]]).isOk)
+  let following := #[Html.elem "p" #[Html.text "Following"] #[("id", "following")]]
+  for text in ["<!--<script>", "<!--<ScRiPt/>", "<!--", "</ScRiPt >"] do
+    let raw := "{\"name\":\"" ++ text ++ "\"}"
+    for attrs in [#[], #[("type", "application/ld+json")]] do
+      t ("contained script: MIME or constant approval cannot bypass parser control: " ++ text)
+        (!(HtmlResource.close #[] #[] raw "en" #[.script attrs raw] following).isOk)
+    let escaped := "{\"name\":\"" ++ Html.escapeJson text ++ "\"}"
+    match close #[.script #[("type", "application/ld+json")] escaped] following with
+    | .error _ => t "contained script: escaped JSON data remains supported" false
+    | .ok page =>
+      t "contained script: escaped JSON data and following element serialize intact"
+        (hasStr page.render escaped && hasStr page.render "<p id=\"following\">Following</p>")
+  for text in ["<script>", "1 < 2", "-->"] do
+    let raw := "{\"name\":\"" ++ text ++ "\"}"
+    t "contained script: harmless raw JSON text remains supported"
+      ((close #[.script #[("type", "application/ld+json")] raw] following).isOk)
+
 /-- A single HTML file carries the exact captured rendering bytes in its
 actual typed carriers. These assertions fail on the sibling-file emitter;
 closure of nested SVG/CSS references is a separate, stricter obligation. -/
 def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   htmlContainedRawContextChecks ref
   htmlContainedCssAtRuleChecks ref
+  htmlContainedAdmissionChecks ref
   let t := check ref
   let moving := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
   let poster := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
