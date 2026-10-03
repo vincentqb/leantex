@@ -1297,7 +1297,7 @@ subformula sets at: `rule` the stroke (the math font's
 `OverbarRuleThickness`, doubled under `thicklines`) and `gap` the
 clearance (`OverbarVerticalGap`) — the two quantities TeX's rule 9 lays
 `\overline` with, a mark drawn over a subformula — then the struck box (`w`
-its advance, `top`/`bot` its ink from the baseline) and, for `\cancelto`,
+its advance, `top`/`bot` its measured line extent from the baseline) and, for `\cancelto`,
 the value's advance and measured ink bounds (not its baseline-inclusive
 line box). `SpaceAfterScript` supplies the trailing space when room is
 requested. The target's size still follows the package's style table;
@@ -1317,10 +1317,10 @@ structure CancelIn where
   deriving Repr, BEq, Inhabited
 
 /-- The mark box, as `(x0, y0, x1, y1)` from the construct's origin:
-horizontal advance and vertical ink grown by the clearance. With room
+horizontal advance and vertical line extent grown by the clearance. With room
 the operand starts at `gap`; overlapping, it starts at 0. Negative kerns
 can reverse the nominal horizontal endpoints, so both axes are ordered
-before marks are drawn or clamped. This bounds the signed endpoints, not
+before marks are drawn. This bounds the signed endpoints, not
 the operand's horizontal glyph ink. -/
 def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
   let x0 := if room then 0 else -i.gap
@@ -1413,124 +1413,115 @@ structure CancelGeom where
   advance : Int
   deriving Repr, BEq, Inhabited
 
-/-- Bring a vertex inside a non-inverted box on both axes. An arrow's
-perpendicular wings can otherwise cross the sides of a wide or tall box:
-`cancelHead 0 0 1000 100 20` reached `(919, 122)` above a 100sp-tall box.
-Vertices that already fit are unchanged (`clampBox_id`). -/
-def clampBox (x0 y0 x1 y1 : Int) (p : Int × Int) : Int × Int :=
-  (max x0 (min x1 p.1), max y0 (min y1 p.2))
+/-- The shared base centre of the head and shaft: four font rules behind
+its tip along the diagonal. The four-rule depth and three-rule head width
+are the original cancellation design (PLAN, 2026-09-29), independent of
+operand aspect. Integer projection rounds each coordinate below one sp. -/
+def cancelBase (x0 y0 x1 y1 rule : Int) : Int × Int :=
+  let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
+  (x1 - 4 * rule * (x1 - x0) / l, y1 - 4 * rule * (y1 - y0) / l)
 
-/-- A clamped point lies in the box, on each axis, whenever the box is not
-inverted. -/
-theorem clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
-    (p : Int × Int) :
-    x0 ≤ (clampBox x0 y0 x1 y1 p).1 ∧ (clampBox x0 y0 x1 y1 p).1 ≤ x1 ∧
-    y0 ≤ (clampBox x0 y0 x1 y1 p).2 ∧ (clampBox x0 y0 x1 y1 p).2 ≤ y1 := by
-  simp only [clampBox]; omega
-
-/-- Clamping preserves every vertex already inside the box. -/
-theorem clampBox_id (x0 y0 x1 y1 : Int) (p : Int × Int)
-    (hx0 : x0 ≤ p.1) (hx1 : p.1 ≤ x1) (hy0 : y0 ≤ p.2) (hy1 : p.2 ≤ y1) :
-    clampBox x0 y0 x1 y1 p = p := by
-  apply Prod.ext <;> simp only [clampBox] <;> omega
-
-/-- Every point of an array mapped through `clampBox` lies in the box. -/
-theorem mem_map_clampBox_between (x0 y0 x1 y1 : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1)
-    (arr : Array (Int × Int)) :
-    ∀ p ∈ arr.map (clampBox x0 y0 x1 y1),
-      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
-  intro p hp
-  rw [Array.mem_map] at hp
-  obtain ⟨q, _, rfl⟩ := hp
-  exact clampBox_between x0 y0 x1 y1 hw hh q
-
-/-- Axial depth of a cancellation head. Its base is three rule widths
-across and at least four rules behind the tip. At a shallow or steep
-angle that base needs more axial room to fit inside the operand box:
-`depth * 2w ≥ 3rh` and `depth * 2h ≥ 3rw`. Taking the least integer depth
-satisfying those constraints preserves both wings instead of clipping
-one into a bar. The shaft reads this same depth. -/
-def cancelHeadDepth (w h rule : Int) : Int :=
-  max (4 * rule) (max
-    ((3 * rule * h + 2 * max 1 w - 1) / (2 * max 1 w))
-    ((3 * rule * w + 2 * max 1 h - 1) / (2 * max 1 h)))
-
-/-- For positive box dimensions the head has its declared minimum depth
-and sufficient axial room for both perpendicular wings. This constraint
-is independent of angle, font, style, or the target annotation. -/
-theorem cancelHeadDepth_covers (w h rule : Int) (hw : 0 < w) (hh : 0 < h) :
-    4 * rule ≤ cancelHeadDepth w h rule ∧
-    3 * rule * h ≤ cancelHeadDepth w h rule * (2 * w) ∧
-    3 * rule * w ≤ cancelHeadDepth w h rule * (2 * h) := by
-  have ceil_le (n d : Int) (hd : 0 < d) : n ≤ ((n + d - 1) / d) * d := by
-    have he := Int.emod_add_mul_ediv (n + d - 1) d
-    have hm := Int.emod_lt_of_pos (n + d - 1) hd
-    rw [Int.mul_comm]
-    omega
-  have hw' : max 1 w = w := by omega
-  have hh' : max 1 h = h := by omega
-  have hx : (3 * rule * h + 2 * w - 1) / (2 * w) ≤ cancelHeadDepth w h rule := by
-    simp only [cancelHeadDepth, hw', hh']; omega
-  have hy : (3 * rule * w + 2 * h - 1) / (2 * h) ≤ cancelHeadDepth w h rule := by
-    simp only [cancelHeadDepth, hw', hh']; omega
-  refine ⟨by simp only [cancelHeadDepth]; omega, ?_, ?_⟩
-  · exact Int.le_trans (ceil_le _ (2 * w) (by omega))
-      (Int.mul_le_mul_of_nonneg_right hx (by omega))
-  · exact Int.le_trans (ceil_le _ (2 * h) (by omega))
-      (Int.mul_le_mul_of_nonneg_right hy (by omega))
-
-/-- The arrowhead of `\cancelto`: three strokes wide, its depth resolved
-from the diagonal and that width (`cancelHeadDepth`), its tip at the box's
-top-right corner. The clamp remains for degenerate or undersized boxes;
-ordinary heads fit without shaving either perpendicular wing. -/
+/-- The full arrowhead of `\cancelto`: four strokes deep and three wide,
+with perpendicular wings on both sides of the shared base. Wings may
+leave the operand rectangle; measuring the finished assembly reserves
+that reach. A zero rule or zero diagonal collapses the triangle, without
+inventing a minimum visible stroke. -/
 def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
-  let depth := cancelHeadDepth w h rule
-  let bx := x1 - depth * w / l
-  let by_ := y1 - depth * h / l
-  (#[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
-    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]).map (clampBox x0 y0 x1 y1)
+  let (bx, by_) := cancelBase x0 y0 x1 y1 rule
+  #[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
+    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]
 
 /-- The arrow's shaft: the rising band from the mark box's bottom-left
-corner to the head's base, cut square there — or nothing, when the box is
-too small for a shaft to stand before the head. Both parts resolve the
-same axial depth; each vertex is clamped into the box. -/
+corner to the shared head base, cut square there. Its full perpendicular
+cap joins the head without clipping. A diagonal too short for a shaft
+carries the head alone. -/
 def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
-  let depth := cancelHeadDepth w h rule
   let dx := min w (rule * l / (2 * h))
   let dy := min h (rule * l / (2 * w))
-  let bx := x1 - depth * w / l
-  let by_ := y1 - depth * h / l
+  let (bx, by_) := cancelBase x0 y0 x1 y1 rule
   let sx := rule * h / (2 * l)
   let sy := rule * w / (2 * l)
-  if (l - depth) * l ≥ dx * w && (l - depth) * l ≥ dy * h then
-    (#[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy),
-      (x0, y0 + dy)]).map (clampBox x0 y0 x1 y1)
+  if (l - 4 * rule) * l ≥ dx * w && (l - 4 * rule) * l ≥ dy * h then
+    #[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy),
+      (x0, y0 + dy)]
   else #[]
 
-/-- The arrowhead never leaves its box: every vertex lies inside `(x0, y0,
-x1, y1)`, including a zero width or height, whatever the rule's sign. -/
-theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
-    ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
-      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 :=
-  mem_map_clampBox_between x0 y0 x1 y1 hw hh _
+/-- The actual triangle keeps the declared axial and transverse vectors
+for every aspect ratio, without shaving or sliding either wing. Doubled
+base coordinates avoid rounding its centre again. This is a shape
+identity; a positive rule and nonzero quantized vectors are additionally
+needed for visible ink. -/
+theorem cancelHead_shape_exact (x0 y0 x1 y1 rule : Int) :
+    let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
+    let head := cancelHead x0 y0 x1 y1 rule
+    let a := head[1]'(by simp [head, cancelHead])
+    let b := head[2]'(by simp [head, cancelHead])
+    head[0]? = some (x1, y1) ∧
+    a.1 + b.1 = 2 * (x1 - 4 * rule * (x1 - x0) / l) ∧
+    a.2 + b.2 = 2 * (y1 - 4 * rule * (y1 - y0) / l) ∧
+    b.1 - a.1 = 2 * (3 * rule * (y1 - y0) / (2 * l)) ∧
+    a.2 - b.2 = 2 * (3 * rule * (x1 - x0) / (2 * l)) := by
+  simp only [cancelHead, cancelBase]
+  exact ⟨rfl, by dsimp; omega, by dsimp; omega, by dsimp; omega, by dsimp; omega⟩
 
-/-- A drawn shaft never leaves its box: when the shaft is nonempty every
-vertex lies inside a non-inverted box, including a zero width or height.
-The empty shaft has no vertices to place. -/
-theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
+/-- The union of the diagonal endpoints' box and the full head's measured
+vertices. Bands stay inside the former and a shaft's cap is narrower than
+the latter. This envelope can exceed the operand rectangle on any side;
+it never changes a drawn vertex to make it fit. -/
+def cancelEnvelope (x0 y0 x1 y1 rule : Int) : Int × Int × Int × Int :=
+  let head := cancelHead x0 y0 x1 y1 rule
+  let a := head[1]'(by simp [head, cancelHead])
+  let b := head[2]'(by simp [head, cancelHead])
+  (min x0 (min a.1 b.1), min y0 (min a.2 b.2),
+    max x1 (max a.1 b.1), max y1 (max a.2 b.2))
+
+/-- The full measured head lies in the union envelope, even for signed
+rules or a degenerate diagonal. Containment alone does not imply paint. -/
+theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
+    let e := cancelEnvelope x0 y0 x1 y1 rule
+    ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
+      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
+  dsimp only
+  intro p hp
+  simp only [cancelHead, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl | rfl <;> dsimp [cancelEnvelope, cancelHead] <;> omega
+
+/-- A nonnegative shaft fits the union envelope: its tail is inside the
+ordered endpoint box, and its one-rule cap fits inside the three-rule
+head at their shared base. No operand-box clipping premise is used. -/
+theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hr : 0 ≤ rule)
+    (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
+    let e := cancelEnvelope x0 y0 x1 y1 rule
     ∀ p ∈ cancelShaft x0 y0 x1 y1 rule,
-      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
+      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
+  dsimp only
+  let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
+  have hl : 0 < l := by dsimp [l]; omega
+  have cap (v : Int) (hv : 0 ≤ v) :
+      0 ≤ rule * v / (2 * l) ∧ rule * v / (2 * l) ≤ 3 * rule * v / (2 * l) := by
+    have hn : 0 ≤ rule * v := Int.mul_nonneg hr hv
+    refine ⟨Int.ediv_nonneg hn (by omega), Int.ediv_le_ediv (by omega) ?_⟩
+    rw [Int.mul_assoc]
+    omega
+  have hx := cap (y1 - y0) (by omega)
+  have hy := cap (x1 - x0) (by omega)
+  have dx := Int.ediv_nonneg (Int.mul_nonneg hr (Int.le_of_lt hl))
+    (show 0 ≤ 2 * (y1 - y0) by omega)
+  have dy := Int.ediv_nonneg (Int.mul_nonneg hr (Int.le_of_lt hl))
+    (show 0 ≤ 2 * (x1 - x0) by omega)
   intro p hp
   simp only [cancelShaft] at hp
   split at hp
-  · exact mem_map_clampBox_between x0 y0 x1 y1 hw hh _ p hp
-  · simp only [Array.not_mem_empty] at hp
+  · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hp
+    rcases hp with rfl | rfl | rfl | rfl | rfl <;>
+      dsimp [cancelEnvelope, cancelHead] <;> dsimp [l] at * <;> omega
+  · exact (Array.not_mem_empty p hp).elim
 
 /-- Nearest integer to `n / (2 * step)`. The factor two keeps measured
 ink centres exact until the final integer-coordinate rounding. -/
@@ -1820,9 +1811,9 @@ theorem cancelto_value_between (room : Bool) (i : CancelIn) :
   rw [ex, ey]
   exact inkRayOrigin_between _ _ _ _ _ _ _ (by omega) (by omega)
 
-/-- The target's ink clears the entire arrow on at least one axis: its
-left edge is a font gap right of every arrow point, or its bottom edge is
-a font gap above every point. Positive gaps imply no ink collision. -/
+/-- A near edge of the target's ink meets the font gap from the tip on
+one axis. This is tip-to-target clearance, not containment of the full
+perpendicular head behind either tip coordinate. -/
 theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
     let b := i.box room
     let g := cancelGeom .to room i
@@ -1836,8 +1827,8 @@ theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
 
 /-- The local right end reserves the mark box, placed target ink and logical
 advance, followed by nonnegative script spacing. The completed assembly
-also passes through `inkRoom`: an above-tip target may extend left of its
-origin, requiring a common translation to reserve that side. -/
+also passes through `inkRoom`: full head wings or target ink can exceed
+the endpoint box, requiring a common translation to reserve that reach. -/
 theorem cancelto_room_covers (i : CancelIn) :
     (i.box true).2.2.1 ≤ (cancelGeom .to true i).advance ∧
     (cancelGeom .to true i).valueX + i.vright ≤ (cancelGeom .to true i).advance ∧
@@ -1855,18 +1846,20 @@ theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
           #[cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
             cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) := rfl
 
-/-- No cancel mark paints outside its box: every vertex of every polygon
-`cancelGeom` lays — each strike, or the arrow's shaft and head — lies inside
-the non-inverted mark box, including a zero width or height. All four
-flavors and both room settings share this bound; no sampling is involved. -/
+/-- Every mark's polygons lie in the envelope formed from the endpoint
+box and full head. A band's box is retained exactly; an arrow is allowed
+the reach of its un-clipped wings. The rule must be nonnegative, but either
+axis may vanish and containment does not claim a visible mark. -/
 theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
-    (hr : 0 ≤ i.rule)
-    (hw : (i.box room).1 ≤ (i.box room).2.2.1)
-    (hh : (i.box room).2.1 ≤ (i.box room).2.2.2) :
+    (hr : 0 ≤ i.rule) :
+    let b := i.box room
+    let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
     ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
-      (i.box room).1 ≤ p.1 ∧ p.1 ≤ (i.box room).2.2.1 ∧
-      (i.box room).2.1 ≤ p.2 ∧ p.2 ≤ (i.box room).2.2.2 := by
-  have band := fun rising =>
+      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
+  dsimp only
+  have hw := (i.box_bounds_contract room).1
+  have hh := (i.box_bounds_contract room).2
+  have band (rising : Bool) :=
     cancelBand_between rising (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
       (i.box room).2.2.2 i.rule hr hw hh
   have head :=
@@ -1874,21 +1867,27 @@ theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn
       (i.box room).2.2.2 i.rule hw hh
   have shaft :=
     cancelShaft_between (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
-      (i.box room).2.2.2 i.rule hw hh
+      (i.box room).2.2.2 i.rule hr hw hh
   intro poly hpoly p hp
   cases mark
   case up =>
     simp only [cancelGeom, Array.mem_singleton] at hpoly
-    subst hpoly; exact band true p hp
+    subst hpoly
+    have := band true p hp
+    dsimp [cancelEnvelope]
+    omega
   case down =>
     simp only [cancelGeom, Array.mem_singleton] at hpoly
-    subst hpoly; exact band false p hp
+    subst hpoly
+    have := band false p hp
+    dsimp [cancelEnvelope]
+    omega
   case cross =>
     simp only [cancelGeom, List.mem_toArray, List.mem_cons, List.not_mem_nil,
       or_false] at hpoly
     rcases hpoly with rfl | rfl
-    · exact band true p hp
-    · exact band false p hp
+    · have := band true p hp; dsimp [cancelEnvelope]; omega
+    · have := band false p hp; dsimp [cancelEnvelope]; omega
   case to =>
     simp only [cancelGeom] at hpoly
     split at hpoly
@@ -1899,16 +1898,31 @@ theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn
       · exact shaft p hp
       · exact head p hp
 
-/-- Every mark stays in its ordered envelope even when signed input
-endpoints were reversed. This is containment only: a zero-area envelope
-need not yield visible ink. -/
+/-- Reserving the full envelope by `inkRoom` contains every mark vertex
+and the logical advance, even after signed endpoint reversal. The common
+translation leaves the head shape and tip-to-value relation unchanged.
+Layout measures the finished assembly, including body and target ink,
+then uses this same interval reservation. -/
 theorem cancelGeom_envelope_between (mark : CancelMark) (room : Bool) (i : CancelIn)
     (hr : 0 ≤ i.rule) :
-    ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
-      (i.box room).1 ≤ p.1 ∧ p.1 ≤ (i.box room).2.2.1 ∧
-      (i.box room).2.1 ≤ p.2 ∧ p.2 ≤ (i.box room).2.2.2 :=
-  cancelGeom_polys_between mark room i hr
-    (i.box_bounds_contract room).1 (i.box_bounds_contract room).2
+    let b := i.box room
+    let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
+    let g := cancelGeom mark room i
+    let r := inkRoom e.1 e.2.2.1 g.advance
+    0 ≤ r.1 + g.advance ∧ r.1 + g.advance ≤ r.2 ∧
+    ∀ poly ∈ g.polys, ∀ p ∈ poly, 0 ≤ r.1 + p.1 ∧ r.1 + p.1 ≤ r.2 := by
+  have bounds := cancelGeom_polys_between mark room i hr
+  have reserved := inkRoom_covers
+    (cancelEnvelope (i.box room).1 (i.box room).2.1
+      (i.box room).2.2.1 (i.box room).2.2.2 i.rule).1
+    (cancelEnvelope (i.box room).1 (i.box room).2.1
+      (i.box room).2.2.1 (i.box room).2.2.2 i.rule).2.2.1
+    (cancelGeom mark room i).advance
+  dsimp only at bounds reserved ⊢
+  refine ⟨reserved.2.2.2.1, reserved.2.2.2.2.1, ?_⟩
+  intro poly hpoly p hp
+  have := bounds poly hpoly p hp
+  omega
 
 mutual
 

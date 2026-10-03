@@ -94,16 +94,15 @@ def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Sp × Dim.Sp)) := Id.
       polys := polys.push (points.map fun (x, y) => (pen + x, y - line.y))
   return polys
 
-/-- These probes contain one northeast cancellation arrow. Its tip is
-the triangle's joint upper-right extreme; a malformed or absent head
-cannot make an alignment check pass vacuously. -/
+/-- These probes contain one northeast cancellation arrow. The head's
+first vertex is its emitted tip; perpendicular wings may exceed either
+coordinate of that tip. Area and ray-shape judges below reject malformed
+heads instead of imposing an operand-box constraint on the triangle. -/
 def arrowTip (polys : Array (Array (Dim.Sp × Dim.Sp))) :
     Except String (Dim.Sp × Dim.Sp) := do
   let heads := polys.filter (·.size == 3)
   let #[head] := heads | throw "expected one triangular arrowhead"
-  let some p := head[0]? | throw "arrowhead has no vertices"
-  let tip := head.foldl (fun (x, y) q => (max x q.1, max y q.2)) p
-  unless head.contains tip do throw "arrowhead lacks its upper-right tip"
+  let some tip := head[0]? | throw "arrowhead has no vertices"
   let area := head.zipIdx.foldl (fun acc (a, i) =>
     let b := head[(i + 1) % head.size]!
     acc + a.1 * b.2 - a.2 * b.1) 0
@@ -140,32 +139,28 @@ def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool 
       a - b + rounding ≥ 3 * rule * length
   | _, _, _ => false
 
-/-- Read the head and thickness from actual shipped pages over shallow,
-steep and ordinary operands, all four math styles and both room policies.
-Only nondegenerate operands are used: a zero-area box cannot hold wings. -/
-def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let fonts ← mathSetOf oneFace
-  for (shape, operand) in [("ordinary", "x"), ("wide", "x+x+x+x+x+x"),
-      ("tall", "\\frac{x}{\\frac{x}{x}}") ] do
-    for (style, before, after) in [("text", "$", "$"), ("display", "\\[", "\\]"),
-        ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")] do
-      for thick in [false, true] do
-        for room in [false, true] do
-          let options := (if thick then "thicklines," else "") ++
-            (if room then "makeroom" else "overlap")
-          let (doc, _) := elabStr (dvDoc ("\\usepackage[" ++ options ++ "]{cancel}")
-            (before ++ "u\\cancelto{0}{" ++ operand ++ "}v" ++ after))
-          let out := layoutOf fonts doc
-          let #[line] := bodyLines out | check ref "cancel wings: missing body line" false
-          let #[anchor] := (shippedBodyGlyphs out).filter (·.scalar == '𝑢') |
-            check ref "cancel wings: missing style witness" false
-          let some font := fonts.fonts[anchor.face]? |
-            check ref "cancel wings: missing font" false
-          let some math := font.math | check ref "cancel wings: missing MATH table" false
-          let rule := math.overbarRuleThickness * anchor.size / (font.unitsPerEm : Int) *
-            (if thick then 2 else 1)
-          check ref s!"cancel wings: {shape}/{style}/{options} keeps full symmetric wings"
-            (headHasWings (polygonsAt line) rule)
+/-- Fixed head aspect measured from the shipped shaft and triangle, not
+from a geometry constructor. Axial depth is four font rules and transverse
+width three. Multiplying projections by the integral diagonal length
+avoids another division: each coordinate was rounded below one sp, so the
+error is bounded by twice that length times the sum of the ray coordinates.
+The assertion requires a positive rule and a nonzero northeast ray. -/
+def headHasShape (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
+  match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
+  | .ok tip, some tail, some head =>
+    let dx := tip.1 - tail.1
+    let dy := tip.2 - tail.2
+    let a := head[1]!
+    let b := head[2]!
+    let length := (Nat.sqrt (dx.natAbs ^ 2 + dy.natAbs ^ 2) : Int)
+    let norm2 := dx * dx + dy * dy
+    let depth2 := dx * (2 * tip.1 - a.1 - b.1) + dy * (2 * tip.2 - a.2 - b.2)
+    let width := dx * (a.2 - b.2) - dy * (a.1 - b.1)
+    let rounding := 2 * length * (dx.natAbs + dy.natAbs)
+    rule > 0 && dx ≥ 0 && dy ≥ 0 && length > 0 && headHasWings polys rule &&
+      (depth2 * length - 8 * rule * norm2).natAbs ≤ rounding &&
+      (width * length - 3 * rule * norm2).natAbs ≤ rounding
+  | _, _, _ => false
 
 structure Witness where
   tip : Dim.Sp × Dim.Sp
@@ -219,6 +214,15 @@ def Witness.clearsTip (w : Witness) : Bool :=
   let y := w.ink.bottom - w.tip.2
   w.fontGap > 0 && ((x == w.fontGap && y ≤ w.fontGap && w.tip.2 ≤ w.ink.top) ||
     (y == w.fontGap && x ≤ w.fontGap && w.tip.1 ≤ w.ink.right))
+
+/-- Positive separation between target outline ink and every shipped mark
+hull, including full head wings outside the operand rectangle. A tip gap
+alone cannot certify this: the target must also clear the actual marks. -/
+def Witness.clearsMarks (w : Witness) (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+  !polys.isEmpty && polys.all fun pts =>
+    (polygonHull pts).any fun mark =>
+      mark.right < w.ink.left || w.ink.right < mark.left ||
+        mark.top < w.ink.bottom || w.ink.top < mark.bottom
 
 /-- Read a one-line synthetic page. The `u` immediately before the
 construct witnesses its actual style size and math face, so the expected
@@ -414,6 +418,47 @@ def roomWitness (fonts : Font.FontSet) (out : Layout.Out) (w : Witness) :
     if right ≤ b.left then after := after.push b
   return { left, right, assembly := #[w.ink] ++ marks, before, after }
 
+/-- Read the head and thickness from actual shipped pages over shallow,
+steep and ordinary operands, all four math styles and both room policies.
+Nonzero rays and positive font rules permit a visible bounded-aspect head;
+its perpendicular wings need not fit inside the operand rectangle. -/
+def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let fonts ← mathSetOf oneFace
+  for (shape, operand) in [("ordinary", "x"), ("wide", "x+x+x+x+x+x"),
+      ("very-wide", "x+x+x+x+x+x+x+x+x+x+x+x"),
+      ("tall", "\\frac{x}{\\frac{x}{x}}") ] do
+    for (style, before, after) in [("text", "$", "$"), ("display", "\\[", "\\]"),
+        ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")] do
+      for thick in [false, true] do
+        for room in [false, true] do
+          let options := (if thick then "thicklines," else "") ++
+            (if room then "makeroom" else "overlap")
+          let (doc, _) := elabStr (dvDoc ("\\usepackage[" ++ options ++ "]{cancel}")
+            (before ++ "u\\cancelto{0}{" ++ operand ++ "}v" ++ after))
+          let out := layoutOf fonts doc
+          let #[line] := bodyLines out | check ref "cancel wings: missing body line" false
+          let #[anchor] := (shippedBodyGlyphs out).filter (·.scalar == '𝑢') |
+            check ref "cancel wings: missing style witness" false
+          let some font := fonts.fonts[anchor.face]? |
+            check ref "cancel wings: missing font" false
+          let some math := font.math | check ref "cancel wings: missing MATH table" false
+          let rule := math.overbarRuleThickness * anchor.size / (font.unitsPerEm : Int) *
+            (if thick then 2 else 1)
+          check ref s!"cancel wings: {shape}/{style}/{options} keeps full symmetric wings"
+            (headHasWings (polygonsAt line) rule)
+          check ref s!"cancel head aspect: {shape}/{style}/{options} keeps four-rule depth and three-rule width"
+            (headHasShape (polygonsAt line) rule)
+          let .ok w := measure fonts out "0" |
+            check ref "cancel head aspect: missing target measurement" false
+          check ref s!"cancel head aspect: {shape}/{style}/{options} keeps target ray and font gap"
+            (w.alongRay && w.clearsTip && w.clearsMarks (polygonsAt line))
+          if room then
+            match roomWitness fonts out w with
+            | .error e => check ref s!"cancel head aspect: {shape}/{style}/{options}: {e}" false
+            | .ok r =>
+              check ref s!"cancel head aspect: {shape}/{style}/{options} reserves full wings and target"
+                (r.containsInk && r.clearsBefore && r.clearsAfter)
+
 /-- Source geometry up to translation, including nonpainting glyphs and
 the actual advances used by the shipped pen. -/
 def relativeSource (glyphs : Array ShippedGlyph) :
@@ -430,6 +475,8 @@ def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (p : Probe) (out : Layout.Out) (w : Witness) : IO Unit := do
   let (ordinary, ds) := layProbe fonts { p with body := p.ordinary }
   let name := s!"cancel source: {p.label}"
+  check ref s!"{name} separates actual arrow marks from target ink"
+    (w.clearsMarks ((bodyLines out).flatMap polygonsAt))
   check ref s!"{name} ordinary control needs no recovery"
     (!(ds ++ ordinary.diags).any fun d => d.code == "W0012" || d.code == "W0389")
   let readings : Except String (Array ShippedGlyph × Dim.Sp × Dim.Sp) := do
@@ -696,8 +743,8 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     let high : RoomWitness := { moved with assembly := moved.assembly.map (fun b => b.shift 0 4) }
     check ref "cancel room judge: vertical separation clears neighbours but not overhang"
       (!high.containsInk && high.clearsBefore && high.clearsAfter)
-  let shaft : Array (Int × Int) := #[(0, 0), (3, 0), (323, 236), (317, 244), (0, 4)]
-  let head : Array (Int × Int) := #[(400, 300), (311, 252), (329, 228)]
+  let shaft : Array (Int × Int) := #[(0, 0), (3, 0), (371, 272), (365, 280), (0, 4)]
+  let head : Array (Int × Int) := #[(400, 300), (359, 288), (377, 264)]
   check ref "cancel wing judge: accepts a symmetric head at full rule width"
     (headHasWings #[shaft, head] 10)
   for wing in [1, 2] do
@@ -705,6 +752,26 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       let slipped := head.modify wing (fun (x, y) => (x + dx, y + dy))
       check ref "cancel wing judge: rejects a wing sliding along the shaft"
         (!headHasWings #[shaft, slipped] 10)
+  check ref "cancel head judge: accepts the sourced four-rule by three-rule triangle"
+    (headHasShape #[shaft, head] 10)
+  check ref "cancel clearance judge: accepts a separated target and rejects missing marks"
+    (({ sample with ink := ⟨425, 315, 435, 325⟩ } : Witness).clearsMarks #[shaft, head] &&
+      !sample.clearsMarks #[])
+  for ink in [⟨400, 300, 410, 310⟩, ⟨377, 283, 380, 286⟩] do
+    check ref "cancel clearance judge: rejects touching or overlapping target and head hulls"
+      (!({ sample with ink } : Witness).clearsMarks #[shaft, head])
+  for (dx, dy) in [(-40, -30), (4, 3)] do
+    let stretched := head.modify 1 (fun (x, y) => (x + dx, y + dy))
+      |>.modify 2 (fun (x, y) => (x + dx, y + dy))
+    check ref "cancel head judge: symmetric wings cannot hide stretched or shortened depth"
+      (headHasWings #[shaft, stretched] 10 && !headHasShape #[shaft, stretched] 10)
+  let widened := head.modify 1 (fun (x, y) => (x - 9, y + 12))
+    |>.modify 2 (fun (x, y) => (x + 9, y - 12))
+  check ref "cancel head judge: a minimum width cannot certify excessive width"
+    (headHasWings #[shaft, widened] 10 && !headHasShape #[shaft, widened] 10)
+  for rule in [0, -10] do
+    check ref "cancel head judge: a nonpositive rule cannot certify painted shape"
+      (!headHasShape #[shaft, head] rule)
   check ref "cancel alignment judge: an absent head cannot certify alignment"
     (match arrowTip #[] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: a zero-area head cannot certify alignment"
