@@ -69,8 +69,8 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
 /-- One phase's diagnostics resolved against the document's acceptance
 (`\allow` and `--best-effort`) and printed. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
-    (ds : Array Diag) : IO Resolution := do
-  let r := Diag.resolveAll allowed allowAll ds
+    (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
+  let r := Diag.resolveAll allowed allowAll (Diag.forOutputs outputs ds)
   for d in r.diags do
     ui.diag d
   return r
@@ -768,11 +768,6 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
         let (res, fromCache) ← decodeImageCached params bytes
         return (.decoded href res none none (some bytes) none, fromCache)
 
-/-- Use the first executed image request only when the producer has no
-location of its own. Missing provenance remains absent. -/
-private def imageDiagAt (imageSpans : Array (String × Span)) (src : String) (d : Diag) : Diag :=
-  { d with span := d.span <|> (imageSpans.find? (·.1 == src)).map (·.2) }
-
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
 decides what each read means (`Image.fulfil`) — an entry with a payload,
@@ -803,7 +798,7 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
       diags := diags ++ Image.lossDiags en.src pl
   diags := diags.map fun d =>
     match d.subject with
-    | some src => imageDiagAt imageSpans src d
+    | some src => DriverDiag.atImageRequest imageSpans src d
     | none => d
   return (store, diags, hits)
 
@@ -833,7 +828,7 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
     | .error why =>
-      diags := diags.push (imageDiagAt imageSpans r.src (DriverDiag.boundarySvgMissing why))
+      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing why))
       unconverted := unconverted.push r.src
   return ({ entries }, diags, unconverted)
 
@@ -992,6 +987,14 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
                   prepared := prepared, earlier := earlier, spliced := spliced
                   cache := cache, scan := scan, provisional := provisional }
 
+/-- The reporting scope is the output plan's projection. Markdown has no
+backend-specific diagnostic scope; common source diagnostics still apply. -/
+def diagnosticOutputs (emit : Array Emit) : Array Diag.Output :=
+  emit.filterMap fun e => match e with
+    | .pdf => some .pdf
+    | .html => some .html
+    | .md => none
+
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   match ← frontend ui file with
@@ -1000,6 +1003,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     return 1
   | some front =>
     let allowAll := ui.cfg.bestEffort
+    let emit := ui.cfg.effectiveEmit front.doc.output.formats
+    let outputs := diagnosticOutputs emit
     -- **The boundary answers before the document's diagnostics are read.**
     -- A request no tool drew, for a picture the rendered subset draws in
     -- part, is withdrawn (`Boundary.withdraw`) and the document elaborated
@@ -1007,7 +1012,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     -- subset's drawing with its refusals named, never a placeholder the
     -- subset could have filled. A document already failing asks nothing of
     -- the tool — its build stops at the first resolution either way.
-    let failing := (Diag.resolveAll front.doc.allow allowAll front.diags).errors > 0
+    let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
     let (pics, undrawn) ← if failing then pure (#[], #[])
       else resolvePictures ui front.doc front.spans.images
     let w := Boundary.withdraw (front.doc.pictureTool.getD "lualatex")
@@ -1025,7 +1030,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
     let mut warnings : Nat := 0
-    let r0 ← ui.resolve doc.allow allowAll diags
+    let r0 ← ui.resolve doc.allow allowAll (outputs := outputs) diags
     fired := fired ++ r0.fired
     accepted := accepted ++ r0.accepted
     warnings := warnings + r0.warnings
@@ -1050,7 +1055,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, doc, fontDiags, paths) =>
-      let r1 ← ui.resolve doc.allow allowAll fontDiags
+      let r1 ← ui.resolve doc.allow allowAll (outputs := outputs) fontDiags
       fired := fired ++ r1.fired
       accepted := accepted ++ r1.accepted
       warnings := warnings + r1.warnings
@@ -1097,7 +1102,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let imgDiags := imgDiags ++ Ir.picAltDiags doc
         (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
         (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
-      let r2 ← ui.resolve doc.allow allowAll imgDiags
+      let r2 ← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags
       fired := fired ++ r2.fired
       accepted := accepted ++ r2.accepted
       warnings := warnings + r2.warnings
@@ -1114,7 +1119,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs pats doc imgs
-      let r3 ← ui.resolve doc.allow allowAll out.diags
+      let r3 ← ui.resolve doc.allow allowAll (outputs := outputs) out.diags
       fired := fired ++ r3.fired
       accepted := accepted ++ r3.accepted
       warnings := warnings + r3.warnings
@@ -1130,7 +1135,6 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- computation over the flags and the document — the one read is
       -- whether `-o` names an existing directory. No directory is created
       -- here, and none is until `publish`.
-      let emit := ui.cfg.effectiveEmit doc.output.formats
       let css := cssFor doc.output.css
       let outIsDir ← match ui.cfg.output with
         | some o => (System.FilePath.mk o).isDir
@@ -1177,7 +1181,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- than decorative.
       let slotDiags := SlotLoss.diags doc.fonts fs doc
         (SlotLoss.carries emit doc.fontPolicy)
-      let rSlot ← ui.resolve doc.allow allowAll slotDiags
+      let rSlot ← ui.resolve doc.allow allowAll (outputs := outputs) slotDiags
       fired := fired ++ rSlot.fired
       accepted := accepted ++ rSlot.accepted
       warnings := warnings + rSlot.warnings
@@ -1192,7 +1196,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if emit.contains .html then
         contractWarnings := contractWarnings ++
           Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
-      let rC ← ui.resolve doc.allow allowAll contractWarnings
+      let rC ← ui.resolve doc.allow allowAll (outputs := outputs) contractWarnings
       fired := fired ++ rC.fired
       accepted := accepted ++ rC.accepted
       warnings := warnings + rC.warnings
@@ -1212,7 +1216,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- keeps the boundary's drawing.
         let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs reqSpans.images
         let imgs ← imageBrowserFaces imgs
-        let rS ← ui.resolve doc.allow allowAll svgDiags
+        let rS ← ui.resolve doc.allow allowAll (outputs := outputs) svgDiags
         fired := fired ++ rS.fired
         accepted := accepted ++ rS.accepted
         warnings := warnings + rS.warnings
@@ -1239,7 +1243,7 @@ in the HTML" (← since t)
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
-        let r4 ← ui.resolve doc.allow allowAll hdiags
+        let r4 ← ui.resolve doc.allow allowAll (outputs := outputs) hdiags
         fired := fired ++ r4.fired
         accepted := accepted ++ r4.accepted
         warnings := warnings + r4.warnings
@@ -1351,12 +1355,13 @@ in the HTML" (← since t)
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.
-      let r5 ← ui.resolve doc.allow allowAll
+      let r5 ← ui.resolve doc.allow allowAll (outputs := outputs)
         ((Diag.unfired doc.allow fired).map DriverDiag.allowUnfired)
       accepted := accepted ++ r5.accepted
       warnings := warnings + r5.warnings
       ui.accepted accepted
-      let notes := diags.foldl (fun n d => if d.severity == .note then n + 1 else n) 0
+      let notes := (Diag.forOutputs outputs diags).foldl
+        (fun n d => if d.severity == .note then n + 1 else n) 0
       ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
       -- `--werror`: the outputs above were written — the flag turns the
       -- exit code, never the rendering — and the verdict line says why the

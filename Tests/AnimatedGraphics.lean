@@ -105,13 +105,28 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       attrs.contains ("alt", "Moving square"))
 
   let playback := ds.filter (·.subject == some "animategraphics:playback")
-  t "animation names the static PDF, source or companion SVG, rate and controls"
-    (playback.size == 1 && playback.all fun d =>
+  let pdfPlayback := Diag.forOutputs #[.pdf] playback
+  let htmlPlayback := Diag.forOutputs #[.html] playback
+  t "animation PDF diagnostic names only its actual static recovery"
+    (pdfPlayback.size == 1 && pdfPlayback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
-      hasStr d.message "static PDF poster without PDF JavaScript" &&
-      hasStr d.message "HTML uses the source or companion SVG when present, otherwise the same static poster" &&
-      hasStr d.message "SVG owns timing" && hasStr d.message "frame rate '17'" &&
-      hasStr d.message "playback controls are not applied")
+      d.output == some .pdf && d.trigger == some "\\animategraphics" &&
+      d.recovery == some (.replacedBy "the selected static poster") &&
+      !hasStr d.message "HTML" && !hasStr d.message "SVG" && d.help.isNone)
+  t "animation HTML diagnostic names only its ignored playback settings"
+    (htmlPlayback.size == 1 && htmlPlayback.all fun d =>
+      d.code == "W0110" && d.severity == .warning &&
+      d.output == some .html && d.trigger == some "\\animategraphics" &&
+      d.recovery == some .ignored && hasStr d.message "frame rate '17'" &&
+      !hasStr d.message "PDF" && d.help.any (hasStr · "SVG"))
+  let (_, repeatedDiags) := elabStr (dvDoc ""
+    "\\animategraphics{17}{animation-probe}{}{} \\animategraphics{17}{animation-probe}{}{}")
+  let repeated := repeatedDiags.filter (·.subject == some "animategraphics:playback")
+  t "animation diagnostics keep independent first-site counts per output"
+    (#[#[.pdf], #[.html], #[.pdf, .html]].all fun outputs =>
+      let counted := Diag.resolveAll #[] false (Diag.forOutputs outputs repeated)
+      counted.warnings == outputs.size && counted.diags.size == 2 * outputs.size &&
+        (counted.diags.filter (·.severity == .warning)).all (·.sites == 2))
   t "animation sizes and alternatives add no unsupported-option warning"
     (ds.all fun d => d.severity == .note ||
       (d.code == "W0110" && d.subject == some "animategraphics:playback"))
@@ -200,8 +215,8 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let controlled := page "" (animate "poster=1,controls,autoplay,loop,palindrome,nomouse" "" "")
   t "animation controls are named once at the use without losing the selected poster"
     (selected controlled 3 (Dim.pt 64) (Dim.pt 40) &&
-      (controlled.diags.filter (·.code == "W0110")).size == 1 &&
-      controlled.diags.any fun d => d.subject == some "animategraphics:playback" &&
+      ((Diag.forOutputs #[.html] controlled.diags).filter (·.code == "W0110")).size == 1 &&
+      (Diag.forOutputs #[.html] controlled.diags).any fun d => d.subject == some "animategraphics:playback" &&
         ["controls", "autoplay", "loop", "palindrome", "nomouse"].all (hasStr d.message))
   let native := page "\\usepackage{animate}\n" (animate "" "" "")
   t "native animate loading still diagnoses playback at the command"

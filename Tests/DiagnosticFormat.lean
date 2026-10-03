@@ -268,10 +268,86 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"diagnostic format: fatal error is never suppressed {allow}/{verbose}"
           (lines.any (·.startsWith s!"Error - Dropped [E0202] - {source}:5:1"))
 
+/-- Output scope is resolved by the real output plan before warning counts,
+acceptance and printing. A static raster makes these driver probes independent
+of installed SVG converters or a TeX engine. -/
+def diagnosticOutputCliChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let font ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
+  let image ← IO.FS.readBinFile "tests/corpus/rects.png"
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeBinFile (dir / "animation-probe.png") image
+    let file := dir / "scope.tex"
+    for (name, scopes) in [("pdf", ["pdf"]), ("html", ["html"]),
+        ("both", ["pdf", "html"])] do
+      for allow in [false, true] do
+        let formats := String.intercalate "," scopes
+        IO.FS.writeFile file ("\\documentclass{article}\n" ++
+          "\\output{formats=" ++ formats ++ "}\n" ++
+          (if allow then "\\allow{W0110}\n" else "\n") ++
+          "\\begin{document}\n" ++
+          "\\animategraphics[width=32pt,alt={Moving square},autoplay,loop,controls]" ++
+          "{17}{animation-probe}{}{}\n\\end{document}\n")
+        let output := dir / s!"{name}-{allow}"
+        IO.FS.createDir output
+        let result ← IO.Process.output {
+          cmd := ".lake/build/bin/leantex"
+          args := #[file.toString, "-o", output.toString, "--porcelain", "--werror"]
+          env := #[("LEANTEX_FONT", some font.toString)] }
+        let records := (result.stdout.splitOn "\n").filterMap fun line =>
+          (Lean.Json.parse line).toOption
+        let losses := records.filter fun record =>
+          record.getObjValAs? String "code" == .ok "W0110"
+        t s!"diagnostic output: only selected scopes reach the CLI {name}/{allow}"
+          (losses.length == scopes.length && scopes.all fun scope =>
+            (losses.filter fun record =>
+              record.getObjValAs? String "output" == .ok scope).length == 1)
+        t s!"diagnostic output: source and trigger survive the CLI {name}/{allow}"
+          (losses.all fun record =>
+            record.getObjValAs? String "file" == .ok file.toString &&
+            record.getObjValAs? Nat "line" == .ok 5 &&
+            record.getObjValAs? String "trigger" == .ok "\\animategraphics")
+        t s!"diagnostic output: output filtering precedes exit policy {name}/{allow}"
+          (result.exitCode == (if allow then 0 else 1) && result.stderr.isEmpty)
+        if allow then
+          let accepted := records.filter fun record =>
+            record.getObjValAs? String "event" == .ok "accepted"
+          t s!"diagnostic output: acceptance counts only selected scopes {name}"
+            (accepted.length == 1 && accepted.all fun record =>
+              record.getObjValAs? Nat "count" == .ok scopes.length)
+        else
+          let verdicts := records.filter fun record =>
+            (record.getObjVal? "warnings").isOk
+          t s!"diagnostic output: warning count includes only selected scopes {name}"
+            (verdicts.length == 1 && verdicts.all fun record =>
+              record.getObjValAs? Nat "warnings" == .ok scopes.length)
+      -- Repeated notices become notes in elaboration. The human footer and
+      -- porcelain projection must count the same requested-output records.
+      let source ← IO.FS.readFile file
+      let animation := "\\animategraphics[width=32pt,alt={Moving square},autoplay,loop,controls]" ++
+        "{17}{animation-probe}{}{}\n"
+      IO.FS.writeFile file ((source.replace "\\allow{W0110}" "").replace
+        "\\end{document}" (animation ++ "\\end{document}"))
+      let args := #[file.toString, "-o", (dir / name).toString]
+      IO.FS.createDirAll (dir / name)
+      let machine ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := args.push "--porcelain", env := #[("LEANTEX_FONT", some font.toString)] }
+      let notes := (machine.stdout.splitOn "\n").filter fun line =>
+        ((Lean.Json.parse line).bind (·.getObjValAs? String "severity")) == .ok "note"
+      let human ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := args.push "--color=never", env := #[("LEANTEX_FONT", some font.toString)] }
+      let hint := s!" · {notes.length} {if notes.length == 1 then "note" else "notes"} (-v)"
+      t s!"diagnostic output: human note count follows the requested outputs {name}"
+        (machine.exitCode == 0 && human.exitCode == 0 && !notes.isEmpty &&
+          (human.stderr.splitOn hint).length == 2)
+
 /-- Suite entrypoint: pure text contracts and actual CLI emissions. -/
 def diagnosticFormatChecks (ref : IO.Ref (List String)) : IO Unit := do
   diagnosticFormatTextChecks ref
   diagnosticRecordChecks ref
   diagnosticFormatCliChecks ref
+  diagnosticOutputCliChecks ref
 
 end Tests

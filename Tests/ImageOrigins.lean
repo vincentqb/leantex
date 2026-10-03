@@ -1,4 +1,4 @@
-import Main
+import LeanTex.Cli.DriverDiag
 import Tests.Images
 import Lean.Data.Json
 
@@ -8,41 +8,33 @@ open LeanTex.Core LeanTex.Cli
 
 private def imageLoaderOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  IO.FS.withTempDir fun dir => do
-    let source := Ir.picSrcPrefix ++ "0123456789abcdef0123456789abcdef"
-    let doc := (elabStr "\\includegraphics[alt={Refused picture}]{figure.pdf}").1
-    let rename (i : Ir.Inline) : Ir.Inline := match i with
-      | .image _ size alt => .image source size alt
-      | i => i
-    let doc := { doc with body := Ir.mapBlocks rename doc.body }
-    let file := (dir / "root.tex").toString
-    let own : Span := ⟨"included/pictures.tex",
-      { line := 18, col := 7, origins := [⟨1, "drawpicture"⟩] }⟩
-    let request : Span := ⟨"included/requests.tex",
-      { line := 23, col := 6, origins := [⟨2, "placepicture"⟩] }⟩
-    let refusal := Diag.demote
-      { DriverDiag.boundaryFailed "lualatex" "synthetic failure" (some own) with
-        refused := some "synthetic-picture", sites := 3 }
-    let (_, located, _) ← loadImages file doc #[] #[(source, refusal)] #[(source, request)]
-    t "image origins: located refusals keep their diagnostic and location"
-      (located == #[{ refusal with subject := some source }])
-    t "image origins: located refusals keep macro provenance"
-      ((located[0]?.bind (·.span)).map (·.pos.origins) == some own.pos.origins)
-    let (_, supplied, _) ← loadImages file doc #[] #[(source, { refusal with span := none })]
-      #[(source, request)]
-    t "image origins: an unlocated refusal inherits the request without other changes"
-      (supplied == #[{ refusal with span := some request, subject := some source }])
-    t "image origins: inherited locations keep macro provenance"
-      ((supplied[0]?.bind (·.span)).map (·.pos.origins) == some request.pos.origins)
-    let missing := (elabStr "\\includegraphics[alt={Missing}]{missing.png}").1
-    let (_, unknown, _) ← loadImages file missing #[] #[] #[("other.png", request)]
-    t "image origins: an unrelated request never invents a location"
-      (unknown.size == 1 && unknown.all fun d => d.kind == .W0601 && d.span.isNone)
-    IO.FS.createDirAll (dir / "missing.png")
-    let (_, unreadable, _) ← loadImages file missing #[] #[] #[("missing.png", request)]
-    t "image origins: an existing unreadable path carries its request location"
-      (unreadable.size == 1 && unreadable.all fun d =>
-        d.kind == .W0601 && d.span == some request && d.subject == some "missing.png")
+  let source := Ir.picSrcPrefix ++ "0123456789abcdef0123456789abcdef"
+  let own : Span := ⟨"included/pictures.tex",
+    { line := 18, col := 7, origins := [⟨1, "drawpicture"⟩] }⟩
+  let request : Span := ⟨"included/requests.tex",
+    { line := 23, col := 6, origins := [⟨2, "placepicture"⟩] }⟩
+  let locate (src : String) (fetch : Image.Fetch) (spans : Array (String × Span)) :=
+    (Image.fulfilRequests #[({ src }, fetch)]).2.map (DriverDiag.atImageRequest spans src)
+  let refusal := Diag.demote
+    { DriverDiag.boundaryFailed "lualatex" "synthetic failure" (some own) with
+      refused := some "synthetic-picture", sites := 3 }
+  let located := locate source (.refused refusal) #[(source, request)]
+  t "image origins: located refusals keep their diagnostic and location"
+    (located == #[{ refusal with subject := some source }])
+  t "image origins: located refusals keep macro provenance"
+    ((located[0]?.bind (·.span)).map (·.pos.origins) == some own.pos.origins)
+  let supplied := locate source (.refused { refusal with span := none }) #[(source, request)]
+  t "image origins: an unlocated refusal inherits the request without other changes"
+    (supplied == #[{ refusal with span := some request, subject := some source }])
+  t "image origins: inherited locations keep macro provenance"
+    ((supplied[0]?.bind (·.span)).map (·.pos.origins) == some request.pos.origins)
+  let unknown := locate "missing.png" (.missing "missing.png") #[("other.png", request)]
+  t "image origins: an unrelated request never invents a location"
+    (unknown.size == 1 && unknown.all fun d => d.kind == .W0601 && d.span.isNone)
+  let unreadable := locate "missing.png" (.unreadable "is a directory") #[("missing.png", request)]
+  t "image origins: an unreadable path carries its request location"
+    (unreadable.size == 1 && unreadable.all fun d =>
+      d.kind == .W0601 && d.span == some request && d.subject == some "missing.png")
 
 /-- The built driver reports image losses at the first executed request,
 including an included file. Dormant definitions and skipped branches are

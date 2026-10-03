@@ -5342,11 +5342,36 @@ def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block) : Bloc
   let (firstPage, otherPage) := spec.pageOrder active otherwise
   .altSteps spec firstPage otherPage
 
+/-- Classify a display region without treating source annotations as
+content. `none` means another semantic inline was present; `some seen`
+records whether a formula was found among labels and empty annotations.
+Only diagnostic wrappers are traversed: a style or link still changes the
+semantic shape, so the general all-descendants fold is not this reader. -/
+-- conserves: none — a classifier; emits no document text.
+def displayParts : List Inline → Bool → Option Bool
+  | [], seen => some seen
+  | .formula true _ _ :: rest, _ | .math true _ :: rest, _ => displayParts rest true
+  | .label _ :: rest, seen => displayParts rest seen
+  | .located _ body :: rest, seen =>
+    (displayParts body.toList seen).bind (displayParts rest)
+  | _ :: _, _ => none
+termination_by xs _ => sizeOf xs
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- A source wrapper around an arbitrary region leaves its display reading
+unchanged, including nested annotations, labels and empty bodies. -/
+theorem displayParts_location_exact (span : Span) (body : Array Inline) (seen : Bool) :
+    displayParts [.located span body] seen = displayParts body.toList seen := by
+  simp only [displayParts]
+  cases displayParts body.toList seen <;> simp [displayParts]
+
 /-- Is this inline a display formula — `\[…\]`, `{equation*}`, an
 alignment — whether modelled or carried as source? -/
-def Inline.isDisplayFormula : Inline → Bool
-  | .formula true _ _ | .math true _ => true
-  | _ => false
+def Inline.isDisplayFormula (x : Inline) : Bool :=
+  displayParts [x] false == some true
 
 /-- The environments `\@trivlist` spaces with `\partopsep` in vertical
 mode, as this engine sets them: a list, a quote, and the kernel's theorem,
@@ -5425,8 +5450,7 @@ label's) is inline content and opens nothing here — as a numbered
 def displayContent? (body : Array Block) : Option (Array Inline) :=
   match body.toList with
   | [.para content] =>
-    if content.any Inline.isDisplayFormula &&
-        content.all (fun x => x.isDisplayFormula || x matches .label _) then
+    if displayParts content.toList false == some true then
       some content
     else none
   | _ => none

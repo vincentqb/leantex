@@ -1206,6 +1206,8 @@ private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
     scale := sty.scale, fontSize := sty.fontSize }
 
 private inductive Tk where
+  /-- Source scopes are metadata only: they never split a shaped word. -/
+  | origin (span : Option Span)
   | word (style : TextStyle) (chars : Array Char) (attr : Attribution)
   | anchor (name : String)
   | space (style : TextStyle)
@@ -1245,7 +1247,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
+  | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ | .corr _ _ => none
 
 /-- The Layout-private marker a decorating site wraps its declared content
 in: `.role leafRole content`. A role is transparent to layout
@@ -1547,6 +1549,9 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty (Ir.formulaFloor body)
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
+  | .located source body =>
+    let inner := flatten mathOk noteOk { st with toks := st.toks.push (.origin (some source)) } sty body
+    { inner with toks := inner.toks.push (.origin none) }
   -- Authored roles are names, pure grouping. The engine's title-part
   -- roles additionally carry the absolute size resolved at their slot;
   -- the role remains the same typed-tree hook in both artifacts.
@@ -1852,6 +1857,19 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
       · exact pushText_toks _ sty (Ir.formulaFloor body) h
   | .styled s body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .colored c _ body => exact flatten_attr_covers mathOk noteOk st _ body h
+  | .located source body =>
+    obtain ⟨hc, hm⟩ := flatten_attr_covers mathOk noteOk
+      { st with toks := st.toks.push (.origin (some source)) } sty body h
+    refine ⟨hc, fun tk htk => ?_⟩
+    simp only [flattenOne, Array.mem_push] at htk
+    rcases htk with htk | htk
+    · rcases hm tk htk with old | named
+      · simp only [Array.mem_push] at old
+        rcases old with old | marker
+        · exact Or.inl old
+        · subst marker; exact Or.inr rfl
+      · exact Or.inr named
+    · subst htk; exact Or.inr rfl
   | .role n body =>
     simp only [flattenOne]
     split
@@ -2020,6 +2038,20 @@ def fixedSpace (c : Char) : Option (Nat × Nat) :=
   else if c == '\u2003' then some (1, 1)   -- em quad: \paragraph's run-in gap
   else none
 
+/-- First actual loss sites, keyed by the diagnostic and its glyph request.
+A covered earlier occurrence can never supply a later loss's location. -/
+private abbrev GlyphOrigins := Array (DiagCode × Nat × Char × Span)
+
+private def rememberGlyph (sites : GlyphOrigins) (code : DiagCode)
+    (idx : Nat) (c : Char) (source : Option Span) : GlyphOrigins :=
+  match source with
+  | none => sites
+  | some source => sites.push (code, idx, c, source)
+
+private def glyphOrigin (sites : GlyphOrigins) (code : DiagCode)
+    (idx : Nat) (c : Char) : Option Span :=
+  (sites.find? fun site => site.1 == code && site.2.1 == idx && site.2.2.1 == c).map (·.2.2.2)
+
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
 A scalar the styled face lacks is set from the precomputed fallback face
@@ -2042,9 +2074,10 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
-    (owners : Array Attribution) :
+    (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins := Id.run do
+  let mut sites := sites
   let mut missing := missing
   let mut substs := substs
   let mut cache := cache
@@ -2155,9 +2188,11 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
                 (owners[i + k]?.getD attr))
               unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
                 substs := substs.push (fontIdx, c', fb)
+                sites := rememberGlyph sites .W0009 fontIdx c' (origins[i + k]?.getD none)
             | none =>
               unless missing.contains (fontIdx, c') do
                 missing := missing.push (fontIdx, c')
+                sites := rememberGlyph sites .E0405 fontIdx c' (origins[i + k]?.getD none)
         i := j
       else
         match fixedSpace c with
@@ -2218,9 +2253,11 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               (owners[i]?.getD attr))
             unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
               substs := substs.push (fontIdx, c, fb)
+              sites := rememberGlyph sites .W0009 fontIdx c (origins[i]?.getD none)
           | none =>
             unless missing.contains (fontIdx, c) do
               missing := missing.push (fontIdx, c)
+              sites := rememberGlyph sites .E0405 fontIdx c (origins[i]?.getD none)
         i := i + 1
         if c == '-' then
           let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
@@ -2235,7 +2272,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     else
       break
   let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-  return (out, missing, substs, cache, offsets, srcs)
+  return (out, missing, substs, cache, offsets, srcs, sites)
 
 /-- Interword glue: the face's space advance, stretching by half and
 shrinking by a third. The proportions are TeX's plain-font fontdimens
@@ -2592,6 +2629,7 @@ private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle
     -- pass the engine scale
     let sty := applyStyle Ir.sizeScale sty st
     weightKeysInlineList (pushWeightKey acc sty) sty body.toList
+  | .located _ body => weightKeysInlineList acc sty body.toList
   | .colored _ _ body => weightKeysInlineList acc sty body.toList
   | .role _ body => weightKeysInlineList acc sty body.toList
   | .link _ body => weightKeysInlineList acc sty body.toList
@@ -3608,6 +3646,7 @@ private structure ItemsAcc where
   dropped : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
+  origins : GlyphOrigins := #[]
   extras : Std.HashMap Nat Sp := {}
   /-- Natural offsets of owner fragments within their original shaped
   boxes, keyed by item index. Only semantic splits carry these offsets;
@@ -3772,8 +3811,10 @@ carried whole, and nothing else. -/
 private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
-    (anchors : Array (String × Nat)) : ItemsAcc :=
+    (anchors : Array (String × Nat)) (origins : Array (Option Span))
+    (source : Option Span) : ItemsAcc :=
   match tk with
+  | .origin _ => acc
   | .word sty chars attr =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let font := fs.get idx
@@ -3787,10 +3828,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    let (ws, m, s, c', offsets, sources) :=
+    let (ws, m, s, c', offsets, sources, sites) :=
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
-        acc.dropped acc.substs acc.cache owners
+        acc.dropped acc.substs acc.cache owners origins acc.origins
     -- The space before the word pairs with its first glyph. Read first,
     -- written inside the one update, so the items array is written in
     -- place: a copy of it per word made a paragraph's items quadratic.
@@ -3800,6 +3841,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       | _ => 0
     let n := acc.items.size
     { acc with items := widenLast acc.items rk ++ ws, dropped := m, substs := s, cache := c'
+               origins := sites
                wordOffsets := offsets.fold (fun os k v => os.insert (n + k) v) acc.wordOffsets
                anchors := acc.anchors ++ anchors.map (fun (name, k) =>
                  (name, n + ((sources.find? (fun (src, _) => k ≤ src)).map (·.2)).getD ws.size))
@@ -3826,14 +3868,16 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       { acc with items := acc.items.push box }
     | none =>
       if acc.dropped.contains (idx, c) then acc
-      else { acc with dropped := acc.dropped.push (idx, c) }
+      else { acc with dropped := acc.dropped.push (idx, c)
+                      origins := rememberGlyph acc.origins .E0405 idx c source }
   | .note num sty body bodyLeaf =>
     let (around, _) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     let (mk, miss) := markBox fs sty around decorations num
     let acc := miss.foldl (fun acc m =>
       if acc.dropped.contains m then acc
-      else { acc with dropped := acc.dropped.push m }) acc
+      else { acc with dropped := acc.dropped.push m
+                      origins := rememberGlyph acc.origins .E0405 m.1 m.2 source }) acc
     { acc with notes := acc.notes.push (acc.items.size, num, body, bodyLeaf)
                items := acc.items.push mk }
   | .formula display sty body attr =>
@@ -3858,6 +3902,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         base := (Math.mathSize runSize.toNat around.xHeightOptical
           around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
       let (ms, m) := mathItems e display body acc.dropped
+      let sites := m.foldl (fun sites (idx, c) =>
+        if acc.dropped.contains (idx, c) then sites
+        else rememberGlyph sites .E0405 idx c source) acc.origins
+      let acc := { acc with origins := sites }
       -- The substitutions the chain made, named like text's (W0009):
       -- a scalar the math face lacks that a fallback face set. One the
       -- assembly paths recorded missing was never substituted — a grown
@@ -3869,13 +3917,15 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           match fs.fallbackFor c with
           | some fb =>
             if ((fs.get fb).gid c).isSome && !acc.substs.contains (idx, c, fb) then
-              { acc with substs := acc.substs.push (idx, c, fb) }
+              { acc with substs := acc.substs.push (idx, c, fb)
+                         origins := rememberGlyph acc.origins .W0009 idx c source }
             else acc
           | none =>
             match Math.MathAlphabet.unapply c with
             | some (a, base) =>
               if acc.unstyled.any (·.2.1 == c) then acc
-              else { acc with unstyled := acc.unstyled.push (idx, c, a, base) }
+              else { acc with unstyled := acc.unstyled.push (idx, c, a, base)
+                              origins := rememberGlyph acc.origins .W0016 idx c source }
             | none => acc
         else acc) acc
       { acc with dropped := m, items := acc.items ++ ms }
@@ -3964,36 +4014,46 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   let mut acc := acc
   let mut pending : Option (TextStyle × Array Char × Attribution) := none
   let mut owners : Array Attribution := #[]
+  let mut origins : Array (Option Span) := #[]
+  let mut scope : List Span := []
   let mut anchors : Array (String × Nat) := #[]
   for tk in toks do
     match tk with
+    | .origin source =>
+      scope := match source with
+        | some source => source :: scope
+        | none => scope.tail
     | .anchor name =>
       match pending with
       | some (_, word, _) => anchors := anchors.push (name, word.size)
-      | none => acc := step acc tk #[] #[]
+      | none => acc := step acc tk #[] #[] #[] scope.head?
     | .word sty chars attr =>
       match pending with
       | some (prev, word, first) =>
         if sty == prev then
           pending := some (prev, word ++ chars, first)
           owners := chars.foldl (fun os _ => os.push attr) owners
+          origins := chars.foldl (fun os _ => os.push scope.head?) origins
         else
-          acc := step acc (.word prev word first) owners anchors
+          acc := step acc (.word prev word first) owners anchors origins none
           pending := some (sty, chars, attr)
           owners := chars.map (fun _ => attr)
+          origins := chars.map (fun _ => scope.head?)
           anchors := #[]
       | none =>
         pending := some (sty, chars, attr)
         owners := chars.map (fun _ => attr)
+        origins := chars.map (fun _ => scope.head?)
     | _ =>
       if let some (sty, word, attr) := pending then
-        acc := step acc (.word sty word attr) owners anchors
+        acc := step acc (.word sty word attr) owners anchors origins none
       pending := none
       owners := #[]
+      origins := #[]
       anchors := #[]
-      acc := step acc tk #[] #[]
+      acc := step acc tk #[] #[] #[] scope.head?
   if let some (sty, word, attr) := pending then
-    acc := step acc (.word sty word attr) owners anchors
+    acc := step acc (.word sty word attr) owners anchors origins none
   return acc
 
 /-- Inlines to breakable items: `itemsOfToks` over the flatten
@@ -4030,19 +4090,26 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.glue { fil := true, parfill := true })
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
+  -- Native shaping describes PDF ink. HTML and Markdown retain Unicode;
+  -- a browser's glyph fallback is not this font set's decision.
   for (idx, c) in acc.dropped do
     diags := diags.push (Diag.of .E0405
-      s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
+      s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
+      (span := glyphOrigin acc.origins .E0405 idx c) (output := some .pdf)
+      (trigger := String.singleton c) (recovery := some .skipped)
       (help := "declare a face that covers it in \\fonts, or accept the loss \
 with \\allow{E0405}"))
   for (idx, c, fb) in acc.substs do
     diags := diags.push (Diag.of .W0009
-      s!"'{(fs.get idx).family}' has no glyph for '{c}' \
-        (U+{hex c.toNat}); set from '{(fs.get fb).family}'")
+      s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
+      (span := glyphOrigin acc.origins .W0009 idx c) (output := some .pdf)
+      (trigger := String.singleton c)
+      (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'")))
   for (idx, c, a, base) in acc.unstyled do
     diags := diags.push (Diag.of .W0016
-      s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
-(U+{hex c.toNat}); a stand-in keeps the letter"
+      s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for U+{hex c.toNat}"
+      (span := glyphOrigin acc.origins .W0016 idx c) (output := some .pdf)
+      (trigger := String.singleton c) (recovery := some (.replacedBy s!"the base letter '{base}'"))
       (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
       (subject := some ("math-alpha:" ++ a.name)))
   return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets, acc.anchors)
@@ -7201,7 +7268,8 @@ private def collectPara (r : Rd) (a : Acc)
         markBox r.fs { color := a.fg, ground := a.ground } noteSize {} num
       for (idx, c) in miss do
         ds := ds.push (Diag.of .E0405
-          s!"'{(r.fs.get idx).family}' has no glyph for '{c}'; dropped")
+          s!"'{(r.fs.get idx).family}' has no glyph for '{c}'"
+          (trigger := String.singleton c) (recovery := some .skipped) (output := some .pdf))
       let nitems := #[mk] ++ nitems0
       let nitems := if r.geom.justify then nitems else raggedItems nitems
       let breaks := kpTwoPass nitems target
@@ -8501,8 +8569,14 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
           for token in line do
             let (kept, nextColumn) := spec.layoutText column token.text
             column := nextColumn
-            out := out.push (Listing.tokenInline a.pal a.ground covered
-              { token with text := kept } (style := spec.style))
+            let inline := Listing.tokenInline a.pal a.ground covered
+              { token with text := kept } (style := spec.style)
+            let source := spec.source.map fun source =>
+              let line := source.pos.line + i - 1 +
+                (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
+              { source with pos := { source.pos with line := line, col :=
+                  if line == source.pos.line then source.pos.col else 1 } }
+            out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
       pure #[.styled .mono out]
   let inner := match covered with
     | some c => #[.colored c none inner]

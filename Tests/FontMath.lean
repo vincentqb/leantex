@@ -522,15 +522,18 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '∀')
       | _ => false)
   t "fallback reports once per family+glyph, naming both faces"
-    ((out.diags.filter (·.code == "W0009")).map (·.message) ==
-      #["'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'"])
+    ((out.diags.filter (·.code == "W0009")).map
+      (fun d => (d.message, d.trigger, d.recovery)) ==
+      #[("'Open Sans' has no glyph for U+2200", some "∀",
+        some (.replacedBy "a glyph from 'Source Code Pro'"))])
   t "a covered scalar raises no E0405" (!out.diags.any (·.code == "E0405"))
   -- No face covers it: dropped once per family+glyph, family named.
   let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
   let dropOut := layoutOf mapped dropDoc geom
   t "an uncovered scalar drops once, naming the family"
-    ((dropOut.diags.filter (·.code == "E0405")).map (·.message) ==
-      #["'Open Sans' has no glyph for '⟨' (U+27E8); dropped"])
+    ((dropOut.diags.filter (·.code == "E0405")).map
+      (fun d => (d.message, d.trigger, d.recovery)) ==
+      #[("'Open Sans' has no glyph for U+27E8", some "⟨", some .skipped)])
   -- A document whose faces cover their text is untouched by the map.
   let (plainDoc, _) := Elab.run "t" "plain words only"
   let noMap := Pdf.write geom bare (layoutOf bare plainDoc geom).pages
@@ -1973,8 +1976,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
     (.cons (.atom .ord (.sym '₿') .nil .nil false) .nil)]] }
   t "a glyph the math face lacks warns E0405 naming it"
-    (((layoutOf mfs bDoc geom).diags.filter (·.code == "E0405")).map (·.message)
-      == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
+    (((layoutOf mfs bDoc geom).diags.filter (·.code == "E0405")).map
+      (fun d => (d.message, d.trigger, d.recovery)) ==
+      #[("'Fira Math' has no glyph for U+20BF", some "₿", some .skipped)])
   -- The chain, extended to math scalars: the census walk carries a
   -- formula's scalars to the driver's precompute, and a scalar the math
   -- face lacks that the precomputed chain covers sets from that face,
@@ -1985,8 +1989,10 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let cOut := layoutOf cfs bDoc geom
   t "a math scalar the chain covers sets from the fallback face, named W0009"
     ((cOut.diags.filter (·.code == "E0405")).isEmpty &&
-      (cOut.diags.filter (·.code == "W0009")).map (·.message) ==
-        #["'Fira Math' has no glyph for '₿' (U+20BF); set from 'Source Serif Pro'"] &&
+      (cOut.diags.filter (·.code == "W0009")).map
+        (fun d => (d.message, d.trigger, d.recovery)) ==
+        #[("'Fira Math' has no glyph for U+20BF", some "₿",
+          some (.replacedBy "a glyph from 'Source Serif Pro'"))] &&
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '₿')
         | _ => false))
@@ -2304,9 +2310,10 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let noBBSet : Font.FontSet := { mfs with fonts := #[serif, noBBFira] }
   let bbOut := layoutOf noBBSet (Elab.run "t" "$\\mathbb{A}$").1 geom
   t "a bold letter in a covered range whose glyph is an isolated hole stands its base, named W0016"
-    ((bbOut.diags.filter (·.code == "W0016")).map (fun d => (d.message, d.subject)) ==
-      #[("'Fira Math' has no double-struck 'A' (U+1D538); a stand-in keeps the letter",
-         some "math-alpha:bb")] &&
+    ((bbOut.diags.filter (·.code == "W0016")).map
+      (fun d => (d.message, d.subject, d.trigger, d.recovery)) ==
+      #[("'Fira Math' has no double-struck glyph for U+1D538", some "math-alpha:bb",
+        some "𝔸", some (.replacedBy "the base letter 'A'"))] &&
       !bbOut.diags.any (·.code == "N0018") &&
       ((bbOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 1 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == 'A')

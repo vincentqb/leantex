@@ -11,6 +11,17 @@ namespace LeanTex.Cli.DriverDiag
 
 open LeanTex.Core
 
+/-- Supply the first executed image request only when the producer has no
+location of its own. Missing provenance remains absent. -/
+def atImageRequest (imageSpans : Array (String × Span)) (src : String) (d : Diag) : Diag :=
+  { d with span := d.span <|> (imageSpans.find? (·.1 == src)).map (·.2) }
+
+/-- A producer's source evidence preserves its complete diagnostic record,
+including macro ancestry, accepted loss and census count. -/
+theorem atImageRequest_located_exact (imageSpans : Array (String × Span))
+    (src : String) (d : Diag) (span : Span) :
+    atImageRequest imageSpans src { d with span := some span } = { d with span := some span } := rfl
+
 /-- E0001: the input file itself could not be read. -/
 def unreadableInput (file err : String) : Diag :=
   Diag.of .E0001 s!"cannot read '{file}': {err}"

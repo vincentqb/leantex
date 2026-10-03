@@ -669,8 +669,9 @@ both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
 so a message exists in exactly one spelling. -/
 private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (subject : Option String := none)
-    (refused : Option String := none) : Diag :=
-  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject refused
+    (refused : Option String := none) (trigger : Option String := none)
+    (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none) : Diag :=
+  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help subject refused trigger recovery output
 
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (refused : Option String := none) : EM Unit :=
@@ -733,45 +734,64 @@ The state step is a pure function so that a statement can name it: the
 first-site flag is a term over the state passed in, not a bound variable
 inside a `do` block, which is what `warnUnknownCmd_push_exact` reads. -/
 private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
-    (pos : Pos) (help : Option String) (demote first : Bool) : Diag :=
+    (pos : Pos) (help : Option String) (demote first : Bool)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) : Diag :=
   let d := diagOf ctx code msg (some pos) (if first then help else none) (subject := some key)
+    (trigger := trigger) (recovery := recovery) (output := output)
   if demote || !first then d.demote else d
 
 /-- **One keyed warning, one diagnostic, carrying its code and its key as
-subject.** The census hypothesis, discharged at the door every counted
-diagnostic goes through: `Diag.tallySites_exact` — the theorem that the
-number on the visible line is the number of sites of that loss — assumes
-`subject.isSome`, and was vacuous on exactly the class that miscounted. -/
+subject.** Typed presentation and output scope never replace census identity. -/
 theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
-    (pos : Pos) (help : Option String) (demote first : Bool) :
-    (warnOnceDiag ctx key code msg pos help demote first).kind = code := by
+    (pos : Pos) (help : Option String) (demote first : Bool)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).kind = code := by
   unfold warnOnceDiag diagOf Diag.of Diag.demote
   dsimp only
   split <;> rfl
 
 theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
-    (pos : Pos) (help : Option String) (demote first : Bool) :
-    (warnOnceDiag ctx key code msg pos help demote first).subject = some key := by
+    (pos : Pos) (help : Option String) (demote first : Bool)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).subject = some key := by
   unfold warnOnceDiag diagOf Diag.of Diag.demote
   dsimp only
   split <;> rfl
 
+/-- A scoped loss has its own first site. The subject stays the construct's
+key; only the once-per-output bookkeeping distinguishes the two backends. -/
+private def warnOnceKey (key : String) : Option Diag.Output → String
+  | none => key
+  | some .pdf => key ++ "\npdf"
+  | some .html => key ++ "\nhtml"
+
 private def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
-    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) : ESt :=
-  let first := !st.warnedUnknown.contains key
+    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) : ESt :=
+  let siteKey := warnOnceKey key output
+  let first := !st.warnedUnknown.contains siteKey
   { st with
-    warnedUnknown := if first then st.warnedUnknown.push key else st.warnedUnknown
-    diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first) }
+    warnedUnknown := if first then st.warnedUnknown.push siteKey else st.warnedUnknown
+    diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first
+      trigger recovery output) }
 
 theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
-    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) :
-    (warnOnceState ctx key code msg pos help demote st).diags =
+    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (warnOnceState ctx key code msg pos help demote st trigger recovery output).diags =
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
-        (!st.warnedUnknown.contains key)) := rfl
+        (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output) := rfl
 
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) (demote : Bool := false) : EM Unit :=
-  modify (warnOnceState ctx key code msg pos help demote)
+    (help : Option String := none) (demote : Bool := false)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) : EM Unit :=
+  modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output
 
 /-- Record a citation group's keys with their `\cite`'s span, first
 occurrence per key: the no-bibliography judge's sites (elabDoc). A
@@ -1620,6 +1640,11 @@ private def mathEnv (ctx : Ctx) : MathParse.Env :=
     cancel := { ctx.cancel with color }
     cancelMiss := miss }
 
+/-- Source annotations follow the token that contributed content. They carry
+no style and introduce no grouping or shaping boundary. -/
+private def sourceInline (ctx : Ctx) (pos : Pos) (inline : Inline) : Inline :=
+  .located ⟨ctx.file, pos⟩ #[inline]
+
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as its text content with a warning naming the construct when it cannot —
 out of scope is a named warning, never a silent drop, and never its source
@@ -1635,12 +1660,12 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note "" pos
-    return .formula display (Parse.rawSrc body) l
+    return sourceInline ctx pos (.formula display (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; the formula {floorWording src}" pos
-    return .math display src
+    return sourceInline ctx pos (.math display src)
 
 /-- One alignment environment (`align`/`gather` and their starred forms):
 its rows parsed into one display grid formula. A construct the parser
@@ -1661,12 +1686,12 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
         (help := if (alignEnvs.lookup name).any (·.2)
           then some s!"'\{{name}*}' spells the unnumbered form, which renders the same"
           else none)
-    return .formula true (Parse.rawSrc body) l
+    return sourceInline ctx pos (.formula true (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; '\{{name}}' {floorWording src}" pos
-    return .math true src
+    return sourceInline ctx pos (.math true src)
 
 /-- The run an unclosed `[` still owns: tokens on its command's own line —
 the stop-at-the-anchor's-line rule, stated once. A raw on a later line, or
@@ -1687,7 +1712,7 @@ private def malformedRun (raws : Array Raw) (i : Nat) (anchor : Pos)
 
 private def allText (xs : Array Inline) : Bool :=
   Ir.foldInlines (fun ok x => ok && match x with
-    | .text _ | .role _ _ => true
+    | .text _ | .role _ _ | .located _ _ => true
     | _ => false) true xs
 
 /-- Punctuation is a presentation leaf: conditional mono text carries two
@@ -1706,7 +1731,7 @@ as a braced word, without re-reading its source or inventing a group. -/
 private def wordInlines (ctx : Ctx) (s : String) (pos : Pos) : Array Inline :=
   (relativeOrigins ctx.macroRoles.enter.inherited pos.origins).foldr
     (fun origin inner => #[.role origin.name inner])
-    #[punctuationInline ctx.literalText ctx.literalWhen s]
+    #[sourceInline ctx pos (punctuationInline ctx.literalText ctx.literalWhen s)]
 
 /-- Literal punctuation follows the union of the active monospace scopes.
 Return only those fields: a font modifier never changes elaboration's budgets. -/
@@ -2983,6 +3008,7 @@ walk deliberately descends only through semantic roles. -/
 private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
   | .text t => punctuationInline false when? t
   | .role name inner => .role name (mapSmartTextList when? #[] inner.toList)
+  | .located source inner => .located source (mapSmartTextList when? #[] inner.toList)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
   | x@(.colored ..) | x@(.link ..) | x@(.label ..) | x@(.ref ..)
   | x@(.decorated ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
@@ -3365,10 +3391,15 @@ private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       return (none, next)
     let fps := argText ctx (args.getD 0 #[])
     let ignored := if opts.ignored.isEmpty then "" else
-      "; these options are also ignored: " ++ String.intercalate ", " opts.ignored.toList
+      "; options " ++ String.intercalate ", " opts.ignored.toList
     warnOnce ctx "animategraphics:playback" .W0110
-      s!"'\\animategraphics' uses a static PDF poster without PDF JavaScript; HTML uses the source or companion SVG when present, otherwise the same static poster; the SVG owns timing, and frame rate '{fps}' and playback controls are not applied{ignored}" pos
-      (help := "author timing and playback behavior in the SVG; the PDF contains only the selected poster")
+      "animation playback is unavailable" pos
+      (trigger := "\\animategraphics")
+      (recovery := some (.replacedBy "the selected static poster")) (output := some .pdf)
+    warnOnce ctx "animategraphics:playback" .W0110
+      s!"unsupported playback settings: frame rate '{fps}'{ignored}" pos
+      (help := "set timing and playback behavior in the SVG")
+      (trigger := "\\animategraphics") (recovery := some .ignored) (output := some .html)
   let src := argText ctx (args.getD (if animated then 1 else 0) #[])
   recordImageSpan ctx src pos
   return (some (.image src opts.spec opts.alt), next)
@@ -4559,8 +4590,8 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
       sliceWeight_lt raws h (Nat.lt_succ_self i)
     match hr : raws[i] with
-    | .word s _ =>
-      elabInlinesFrom ctx raws (i + 1) acc (sb ++ s)
+    | .word s pos =>
+      elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push (sourceInline ctx pos (.text s))) ""
     | .space =>
       -- A run of blanks was one token at the lexer; a splice that puts two
       -- runs side by side sets one separator, and a paragraph never opens
@@ -4570,20 +4601,24 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .par _ =>
       elabInlinesFrom ctx raws (i + 1) acc
         (if needsSep acc sb then sb.push ' ' else sb)
-    | .sym '[' _ =>
-      elabInlinesFrom ctx raws (i + 1) acc (sb.push '[')
-    | .sym ']' _ =>
-      elabInlinesFrom ctx raws (i + 1) acc (sb.push ']')
-    | .sym '~' _ =>
+    | .sym '[' pos =>
+      elabInlinesFrom ctx raws (i + 1)
+        ((flushText acc sb).push (sourceInline ctx pos (.text "["))) ""
+    | .sym ']' pos =>
+      elabInlinesFrom ctx raws (i + 1)
+        ((flushText acc sb).push (sourceInline ctx pos (.text "]"))) ""
+    | .sym '~' pos =>
       -- Every LaTeX author means a non-breaking space by `~`, and reserving
       -- it buys nothing: there is no catcode machinery here to reserve it for.
-      elabInlinesFrom ctx raws (i + 1) acc (sb.push '\u00a0')
+      elabInlinesFrom ctx raws (i + 1)
+        ((flushText acc sb).push (sourceInline ctx pos (.text "\u00a0"))) ""
     | .sym c pos =>
       if ctx.noteBody || ctx.argBody then
         -- A note is absorbed, as beamer absorbs it, and an argument is
         -- the caller's token list: in both, a reserved character is
         -- literal text — an argument's may still be a key on arrival.
-        elabInlinesFrom ctx raws (i + 1) acc (sb.push c)
+        elabInlinesFrom ctx raws (i + 1)
+          ((flushText acc sb).push (sourceInline ctx pos (.text (String.singleton c)))) ""
       else
         diag ctx .E0311 s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
         elabInlinesFrom ctx raws (i + 1) acc sb
@@ -4832,14 +4867,22 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           let (roles, acc, sb) := accentOperandStep ctx.macroRoles raws[i + 1]? acc sb
-          elabInlinesFrom { ctx with macroRoles := roles } raws (i + 2) acc (sb ++ composed)
+          elabInlinesFrom { ctx with macroRoles := roles } raws (i + 2)
+            ((flushText acc sb).push (sourceInline ctx pos (.text composed))) ""
         else if let some lit := escapeOf name then
-          elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
+          -- A control space remains reader state: `spaceSeps` skips the
+          -- input blanks after it. Only ink needs a source annotation.
+          if name == " " then
+            elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
+          else
+            elabInlinesFrom ctx raws (i + 1)
+              ((flushText acc sb).push (sourceInline ctx pos (.text lit))) ""
         else if (Lex.textSymbols.lookup name).isSome then
           -- A document may define a symbol's name for itself; its definition
           -- wins, so the symbol only fires when nothing shadows it.
-          elabInlinesFrom ctx raws (i + 1) acc
-            (sb ++ (Lex.textSymbols.lookup name).getD "")
+          elabInlinesFrom ctx raws (i + 1)
+            ((flushText acc sb).push (sourceInline ctx pos
+              (.text ((Lex.textSymbols.lookup name).getD "")))) ""
         else if let some style := modifierStyle? name then
           let head := selectorHead raws (i + 1)
           let j := head.2
@@ -4953,7 +4996,7 @@ no extent is reserved for it" pos
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) acc sb
-          | some (.word s _) =>
+          | some (.word s wordPos) =>
             -- TeX takes one token, so a bare word gives its first character
             -- and keeps the rest: `\vphantom value` props a `v` and still
             -- ships "alue". Consuming the whole word would drop content in
@@ -4962,7 +5005,9 @@ no extent is reserved for it" pos
             say true
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1) acc (sb ++ (s.drop 1).toString)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (sourceInline ctx (wordPos.next false)
+                (.text (s.drop 1).toString))) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5799,7 +5844,7 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
   · rw [hrun, warnOnceState_diags_exact]
     simp [bumpRunShape_size_exact]
   · rw [hrun, warnOnceState_diags_exact]
-    simp
+    simp [warnOnceKey]
 
 /-- **Package code sets no text: a LaTeX internal's arguments are consumed,
 and its refusal is paid for by exactly one diagnostic.** The empty recovery
@@ -6513,6 +6558,9 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | .role name inner =>
     let (inner, more) := trimParaList leading #[] inner.toList
     (if inner.isEmpty then #[] else #[.role name inner], more)
+  | .located source inner =>
+    let (inner, more) := trimParaList leading #[] inner.toList
+    (if inner.isEmpty then #[] else #[.located source inner], more)
   | .label name => (#[.label name], leading)
   | .linebreak g => if leading then (#[.linebreak g], false) else (#[], true)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
@@ -8463,8 +8511,10 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
     | _ => size) (Ir.Style.size "normalsize")
+  let sourceStart := ("\\begin{" ++ env ++ "}").foldl
+    (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s { fontSize := inherited }
+    return .verbatim none s { fontSize := inherited, source := some ⟨ctx.file, sourceStart⟩ }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -8572,7 +8622,16 @@ size commands; the current style stands" (some pos)
     content := (s.drop (listingContentStart env s)).toString
   else
     content := (s.drop afterOpt).toString
-  let spec : Ir.ListingSpec := { numbers, language, style, fontSize, tabSize, breakLines }
+  let sourcePrefix := if env == "minted" then listingContentStart env s else afterOpt
+  let contentPos := (s.take sourcePrefix).toString.foldl (fun p c => p.next (c == '\n')) sourceStart
+  let spec : Ir.ListingSpec := {
+    numbers := numbers
+    language := language
+    style := style
+    fontSize := fontSize
+    tabSize := tabSize
+    breakLines := breakLines
+    source := some ⟨ctx.file, contentPos⟩ }
   let spec ← match caption with
     | some cap => do
       let num := (← get).ctr.lstNum + 1
@@ -15634,7 +15693,7 @@ private def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Dia
   let first := runPrepared file p earlier picMetric
   let (doc, diags, rs) := if first.2.2.fallbacks.isEmpty then first
     else runPrepared file p earlier picMetric first.2.2.fallbacks
-  (doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
+  (Ir.eraseLocations doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
 
 /-- Elaborate parsed input on the span-free, file-free path. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])

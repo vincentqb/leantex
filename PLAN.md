@@ -26166,3 +26166,68 @@ The kernel checks this typed-tree/resource model. SVG validation, image and
 font decoding, and browser parsing are external evidence, not kernel-proved
 semantics. Offline acceptance covers copied reference artifacts in Chromium
 and Firefox, with screen/print and reduced-motion checks where supported.
+
+
+### 2026-10-03 — Diagnostics separate evidence, recovery and advice
+
+A diagnostic carries a problem, source span, optional literal trigger,
+optional recovery and optional output scope. Recovery is a closed vocabulary:
+ignored, skipped, or replaced by a named result. Advice remains an optional
+action in `help`; it does not describe a fallback that already happened.
+The formatter presents the common case in three lines, omitting empty rows
+and adding an advice line when there is an action to take. Header text
+escapes control characters and multiline values remain indented. JSON keeps
+its existing keys and adds the structured trigger, recovery and output.
+
+PDF and HTML animation losses are separate records. The driver filters to
+the selected output plan before acceptance, warning counts or exit policy.
+The site census includes output scope in its identity, so two backend losses
+at one source are neither conflated nor counted in a build of the other
+format. Native glyph fallback, omission and alphabet stand-in diagnostics
+are scoped to PDF as well: HTML and Markdown retain Unicode, so native font
+failure is not evidence of missing browser ink. This includes embedded-font
+HTML; its browser still resolves fallback. Shared IR alphabet resolution
+remains common to every output. `forOutputs_mem`, `forOutputs_id`,
+`sameLoss_output_exact` and the record-preservation theorems cover arbitrary
+records and output selections.
+The terminal boundary check rejects direct printing of diagnostic fields,
+including trigger, recovery and typed diagnostic output projections, while
+ordinary output-path status messages remain valid.
+
+Delayed font diagnostics follow the occurrence that fails shaping. Source
+annotations are transparent IR values carried through generic walks and both
+backends. Layout threads origins across text runs without breaking words or
+kerning; listing lines advance from their source position. Input and image
+requests retain their originating spans through deferred work. An operation
+without source evidence does not invent line 1. `eraseLocations_text` states
+the common content invariant; shipped glyph positions, PDF bytes and typed
+HTML checks hold the annotations to their diagnostic-only role.
+
+The design follows the separation of records and handlers in Python logging,
+the structured record and formatter in Loguru, Clang's source-oriented
+diagnostics, and OpenTelemetry's separation of severity, body and attributes.
+These are design references, not runtime dependencies:
+https://docs.python.org/3/library/logging.html,
+https://loguru.readthedocs.io/en/stable/api/logger.html,
+https://clang.llvm.org/docs/InternalsManual.html,
+https://opentelemetry.io/docs/specs/otel/logs/data-model/.
+
+Validation includes fail-first guards for source erasure, glyph origins,
+output policy, multi-output census and note counts. The census merges
+observed output scopes while counting common records once; a scope absent
+from a stream is unobserved, not a claim of zero losses. Six census cases
+failed before that change and pass afterward. Two CLI note-count checks
+failed before the summary counted only the selected outputs and now pass.
+The native-font CLI guard has sixteen cases covering PDF, HTML font policies,
+Markdown, mixed outputs, acceptance and refusal; forty-two assertions failed
+before native glyph decisions gained PDF scope.
+
+The default five-run benchmark passes its bibliography growth check
+(4.2 for a fourfold input, below the declared 8.0 bound). Both reference
+classes compile to PDF and HTML with animation notices scoped to the
+requested output and glyph reports carrying source positions. Corpus IR
+goldens remain unchanged; the diagnostic golden records the intended
+structured presentation.
+
+The complete `lake build --wfail`, `lake test` and all twelve scoreboard
+tiers pass. The convention tree check also passes without an exception.

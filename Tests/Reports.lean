@@ -46,6 +46,11 @@ import Tests.OverlayInputs
 import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.DiagnosticFormat
+import Tests.DiagnosticFontScope
+import Tests.DiagnosticOrigins
+import Tests.SourceAnnotations
+import Tests.InputOrigins
+import Tests.ImageOrigins
 import Tests.SlideLabels
 import scripts.LandCore
 
@@ -80,7 +85,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
-  overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks
+  overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticFontScopeChecks
+  diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
 
 namespace Reports
@@ -560,7 +566,27 @@ def reports : List Report := [
       "fourteen publication checks failed before destination validation; colliding formats and filesystem aliases cannot overwrite the verified page",
       "seventeen raw-context guards failed at ac1b5347; the foreign-style witness also produced an intercepted external image request in Chromium",
       "copied reference artifacts render their images and embedded fonts offline in Chromium and Firefox; Chromium also checks print and reduced-motion posters"]
-    state := .guarded "e5a5428a" .before .author }
+    state := .guarded "e5a5428a" .before .author },
+  { id := "R79", date := "2026-10-03"
+    what := "delayed font, image and input diagnostics lost the source location that requested the failing operation"
+    pins := [check% diagnosticOriginChecks, check% sourceAnnotationChecks, check% inputOriginsChecks,
+      check% imageOriginsChecks, thm% Data.fileRefsAt_input_exact,
+      thm% Ir.eraseLocations_text, thm% Ir.displayParts_location_exact]
+    accept := ["glyph guards failed on four source cases before the fix, including a later occurrence after a covered scalar and an included listing",
+      "nine display and spacing assertions failed during integration; transparent source annotations now preserve display classification and control spaces",
+      "synthetic driver requests preserve included file positions and macro ancestry without inventing a source for top-level filesystem failures"]
+    state := .guarded "7d46cc5d" .before .author },
+  { id := "R80", date := "2026-10-03"
+    what := "diagnostic prose mixed the triggering construct, problem, recovery and advice, and animation notices described output formats that were not being built"
+    pins := [check% diagnosticFormatChecks, check% diagnosticFontScopeChecks, check% animatedGraphicsChecks,
+      thm% Diag.forOutputs_mem, thm% Diag.forOutputs_id,
+      thm% Diag.sameLoss_output_exact, thm% Diag.tallySites_record_exact,
+      thm% Diag.accept_record_exact]
+    accept := ["formatter guards failed before the record projection changed; terminal controls and hostile line separators remain escaped data",
+      "synthetic PDF and HTML builds reproduced mixed-format notices before output filtering; the convention gate checks diagnostic sinks",
+      "forty-two real CLI assertions failed before native glyph output scoping; publication, acceptance, refusal and warning policy now follow the selected outputs",
+      "six census checks and two CLI note-count checks failed before scope-aware accounting; repeated common records count once and independent output losses remain distinct"]
+    state := .guarded "7d46cc5d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

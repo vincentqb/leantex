@@ -34,6 +34,11 @@ import Tests.PdfReadObjects
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
+import Tests.DiagnosticFontScope
+import Tests.DiagnosticOrigins
+import Tests.SourceAnnotations
+import Tests.InputOrigins
+import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SlideLabels
 import Tests.FontMath
@@ -99,7 +104,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
   overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
-  diagnosticFormatChecks mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
+  diagnosticFormatChecks diagnosticFontScopeChecks diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
+  mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
   inputUseChecks mathAlphaEntryChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -532,6 +538,11 @@ def main (args : List String) : IO UInt32 := do
   argsChecks ref
   renderChecks ref
   diagnosticFormatChecks ref
+  diagnosticFontScopeChecks ref
+  diagnosticOriginChecks ref
+  sourceAnnotationChecks ref
+  inputOriginsChecks ref
+  imageOriginsChecks ref
   lexChecks ref
   braceEolChecks ref
   nfcChecks ref

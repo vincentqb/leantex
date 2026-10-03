@@ -26,9 +26,10 @@ uncounted.
 The census reads porcelain streams, never documents, and never gates: the
 corpus it is for is private and off-tree. It bands every line by its declared
 `loss`, never by its rendered severity (a repeat site's note and an accepted
-loss both print `note`), groups sites by (code, subject) and never by message
-text, adds each line's `sites` (the first line of a loss carries them all),
-and counts each document once however many backends built it. Its rows hold a
+loss both print `note`), groups sites by (code, output, subject) and never by
+message text, adds each line's `sites` (the first line of a loss carries them
+all), and counts each document once however many backends built it. Common
+losses count once; each observed output contributes its own losses. Its rows hold a
 registered code and numbers and nothing else, so nothing a document wrote can
 reach its output, wherever that output is sent.
 -/
@@ -161,7 +162,7 @@ def natField (line key : String) : Option Nat :=
   | [_, rest] => (String.ofList (rest.toList.takeWhile Char.isDigit)).toNat?
   | _ => none
 
-/-- One code in one document: its lines, the sites they account for, the
+/-- One code and output scope in one document: its lines, the sites they account for, the
 distinct losses among them, and whether they printed at more than one
 severity. -/
 structure Tally where
@@ -169,6 +170,10 @@ structure Tally where
   sites : Nat := 0
   groups : Array String := #[]
   severities : Array String := #[]
+
+/-- Scope is part of loss identity. Keeping it as a field prevents a subject
+or path from impersonating an output by containing a delimiter. -/
+abbrev Tallies := Array ((String × Option String) × Tally)
 
 /-- A census row. No field holds text: a code the registry names, and counts. -/
 structure PublicRow where
@@ -197,11 +202,11 @@ structure Census where
   misfiled : Nat
   unregistered : Nat
 
-/-- One stream's tallies by code string, and the document it built. -/
+/-- One stream's tallies by code and output scope, and the document it built. -/
 def readStream (text : String) (fallback : String) :
-    String × Array (String × Tally) × Nat × Nat := Id.run do
+    String × Tallies × Nat × Nat := Id.run do
   let mut doc := fallback
-  let mut tallies : Array (String × Tally) := #[]
+  let mut tallies : Tallies := #[]
   let mut misfiled := 0
   let mut unregistered := 0
   for line in text.splitOn "\n" do
@@ -218,8 +223,9 @@ def readStream (text : String) (fallback : String) :
         | some f, some l, some c => s!"p:{f}:{l}:{c}"
         | _, _, _ => s!"n:{tallies.size}:{line.length}"
     let sev := (strField line "severity").getD ""
-    let i := (tallies.findIdx? (·.1 == code)).getD tallies.size
-    if i == tallies.size then tallies := tallies.push (code, {})
+    let bucket := (code, strField line "output")
+    let i := (tallies.findIdx? (·.1 == bucket)).getD tallies.size
+    if i == tallies.size then tallies := tallies.push (bucket, {})
     tallies := tallies.modify i fun (c, t) => (c, { t with
       lines := t.lines + 1
       sites := t.sites + (natField line "sites").getD 1
@@ -227,11 +233,13 @@ def readStream (text : String) (fallback : String) :
       severities := if t.severities.contains sev then t.severities else t.severities.push sev })
   return (doc, tallies, misfiled, unregistered)
 
-/-- The census of some porcelain streams. A document built by two backends
-is counted once, from its first stream; its other streams are compared line
-count by line count, and a difference is a disagreement, not a sum. -/
+/-- The census of some porcelain streams. Common losses count once, from the
+first stream for a document. Each new output scope contributes its own losses;
+repeated observations of a scope compare counts rather than adding them.
+A scope absent from every diagnostic is unobserved, not a claim of zero losses:
+old summary records do not declare an output plan. -/
 def census (streams : Array (String × String)) : Census := Id.run do
-  let mut docs : Array (String × Array (String × Tally)) := #[]
+  let mut docs : Array (String × Tallies) := #[]
   let mut disagreements := 0
   let mut misfiled := 0
   let mut unregistered := 0
@@ -239,27 +247,36 @@ def census (streams : Array (String × String)) : Census := Id.run do
     let (doc, tallies, mis, unreg) := readStream text name
     misfiled := misfiled + mis
     unregistered := unregistered + unreg
-    match docs.find? (·.1 == doc) with
+    match docs.findIdx? (·.1 == doc) with
     | none => docs := docs.push (doc, tallies)
-    | some (_, first) =>
-      let codes := (first.map (·.1) ++ tallies.map (·.1)).toList.eraseDups
-      for c in codes do
-        let a := ((first.find? (·.1 == c)).map (·.2.lines)).getD 0
-        let b := ((tallies.find? (·.1 == c)).map (·.2.lines)).getD 0
-        if a != b then disagreements := disagreements + 1
+    | some i =>
+      let first := docs[i]!.2
+      let observed (ts : Tallies) (scope : Option String) :=
+        scope.isNone || ts.any (·.1.2 == scope)
+      let keys := (first.map (·.1) ++ tallies.map (·.1)).toList.eraseDups
+      for key in keys do
+        if observed first key.2 && observed tallies key.2 then
+          let a := ((first.find? (·.1 == key)).map (·.2.lines)).getD 0
+          let b := ((tallies.find? (·.1 == key)).map (·.2.lines)).getD 0
+          if a != b then disagreements := disagreements + 1
+      let fresh := tallies.filter fun (key, _) => !observed first key.2
+      docs := docs.set! i (doc, first ++ fresh)
   let mut rows : Array PublicRow := #[]
   for c in DiagCode.all do
-    let per := docs.filterMap fun (_, ts) => (ts.find? (·.1 == c.code)).map (·.2)
+    let per := docs.filterMap fun (_, ts) =>
+      let buckets := ts.filterMap fun (key, t) => if key.1 == c.code then some t else none
+      if buckets.isEmpty then none else some buckets
     if per.isEmpty then continue
-    let sevs := per.foldl (fun acc t => t.severities.foldl
+    let all := per.flatten
+    let sevs := all.foldl (fun acc t => t.severities.foldl
       (fun a s => if a.contains s then a else a.push s) acc) (#[] : Array String)
     rows := rows.push {
       code := c
       docs := per.size
       mixed := sevs.size > 1
-      lines := per.foldl (· + ·.lines) 0
-      sites := per.foldl (· + ·.sites) 0
-      groups := per.foldl (· + ·.groups.size) 0 }
+      lines := all.foldl (· + ·.lines) 0
+      sites := all.foldl (· + ·.sites) 0
+      groups := all.foldl (· + ·.groups.size) 0 }
   let sorted := rows.qsort fun a b =>
     bandIndex a.code.loss < bandIndex b.code.loss ||
       (bandIndex a.code.loss == bandIndex b.code.loss && a.groups > b.groups)
@@ -380,6 +397,24 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
   let oneShort := census #[("a.pdf", three ++ summary),
     ("a.html", site "warning" "config" "" ++ summary)]
   no "a backend that reports a different count is a disagreement" (oneShort.disagreements == 1)
+  let scopedSite (output : String) (sites : String := "") :=
+    site "warning" "config" (sites ++ s!",\"output\":\"{output}\"")
+  let distinct := census #[("a", scopedSite "pdf" ++ scopedSite "html" ++ summary)]
+  no "one subject affecting two outputs is two losses in one stream"
+    (distinct.rows.map (fun r => (r.lines, r.sites, r.groups, r.docs)) == #[(2, 2, 2, 1)])
+  let separated := #[("a.pdf", three ++ scopedSite "pdf" ++ summary),
+    ("a.html", three ++ scopedSite "html" ++ summary)]
+  let together := ("a.both", three ++ scopedSite "pdf" ++ scopedSite "html" ++ summary)
+  for streams in [separated, separated.reverse, #[together], separated.push together,
+      #[together] ++ separated] do
+    let observed := census streams
+    no "common losses count once and each output contributes its own losses"
+      (observed.documents == 1 && observed.disagreements == 0 &&
+        observed.rows.map (fun r => (r.lines, r.sites, r.groups, r.docs)) == #[(5, 5, 3, 1)])
+  let scopedShort := census #[("a.first", scopedSite "pdf" ++ scopedSite "pdf" ++ summary),
+    ("a.again", scopedSite "pdf" ++ summary)]
+  no "a repeated output with a different count still reports disagreement"
+    (scopedShort.disagreements == 1)
   no "a line whose loss disagrees with the registry is counted"
     ((census #[("s", site "warning" "degraded" "")]).misfiled == 1)
 
