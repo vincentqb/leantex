@@ -75,6 +75,7 @@ def human (color : Bool) (d : Diag) : String :=
   head ++ scope ++ location ++ trigger ++ count ++ reason ++ recovery ++ suggestion
 
 def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
+  let file := humanText "\\n" file
   if errors == 0 then
     s!"{sgr color "1;32" "✔"} {file} ({ms} ms)"
   else
@@ -83,6 +84,8 @@ def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : Stri
 
 def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
     String :=
+  let file := humanText "\\n" file
+  let output := humanText "\\n" output
   let noun := if pages == 1 then "page" else "pages"
   -- A translated idiom is not a problem, so it does not print by default; the
   -- count says there is something to read, and -v is where to read it.
@@ -99,6 +102,7 @@ def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
 /-- The `--werror` verdict, printed after the outputs (which were written:
 the flag changes the exit code, never the rendering). -/
 def humanWerror (color : Bool) (file : String) (warnings ms : Nat) : String :=
+  let file := humanText "\\n" file
   let noun := if warnings == 1 then "warning" else "warnings"
   s!"{sgr color "1;31" "✖"} {file} — {warnings} {noun} (--werror) ({ms} ms)"
 

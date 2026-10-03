@@ -60,6 +60,33 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "diagnostic format: terminal controls are visible text"
     (Render.human false (Diag.of .E0001 controls) ==
       "Error - Dropped [E0001]\n  \\x00\\x07\\x08\\x7f\\x85\\x9b")
+  let statusControls := String.ofList ((List.range 32 ++ (List.range 33).map (· + 127) ++
+    [0x2028, 0x2029]).map Char.ofNat)
+  for color in [false, true] do
+    let unstyle := fun (s : String) =>
+      ["\x1b[1;32m", "\x1b[1;31m", "\x1b[2m", "\x1b[0m"].foldl
+        (fun text code => text.replace code "") s
+    let statuses : List (String × (String → String) × (String → String)) :=
+      [("summary success", (fun path => Render.humanSummary color path 0 7),
+          (fun path => s!"✔ {path} (7 ms)")),
+       ("summary error", (fun path => Render.humanSummary color path 2 7),
+          (fun path => s!"✖ {path} — 2 errors (7 ms)")),
+       ("done", (fun path => Render.humanDone color path (path ++ ".pdf") 1 7),
+          (fun path => s!"✔ {path} → {path}.pdf — 1 page (7 ms)")),
+       ("done with notes", (fun path => Render.humanDone color path (path ++ ".html") 2 7 1),
+          (fun path => s!"✔ {path} → {path}.html — 2 pages (7 ms) · 1 note (-v)")),
+       ("werror", (fun path => Render.humanWerror color path 2 7),
+          (fun path => s!"✖ {path} — 2 warnings (--werror) (7 ms)"))]
+    for (name, render, expected) in statuses do
+      for (path, visible) in
+          [("", ""), ("résumé [draft]\\part", "résumé [draft]\\part"),
+           ("\r\n\t\x1b[0m\x9b0m\u2028\u2029", "\\r\\n\\t\\x1b[0m\\x9b0m\\u2028\\u2029")] do
+        let actual := render path
+        t s!"diagnostic format: {name} preserves visible paths, color={color}"
+          (unstyle actual == expected visible && actual.contains '\x1b' == color)
+      t s!"diagnostic format: {name} is one safe physical line, color={color}"
+        (!(unstyle (render statusControls)).toList.any fun c => c.toNat < 0x20 ||
+          (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029')
   -- Strip only the SGR sequences the renderer emits, not arbitrary escapes
   -- in a diagnostic. The latter must have been spelled out as data.
   for sample in [d, multi, { d with sites := 3 }, accepted] do
