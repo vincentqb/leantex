@@ -1200,6 +1200,7 @@ private def resolveInline (p : CitePunct) (find : Resolver)
     out ++ rendered
   | .styled st body => out.push (.styled st (resolveInlines p find #[] body.toList))
   | .colored c nm body => out.push (.colored c nm (resolveInlines p find #[] body.toList))
+  | .located nm body => out.push (.located nm (resolveInlines p find #[] body.toList))
   | .role nm body => out.push (.role nm (resolveInlines p find #[] body.toList))
   | .link u body => out.push (.link u (resolveInlines p find #[] body.toList))
   | .decorated kind body =>
@@ -1244,6 +1245,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .cite _ _ => false
   | .styled _ body => citeFreeList body.toList
   | .colored _ _ body => citeFreeList body.toList
+  | .located _ body => citeFreeList body.toList
   | .role _ body => citeFreeList body.toList
   | .link _ body => citeFreeList body.toList
   | .decorated _ body => citeFreeList body.toList
@@ -1275,7 +1277,7 @@ where
       resolveInline p find out x = out ++ resolveInline p find #[] x := by
     match x with
     | .cite _ _ => simp [resolveInline]
-    | .styled _ body | .colored _ _ body | .role _ body | .link _ body
+    | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
     | .decorated kind body | .onSteps _ body | .footnote _ body => simp [resolveInline]
     | .altSteps _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
@@ -1298,6 +1300,9 @@ theorem resolveInline_id (p : CitePunct) (find : Resolver)
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
   | .colored c nm body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id p find body.toList h]
+  | .located nm body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
   | .role nm body =>
@@ -1753,7 +1758,7 @@ theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) 
       q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInline p find #[] x).toList →
       q ∈ acc ∨ q.isCite = false := by
   match x with
-  | .styled _ body | .colored _ _ body | .role _ body | .link _ body
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
   | .decorated kind body | .onSteps _ body | .footnote _ body =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,

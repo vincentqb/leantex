@@ -63,6 +63,7 @@ private def inlineInto (acc : String) : Inline → String
     | .mono => acc ++ s!"`{inner}`"
     | _ => acc ++ inner
   | .colored _ _ body => inlinesInto acc body.toList
+  | .located _ body => inlinesInto acc body.toList
   -- the role's class is a web styling hook; prose keeps the words
   | .role _ body => inlinesInto acc body.toList
   | .link url body =>

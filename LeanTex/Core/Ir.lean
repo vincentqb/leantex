@@ -7109,6 +7109,8 @@ def fillOne (content : Array Inline) : Inline → Inline
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .colored c n body =>
     .colored c n (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .located span body =>
+    .located span (fillList content body.toList).toArray
   | .role n body =>
     .role n (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .decorated kind body =>
@@ -8140,6 +8142,7 @@ def plainTextOne (x : Inline) : String :=
   | .formula _ _ body => formulaFloor body
   | .styled _ body => plainTextList body.toList
   | .colored _ _ body => plainTextList body.toList
+  | .located _ body => plainTextList body.toList
   | .role _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
   | .decorated _ body => plainTextList body.toList
@@ -8208,6 +8211,7 @@ def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   match x with
   | .styled _ body => foldInlineList fi (fi acc x) body.toList
   | .colored _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .located _ body => foldInlineList fi (fi acc x) body.toList
   | .role _ body => foldInlineList fi (fi acc x) body.toList
   | .link _ body => foldInlineList fi (fi acc x) body.toList
   | .decorated _ body => foldInlineList fi (fi acc x) body.toList
@@ -8348,6 +8352,9 @@ def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) : α :=
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
   | .colored _ _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .located _ body =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
   | .role _ body =>
@@ -8546,6 +8553,10 @@ theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inline → 
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
   | .colored _ _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .located _ body =>
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
@@ -8784,7 +8795,7 @@ creating an anchor inside an already-built block link. -/
 def Inline.anchorBearing : Inline → Bool
   | .link _ _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => true
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
-  | .role _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .located _ _ | .role _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ | .onSteps _ _ | .altSteps _ _ _
   | .image _ _ _ | .icon _ _ | .label _ => false
@@ -8805,7 +8816,7 @@ def Inline.bearsLinkText : Inline → Bool
   | .icon _ _ | .pageNumber | .pageCount => true
   | .image _ _ _ | .label _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _ | .linebreak _
-  | .styled _ _ | .colored _ _ _ | .role _ _ | .link _ _ | .decorated _ _
+  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
   | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => false
 
 /-- One link-body leaf given its kind's affordance: a text-bearing leaf is
@@ -8857,7 +8868,7 @@ censuses the block tree. Wrapper nodes contribute nothing twice; leaf text,
 listing text, reference entries, and non-text alternatives do. -/
 private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
   match x with
-  | .styled _ _ | .colored _ _ _ | .role _ _ | .link _ _ | .decorated _ _
+  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
   | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
@@ -9073,6 +9084,7 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .link url body => out.push (plainTextList body.toList, url)
   | .styled _ body => navLinkInlineList out body.toList
   | .colored _ _ body => navLinkInlineList out body.toList
+  | .located _ body => navLinkInlineList out body.toList
   | .role _ body => navLinkInlineList out body.toList
   | .decorated _ body => navLinkInlineList out body.toList
   | .onSteps _ body => navLinkInlineList out body.toList
@@ -9253,6 +9265,7 @@ def dumpInline (ind : String) (x : Inline) : String :=
       | some n => s!"{n} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
       | none => s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
+  | .located _ body => dumpInlines ind body
   | .role n body =>
     s!"{ind}role {n}\n" ++ dumpInlines (ind ++ "  ") body
   | .link url body =>
@@ -10109,6 +10122,7 @@ def maxStepInlineList : List Inline → Nat
 def maxStepInline : Inline → Nat
   | .styled _ body => maxStepInlineList body.toList
   | .colored _ _ body => maxStepInlineList body.toList
+  | .located _ body => maxStepInlineList body.toList
   | .role _ body => maxStepInlineList body.toList
   | .link _ body => maxStepInlineList body.toList
   | .decorated _ body => maxStepInlineList body.toList
@@ -10339,6 +10353,7 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
     if pending then .colored (cover.of c) none (dimInlineList cover k true #[] body.toList)
     else .colored c nm (dimInlineList cover k false #[] body.toList)
   -- a role is a name, not ink: the cover dims what is inside it
+  | .located n body => .located n (dimInlineList cover k pending #[] body.toList)
   | .role n body => .role n (dimInlineList cover k pending #[] body.toList)
   | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
   | .decorated kind body => .decorated kind (dimInlineList cover k pending #[] body.toList)
@@ -10474,6 +10489,12 @@ theorem wrap_text (w : Array Inline → Inline)
     (hw : ∀ xs, plainTextOne (w xs) = plainText xs) :
     Conserves plainText (fun xs => #[w xs]) := fun xs => by
   simp [plainText, plainTextList, hw]
+
+/-- Diagnostic provenance is transparent to the text census. In particular,
+an empty annotation adds neither content nor a template hole. -/
+theorem located_text (span : Span) :
+    Conserves plainText (fun xs => #[.located span xs]) :=
+  wrap_text (.located span) fun _ => rfl
 
 /-- Wrap inline content in a language switch: what `\foreignlanguage`,
 `\selectlanguage`, and `otherlanguage` become. -/
@@ -10969,6 +10990,7 @@ def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
     footnoteInlineList (out.push (num, body)) body.toList
   | .styled _ body => footnoteInlineList out body.toList
   | .colored _ _ body => footnoteInlineList out body.toList
+  | .located _ body => footnoteInlineList out body.toList
   | .role _ body => footnoteInlineList out body.toList
   | .link _ body => footnoteInlineList out body.toList
   | .decorated _ body => footnoteInlineList out body.toList
@@ -11268,6 +11290,9 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     by_cases h : pending = true
     · simp [h, plainTextOne, dimInlineList_text cover k true body.toList #[], plainTextList]
     · simp [h, plainTextOne, dimInlineList_text cover k false body.toList #[], plainTextList]
+  | .located n body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .role n body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
@@ -12030,6 +12055,7 @@ def recolorRolesInline (recolor : RoleRecolor) (pal : Palette)
     .colored (recolor pal ground nm c) nm
       (recolorRolesInlines recolor pal ground #[] body.toList)
   | .styled st body => .styled st (recolorRolesInlines recolor pal ground #[] body.toList)
+  | .located n body => .located n (recolorRolesInlines recolor pal ground #[] body.toList)
   | .role n body => .role n (recolorRolesInlines recolor pal ground #[] body.toList)
   | .link u body => .link u (recolorRolesInlines recolor pal ground #[] body.toList)
   | .decorated kind body => .decorated kind (recolorRolesInlines recolor pal ground #[] body.toList)
@@ -12093,6 +12119,10 @@ theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
       plainTextList]
   | .styled st body =>
+    rw [recolorRolesInline]
+    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
+      plainTextList]
+  | .located n body =>
     rw [recolorRolesInline]
     simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
       plainTextList]
@@ -13430,7 +13460,7 @@ def imageRequestPush (out : Array Image.Request) : Inline → Array Image.Reques
     let req := spec.request src
     if out.contains req then out else out.push req
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
-  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill
+  | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .icon _ _
   | .cite _ _ | .footnote _ _ => out
@@ -14069,6 +14099,7 @@ def mapInlineList (f : Inline → Inline) (out : Array Inline) :
 def mapInline (f : Inline → Inline) : Inline → Inline
   | .styled st body => .styled st (mapInlineList f #[] body.toList)
   | .colored c n body => .colored c n (mapInlineList f #[] body.toList)
+  | .located n body => .located n (mapInlineList f #[] body.toList)
   | .role n body => .role n (mapInlineList f #[] body.toList)
   | .link u body => .link u (mapInlineList f #[] body.toList)
   | .decorated kind body => .decorated kind (mapInlineList f #[] body.toList)
@@ -14209,6 +14240,7 @@ def resolveMathAlphaInline (coverage : Math.MathAlphabetCoverage) : Inline → I
     .formula display src (Math.resolveMathAlphas coverage body)
   | .styled st body => .styled st body
   | .colored c n body => .colored c n body
+  | .located n body => .located n body
   | .role n body => .role n body
   | .link u body => .link u body
   | .decorated kind body => .decorated kind body
@@ -14317,7 +14349,7 @@ private theorem mapMathInline_fixed_point (coverage : Math.MathAlphabetCoverage)
   match x with
   | .styled st body
   | .colored c n body
-  | .role n body
+  | .located n body | .role n body
   | .link u body
   | .decorated kind body
   | .onSteps spec body
@@ -14627,7 +14659,7 @@ private theorem foldMapMathInline_id (coverage : Math.MathAlphabetCoverage)
     foldInline (mathAlphaMissingStep coverage) acc
       (mapInline (resolveMathAlphaInline coverage) x) = acc := by
   match x with
-  | .styled _ body | .colored _ _ body | .role _ body | .link _ body
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
   | .decorated _ body | .onSteps _ body | .footnote _ body =>
     simp only [mapInline, foldInline, mathAlphaMissingStep,
       mapInlineList_toList, List.nil_append]
@@ -14853,6 +14885,10 @@ theorem mapInline_text (f : Inline → Inline)
     show plainTextList (mapInlineList f #[] body.toList).toList = _
     rw [mapInlineList_text f hf body.toList #[]]
     simp [plainTextList, plainTextOne]
+  | .located n body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
   | .role n body =>
     show plainTextList (mapInlineList f #[] body.toList).toList = _
     rw [mapInlineList_text f hf body.toList #[]]
@@ -14935,6 +14971,9 @@ theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
   | .colored c n body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
+  | .located n body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
   | .role n body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
@@ -14990,6 +15029,11 @@ theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
     simp
   | .colored c n body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .located n body =>
     rw [foldInline, foldInlineList_or] at h
     rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
@@ -15368,6 +15412,7 @@ def textUnder (p : Style → Bool) (x : Inline) : String :=
   | .styled st body =>
     if p st then plainTextList body.toList else textUnderList p "" body.toList
   | .colored _ _ body => textUnderList p "" body.toList
+  | .located _ body => textUnderList p "" body.toList
   | .role _ body => textUnderList p "" body.toList
   | .link _ body => textUnderList p "" body.toList
   | .decorated _ body => textUnderList p "" body.toList
