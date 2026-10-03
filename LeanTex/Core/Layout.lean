@@ -2782,6 +2782,11 @@ percentages for the script styles (`Math.sizeFor`, clamped on parse). -/
 private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
   Math.sizeFor e.consts.scales e.base st
 
+/-- A text-sourced math alphabet keeps the surrounding text em, with the
+same MATH script ladder as its neighbouring math glyphs. -/
+private def MathEnv.textSizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
+  Math.sizeFor e.consts.scales e.textBase st
+
 /-- A MATH constant (font design units) scaled at a size. Constants are read
 from the font of the base and scale with the base's size (OpenType MATH
 spec, MathConstants). -/
@@ -3451,7 +3456,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     -- No host per-scalar fallback — the projected family carries the base
     -- letter, or the scalar is the never-silent coverage loss (E0405).
     -- Text faces retain the ambient size, with the same script ladder.
-    let size := Math.sizeFor e.consts.scales e.textBase st
+    let size := e.textSizeAt st
     let fi := e.fs.lookup style.slot.toNat style.weight style.italic
     match glyphOf size (e.fs.get fi) c with
     | some g =>
@@ -3755,43 +3760,58 @@ private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
 steps select `scale`; `\fontsize` then evaluates against that current size
 and the actual local measure. `none` uses the document's ordinary
 line-height rule; `some 0` keeps an explicitly zero baseline skip. -/
-private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) :
-    Sp × Option Sp :=
+private def TextStyle.metricsIn (sty : TextStyle) (base xHeight : Sp)
+    (values : MeasureValues) : Sp × Option Sp :=
   let basis := base * sty.scale / 1000
   let xBasis := xHeight * sty.scale / 1000
-  let values := MeasureValues.horizontal textW textH
   let size := match sty.fontSize with
     | some e => max 1 (e.resolveWidth values basis xBasis)
     | none => basis
   let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
   (size, leading)
 
+/-- Native paragraphs supply one horizontal measure and their text height
+at the consuming site; providers can carry the same resolved vocabulary. -/
+private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) :
+    Sp × Option Sp :=
+  sty.metricsIn base xHeight (MeasureValues.horizontal textW textH)
+
 /-- Resolve one surrounding text style through the native run resolver.
-Math lengths and attachment measurements share this environment. -/
+Math lengths, text alphabets and attachments share this environment. An
+omitted local context retains the page's ordinary text area. -/
 private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
-    (styles : Array Ir.Style) : Option MathEnv := do
+    (styles : Array Ir.Style) (measures : Option MeasureValues) : Option MathEnv := do
   let (idx, font, consts) ← fs.mathFont?
   let sty := styles.foldl (applyStyle geom.scale) {}
   let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
-  let (runSize, _) := sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight
+  let values := measures.getD (MeasureValues.horizontal geom.textWidth geom.textHeight)
+  let (runSize, _) := sty.metricsIn geom.fontSize xHeight values
   let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
   pure (MathEnv.forRun fs idx font consts around runSize)
 
 /-- A physical math length's current em, from the same font environment as
 native glyphs. No MATH face means no measured unit. -/
 def mathEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
-    (st : Math.MathStyle) : Option Int := do
-  let e ← MathEnv.forStyles geom fs styles
+    (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
+  let e ← MathEnv.forStyles geom fs styles measures
   if e.sizeAt st ≤ 0 then none else some (e.sizeAt st)
+
+/-- The em used by native text-sourced math alphabets. Both em providers
+resolve the same ambient declarations and local measures; only the math
+face's x-height matching distinguishes their base sizes. -/
+def mathTextEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
+    (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
+  let e ← MathEnv.forStyles geom fs styles measures
+  if e.textSizeAt st ≤ 0 then none else some (e.textSizeAt st)
 
 /-- Font-measured cancellation for another backend, resolved through the
 same text-style and math walks as native placement. Style history is outermost
 first; named sizes, explicit sizes and face changes reach the existing resolver.
 The operand's horizontal ink travels separately from its logical advance. -/
 def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
-  (st : Math.MathStyle) (spec : Math.CancelSpec) (body value : Math.MList) :
-  Option Math.CancelMetric := do
-  let e ← MathEnv.forStyles geom fs styles
+  (st : Math.MathStyle) (spec : Math.CancelSpec) (body value : Math.MList)
+  (measures : Option MeasureValues := none) : Option Math.CancelMetric := do
+  let e ← MathEnv.forStyles geom fs styles measures
   if e.sizeAt st ≤ 0 then none else
     let (bs, missing) := layMathTail e st 0
       (Math.degrade body.classes) none (#[], #[]) body
@@ -3805,8 +3825,9 @@ def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
 project; a consumer cannot mistake a guessed rectangle for glyph ink. -/
 theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
-    (body value : Math.MList) (h : fs.mathFont? = none) :
-    cancelMetric geom fs styles st spec body value = none := by
+    (body value : Math.MList) (h : fs.mathFont? = none)
+    (measures : Option MeasureValues := none) :
+    cancelMetric geom fs styles st spec body value measures = none := by
   simp [cancelMetric, MathEnv.forStyles, h]
 
 /-- A measured answer has a positive em, so converting its coordinates to
@@ -3815,9 +3836,10 @@ to `Math.CancelIn`; this is the measured-font boundary's contract. -/
 theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
-    (h : cancelMetric geom fs styles st spec body value = some metric) :
+    (measures : Option MeasureValues := none)
+    (h : cancelMetric geom fs styles st spec body value measures = some metric) :
     0 < metric.em := by
-  cases he : MathEnv.forStyles geom fs styles with
+  cases he : MathEnv.forStyles geom fs styles measures with
   | none => simp [cancelMetric, he] at h
   | some e =>
     simp only [cancelMetric, he, bind, Option.bind] at h
@@ -3832,9 +3854,10 @@ projection, not a new rule about the IR's attachment geometry. -/
 theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
-    (h : cancelMetric geom fs styles st spec body value = some metric) :
-    mathEm geom fs styles st = some metric.em := by
-  cases he : MathEnv.forStyles geom fs styles with
+    (measures : Option MeasureValues := none)
+    (h : cancelMetric geom fs styles st spec body value measures = some metric) :
+    mathEm geom fs styles st measures = some metric.em := by
+  cases he : MathEnv.forStyles geom fs styles measures with
   | none => simp [cancelMetric, he] at h
   | some e =>
     simp only [cancelMetric, he, bind, Option.bind] at h
