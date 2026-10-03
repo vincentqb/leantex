@@ -765,7 +765,7 @@ reads as the space the page shows. -/
 def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
   | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c, _) => s.push c) s
-  | .gap _ _ => s.push ' '
+  | .gap _ _ | .decoratedGap _ _ _ => s.push ' '
   | _ => s) ""
 
 /-- The furniture baselines (head y, foot y) a geometry owes under `font`'s

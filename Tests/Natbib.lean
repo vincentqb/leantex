@@ -40,6 +40,36 @@ def citetextModes : List (String × String × List String × List String × List
     ["\\citetext{priv.\\ comm.}", "\\citetext{see \\citealp{delta2021}}"],
     ["L1 (priv. comm.) end.", "L2 (see Delta, 2021) end."], [delta])]
 
+/-- A shipped gap reads as one space with or without decoration.
+The citation has both linked interword gaps and a glyphless tie; reading
+either gap representation must retain natbibRows' TeX-referenced
+`\citep[see][p.~5]` line, while removing the linked spaces must remain
+distinguishable. -/
+def citationInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, _) := elabStr (natbibSrc "\\usepackage{natbib}" "unsrtnat"
+    ["\\citep[see][p.~5]{alpha2019}"])
+  let (doc, _) := Bib.apply #[("refs", natbibBib)] doc
+  let some line := (bodyLines (layoutOf oneFace doc)).find?
+      (fun l => (lineText l).startsWith "L1 ") |
+    t "citation ink: the probe ships its citation line" false
+  let want := "L1 [see Alpha et al., 2019, p. 5] end."
+  t "citation ink: the probe ships decorated gaps and a glyphless tie"
+    (line.segs.any (fun s => match s with | .decoratedGap _ _ _ => true | _ => false) &&
+      line.segs.any (fun s => match s with
+        | .run _ _ _ _ gs _ _ _ _ _ _ => gs.isEmpty
+        | _ => false))
+  let plain := { line with segs := line.segs.map fun s => match s with
+    | .decoratedGap w word _ => .gap w word
+    | s => s }
+  t "citation ink: plain gaps and the tie retain every reference space" (lineInk plain == want)
+  t s!"citation ink: decorating gaps preserves the exact reference line ('{lineInk line}')"
+    (lineInk line == want)
+  let joined := { line with segs := line.segs.filter fun s => match s with
+    | .decoratedGap _ _ _ => false
+    | _ => true }
+  t "citation ink: losing linked spaces changes the reading" (lineInk joined != want)
+
 /-- **`\citetext` is natbib's `\NAT@open#1\NAT@close`** (natbib.sty:739):
 its body is body text set between the citation brackets, so a citation
 inside it is a citation like any other — its entry enters the reference list
@@ -49,6 +79,7 @@ punctuation (natbib.dtx, §Extended Citation Commands: `\citetext{see
 in the HTML, in every mode, with no diagnostic: a nested citation that ships
 `?` is a loss, and one no diagnostic names is a silent one. -/
 def citetextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  citationInkChecks ref oneFace
   let t := check ref
   for (pre, style, calls, want, list) in citetextModes do
     let (page, entries, html, ds) := natbibShip oneFace natbibBib pre style calls
