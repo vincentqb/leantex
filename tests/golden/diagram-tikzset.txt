@@ -28,4 +28,4 @@ picture 2 shapes
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics
-warning[W0376] 37:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
+note[N0376] 37:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing

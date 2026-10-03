@@ -242,23 +242,23 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
     (svgNames wordless == #[some "Figure"] && figureAlts wordless == #[none])
   t "a bare native picture is in the missing-alternative census"
     (Ir.imagesSansAlt wordless == #["picture#0"])
-  t "a bare native picture fires W0376 on its own line"
-    (wordlessDs.any fun d => d.code == "W0376" && d.subject == some "picture#0" &&
+  t "a bare native picture fires N0376 on its own line"
+    (wordlessDs.any fun d => d.code == "N0376" && d.subject == some "picture#0" &&
       d.span == some ⟨"t", { line := 4, col := 1 }⟩)
   let caption := "A synthetic diagram"
   let (capNative, capNativeDs) := elabStr (dvDoc native
     ("\\begin{figure}" ++ pic "" square ++ s!"\\caption\{{caption}}\\end\{figure}"))
-  t "a caption fills an undeclared native picture and silences W0376"
+  t "a caption fills an undeclared native picture and silences N0376"
     (pictureAlts capNative == #[.described caption] &&
       (figureAlts capNative).contains (some caption) && svgNames capNative == #[some caption] &&
-      capNativeDs.all (·.code != "W0376"))
+      capNativeDs.all (·.code != "N0376"))
   let (captionThenBare, captionThenBareDs) := elabStr (dvDoc native
     ("\\begin{figure}" ++ pic "" square ++ s!"\\caption\{{caption}}\\end\{figure}\n\n" ++
       pic "" square))
   t "caption fill cannot renumber a later native picture's census key"
     (Ir.imagesSansAlt captionThenBare == #[Ir.picKeyPrefix ++ "1"] &&
       captionThenBareDs.any fun d =>
-        d.code == "W0376" && d.subject == some (Ir.picKeyPrefix ++ "1") && d.span.isSome)
+        d.code == "N0376" && d.subject == some (Ir.picKeyPrefix ++ "1") && d.span.isSome)
   -- latex-lab-tikz's keys, consumed before the subset or the boundary sees
   -- the options: no W0334, no route the key alone would have forced.
   let svgAttr (doc : Ir.Doc) (k : String) : Array (Option String) :=
@@ -270,14 +270,14 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   let named (ds : Array Diag) (code : String) : Bool := ds.any (·.code == code)
   let (described, dDs) := elabStr (dvDoc native
     (pic "[alt={A described diagram}, scale=0.5]" words))
-  t "alt={...} on a picture is read: no W0334, no W0376"
-    (!named dDs "W0334" && !named dDs "W0376")
+  t "alt={...} on a picture is read: no W0334, no N0376"
+    (!named dDs "W0334" && !named dDs "N0376")
   t "a declared alternative outranks the picture's words, in both artifacts"
     (svgNames described == #[some "A described diagram"] &&
      figureAlts described == #[some "A described diagram"])
   let (deco, decoDs) := elabStr (dvDoc native (pic "[artifact]" square))
-  t "[artifact] on a picture is read: no W0334, no W0376"
-    (!named decoDs "W0334" && !named decoDs "W0376")
+  t "[artifact] on a picture is read: no W0334, no N0376"
+    (!named decoDs "W0334" && !named decoDs "N0376")
   let decoTree := Struct.ofDoc deco
   let decoSk := Pdf.skeleton decoTree
   t "a decorative picture: no Figure, and no element holds its leaf"
@@ -322,23 +322,23 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
       treeAlts.any (·.1.isNone))
   -- latex-lab-graphic's `artifact` on an image.
   let (imgDeco, imgDs) := elabStr (dvDoc "" "\\includegraphics[artifact]{chart.png}")
-  t "\\includegraphics[artifact] is read: no W0110, no W0376"
-    (!named imgDs "W0110" && !named imgDs "W0376")
+  t "\\includegraphics[artifact] is read: no W0110, no N0376"
+    (!named imgDs "W0110" && !named imgDs "N0376")
   t "a decorative image: no Figure; alt=\"\" with the declared decorative role"
     (figureAlts imgDeco == #[] && imgAttr imgDeco "alt" == #[some ""] &&
      imgAttr imgDeco "role" == #[some "presentation"])
   let (capDeco, capDs) := elabStr (dvDoc "" ("\\begin{figure}\\includegraphics[artifact]" ++
     "{chart.png}\\caption{A synthetic caption}\\end{figure}"))
   t "a caption fills no declared alternative: [artifact] in a captioned figure stays decoration"
-    (!named capDs "W0376" && imgAttr capDeco "role" == #[some "presentation"])
+    (!named capDs "N0376" && imgAttr capDeco "role" == #[some "presentation"])
   t "markdown's two states for three: a decorative image reads as no text"
     (hasStr (MarkdownDoc.emit imgDeco) "![](chart.png)")
   -- LaTeX's tagging code warns of a graphic without an alternative
   -- (latex-lab-graphic's alt-text-missing); so does the engine, keyed by the
   -- image, and the image ships what it always shipped.
   let (bare, bareDs) := elabStr (dvDoc "" "\\includegraphics{chart.png}")
-  t "an image without an alternative is W0376 keyed by its source"
-    (bareDs.any fun d => d.code == "W0376" && d.subject == some "chart.png")
+  t "an image without an alternative is N0376 keyed by its source"
+    (bareDs.any fun d => d.code == "N0376" && d.subject == some "chart.png")
   t "an image without an alternative ships alt=\"\" and a Figure without /Alt"
     (imgAttr bare "alt" == #[some ""] && imgAttr bare "role" == #[none] &&
      figureAlts bare == #[none])

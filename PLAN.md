@@ -26415,3 +26415,29 @@ Validation: the warning-clean default build and `leantex`/`Tests` targets,
 full `lake test`, and the five-repeat repository benchmark pass. The
 benchmark's bibliography growth check remains below its declared bound.
 Independent review of the final accounting and driver changes is clean.
+
+
+### 2026-10-03 — Missing image alternatives are informational advice
+
+An image without an alternative still renders as declared. Its authoring
+advice now has the registered informational loss, `N0376`, so normal output
+omits it, verbose output uses the information icon, and `--werror` does not
+count it. Existing `\allow{W0376}` declarations migrate through the retired
+code table with a note; they neither fail nor broaden acceptance.
+
+Accessibility assertions judge facts independently of reporting severity.
+Their code list now holds `DiagCode` values directly, and an explicit AA
+assertion still fails on a missing alternative. File paths, source positions,
+authored command evidence and image subjects retain the same ownership.
+
+Report R83 records four focused failures on `9ede34c4` before the fix: the
+registered severity, warning accounting, human header and old-code migration.
+The existing source-origin checks also hold the new informational record to
+the authored site and verify that accepting advice leaves it unchanged.
+
+Validation: the warning-clean `leantex` and `Tests` build, the focused
+checks, regenerated diagnostic goldens, full `lake test`, and the declaration
+commutation oracle pass. Twelve real CLI probes cover ordinary, verbose,
+strict-warning, retired-code, structured and explicit-AA runs in both
+formats; PDF and HTML bytes match the baseline. Independent implementation
+review found no further acceptance or attribution issue.

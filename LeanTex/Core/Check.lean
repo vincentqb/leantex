@@ -129,12 +129,12 @@ private def failure (a : Assertion) (actual : String) : Diag :=
 `accessibility = AA` reads. Contrast pairs (SC 1.4.3 / 1.4.11: W0315
 declared, W0330 defaulted ink, W0345 themed resolution), the heading
 outline (SC 1.3.1, technique G141: W0320 the skip, W0321 the misplaced
-title), and images with no text alternative (SC 1.1.1: W0376). Motion has
+title), and images with no text alternative (SC 1.1.1: N0376). Motion has
 no row: every emitted animation carries its reduced-motion guard by
 construction (`motionCss_guarded` and its siblings), so the fact cannot
 fail. -/
-def a11yCodes : List String :=
-  ["W0315", "W0330", "W0345", "W0320", "W0321", "W0376"]
+def a11yCodes : List DiagCode :=
+  [.W0315, .W0330, .W0345, .W0320, .W0321, .N0376]
 
 /-- The failing AA rows of a document: each judged accessibility code that
 fired, with its count and registered meaning, plus the one non-diagnostic
@@ -142,17 +142,16 @@ row — an undeclared document language (SC 3.1.1 asks that the page's
 default language be programmatically determinable; the PDF then carries no
 `/Lang`, and the HTML's `en` is the engine's assumption, not the
 document's declaration). Read from the diagnostics before `\allow`
-resolution: accepting a warning quiets the report, not the fact — the
-deliberate escapes (a decorative declaration, an alt) remove the fact
-itself, at the judge. -/
+resolution, independently of severity: advice and accepted warnings remain
+facts. The deliberate escapes (a decorative declaration, an alt) remove the
+fact itself, at the judge. -/
 def a11ySummary (doc : Doc) (diags : Array Diag) : Array String := Id.run do
   let mut out : Array String := #[]
   for c in a11yCodes do
-    let n := (diags.filter (·.code == c)).size
+    let n := (diags.filter (·.kind == c)).size
     if n > 0 then
-      let meaning := ((DiagCode.ofString? c).map (·.meaning)).getD ""
-      out := out.push (if n == 1 then s!"{c}: {meaning}"
-        else s!"{c} ×{n}: {meaning}")
+      out := out.push (if n == 1 then s!"{c.code}: {c.meaning}"
+        else s!"{c.code} ×{n}: {c.meaning}")
   if doc.info.language.isNone then
     out := out.push ("no declared language (WCAG 2.2 SC 3.1.1): declare " ++
       "\\pdfmeta{ language = ... } or babel's language option")

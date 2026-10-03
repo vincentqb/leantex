@@ -236,7 +236,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .N0104 => dvE (dvDeck ""
       "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")
   | .N0105 =>
-    dvE (dvDoc "\\allow{W0341}\n" "x") ++ dvE (dvDoc "\\allow{W0344}\n" "x")
+    dvE (dvDoc "\\allow{W0341}\n" "x") ++ dvE (dvDoc "\\allow{W0344}\n" "x") ++
+      dvE (dvDoc "\\allow{W0376}\n" "x")
   | .N0114 =>
     dvE (dvDoc "\\ifdefined\\shiny\\sloppy\\else\\relax\\fi\n" "x") ++
     dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x") ++
@@ -287,7 +288,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "x\n\\maketitle")
   | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")
-  | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}") ++
+  | .N0376 => dvE (dvDoc "" "\\includegraphics{chart.png}") ++
       Ir.picAltDiags (elabStr (dvDoc "\\pictures{ tool = lualatex }\n"
           "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")).1
         (fun _ => none) (fun _ => true)
@@ -1452,7 +1453,7 @@ def werrorChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\"warnings\":3,\"ms\":17}")
 
 
-/-- The accessibility contract's judge sites. The alt judge (W0376, WCAG
+/-- The accessibility contract's judge sites. The alt judge (N0376, WCAG
 2.2 SC 1.1.1): fires on an image with no text alternative, silenced by
 each declared escape — an `alt` option, a figure caption (which becomes
 the alt at elaboration). The AA assertion surface: `\assert{ accessibility
@@ -1462,16 +1463,35 @@ resolution. Each check breaks its judge once, the AssertKind row's own
 obligation. -/
 def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- W0376 fires and is silenced by each escape.
-  t "an image with no text alternative fires W0376"
-    ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any (·.code == "W0376"))
-  t "a declared alt silences W0376"
+  -- Missing alternatives are authoring advice. The shared resolver retains
+  -- the fact without counting a compilation warning; explicit AA still judges it.
+  let advice := Ir.altDiags (elabStr (dvDoc "" "\\includegraphics{chart.png}")).1
+  t "missing alternatives are informational in the registry and emitted records"
+    (advice.size == 1 && advice.all fun d =>
+      d.code == "N0376" && d.kind.loss == .info && d.severity == .note)
+  let resolved := Diag.resolveAll #[] false advice
+  t "alternative advice is retained without affecting --werror"
+    (resolved.diags == advice && resolved.accepted.isEmpty &&
+      resolved.errors == 0 && resolved.warnings == 0 &&
+      exitFor resolved.errors 0 resolved.warnings true == 0)
+  t "alternative advice renders with the information icon and code"
+    (advice.all fun d => (Render.human false d).startsWith "ℹ [N0376]\n")
+  let (oldDoc, oldDs) := elabStr (dvDoc "\\allow{W0376}\n"
+    "\\includegraphics{chart.png}")
+  t "the former alternative warning migrates without granting acceptance"
+    (oldDoc.allow.isEmpty && oldDs.all (·.severity != .error) &&
+      oldDs.any (fun d => d.code == "N0105" && d.subject == some "allow:W0376") &&
+      oldDs.any (·.code == "N0376"))
+  -- N0376 fires and is silenced by each escape.
+  t "an image with no text alternative fires N0376"
+    ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any (·.code == "N0376"))
+  t "a declared alt silences N0376"
     (((dvE (dvDoc "" "\\includegraphics[alt={A synthetic chart}]{chart.png}")).any
-      (·.code == "W0376")) == false)
-  t "a figure caption becomes the alternative and silences W0376"
+      (·.code == "N0376")) == false)
+  t "a figure caption becomes the alternative and silences N0376"
     (((dvE (dvDoc "" ("\\begin{figure}\\includegraphics{chart.png}" ++
         "\\caption{A synthetic chart}\\end{figure}"))).any
-      (·.code == "W0376")) == false)
+      (·.code == "N0376")) == false)
   -- A boundary picture routed by the open default is in the census — the
   -- default route changes who drew the box, not what the accessibility
   -- tree gets — carries its trust note, and is left to the driver's face
@@ -1480,7 +1500,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
   t "a default-routed boundary picture is counted, noted, and left to the driver's judge"
     ((Ir.imagesSansAlt routed).size == 1 &&
-     routedDs.all (·.code != "W0376") && routedDs.any (·.code == "N0023"))
+     routedDs.all (·.code != "N0376") && routedDs.any (·.code == "N0023"))
   -- The theorem's executable face: the judge and the census agree on the
   -- offender.
   let (bare, _) := elabStr (dvDoc "" "\\includegraphics{chart.png}")
@@ -1491,16 +1511,16 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       !(Ir.altDiags bare).isEmpty)
   t "the judge names the image's own line"
     ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any fun d =>
-      d.code == "W0376" && d.span == some ⟨"t", { line := 3, col := 1 }⟩)
+      d.code == "N0376" && d.span == some ⟨"t", { line := 3, col := 1 }⟩)
   -- The picture face: judged by the driver after fulfilment, in the
   -- author's words (the source spelling is the engine's cache key).
   let door := "\\pictures{ tool = lualatex }\n"
   let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
   let (picDoc, picDs) := elabStr (dvDoc door pic)
   t "elaboration leaves a boundary picture to the driver's judge"
-    (picDs.all (·.code != "W0376"))
+    (picDs.all (·.code != "N0376"))
   let firedPic := Ir.picAltDiags picDoc (fun _ => none) (fun _ => true)
-  t "a shipped picture with no alternative fires W0376 in the author's words"
+  t "a shipped picture with no alternative fires N0376 in the author's words"
     (firedPic.size == 1 && firedPic.all fun d =>
       (d.message.splitOn "picture").length == 2 &&
       (d.message.splitOn Ir.picSrcPrefix).length == 1)
@@ -1534,7 +1554,8 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "outlineHasSkip names the fact W0320 fires on"
     (Ir.outlineHasSkip gapped && gds.any (·.code == "W0320"))
   -- The AA assertion: parse, fail on a judged fact, hold when clean.
-  let (failing, fds) := elabStr (dvDoc "\\assert{ accessibility = AA }\n"
+  let (failing, fds) := elabStr (dvDoc
+    "\\assert{ accessibility = AA }\n\\pdfmeta{ language = \"en\" }\n"
     "\\includegraphics{chart.png}")
   t "accessibility = AA parses to its kind"
     (failing.asserts.any (·.kind == Ir.AssertKind.accessibilityAA))

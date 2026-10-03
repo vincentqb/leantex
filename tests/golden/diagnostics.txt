@@ -251,10 +251,13 @@
   '<presentation:0>' declares no presentation slides; this frame ships no page
 ── N0105 (info) \allow names a retired code; its successor answers
 ℹ [N0105] - \allow
-  '\allow' names the retired code 'W0341'; its loss is a clause of 'W0301' now, so this accepts nothing
-  suggestion: \allow{W0301} accepts every 'W0301', this loss among them
+  '\allow' names the retired code 'W0341'; 'W0301' reports this now, so this accepts nothing
+  suggestion: remove 'W0341' from \allow and review the 'W0301' diagnostic
 ℹ [N0105] - \allow
   '\allow' names the retired code 'W0344'; the loss it named cannot occur
+ℹ [N0105] - \allow
+  '\allow' names the retired code 'W0376'; 'N0376' reports this now, so this accepts nothing
+  suggestion: remove 'W0376' from \allow and review the 'N0376' diagnostic
 ── N0114 (info) a TeX conditional resolved from the document's own definitions and loads
 ℹ [N0114] - \ifdefined
   '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
@@ -267,6 +270,13 @@
 ── N0200 (info) page set short: its skips gave their shrink
 ℹ [N0200]
   page 1 set 6pt short: its skips gave 40% of their 16pt of shrink
+── N0376 (info) an image ships no text alternative (WCAG 2.2)
+ℹ [N0376] - \includegraphics
+  image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
+  suggestion: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+ℹ [N0376]
+  this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
+  suggestion: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
 ── N0419 (info) a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it
 ℹ [N0419]
   no boundary tool drew this picture, so the rendered subset draws it; what the subset leaves out is named beside it
@@ -666,13 +676,6 @@
 ⚠ [W0374] - \footnote
   a footnote on this card is kept inline; a card face has no note apparatus
   suggestion: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
-── W0376 (standard) an image ships no text alternative (WCAG 2.2)
-⚠ [W0376] - \includegraphics
-  image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
-  suggestion: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
-⚠ [W0376]
-  this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
-  suggestion: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 ⚠ [W0377]
   link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)

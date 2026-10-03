@@ -614,7 +614,13 @@ def reports : List Report := [
       "the guards cover direct commands, macro calls, included files, repeated assets and environment whitespace; synthetic and Markdown inputs never invent an authored TeX command",
       "six further assertions failed before original-input evidence preserved escaped line endings and Unicode command spellings through normalization",
       "source attribution preserves the diagnostic subject, acceptance, scope and alternative accounting"]
-    state := .guarded "4527e7af" .before .author }
+    state := .guarded "4527e7af" .before .author },
+  { id := "R83", date := "2026-10-03"
+    what := "missing image alternatives were counted as compilation warnings instead of informational authoring advice"
+    pins := [check% a11yChecks, check% diagnosticImageOriginChecks]
+    accept := ["four focused assertions failed before severity, warning counts, presentation and old-code migration followed the information policy",
+      "explicit accessibility assertions continue to enforce the same alternative facts"]
+    state := .guarded "9ede34c4" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -13759,9 +13759,9 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
       match DiagCode.retired.lookup code with
       | some (some succ) =>
         evs := evs.push (.say (diagOf ctx .N0105
-          s!"'\\allow' names the retired code '{code}'; its loss is a clause of '{succ}' \
-now, so this accepts nothing"
-          (some pos) (help := s!"\\allow\{{succ}} accepts every '{succ}', this loss among them")
+          s!"'\\allow' names the retired code '{code}'; '{succ}' reports this now, \
+so this accepts nothing"
+          (some pos) (help := s!"remove '{code}' from \\allow and review the '{succ}' diagnostic")
           (subject := some ("allow:" ++ code))))
       | some none =>
         evs := evs.push (.say (diagOf ctx .N0105
@@ -15432,7 +15432,7 @@ structure ReqSpans where
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
   /-- Each image source's first span — file images and boundary pictures
-  alike: where the driver's per-picture W0376 and E0382 point. -/
+  alike: where the driver's per-picture N0376 and E0382 point. -/
   images : Array (String × Span) := #[]
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: a request here that no tool draws is withdrawn, and the picture is

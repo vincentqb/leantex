@@ -13,18 +13,18 @@ private def imageOriginParse (file text : String) : Array Parse.Raw :=
 private def imageOriginTex (file text : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
   Elab.runRawsSpanned file (imageOriginParse file text)
 
-/-- W0376 quotes the exact authored command at its recorded site, including a
+/-- N0376 quotes the exact authored command at its recorded site, including a
 macro invocation before expansion. Source spans alone justify no trigger in raw
 IR. Attribution preserves the census, source span, acceptance and output scope. -/
 def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit :=
     unless ok do ref.modify (name :: ·)
-  let missing (ds : Array Diag) := ds.filter (·.kind == .W0376)
+  let missing (ds : Array Diag) := ds.filter (·.kind == .N0376)
   let hasTrigger (ds : Array Diag) (trigger : String) :=
     ds.size == 1 && ds.all (·.trigger == some trigger)
   let hasHeader (ds : Array Diag) (location trigger : String) :=
     hasTrigger ds trigger && ds.all fun d =>
-      (Render.human false d).startsWith s!"⚠ [W0376] - {location} - {trigger}\n"
+      (Render.human false d).startsWith s!"ℹ [N0376] - {location} - {trigger}\n"
   let noTrigger (ds : Array Diag) :=
     ds.size == 1 && ds.all (·.trigger.isNone)
   -- Backslash separates NFC slices: it survives decomposition, stops mark
@@ -98,11 +98,11 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ads := missing animatedDs
   t "image origin: a direct animation quotes animategraphics"
     (hasHeader ads "animation.tex:3:1" "\\animategraphics")
-  t "image origin: animation keeps its source and one standard warning"
+  t "image origin: animation keeps its source and one informational diagnostic"
     (ads.size == 1 && ads.all fun d =>
       d.span == some ⟨"animation.tex", { line := 3, col := 1 }⟩ &&
-      d.subject == some "poster.pdf" && d.kind.loss == .standard &&
-      d.severity == .warning && d.sites == 1 && d.output.isNone)
+      d.subject == some "poster.pdf" && d.kind.loss == .info &&
+      d.severity == .note && d.sites == 1 && d.output.isNone)
   let mut macroWarnings : Array Diag := #[]
   for (label, body) in [
       ("plain", "\\animategraphics{12}{poster.pdf}{}{}"),
@@ -117,8 +117,8 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"image origin: a {label} {name} macro keeps its invocation span"
         (mds.size == 1 && mds.all fun d =>
           d.span == some ⟨file, { line := 4, col := 1 }⟩ &&
-          d.subject == some "poster.pdf" && d.kind.loss == .standard &&
-          d.severity == .warning && d.sites == 1 && d.output.isNone)
+          d.subject == some "poster.pdf" && d.kind.loss == .info &&
+          d.severity == .note && d.sites == 1 && d.output.isNone)
       t s!"image origin: a {label} {name} macro quotes its authored invocation"
         (hasHeader mds s!"{file}:4:1" invocation)
       macroWarnings := macroWarnings ++ mds
@@ -200,7 +200,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((missing boundaryDs).isEmpty && noTrigger shipped &&
       shipped.all fun d =>
         d.span == some ⟨"boundary.tex", { line := 1, col := 1 }⟩ &&
-        (Render.human false d).startsWith "⚠ [W0376] - boundary.tex:1:1\n")
+        (Render.human false d).startsWith "ℹ [N0376] - boundary.tex:1:1\n")
   let boundaryPrepared := Elab.prepare "boundary.tex"
     (imageOriginParse "boundary.tex" boundarySource)
   let attributed := shipped.map boundaryPrepared.sourceTriggers.attribute
@@ -208,7 +208,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasHeader attributed "boundary.tex:1:1" "\\begin")
   t "image origin: boundary attribution changes only the trigger"
     (attributed.map (fun d => { d with trigger := none }) == shipped)
-  t "image origin: an unshipped boundary picture raises no alt warning"
+  t "image origin: an unshipped boundary picture raises no alt diagnostic"
     ((Ir.picAltDiags boundary spanOf (fun _ => false)).isEmpty)
   t "image origin: absent source evidence stays absent"
     ((Ir.altDiags animated).all (·.trigger.isNone) &&
@@ -225,10 +225,10 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     markdownWarnings ++ includedWarnings ++ mixedWarnings ++ repeatedWarnings ++ nativeWarnings ++
     spacedNativeWarnings ++ shipped ++ attributed
   for d in warnings do
-    let (accepted, didAccept) := d.accept #["W0376"] false
-    t "image origin: attribution does not change acceptance or common output scope"
-      (didAccept && accepted.severity == .note &&
-        accepted == d.demote &&
+    let (accepted, didAccept) := d.accept #["N0376"] false
+    t "image origin: informational attribution needs no acceptance and retains common output scope"
+      (!didAccept && accepted.severity == .note &&
+        accepted == d &&
         Diag.forOutputs #[.pdf] #[d] == #[d] &&
         Diag.forOutputs #[.html] #[d] == #[d])
     let plain := { d with trigger := none }
@@ -241,7 +241,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _, _ => t "image origin: porcelain remains valid JSON" false
   t "image origin: human animation header quotes the authored animategraphics token"
     (ads.any fun d =>
-      (Render.human false d).startsWith "⚠ [W0376] - animation.tex:3:1 - \\animategraphics\n")
+      (Render.human false d).startsWith "ℹ [N0376] - animation.tex:3:1 - \\animategraphics\n")
   let rawImages := Ir.altDiags animated (Elab.ReqSpans.spanOf spans.images)
   t "image origin: existing request span API remains sufficient"
     (rawImages.map (·.span) == ads.map (·.span))

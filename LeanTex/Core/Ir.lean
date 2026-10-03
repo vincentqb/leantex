@@ -13989,10 +13989,10 @@ def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
   ((imagesSansAlt doc).filter fun src => !src.startsWith picSrcPrefix).map fun src =>
     let span := spanOf src
     if src.startsWith picKeyPrefix then
-      Diag.of .W0376 pictureSansAltMessage span
+      Diag.of .N0376 pictureSansAltMessage span
         (help := some pictureSansAltHelp) (subject := some src)
     else
-      Diag.of .W0376
+      Diag.of .N0376
         (s!"image '{src}' ships no text alternative; assistive technology " ++
           "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
         span
@@ -14010,7 +14010,7 @@ def picAltDiags (doc : Doc) (spanOf : String → Option Span)
   ((imagesSansAlt doc).filter fun src =>
       src.startsWith picSrcPrefix && shipped src).map fun src =>
     let span := spanOf src
-    Diag.of .W0376 pictureSansAltMessage span
+    Diag.of .N0376 pictureSansAltMessage span
       (help := some pictureSansAltHelp) (subject := some src)
 
 private theorem length_filter_partition (p : α → Bool) :

@@ -4866,7 +4866,7 @@ def attrOf? (attrs : Array (String × String)) (k : String) : Option String :=
 Described, `alt` the text (WCAG 2.2 technique H37); decorative, `alt=""`
 with `role="presentation"`, the declared decorative role the page judge
 reads (`a11yElem`); undeclared, `alt=""` — what the engine has always
-shipped there, kept, and named by W0376 instead. -/
+shipped there, kept, and named by N0376 instead. -/
 def imgAltAttrs : Ir.Alt → Array (String × String)
   | .described t => #[("alt", t)]
   | .decorative => #[("alt", ""), ("role", "presentation")]

@@ -82,14 +82,15 @@ inductive Loss where
   | degraded
   /-- The output is exactly what the document declared, and the declaration
   falls below a standard the engine holds documents to: a readable measure,
-  a heading nearer its text than what precedes it, a WCAG contrast ratio or
-  text alternative. Nothing was lost in translation; the remedy is the
-  author's, so the engine has nothing to recover in its place. -/
+  a heading nearer its text than what precedes it, a WCAG contrast ratio.
+  Nothing was lost in translation; the remedy is the author's, so the engine
+  has nothing to recover in its place. -/
   | standard
   /-- A skipped construct with no content operand (packages, templating,
   TeX conditionals): the meaning of the content survives. -/
   | config
-  /-- Translation notes and advice; the output matches the intent. -/
+  /-- Translation notes and authoring advice, including missing image alternatives;
+  the output matches the intent. -/
   | info
   deriving Repr, BEq
 
@@ -244,7 +245,7 @@ inductive DiagCode where
   | W0372
   | W0373
   | W0374
-  | W0376
+  | N0376
   | N0022
   | W0377
   | N0023
@@ -432,7 +433,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0372 => ("0372", .degraded, "a footnote taller than the text block overruns its page")
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
-  | .W0376 => ("0376", .standard, "an image ships no text alternative (WCAG 2.2)")
+  | .N0376 => ("0376", .info, "an image ships no text alternative (WCAG 2.2)")
   | .N0022 => ("0022", .info, "a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
@@ -544,15 +545,16 @@ what answers it now. Without this row a retirement turned a building document
 into a hard error (`E0329`, a `dropped` loss: exit 1, no PDF) for a change
 that took nothing away.
 
-`some succ` means the loss is still named, as a clause of `succ`'s own
-diagnostic — which names more than the retired code did. So `\allow` of the
-old spelling accepts *nothing*: accepting `succ` in its place would accept
-every loss `succ` names, and a document that accepted dropped option runs
+`some succ` means the fact is still named by another diagnostic. The
+successor may report a broader loss, or be informational and need no
+acceptance. `\allow` of the old spelling accepts *nothing*: accepting `succ`
+in its place would accept every loss `succ` names, and a document that accepted dropped option runs
 would silently accept every unknown command with them (measured: `--werror`
 went from 1 to 0 on such a document). The note says which code names the
 loss now, and the document widens its acceptance only by writing that code
-itself. `none` means the loss cannot occur any more — the engine's rule
-changed — so there is nothing to accept and nothing to fail over. A pure
+itself if acceptance is needed. `none` means the loss cannot occur any more —
+the engine's rule changed — so there is nothing to accept and nothing to fail
+over. A pure
 renumbering, whose successor names exactly the retired loss, would accept
 its successor; no row is one, so the table does not carry that case.
 
@@ -568,7 +570,9 @@ def DiagCode.retired : List (String × Option String) :=
    -- `\scshape` means uniform small caps, so a casing lie in the source is
    -- no longer how the canonical form is reached: the loss this named cannot
    -- occur.
-   ("W0344", none)]
+   ("W0344", none),
+   -- A missing alternative is authoring advice; no acceptance is needed.
+   ("W0376", some "N0376")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 inductive Diag.Output where

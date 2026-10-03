@@ -106,7 +106,7 @@ def registry : List AuditRow :=
   -- that fires on it is the gate.
   [⟨.W0201, .keep, .native, check% measureChecks⟩,
    ⟨.W0202, .keep, .native, check% rhythmChecks⟩,
-   ⟨.W0376, .keep, .native, check% a11yChecks⟩,
+   ⟨.N0376, .keep, .native, check% a11yChecks⟩,
    -- The covered arm warns about the engine's own default cover: realize
    -- it per role at its one resolving site instead, as N0022 does.
    ⟨.W0345, .native, .native, check% contrastChecks⟩,

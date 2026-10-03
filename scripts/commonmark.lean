@@ -813,8 +813,8 @@ def smartNote : String := "pending-decision:smart-punctuation"
 /-- The losses a run names that bar it from `match`, sorted: every markdown
 route (`W0307`/`W0392` under an `md:` subject), and any `W0110`, which on a
 markdown run means the desugaring handed the elaborator an option it could
-not read — the shape the injected info strings took. Other degraded codes
-(`W0601` a missing image file, `W0376` a missing alternative) are about the
+not read — the shape the injected info strings took. Other diagnostics
+(`W0601` a missing image file, `N0376` a missing alternative) are about the
 document, not the reader, and the canonical trees already carry what they
 are about. -/
 def routesOf (diags : Array Diag) : Array String := Id.run do

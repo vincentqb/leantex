@@ -212,7 +212,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an image's alt text reaches the page"
     (has "![the alt](/u)\n" "the alt")
   t "an image with alt text raises no missing-alternative warning"
-    ((dvMd "![the alt](/u)\n").all (·.kind != .W0376))
+    ((dvMd "![the alt](/u)\n").all (·.kind != .N0376))
   -- Text that would be a control sequence in tex is literal in markdown:
   -- the desugaring goes through `word`, never through generated source.
   t "a per cent sign in markdown text is not a comment"
