@@ -176,41 +176,31 @@ and resolved font gap. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
-  -- Polygon vertices are relative to the current pen, as in metricRunsAt.
-  let polygonsAt (l : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.Sp)) := Id.run do
-    let mut x := l.x
-    let mut out := #[]
-    for s in l.segs do
-      match s with
-      | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-      | .decoration _ w _ _ _ | .rule w _ _ _ | .image _ w _ =>
-        x := x + w
-      | .poly pts _ => out := out.push (x, pts)
-    return out
+  let polygonsAt := ShippedInk.polygonPens
   let polygons (l : Layout.LineOut) := (polygonsAt l).map (·.2)
   let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
     (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
   let glyphsAt (l : Layout.LineOut) :=
     shippedBodyGlyphs { pages := #[{ lines := #[l] }], diags := #[] }
   let targetGlyphs (l : Layout.LineOut) := (glyphsAt l).filter (·.scalar == '7')
-  let inside (bounds : CancelAlignment.InkBounds)
+  let inside (bounds : ShippedInk.InkBounds)
       (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
     !polys.isEmpty && polys.all fun pts =>
-      (CancelAlignment.polygonHull pts).any fun mark =>
+      (ShippedInk.polygonHull pts).any fun mark =>
         bounds.left ≤ mark.left && mark.right ≤ bounds.right &&
           bounds.bottom ≤ mark.bottom && mark.top ≤ bounds.top
   -- Outline hulls conservatively enclose ink. Require a positive gap on
   -- either axis against every mark; touching hulls do not count as clear.
-  let clearsInk (ink : CancelAlignment.InkBounds)
+  let clearsInk (ink : ShippedInk.InkBounds)
       (placed : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
     !placed.isEmpty && placed.all fun pts =>
-      (CancelAlignment.polygonHull pts).any fun mark =>
+      (ShippedInk.polygonHull pts).any fun mark =>
         mark.right < ink.left || ink.right < mark.left ||
           mark.top < ink.bottom || ink.top < mark.bottom
   let arrowClearsTarget (l : Layout.LineOut) : Bool :=
     (targetGlyphs l).size == 1 &&
-      match CancelAlignment.targetInk fonts (targetGlyphs l) with
-      | .ok ink => clearsInk ink (CancelAlignment.polygonsAt l)
+      match ShippedInk.targetInk fonts (targetGlyphs l) with
+      | .ok ink => clearsInk ink (ShippedInk.polygonsAt l)
       | .error _ => false
   -- Compensated kerns preserve every other pen and the logical advance.
   -- Increasing the run's raise moves its ink upward in the hull coordinates.
@@ -272,7 +262,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           let (left, bottom, right, top) := if cmd == "cancelto{7}" then
               Math.cancelEnvelope x0 y0 x1 y1 rule
             else (x0, y0, x1, y1)
-          let bounds : CancelAlignment.InkBounds := { left, bottom, right, top }
+          let bounds : ShippedInk.InkBounds := { left, bottom, right, top }
           t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
             (inside bounds polys)
           -- Mutate actual emitted polygons against the fixed expected box.
@@ -345,7 +335,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       let #[g] := targetGlyphs line |
         t s!"cancel box: {label} ships one target glyph" false
         continue
-      let .ok ink := CancelAlignment.targetInk fonts #[g] |
+      let .ok ink := ShippedInk.targetInk fonts #[g] |
         t s!"cancel box: {label} has decoded target ink" false
         continue
       let some font := fonts.fonts[g.face]? | continue
@@ -355,17 +345,17 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       let some (Ink.Cmd.move gx gy) := cmds[0]? |
         t s!"cancel box: {label} starts at a contour vertex" false
         continue
-      let outline := cmds.flatMap CancelAlignment.outlinePoints
+      let outline := cmds.flatMap ShippedInk.outlinePoints
       t s!"cancel box: {label} witnesses a single painted polygon"
         (font.unitsPerEm > 0 && cmds.size ≥ 3 && area2 outline != 0 &&
           (cmds.extract 1 cmds.size).all (fun cmd => match cmd with
             | .line _ _ => true
             | _ => false))
-      let placed := CancelAlignment.polygonsAt line
+      let placed := ShippedInk.polygonsAt line
       let #[head] := placed.filter (·.size == 3) |
         t s!"cancel box: {label} ships one triangular head" false
         continue
-      let some headInk := CancelAlignment.polygonHull head | continue
+      let some headInk := ShippedInk.polygonHull head | continue
       let (cx, cy) := head.foldl (fun (x, y) p => (x + p.1, y + p.2)) (0, 0)
       let inside := (cx / 3, cy / 3)
       let sides : Array Int := head.zipIdx.map fun (p, i) =>
@@ -379,8 +369,8 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"cancel box: {label} moves only target ink in both axes"
         (dx != 0 && dy != 0 &&
           targetGlyphs moved == #[{ g with x := g.x + dx, y := g.y - dy }] &&
-          CancelAlignment.targetInk fonts (targetGlyphs moved) == .ok (ink.shift dx dy) &&
-          CancelAlignment.polygonsAt moved == placed &&
+          ShippedInk.targetInk fonts (targetGlyphs moved) == .ok (ink.shift dx dy) &&
+          ShippedInk.polygonsAt moved == placed &&
           (glyphsAt moved).filter (·.scalar != '7') == (glyphsAt line).filter (·.scalar != '7'))
       let wrongOrigin := (polygons line).map fun pts =>
         pts.map fun (x, y) => (line.x + x, y - line.y)

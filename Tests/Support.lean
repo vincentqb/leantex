@@ -1220,6 +1220,104 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
         | .poly _ _ => pure ()
   return acc
 
+namespace ShippedInk
+
+/-- Outline hull in page coordinates with y pointing upward. Control
+points are included; these are measured bounds, not raster extrema.
+Neither baseline zero nor logical advance belongs to the hull. -/
+structure InkBounds where
+  left : Dim.Sp
+  bottom : Dim.Sp
+  right : Dim.Sp
+  top : Dim.Sp
+  deriving BEq, Repr
+
+def InkBounds.shift (b : InkBounds) (dx dy : Dim.Sp) : InkBounds :=
+  { left := b.left + dx, right := b.right + dx
+    bottom := b.bottom + dy, top := b.top + dy }
+
+def outlinePoints : Ink.Cmd → Array (Int × Int)
+  | .move x y | .line x y => #[(x, y)]
+  | .quad cx cy x y => #[(cx, cy), (x, y)]
+  | .cube x₁ y₁ x₂ y₂ x y => #[(x₁, y₁), (x₂, y₂), (x, y)]
+
+def InkBounds.union (a b : InkBounds) : InkBounds :=
+  { left := min a.left b.left, bottom := min a.bottom b.bottom
+    right := max a.right b.right, top := max a.top b.top }
+
+/-- Disjoint interiors of quantized outline hulls. This is a conservative
+ink-separation check, not a claim that intersecting hulls imply raster contact. -/
+def InkBounds.disjoint (a b : InkBounds) : Bool :=
+  a.right ≤ b.left || b.right ≤ a.left || a.top ≤ b.bottom || b.top ≤ a.bottom
+
+def InkBounds.inRoom (b : InkBounds) (left right : Dim.Sp) : Bool :=
+  left ≤ b.left && b.right ≤ right
+
+def polygonHull (points : Array (Dim.Sp × Dim.Sp)) : Option InkBounds := do
+  let (x, y) ← points[0]?
+  return points.foldl (fun b (px, py) => b.union ⟨px, py, px, py⟩) ⟨x, y, x, y⟩
+
+/-- Decode the shipped glyph independently of the layout's bounds helper.
+Every point uses its actual pen position, size and baseline. Missing
+outline evidence fails; an empty or zero-area hull contributes no ink. -/
+def glyphInk (fonts : Font.FontSet) (g : ShippedGlyph) :
+    Except String (Option InkBounds) := do
+  let some font := fonts.fonts[g.face]? | throw "target face is missing"
+  if font.unitsPerEm == 0 then throw "target face has zero units per em"
+  if g.expand != 0 then throw "target glyph unexpectedly expands"
+  let some cmds := font.inkSrc.get.cmdsAt g.glyph | throw "target outline is missing"
+  let upem : Int := font.unitsPerEm
+  let mut bounds : Option InkBounds := none
+  for cmd in cmds do
+    for (x, y) in outlinePoints cmd do
+      let px := g.x + x * g.size / upem
+      let py := -g.y + y * g.size / upem
+      let point : InkBounds := ⟨px, py, px, py⟩
+      bounds := some (match bounds with | none => point | some b => b.union point)
+  return bounds.filter fun b => b.left < b.right && b.bottom < b.top
+
+/-- Whether a shipped glyph has outline commands. Empty-outline spaces
+still belong to the source census and advance the pen, but paint no ink.
+An undecodable outline is a failed measurement rather than an empty one. -/
+def glyphPaints (fonts : Font.FontSet) (g : ShippedGlyph) : Except String Bool := do
+  let some font := fonts.fonts[g.face]? | throw "target face is missing"
+  let some cmds := font.inkSrc.get.cmdsAt g.glyph | throw "target outline is missing"
+  return !cmds.isEmpty
+
+/-- Union only the target glyphs' ink, ignoring decoded empty outlines.
+Starting from the first painted glyph is essential for an annotation whose
+entire visible contents are raised; a space's baseline must not join it. -/
+def targetInk (fonts : Font.FontSet) (glyphs : Array ShippedGlyph) :
+    Except String InkBounds := do
+  let mut bounds : Option InkBounds := none
+  for g in glyphs do
+    if let some b ← glyphInk fonts g then
+      bounds := some (match bounds with
+        | none => b
+        | some old => old.union b)
+  let some ink := bounds | throw "target has no painted glyphs"
+  return ink
+
+/-- Polygon origins from the actual line pen, advancing through every
+width-bearing segment, including rules. Vertices stay relative to that pen. -/
+def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.Sp)) := Id.run do
+  let mut pen := line.x
+  let mut polys := #[]
+  for seg in line.segs do
+    match seg with
+    | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
+    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ =>
+      pen := pen + w
+    | .poly points _ => polys := polys.push (pen, points)
+  return polys
+
+/-- Shipped polygons in the same upward page coordinates as `glyphInk`. -/
+def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Sp × Dim.Sp)) :=
+  (polygonPens line).map fun (pen, points) =>
+    points.map fun (x, y) => (pen + x, y - line.y)
+
+end ShippedInk
+
 /-- Gaps that stand before glyph ink, excluding a paragraph's closing fill. -/
 def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
   let mut out : Array Dim.Sp := #[]

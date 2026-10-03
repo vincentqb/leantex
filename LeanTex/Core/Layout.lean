@@ -2766,6 +2766,17 @@ private structure MathEnv where
   says. -/
   attr : Attribution
 
+/-- The common font environment for measuring and placing a math run.
+Its em matches the surrounding face's measured x-height. Placement adds
+paint and attribution; measurements need neither. -/
+private def MathEnv.forRun (fs : FontSet) (idx : Nat) (font : Font)
+    (consts : MathConsts) (around : Font) (runSize : Sp) : MathEnv :=
+  { idx, font, consts, fs, color := Ir.Color.black, link := none
+    decorations := {}, leading := none, attr := .unattributed
+    textBase := runSize
+    base := (Math.mathSize runSize.toNat around.xHeightOptical
+      around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
+
 /-- Font size at a style: base for display and text, the face's declared
 percentages for the script styles (`Math.sizeFor`, clamped on parse). -/
 private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
@@ -3205,6 +3216,21 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
         (min (raise + bBot) (accRaise + mBot))
     return (items, missing0)
 
+/-- The one measured input to cancellation geometry in both backends.
+Nonpainting spaces contribute advance, but never target attachment ink;
+the operand's vertical extent includes its baseline, as its native box does. -/
+private def cancelInput (e : MathEnv) (st : Math.MathStyle)
+    (spec : Math.CancelSpec) (body value : Array Item) : Math.CancelIn :=
+  let size := e.sizeAt st
+  let (top, bot) := mathItemsExtent e.fs body
+  let ink := (mathItemsInk e.fs value).getD {}
+  let rule := e.constAt size e.consts.overbarRuleThickness
+  { rule := if spec.thick then 2 * rule else rule
+    gap := e.constAt size e.consts.overbarVerticalGap
+    w := mathItemsWidth body, top, bot, vw := mathItemsWidth value
+    vtop := ink.top, vbot := ink.bottom, vleft := ink.left, vright := ink.right
+    space := e.constAt size e.consts.spaceAfterScript }
+
 /-- Assemble a laid cancel mark — cancel.sty's four commands — by the
 stated conventions (`Math.cancelGeom`; PLAN, 2026-09-29 cancellation entry): the
 marks from the math font's overbar rule, doubled under `thicklines`, and
@@ -3220,17 +3246,10 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
   let size := e.sizeAt st
-  let (bTop, bBot) := mathItemsExtent e.fs bItems
-  let vInk := (mathItemsInk e.fs vItems).getD {}
-  let θ := e.constAt size e.consts.overbarRuleThickness
-  let w := mathItemsWidth bItems
-  let vw := mathItemsWidth vItems
-  let g := Math.cancelGeom mark spec.room
-    { rule := if spec.thick then 2 * θ else θ
-      gap := e.constAt size e.consts.overbarVerticalGap
-      w, top := bTop, bot := bBot, vw, vtop := vInk.top, vbot := vInk.bottom
-      vleft := vInk.left, vright := vInk.right
-      space := e.constAt size e.consts.spaceAfterScript }
+  let input := cancelInput e st spec bItems vItems
+  let w := input.w
+  let vw := input.vw
+  let g := Math.cancelGeom mark spec.room input
   let marks := g.polys.map fun pts => Item.poly (pts.map fun (x, y) => (x, y + raise)) ink
   let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
@@ -3239,8 +3258,8 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     #[mathKern e size (g.valueX - g.shift - w)] ++ raiseItems (raise + g.valueY) vItems
   let reached := if vItems.isEmpty then g.shift + w else g.valueX + vw
   let vRaise := raise + g.valueY
-  let top := max mTop (max (raise + bTop) (if vItems.isEmpty then raise else vRaise + vInk.top))
-  let bot := min mBot (min (raise + bBot) (if vItems.isEmpty then raise else vRaise + vInk.bottom))
+  let top := max mTop (max (raise + input.top) (if vItems.isEmpty then raise else vRaise + input.vtop))
+  let bot := min mBot (min (raise + input.bot) (if vItems.isEmpty then raise else vRaise + input.vbot))
   let reach := struts e top bot
   let assembled := ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
   if !spec.room then assembled else
@@ -3747,6 +3766,54 @@ private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) 
   let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
   (size, leading)
 
+/-- Font-measured cancellation for another backend, resolved through the
+same text-style and math walks as native placement. Style history is outermost
+first; named sizes, explicit sizes and face changes reach the existing resolver.
+The operand's horizontal ink travels separately from its logical advance. -/
+def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
+  (st : Math.MathStyle) (spec : Math.CancelSpec) (body value : Math.MList) :
+  Option Math.CancelMetric := do
+  let (idx, font, consts) ← fs.mathFont?
+  let sty := styles.foldl (applyStyle geom.scale) {}
+  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+  let (runSize, _) := sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight
+  let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
+  let e := MathEnv.forRun fs idx font consts around runSize
+  if e.sizeAt st ≤ 0 then none else
+    let (bs, missing) := layMathTail e st 0
+      (Math.degrade body.classes) none (#[], #[]) body
+    let (vs, _) := layMathTail e (spec.size.style st) 0
+      (Math.degrade value.classes) none (#[], missing) value
+    let bounds := (mathItemsInk fs bs).getD {}
+    some { em := e.sizeAt st, input := cancelInput e st spec bs vs
+           bodyLeft := bounds.left, bodyRight := bounds.right }
+
+/-- Without a MATH face there is no measured cancellation geometry to
+project; a consumer cannot mistake a guessed rectangle for glyph ink. -/
+theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
+    (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
+    (body value : Math.MList) (h : fs.mathFont? = none) :
+    cancelMetric geom fs styles st spec body value = none := by
+  simp [cancelMetric, h]
+
+/-- A measured answer has a positive em, so converting its coordinates to
+relative font units never divides by zero. The attachment contracts belong
+to `Math.CancelIn`; this is the measured-font boundary's contract. -/
+theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
+    (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
+    (body value : Math.MList) (metric : Math.CancelMetric)
+    (h : cancelMetric geom fs styles st spec body value = some metric) :
+    0 < metric.em := by
+  cases hf : fs.mathFont? with
+  | none => simp [cancelMetric, hf] at h
+  | some found =>
+    rcases found with ⟨idx, font, consts⟩
+    simp only [cancelMetric, hf, bind, Option.bind] at h
+    split at h
+    · contradiction
+    · cases h
+      exact Int.not_le.mp (by assumption)
+
 def lineThroughRaise (xHeight : Sp) : Sp := max 0 xHeight * 55 / 100
 
 def lineThroughThickness : Sp := Ir.lineThroughThickness
@@ -3890,17 +3957,13 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- `Math.mathSize` states and its agreement theorems bound to the sp.
       let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
       let (runSize, leading) := sty.metrics size xHeight textW textH
-      let e : MathEnv := {
-        idx, font, consts, fs
+      let e := { MathEnv.forRun fs idx font consts around runSize with
         color := sty.color
         link := sty.link
         decorations := sty.resolvedDecorations size xHeight textW textH fs
         leading := leading
         ground := sty.ground
-        attr := attr
-        textBase := runSize
-        base := (Math.mathSize runSize.toNat around.xHeightOptical
-          around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
+        attr := attr }
       let (ms, m) := mathItems e display body acc.dropped
       let sites := m.foldl (fun sites (idx, c) =>
         if acc.dropped.contains (idx, c) then sites

@@ -1316,6 +1316,16 @@ structure CancelIn where
   space : Int := 0
   deriving Repr, BEq, Inhabited
 
+/-- Measured cancellation in the active math font and style. The operand's
+horizontal ink is distinct from its advance: signed spacing can leave ink
+outside the logical box. Consumers reserve both without moving the attachment. -/
+structure CancelMetric where
+  em : Int
+  input : CancelIn
+  bodyLeft : Int
+  bodyRight : Int
+  deriving Repr, BEq, Inhabited
+
 /-- The mark box, as `(x0, y0, x1, y1)` from the construct's origin:
 horizontal advance and vertical line extent grown by the clearance. With room
 the operand starts at `gap`; overlapping, it starts at 0. Negative kerns
