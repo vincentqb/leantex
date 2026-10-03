@@ -85,6 +85,14 @@ private def cancelReadEm (em : Int) (s : String) : Option Int := do
     let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
     return (n * em + (d : Int) / 2) / d
 
+/-- CSS margins carry signed offsets; MathML lspace itself must be
+nonnegative, and the balancing margin keeps the attachment advance zero. -/
+private def cancelReadOffset (em : Int) (node : Html.Node) : Option Int := do
+  let space ← cancelReadEm em (cancelAttr "lspace" node)
+  let left ← cancelReadEm em (cancelCss "margin-left" node)
+  let right ← cancelReadEm em (cancelCss "margin-right" node)
+  if space < 0 || left + right != 0 then none else some (space + left)
+
 private def cancelTag : Html.Node → String
   | .elem tag _ _ => tag
   | _ => ""
@@ -114,7 +122,10 @@ private structure CancelHtmlRead where
 
 private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := do
   if cancelTag node != "mpadded" || !(cancelCss "position" node).isEmpty then none else do
-    let width ← cancelReadEm em (cancelAttr "width" node)
+    let boxWidth ← cancelReadEm em (cancelAttr "width" node)
+    let margin ← if (cancelCss "margin-inline-end" node).isEmpty then some 0
+      else cancelReadEm em (cancelCss "margin-inline-end" node)
+    let width := boxWidth + margin
     let top ← cancelReadEm em (cancelAttr "height" node)
     let depth ← cancelReadEm em (cancelAttr "depth" node)
     let b ← (cancelKids node)[0]?
@@ -124,9 +135,9 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
         (MathMl.nodeChars #[] v) != #['7'] then none else do
       if [b, v].any (fun n => cancelAttr "width" n != "0" ||
           cancelAttr "height" n != "0" || cancelAttr "depth" n != "0") then none else do
-        let bx ← cancelReadEm em (cancelAttr "lspace" b)
+        let bx ← cancelReadOffset em b
         let by_ ← cancelReadEm em (cancelAttr "voffset" b)
-        let vx ← cancelReadEm em (cancelAttr "lspace" v)
+        let vx ← cancelReadOffset em v
         let vy ← cancelReadEm em (cancelAttr "voffset" v)
         let target ← (cancelKids v)[0]?
         let overlay ← (cancelKids node)[2]?
@@ -139,9 +150,8 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
             !(cancelCss "top" svg).isEmpty || cancelCss "vertical-align" svg != "baseline" ||
             cancelCss "overflow" svg != "visible" ||
             cancelAttr "preserveAspectRatio" svg != "none" then none else do
-          let ox ← cancelReadEm em (cancelAttr "lspace" overlay)
+          let ox ← cancelReadOffset em overlay
           let oy ← cancelReadEm em (cancelAttr "voffset" overlay)
-          let sx ← cancelReadEm em (cancelCss "margin-left" text)
           let sw ← cancelReadEm em (cancelCss "width" svg)
           let sh ← cancelReadEm em (cancelCss "height" svg)
           let vb ← ((cancelAttr "viewBox" svg).splitOn " ").mapM String.toInt?
@@ -155,7 +165,7 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
                     | [xs, ys] =>
                       let x ← xs.toInt?
                       let y ← ys.toInt?
-                      return (ox + sx + (x - x0) * sw / w,
+                      return (ox + (x - x0) * sw / w,
                         oy + sh - (y - y0) * sh / h)
                     | _ => none
                   return pts.toArray
@@ -222,7 +232,7 @@ private def cancelContained (metric : CancelMetric) (room : Bool)
   points.all (fun (x, y) =>
     y + eps ≥ r.bot && y - eps ≤ r.top &&
       (!room || (x + eps ≥ 0 && x - eps ≤ r.width))) &&
-    (room || (cancelNear eps r.width (max 0 i.w) && cancelNear eps r.body.1 0))
+    (room || (cancelNear eps r.width i.w && cancelNear eps r.body.1 0))
 
 /-- Room allocation cannot change a cancellation target's font-size level.
 The expected level comes from the same IR style rule the PDF layout reads.

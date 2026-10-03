@@ -50,11 +50,24 @@ def measuredEm (n em : Int) : String :=
   (if n < 0 && m != 0 then "-" else "") ++
     s!"{m / 1000000}." ++ "".pushn '0' (6 - fs.length) ++ fs ++ "em"
 
-/-- Signed mu over 18ths of the current em (TeXbook p. 168).
-Negative spacing is emitted as an inline margin: MathML Core §3.2.5's
-width hint rejects negative values, whereas CSS margins preserve the
-following glyph displacement and the row's advance. -/
-def muWidth (mu : Int) : String := measuredEm mu 18
+/-- MathML width hints are nonnegative; a CSS end margin carries the
+negative part of an advance. Both are in the same current-style units. -/
+def widthParts (width : Int) : Int × Int := (max 0 width, min 0 width)
+
+/-- Artifact arithmetic: the browser's width and end margin preserve every
+signed advance, including zero, without an invalid negative width hint. -/
+theorem widthParts_contract (width : Int) :
+    let p := widthParts width
+    0 ≤ p.1 ∧ p.2 ≤ 0 ∧ p.1 + p.2 = width := by
+  dsimp [widthParts]
+  omega
+
+/-- One advance projection for spacing and measured attachment boxes. -/
+def advanceAttrs (em width : Int) : Array (String × String) :=
+  let (w, margin) := widthParts width
+  if margin < 0 then
+    #[("width", "0"), ("style", s!"margin-inline-end: {measuredEm margin em}")]
+  else #[("width", measuredEm w em)]
 
 /-- The padding a stretched array's cells add above and below, so its rows
 stand `\arraystretch` times the one-baseline pitch apart: half the stretch
@@ -191,6 +204,9 @@ structure Marks where
   /-- Resolved font units for physical math lengths, through the same native
   run resolver as the attachment measurement. -/
   em : MathStyle → Option Int := fun _ => none
+  /-- Text-sourced alphabets use the ambient text size, before the math
+  face's optical size adjustment. -/
+  textEm : MathStyle → Option Int := fun _ => none
   /-- The current style's em and the exact measured input, in the same
   coordinate units. A missing measurement keeps the semantic fallback. -/
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
@@ -346,15 +362,17 @@ def cancelPolygon (ink : String) (pad : Int) (ps : Array (Int × Int)) : Html.No
   .elem "polygon" #[("points", points), ("fill", ink)] #[]
 
 /-- A zero-size placement box uses offsets in the parent's current-style
-em, outside any font-size change applied to the visible native child. -/
+em, outside the visible child's font-size change. Balanced margins preserve
+signed offsets and zero advance: Chromium clamps negative MathML lspace. -/
 def cancelAt (em x y : Int) (child : Html.Node) : Html.Node :=
   .elem "mpadded" #[("width", "0"), ("height", "0"), ("depth", "0"),
-    ("lspace", measuredEm x em), ("voffset", measuredEm y em)] #[child]
+    ("lspace", "0"), ("voffset", measuredEm y em),
+    ("style", s!"margin-left: {measuredEm x em}; margin-right: {measuredEm (-x) em}")]
+    #[child]
 
 /-- Artifact placement: one SVG user unit is one measured input unit. The
 viewport contains the whole measured reach, with its bottom on an explicit
-MathML baseline. Its mtext owns the horizontal displacement: browsers clamp
-negative mpadded lspace and disagree on absolutely positioned SVG bearings.
+MathML baseline. Body, target and SVG use the same signed placement boxes.
 At least one em in each dimension keeps zero-advance content nondegenerate.
 Body and value remain selectable MathML. -/
 def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
@@ -363,9 +381,9 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
   let i := metric.input
   let g := Math.cancelGeom mark spec.room i
   let visible := mark == .to || shown
-  let reach := cancelReach metric g visible
+  let reach := cancelReach metric g shown
   let (pad, width) := if spec.room then inkRoom reach.left reach.right g.advance
-    else (0, max 0 g.advance)
+    else (0, g.advance)
   let ink := match spec.color with
     | some (c, n) => inkCss c n
     | none => "currentColor"
@@ -385,11 +403,10 @@ vertical-align: baseline; overflow: visible; pointer-events: none")]
     (paint (spec.color.map fun (c, n) => inkCss c n)
       (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals))
   let kids := if visible then #[body, value] else #[body]
-  .elem "mpadded" #[("width", measuredEm width em),
-    ("height", measuredEm reach.top em), ("depth", measuredEm (-reach.bot) em),
-    ("data-cancel-metric", "measured")]
-    (kids.push (cancelAt em 0 reach.bot
-      (.elem "mtext" #[("style", s!"margin-left: {measuredEm sx em}")] #[svg])))
+  .elem "mpadded" (advanceAttrs em width ++
+    #[("height", measuredEm reach.top em), ("depth", measuredEm (-reach.bot) em),
+      ("data-cancel-metric", "measured")])
+    (kids.push (cancelAt em sx reach.bot (.elem "mtext" #[] #[svg])))
 
 /-- The font provider is the sole source of measured bounds. A nonpositive
 em cannot define a CSS projection and takes the named semantic fallback. -/
@@ -420,10 +437,8 @@ nucleus under its script schema (`scriptNode`). `disp` goes false inside
 scripts, as the script styles are never display. A colour switch is read
 by its list (`listNodes`) and emits nothing of its own. -/
 def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
-  | .space mu =>
-    .elem "mspace" (if mu < 0 then
-      #[("width", "0"), ("style", s!"margin-inline-end: {muWidth mu}")]
-      else #[("width", muWidth mu)]) #[]
+  | .space mu => -- Signed mu: 18ths of the current em (TeXbook p. 168).
+    .elem "mspace" (advanceAttrs 18 mu) #[]
   | .ink _ _ => .elem "mrow" #[] #[]
   | .atom cls nuc sup sub lim =>
     scriptNode (lim && disp) (nucNode mk disp cls nuc)
@@ -469,7 +484,11 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
       | "mi" => #[("mathvariant", "normal")]
       | "mo" => #[("stretchy", "false")]
       | _ => #[]
-    .elem tag (base.push ("style", style.css)) #[.text (charText c)]
+    let sizing := match mk.textEm mk.style, mk.em mk.style with
+      | some text, some math =>
+        if text > 0 && math > 0 then s!"; font-size: {measuredEm text math}" else ""
+      | _, _ => ""
+    .elem tag (base.push ("style", style.css ++ sizing)) #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
