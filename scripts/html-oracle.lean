@@ -734,13 +734,8 @@ async function runReader(name) {
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(100);
       const ready = await page.evaluate(() => document.readyState);
-      // A stylesheet or icon the document names by URL is the author's
-      // file, not the engine's emission: its absence from the fixture is
-      // not a load failure.
-      const declared = await page.evaluate(() => [...document.querySelectorAll('link[href]')].map(l => l.href));
-      const own = errors.filter(e => !declared.some(u => e.includes(u)));
-      out(fx, name, 'load', ready === 'complete' && own.length === 0 ? 'pass'
-        : 'fail:' + clean(ready !== 'complete' ? 'readyState ' + ready : own[0]));
+      out(fx, name, 'load', ready === 'complete' && errors.length === 0 ? 'pass'
+        : 'fail:' + clean(ready !== 'complete' ? 'readyState ' + ready : errors[0]));
       for (const [feature, fn] of Object.entries(checks)) {
         out(fx, name, feature, cell(await page.evaluate(fn)));
       }
@@ -836,25 +831,44 @@ def copyTree (src dst : System.FilePath) : IO Unit := do
     if let some parent := d.parent then IO.FS.createDirAll parent
     IO.FS.writeBinFile d (← IO.FS.readBinFile f)
 
-/-- Exact generated SVG bytes under the hrefs present in the pages the browser
-will open. Converter diagnostics enter as failed records, so a missing tool
-cannot silently turn a previously exercised image into a passing `na` cell. -/
+/-- Decode the data URL independently of the engine's encoder. The binary
+pipe preserves exact bytes; malformed base64 is a failed capture. -/
+def svgPayload (root : System.FilePath) (href : String) : IO (Except String ByteArray) := do
+  let dataPrefix := "data:image/svg+xml;base64,"
+  if !href.startsWith dataPrefix then return .error "non-svg-resource"
+  let file := root / "capture-base64"
+  IO.FS.writeFile file ((href.drop dataPrefix.length).toString)
+  let child ← IO.Process.spawn
+    { cmd := "base64", args := #["-d", file.toString]
+      stdin := .null, stdout := .piped, stderr := .null }
+  let data ← child.stdout.readBinToEnd
+  if (← child.wait) != 0 then return .error "invalid-base64"
+  return .ok data
+
+/-- Read the actual file with libxml's HTML parser, then capture SVG data URLs
+by image/source ordinal. Text resembling markup does not become an image; repeated
+payloads, hidden images and print posters each retain their own rendering use.
+Converter failures remain explicit records even when no image was published. -/
 def capturedBrowserFaces (root : System.FilePath) (fixtures : Array String)
     (failures : Array Scoreboard.BrowserFace) : IO (Array Scoreboard.BrowserFace) := do
   let mut out := failures
   for fixture in fixtures do
-    let html ← IO.FS.readFile (root / (fixture ++ ".html"))
-    let assets := root / (fixture ++ ".assets")
-    if !(← assets.isDir) then continue
-    for file in (← System.FilePath.walkDir assets).qsort (·.toString < ·.toString) do
-      if (← file.isDir) || !LeanTex.Core.Image.isSvg file.toString then continue
-      let rel := (file.toString.drop (assets.toString.length + 1)).toString
-      let href := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") rel
-      if (html.splitOn s!"src=\"{href}\"").length > 1 ||
-          (html.splitOn s!"srcset=\"{href}\"").length > 1 then
-        out := out.push (Scoreboard.BrowserFace.captured fixture href (← IO.FS.readBinFile file))
-      else
-        out := out.push { fixture, href, result := .failed "unlinked-svg" }
+    for (tag, attr, role) in [("img", "src", "i"), ("source", "srcset", "p")] do
+      let parsed ← IO.Process.output
+        { cmd := "xmllint"
+          args := #["--nonet", "--html", "--xpath", "//" ++ tag ++ "/@" ++ attr,
+            (root / (fixture ++ ".html")).toString] }
+      if parsed.exitCode != 0 && !(parsed.exitCode == 11 &&
+          parsed.stdout.isEmpty && (parsed.stderr.splitOn "XPath set is empty").length > 1) then
+        out := out.push (Scoreboard.BrowserFace.failed fixture "html-parse")
+        continue
+      for (tail, k) in ((parsed.stdout.splitOn (" " ++ attr ++ "=\"")).drop 1).toArray.zipIdx do
+        let href := (tail.splitOn "\"").head!
+        if !href.startsWith "data:image/svg+xml;base64," then continue
+        let name := Scoreboard.browserFaceHref fixture role k href
+        match ← svgPayload root href with
+        | .ok bytes => out := out.push (Scoreboard.BrowserFace.captured fixture name bytes)
+        | .error why => out := out.push { fixture, href := name, result := .failed why }
   return out
 
 -- ## Aggregation
@@ -1075,26 +1089,38 @@ def selftest : IO UInt32 := do
       IO.eprintln s!"FAIL {name}: parsed"
       bad := bad + 1
   let captureFails ← IO.FS.withTempDir fun root => do
-    let fixture := "encoded"
-    let assets := root / (fixture ++ ".assets")
-    IO.FS.createDirAll assets
+    let fixture := "embedded"
     let bytes := "<svg/>".toUTF8
-    let names := #["a , λ.svg", "upper.SVG"]
-    let mut expected := #[]
-    let mut html := ""
-    for (name, k) in names.zipIdx do
-      let file := LeanTex.Core.HtmlDoc.imageAssetName k name (some bytes)
-      let href := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") file
-      IO.FS.writeBinFile (assets / file) bytes
-      html := html ++ s!"<img src=\"{href}\">"
-      expected := expected.push (Scoreboard.BrowserFace.captured fixture href bytes)
-    IO.FS.writeFile (root / (fixture ++ ".html")) html
+    let href := "data:image/svg+xml;base64,PHN2Zy8+"
+    let pin := Scoreboard.sha256Hex href.toUTF8
+    -- No sidecars exist. Repeated bytes still represent distinct image uses,
+    -- and a print poster is distinct from its screen image.
+    IO.FS.writeFile (root / (fixture ++ ".html"))
+      ("<!doctype html><html><body><picture><source srcset=\"" ++ href ++
+        "\"><img src=\"" ++ href ++ "\"></picture><img src=\"" ++ href ++
+        "\"></body></html>")
+    let expected := #["i0", "i1", "p0"] |>.map fun role =>
+      Scoreboard.BrowserFace.captured fixture (fixture ++ "/" ++ role ++ "-" ++ pin ++ ".svg") bytes
     let captured ← capturedBrowserFaces root #[fixture] #[]
     let mut failures := 0
-    for face in expected do
-      unless captured.contains face do
-        IO.eprintln s!"FAIL browser capture: encoded/uppercase href {face.href} is captured exactly"
-        failures := failures + 1
+    if captured != expected then
+      IO.eprintln "FAIL browser capture: each embedded use is captured exactly, with no sidecars"
+      failures := failures + 1
+    IO.FS.writeFile (root / (fixture ++ ".html"))
+      ("<!doctype html><html><body><img src=\"data:image/png;base64,iVBORw0KGgo=\">" ++
+        "&lt;img src=\"" ++ href ++ "\"&gt;<script>'<img src=\"" ++ href ++
+        "\">'</script><div hidden><img src=\"" ++ href ++ "\"></div></body></html>")
+    let hidden ← capturedBrowserFaces root #[fixture] #[]
+    if hidden != #[expected[1]!] then
+      IO.eprintln "FAIL browser capture: parsed hidden images retain their ordinal; quoted markup is not a use"
+      failures := failures + 1
+    IO.FS.writeFile (root / (fixture ++ ".html"))
+      "<!doctype html><html><body><img src=\"data:image/svg+xml;base64,!?\"></body></html>"
+    let malformed ← capturedBrowserFaces root #[fixture] #[]
+    let badName := Scoreboard.browserFaceHref fixture "i" 0 "data:image/svg+xml;base64,!?"
+    if malformed != #[{ fixture, href := badName, result := .failed "invalid-base64" }] then
+      IO.eprintln "FAIL browser capture: malformed embedded payload is an explicit failed capture"
+      failures := failures + 1
     return failures
   bad := bad + captureFails
   if bad == 0 then

@@ -27,9 +27,12 @@ def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
       (contentKey before == contentKey (Hermetic.browserSourceBlobs "figure" doc store))
     let actual ← imageFaces store
     let faced := Hermetic.facedStore store
-    let expected := Hermetic.pageExpectedFaces "figure" faced
+    let expectedFor := fun imgs : Image.Store =>
+      let (_, body, _) := HtmlDoc.emitTree { imgs } doc
+      browserExpectedFaces "figure" body
+    let expected := expectedFor faced
     check ref "hermetic source: expected identities match real converted primary and poster"
-      (expected == Hermetic.pageExpectedFaces "figure" actual && expected.size == 2)
+      (expected == expectedFor actual && expected.size == 2)
     check ref "hermetic source: the typed page contains every captured resource URI"
       ((HtmlDoc.imageResources faced).all fun a =>
         let html := (HtmlDoc.emit { imgs := faced, assetsDir := "figure.assets" } doc).1
@@ -37,7 +40,7 @@ def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
     let without : Image.Store :=
       { entries := store.entries.map fun en => { en with companion := none } }
     check ref "hermetic source: removing a captured companion changes both plan and key"
-      ((Hermetic.pageExpectedFaces "figure" (Hermetic.facedStore without)).size == 1 &&
+      ((expectedFor (Hermetic.facedStore without)).size == 1 &&
         contentKey before != contentKey (Hermetic.browserSourceBlobs "figure" doc without))
 where
   imageFaces (store : Image.Store) : IO Image.Store := do

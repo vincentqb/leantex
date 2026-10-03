@@ -77,6 +77,7 @@ invert the test.
 import LeanTex
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
+import LeanTex.Cli.Publication
 import scripts.Gate
 import Lean.Data.Json
 
@@ -1229,32 +1230,63 @@ def browserFaces (text : String) : Except String (Array BrowserFace) := do
       out := out.push face
   return out
 
-/-- The identity a hermetic image plan and an actual converted asset share.
-Only the 32-digit content key is erased: role, store index, encoded basename
-and SVG extension remain. The exact href still enters `browserFaceKey`. -/
+/-- Compact name for a rendering use in the actual HTML: image/source ordinal
+plus the SHA-256 of its exact data URL. The record never stores megabytes of
+base64; the byte digest in `BrowserFaceResult` independently covers its payload. -/
+def browserFaceHref (fixture role : String) (index : Nat) (href : String) : String :=
+  s!"{fixture}/{role}{index}-{sha256Hex href.toUTF8}.svg"
+
+/-- A hermetic page knows an image's position and primary/poster role before a
+host converts its bytes. Erase only that URL's digest, preserving both. -/
 def browserImageIdentity (fixture href : String) : Option String := do
-  let assetPrefix := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") ""
-  if !href.startsWith assetPrefix then none else
-  let file := (href.drop assetPrefix.length).toString
-  if file.contains '/' then none else
-  let ident :: key :: parts := file.splitOn "-" | none
+  let basePath := fixture ++ "/"
+  if !href.startsWith basePath || !href.endsWith ".svg" then none else
+  let file := (href.drop basePath.length |>.dropEnd 4).toString
+  let [ident, key] := file.splitOn "-" | none
   if !(ident.startsWith "i" || ident.startsWith "p") then none else
   let digits := (ident.drop 1).toString
   let index ← digits.toNat?
   if digits != toString index then none else
-  if key.length != 32 || !key.all (fun c => c.isDigit || ('A' ≤ c && c ≤ 'F')) then none else
-  let base := String.intercalate "-" parts
-  if !LeanTex.Core.Image.isSvg base then none else
-  some (assetPrefix ++ ident ++ "-" ++ base)
+  if key.length != 64 || !key.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) then none else
+  some (basePath ++ ident ++ ".svg")
 
-/-- Boundary pictures use the disjoint lowercase 32-digit picture hash,
-without an image index or content-key component. -/
-def browserBoundaryFace (fixture href : String) : Bool :=
-  let assetPrefix := LeanTex.Core.HtmlDoc.imageAssetHref (fixture ++ ".assets") ""
-  let file := (href.drop assetPrefix.length).toString
-  let key := (file.dropEnd 4).toString
-  href.startsWith assetPrefix && file.endsWith ".svg" && key.length == 32 &&
-    key.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f'))
+mutual
+
+/-- Independent typed-tree expectation, including hidden image uses. HTML has
+no generic fold; this structural walk records only the two image-fetch sites. -/
+def browserRefsOne (acc : Array (String × String)) : LeanTex.Core.Html.Node → Array (String × String)
+  | .elem tag attrs kids =>
+    let field := if tag == "img" then some ("i", "src")
+      else if tag == "source" then some ("p", "srcset") else none
+    let acc := match field with
+      | some (role, key) => acc.push (role, ((attrs.find? (·.1 == key)).map (·.2)).getD "")
+      | none => acc
+    browserRefsList acc kids.toList
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+def browserRefsList (acc : Array (String × String)) : List LeanTex.Core.Html.Node → Array (String × String)
+  | [] => acc
+  | node :: rest => browserRefsList (browserRefsOne acc node) rest
+
+end
+
+/-- One required capture per SVG rendering use, not per unique payload. Raster
+uses still advance their role's ordinal. An unfulfilled picture request is a
+known SVG use: the host oracle must capture it, too, or refuse the build. -/
+def browserExpectedFaces (fixture : String) (nodes : Array LeanTex.Core.Html.Node) :
+    Array (String × String) := Id.run do
+  let mut image := 0
+  let mut poster := 0
+  let mut out := #[]
+  for (role, href) in browserRefsList #[] nodes.toList do
+    let index := if role == "i" then image else poster
+    if role == "i" then image := image + 1 else poster := poster + 1
+    if href.startsWith "data:image/svg+xml;base64," ||
+        href.startsWith LeanTex.Core.Ir.picSrcPrefix then
+      out := out.push (fixture, s!"{fixture}/{role}{index}.svg")
+  return out
 
 /-- Faults that stop committed pass cells certifying another set of browser
 faces. The source key is rebuilt hermetically; the content key is recomputed
@@ -1300,8 +1332,7 @@ def browserFaceFaults (text freshSourceKey : String)
           if !expected.contains identity then
             faults := faults.push s!"unexpected browser image {face.fixture}/{href}"
         | none =>
-          if !browserBoundaryFace face.fixture face.href then
-            faults := faults.push s!"unclassified browser face {face.fixture}/{face.href}"
+          faults := faults.push s!"unclassified browser face {face.fixture}/{face.href}"
     for (fixture, href) in expected do
       if !captured.contains (fixture, href) then
         faults := faults.push s!"missing browser image {fixture}/{href}"
@@ -1648,16 +1679,6 @@ def facedHrefs (name : String) (imgs : Image.Store) (k : Nat) : Option String ×
       HtmlDoc.imageAssetHref (name ++ ".assets") a.file
   (href false, href true)
 
-/-- Only converted content keys are unknown hermetically. Retain every
-other part of the typed SVG asset's identity, including its primary/poster
-role and encoded filename; raster assets contribute no SVG expectation. -/
-def pageExpectedFaces (name : String) (imgs : Image.Store) : Array (String × String) :=
-  (HtmlDoc.imageAssets imgs).filterMap fun a =>
-    if Image.isSvg a.file then
-      (browserImageIdentity name (HtmlDoc.imageAssetHref (name ++ ".assets") a.file)).map
-        (name, ·)
-    else none
-
 /-- Key captured vector inputs, the driver's shared plan, and its typed
 success projection. No filesystem read or host conversion occurs here:
 deleting or replacing a file after capture cannot change these inputs. -/
@@ -1730,9 +1751,11 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
     { css, imgs := faced
       fonts := if doc.fontPolicy == .embedded then some fs else none
       fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
+  let .ok cfg ← LeanTex.Cli.Publication.captureHtmlResources file cfg doc | return none
+  let (head, body, _) := HtmlDoc.emitTree cfg doc
   let browserSources := browserSourceBlobs name doc store
-  return some { html := (HtmlDoc.emit cfg doc).1, read, browserSources
-                expectedFaces := pageExpectedFaces name faced }
+  return some { html := Html.document (doc.info.language.getD "en") head body, read, browserSources
+                expectedFaces := browserExpectedFaces name body }
 
 structure CorpusKeys where
   html : String

@@ -17,9 +17,10 @@ This tier never launches a browser or a converter: it reads the committed
 matrix. It rebuilds the corpus in-process and compares `src-key:` with the
 HTML this tree emits. It separately compares `browser-face-src-key:` with a
 hermetic key over the vector inputs, generated hrefs, and the shared converter
-recipe. Every `browser-face:` row then pins one href to the SHA-256 and size of
-the exact bytes the oracle gave the browser; `browser-face-key:` covers those
-rows. Missing, malformed, duplicated, stale, or failed captures are faults, so
+recipe. Every `browser-face:` row pins a rendering use and the SHA-256 of
+its data URL to the independently decoded payload's SHA-256 and size;
+`browser-face-key:` covers those rows. Missing, malformed, duplicated,
+stale, or failed captures are faults, so
 pass cells cannot outlive the pages or browser faces they measured.
 
 Converter output is inherently a host report: this check does not execute
@@ -191,11 +192,12 @@ alpha       pass       untested\n"
   no "key: 16 hex digits" ((contentKey a).length == 16)
   -- The browser-face capture is the exact href and converted content the
   -- browser run received. A converter regression cannot retain its key.
+  let svgHref (bytes : ByteArray) :=
+    ({ media := .svg, bytes } : LeanTex.Core.HtmlResource.Embedded).uri
   let imageHref (k : Nat) (bytes : ByteArray) :=
-    LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
-      (LeanTex.Core.HtmlDoc.imageAssetName k "box.svg" (some bytes))
+    browserFaceHref "figures" "i" k (svgHref bytes)
   let face := BrowserFace.captured "figures" (imageHref 0 "<svg/>".toUTF8) "<svg/>".toUTF8
-  let expected := #[("figures", "figures.assets/i0-box.svg")]
+  let expected := #[("figures", "figures/i0.svg")]
   let changedBytes := BrowserFace.captured "figures" face.href
     "<svg><path/></svg>".toUTF8
   let changedHref := BrowserFace.captured "figures" (imageHref 1 "<svg/>".toUTF8) "<svg/>".toUTF8
@@ -244,44 +246,45 @@ browser-face: figures missing-fields\n"
     (!(browserFaceFaults (records #[empty]) "source" expected).isEmpty)
   no "browser face: a missing expected poster is refused even with a recomputed key"
     (!(browserFaceFaults faceText "source"
-      #[("figures", "figures.assets/i0-box.svg"), ("figures", "figures.assets/p0-box.svg")]).isEmpty)
+      #[("figures", "figures/i0.svg"), ("figures", "figures/p0.svg")]).isEmpty)
   no "browser face: an extra face is refused even with a recomputed key"
     (!(browserFaceFaults (records #[face, changedHref]) "source"
-      #[("figures", "figures.assets/i0-box.svg")]).isEmpty)
+      #[("figures", "figures/i0.svg")]).isEmpty)
   let replaced := BrowserFace.captured "figures"
     (imageHref 0 "<svg><path/></svg>".toUTF8) "<svg><path/></svg>".toUTF8
   no "browser identity: content-key changes retain the expected identity"
     (browserImageIdentity "figures" face.href == browserImageIdentity "figures" replaced.href)
   no "browser identity: the exact capture key still sees a content-key change"
     (browserFaceKey #[face] != browserFaceKey #[replaced])
-  no "browser identity: two content keys for one role/index/name are duplicates"
+  no "browser identity: two content keys for one role/index are duplicates"
     (!(browserFaceFaults (records #[face, replaced]) "source" expected).isEmpty)
   no "browser identity: an index change remains visible"
     (browserImageIdentity "figures" face.href != browserImageIdentity "figures" changedHref.href)
-  let posterHref := LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
-    (LeanTex.Core.HtmlDoc.imagePosterName 0 { src := "box.pdf", posterSvg := some "<svg/>".toUTF8 })
+  let posterHref := browserFaceHref "figures" "p" 0 (svgHref "<svg/>".toUTF8)
   no "browser identity: primary and poster remain distinct"
-    (browserImageIdentity "figures" posterHref == some "figures.assets/p0-box.svg" &&
+    (browserImageIdentity "figures" posterHref == some "figures/p0.svg" &&
       browserImageIdentity "figures" face.href != browserImageIdentity "figures" posterHref)
   let poster := BrowserFace.captured "figures" posterHref "<svg/>".toUTF8
   no "browser face: the complete expected primary/poster set passes"
     (browserFaceFaults (records #[face, poster]) "source"
-      (expected.push ("figures", "figures.assets/p0-box.svg"))).isEmpty
-  let boundaryHref := "figures.assets/" ++ LeanTex.Core.Ir.picHash "invented boundary" ++ ".svg"
-  let boundary := BrowserFace.captured "figures" boundaryHref "<svg/>".toUTF8
-  no "browser identity: boundary hash is classified only as a boundary"
-    (browserBoundaryFace "figures" boundaryHref && (browserImageIdentity "figures" boundaryHref).isNone)
-  no "browser identity: an image is never classified as a boundary"
-    (!browserBoundaryFace "figures" face.href)
-  no "browser face: an actual boundary identity passes without an image expectation"
-    (browserFaceFaults (records #[boundary]) "source").isEmpty
+      (expected.push ("figures", "figures/p0.svg"))).isEmpty
+  let boundaryHref := browserFaceHref "figures" "i" 0 (svgHref "<svg><path/></svg>".toUTF8)
+  let boundary := BrowserFace.captured "figures" boundaryHref "<svg><path/></svg>".toUTF8
+  no "browser face: a boundary image also owes its typed-tree expectation"
+    (!(browserFaceFaults (records #[boundary]) "source").isEmpty &&
+      (browserFaceFaults (records #[boundary]) "source" expected).isEmpty)
   no "browser face: a raster-only page needs no converted capture"
     (browserFaceFaults (records #[]) "source").isEmpty
-  let encoded := LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets"
-    (LeanTex.Core.HtmlDoc.imageAssetName 0 "a , λ.SVG" (some "<svg/>".toUTF8))
-  no "browser identity: encoded names and uppercase SVG retain their spelling"
-    (browserImageIdentity "figures" encoded ==
-      some (LeanTex.Core.HtmlDoc.imageAssetHref "figures.assets" "i0-a , λ.SVG"))
+  let img (href : String) : LeanTex.Core.Html.Node := .elem "img" #[⟨"src", href⟩] #[]
+  let source (href : String) : LeanTex.Core.Html.Node := .elem "source" #[⟨"srcset", href⟩] #[]
+  let refs : Array LeanTex.Core.Html.Node := #[
+    img "data:image/png;base64,iVBORw0KGgo=",
+    .elem "picture" #[] #[source (svgHref "<svg/>".toUTF8), img (svgHref "<svg/>".toUTF8)],
+    .elem "div" #[⟨"hidden", ""⟩] #[img (LeanTex.Core.Ir.picSrcPrefix ++ "request")],
+    .text "<img src='unowned.svg'>", .style "img {color: red}", .script #[] "'<img src=x>'"]
+  no "browser expectations: image roles count raster uses and retain hidden resources"
+    (browserExpectedFaces "figures" refs ==
+      #[("figures", "figures/p0.svg"), ("figures", "figures/i1.svg"), ("figures", "figures/i2.svg")])
   let message (code text : String) := Lean.Json.compress <| Lean.Json.mkObj
     [("event", .str "diagnostic"), ("code", .str code), ("message", .str text)]
   let misleading := "rsvg-convert: unrelated setup output\n" ++

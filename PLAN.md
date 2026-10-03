@@ -26125,3 +26125,21 @@ They include changing or deleting source assets between capture and publish,
 refused-resource preservation of existing output, and every shipped corpus
 page. The browser acceptance run moves only the HTML file into a fresh
 directory and checks its images, fonts and rendering requests offline.
+
+### 2026-10-03 — Browser evidence follows embedded rendering uses
+
+The browser oracle now parses the emitted HTML and independently decodes
+its SVG data URLs. Its capture key binds each image or poster position to
+the exact URL and decoded bytes. Repeated payloads still owe one capture
+per use; raster uses advance the image position, hidden images remain in
+the census, and quoted markup contributes no image. Boundary pictures owe
+the same capture as every other SVG. No sidecar filename is evidence of
+what a single-file page contains.
+
+The expected uses come from the typed tree. Local stylesheet and favicon
+bytes enter its hermetic freshness key through the publisher's shared
+capture operation. Missing head resources fail the browser load check;
+the invented profile fixture now supplies both declared resources. Three
+capture assertions failed against the sidecar reader and pass against the
+embedded reader. Parser, malformed-base64, missing-use, duplicate-use,
+primary/poster and changed-payload controls keep the audit accountable.
