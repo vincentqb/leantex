@@ -701,6 +701,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     usesInlines { cx with cur := some (nm, c, acc.runs) } { acc with runs := acc.runs + 1 }
       body.toList
   -- a role names its content; the ink inside keeps the current colour
+  | .located _ body => usesInlines cx acc body.toList
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body => usesInlines cx acc body.toList
   | .decorated _ body => usesInlines cx acc body.toList
