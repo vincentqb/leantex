@@ -5,6 +5,8 @@ import Tests.CancelRegression
 import Tests.CancelHtml
 import Tests.CancelAlignment
 import Tests.CancelMetric
+import Tests.CancelContext
+import Tests.CancelReview
 import Tests.BeamerHooks
 import Tests.BeamerColors
 import Tests.MintedSettings
@@ -243,6 +245,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   cancelHtmlChecks ref
   CancelAlignment.checks ref oneFace
   CancelMetric.checks ref oneFace
+  CancelContext.checks ref
+  CancelReview.checks ref oneFace
   roleLayoutChecks ref geom oneFace
   navLayoutChecks ref geom oneFace
   vdistChecks ref geom oneFace

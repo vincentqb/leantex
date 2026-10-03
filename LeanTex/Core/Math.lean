@@ -1316,6 +1316,17 @@ structure CancelIn where
   space : Int := 0
   deriving Repr, BEq, Inhabited
 
+/-- A measured target paints only when both axes have nonzero extent.
+Its advance alone never creates attachment ink or a raised baseline. -/
+def CancelIn.hasValueInk (i : CancelIn) : Bool :=
+  i.vleft != i.vright && i.vbot != i.vtop
+
+/-- Ink presence depends only on the measured rectangle, never on source
+syntax, its logical advance or the baseline used to measure it. -/
+theorem CancelIn.hasValueInk_contract (i : CancelIn) :
+    i.hasValueInk = true ↔ i.vleft ≠ i.vright ∧ i.vbot ≠ i.vtop := by
+  simp [hasValueInk]
+
 /-- Measured cancellation in the active math font and style. The operand's
 horizontal ink is distinct from its advance: signed spacing can leave ink
 outside the logical box. Consumers reserve both without moving the attachment. -/

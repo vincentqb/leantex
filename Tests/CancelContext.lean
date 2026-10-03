@@ -84,7 +84,9 @@ private def columnContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
 
 /-- A text-sourced math leaf uses the text em; its neighbouring math glyph
 uses the x-height-matched math em. The leaf's emitted font-size must state
-that ratio even inside either script style. -/
+that ratio even inside either script style. Firefox drops a plain relative
+font size on a token that also changes family; `calc` preserves that same
+ratio without adding a MathML container (the rendered text-target probe). -/
 private def mixedContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (name, before, after) in [("text", "$", "$"),
       ("script", "$z^{", "}$"), ("scriptscript", "$z^{z^{", "}}$")] do
@@ -104,14 +106,15 @@ private def mixedContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
         let m ← mathEm
         let node ← leaf
         let css ← (attrValuesOf (· == "mi") "style" node)[0]?
-        return hasStr css s!"font-size: {MathMl.measuredEm t m}").getD false)
+        return hasStr css s!"font-size: calc({MathMl.measuredEm t m})").getD false)
 
+end CancelContext
+
+open CancelContext in
 /-- Focused artifact guards for local measurement and mixed text/math ems. -/
-def checks (ref : IO.Ref (List String)) : IO Unit := do
+def CancelContext.checks (ref : IO.Ref (List String)) : IO Unit := do
   let some fonts ← serifFacesSet |
     check ref "cancel context fixture faces load" false
   localContextChecks ref fonts
   columnContextChecks ref fonts
   mixedContextChecks ref fonts
-
-end CancelContext

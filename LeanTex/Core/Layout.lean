@@ -3259,12 +3259,15 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
   let body := #[mathKern e size g.shift] ++ raised
+  -- Only measured target ink follows the arrow's ray. Raising a glyphless
+  -- kern would enlarge the line box, even though it paints nothing.
+  let vRaise := raise + if input.hasValueInk then g.valueY else 0
   let value := if vItems.isEmpty then #[] else
-    #[mathKern e size (g.valueX - g.shift - w)] ++ raiseItems (raise + g.valueY) vItems
+    let placed := raiseItems vRaise vItems
+    #[mathKern e size (g.valueX - g.shift - w)] ++ placed
   let reached := if vItems.isEmpty then g.shift + w else g.valueX + vw
-  let vRaise := raise + g.valueY
-  let top := max mTop (max (raise + input.top) (if vItems.isEmpty then raise else vRaise + input.vtop))
-  let bot := min mBot (min (raise + input.bot) (if vItems.isEmpty then raise else vRaise + input.vbot))
+  let top := max mTop (max (raise + input.top) (if input.hasValueInk then vRaise + input.vtop else raise))
+  let bot := min mBot (min (raise + input.bot) (if input.hasValueInk then vRaise + input.vbot else raise))
   let reach := struts e top bot
   let assembled := ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
   if !spec.room then assembled else
@@ -3273,8 +3276,9 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   let bounds := (mathItemsInk e.fs assembled).getD {}
   let left := min bounds.left (min g.shift (g.shift + w))
   let right := max bounds.right (max g.shift (g.shift + w))
-  let left := if vItems.isEmpty then left else min left (min g.valueX (g.valueX + vw))
-  let right := if vItems.isEmpty then right else max right (max g.valueX (g.valueX + vw))
+  let target := input.hasValueInk || vw != 0
+  let left := if target then min left (min g.valueX (g.valueX + vw)) else left
+  let right := if target then max right (max g.valueX (g.valueX + vw)) else right
   let (pad, width) := Math.inkRoom left right g.advance
   if pad == 0 && width == g.advance then assembled else
     #[mathKern e size pad] ++ assembled ++ #[mathKern e size (width - pad - g.advance)]

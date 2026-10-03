@@ -82,8 +82,10 @@ private def docWitness (fonts : Font.FontSet) (doc : Ir.Doc) (ds : Array Diag) :
   let out := layoutOf fonts doc geom
   let (_, nodes, hds) := HtmlDoc.emitTree {
     fonts := some fonts
-    cancelMetric := Layout.cancelMetric geom fonts
-    mathEm := Layout.mathEm geom fonts } doc
+    cancelMetric := fun measures ss st spec body value =>
+      Layout.cancelMetric geom fonts ss st spec body value (some measures)
+    mathEm := fun measures ss st => Layout.mathEm geom fonts ss st (some measures)
+    mathTextEm := fun measures ss st => Layout.mathTextEm geom fonts ss st (some measures) } doc
   if (ds ++ out.diags ++ hds).any (fun d =>
       d.code == "W0012" || d.code == "W0301" || d.code == "W0302") then
     throw "source unexpectedly refused"

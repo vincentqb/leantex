@@ -30,6 +30,8 @@ import Tests.CancelRegression
 import Tests.CancelHtml
 import Tests.CancelAlignment
 import Tests.CancelMetric
+import Tests.CancelContext
+import Tests.CancelReview
 import Tests.MathSym
 import Tests.BeamerHooks
 import Tests.BeamerColors
@@ -625,13 +627,19 @@ def reports : List Report := [
   { id := "R84", date := "2026-10-03"
     what := "cancellation arrows lost their visible heads and their targets sat below the forward ray instead of beyond the tip with measured clearance"
     pins := [check% CancelAlignment.checks, check% CancelMetric.checks,
+      check% CancelContext.checks, check% CancelReview.checks,
       check% cancelHtmlChecks, thm% Math.cancelHead_shape_exact,
+      thm% Math.CancelIn.hasValueInk_contract, thm% MathMl.widthParts_contract,
       thm% Math.inkRayOrigin_between, thm% Math.inkRayOrigin_clears_between,
       thm% Math.cancelGeom_envelope_between, thm% Layout.cancelMetric_em_agree]
     accept := ["native guards failed before arrowheads retained their full triangle and the measured target ink was centered on the forward ray",
       "seventy-two shared-provider assertions failed before both artifacts used the native style and font measurements",
       "typed HTML guards failed 320 fraction-style assertions and 352 script-scale assertions before current-style projection removed browser-dependent implicit scaling",
       "ninety-eight baseline projection assertions failed before the SVG used an explicit bottom baseline with its full measured viewport",
+      "review guards failed on signed advances and leftward attachment origins before portable margins preserved the native pen in both browsers",
+      "twelve local-context assertions failed before physical math lengths and text-sourced alphabets used the current box measure and text em; the stale-callback control also fails shared-column scope restoration",
+      "forty-four review assertions failed before empty and nonpainting targets preserved advance without extending the reserved height or surrounding native line baselines",
+      "three typed font-size assertions and a rendered Firefox text-target comparison failed before an equivalent calc spelling preserved the measured font ratio on family changes",
       "Firefox and Chromium render the same baseline projection and all forty-two script-size cases; screen and printed artifacts retain each head and target",
       "the private reference corpus builds in both formats and its affected native pages show the target beyond the arrow tip"]
     state := .guarded "9ede34c4" .before .author }

@@ -26464,14 +26464,30 @@ the operand and target as selectable MathML. One native style resolver also
 supplies physical math lengths. Explicit relative script transitions apply
 the font's MATH percentages once and respect the scriptscript floor. The
 SVG uses its full measured viewport and an explicit bottom baseline;
-absolute positioning depended on browser-specific ink bearings.
+absolute positioning depended on browser-specific ink bearings. Balanced
+margins carry signed offsets and advances portably, since browsers clamp
+negative MathML widths and disagree on negative `lspace`.
 
-Report R84 pins the failing arrow, shared-provider, style and baseline
-guards. Before their fixes, seventy-two provider assertions, 320 fraction
-style assertions, 352 script-scale assertions and ninety-eight baseline
-projection assertions failed. The focused checks now pass. Actual Firefox
-and Chromium screen and print probes preserve the geometry; forty-two
-script-size cases per browser pass. The native and browser PDFs retain all
-seven synthetic heads and targets. The external cancellation differential,
+The provider carries the current box measure through nested columns and
+fixed-width table cells. Physical lengths and text-sourced alphabets read
+the same font-size resolver as native placement, including its distinction
+between ambient text size and x-height-matched math size. A `calc` spelling
+preserves that same relative size when Firefox changes a MathML token's
+font family; the semantic tree is unchanged. Ink presence is a property of
+the measured rectangle, not of the source's syntax: empty groups, color
+switches and spacing retain their source and advance without raising
+invisible runs or enlarging the line's reserved height.
+
+Report R84 pins the failing arrow, shared-provider, style, local-context,
+signed-placement and baseline guards. Before their fixes, seventy-two
+provider assertions, 320 fraction-style assertions, 352 script-scale
+assertions and ninety-eight baseline projection assertions failed. Review
+also exposed twelve local-context failures, forty-four inkless-target
+failures and three font-size spelling failures, with a rendered Firefox
+witness for the last defect. The focused checks now pass. The follow-up
+matrix passes twenty Firefox checks and forty Chromium screen/print checks
+across signed advances, nonpainting targets, mixed fonts and local lengths.
+The earlier forty-two script-size cases per browser also pass. The native
+and browser PDFs retain all seven synthetic heads and targets. The external cancellation differential,
 five-repeat repository benchmark and private reference acceptance builds
 also pass. No private source enters the fixtures.

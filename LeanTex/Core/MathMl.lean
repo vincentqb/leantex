@@ -342,16 +342,19 @@ private def CancelReach.point (r : CancelReach) (p : Int × Int) : CancelReach :
   { left := min r.left p.1, right := max r.right p.1
     top := max r.top p.2, bot := min r.bot p.2 }
 
-private def cancelReach (metric : CancelMetric) (g : CancelGeom) (shown : Bool) : CancelReach :=
+private def cancelReach (metric : CancelMetric) (g : CancelGeom) : CancelReach :=
   let i := metric.input
   let body : CancelReach := {
     left := g.shift + min metric.bodyLeft (min 0 i.w)
     right := g.shift + max metric.bodyRight (max 0 i.w)
     top := max 0 i.top, bot := min 0 i.bot }
-  let body := if shown then
-      ((body.point (g.valueX + i.vleft, g.valueY + i.vbot)).point
-        (g.valueX + i.vright, g.valueY + i.vtop)).point
-        (g.valueX, g.valueY) |>.point (g.valueX + i.vw, g.valueY)
+  let body := if i.hasValueInk then
+      (body.point (g.valueX + i.vleft, g.valueY + i.vbot)).point
+        (g.valueX + i.vright, g.valueY + i.vtop)
+    else body
+  let body := if i.hasValueInk || i.vw != 0 then
+      { body with left := min body.left (min g.valueX (g.valueX + i.vw))
+                  right := max body.right (max g.valueX (g.valueX + i.vw)) }
     else body
   g.polys.foldl (fun r ps => ps.foldl CancelReach.point r) body
 
@@ -381,7 +384,7 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
   let i := metric.input
   let g := Math.cancelGeom mark spec.room i
   let visible := mark == .to || shown
-  let reach := cancelReach metric g shown
+  let reach := cancelReach metric g
   let (pad, width) := if spec.room then inkRoom reach.left reach.right g.advance
     else (0, g.advance)
   let ink := match spec.color with
@@ -484,9 +487,13 @@ def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Nod
       | "mi" => #[("mathvariant", "normal")]
       | "mo" => #[("stretchy", "false")]
       | _ => #[]
+    -- Firefox drops a plain relative font size when a MathML token also
+    -- changes font family. `calc` keeps the same resolved ratio in both
+    -- browsers, without changing the semantic tree (CancelContext.checks
+    -- and the rendered text-target probe).
     let sizing := match mk.textEm mk.style, mk.em mk.style with
       | some text, some math =>
-        if text > 0 && math > 0 then s!"; font-size: {measuredEm text math}" else ""
+        if text > 0 && math > 0 then s!"; font-size: calc({measuredEm text math})" else ""
       | _, _ => ""
     .elem tag (base.push ("style", style.css ++ sizing)) #[.text (charText c)]
   | .word s => .elem "mi" #[] #[.text s]
