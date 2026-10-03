@@ -2775,6 +2775,7 @@ is contrast with the running text — no face field says "is a sans design"
 no face (a page under a declared `css =`) sets no run in a resolved face
 and loses nothing. -/
 def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let before := (← ref.get).length
   let t := check ref
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"slot matrix: leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
@@ -2819,6 +2820,7 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
     let r := rows[k]!
     match (outcomes[k]?).bind id with
     | some (.ok o) =>
+      IO.FS.writeFile (dir / s!"row{k}.log") (o.oracle ++ "\n" ++ o.log)
       t s!"slot matrix {r.label}: the build succeeds: {o.log}" (o.exit == 0)
       unless o.flagsAgree do flagDisagree := flagDisagree.push s!"{r.label} ({o.oracle})"
       let declared := r.decl.contains r.slot
@@ -2845,7 +2847,10 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
   t s!"slot matrix: some rows are not ({expectedSilent})" (0 < expectedSilent)
   t s!"slot matrix: every PDF declares the run face's pitch its embedded program does: \
 {flagDisagree}" flagDisagree.isEmpty
-  IO.FS.removeDirAll dir
+  if (← ref.get).length == before then
+    IO.FS.removeDirAll dir
+  else
+    IO.eprintln s!"slot matrix: retained artifacts in {dir}"
 
 /-- **A family slot set in a face not of its kind, and the report that
 names it.** The mono-slot defect: a `\texttt`, `\url` or verbatim run in a

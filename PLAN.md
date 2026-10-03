@@ -26143,3 +26143,26 @@ the invented profile fixture now supplies both declared resources. Three
 capture assertions failed against the sidecar reader and pass against the
 embedded reader. Parser, malformed-base64, missing-use, duplicate-use,
 primary/poster and changed-payload controls keep the audit accountable.
+
+### 2026-10-03 — Checked single-file publication and parsing contexts
+
+HTML publication now requires `HtmlResource.ClosedPage`. Its closure proof
+covers every rendering request projected from the exact typed head and body
+that serialization writes. `close_covers` and `emitClosed_covers` connect the
+checked tree, its captured resources, and the published bytes. Navigation
+links remain navigation; unresolved rendering dependencies fail before a
+file is written, even under best-effort recovery.
+
+Raw style and script payloads also owe their parsing context. An SVG style
+witness passed a context-free resource scan but became an external image
+request when Chromium parsed the serialized page. The checker now latches
+refusal through foreign content, RCDATA and void-element descendants;
+`style_context_refused_exact` and `script_context_refused_exact` quantify over
+all payloads and resource evidence. Seventeen guards failed before this
+change. Ordinary HTML styles, the declared deck script, inert JSON data,
+and escaped foreign text retain their supported behavior.
+
+The kernel checks this typed-tree/resource model. SVG validation, image and
+font decoding, and browser parsing are external evidence, not kernel-proved
+semantics. Offline acceptance covers copied reference artifacts in Chromium
+and Firefox, with screen/print and reduced-motion checks where supported.

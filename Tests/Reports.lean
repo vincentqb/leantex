@@ -76,7 +76,7 @@ open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   shellReplyChecks listingProviderChecks publicationPathChecks
-  htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
+  htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
@@ -551,11 +551,15 @@ def reports : List Report := [
     state := .guarded "07e3714e" .before .author },
   { id := "R78", date := "2026-10-02"
     what := "HTML output depended on neighboring font and image files and external styles instead of being one movable, self-contained file"
-    pins := [check% htmlContainedChecks, check% htmlContainedPublicationChecks, check% htmlContainedSvgColorChecks,
+    pins := [check% htmlContainedChecks, check% htmlContainedRawContextChecks,
+      check% htmlContainedPublicationChecks, check% htmlContainedSvgColorChecks,
       check% htmlContainedCliChecks, check% htmlContainedCorpusChecks, check% publicationPathChecks,
-      thm% HtmlResource.close_covers, thm% HtmlDoc.emitClosed_covers]
+      thm% HtmlResource.close_covers, thm% HtmlDoc.emitClosed_covers,
+      thm% HtmlResource.style_context_refused_exact, thm% HtmlResource.script_context_refused_exact]
     accept := ["capture guards failed on the earlier publisher; publication uses the checked bytes after source files change or disappear",
-      "fourteen publication checks failed before destination validation; colliding formats and filesystem aliases cannot overwrite the verified page"]
+      "fourteen publication checks failed before destination validation; colliding formats and filesystem aliases cannot overwrite the verified page",
+      "seventeen raw-context guards failed at ac1b5347; the foreign-style witness also produced an intercepted external image request in Chromium",
+      "copied reference artifacts render their images and embedded fonts offline in Chromium and Firefox; Chromium also checks print and reduced-motion posters"]
     state := .guarded "e5a5428a" .before .author }
 ]
 
