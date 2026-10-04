@@ -1,4 +1,5 @@
 import LeanTex.Core.Html
+import Std.Data.HashSet
 
 namespace LeanTex.Core.HtmlResource
 
@@ -268,6 +269,43 @@ def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
   | .script value => !deckScript.isEmpty && value == deckScript
   | .refused _ => false
 
+/-- Prepare the admitted URIs once, using the exact captured-byte readiness.
+Return a concrete index: a function-valued result lets compiler eta expansion
+move preparation inside each request's lookup. -/
+def compile (resources : Array Embedded) (svgChecked : Array ByteArray) : Std.HashSet String :=
+  Std.HashSet.ofArray (resources.filterMap fun r =>
+    if r.ready svgChecked then some r.uri else none)
+
+/-- Look up URLs in the prepared index; all other requests keep their policy. -/
+def resolvesCompiled (urls : Std.HashSet String) (deckScript : String) : Request → Bool
+  | .url value => urls.contains value
+  | request => resolves #[] #[] deckScript request
+
+/-- Artifact-specific: the prepared resolver equals the original policy for
+every resource set, SVG attestation, script and request. -/
+theorem compile_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+    (deckScript : String) : resolvesCompiled (compile resources svgChecked) deckScript =
+      resolves resources svgChecked deckScript := by
+  funext request
+  cases request with
+  | url value =>
+    apply Bool.eq_iff_iff.mpr
+    simp only [resolvesCompiled, compile, resolves]
+    rw [Array.any_eq_true']
+    simp
+  | localFragment value => rfl
+  | script value => rfl
+  | refused reason => rfl
+
+/-- A single first-refusal scan admits exactly the original all-requests check,
+for every projection, including empty ones and explicit refusals. -/
+theorem compile_admission_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+    (deckScript : String) (projected : Array Request) :
+    (projected.find? fun r => !resolvesCompiled (compile resources svgChecked) deckScript r) = none ↔
+      projected.all (resolves resources svgChecked deckScript) = true := by
+  rw [compile_exact, Array.find?_eq_none, Array.all_eq_true']
+  simp
+
 /-- Artifact-specific: no resource evidence can certify a raw style in a
 context where the dependency projection does not model its parsing. -/
 theorem style_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
@@ -308,19 +346,20 @@ def referenceLabel (value : String) : String :=
 Unknown/remote/data-only claims all fail without matching captured evidence. -/
 def close (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript lang : String) (head body : Array Html.Node) : Except String (ClosedPage deckScript) :=
-  if h : (requests head body).all (resolves resources svgChecked deckScript) = true then
-    .ok { lang, head, body, resources, svgChecked, closed := h }
-  else
-    let why := ((requests head body).find? fun r =>
-      !resolves resources svgChecked deckScript r).map fun r => match r with
+  let urls := compile resources svgChecked
+  let projected := requests head body
+  match h : projected.find? (fun r => !resolvesCompiled urls deckScript r) with
+  | none =>
+    .ok { lang, head, body, resources, svgChecked, closed :=
+      (compile_admission_exact resources svgChecked deckScript projected).mp h }
+  | some r => .error (match r with
       | .url value => "HTML rendering URL " ++ referenceLabel value ++
           " has no embedded, validated resource"
       | .localFragment value =>
         let label := referenceLabel value
         "unsupported SVG fragment reference " ++ label
       | .script _ => "an HTML script is not the constant deck script"
-      | .refused why => why
-    .error (why.getD "the HTML resource closure check failed")
+      | .refused why => why)
 
 /-- Artifact-specific: successful checked emission covers the actual tree's
 rendering projection. SVG readiness is exact-byte external-validator evidence;
@@ -330,14 +369,12 @@ theorem close_covers (resources : Array Embedded) (svgChecked : Array ByteArray)
     (h : close resources svgChecked deckScript lang head body = .ok page) :
     page.render = Html.document lang head body ∧
       ∀ r ∈ requests head body, resolves resources svgChecked deckScript r = true := by
-  unfold close at h
+  dsimp only [close] at h
   split at h
   · next hc =>
     cases h
-    refine ⟨rfl, ?_⟩
-    intro r hr
-    obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp hr
-    exact Array.all_eq_true.mp hc i hi
+    exact ⟨rfl, Array.all_eq_true'.mp
+      ((compile_admission_exact resources svgChecked deckScript _).mp hc)⟩
   · contradiction
 
 end LeanTex.Core.HtmlResource
