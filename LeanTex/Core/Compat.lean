@@ -1638,38 +1638,59 @@ elaborator. Macro execution must precede this pass. -/
 def overlayInputs (raws : Array Raw) : Array Raw :=
   overlayInputsList raws none #[] raws.toList 0 0
 
-/-- An executing macro fragment is inside a selector exactly when an
-advertised slot opened `<` and has not closed it. Groups stay opaque. -/
-private def overlayOpen (raws : Array Raw) : Bool := Id.run do
-  let mut pending : Option OverlayWindow := none
-  let mut opened := false
-  for r in raws do
-    match r with
-    | .word text p =>
-      let mut s := text
-      if !opened then
-        if let some name := pending.bind (overlayVariantName · text) then
-          pending := overlayNext none (.ctrl name p) 0
-          s := (text.drop 1).toString
-      if !opened && !pending.any (·.accepts) then
-        pending := overlayNext pending r 0
-      else
-        for c in s.toList do
-          if opened then
-            if c == '>' then
-              opened := false
-              pending := pending.bind OverlayWindow.afterSelector
-          else if c == '<' && pending.any (·.accepts) then
-            opened := true
-          else if c.isWhitespace then
-            pending := overlayNext pending .space 0
-          else pending := none
-    | .ctrl _ _ | .sym _ _ | .space =>
-      if !opened then pending := overlayNext pending r 0
-    | _ =>
-      opened := false
+private structure OverlayScan where
+  pending : Option OverlayWindow := none
+  opened : Bool := false
+
+private def OverlayScan.step (scan : OverlayScan) (r : Raw) : OverlayScan := Id.run do
+  let mut pending := scan.pending
+  let mut opened := scan.opened
+  match r with
+  | .word text p =>
+    let mut s := text
+    if !opened then
+      if let some name := pending.bind (overlayVariantName · text) then
+        pending := overlayNext none (.ctrl name p) 0
+        s := (text.drop 1).toString
+    if !opened && !pending.any (·.accepts) then
       pending := overlayNext pending r 0
-  return opened
+    else
+      for c in s.toList do
+        if opened then
+          if c == '>' then
+            opened := false
+            pending := pending.bind OverlayWindow.afterSelector
+        else if c == '<' && pending.any (·.accepts) then
+          opened := true
+        else if c.isWhitespace then
+          pending := overlayNext pending .space 0
+        else pending := none
+  | .ctrl _ _ | .sym _ _ | .space =>
+    if !opened then pending := overlayNext pending r 0
+  | _ =>
+    opened := false
+    pending := overlayNext pending r 0
+  return { pending, opened }
+
+/-- The selector cursor belongs to the emitted prefix. Its invariant makes
+macro splices and ordinary tokens resume the same scan, without replaying
+all earlier output at every control. -/
+private structure OverlayPrefix where
+  raws : Array Raw
+  scan : OverlayScan
+  scan_exact : scan = raws.foldl OverlayScan.step {}
+
+private def OverlayPrefix.ofArray (raws : Array Raw) : OverlayPrefix :=
+  ⟨raws, raws.foldl OverlayScan.step {}, rfl⟩
+
+private def OverlayPrefix.push (out : OverlayPrefix) (r : Raw) : OverlayPrefix :=
+  ⟨out.raws.push r, out.scan.step r, by simp [← out.scan_exact]⟩
+
+private def OverlayPrefix.append (out : OverlayPrefix) (rs : Array Raw) : OverlayPrefix :=
+  ⟨out.raws ++ rs, rs.foldl OverlayScan.step out.scan, by
+    simp [← out.scan_exact]⟩
+
+private instance : HAppend OverlayPrefix (Array Raw) OverlayPrefix := ⟨OverlayPrefix.append⟩
 
 /-- The alert style around a body, one spelling for both `\alert` forms:
 themed, the theme's alert colour AND bold — colour alone would be the only
@@ -3195,9 +3216,9 @@ but is not otherwise executed by this replacement's walk. -/
 private def condList [Monad m]
     (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
     (plan : List Bool) (raws following : Array Raw)
-    (out : Array Raw) (stack : List CondOpen) :
+    (out : OverlayPrefix) (stack : List CondOpen) :
     List Raw → Nat → Nat → EvalM m CondRun
-  | [], i, skip => pure { raws := out, stop := i + skip }
+  | [], i, skip => pure { raws := out.raws, stop := i + skip }
   | _ :: rest, i, skip + 1 => condList ex plan raws following out stack rest (i + 1) skip
   | .space :: rest, i, 0 => do
     let out := if plan.isEmpty && stack.all CondOpen.keeps && !(← get).ignoreSpaces
@@ -3294,7 +3315,7 @@ private def condList [Monad m]
           (subject := some "ctrl:endinput")
       let kept := line.filter fun r =>
         !(r matches .ctrl "fi" _ | .ctrl "else" _ | .ctrl "or" _)
-      return { raws := out ++ kept.toArray, stop := i + 1 + rest.length }
+      return { raws := out.raws ++ kept.toArray, stop := i + 1 + rest.length }
     else
       condStopSpaces
       condList ex [] raws following (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
@@ -3502,7 +3523,7 @@ execute this definition there, so that part of the text is skipped whole")
       if !st.condInDoc then recordLoad raws n i
       -- premise: Tests.overlayInputChecks — a selector reads textual macro
       -- fragments at its use, before the shared numbered boundary is sealed.
-      if overlayOpen out then
+      if out.scan.opened then
         let r := match overlayFragment st.binds st.binds.size n with
           | some text => .word text pos
           | none => .ctrl n pos
@@ -3512,7 +3533,7 @@ execute this definition there, so that part of the text is skipped whole")
       else match ← ex n pos (raws ++ following) (i + 1) with
         | some run =>
           if run.stop > i + 1 + rest.length then
-            return { run with raws := out ++ run.raws }
+            return { run with raws := out.raws ++ run.raws }
           condList ex [] raws following (out ++ run.raws ++ run.tail)
             stack rest (i + 1) (run.stop - (i + 1))
         | none =>
@@ -3547,7 +3568,7 @@ private def condOne [Monad m]
     let m ← condMark
     let top := (← get).fileTop
     if groupScope then write fun st => { st with fileTop := false }
-    let body' ← condList ex [] body #[] #[] [] body.toList 0 0
+    let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
     let _ ← swapTop top
     if groupScope then condClose m
     return .group body'.raws p
@@ -3555,7 +3576,7 @@ private def condOne [Monad m]
     condStopSpaces
     let m ← condMark
     let top ← swapTop false
-    let body' ← condList ex [] body #[] #[] [] body.toList 0 0
+    let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
     let _ ← swapTop top
     condClose m
     return .math d body'.raws p
@@ -3568,7 +3589,7 @@ private def condOne [Monad m]
       let saved ← get
       write fun st => { st with file := f, useSite := none }
       let top ← swapTop true
-      let body' ← condList ex [] body #[] #[] [] body.toList 0 0
+      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
       write fun st => { st with file := saved.file, useSite := saved.useSite }
       return .env n body'.raws p
@@ -3587,7 +3608,7 @@ private def condOne [Monad m]
       -- The title argument belongs to this environment's selector window,
       -- just as it does in overlayInputsRaw after execution.
       let head := if overlayTitled n then #[Raw.ctrl "titled overlay" p] else #[]
-      let body' ← condList ex [] body #[] head [] body.toList 0 0
+      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray head) [] body.toList 0 0
       let _ ← swapTop top
       condClose m
       write fun st => { st with inPicture := inPic }
@@ -3717,9 +3738,9 @@ the argument boundary is unread here, so its optional selection and state change
       let top ← swapTop false
       let run ← if _h : serial < bound ∨ textSerial < textBound then
           condList (fun n p rs k => condExpandAt reader nextBound textSerial n p rs k)
-            [] body following #[] [] body.toList 0 0
+            [] body following (OverlayPrefix.ofArray #[]) [] body.toList 0 0
         else
-          condList (fun _ _ _ _ => pure none) [] body following #[] [] body.toList 0 0
+          condList (fun _ _ _ _ => pure none) [] body following (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
       write fun s => { s with useSite := site }
       let out := match origin with
@@ -3780,7 +3801,7 @@ no TeX group; definitions therefore obey the caller's existing scope. -/
 def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
     (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
   let (run, state) ←
-    (condList (condTopExpand (some reader)) [] raws #[] #[] [] raws.toList 0 0).run
+    (condList (condTopExpand (some reader)) [] raws #[] (OverlayPrefix.ofArray #[]) [] raws.toList 0 0).run
       { context.state with
         diags := context.state.diags ++ diags
         sourceTriggers := sourceTriggers context.state.file context.state.sourceTriggers raws.toList }
@@ -3818,7 +3839,7 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) :
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
           (condList (fun n q rs k => condExpandAt reader v.serial v.textSerial n q rs k)
-            [] replacement #[] #[] [] replacement.toList 0 0)
+            [] replacement #[] (OverlayPrefix.ofArray #[]) [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
     | _ => pure ()
@@ -3866,7 +3887,7 @@ private def condReplay [Monad m] (reader : Option (InputReader m))
   for (pt, file, pos, body) in hooks do
     if pt == point then
       write fun st => { st with file := file }
-      let body ← condList (condTopExpand reader) [] body #[] #[] [] body.toList 0 0
+      let body ← condList (condTopExpand reader) [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       out := out.push (pt, file, pos, body.raws)
   write fun st => { st with
     file := saved.file, fileTop := saved.fileTop
@@ -3883,7 +3904,7 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   let d := seam.getD raws.size
   let pre := raws.extract 0 d
   let post := raws.extract d raws.size
-  let pre' ← condList (condTopExpand reader) [] pre #[] #[] [] pre.toList 0 0
+  let pre' ← condList (condTopExpand reader) [] pre #[] (OverlayPrefix.ofArray #[]) [] pre.toList 0 0
   let hooks := (← get).deferred
   let endHooks ← condReplay reader hooks .endPreamble
   let texts ← if seam.isSome then condSettle reader else pure #[]
@@ -3893,7 +3914,7 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   let endHooks := endHooks.map fun (pt, f, pos, body) => (pt, f, pos, patch f body)
   let beginHooks ← condReplay reader hooks .beginDocument
   write fun st => { st with deferred := endHooks ++ beginHooks }
-  let post' ← condList (condTopExpand reader) [] post #[] #[] [] post.toList 0 0
+  let post' ← condList (condTopExpand reader) [] post #[] (OverlayPrefix.ofArray #[]) [] post.toList 0 0
   return patch file pre'.raws ++ post'.raws
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
