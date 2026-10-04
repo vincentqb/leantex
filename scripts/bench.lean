@@ -6,9 +6,12 @@ repository root after `lake build`:
 
 Reference point, not a fair fight: lualatex loads formats and fonts per run,
 and does far more. Median of N runs (env var `N`, default 5), milliseconds.
+`LEANTEX_BENCH_BINARY` selects a saved compiler for before/after comparisons
+over the same inputs, environment and benchmark driver.
 -/
 
-def leantex := ".lake/build/bin/leantex"
+def compiler : IO String := do
+  return (← IO.getEnv "LEANTEX_BENCH_BINARY").getD ".lake/build/bin/leantex"
 
 def die (msg : String) : IO α := do
   IO.eprintln msg
@@ -68,6 +71,7 @@ def bibPhaseMs (log : String) : Option Nat :=
 listed (`\nocite{*}` under plainnat, which sorts and letters them): the
 median of `n` runs' `bib` phase. -/
 def benchBib (n : Nat) (entries : Nat) : IO Nat := do
+  let leantex ← compiler
   let dir ← IO.FS.createTempDir
   IO.FS.writeFile (dir / "refs.bib") (bibOf entries)
   IO.FS.writeFile (dir / "scale.tex")
@@ -88,7 +92,29 @@ def benchBib (n : Nat) (entries : Nat) : IO Nat := do
   IO.println s!"{padRight s!"leantex  bib phase, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
   return ms
 
+/-- A repeated image must not repeatedly encode the embedded font programs
+while checking HTML resource closure. Both sizes use the same captured assets. -/
+def benchImageDeck (n frames : Nat) : IO Unit := do
+  let leantex ← compiler
+  let fonts ← IO.FS.realPath "tests/corpus/fonts"
+  let image ← IO.FS.readBinFile "tests/corpus/rects.png"
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeBinFile (dir / "figure.png") image
+    let mut source := "\\documentclass{beamer}\n\\usetheme{moloch}\n" ++
+      "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Open Sans\" }\n" ++
+      "\\begin{document}\n"
+    for i in [0:frames] do
+      source := source ++ "\\begin{frame}{Repeated figure " ++ toString i ++ "}\n" ++
+        "\\includegraphics[width=0.25\\textwidth,alt={Invented color grid}]{figure.png}\n" ++
+        "\\end{frame}\n"
+    source := source ++ "\\end{document}\n"
+    let input := dir / "deck.tex"
+    IO.FS.writeFile input source
+    bench n s!"leantex  image deck, {frames} frames (HTML)" leantex
+      #["-q", "build", input.toString, "-o", (dir / "deck.html").toString]
+
 def main : IO UInt32 := do
+  let leantex ← compiler
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5
   let genLorem ← IO.Process.output
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/gen-lorem.lean"] }
@@ -127,6 +153,8 @@ def main : IO UInt32 := do
   bench n "leantex  paper.tex -o html" leantex
     #["-q", "build", "bench/paper.tex", "-o", (outDir / "paper.html").toString]
   IO.FS.removeDirAll outDir
+  benchImageDeck n 32
+  benchImageDeck n 128
   -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
   -- thousands of entries, and a phase quadratic in them (75 s at 1600)
   -- passed every row above. Four times the entries may cost at most eight
