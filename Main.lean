@@ -939,13 +939,17 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
         let (raws, parseDiags) := Parse.parse file toks
         ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
         pure (raws, lexDiags ++ parseDiags)
+    let t ← IO.monoMsNow
     let (executed, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file executed.raws
+    ui.phase "input" s!"{raws.size} top-level nodes" (← since t)
     let earlier := frontDiags ++ inputDiags ++ dataDiags
     -- One rewrite, one boundary scan, one macro scan: two elaborations of
     -- one document must read one source, or their agreement would be about
     -- two (`Elab.prepareExecuted`).
+    let t ← IO.monoMsNow
     let prepared := Elab.prepareExecuted file { executed with raws := raws }
+    ui.phase "prepare" s!"{prepared.raws.size} top-level nodes" (← since t)
     let cache ← FontEnv.Cache.mk'
     -- Nothing is asked of a face until something might measure against it,
     -- and a math slot only where a picture body sets a formula
