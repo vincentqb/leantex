@@ -55,6 +55,7 @@ import Tests.PdfConformance
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.CompatGate
+import Tests.CompatExecution
 import Tests.HtmlTokens
 import Tests.HtmlContained
 import Tests.HtmlA11y
@@ -595,6 +596,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  compatExecutionChecks ref
   listingChecks ref
   posterCompatChecks ref
   columnFormChecks ref

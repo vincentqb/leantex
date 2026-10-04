@@ -26491,3 +26491,52 @@ The earlier forty-two script-size cases per browser also pass. The native
 and browser PDFs retain all seven synthetic heads and targets. The external cancellation differential,
 five-repeat repository benchmark and private reference acceptance builds
 also pass. No private source enters the fixtures.
+
+### 2026-10-04 — Carry execution state and serialize checked HTML once
+
+The execution prefix owns its overlay selector cursor. Each push and macro
+splice preserves a proof that the cursor equals a fold of the entire prefix,
+so ordinary control commands no longer replay all preceding output. Groups
+remain opaque and the selector transition is unchanged. The regression
+checks preserve exact executed streams for text modifiers and ordinary
+commands while distinguishing linear from quadratic allocation growth.
+All three growth guards failed on the saved baseline before the fix.
+
+HTML closure prepares a concrete set of approved URLs once, including the
+same exact-byte SVG readiness decision. One request projection finds the
+first refused resource or constructs the existing ClosedPage. Universal
+contracts equate the prepared lookup and admission decision to the original
+policy; preparation is outside every lookup in generated code.
+
+Publication serializes that checked page once. The resulting bytes carry an
+erased witness to a ClosedPage, retaining closure without retaining the tree
+and captured resources alongside the string. Measurement and writing use
+those same bytes. Verbose input and preparation phase timings now expose
+work that previously disappeared between the named phases.
+
+The benchmark driver can select a saved compiler and includes two sizes of
+an invented repeated-image deck. This lets both binaries use the same
+inputs, fonts, driver, and five-repeat median methodology.
+
+Five-repeat medians from that driver, comparing the saved `6f63ab8a`
+compiler with the combined change on the same host:
+
+| Input and output | Before | After |
+|---|---:|---:|
+| Decoration-heavy document, PDF | 5,037 ms | 866 ms |
+| Themed deck, HTML | 257 ms | 196 ms |
+| Paper, HTML | 429 ms | 325 ms |
+| Repeated image deck, 32 frames, HTML | 302 ms | 185 ms |
+| Repeated image deck, 128 frames, HTML | 534 ms | 203 ms |
+
+The other PDF medians remain close (paragraphs 110/107 ms, long text
+387/397 ms, themed deck 105/102 ms, paper 194/187 ms). These are build
+measurements on this host, not browser playback measurements. All eight
+saved PDF/HTML artifacts are byte-identical. Independent review found no
+semantic change in the carried scan, including malformed selectors, opaque
+nested bodies, titled prefixes, continuation tails, and early returns.
+
+The combined warnings-as-failures build, full test suite, publication and
+SVG closure guards, and private reference acceptance builds in both formats
+pass. The allocation guard runs in the main suite beside compatibility
+checks; it is independent of wall-clock timing.
