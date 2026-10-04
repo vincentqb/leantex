@@ -123,6 +123,81 @@ def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "contained script: harmless raw JSON text remains supported"
       ((close #[.script #[("type", "application/ld+json")] raw] following).isOk)
 
+/-- Prepared closure retains exact captured bytes, rejects unready entries even
+among duplicates, and preserves the typed carriers and first refusal. -/
+def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let close (resources : Array HtmlResource.Embedded) (checked : Array ByteArray) :=
+    HtmlResource.close resources checked HtmlDoc.deckScript "en"
+  let image (uri : String) := Html.elem "img" #[] #[("src", uri), ("alt", "Captured square")]
+  let captures : Array HtmlResource.Embedded := (Array.range 32).map fun i =>
+    { media := .svg, bytes := svgDocument s!"<rect id=\"square-{i}\" width=\"1\" height=\"1\"/>" }
+  let checked := captures.map (·.bytes)
+  let urls := captures.map (·.uri)
+  let invalid : Array HtmlResource.Embedded :=
+    #[.png, .jpeg, .ico, .svg, .ttf, .otf].map fun media =>
+      { media, bytes := "not an admitted resource".toUTF8 }
+  let resources := invalid ++ captures ++ captures
+  let head := #[Html.Node.style ("p { background: url(\"" ++ urls[0]! ++ "\") }")]
+  let repeated := (Array.range 512).map fun i => urls[i % urls.size]!
+  let body := repeated.map image
+  match close resources checked head body with
+  | .error _ => t "contained index: repeated assets close with duplicates and unused invalid entries" false
+  | .ok page =>
+    let images := elemAttrsList (· == "img") #[] page.body.toList
+    t "contained index: every repeated typed carrier survives in order"
+      (images == repeated.map (fun uri => ("img", #[("src", uri), ("alt", "Captured square")])))
+    t "contained index: checked serialization is exactly the supplied tree"
+      (page.render == Html.document "en" head body)
+  for resource in invalid do
+    t s!"contained index: an unready {repr resource.media} entry cannot resolve its own URI"
+      (!(close resources checked head (body.push (image resource.uri))).isOk)
+  for (media, signature) in [
+      (HtmlResource.Media.png, bytes [137, 80, 78, 71, 13, 10, 26, 10]),
+      (.jpeg, bytes [255, 216, 255]), (.ico, bytes [0, 0, 1, 0]),
+      (.ttf, bytes [0, 1, 0, 0]), (.otf, "OTTO".toUTF8)] do
+    let resource : HtmlResource.Embedded := { media, bytes := signature ++ "captured".toUTF8 }
+    let carrier (uri : String) := match media with
+      | .ttf | .otf => Html.Node.style ("@font-face { font-family: Probe; src: url(\"" ++ uri ++ "\"); }")
+      | .png | .jpeg | .ico | .svg => image uri
+    t s!"contained index: admitted {repr media} signature still resolves"
+      ((close #[resource] #[] #[] #[carrier resource.uri]).isOk)
+    for n in [:signature.size] do
+      let truncated := { resource with bytes := signature.extract 0 n }
+      t s!"contained index: truncated {repr media} signature {n} remains refused"
+        (!(close #[truncated] #[truncated.bytes] #[] #[carrier truncated.uri]).isOk)
+    let changed := { resource with bytes := signature ++ "changed".toUTF8 }
+    t s!"contained index: {repr media} readiness cannot stand in for the captured bytes"
+      (!(close #[changed] #[] #[] #[carrier resource.uri]).isOk &&
+        (close #[changed] #[] #[] #[carrier changed.uri]).isOk)
+  let original := captures[0]'(by simp [captures])
+  let changed := { original with bytes := svgDocument "<rect width=\"2\" height=\"1\"/>" }
+  t "contained index: replacing SVG bytes cannot reuse the old attestation"
+    (!(close #[changed] #[original.bytes] #[] #[image changed.uri]).isOk)
+  t "contained index: new SVG approval admits only the new captured URI"
+    ((close #[changed] #[changed.bytes] #[] #[image changed.uri]).isOk &&
+      !(close #[changed] #[changed.bytes] #[] #[image original.uri]).isOk)
+  t "contained index: independent closures keep their own capture and approval"
+    ((close #[original] #[original.bytes] #[] #[image original.uri]).isOk &&
+      !(close #[original] #[changed.bytes] #[] #[image original.uri]).isOk)
+  let missing := "first-missing.svg"
+  let later := "later-missing.svg"
+  let why := "HTML rendering URL " ++ reprStr missing ++ " has no embedded, validated resource"
+  for (extraHead, extraBody, expected) in [
+      (head, body ++ #[image missing, image later], why),
+      (head.push (.style ("p { background: url(" ++ missing ++ ") }")), body.push (image later), why),
+      (head, body ++ #[Html.elem "svg" #[Html.elem "use" #[] #[("href", "#bad fragment")]],
+        image missing], "unsupported SVG fragment reference " ++ reprStr "#bad fragment"),
+      (head, body ++ #[Html.Node.script #[] "unapproved()", image missing],
+        "an HTML script is not the constant deck script"),
+      (head, body ++ #[Html.elem "svg" #[Html.Node.style "p { color: red }"], image missing],
+        "raw HTML style is inside an unsupported parsing context")] do
+    match close resources checked extraHead extraBody with
+    | .error actual => t "contained index: first refusal retains projection order and exact detail" (actual == expected)
+    | .ok _ => t "contained index: an unknown URL or refused context cannot close" false
+  t "contained index: an empty tree needs no resource evidence"
+    ((close invalid #[] #[] #[]).isOk)
+
 /-- A single HTML file carries the exact captured rendering bytes in its
 actual typed carriers. These assertions fail on the sibling-file emitter;
 closure of nested SVG/CSS references is a separate, stricter obligation. -/
@@ -130,6 +205,7 @@ def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   htmlContainedRawContextChecks ref
   htmlContainedCssAtRuleChecks ref
   htmlContainedAdmissionChecks ref
+  htmlContainedIndexChecks ref
   let t := check ref
   let moving := svgDocument "<rect width=\"20\" height=\"20\" fill=\"blue\"/>"
   let poster := svgDocument "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
