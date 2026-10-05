@@ -52,8 +52,8 @@ def groundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
     (titleLoss.contains "colframe" && titleLoss.contains "coltitle")
 
 /-- The helper's native output is judged through actual emitters; the
-declaration/argument reader is covered separately by `sourceChecks`. -/
-def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+declaration/argument reader is covered separately by `tcolorboxSourceChecks`. -/
+def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let (actual, ds) := docOf
     "title={Exact, title = {kept}},fontupper=\\small\\bfseries"
@@ -74,7 +74,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let styled := (docOf "coltext=red,fonttitle=\\itshape,coltitle=blue,title={Heading}"
     "ColoredBody").1
   let styledNative := nativeDoc
-    "\\begin{block}{{\\itshape\\color{blue}Heading}}{\\color{red}ColoredBody}\\end{block}"
+    "\\begin{block}{{\\color{blue}\\itshape Heading}}{\\color{red}ColoredBody}\\end{block}"
   t "tcolorbox: separate title and body styles use existing native scopes"
     (samePages fonts styled styledNative)
   t "tcolorbox: scoped colour changes the rendered body"
@@ -209,6 +209,67 @@ def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ("\\begin{block}{Outer}Chosen" ++
       "\\begin{block}{Inner}Default\\end{block}Chosen\\end{block}Default")
 
+/-- Preparing retained fields preserves the caller's macro orders. A refused
+nested template consumes its arguments without running them and executes only
+its body, once, with the original environment's scope. -/
+def tcolorboxPreparationChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  for (key, replacement, title, body) in [
+      ("title", "\\iftrue Copied\\else Wrong\\fi", "Copied", "Body"),
+      ("fonttitle", "\\iftrue\\bfseries\\else\\small\\fi", "{\\bfseries Heading}", "Body"),
+      ("fontupper", "\\iftrue\\small\\else\\bfseries\\fi", "Heading", "{\\small Body}")] do
+    for nested in [false, true] do
+      sourceCaseChecks ref fonts
+        (key ++ if nested then " copied inside two macros" else " copied inside a macro")
+        ("\\def\\originalprobe{" ++ replacement ++ "}" ++
+          "\\newtcolorbox{panel}{title={Heading}," ++ key ++ "=\\aliasprobe}" ++
+          "\\def\\wrapperprobe{\\let\\aliasprobe\\originalprobe" ++
+            "\\begin{panel}Body\\end{panel}}" ++
+          if nested then "\\def\\outerprobe{\\wrapperprobe}" else "")
+        (if nested then "\\outerprobe" else "\\wrapperprobe")
+        ("\\begin{block}{" ++ title ++ "}" ++ body ++ "\\end{block}")
+  let ignored := "\\gdef\\discardedprobe{Leaked}"
+  let kept := "\\ifbodyprobe Repeated\\else Once\\fi\\bodyprobetrue" ++
+    "\\ifbodyprobe Kept\\else Missing\\fi"
+  let observed := "\\ifdefined\\discardedprobe Leaked\\else Inert\\fi/" ++
+    "\\ifbodyprobe LeakedScope\\else Scoped\\fi"
+  let optional := "\\newtcolorbox{innerpanel}[2][" ++ ignored ++ "]{title={#1/#2}}"
+  for (label, declaration, opening, bodyPrefix) in [
+      ("required argument",
+        "\\newtcolorbox{innerpanel}[1]{title={#1}}",
+        "\\begin{innerpanel}{" ++ ignored ++ "}", ""),
+      ("optional argument", optional,
+        "\\begin{innerpanel}[" ++ ignored ++ "]{" ++ ignored ++ "}", ""),
+      ("default argument", optional,
+        "\\begin{innerpanel}{" ++ ignored ++ "}", ""),
+      ("split token argument",
+        "\\newtcolorbox{innerpanel}[2]{title={#1/#2}}",
+        "\\begin{innerpanel}{" ++ ignored ++ "}XY", "Y"),
+      ("direct options", "",
+        "\\begin{tcolorbox}[title={" ++ ignored ++ "},fontupper={" ++ ignored ++ "}]", "")] do
+    let name := if label == "direct options" then "tcolorbox" else "innerpanel"
+    let nested := opening ++ kept ++ "\\end{" ++ name ++ "}"
+    for key in ["title", "fonttitle", "fontupper"] do
+      let recovered := "{" ++ bodyPrefix ++ "OnceKept}"
+      let title := if key == "title" then recovered
+        else if key == "fonttitle" then "{" ++ recovered ++ "Heading}" else "Heading"
+      let body := if key == "fontupper" then "{" ++ recovered ++ "Inert/Scoped}"
+        else "Inert/Scoped"
+      sourceCaseChecks ref fonts (key ++ " refuses nested " ++ label)
+        ("\\newif\\ifbodyprobe" ++ declaration ++
+          "\\newtcolorbox{panel}{title={Heading}," ++ key ++ "={" ++ nested ++ "}}")
+        ("\\begin{panel}" ++ observed ++ "\\end{panel}" ++ observed)
+        ("\\begin{block}{" ++ title ++ "}" ++ body ++ "\\end{block}Inert/Scoped")
+        (some .W0104) none (some name)
+  sourceCaseChecks ref fonts "a macro cannot restart title preparation"
+    ("\\newif\\ifbodyprobe\\newtcolorbox{innerpanel}[1]{title={#1}}" ++
+      "\\def\\nestedprobe{\\begin{innerpanel}{" ++ ignored ++ "}" ++ kept ++
+        "\\end{innerpanel}}" ++
+      "\\newtcolorbox{panel}{title={\\nestedprobe}}")
+    ("\\begin{panel}" ++ observed ++ "\\end{panel}" ++ observed)
+    "\\begin{block}{{OnceKept}}Inert/Scoped\\end{block}Inert/Scoped"
+    (some .W0104) none (some "innerpanel")
+
 /-- tcolorbox uses ordinary environment arguments and TeX declaration scope
 (tcolorbox manual, “Creation of New Environments”). Synthetic LuaLaTeX probes
 also pin the less obvious cases: unused arguments stay inert, an empty optional
@@ -334,7 +395,7 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 
 /-- Full declaration probes for the compatibility owner: options are
 instantiated at use, including a default and a macro defined later. -/
-def sourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let later := "\\newcommand{\\later}[1]{#1}"
   let source := "\\documentclass{beamer}\\theme{default}" ++
@@ -363,5 +424,6 @@ def sourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
   t "tcolorbox source: declaration and uses introduce no unknown body errors"
     (!ds.any (fun d => d.severity == .error || d.code == "W0301" || d.code == "W0302"))
   tcolorboxScopeChecks ref fonts
+  tcolorboxPreparationChecks ref fonts
 
 end TcolorboxChecks

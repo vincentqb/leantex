@@ -3229,13 +3229,18 @@ is transient execution state, not a scoped assignment. -/
 private def condStopSpaces : M Unit := do
   if (← get).ignoreSpaces then write fun st => { st with ignoreSpaces := false }
 
+/-- A recognised box consumes its arguments even when preparation is refused. -/
+private inductive BoxPreparation where
+  | ready (prepared : Tcolorbox.Prepared)
+  | refused
+
 /-- An executed prefix and the next unread source index. A split word's
 remainder stays separate: it is caller text, not output of the expansion. -/
 private structure CondRun where
   raws : Array Raw
   stop : Nat
   tail : Array Raw := #[]
-  box : Option Tcolorbox.Prepared := none
+  box : Option BoxPreparation := none
 
 mutual
 
@@ -3682,7 +3687,7 @@ private def condOne [Monad m]
       let body' ← condList ex [] body #[] (OverlayPrefix.ofArray front) [] body.toList 0
         ((box.map (·.stop)).getD 0)
       let result ← match box.bind (·.box) with
-        | some prepared => do
+        | some (.ready prepared) => do
           let lowered := prepared.lower body'.raws p
           became s!"\\begin\{{n}}" "a native block" p
           unless lowered.unsupported.isEmpty do
@@ -3691,6 +3696,7 @@ private def condOne [Monad m]
               p (help := "use native block styles for portable decoration")
               (subject := some ("tcolorbox:" ++ n))
           pure (Raw.group lowered.raws p)
+        | some .refused => pure (.group (body'.raws.extract head.size body'.raws.size) p)
         | none => pure (.env n (body'.raws.extract head.size body'.raws.size) p)
       let _ ← swapTop top
       condClose m
@@ -3747,15 +3753,17 @@ at the use. `bound` is the binding order the enclosing text sees. An older
 binding lowers it; a newer copy of an older text keeps it and lowers
 `textBound` instead. Direct calls to helpers below that binding order stay
 readable; a further local copy must itself lower one of the two orders.
-Every recursive expansion descends the lexicographic pair. A substituted
+Every recursive macro expansion descends the lexicographic pair. A substituted
 replacement containing no controls or environments needs no recursion and
 can execute even when neither order descends.
+`prepareBox` is a separate final stage: preparing selected fields preserves
+both macro orders and disables further preparation throughout those fields.
 An optional wrapper and its inner text use the later of their serials,
 so a retained alias sees the current inner text. A live use that still
 needs recursion when the orders rule it out is refused by name; `none`
 leaves it to the elaborator. -/
 private def condExpandAt [Monad m] (reader : Option (InputReader m))
-    (bound textBound : Nat) (n : String) (pos : Pos)
+    (bound textBound : Nat) (prepareBox : Bool) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : EvalM m (Option CondRun) := do
   let st ← get
   let site := st.useSite
@@ -3772,19 +3780,24 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
         if args.size != v.arity then none else
           some (bindRawArgsList args #[] (rebaseList atUse false v.raws.toList), stop, tail)
     let some (options, stop, tail) := call | return none
-    -- A template selects fields, rather than expanding a named command.
-    -- Spend the text stage once while retaining the caller's binding order:
-    -- helpers defined after the box remain visible. The original body is
-    -- still walked structurally by condOne with its caller's expander.
-    -- premise: TcolorboxChecks.tcolorboxScopeChecks — late helpers, local
-    -- definitions and unused/refused values are checked at separate uses.
-    if _hstage : 0 < textBound then
-      let prepared := Tcolorbox.prepare options pos
+    -- A template selects fields without changing either macro order.
+    -- Its original body keeps the caller's preparation stage in condOne.
+    -- premise: tcolorboxPreparationChecks — copied helpers remain executable;
+    -- refusing a nested template keeps only its consumed boundary and body.
+    if _hstage : prepareBox then
+      -- Capture selected colors in the use's binding snapshot before either
+      -- font hook runs. Text fragments cannot execute assignments.
+      let prepared ← Tcolorbox.prepareM (fun _ (rs : Array Raw) => pure <|
+        (rs.toList.mapM fun (r : Raw) => match r with
+          | .ctrl name p =>
+            (overlayFragment st.binds st.binds.size name).map (Raw.word · p)
+          | .word _ _ | .sym _ _ | .space => some r
+          | _ => none).map List.toArray) options pos
       let title ← condOne
-        (fun n p rs k => condExpandAt reader bound 0 n p rs k)
+        (fun n p rs k => condExpandAt reader bound textBound false n p rs k)
         true (.group prepared.title pos)
       let decls ← condList
-        (fun n p rs k => condExpandAt reader bound 0 n p rs k)
+        (fun n p rs k => condExpandAt reader bound textBound false n p rs k)
         [] prepared.bodyDecls #[] (OverlayPrefix.ofArray #[]) []
         prepared.bodyDecls.toList 0 0
       let title := match title with
@@ -3792,14 +3805,14 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
         | _ => prepared.title
       return some {
         raws := #[], stop, tail
-        box := some { prepared with title, bodyDecls := decls.raws } }
+        box := some (.ready { prepared with title, bodyDecls := decls.raws }) }
     else
       say .W0104
-        "a box title or style recursively requests another box; its template is left unexpanded"
+        "a box title or style requests another box; its template is skipped and its body kept"
         (site.getD pos)
         (help := "place nested boxes in the body")
         (subject := some ("tcolorbox:" ++ name))
-      return none
+      return some { raws := #[], stop, tail, box := some .refused }
   let inPic := st.inPicture
   let own := st.picBound.contains n || st.provideKeeps.contains n ||
     (inPic && picWalkCtrls.contains n)
@@ -3861,7 +3874,7 @@ the argument boundary is unread here, so its optional selection and state change
         useSite := some (site.getD pos), macroClock := st.macroClock + 1 }
       let top ← swapTop false
       let run ← if _h : serial < bound ∨ textSerial < textBound then
-          condList (fun n p rs k => condExpandAt reader nextBound textSerial n p rs k)
+          condList (fun n p rs k => condExpandAt reader nextBound textSerial prepareBox n p rs k)
             [] body following (OverlayPrefix.ofArray #[]) [] body.toList 0 0
         else
           condList (fun _ _ _ _ => pure none) [] body following (OverlayPrefix.ofArray #[]) [] body.toList 0 0
@@ -3903,16 +3916,17 @@ without that selection or those changes")
     let (answer, context) ← reader request { state := st }
     write fun _ => context.state
     return answer.map fun answer => { raws := answer, stop := j + 1 }
-termination_by (bound, textBound)
+termination_by (bound, textBound, if prepareBox then 1 else 0)
 decreasing_by
   all_goals
     simp_wf
     first
-    | exact Prod.Lex.right _ _hstage
+    | exact Prod.Lex.right _ (Prod.Lex.right _ (by simp [_hstage]))
     | (split
        · apply Prod.Lex.left
          assumption
        · apply Prod.Lex.right
+         apply Prod.Lex.left
          omega)
 
 /-- The expander running text uses: every definition made so far is visible. -/
@@ -3920,7 +3934,7 @@ private def condTopExpand [Monad m] (reader : Option (InputReader m))
     (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     EvalM m (Option CondRun) := do
   let bound := (← get).serial + 1
-  condExpandAt reader bound bound n pos raws start
+  condExpandAt reader bound bound true n pos raws start
 
 /-- Execute a parsed file answer in the state of its request, before
 continuing the caller. The input wrapper carries its filename and opens
@@ -3965,7 +3979,7 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) :
         write fun st => { st with file := p.file, settling := some p.name }
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
-          (condList (fun n q rs k => condExpandAt reader v.serial v.textSerial n q rs k)
+          (condList (fun n q rs k => condExpandAt reader v.serial v.textSerial true n q rs k)
             [] replacement #[] (OverlayPrefix.ofArray #[]) [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none }
         out := out.push (p.file, p.pos, body)
