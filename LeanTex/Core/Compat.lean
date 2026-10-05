@@ -2263,7 +2263,8 @@ decided or not, every one of them opens a frame, so `\else`/`\fi` matching
 stays in step. An `\if…` name the pass does not know might open a
 conditional or might not, which would desynchronise the matching, so it
 leaves the whole extent alone. The name after `\newif` is the flag being
-declared, not a conditional. -/
+declared, not a conditional. `\ifstrequal` selects grouped arguments and
+does not open a primitive conditional. -/
 private def condExtentEnd (flags : Std.HashMap String Bool) (raws : Array Raw)
     (i : Nat) : Option Nat := Id.run do
   let mut depth := 0
@@ -2279,7 +2280,7 @@ private def condExtentEnd (flags : Std.HashMap String Bool) (raws : Array Raw)
       if isCondHead flags n then
         depth := depth + 1
         j := j + 1
-      else if n.startsWith "if" then return none
+      else if n.startsWith "if" && n != "ifstrequal" then return none
       else j := j + 1
     | some _ => j := j + 1
     | none => return none
@@ -2695,7 +2696,7 @@ def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
       | none => #[]
     some (want.all (passes s.clsPassed ++ own).contains)
 
-/-- Exactly `n` brace groups after `i`, each after any spaces: a loaded
+/-- Exactly `n` brace groups after `i`, each after any spaces: a grouped
 test's shape, read before anything is decided. A token that is not a group,
 or a paragraph break, leaves the test unread. -/
 private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Raw)) :=
@@ -2729,6 +2730,66 @@ private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option L
     else some { cls := test.cls, name := rawSrc name,
                 want := if test.withOpts then some (optionItems (rawSrc (args.getD 1 #[])))
                   else none }
+
+/-- e-TeX's `\detokenize` doubles parameter characters. -/
+private def stringTestChars (s : String) : String :=
+  s.toList.foldl (fun out c => (out.push c) ++ if c == '#' then "#" else "") ""
+
+/-- A detokenized control word carries a delimiter space; a control symbol
+does not (e-TeX manual, `\detokenize`). -/
+private def stringTestControl (n : String) : String :=
+  "\\" ++ n ++ if !n.isEmpty && n.toList.all Lex.nameChar then " " else ""
+
+mutual
+
+-- conserves: none — a comparison key over surface tokens, not an IR rewrite.
+private def stringTestTokens (out : String) : List Raw → Option String
+  | [] => some out
+  | r :: rest => (stringTestToken r).bind fun s => stringTestTokens (out ++ s) rest
+
+/-- Literal token spelling for etoolbox's `\ifstrequal`. Source pretty-printing
+is unsuitable: it trims significant spaces and canonicalizes math delimiters.
+No name lookup or operand execution occurs. Verbatim nodes have lost their
+original delimiters, so their spelling is unread rather than guessed. -/
+private def stringTestToken : Raw → Option String
+  | .word s _ => some (stringTestChars s)
+  | .space => some " "
+  | .par _ => some (stringTestControl "par")
+  | .ctrl n _ => some (stringTestControl n)
+  | .sym c _ => some (stringTestChars (String.singleton c))
+  | .group body _ => (stringTestTokens "{" body.toList).map (· ++ "}")
+  | .math display body p =>
+    let (left, right) := if p.command == some "\\(" then ("\\(", "\\)")
+      else if display then ("\\[", "\\]") else ("$", "$")
+    (stringTestTokens left body.toList).map (· ++ right)
+  | .env n body _ =>
+    (stringTestTokens (stringTestControl "begin" ++ "{" ++ n ++ "}") body.toList).map
+      (· ++ stringTestControl "end" ++ "{" ++ n ++ "}")
+  | .verb .. => none
+
+end
+
+/-- Partitioning a token sequence does not change its literal comparison
+key, including an unread token's refusal. -/
+private theorem stringTestTokens_append_exact (out : String) (xs ys : List Raw) :
+    stringTestTokens out (xs ++ ys) =
+      (stringTestTokens out xs).bind (fun s => stringTestTokens s ys) := by
+  induction xs generalizing out with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.cons_append, stringTestTokens]
+    cases hx : stringTestToken x with
+    | none => rfl
+    | some s => simpa only [Option.bind_some] using ih (out ++ s)
+
+/-- `etoolbox.sty` compares `\detokenize` of two operands, without expanding
+them, then selects one of two branch arguments outside its comparison group.
+Read all four groups before allowing any part of the call to execute. -/
+private def stringTestAt (raws : Array Raw) (i : Nat) : Option Bool := do
+  let args ← argGroupsAt raws i 4
+  let left ← stringTestTokens "" (args.getD 0 #[]).toList
+  let right ← stringTestTokens "" (args.getD 1 #[]).toList
+  pure (left == right)
 
 /-- Which of the groups after a resolved test are kept, unbraced, and which go
 with it: the name and the option list go, and the branch the answer picks
@@ -2826,7 +2887,8 @@ private def condLiveList (flags : Std.HashMap String Bool)
 private def condLiveRaw (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : Raw → Bool
   | .ctrl n _ =>
-    isCondHead flags n || n == "unless" || n == "newif" || condDefiners.contains n ||
+    isCondHead flags n || n == "unless" || n == "newif" || n == "ifstrequal" ||
+      condDefiners.contains n ||
       (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
@@ -3427,6 +3489,14 @@ private def condList [Monad m]
             (help := "declare the hook before '\\begin{document}'")
           condList ex [] raws following out stack rest (i + 1) 0
       | _ => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
+    else if let some ans := if n == "ifstrequal" then stringTestAt raws (i + 1) else none then
+      -- premise: Tests.stringConditionalChecks — operands and the unselected
+      -- branch stay inert; the selected argument executes in the caller's scope.
+      let msg := if ans then
+          "'\\ifstrequal': the literal strings agree, so the first branch is kept"
+        else "'\\ifstrequal': the literal strings differ, so the second branch is kept"
+      sayOnce ("string-test:" ++ msg) .N0114 msg (st.useSite.getD pos)
+      condList ex [false, false, ans, !ans] raws following out stack rest (i + 1) 0
     else if let some (test, query) := (loadedTests.find? (·.ctrl == n)).bind fun test =>
         (loadedAt raws (i + 1) test).map (test, ·) then
       -- premise: loadedTestChecks — selected branches execute where the
