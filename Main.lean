@@ -295,11 +295,10 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
-  let spec ← if bare then
-      match FontDb.defaultFamily faces with
-      | some fam => pure { spec with body := some fam }
-      | none => return .error noFontDiag
-    else pure spec
+  -- Mono and math are independent roles; neither supplies the text default.
+  let spec := if spec.body.isNone && spec.sans.isNone then
+      { spec with body := FontDb.defaultFamily faces }
+    else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
