@@ -73,6 +73,28 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       !raiseDs.any (fun d => d.severity == .error || d.code == "W0301") &&
       reprStr (layoutOf fonts raised).pages == reprStr (layoutOf fonts raisedNative).pages &&
       templateHtmlFacts raised == templateHtmlFacts raisedNative)
+  let mathFonts ← mathSetOf fonts
+  let mathModes := [("dollar", "$", "$"), ("parentheses", "\\(", "\\)"),
+      ("brackets", "\\[", "\\]"), ("ensuremath", "\\ensuremath{", "}")] ++
+    (Elab.displayMathEnvs.map (·.1) ++ Elab.alignEnvs.map (·.1)).map
+      (fun n => (n, s!"\\begin\{{n}}", s!"\\end\{{n}}"))
+  for (mode, first, last) in mathModes do
+    let wrap := fun s => "\\documentclass{article}\\begin{document}" ++
+      first ++ s ++ last ++ "\\end{document}"
+    let (actual, ds) := elabStr (wrap "a + \\raisebox{1pt}{\\sum_k R_k} + z^2")
+    let expected := (elabStr (wrap "a + {\\sum_k R_k} + z^2")).1
+    let html := (templateHtml actual).toList
+    t s!"math mode {mode}: the math parser owns containment"
+      (ds.any (·.code == "W0389") &&
+        !ds.any (fun d => d.code == "W0012" ||
+          (d.code == "W0104" && d.subject == some "ctrl:raisebox")))
+    t s!"math mode {mode}: containment preserves shipped mathematical ink"
+      (reprStr (layoutOf mathFonts actual).pages == reprStr (layoutOf mathFonts expected).pages &&
+        nodeTextList "" html == nodeTextList "" (templateHtml expected).toList)
+    t s!"math mode {mode}: the HTML math node retains its authored source"
+      ((elemAttrsList (· == "math") #[] html).any (fun (_, attrs) =>
+        attrs.any (fun (key, value) =>
+          key == "data-tex" && hasStr value "\\raisebox {1pt}")))
   let footer (counter : String) :=
     "\\setbeamertemplate{footline}{" ++
       "\\begin{beamercolorbox}[wd=\\paperwidth,ht=2.6ex,dp=1.2ex,leftskip=0.8cm,rightskip=0.8cm]{footline}" ++

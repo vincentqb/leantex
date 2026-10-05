@@ -277,6 +277,12 @@ def listEnvs : List String := ["itemize", "enumerate", "description"]
 /-- Environments whose bodies the elaborator reads as table cells. -/
 def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
 
+/-- Math-mode entry environments (latex.ltx, amsmath.sty). Their bodies
+belong to the math parser, just as a `Raw.math` body does.
+`beamerTemplateChecks` quantifies over the elaborator's entry catalogues. -/
+private def mathEnvs : List String :=
+  ["equation", "equation*", "displaymath", "align", "align*", "gather", "gather*"]
+
 /-- The kernel and booktabs length parameters, each with its site. A name
 not here is a length of the document's own: a token of its name. -/
 def paramSites : List (String × ParamSite) :=
@@ -6428,6 +6434,12 @@ is skipped" pos
         else BeamerColor.starMarker
       return some (#[.ctrl marker pos, .group args[0] pos, .group args[1] pos], k)
     else return none
+  | "ensuremath" =>
+    -- Preserve the math-mode group for the math parser, including its
+    -- containment accounting; text-mode rewrites do not own its commands.
+    let (args, j) := takeGroups raws start 1
+    if args.size != 1 then return none
+    return some (#[.ctrl name pos] ++ raws.extract start j, j)
   | "raisebox" =>
     let (args, j) := takeGroups raws start 1
     if args.size != 1 then return none
@@ -8829,7 +8841,9 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       write fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      if n == "otherlanguage" || n == "otherlanguage*" then
+      if mathEnvs.contains n then
+        return .env n body p
+      else if n == "otherlanguage" || n == "otherlanguage*" then
         -- The environment form of the switch: the body takes the language
         -- attribute; the starred form differs only in date handling the
         -- engine does not model. The first group is the language.
