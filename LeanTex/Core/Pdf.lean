@@ -6,6 +6,7 @@ import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct
+import LeanTex.Core.PdfXref
 
 namespace LeanTex.Core.Pdf
 
@@ -1094,6 +1095,88 @@ is the statement this shape exists for. -/
 def serialize (head : ByteArray) (rows : Array Row) : ByteArray × Array (Nat × Nat) :=
   serializeList head #[] rows.toList
 
+/-- A row appends its bytes independently of the preceding file. -/
+theorem rowInto_bytes (pre : ByteArray) (id : Nat) (body : Body) :
+    rowInto pre id body = pre ++ rowInto ByteArray.empty id body := by
+  cases body with
+  | stream dict data => simp [rowInto, ByteArray.append_assoc]
+  | form head resources content => simp [rowInto, ByteArray.append_assoc]
+  | copied value stream =>
+    cases stream <;> simp [rowInto, ByteArray.append_assoc]
+
+theorem serializeList_bytes (rows : List Row) (out : ByteArray)
+    (locs : Array (Nat × Nat)) :
+    (serializeList out locs rows).1 =
+      out ++ (serializeList ByteArray.empty #[] rows).1 := by
+  induction rows generalizing out locs with
+  | nil => simp [serializeList]
+  | cons r rest ih =>
+    simp only [serializeList]
+    rw [ih, ih (rowInto ByteArray.empty r.id r.body)]
+    rw [rowInto_bytes out]
+    exact ByteArray.append_assoc
+
+theorem serializeList_offsets (rows : List Row) (out : ByteArray)
+    (locs : Array (Nat × Nat)) :
+    (serializeList out locs rows).2 =
+      locs ++ (serializeList out #[] rows).2 := by
+  induction rows generalizing out locs with
+  | nil => simp [serializeList]
+  | cons r rest ih =>
+    simp only [serializeList]
+    rw [ih (rowInto out r.id r.body) (locs.push (r.id, out.size)),
+      ih (rowInto out r.id r.body) (#[].push (r.id, out.size))]
+    simp only [Array.push_eq_append, Array.empty_append, Array.append_assoc]
+
+theorem serializeList_offsetSize (rows : List Row) (out : ByteArray)
+    (locs : Array (Nat × Nat)) :
+    (serializeList out locs rows).2.size = locs.size + rows.length := by
+  induction rows generalizing out locs with
+  | nil => simp [serializeList]
+  | cons r rest ih =>
+    simp only [serializeList, ih, Array.size_push, List.length_cons]
+    omega
+
+theorem serializeList_append (before after : List Row) (out : ByteArray)
+    (locs : Array (Nat × Nat)) :
+    serializeList out locs (before ++ after) =
+      serializeList (serializeList out locs before).1
+        (serializeList out locs before).2 after := by
+  induction before generalizing out locs with
+  | nil => rfl
+  | cons r rest ih =>
+    simpa only [List.cons_append, serializeList] using
+      (ih (rowInto out r.id r.body) (locs.push (r.id, out.size)))
+
+/-- Every recorded offset selects exactly that row's bytes in the
+serialized file. This artifact-specific law quantifies over all preceding
+and following rows, including binary streams and copied objects. -/
+theorem serialize_row_exact (head : ByteArray) (before after : Array Row) (r : Row) :
+    let pre := (serialize head before).1
+    let out := serialize head (before ++ #[r] ++ after)
+    out.2[before.size]? = some (r.id, pre.size) ∧
+      out.1.extract pre.size (pre.size + (rowInto ByteArray.empty r.id r.body).size) =
+        rowInto ByteArray.empty r.id r.body := by
+  dsimp only
+  simp only [serialize, Array.toList_append, List.append_assoc,
+    List.singleton_append, serializeList_append, serializeList]
+  constructor
+  · rw [serializeList_offsets]
+    have hsize := serializeList_offsetSize before.toList head #[]
+    simp only [Array.size_empty, Nat.zero_add, Array.length_toList] at hsize
+    rw [Array.getElem?_append_left (by simp [hsize])]
+    rw [← hsize]
+    exact Array.getElem?_push_size
+  · rw [serializeList_bytes, rowInto_bytes]
+    rw [ByteArray.append_assoc]
+    simpa only [Nat.add_zero] using
+      (ByteArray.extract_append_size_add
+        (a := (serializeList head #[] before.toList).1)
+        (b := rowInto ByteArray.empty r.id r.body ++
+          (serializeList ByteArray.empty #[] after.toList).1)
+        (i := 0) (j := (rowInto ByteArray.empty r.id r.body).size)).trans
+        (ByteArray.extract_append_eq_left rfl)
+
 /-- **`serialize_locs_covers`** (the `_covers` statement): `serialize`
 reports one offset per row, in the rows' own order — so a cross-reference
 built from `locs` names every object the writer wrote and no other. -/
@@ -1112,18 +1195,78 @@ the head's own size — the offset a reader following `startxref` arrives at,
 and the base case of the induction over the rows. -/
 theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
-  suffices h : ∀ (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)),
-      (serializeList out locs l).2[0]? = if locs.isEmpty then
-        (match l with | [] => none | s :: _ => some (s.id, out.size)) else locs[0]? by
-    simpa [serialize] using h (r :: rest.toList) head #[]
-  intro l
-  induction l with
-  | nil => intro out locs; cases locs <;> simp [serializeList]
-  | cons s tl ih =>
-    intro out locs
-    rw [serializeList, ih]
-    cases locs with
-    | mk xs => cases xs <;> simp
+  simpa [serialize, serializeList] using (serialize_row_exact head #[] rest r).1
+
+/-- The three dictionaries of one embedded face (ISO 32000-2 §§9.7, 9.8).
+The stream rows hold its program and ToUnicode separately. -/
+structure FontObjects where
+  type0 : PdfRead.Obj
+  cid : PdfRead.Obj
+  descriptor : PdfRead.Obj
+
+def FontObjects.rows (o : FontObjects) (k : Nat) : List (Nat × PdfRead.Obj) :=
+  [(ObjTable.type0Id k, o.type0), (ObjTable.cidId k, o.cid),
+    (ObjTable.fdId k, o.descriptor)]
+
+/-- Font dictionaries from the face metrics and the allocated ids.
+The name and widths have already been resolved for the selected glyphs. -/
+def fontObjects (t : ObjTable) (k : Nat) (font : Font)
+    (baseFont : String) (widths : PdfRead.Obj) : FontObjects :=
+  let ascent1000 := font.ascent * 1000 / font.unitsPerEm
+  let descent1000 := font.descent * 1000 / font.unitsPerEm
+  -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
+  -- the face's own (OS/2 sCapHeight through `Font.capHeight` — `ascent`
+  -- once stood in for it), and ItalicAngle is the slant the face declares
+  -- (post.italicAngle); only a face flagged italic that declares none
+  -- keeps the conventional -12°.
+  let capHeight1000 := font.capHeight * 1000 / font.unitsPerEm
+  let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
+  let cidToGid : Array (String × PdfRead.Obj) :=
+    if font.isCff then #[] else #[("CIDToGIDMap", .name "Identity")]
+  let fontFileKey := if font.isCff then "FontFile3" else "FontFile2"
+  let italicAngle := if font.italicAngle == 0 && font.isItalic then -12
+    else font.italicAngle
+  -- Flags: bit 1 fixed pitch, bit 3 symbolic, bit 7 italic (1-based).
+  let flags := 4 + (if font.isFixedPitch then 1 else 0) + (if font.isItalic then 64 else 0)
+  -- StemV and the FontBBox x-bounds are conventional stand-ins, said so:
+  -- an unhinted OpenType face declares neither (a stem width lives in
+  -- hinting data the parser does not keep), so these are the trade's
+  -- usual values, not measurements.
+  let stemV := if font.isBold then 140 else 80
+  {
+    type0 := .dict
+      #[("Type", .name "Font"), ("Subtype", .name "Type0"), ("BaseFont", .name baseFont),
+        ("Encoding", .name "Identity-H"),
+        ("DescendantFonts", .arr #[.ref (ObjTable.cidId k) 0]),
+        ("ToUnicode", .ref (ObjTable.toUniId k) 0)]
+    cid := .dict
+      (#[("Type", .name "Font"), ("Subtype", .name cidSubtype),
+         ("BaseFont", .name baseFont),
+         ("CIDSystemInfo", .dict #[("Registry", litObj "(Adobe)"),
+           ("Ordering", litObj "(Identity)"), ("Supplement", .int 0)]),
+         ("FontDescriptor", .ref (ObjTable.fdId k) 0), ("DW", .int 1000),
+         ("W", widths)] ++ cidToGid)
+    descriptor := .dict
+      #[("Type", .name "FontDescriptor"), ("FontName", .name baseFont), ("Flags", .int flags),
+        ("FontBBox", .arr #[.int (-1000), .int descent1000, .int 2000, .int ascent1000]),
+        ("ItalicAngle", .int italicAngle), ("Ascent", .int ascent1000),
+        ("Descent", .int descent1000), ("CapHeight", .int capHeight1000),
+        ("StemV", .int stemV), (fontFileKey, .ref (t.fileId k) 0)]
+  }
+
+/-- The composite font, its descendant, and its descriptor point to the
+table's own slots, for every face and glyph-width table. This is a PDF
+dictionary contract; it does not assume a reader or certify a font file. -/
+theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
+    (baseFont : String) (widths : PdfRead.Obj) :
+    let o := fontObjects t k font baseFont widths
+    o.type0.get? "DescendantFonts" = some (.arr #[.ref (ObjTable.cidId k) 0]) ∧
+    o.type0.get? "ToUnicode" = some (.ref (ObjTable.toUniId k) 0) ∧
+    o.cid.get? "FontDescriptor" = some (.ref (ObjTable.fdId k) 0) ∧
+    o.descriptor.get? (if font.isCff then "FontFile3" else "FontFile2") =
+      some (.ref (t.fileId k) 0) := by
+  cases hcff : font.isCff <;>
+    simp [fontObjects, hcff, PdfRead.Obj.get?]
 
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (its program
@@ -1201,45 +1344,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let used := usedPerFont[k]!
     let baseFont := if (programs[k]?.map (·.2)).getD false
       then s!"{subsetTag k (used.map (·.1))}+{font.psName}" else font.psName
-    let ascent1000 := font.ascent * 1000 / font.unitsPerEm
-    let descent1000 := font.descent * 1000 / font.unitsPerEm
-    -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
-    -- the face's own (OS/2 sCapHeight through `Font.capHeight` — `ascent`
-    -- once stood in for it), and ItalicAngle is the slant the face declares
-    -- (post.italicAngle); only a face flagged italic that declares none
-    -- keeps the conventional -12°.
-    let capHeight1000 := font.capHeight * 1000 / font.unitsPerEm
-    let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
-    let cidToGid : Array (String × PdfRead.Obj) :=
-      if font.isCff then #[] else #[("CIDToGIDMap", .name "Identity")]
-    let fontFileKey := if font.isCff then "FontFile3" else "FontFile2"
-    let italicAngle := if font.italicAngle == 0 && font.isItalic then -12
-      else font.italicAngle
-    -- Flags: bit 1 fixed pitch, bit 3 symbolic, bit 7 italic (1-based).
-    let flags := 4 + (if font.isFixedPitch then 1 else 0) + (if font.isItalic then 64 else 0)
-    -- StemV and the FontBBox x-bounds are conventional stand-ins, said so:
-    -- an unhinted OpenType face declares neither (a stem width lives in
-    -- hinting data the parser does not keep), so these are the trade's
-    -- usual values, not measurements.
-    let stemV := if font.isBold then 140 else 80
-    [(ObjTable.type0Id k, PdfRead.Obj.dict
-      #[("Type", .name "Font"), ("Subtype", .name "Type0"), ("BaseFont", .name baseFont),
-        ("Encoding", .name "Identity-H"),
-        ("DescendantFonts", .arr #[.ref (ObjTable.cidId k) 0]),
-        ("ToUnicode", .ref (ObjTable.toUniId k) 0)]),
-     (ObjTable.cidId k, PdfRead.Obj.dict
-      (#[("Type", PdfRead.Obj.name "Font"), ("Subtype", .name cidSubtype),
-         ("BaseFont", .name baseFont),
-         ("CIDSystemInfo", .dict #[("Registry", litObj "(Adobe)"),
-           ("Ordering", litObj "(Identity)"), ("Supplement", .int 0)]),
-         ("FontDescriptor", .ref (ObjTable.fdId k) 0), ("DW", .int 1000),
-         ("W", wArray font used)] ++ cidToGid)),
-     (ObjTable.fdId k, PdfRead.Obj.dict
-      #[("Type", .name "FontDescriptor"), ("FontName", .name baseFont), ("Flags", .int flags),
-        ("FontBBox", .arr #[.int (-1000), .int descent1000, .int 2000, .int ascent1000]),
-        ("ItalicAngle", .int italicAngle), ("Ascent", .int ascent1000),
-        ("Descent", .int descent1000), ("CapHeight", .int capHeight1000),
-        ("StemV", .int stemV), (fontFileKey, .ref (t.fileId k) 0)])]
+    (fontObjects t k font baseFont (wArray font used)).rows k
   -- Internal fragments name PDF destinations, never URI actions. Resolve
   -- from the final lines so columns, spills, and vertical glue cannot leave
   -- an annotation pointing at the page where collection first saw its name
@@ -1534,13 +1639,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
   -- kind the table's answer.
   let xrefOff := body.size
-  let be4 (v : Nat) : List UInt8 :=
-    [UInt8.ofNat (v / 16777216), UInt8.ofNat (v / 65536 % 256),
-     UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]
-  let directRow (off : Nat) : ByteArray := ⟨(1 :: be4 off ++ [0, 0]).toArray⟩
-  let streamRow (idx : Nat) : ByteArray :=
-    ⟨(2 :: be4 t.objStmId ++ [UInt8.ofNat (idx / 256 % 256), UInt8.ofNat (idx % 256)]).toArray⟩
-  let mut xrefRows : ByteArray := ⟨#[0, 0, 0, 0, 0, 0xFF, 0xFF]⟩
+  let directRow (off : Nat) : ByteArray := Xref.row 1 off 0
+  let streamRow (idx : Nat) : ByteArray := Xref.row 2 t.objStmId idx
+  let mut xrefRows : ByteArray := Xref.row 0 0 65535
   for h : id in t.ids do
     match hk : t.kindOf compressedIdx id with
     | some .xref => xrefRows := xrefRows ++ directRow xrefOff
@@ -1555,7 +1656,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         -- pointing into the object stream at another object. Unreachable as
         -- the writer stands — every allocated id is a row — but the arm is
         -- the honest answer rather than a guessed offset.
-        xrefRows := xrefRows ++ ⟨#[0, 0, 0, 0, 0, 0, 0]⟩
+        xrefRows := xrefRows ++ Xref.row 0 0 0
     | none =>
       have hs : (t.kindOf compressedIdx id).isSome = true :=
         objTable_kindOf_some keep imgs usedImgs np nOut es.size compressedIdx id h
