@@ -139,6 +139,76 @@ private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         (ds.filter (·.kind == code) |>.all fun d =>
           d.subject.any fun s => s == name || s.endsWith (":" ++ name))
 
+/-- Key selection precedes execution: discarded values cannot change the
+body or surrounding scope. Global definitions witness effects that closing
+an option group cannot hide; a local flag is observed inside the box.
+Retained font declarations share the body's scope, including nested boxes,
+and that scope closes before the following text. -/
+def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  let defined := "\\ifdefined\\hiddenprobe Leaked\\else Inert\\fi"
+  let chosen := "\\ifchoiceprobe Chosen\\else Default\\fi"
+  -- Positive controls show that the same effects are observable when
+  -- executed in ordinary native block content.
+  sourceCaseChecks ref fonts "global definition witness" ""
+    ("\\begin{block}{Heading}{\\gdef\\hiddenprobe{Leaked}}" ++
+      defined ++ "\\end{block}" ++ defined)
+    "\\begin{block}{Heading}Leaked\\end{block}Leaked"
+  sourceCaseChecks ref fonts "local flag witness" "\\newif\\ifchoiceprobe"
+    ("\\begin{block}{Heading}\\choiceprobetrue" ++ chosen ++
+      "\\end{block}" ++ chosen)
+    "\\begin{block}{Heading}Chosen\\end{block}Default"
+  sourceCaseChecks ref fonts "unsupported global definition is inert"
+    "\\newtcolorbox{panel}{title={Heading},unknown={\\global\\def\\hiddenprobe{Leaked}}}"
+    ("\\begin{panel}" ++ defined ++ "\\end{panel}" ++ defined)
+    "\\begin{block}{Heading}Inert\\end{block}Inert"
+    (some .W0110) (some "\\begin") (some "panel")
+  sourceCaseChecks ref fonts "unsupported local flag cannot choose body"
+    ("\\newif\\ifchoiceprobe" ++
+      "\\newtcolorbox{panel}{title={Heading},unknown=\\choiceprobetrue}")
+    ("\\begin{panel}" ++ chosen ++ "\\end{panel}" ++ chosen)
+    "\\begin{block}{Heading}Default\\end{block}Default"
+    (some .W0110) (some "\\begin") (some "panel")
+  for (key, initial, final, title, body) in [
+      ("title", "\\global\\def\\hiddenprobe{Leaked}Discarded", "Heading",
+        "Heading", "Inert"),
+      ("fontupper", "\\global\\def\\hiddenprobe{Leaked}\\bfseries", "\\small",
+        "Heading", "{\\small Inert}"),
+      ("fonttitle", "\\global\\def\\hiddenprobe{Leaked}\\itshape", "\\bfseries",
+        "{\\bfseries Heading}", "Inert")] do
+    sourceCaseChecks ref fonts ("replaced " ++ key ++ " is inert")
+      ("\\newtcolorbox{panel}{title={Heading}," ++ key ++ "={" ++ initial ++
+        "}," ++ key ++ "={" ++ final ++ "}}")
+      ("\\begin{panel}" ++ defined ++ "\\end{panel}" ++ defined)
+      ("\\begin{block}{" ++ title ++ "}" ++ body ++ "\\end{block}Inert")
+  sourceCaseChecks ref fonts "empty title leaves title font inert"
+    ("\\newtcolorbox{panel}{" ++
+      "fonttitle={\\global\\def\\hiddenprobe{Leaked}\\bfseries}}")
+    ("\\begin{panel}" ++ defined ++ "\\end{panel}" ++ defined)
+    "\\begin{block}{}Inert\\end{block}Inert"
+  sourceCaseChecks ref fonts "retained body font flag shares body scope"
+    ("\\newif\\ifchoiceprobe" ++
+      "\\newtcolorbox{panel}{title={Heading},fontupper={\\choiceprobetrue\\small}}")
+    ("\\begin{panel}" ++ chosen ++ "\\end{panel}" ++ chosen)
+    "\\begin{block}{Heading}{\\small Chosen}\\end{block}Default"
+  sourceCaseChecks ref fonts "nested original body binds each box"
+    "\\newtcolorbox{panel}[2]{title={#1},fontupper={#2}}"
+    ("\\begin{panel}{Outer}{\\small}Before" ++
+      "\\begin{panel}{Inner}{\\bfseries}Inside\\end{panel}" ++
+      "After\\end{panel}Outside")
+    ("\\begin{block}{Outer}{\\small Before" ++
+      "\\begin{block}{Inner}{\\bfseries Inside}\\end{block}" ++
+      "After}\\end{block}Outside")
+  sourceCaseChecks ref fonts "nested original body restores font flag"
+    ("\\newif\\ifchoiceprobe" ++
+      "\\newtcolorbox{outerpanel}{title={Outer},fontupper=\\choiceprobetrue}" ++
+      "\\newtcolorbox{innerpanel}{title={Inner},fontupper=\\choiceprobefalse}")
+    ("\\begin{outerpanel}" ++ chosen ++
+      "\\begin{innerpanel}" ++ chosen ++ "\\end{innerpanel}" ++ chosen ++
+      "\\end{outerpanel}" ++ chosen)
+    ("\\begin{block}{Outer}Chosen" ++
+      "\\begin{block}{Inner}Default\\end{block}Chosen\\end{block}Default")
+
 /-- tcolorbox uses ordinary environment arguments and TeX declaration scope
 (tcolorbox manual, “Creation of New Environments”). Synthetic LuaLaTeX probes
 also pin the less obvious cases: unused arguments stay inert, an empty optional
@@ -260,6 +330,7 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         "\\begin{block}{Original: Kept}{\\small Body}\\end{block}",
         "\\newtcolorbox")] do
     sourceCaseChecks ref fonts label pre body control (some .W0104) (some command)
+  tcolorboxEffectChecks ref fonts
 
 /-- Full declaration probes for the compatibility owner: options are
 instantiated at use, including a default and a macro defined later. -/
