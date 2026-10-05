@@ -6343,6 +6343,43 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a mentioned palette edit moves the request"
     (Ir.pictureRefs cdoc != Ir.pictureRefs cdoc'' &&
      (Ir.pictureRefs cdoc).map (·.1) == (Ir.pictureRefs cdoc'').map (·.1))
+  -- Carried styles are executable request source too. Their dependencies
+  -- must travel even when the picture body spells only a style name.
+  let styledPic := "\\begin{tikzpicture}\\shade[painted] (0,0) rectangle (1,1);" ++
+    "\\end{tikzpicture}"
+  let styledPreamble := "\\tikzset{painted/.style={fill=quietbg}}\n"
+  let styledDoc := (elabStr (dvDoc (pal ++ styledPreamble) styledPic)).1
+  t "a colour reached only through a carried style is declared"
+    ((styledDoc.palette.find? "quietbg").any fun c =>
+      hasStr (reqOf styledDoc) (Ir.colorDeclLine ("quietbg", c)))
+  t "editing a style's colour invalidates the request without changing the picture id"
+    (let changed := (elabStr (dvDoc
+       ("\\palette{ ember = #C0431F, quietbg = #000000 }\n" ++ styledPreamble)
+       styledPic)).1
+     Ir.pictureRefs styledDoc != Ir.pictureRefs changed &&
+       (Ir.pictureRefs styledDoc).map (·.1) == (Ir.pictureRefs changed).map (·.1))
+  t "editing a colour unused by both the style and picture preserves the request"
+    (let changed := (elabStr (dvDoc
+       ("\\palette{ ember = #000000, quietbg = #F2EEE8 }\n" ++ styledPreamble)
+       styledPic)).1
+     Ir.pictureRefs styledDoc == Ir.pictureRefs changed)
+  let styleMacros : Array (String × String) := #[
+    ("stamp", "\\providecommand{\\stamp}{}\\renewcommand{\\stamp}{\\detail}"),
+    ("detail", "\\providecommand{\\detail}{}\\renewcommand{\\detail}{\\textcolor{quietbg}{Mark}}"),
+    ("unused", "\\providecommand{\\unused}{}\\renewcommand{\\unused}{Away}")]
+  let macroStyleDoc := { styledDoc with
+    picturePreamble := "\\tikzset{painted/.style={font=\\stamp}}\n"
+    pictureMacros := styleMacros }
+  t "a macro reached only through a carried style brings its transitive definitions and colour"
+    (let request := reqOf macroStyleDoc
+     hasStr request styleMacros[0]!.2 && hasStr request styleMacros[1]!.2 &&
+       !hasStr request styleMacros[2]!.2 &&
+       (macroStyleDoc.palette.find? "quietbg").any fun c =>
+         hasStr request (Ir.colorDeclLine ("quietbg", c)))
+  t "editing a macro outside the complete request's dependency closure preserves its bytes"
+    (reqOf macroStyleDoc == reqOf { macroStyleDoc with
+      pictureMacros := styleMacros.set! 2
+        ("unused", "\\providecommand{\\unused}{}\\renewcommand{\\unused}{Elsewhere}") })
   let (ldoc, _) := elabStr (dvDoc (pal ++ "\\colorlet{ember2}{ember!50!black}\n")
     ("\\begin{tikzpicture}\\shade[text=ember2] (0,0) rectangle (1,1);" ++
      "\\end{tikzpicture}"))

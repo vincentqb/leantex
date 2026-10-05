@@ -7634,9 +7634,9 @@ structure Doc where
   body is the picture as written — the `bibRefs` shape. The request the
   driver fulfils is formed at the request site (`pictureRefs`): the body
   wrapped with `picturePreamble`, the document's font roles, and exactly
-  the palette roles the body mentions, so a picture's colours and faces
-  are the page's (`Design.ofDoc` reads the same palette). The result
-  embeds through the image path as a measured form XObject. The trust
+  the palette roles its body and carried declarations mention, so its
+  colours and faces are the page's (`Design.ofDoc` reads the same palette).
+  The result embeds through the image path as a measured form XObject. The trust
   label: the engine claims the *box*, never the contents. -/
   pictureSrcs : Array (String × String) := #[]
   /-- The preamble a boundary standalone needs beyond the document's
@@ -7647,8 +7647,8 @@ structure Doc where
   and the declaration as the boundary standalone reads it. Captured as the
   document wrote it rather than spelled back from a native `UserCmd`,
   because an optional argument's default is the one part the native form
-  drops. The request site carries the subset a picture body reaches
-  (`macroDecls`, `macroDecls_covers`), so a picture that spells a
+  drops. The request site carries the subset its body and carried preamble
+  reach (`macroDecls`, `macroDecls_covers`), so a picture that spells a
   document macro is drawn with it. -/
   pictureMacros : Array (String × String) := #[]
   /-- The ink this document carries that its author did not write: one entry
@@ -13851,14 +13851,15 @@ def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
 /-- The request one picture body states, formed from the finished
 document: the driver calls `pictureRefs` after contrast realization, so a
 role the realizer moved is moved in the picture too — the picture's
-`alert` is the page's `alert`. The colour scan reads the carried
-definitions beside the body, because a role a macro spells is a role the
-picture paints with: the same closure that makes the macro travel makes
-its colours travel. -/
+`alert` is the page's `alert`. The carried preamble and the body are both
+dependency roots: a TikZ style can name a macro or colour that the body
+never spells. The colour scan also reads every reachable macro definition,
+so the same closure that makes a macro travel makes its colours travel. -/
 def pictureRequest (doc : Doc) (body : String) : String :=
-  let macros := macroDecls doc.pictureMacros body
+  let roots := doc.picturePreamble ++ body
+  let macros := macroDecls doc.pictureMacros roots
   wrapStandalone doc.picturePreamble (fontLines doc.fonts)
-    (paletteDecls doc.palette (macroDeclLines macros ++ body)) macros body
+    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) macros body
 
 /-- The boundary requests the shipped tree actually states: `pictureSrcs`
 filtered to the ids an `.image` node still references — a picture pruned
@@ -13994,9 +13995,9 @@ theorem macroDecls_mem (macros : Array (String × String)) (body : String)
 request `pictureRefs` states is one picture body of `pictureSrcs`
 wrapped with the document's preamble, its declared font roles
 (`fontLines doc.fonts`), the palette roles the request mentions
-(`paletteDecls doc.palette`) and the macro definitions the body reaches
-(`macroDecls doc.pictureMacros`) — the same `fonts` and `palette` both
-backends read through `Design.ofDoc`. No backend theorem stands behind
+(`paletteDecls doc.palette`) and the macro definitions its preamble and
+body reach (`macroDecls doc.pictureMacros`) — the same `fonts` and `palette`
+both backends read through `Design.ofDoc`. No backend theorem stands behind
 this one: the PDF embeds the tool's drawing and the HTML embeds a
 rasterization of the same drawing — one fulfilment, two projections. -/
 theorem pictureRefs_design_projects (doc : Doc) (id w : String)
@@ -14004,8 +14005,9 @@ theorem pictureRefs_design_projects (doc : Doc) (id w : String)
     ∃ body, (id, body) ∈ doc.pictureSrcs ∧
       w = wrapStandalone doc.picturePreamble (fontLines doc.fonts)
         (paletteDecls doc.palette
-          (macroDeclLines (macroDecls doc.pictureMacros body) ++ body))
-        (macroDecls doc.pictureMacros body) body := by
+          (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ body)) ++
+            (doc.picturePreamble ++ body)))
+        (macroDecls doc.pictureMacros (doc.picturePreamble ++ body)) body := by
   unfold pictureRefs at h
   rw [Array.mem_map] at h
   obtain ⟨⟨id', body⟩, hmem, heq⟩ := h
