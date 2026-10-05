@@ -277,17 +277,9 @@ it — one code, one meaning, and the meaning is a loss. -/
 def textNeutralCtrl : List String :=
   ["text", "mbox", "textrm", "textup", "textnormal", "rm"]
 
-/-- The math accent commands: the combining mark set over the base
-(unicode-math's accent table — `\hat` is U+0302), and whether it
-stretches to the base's width through the face's horizontal variants.
-`\overline` maps to U+0305, the mark layout draws as a rule from the
-overbar constants (TeXbook Appendix G rule 9), so its stretch is exact. -/
-def accentCtrl : List (String × Char × Bool) :=
-  [("hat", '\u0302', false), ("widehat", '\u0302', true),
-   ("tilde", '\u0303', false), ("widetilde", '\u0303', true),
-   ("bar", '\u0304', false),
-   ("dot", '\u0307', false), ("ddot", '\u0308', false),
-   ("vec", '\u20D7', false), ("overline", '\u0305', true)]
+/-- The shared accent registry: parsing and the plaintext reading use one
+mapping between the control name, combining mark and stretch flag. -/
+def accentCtrl : List (String × Char × Bool) := Ir.mathAccentCommands
 
 /-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
 for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`

@@ -8029,20 +8029,347 @@ invert the layering. A dropped symbol is named by the diagnostic; a shipped
 backslash is not. -/
 def mathFloor (src : String) : String := String.ofList (floorInk src)
 
-/-- The floor for a formula the elaborator *did* model but the page cannot
-set: no math face is available, so the atoms have no metrics. Their glyphs
-are known all the same, so the floor is the formula's own glyph text — the
-scalars the coverage census counts — and never its source. Same policy as
-`mathFloor`, better material: here the parse succeeded, so the floor is the
-mathematics rather than what survives its spelling.
+/-- Math accents shared by parsing and the textual formula reading. The
+combining marks and stretch flags are unicode-math's accent table;
+`overline` uses U+0305 (TeXbook Appendix G, rule 9). -/
+def mathAccentCommands : List (String × Char × Bool) :=
+  [("hat", '\u0302', false), ("widehat", '\u0302', true),
+   ("tilde", '\u0303', false), ("widetilde", '\u0303', true),
+   ("bar", '\u0304', false), ("dot", '\u0307', false), ("ddot", '\u0308', false),
+   ("vec", '\u20D7', false), ("overline", '\u0305', true)]
 
-No character filter runs over these scalars, deliberately. A parsed atom's
-scalar is content by the parser's own decision: `\{` means the brace glyph
-and `\backslash` the backslash, and filtering them would delete what the
-author asked for. That is why `markupChars` governs salvage from a source
-string and not this. -/
-def formulaFloor (body : Math.MList) : String :=
-  String.ofList (Math.MList.scalarsList #[] body).toList
+namespace FormulaText
+
+-- The math AST has its own mutually recursive lists, nuclei and grids.
+-- A structural reading needs their boundaries; the glyph-coverage census
+-- deliberately omits operators drawn as rules and cannot supply this text.
+private def grouped (s : String) : String := (String.singleton '(' ++ s).push ')'
+
+private def optionalChar : Option Char → String
+  | none => ""
+  | some c => String.singleton c
+
+private def script (marker body : String) : String :=
+  if body.isEmpty then "" else
+    let text := grouped body
+    marker ++ text
+
+private def scripts (base sup sub : String) : String :=
+  if sup.isEmpty && sub.isEmpty then base
+  else grouped base ++ script "_" sub ++ script "^" sup
+
+private def fraction (spec : Math.FracSpec) (num den : String) : String :=
+  optionalChar spec.left ++
+    (if spec.rule = some 0 then
+      if num.isEmpty && den.isEmpty then "" else "stack" ++ grouped (num ++ ";" ++ den)
+     else grouped num ++ "/" ++ grouped den) ++
+    optionalChar spec.right
+
+private def radical (degree body : String) : String :=
+  let text := grouped body
+  if degree.isEmpty then
+    "sqrt" ++ text
+  else
+    let index := grouped degree
+    "root" ++ index ++ text
+
+private def cancellation (mark : Math.CancelMark) (value body : String) : String :=
+  let name := match mark with
+    | .up => "cancel" | .down => "bcancel" | .cross => "xcancel" | .to => "cancelto"
+  let text := grouped (body ++
+    (if mark = .to then ";" ++ value
+     else if value.isEmpty then "" else ";" ++ value))
+  name ++ text
+
+mutual
+
+private def list (acc : String) : Math.MList → String
+  | .nil => acc
+  | .cons x rest => list (acc ++ item x) rest
+
+private def item : Math.MItem → String
+  | .atom _ n sup sub _ => scripts (nucleus n) (list "" sup) (list "" sub)
+  | .space _ => ""
+  | .ink _ _ => ""
+
+private def nucleus : Math.MNucleus → String
+  | .sym c => String.singleton c
+  | .styled _ c => String.singleton c
+  | .word s => s
+  | .list body => list "" body
+  | .alpha _ _ body => list "" body
+  | .frac spec num den => fraction spec (list "" num) (list "" den)
+  | .rad deg body => radical (list "" deg) (list "" body)
+  | .delim left right body =>
+    let text := optionalChar left ++ list "" body
+    let close := optionalChar right
+    text ++ close
+  | .big d _ => optionalChar d
+  | .grid _ rs =>
+    let text := rows "" rs
+    if text.isEmpty then "" else "[" ++ text ++ "]"
+  | .accent mark wide body =>
+    let name := ((mathAccentCommands.find? (fun p => p.2 == (mark, wide))).map (·.1)).getD "accent"
+    name ++ grouped (list "" body)
+  | .cancel mark _ value body => cancellation mark (list "" value) (list "" body)
+
+private def row (acc : String) : Math.MRow → String
+  | .nil => acc
+  | .cons c rest => row (acc ++ list "" c ++ (match rest with
+      | .nil => "" | .cons _ _ => ",")) rest
+
+private def rows (acc : String) : Math.MRows → String
+  | .nil => acc
+  | .cons r rest => rows (acc ++ "[" ++ row "" r ++ "]" ++ (match rest with
+      | .nil => "" | .cons _ _ => ",")) rest
+
+end
+
+private theorem script_length (marker body : String) : body.length ≤ (script marker body).length := by
+  simp only [script]
+  split
+  · rename_i h
+    simp_all
+  · simp [grouped, String.length_append]
+    omega
+
+private theorem scripts_length (base sup sub : String) :
+    base.length + sup.length + sub.length ≤ (scripts base sup sub).length := by
+  simp only [scripts]
+  split
+  · rename_i h
+    simp_all
+  · have hs := script_length "^" sup
+    have hb := script_length "_" sub
+    simp only [grouped, String.length_append, String.length_push, String.length_singleton] at *
+    omega
+
+private theorem fraction_length (spec : Math.FracSpec) (num den : String) :
+    (optionalChar spec.left).length + num.length + den.length + (optionalChar spec.right).length ≤
+      (fraction spec num den).length := by
+  simp only [fraction]
+  split
+  · split
+    · rename_i h
+      simp_all
+    · simp only [grouped, String.length_append, String.length_push, String.length_singleton]
+      omega
+  · simp only [grouped, String.length_append, String.length_push, String.length_singleton]
+    omega
+
+private theorem radical_length (deg body : String) :
+    deg.length + body.length ≤ (radical deg body).length := by
+  simp only [radical]
+  split
+  · rename_i h
+    simp_all [grouped]
+    omega
+  · simp only [grouped, String.length_append, String.length_push, String.length_singleton]
+    omega
+
+private theorem cancellation_length (mark : Math.CancelMark) (value body : String) :
+    body.length + value.length ≤ (cancellation mark value body).length := by
+  cases mark <;> by_cases h : value.isEmpty <;> simp_all [cancellation, grouped] <;> omega
+
+mutual
+
+private theorem list_length : ∀ (body : Math.MList) (chars : Array Char) (text : String),
+    (Math.MList.scalarsList chars body).size + text.length ≤ (list text body).length + chars.size
+  | .nil, _, _ => by simp [list, Math.MList.scalarsList, Nat.add_comm]
+  | .cons x rest, chars, text => by
+    have hx := item_length x chars
+    have hr := list_length rest (x.scalars chars) (text ++ item x)
+    simp only [list, Math.MList.scalarsList, String.length_append] at *
+    omega
+
+private theorem item_length : ∀ (x : Math.MItem) (chars : Array Char),
+    (x.scalars chars).size ≤ chars.size + (item x).length
+  | .space _, _ => by simp [item, Math.MItem.scalars]
+  | .ink _ _, _ => by simp [item, Math.MItem.scalars]
+  | .atom _ n sup sub _, chars => by
+    have hn := nucleus_length n chars
+    have hs := list_length sup (n.scalars chars) ""
+    have hb := list_length sub (Math.MList.scalarsList (n.scalars chars) sup) ""
+    have h := scripts_length (nucleus n) (list "" sup) (list "" sub)
+    simp only [item, Math.MItem.scalars, String.length_empty, Nat.add_zero] at *
+    omega
+
+private theorem nucleus_length : ∀ (n : Math.MNucleus) (chars : Array Char),
+    (n.scalars chars).size ≤ chars.size + (nucleus n).length
+  | .sym c, _ => by simp [Math.MNucleus.scalars, nucleus]
+  | .styled _ c, _ => by simp [Math.MNucleus.scalars, nucleus]
+  | .word s, _ => by
+    simp [Math.MNucleus.scalars, nucleus, String.foldl_eq_foldl_toList, String.length_toList]
+  | .list b, chars => by
+    simpa [Math.MNucleus.scalars, nucleus, Nat.add_comm] using list_length b chars ""
+  | .alpha _ _ b, chars => by
+    simpa [Math.MNucleus.scalars, nucleus, Nat.add_comm] using list_length b chars ""
+  | .frac spec num den, chars => by
+    have hn := list_length num (match spec.left with
+      | none => chars | some c => chars.push c) ""
+    have hd := list_length den (Math.MList.scalarsList (match spec.left with
+      | none => chars | some c => chars.push c) num) ""
+    have h := fraction_length spec (list "" num) (list "" den)
+    simp only [Math.MNucleus.scalars, nucleus]
+    cases hl : spec.left <;> cases hr : spec.right <;>
+      simp [hl, hr, optionalChar, String.length_empty] at * <;> omega
+  | .rad deg b, chars => by
+    have hd := list_length deg chars ""
+    have hb := list_length b (Math.MList.scalarsList chars deg) ""
+    have h := radical_length (list "" deg) (list "" b)
+    simp only [Math.MNucleus.scalars, nucleus, String.length_empty, Nat.add_zero] at *
+    omega
+  | .delim l r b, chars => by
+    have h := list_length b (match r with
+      | none => (match l with | none => chars | some c => chars.push c)
+      | some c => (match l with | none => chars | some c => chars.push c).push c) ""
+    cases l <;> cases r <;>
+      simp_all [Math.MNucleus.scalars, nucleus, optionalChar, String.length_append] <;> omega
+  | .big d _, chars => by
+    cases d <;> simp [Math.MNucleus.scalars, nucleus, optionalChar]
+  | .grid _ rs, chars => by
+    have h := rows_length rs chars ""
+    simp only [Math.MNucleus.scalars, nucleus]
+    split
+    · rename_i hz
+      simp_all
+    · simp only [String.length_append]
+      simp only [String.length_empty, Nat.add_zero] at h
+      omega
+  | .accent mark _ b, chars => by
+    have h := list_length b (if mark == '\u0305' then chars else chars.push mark) ""
+    simp only [Math.MNucleus.scalars, nucleus, grouped, String.length_append,
+      String.length_push, String.length_singleton]
+    split <;> simp_all <;> omega
+  | .cancel mark _ value b, chars => by
+    have hb := list_length b chars ""
+    have hv := list_length value (Math.MList.scalarsList chars b) ""
+    have h := cancellation_length mark (list "" value) (list "" b)
+    simp only [Math.MNucleus.scalars, nucleus, String.length_empty, Nat.add_zero] at *
+    omega
+
+private theorem row_length : ∀ (r : Math.MRow) (chars : Array Char) (text : String),
+    (r.scalarsRow chars).size + text.length ≤ (row text r).length + chars.size
+  | .nil, _, _ => by simp [row, Math.MRow.scalarsRow, Nat.add_comm]
+  | .cons c rest, chars, text => by
+    have hc := list_length c chars ""
+    have hr := row_length rest (Math.MList.scalarsList chars c)
+      (text ++ list "" c ++ (match rest with | .nil => "" | .cons _ _ => ","))
+    simp only [row, Math.MRow.scalarsRow, String.length_append, String.length_empty,
+      Nat.add_zero] at *
+    omega
+
+private theorem rows_length : ∀ (rs : Math.MRows) (chars : Array Char) (text : String),
+    (rs.scalarsRows chars).size + text.length ≤ (rows text rs).length + chars.size
+  | .nil, _, _ => by simp [rows, Math.MRows.scalarsRows, Nat.add_comm]
+  | .cons r rest, chars, text => by
+    have hc := row_length r chars ""
+    have hr := rows_length rest (r.scalarsRow chars)
+      (text ++ "[" ++ row "" r ++ "]" ++ (match rest with | .nil => "" | .cons _ _ => ","))
+    simp only [rows, Math.MRows.scalarsRows, String.length_append, String.length_empty,
+      Nat.add_zero] at *
+    omega
+
+end
+
+mutual
+
+private theorem list_mapInk (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (body : Math.MList) (acc : String), list acc (Math.MList.mapInk f body) = list acc body
+  | .nil, _ => rfl
+  | .cons x rest, acc => by
+    simp only [Math.MList.mapInk, list, item_mapInk f x, list_mapInk f rest]
+
+private theorem item_mapInk (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (x : Math.MItem), item (Math.MItem.mapInk f x) = item x
+  | .space _ => rfl
+  | .ink _ _ => rfl
+  | .atom _ n sup sub _ => by
+    simp only [Math.MItem.mapInk, item, nucleus_mapInk f n, list_mapInk f sup,
+      list_mapInk f sub]
+
+private theorem nucleus_mapInk (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (n : Math.MNucleus), nucleus (Math.MNucleus.mapInk f n) = nucleus n
+  | .sym _ => rfl
+  | .styled _ _ => rfl
+  | .word _ => rfl
+  | .list body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f body]
+  | .alpha _ _ body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f body]
+  | .frac _ num den => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f num, list_mapInk f den]
+  | .rad deg body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f deg, list_mapInk f body]
+  | .delim _ _ body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f body]
+  | .big _ _ => rfl
+  | .grid _ rs => by
+    simp only [Math.MNucleus.mapInk, nucleus, rows_mapInk f rs]
+  | .accent _ _ body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f body]
+  | .cancel _ _ value body => by
+    simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f value, list_mapInk f body]
+
+private theorem row_mapInk (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (r : Math.MRow) (acc : String), row acc (Math.MRow.mapInk f r) = row acc r
+  | .nil, _ => rfl
+  | .cons c rest, acc => by
+    simp only [Math.MRow.mapInk, row, list_mapInk f c]
+    rw [row_mapInk f rest]
+    cases rest <;> rfl
+
+private theorem rows_mapInk (f : Ir.Color → Option String → Ir.Color) :
+    ∀ (rs : Math.MRows) (acc : String), rows acc (Math.MRows.mapInk f rs) = rows acc rs
+  | .nil, _ => rfl
+  | .cons r rest, acc => by
+    simp only [Math.MRows.mapInk, rows, row_mapInk f r]
+    rw [rows_mapInk f rest]
+    cases rest <;> rfl
+
+end
+
+end FormulaText
+
+/-- The shared plaintext reading of a parsed formula: fallback page text,
+picture labels, alternatives, outlines and tagged structure all read this.
+Grouping, `/`, scripts, roots and matrices follow AsciiMath's linear
+notation (https://asciimath.org/#syntax). Ruleless fractions are named
+`stack(num;den)`; cancellation names the mark and its operands; accents
+use the same names and marks as the parser.
+
+This is a readable structural floor, not a round-trip serialization of
+arbitrary word atoms. Parsed literal characters bypass the source filter:
+a parsed brace is content. Nonprinting spaces, ink switches and absent
+delimiters stay empty. -/
+def formulaFloor (body : Math.MList) : String := FormulaText.list "" body
+
+/-- The independent glyph census is a lower bound on the length of the
+structured recovery. In particular, a formula with a nonempty parsed census
+cannot recover to an empty string. This is character accounting, not a
+claim that every source token denotes a glyph. -/
+theorem formulaFloor_content_covers (body : Math.MList) :
+    (Math.MList.scalarsList #[] body).size ≤ (formulaFloor body).length := by
+  simpa [formulaFloor] using FormulaText.list_length body #[] ""
+
+/-- Recolouring preserves the complete structural reading, including the
+operators and grouping that the scalar census does not count. -/
+theorem formulaFloor_ink_id (f : Color → Option String → Color) (body : Math.MList) :
+    formulaFloor (Math.MList.mapInk f body) = formulaFloor body :=
+  FormulaText.list_mapInk f body ""
+
+/-- Fraction operands never read as their bare juxtaposition, even when
+one or both operands are empty. Grouping and the division sign belong to
+the shared structural reading, independently of the eventual backend. -/
+theorem formulaFloor_separates (num den : Math.MList) :
+    formulaFloor (.cons (.atom .ord (.frac {} num den) .nil .nil false) .nil) ≠
+      formulaFloor num ++ formulaFloor den := by
+  intro h
+  have hlen := congrArg String.length h
+  simp [formulaFloor, FormulaText.list, FormulaText.item, FormulaText.nucleus,
+    FormulaText.scripts, FormulaText.fraction, FormulaText.optionalChar, FormulaText.grouped,
+    String.length_append] at hlen
+  omega
 
 /-- Nothing invented and no markup: every character of a formula's salvage
 is a character of its source, and none of them is LaTeX punctuation. The
@@ -8252,12 +8579,29 @@ What the judge deliberately does not express is the corollary the
 three clauses and is still false, because the defect is in the arrangement
 rather than in any character. `floorNamedArgs` is the mechanism for the
 cases where dropping an operand fixes it; where both fragments are content
-the repair is a separator, which is `formulaFloor_separates` (owed). -/
+the repair is a separator, which is `formulaFloor_separates`. -/
 def FloorHonest (f : Floor) (s : Salvage) (carried ink : List Char) : Prop :=
   (f.ships = false → ink = []) ∧
   (f.inks = true → carried ≠ [] → ink ≠ []) ∧
   (s = .filtered → ∀ c ∈ ink,
     (c ∈ carried ∨ c ∈ mathFloorPlaceholder) ∧ c ∉ markupChars)
+
+/-- Every shipping recovery code pays for a parsed formula's content.
+The reference is the parsed glyph census, independent of the formatter;
+raw source punctuation and length parameters can be intentionally nonprinting
+(`\big.` and an empty ruleless `\genfrac`, for example). This does not assert
+that the parser preserves arbitrary source content. -/
+theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (body : Math.MList) :
+    FloorHonest c.floor .translated
+      (Math.MList.scalarsList #[] body).toList (formulaFloor body).toList := by
+  refine ⟨fun hn => absurd (h.symm.trans hn) (by decide), fun _ hc hi => ?_,
+    fun hn => nomatch hn⟩
+  have hc' : (Math.MList.scalarsList #[] body).size > 0 := by
+    simpa [← Array.length_toList, List.length_pos_iff] using hc
+  have hi' : (formulaFloor body).length = 0 := by
+    simpa [String.length_toList] using congrArg List.length hi
+  have bound := formulaFloor_content_covers body
+  omega
 
 /-- Did this construct carry content at all? The source's own content
 characters, read through the same mask the floor reads, so "carried content"
@@ -12365,7 +12709,7 @@ theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
       plainTextList]
   | .formula d src body =>
     rw [recolorRolesInline]
-    simp [plainTextOne, formulaFloor, Math.MList.mapInk_scalars]
+    simp [plainTextOne, formulaFloor_ink_id]
   | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ => rfl
