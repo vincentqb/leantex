@@ -209,6 +209,33 @@ def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     ("\\begin{block}{Outer}Chosen" ++
       "\\begin{block}{Inner}Default\\end{block}Chosen\\end{block}Default")
 
+/-- Title hooks execute inside the title's savebox scope. Definitions leave
+no inline syntax behind; uses see the binding at that point, and only a
+global assignment can change the body or following text. -/
+def tcolorboxTitleBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  for (definer, after) in [
+      ("\\def", "Outer"), ("\\long\\def", "Outer"),
+      ("\\global\\def", "Local"), ("\\gdef", "Local")] do
+    sourceCaseChecks ref fonts (definer ++ " in title font")
+      ("\\def\\headingprobe{Outer}" ++
+        "\\newtcolorbox{panel}{title={\\headingprobe}," ++
+        "fonttitle={" ++ definer ++ "\\headingprobe{Local}}}")
+      "\\begin{panel}\\headingprobe\\end{panel}\\headingprobe"
+      ("\\begin{block}{{Local}}" ++ after ++ "\\end{block}" ++ after)
+  sourceCaseChecks ref fonts "title-local value precedes scoped redefinition"
+    ("\\def\\headingprobe{Outer}" ++
+      "\\newtcolorbox{panel}{fonttitle={\\def\\headingprobe{Local}}," ++
+      "title={\\headingprobe/{\\def\\headingprobe{Inner}\\headingprobe}/\\headingprobe}}")
+    "\\begin{panel}\\headingprobe\\end{panel}\\headingprobe"
+    "\\begin{block}{{Local/{Inner}/Local}}Outer\\end{block}Outer"
+  sourceCaseChecks ref fonts "title-local value inside native formatting"
+    ("\\def\\headingprobe{Outer}" ++
+      "\\newtcolorbox{panel}{fonttitle={\\def\\headingprobe{Local}}," ++
+      "title={\\textbf{\\headingprobe}}}")
+    "\\begin{panel}\\headingprobe\\end{panel}\\headingprobe"
+    "\\begin{block}{{\\textbf{Local}}}Outer\\end{block}Outer"
+
 /-- Preparing retained fields preserves the caller's macro orders. A refused
 nested template consumes its arguments without running them and executes only
 its body, once, with the original environment's scope. -/
@@ -425,5 +452,6 @@ def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     (!ds.any (fun d => d.severity == .error || d.code == "W0301" || d.code == "W0302"))
   tcolorboxScopeChecks ref fonts
   tcolorboxPreparationChecks ref fonts
+  tcolorboxTitleBindingChecks ref fonts
 
 end TcolorboxChecks

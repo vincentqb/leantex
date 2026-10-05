@@ -807,6 +807,9 @@ private structure St where
   into the picture rather than leave the walk a table for the whole
   document. -/
   inPicture : Bool := false
+  /-- A prepared title becomes inline content. Execute readable definitions
+  without emitting their syntax, and expand local uses before its scope closes. -/
+  materializeTitle : Bool := false
   /-- The document body has begun: a definition made from here on is read
   by the elaborator where it is made, not at the preamble's end. -/
   condInDoc : Bool := false
@@ -3609,6 +3612,22 @@ private def condList [Monad m]
         -- expansion cannot decide is taken out of the definition the
         -- elaborator expands.
         let st ← get
+        -- premise: tcolorboxTitleBindingChecks — title-local definitions
+        -- leave no inline syntax, while global effects reach later content.
+        if st.materializeTitle &&
+            (bound.bind (condValueOf st.binds ·)).any Option.isSome &&
+            !(bound.any st.provideKeeps.contains) then
+          let kept := (definerPrefixes raws i).reverse.foldl (init := out.raws.toList.reverse)
+            fun rs name => match rs.dropWhile (· matches .space) with
+              | .ctrl found _ :: rest => if found == name then rest else rs
+              | _ => rs
+          let out := OverlayPrefix.ofArray kept.reverse.toArray
+          -- Expanding definers have already evaluated their readable text;
+          -- consume that text too, rather than recovering it as title content.
+          let stop := ((definerShape raws i n (stored := true)).getD sh).stop
+          became s!"\\{n}\\{bound.getD n}" "a scoped title binding"
+            (st.useSite.getD pos) (subject := bound)
+          return ← condList ex [] raws following out stack rest (i + 1) (stop - (i + 1))
         let liveVal := match bound.bind (condValueOf st.binds ·) with
           | some (some v) => if v.live then some v else none
           | _ => none
@@ -3863,9 +3882,11 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
             (overlayFragment st.binds st.binds.size name).map (Raw.word · p)
           | .word _ _ | .sym _ _ | .space => some r
           | _ => none).map List.toArray) options pos
+      write fun s => { s with materializeTitle := true }
       let title ← condOne
         (fun n p rs k => condExpandAt reader bound textBound false n p rs k)
         true (.group prepared.title pos)
+      write fun s => { s with materializeTitle := st.materializeTitle }
       let decls ← condList
         (fun n p rs k => condExpandAt reader bound textBound false n p rs k)
         [] prepared.bodyDecls #[] (OverlayPrefix.ofArray #[]) []
@@ -3891,7 +3912,7 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
     -- premise: Tests.macroDefaultChecks — optional selection changes both
     -- artifacts; macroPhaseChecks holds the opening scan across expansion,
     -- and macroUseChecks holds execution between two states.
-    if !(v.live || inPic || st.ignoreSpaces) || own then return none
+    if !(v.live || inPic || st.ignoreSpaces || st.materializeTitle) || own then return none
     let value := match v.optional with
       | none => some v
       | some (key, _) => (condValueOf st.binds key).bind id
