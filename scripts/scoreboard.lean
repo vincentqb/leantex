@@ -21,9 +21,8 @@ A tier is discovered by convention: its name is the basename of
 `tests/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
 `--check` is `lake env lean --run scripts/<tier>.lean --check`.
 
-What the aggregate reads is that `--check`'s **exit status** — the one
-contract PLAN's spec defines, and so the only one every tier's writer was
-told about. A tier may also print the porcelain line (`tierLine`), which
+What the aggregate reads is `--check`'s **exit status**.
+A tier may also print the porcelain line (`tierLine`), which
 adds counts; it can never turn a non-zero exit into a pass. A tier that
 exits 0 silently is `ok`.
 
@@ -510,50 +509,10 @@ not a tier name ([a-z0-9-]+), which --check faults"
 
 -- ## The speed report
 
-/-- The declared bench tolerance. Data, not a gate: `--bench` runs another
-engine, so it can never be part of a hermetic check, and the numbers move
-with the host. Every field is stated so a reader can say what would count as
-a regression, which is the part a report usually leaves out. -/
-structure BenchTolerance where
-  /-- Runs per document. Odd, so the median is a measured value. -/
-  samples : Nat
-  /-- Runs dropped before measuring: the first is a cold page cache. -/
-  discard : Nat
-  /-- Percent a document's median may rise over its committed value. -/
-  slackPercent : Nat
-  /-- Medians, not means: one slow run on a busy host moves a mean. -/
-  statistic : String
-  /-- Which column the tolerance would gate, if it gated. -/
-  gates : String
-  /-- Which column stays a record whatever it does. -/
-  records : String
-deriving Inhabited
-
-def benchTolerance : BenchTolerance :=
-  { samples := 9, discard := 1, slackPercent := 15, statistic := "median"
-    gates := "leantex", records := "lualatex" }
-
-/-- The bench numbers beside the last ones PLAN.md recorded. A report: it
-runs another engine, so it can never be part of a hermetic gate, and no
-tolerance is enforced here. The tolerance is declared as a value
-(`benchTolerance`) rather than as prose, so the day it does gate, the number
-it gates at is the one written down and not one someone retypes. -/
+/-- Delegate sampling and reporting to the benchmark driver.
+This runs another engine and is not a hermetic gate. -/
 def benchReport : IO UInt32 := do
-  let plan ← readFileOr "PLAN.md"
-  let recorded := (plan.splitOn "\n").filter (fun l =>
-    containsSub l "scripts/bench.lean" && containsSub l "median")
   IO.println "scoreboard: bench is a report, never a gate (it runs lualatex)."
-  match recorded.reverse.head? with
-  | some l => IO.println s!"scoreboard: last recorded — {l.trimAscii.toString}"
-  | none => IO.println "scoreboard: PLAN.md records no bench median yet"
-  let t := benchTolerance
-  IO.println s!"scoreboard: declared tolerance, not enforced: the {t.statistic} of \
-{t.samples} runs per document (first {t.discard} discarded, cold page cache) may rise \
-{t.slackPercent}% over its committed value. It would gate the {t.gates} column only; \
-the {t.records} column is recorded and never compared. Noise control: pin the sample \
-count, compare {t.statistic}s rather than means, and take the whole corpus in one \
-batch so a busy host moves every row together — a single row moving is then a signal, \
-and all rows moving is the host."
   let out ← IO.Process.output
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/bench.lean"] }
   IO.print out.stdout

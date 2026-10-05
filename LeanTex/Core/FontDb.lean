@@ -49,7 +49,7 @@ private def isFontFile (p : String) : Bool :=
   -- of every one of 3000 names and was most of the listing's time.
   -- `.ttc` and `.dfont` collections (macOS system fonts) are skipped here by
   -- construction: the scan never opens them, so they can never be reported
-  -- as broken fonts. Parsing collections is out of scope (PLAN.md).
+  -- as broken fonts. Font collections are not supported.
   let ext := (p.splitOn ".").getLast? |>.map String.toLower
   ext == some "ttf" || ext == some "otf"
 

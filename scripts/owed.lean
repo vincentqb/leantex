@@ -11,8 +11,8 @@ pre-commit hook runs; `--selftest` exercises the predicates.
 
 Exit is non-zero only when the ratchet is violated. The ratchet: the number
 of open holes may never grow without a matching record naming the new
-obligation, and every recorded name must be registered in PLAN.md
-(backticked), so new debt is deliberate and named. Decreasing is always
+obligation. These source records are the registry; names must be unique
+and nonempty, so new debt is deliberate and named. Decreasing is always
 allowed. Mechanically also checked: no file outside the staging path may
 name Obligations in an import line, so the gated library
 (`lake build --wfail`, `lake test`) can never depend on an unproved
@@ -29,10 +29,6 @@ import scripts.Gate
 `bannedWord`, so the hook's keyword gate and this hole counter can never
 disagree about what counts. -/
 def holeLine (l : String) : Bool := bannedWord kwSorry l
-
-/-- A name is registered when PLAN.md spells it backticked. -/
-def registered (plan name : String) : Bool :=
-  containsSub plan ("`" ++ name ++ "`")
 
 structure Ob where
   name : String
@@ -73,8 +69,8 @@ def parseFile (file content : String) : Array Ob × Nat × Array String := Id.ru
           on the next four lines"
   return (obs, holes, errs)
 
-/-- The ratchet over everything parsed: one hole per record, no duplicate
-names, every name registered in PLAN.md — and no stale premise: a blocker
+/-- The ratchet over everything parsed: one hole per named record, no duplicate
+names, and no stale premise: a blocker
 naming the retired non-totality story describes a tree that no longer
 exists (every function terminates by a proved measure), so those words
 are banned from blocker text. A dead premise once hid the live blocker
@@ -82,7 +78,7 @@ are banned from blocker text. A dead premise once hid the live blocker
 file passes the hook's own keyword gate. -/
 def staleBlockerWords : List String := ["par" ++ "tial", "non-total"]
 
-def ratchetErrors (obs : Array Ob) (holes : Nat) (plan : String) :
+def ratchetErrors (obs : Array Ob) (holes : Nat) :
     Array String := Id.run do
   let mut errs : Array String := #[]
   if holes != obs.size then
@@ -90,13 +86,11 @@ def ratchetErrors (obs : Array Ob) (holes : Nat) (plan : String) :
       records -- every hole is one recorded obligation, one hole per record"
   let mut seen : Array String := #[]
   for ob in obs do
+    if ob.name.isEmpty then
+      errs := errs.push s!"{ob.file}:{ob.line}: owed record needs a nonempty name"
     if seen.contains ob.name then
       errs := errs.push s!"{ob.file}:{ob.line}: duplicate owed name '{ob.name}'"
     seen := seen.push ob.name
-    if !registered plan ob.name then
-      errs := errs.push s!"{ob.file}:{ob.line}: '{ob.name}' is not registered \
-        in PLAN.md -- a new hole lands with a PLAN entry naming it: add \
-        `{ob.name}` under 'Owed obligations'"
     for w in staleBlockerWords do
       if containsSub ob.blocker w then
         errs := errs.push s!"{ob.file}:{ob.line}: '{ob.name}' blocker says \
@@ -127,9 +121,6 @@ def selftest : IO UInt32 := do
     ("-- import Obligations", false),
     ("import LeanTex.Core.Ir", false)]
 
-  expect "registered" (registered "text `a_b` text") [
-    ("a_b", true), ("a", false), ("c_d", false)]
-
   expect "fieldOf owed" (fun l => (fieldOf l "owed").isSome) [
     ("-- owed: emission_conservation_paras", true),
     ("  -- owed: x", true),
@@ -143,13 +134,19 @@ def selftest : IO UInt32 := do
   let (obs, holes, errs) := parseFile "F.lean" good
   if !(obs.size == 1 && holes == 1 && errs.isEmpty) then
     fails.modify ("parseFile: well-formed record misparsed" :: ·)
-  if !(ratchetErrors obs holes "registry: `t_one`").isEmpty then
-    fails.modify ("ratchet: fired on a recorded, registered hole" :: ·)
-  if (ratchetErrors obs holes "registry without the name").isEmpty then
-    fails.modify ("ratchet: missed an unregistered obligation" :: ·)
+  if !(ratchetErrors obs holes).isEmpty then
+    fails.modify ("ratchet: fired on a named source record" :: ·)
+  if (ratchetErrors (obs ++ obs) (holes * 2)).isEmpty then
+    fails.modify ("ratchet: missed duplicate names with matching hole count" :: ·)
+  if (ratchetErrors (obs.map fun ob => { ob with name := "" }) holes).isEmpty then
+    fails.modify ("ratchet: missed an unnamed obligation" :: ·)
+  if (ratchetErrors obs 0).isEmpty then
+    fails.modify ("ratchet: missed a stale record with no hole" :: ·)
+  if (ratchetErrors (obs.map fun ob => { ob with blocker := "non-total" }) holes).isEmpty then
+    fails.modify ("ratchet: missed a stale blocker" :: ·)
   let bare := "theorem t_two : True := by " ++ kwSorry ++ "\n"
   let (obs2, holes2, _) := parseFile "F.lean" bare
-  if (ratchetErrors obs2 holes2 "").isEmpty then
+  if (ratchetErrors obs2 holes2).isEmpty then
     fails.modify ("ratchet: missed a hole with no owed record" :: ·)
   let incomplete := "-- owed: t_three\n-- owner: M\ntheorem t_three : True := by " ++
     kwSorry ++ "\n"
@@ -188,7 +185,6 @@ def libFiles : IO (Array String) := do
 def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then
     return (← selftest)
-  let plan ← readFileOr "PLAN.md"
   let mut obs : Array Ob := #[]
   let mut holes := 0
   let mut errs : Array String := #[]
@@ -197,7 +193,7 @@ def main (args : List String) : IO UInt32 := do
     obs := obs ++ o
     holes := holes + h
     errs := errs ++ e
-  errs := errs ++ ratchetErrors obs holes plan
+  errs := errs ++ ratchetErrors obs holes
   for f in (← libFiles) do
     let content ← readFileOr f
     let ls := (content.splitOn "\n").toArray

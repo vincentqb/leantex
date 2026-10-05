@@ -23,13 +23,13 @@ moves into the module that owns it, with a real proof, and its hole
 disappears from here.
 
 Each obligation carries a record the ratchet reads — five consecutive
-comment lines, `owed` (the name, registered in PLAN.md or the commit
-fails), `owner` (where the proved theorem will live), `source` (which
+comment lines, `owed` (a unique, nonempty name),
+`owner` (where the proved theorem will live), `source` (which
 advisory or audit asked for it), `blocker` (what stops the proof today),
 and `goldens` (whether discharging it moves goldens).
 
 `lake env lean --run scripts/owed.lean` prints the queue and enforces the
-ratchet: one hole per record, every record named in PLAN.md, no import
+ratchet: one hole per named record, no duplicate names, no import
 from the gated library. The definitions below are measures the statements
 need (counting functions over public engine types); they specify inputs
 and outputs, they do not duplicate any engine definition.

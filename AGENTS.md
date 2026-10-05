@@ -2,8 +2,8 @@
 
 leantex: fast, certified, modern document engine in Lean 4 — one language,
 two surfaces (tex primary, markdown as sugar), two backends (PDF 2.0 and
-HTML). The living plan is `PLAN.md` — design decisions and milestone status
-land there, not here. Never record personal information (names, emails, and
+HTML). Keep README.md focused on end users; git history records completed
+work. Never record personal information (names, emails, and
 the text or topics of private documents) or local paths to private documents
 in this repo; refer to the private reference corpus abstractly.
 
@@ -83,9 +83,7 @@ in this repo; refer to the private reference corpus abstractly.
   tree (or a raster), never over `Ir.dump`.
 
 - The obligation table: adding a kind of thing owes an invariant, decided
-  before the code. The PLAN 2026-09-17 obligations entry carries each
-  row's why and the defect it would have caught; enforcement in
-  parentheses.
+  before the code. Enforcement is named in parentheses.
 
   | when you add… | you owe… |
   |---|---|
@@ -314,11 +312,8 @@ in this repo; refer to the private reference corpus abstractly.
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter. A guarantee stated in
-  prose is not a guarantee: termination, totality and determinism claims
-  in PLAN name the theorem that holds them, and a claim with no theorem
-  is written as owed — the 2026-09-19 nontermination bug lived twelve
-  hours behind a PLAN sentence with no checker (`bindCmd_monotone` is
-  the statement that would have failed the commit). In a statement meant for
+  prose names the theorem that holds it; a claim with no theorem is
+  recorded as an owed obligation. In a statement meant for
   `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
   the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
   to it. `omega` handles `Int.max`/`min` directly — no `Int.max_def` unfold,
@@ -331,9 +326,9 @@ in this repo; refer to the private reference corpus abstractly.
   default `lake build` and `lake test`, never imported by `LeanTex/` (the
   hook and `scripts/owed.lean` check mechanically). `sorry` is permitted
   only there, one per obligation, each carrying an
-  owed/owner/source/blocker/goldens record whose name is registered in
-  PLAN.md § Owed obligations — the ratchet: the debt may never grow
-  unnamed. A discharged obligation moves into its owner module with a real
+  owed/owner/source/blocker/goldens record with a unique, nonempty name —
+  the ratchet: the debt may never grow unnamed. A discharged obligation
+  moves into its owner module with a real
   proof; the queue is not a home. Statements range over the engine's own
   functions, never a spec copy.
 - No default values on inductive constructor fields — patterns then

@@ -1,4 +1,3 @@
 tests/golden/diagnostics.txt merge=union
-PLAN.md merge=union
 tests/parity/*.ref.pdf binary
 tests/parity/*.tex -text

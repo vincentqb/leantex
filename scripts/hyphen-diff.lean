@@ -38,7 +38,7 @@ def defaultWords : IO (Array String) := do
   for entry in (← System.FilePath.readDir "tests/corpus").qsort (·.fileName < ·.fileName) do
     if entry.fileName.endsWith ".tex" then
       text := text ++ (← IO.FS.readFile entry.path) ++ "\n"
-  for doc in ["PLAN.md", "AGENTS.md"] do
+  for doc in ["README.md", "AGENTS.md"] do
     text := text ++ (← IO.FS.readFile doc) ++ "\n"
   let isLetter := fun (c : Char) => (c ≥ 'a' && c ≤ 'z') || (c ≥ 'A' && c ≤ 'Z')
   let tokens := (text.split (fun c => !isLetter c)).toList.map (·.toString)

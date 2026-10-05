@@ -84,7 +84,7 @@ def parseSource : List String → Except String Source
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
-    || f == "lean-toolchain" || f.startsWith "tests/golden/" || f == "PLAN.md"
+    || f == "lean-toolchain" || f.startsWith "tests/golden/"
 
 /-- The owed-theorem staging area (see scripts/owed.lean): the one path
 where a stated obligation may hold its proof open. -/
@@ -1176,9 +1176,8 @@ once between this record's `-- owed:` line and the next one.
 
 `owed.lean` reads a record as five *consecutive* lines, so a sixth field
 line following a complete record is invisible to it — and that is the shape
-a merge produces. Twice now, a rebase onto a shared `PLAN.md` resolved an
-append-only-log conflict with keep-both-sides, which is right for a log and
-wrong for a structured record, and left a record carrying two or three
+a merge can produce when both sides of a conflict are kept,
+leaving a record carrying two or three
 `-- blocker:` lines. The ratchet noticed only indirectly, via a record count
 that no longer matched the hole count, which names neither the record nor
 the field. This names both. -/
@@ -2689,14 +2688,13 @@ def main (args : List String) : IO UInt32 := do
       for (line, key, n) in obRecordFaults lines do
         say s!"pre-commit: the owed record at {p}:{line} has {n} '-- {key}:' lines, not one.
   An owed record is a fixed five-field form (owed/owner/source/blocker/goldens),
-  not an append-only log: two agents rebasing onto one PLAN.md have twice
-  produced a duplicated field by keeping both sides of a conflict, which is
-  right for a log and wrong for a record. owed.lean reads five consecutive
+  not an append-only log. Keeping both sides of a conflict can duplicate a
+  field. owed.lean reads five consecutive
   lines, so a duplicate past the fifth is invisible there.
   Fix: keep the one field value you mean and delete the others."
 
-  -- PLAN.md must leave the debt recorded — one hole per owed record, every
-  -- record registered in PLAN, no import of Obligations from the gated
+  -- Proof debt stays in its source records — one hole per named record,
+  -- no duplicate names, no import of Obligations from the gated
   -- library. The check reads the whole tree, not the diff, so the count
   -- cannot drift through an edit the diff scanner does not see. Off the
   -- index it always runs: CI has no reason to trust a file list for a
@@ -2708,7 +2706,7 @@ def main (args : List String) : IO UInt32 := do
     let pre := prefixOut.stdout.trimAscii.toString
     env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
 
-  if src != .index || staged.any (fun f => obligationsFile f || f == "PLAN.md") then
+  if src != .index || staged.any (fun f => obligationsFile f || f == "scripts/owed.lean") then
     let owedBuild ← IO.Process.output
       { cmd := "lake", args := #["build", "owed", "-q"], env }
     let owed ← if owedBuild.exitCode == 0 then
@@ -2716,7 +2714,7 @@ def main (args : List String) : IO UInt32 := do
       else pure owedBuild
     if owed.exitCode != 0 then
       say s!"pre-commit: the owed-theorem ratchet failed:
-{owed.stderr}  Fix: register the obligation in PLAN.md ('Owed obligations'), or finish
+{owed.stderr}  Fix: give each obligation one complete source record, or finish
   its proof and move it to its owner module (see scripts/owed.lean)."
 
   -- The phantom-citation gate (scripts/cites.lean), whole tree: does every
