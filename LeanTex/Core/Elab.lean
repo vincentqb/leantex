@@ -6211,6 +6211,19 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
 
+/-- A named font declaration or a palette name used without an argument.
+The paragraph and list-prefix readers share this lexical distinction:
+`\accent{word}` is content, while bare `\accent` changes the scope. -/
+private def namedScopeDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) :
+    Option Ir.Decl :=
+  match declStyleOf n with
+  | some s => some (.style s)
+  | none =>
+    (ctx.palette.find? n).bind fun c =>
+      match raws[skipSpaces raws (i + 1)]? with
+      | some (.group _ _) => none
+      | _ => some (.color c (some n))
+
 /-- The block reading of a declaration met between blocks — the `isB` row
 and its arm's one computation: the `Ir.Decl` the rest of the scope is
 elaborated under, when `n` is a style declaration or a bare palette name
@@ -6224,13 +6237,7 @@ private def declBlockOf (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   -- `\ttfamily` keeps its inline reading: its literal treatment of
   -- punctuation lives on the inline context, not in the flow state.
   if !cur.all isSpaceOrPar || n.startsWith "@lang:" || n == "ttfamily" then none
-  else match declStyleOf n with
-    | some s => some (.style s)
-    | none =>
-      (ctx.palette.find? n).bind fun c =>
-        match raws[skipSpaces raws (i + 1)]? with
-        | some (.group _ _) => none
-        | _ => some (.color c (some n))
+  else namedScopeDecl ctx n raws i
 
 /-- The `isB` row of the declaration's block reading: one Bool for the
 knot, computed outside it. -/
@@ -6258,15 +6265,77 @@ private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
 private def leaveBlockDecl (saved : List Ir.Decl) : EM Unit :=
   modify fun st => { st with blockDecls := saved }
 
+/-- Elaborate under additional declarations, then restore the caller's
+declarations while retaining every other effect. `Ir.wrapDecls_text` is the
+IR conservation law; this operation supplies its scoped declaration input. -/
+def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
+  fun st =>
+    let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
+    (value, { done with blockDecls := st.blockDecls })
+
+/-- Declaration scope restores exactly that field for every elaboration
+action, including an action that changes declarations itself. Its result
+and all other state effects are preserved. -/
+theorem withBlockDecls_exact (decls : List Ir.Decl) (action : EM α) (st : ESt) :
+    withBlockDecls decls action st =
+      let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
+      (value, { done with blockDecls := st.blockDecls }) := rfl
+
+/-- Nested declaration scopes compose in source order for every action;
+restoration cannot discard effects outside the declaration field. -/
+theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action : EM α) :
+    withBlockDecls outer (withBlockDecls inner action) =
+      withBlockDecls (outer ++ inner) action := by
+  funext st
+  simp only [withBlockDecls, List.append_assoc]
+  cases action { st with blockDecls := st.blockDecls ++ (outer ++ inner) }
+  rfl
+
+/-- Declaration alignment is shared by paragraph and list scopes. -/
+private def declAlignOf (n : String) : Option Ir.HAlign :=
+  if n == "centering" then some .center
+  else (Ir.raggedSideOf? n).map Ir.FlushSide.halign
+
+private def wrapDeclAlign (align : Option Ir.HAlign) (inner : Array Block) :
+    Array Block :=
+  if inner.isEmpty then #[]
+  else match align with
+    | some .center => #[.center inner]
+    | some .left => #[.ragged .left inner]
+    | some .right => #[.ragged .right inner]
+    | none => inner
+
 /-- The declaration arm's whole effect but the recursion: the elaborated
 rest of the scope, centred or ragged as one block wrapper (an empty scope
 wraps nothing); a style or colour declaration already reached every
 region inside through `ctx.blockDecls`. -/
 private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
-  if n == "centering" then (if inner.isEmpty then #[] else #[.center inner])
-  else match Ir.raggedSideOf? n with
-    | some side => (if inner.isEmpty then #[] else #[.ragged side inner])
-    | none => inner
+  wrapDeclAlign (declAlignOf n) inner
+
+/-- Declarations between `\begin{list}` and the first item belong to the
+list group (ltlists.dtx). They have no text of their own, and remain in
+force while the individual items open and close their own scopes. -/
+private structure ListScope where
+  decls : List Ir.Decl := []
+  align : Option Ir.HAlign := none
+
+private def listScopeCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (name : String) (pos : Pos) (scope : ListScope) : EM (Option ListScope) := do
+  if let some align := declAlignOf name then
+    return some { scope with align := some align }
+  if name.startsWith Compat.fontSizeMark then
+    let style ← readFontSizeStyle ctx name pos
+    return some { scope with decls := scope.decls ++ style.toList.map Ir.Decl.style }
+  if name.startsWith "@ink:" then
+    let source := (name.drop "@ink:".length).toString
+    match ← readColor ctx ctx.palette none source pos with
+    | .resolved c token =>
+      return some { scope with decls := scope.decls ++ [.color c token] }
+    | .missing => warnPaletteMiss ctx source pos
+    | .rejected => pure ()
+    return some scope
+  return (namedScopeDecl ctx name raws i).map fun d =>
+    { scope with decls := scope.decls ++ [d] }
 
 /-- The block form's whole effect but the recursion: resolve the explicit
 ink source through the typed colour door, declare the flow ink, and bump the
@@ -8091,7 +8160,7 @@ decreasing_by
 `\pause` count standing before each, the warnings of the old in-loop split
 fired at the same points — explicit recursion so the split's conservation
 (no item outweighs the body) is a fact the item elaboration stands on. -/
-private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (j : Nat)
+private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (scope : ListScope) (j : Nat)
     (items : Array (Array Raw)) (steps : Array (Option Ir.OverlaySpec))
     (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
     (curStep : Option Ir.OverlaySpec) (curPauses : Nat)
@@ -8100,13 +8169,13 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
       + sliceWeight body j ≤ bound)
     (hp : itemsP items.toList + nestedParsList curItem.toList
       + slicePars body j ≤ pbound) :
-    EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × Array Nat //
+    EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × Array Nat × ListScope //
       itemsW r.1.toList ≤ bound ∧ itemsP r.1.toList ≤ pbound } := do
   if h : j < body.size then
     match body[j] with
     | .ctrl "item" _ =>
       if seen then
-        itemSplitGo ctx body pos desc (j + 1) (items.push curItem)
+        itemSplitGo ctx body pos desc scope (j + 1) (items.push curItem)
           (steps.push curStep) (itemPauses.push curPauses) pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
           (by
@@ -8117,7 +8186,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             have hpj := slicePars_here body h
             rw [itemsP_push]; simp [nestedParsList]; omega)
       else
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses #[]
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -8130,7 +8199,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
       -- Counted for the items that follow; kept in the item so a
       -- mid-item pause still steps the item's own remaining blocks.
       if seen then
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses (pauses + 1)
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
           strayDiagged bound pbound
           (by
@@ -8141,7 +8210,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             have h2 := rawPars_split body[j]
             rw [nestedParsList_push]; omega)
       else
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses (pauses + 1)
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
           curItem curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -8156,7 +8225,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
       -- closing bracket.
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
           (by
             have hwj := sliceWeight_here body h
@@ -8178,7 +8247,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             warnOnce ctx "item:marker" .W0110
               "'\\item' [marker] override is not modelled; the level's marker stands" pos
               (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
-          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
+          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
             curStep curPauses false true seen strayDiagged bound pbound
             (by
               have hwj := sliceWeight_here body h
@@ -8194,7 +8263,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             | none => do
               warnOverlaySpec ctx w pos
               pure curStep
-          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
+          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
             curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
             (by
               have hwj := sliceWeight_here body h
@@ -8205,7 +8274,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
               have h2 := rawPars_split body[j]
               omega)
         else
-          itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses
+          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
             (curItem.push body[j]) curStep curPauses false inOpt seen strayDiagged
             bound pbound
             (by
@@ -8218,7 +8287,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
               rw [nestedParsList_push]
               omega)
       else if seen then
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen strayDiagged
           bound pbound
           (by
@@ -8231,13 +8300,13 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             rw [nestedParsList_push]
             omega)
       else do
-        if let .ctrl c _ := item then
+        if let .ctrl c cpos := item then
           if counterCtrl c then
             -- A counter command before the first `\item` sets its counter,
             -- as LaTeX allows there (ltlists.dtx: the list's own settings
             -- follow `\list`'s): a declaration, never content.
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
-            return ← itemSplitGo ctx body pos desc k items steps itemPauses pauses curItem
+            return ← itemSplitGo ctx body pos desc scope k items steps itemPauses pauses curItem
               curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
               (by
                 have hwj := sliceWeight_here body h
@@ -8248,9 +8317,21 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
                 have h2 := rawPars_split body[j]
                 have hle := slicePars_le body hk
                 omega)
+          if let some scope' ← listScopeCtrl ctx body j c cpos scope then
+            return ← itemSplitGo ctx body pos desc scope' (j + 1)
+              items steps itemPauses pauses curItem curStep curPauses
+              awaitSpec inOpt seen strayDiagged bound pbound
+              (by
+                have hwj := sliceWeight_here body h
+                have hw1 := rawWeight_pos body[j]
+                omega)
+              (by
+                have hpj := slicePars_here body h
+                have h2 := rawPars_split body[j]
+                omega)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
-        itemSplitGo ctx body pos desc (j + 1) items steps itemPauses pauses curItem
+        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
           (by
@@ -8265,11 +8346,11 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
     have h1 := sliceWeight_end body (show body.size ≤ j by omega)
     have h2 := slicePars_end body (show body.size ≤ j by omega)
     if seen then
-      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses),
+      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses, scope),
         show itemsW (items.push curItem).toList ≤ bound by rw [itemsW_push]; omega,
         show itemsP (items.push curItem).toList ≤ pbound by rw [itemsP_push]; omega⟩
     else
-      return ⟨(items, steps, itemPauses),
+      return ⟨(items, steps, itemPauses, scope),
         show itemsW items.toList ≤ bound by omega,
         show itemsP items.toList ≤ pbound by omega⟩
 termination_by body.size - j
@@ -9692,6 +9773,7 @@ seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
 seal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
 seal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
+seal withBlockDecls wrapDeclAlign
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
@@ -11099,8 +11181,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- `\pause` between items steps the rest of the LIST, not just
     -- the rest of an item's own blocks: each item records how many
     -- pauses stand before it and reveals one step after the last.
-    let ⟨(items, steps, itemPauses), hsplit⟩ ← itemSplitGo ctx lbody pos
-      (n == "description") 0
+    let ⟨(items, steps, itemPauses, scope), hsplit⟩ ← itemSplitGo ctx lbody pos
+      (n == "description") {} 0
       #[] #[] #[] 0 #[] none 0 false false false false
       (sliceWeight lbody 0) (slicePars lbody 0)
       (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
@@ -11110,12 +11192,19 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       sliceWeight_zero _
     have hl1 : slicePars lbody 0 = nestedParsList lbody.toList :=
       slicePars_zero _
-    let elabItems ← elabItemsGo ctx items steps itemPauses 0 #[]
-      (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
-      (by omega) (by omega)
-    let elabItems ← if n == "description" then descItems ctx lbody elabItems
+    -- Literal punctuation is a lexical effect of the same font scope;
+    -- it must reach the item reader before its text is elaborated.
+    let literal := ctx.literalText || Ir.Decl.anyStyle (· == .mono) scope.decls
+    let ⟨itemCtx, hm⟩ : MCtx ctx ← pure ⟨{ ctx with literalText := literal },
+      rfl, rfl, rfl, rfl⟩
+    let elabItems ← withBlockDecls scope.decls do
+      let elabItems ← elabItemsGo itemCtx items steps itemPauses 0 #[]
+        (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
+        (by omega) (by omega)
+      if n == "description" then descItems itemCtx lbody elabItems
       else pure elabItems
-    blocks := blocks.push (.list (n == "enumerate") (coverItems ctx steps itemPauses elabItems))
+    blocks := blocks ++ wrapDeclAlign scope.align
+      #[.list (n == "enumerate") (coverItems ctx steps itemPauses elabItems)]
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep` around its scope;
@@ -12305,6 +12394,7 @@ unseal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterAr
 unseal theCounterLevel? String.toInt? String.toNat?
 unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
 unseal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
+unseal withBlockDecls wrapDeclAlign
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
