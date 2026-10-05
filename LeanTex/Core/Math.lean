@@ -2185,8 +2185,9 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .list body => MList.scalarsList acc body
   | .alpha _ _ body => MList.scalarsList acc body
   | .frac spec num den =>
-    -- In reading order, delimiters around the parts: the formula floor reads
-    -- this walk (`Ir.formulaFloor`), so `\binom{n}{k}` reads `(nk)`.
+    -- Font coverage includes delimiters and both operands. This scalar
+    -- census omits structural separators; Ir.formulaFloor supplies those
+    -- in the independent plaintext reading.
     let acc := match spec.left with
       | some c => acc.push c
       | none => acc
@@ -2456,9 +2457,9 @@ end
 
 mutual
 
-/-- Recolouring a formula keeps every scalar in place, so its text census
-and every plain-text reading of it (`Ir.formulaFloor`) are the ones the
-page had before contrast realization. -/
+/-- Recolouring preserves the formula's glyph census. Preservation of the
+full structural plaintext reading is proved separately by
+`Ir.formulaFloor_ink_id`; it does not follow from scalar equality alone. -/
 theorem MList.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
     ∀ (l : MList) (acc : Array Char), (MList.mapInk f l).scalarsList acc = l.scalarsList acc
   | .nil, _ => rfl

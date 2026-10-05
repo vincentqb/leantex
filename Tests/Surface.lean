@@ -6906,11 +6906,11 @@ facts, each a defect the deck-shaped picture showed:
   the same name as one written after it: pgf reads the two orders alike.
 * `left=of`/`right=of`/`above=of`/`below=of` place the node at the
   `node distance` from the named one, centre to centre (`Picture.placeRel_exact`).
-* The placement is a function of the reference graph, not of declaration
-  order: the page is the same whichever of two nodes is written first. The
-  rows below read that off two shipped pages; the statement is owed as
-  `Obligations.place_order_agree`, which still lacks the independence
-  hypothesis its record names. TikZ rejects the forward reference; the
+* Distinct nodes with acyclic references resolve to the same positions in
+  the paired declarations below. These are shipped-page checks of the
+  reference resolver. `Picture.NodePlan.place_order_agree` proves the
+  local case for independent read/write plans; arbitrary source
+  permutations are not claimed. TikZ rejects the forward reference; the
   engine resolves it, and only a reference to a name no node carries — or
   a cycle — is refused, by name.
 

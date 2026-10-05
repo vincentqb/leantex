@@ -1,5 +1,6 @@
 import Tests.Support
 import Tests.Surface
+import Tests.ElabContracts
 import Tests.FontSize
 import Tests.CancelRegression
 import Tests.CancelHtml
@@ -33,6 +34,7 @@ import Tests.FrameHeadingScope
 import Tests.Census
 import Tests.Backends
 import Tests.Images
+import Tests.ImageCodec
 import Tests.SvgImages
 import Tests.SvgTools
 import Tests.AnimatedGraphics
@@ -53,6 +55,7 @@ import Tests.Themes
 import Tests.SeedPalette
 import Tests.SlideLabels
 import Tests.FontMath
+import Tests.FormulaFloor
 import Tests.MathAlphaGeometry
 import Tests.MathAlphaSemantics
 import Tests.MathAlphaEntry
@@ -99,6 +102,7 @@ import Tests.Kernel
 import Tests.PicturePaths
 import Tests.PictureBoundary
 import Tests.FontDefaults
+import Tests.PictureContracts
 import Tests.PictureKeys
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
@@ -266,6 +270,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   multicolumnSpanChecks ref oneFace
   recoveryChecks ref oneFace
   floorPolicyChecks ref oneFace
+  Tests.formulaFloorChecks ref oneFace
   mathContainChecks ref oneFace
   cancelReportChecks ref oneFace
   cancelGeometryChecks ref oneFace
@@ -421,6 +426,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   imageRowChecks ref oneFace
   colorKeyChecks ref oneFace
   planChecks ref
+  imageCodecChecks ref
   pdfFormChecks ref oneFace
   pdfCensusChecks ref oneFace
   pdfContractChecks ref oneFace arts
@@ -608,6 +614,7 @@ def main (args : List String) : IO UInt32 := do
   pendingChecks ref
   salvageChecks ref
   diagSiteCountChecks ref
+  elabWarningContractChecks ref
   porcelainCensusChecks ref
   siteAccountingChecks ref
   diagAuditChecks ref
@@ -620,6 +627,7 @@ def main (args : List String) : IO UInt32 := do
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref
+  PictureContracts.checks ref
   diagVoiceChecks ref update
   allowChecks ref
   werrorChecks ref

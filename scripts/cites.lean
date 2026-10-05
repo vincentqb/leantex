@@ -212,12 +212,12 @@ def citePhantomKnown : List PhantomRow :=
    -- Fix: state it where the placement is computed.
    ⟨"Picture.placeRel_exact", "Tests/Support.lean", "CensusPage.pathBoxes"⟩,
    ⟨"Picture.placeRel_exact", "Tests/Surface.lean", "pictureNodePlaceChecks"⟩,
-   -- Node placement claimed independent of writing order. The statement is
-   -- already staged, as the owed `Obligations.place_order_agree`, and its
-   -- record says it is false as written: two statements naming one node are
-   -- order-sensitive, and the hypothesis it lacks is independence. Fix: cite
-   -- the owed statement as owed, and repair its hypothesis where it is
-   -- staged, not by writing a second statement.
+   -- Whole-picture permutation remains an executable placement check.
+   -- Picture.NodePlan.place_order_agree proves the actual resolving
+   -- operations commute under independent reads and writes; it does not
+   -- prove the former arbitrary-source claim, refuted by duplicate names.
+   -- Fix: cite that local contract with its scope and keep the global
+   -- claim attributed to pictureNodePlaceChecks.
    ⟨"Picture.place_order_agree", "Tests/Support.lean", "CensusPage.pathBoxes"⟩]
 
 /-- The phantom judgement, pure so the selftest drives it in both
@@ -495,7 +495,7 @@ def selftest : IO UInt32 := do
     ("x_y", true),
     -- the qualified spelling, which is how a citation reaches another file
     ("Elab.warnUnknownCmd_pushes_one", true),
-    ("Obligations.floorMask_id", true),
+    ("Ir.floorMask_id", true),
     ("Diag.tallySites_exact", true),
     ("LeanTex.Core.Elab.runShape_fold_exact", true),
     -- everything else the tree backticks

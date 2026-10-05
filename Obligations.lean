@@ -99,7 +99,7 @@ def blockLeafInk (t : Struct.Tree) (k : Nat) : List Char :=
 -- owed: lines_attributed_covers
 -- owner: LeanTex.Core.Layout
 -- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8 (the attribution channel indexes the structure tree's leaf array); PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
--- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither loop needs restating, though. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Obligations.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here: a pure invariant is blind to how much of the input the loop has consumed, so it proves a `_covers`-shaped safety claim and not a census; and the state both loops thread is `Acc`, private to Layout, so the invariant cannot be *spelled* from outside the module. The remaining work is therefore two statements written inside Layout — the driver loop's invariant over `Acc`, and a progress-indexed form (invariant over the prefix consumed) for the counting half — not a refactor of either loop. The placement half stays definitional: `placeLine`'s `mk` closure copies `ParaJob.leaf` onto every line it commits (`placeLine_leaf_exact`), and the count comes from `Struct`'s own walk (`leafCount`), so what remains is that the walk's claims run over the body in `Struct.blocksRaw`'s order — which is the driver loop's order, hence the first of the two loops above
+-- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither loop needs restating, though. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Ir.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here: a pure invariant is blind to how much of the input the loop has consumed, so it proves a `_covers`-shaped safety claim and not a census; and the state both loops thread is `Acc`, private to Layout, so the invariant cannot be *spelled* from outside the module. The remaining work is therefore two statements written inside Layout — the driver loop's invariant over `Acc`, and a progress-indexed form (invariant over the prefix consumed) for the counting half — not a refactor of either loop. The placement half stays definitional: `placeLine`'s `mk` closure copies `ParaJob.leaf` onto every line it commits (`placeLine_leaf_exact`), and the count comes from `Struct`'s own walk (`leafCount`), so what remains is that the walk's claims run over the body in `Struct.blocksRaw`'s order — which is the driver loop's order, hence the first of the two loops above
 -- goldens: no
 /-- Attribution covers the ink, weak public form: in a document of plain
 text paragraphs, every line that is not furniture and ships ink names a
@@ -138,7 +138,7 @@ theorem lines_attributed_text
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I4 (the theorem whose absence let six user-visible defects ship); arch-faithful refactor 3
--- blocker: the named refactors landed (2026-09-20: Rd/Acc reader split, B's writers the commit/pushSibling/finishPage trio, itemsOfInlines a fold of itemsOfTok with a first-class dropped ledger, the driver on placeFrom/runPost with page facts crossing at runPost_pages. 2026-09-24: the collect-walk arm split, so `collectBlock` unfolds one arm at a time — `role_transparent_collect` is the witness, and the equation-lemma wall this row named is down). What remains is not the walk: it is the two imperative loops on either side of it. `run`'s top-level `for h : i in [0:doc.body.size]` threads `acc` over `doc.body` with the frame numbering and the per-step collects inside it, and the placement pass folds the staged op stream into pages; neither needs restating. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Obligations.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here is the conservation direction: this row is a census equality, and a pure loop invariant cannot express one (it cannot name the prefix consumed). So what is owed is a progress-indexed invariant — `P (prefix consumed) state`, whose conclusion at a `break` is a prefix rather than the whole body — written inside Layout, where `Acc` can be named. The two loops themselves are now readable as they stand. Note the arm split is not uniform and cannot be: Lean picks one recursive argument group for the mutual block and `collectAlt` recurses into two block arrays, so the recursive arms stay inline; well-founded recursion would trade this cheap wall for the WF-equation wall `elab_inlines_option_run_dropped` records
+-- blocker: the named refactors landed (2026-09-20: Rd/Acc reader split, B's writers the commit/pushSibling/finishPage trio, itemsOfInlines a fold of itemsOfTok with a first-class dropped ledger, the driver on placeFrom/runPost with page facts crossing at runPost_pages. 2026-09-24: the collect-walk arm split, so `collectBlock` unfolds one arm at a time — `role_transparent_collect` is the witness, and the equation-lemma wall this row named is down). What remains is not the walk: it is the two imperative loops on either side of it. `run`'s top-level `for h : i in [0:doc.body.size]` threads `acc` over `doc.body` with the frame numbering and the per-step collects inside it, and the placement pass folds the staged op stream into pages; neither needs restating. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Ir.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here is the conservation direction: this row is a census equality, and a pure loop invariant cannot express one (it cannot name the prefix consumed). So what is owed is a progress-indexed invariant — `P (prefix consumed) state`, whose conclusion at a `break` is a prefix rather than the whole body — written inside Layout, where `Acc` can be named. The two loops themselves are now readable as they stand. Note the arm split is not uniform and cannot be: Lean picks one recursive argument group for the mutual block and `collectAlt` recurses into two block arrays, so the recursive arms stay inline; well-founded recursion would trade this cheap wall for the WF-equation wall `elab_inlines_option_run_dropped` records
 -- goldens: no
 /-- Emission conservation, weak public form: a document of plain text
 paragraphs (no head, no foot, no hyphenation) ships exactly the ink it
@@ -162,7 +162,7 @@ def framedDeck (doc : Ir.Doc) : Prop :=
 -- owed: pages_partition_frames
 -- owner: LeanTex.Core.Layout
 -- source: audit-numbering's model, restated as a partition over `PageOut.frame` when refactor 1 (the frame id on `PageOut`, written at `finishPage`) landed — supersedes pages_count_frame_steps, whose count is this statement summed over the frames; arch-provable I4's page side
--- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither loop needs restating, though. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Obligations.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here: a pure invariant is blind to how much of the input the loop has consumed, so it proves a `_covers`-shaped safety claim and not a census; and the state both loops thread is `Acc`, private to Layout, so the invariant cannot be *spelled* from outside the module. The remaining work is therefore two statements written inside Layout — the driver loop's invariant over `Acc`, and a progress-indexed form (invariant over the prefix consumed) for the counting half — not a refactor of either loop. Both halves of this row live in those loops: the frame attribution is decided in the driver loop (it sets `acc.frameNum` per top-level block and re-enters `collectBlock` once per overlay step), and the page side needs a frame-attribution analogue of the BgStep pack over the `.foot`-op stream in the placement loop. The counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`)
+-- blocker: the collect walk's equation lemmas landed (2026-09-24: `collectBlock`'s match split into per-arm functions, eleven non-recursive arms and six non-recursive interiors lifted out; `role_transparent_collect` is the witness that an arm now unfolds at the default budget, where generation previously exhausted whnf whatever the budget). That was necessary and is not sufficient. Two imperative loops still stand between the walk and the pages, and this statement must cross both: `run`'s top-level `for h : i in [0:doc.body.size]` over `doc.body`, which threads `acc` and is where a frame's number and its step pages are decided, and the placement pass over the staged op stream. Neither loop needs restating, though. CORRECTED 2026-09-24 (loop-reading layer): the premise that a `forIn`/`Id.run` loop has no equational theory is no longer true. `LeanTex.Core.Loop` reads one: `forIn_range_inv` carries a state invariant through a loop that may `break` (a `ForInStep.done` is the same channel as a `yield` for a safety property), and `bind_eq_of_inv` peels the loops of a chained `Id.run do` block one at a time. Neither needs the loop restated as a fold, and `Ir.floorMask_id` is the worked example — three loops, no change to the walk. What that layer does NOT reach, and what is therefore the live blocker here: a pure invariant is blind to how much of the input the loop has consumed, so it proves a `_covers`-shaped safety claim and not a census; and the state both loops thread is `Acc`, private to Layout, so the invariant cannot be *spelled* from outside the module. The remaining work is therefore two statements written inside Layout — the driver loop's invariant over `Acc`, and a progress-indexed form (invariant over the prefix consumed) for the counting half — not a refactor of either loop. Both halves of this row live in those loops: the frame attribution is decided in the driver loop (it sets `acc.frameNum` per top-level block and re-enters `collectBlock` once per overlay step), and the page side needs a frame-attribution analogue of the BgStep pack over the `.foot`-op stream in the placement loop. The counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`)
 -- goldens: no
 /-- Numbered pages partition by frame: in a deck of titled countable
 frames, every shipped page is attributed to a frame (the `_covers` half),
@@ -282,36 +282,6 @@ theorem inflate_deflate_id (b : ByteArray) :
     Flate.inflate (Flate.deflate b) b.size = .ok b := by
   sorry
 
-/-- Every count the cache format spells as a u32 is inside it, and no form
-rides: what `Image.decode` produces (the ranges by
-`colorKeyRanges_between`). -/
-def binBounded (i : Image.Plan) : Prop :=
-  i.form = none ∧ i.pxW < 4294967296 ∧ i.pxH < 4294967296 ∧
-    i.dpiX < 4294967296 ∧ i.dpiY < 4294967296 ∧ i.bitDepth < 4294967296 ∧
-    i.orientation < 4294967296 ∧ i.data.size < 4294967296 ∧ i.losses.size < 4294967296 ∧
-    (match i.color with
-      | .gray => True
-      | .rgb => True
-      | .indexed palette => palette.size < 4294967296
-      | .iccBased n profile => n < 4294967296 ∧ profile.size < 4294967296) ∧
-    (match i.alpha with
-      | .opaque => True
-      | .colorKey ranges => ranges.size < 4294967296 ∧ ∀ v ∈ ranges, v < 4294967296
-      | .soft plane bpc => plane.size < 4294967296 ∧ bpc < 4294967296)
-
--- owed: decodeBin_encodeBin_id
--- owner: LeanTex.Core.Image
--- source: the build-cache slice (2026-09-21 survey wave): the driver's image cache files `Image.encodeBin`'s bytes under the source's content key and the plan parameters' key, and transparency — a cache hit *is* the recomputation's value, keeping the artifact a function of the document and the font environment — is exactly this inversion. Restated over the typed `Plan` by image-plan-factor (the three sums ride as tag bytes, the ledger as one byte per entry). The in-suite witnesses are the image-cache serialization rows in Tests/Images (a plan per alpha and colour constructor round-trips; foreign, truncated, and older-magic bytes refuse).
--- blocker: the byte algebra, not the loops (corrected 2026-09-24: `LeanTex.Core.Loop` reads a breaking `forIn`, and a round trip is in any case a value claim no state invariant supplies; the two loops here are also in `Option`, not `Id`, so that layer would need a monadic postcondition form first). The codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the eighteen header reads, the key loop, and the tag dispatch through; the statement carries its honest side conditions (`binBounded`: each Nat field and each length under 2³², every colour-key value under 2³², `form = none`) so the per-field lemmas can compose once they exist.
--- goldens: no
-/-- The image cache's serialization inverts: reading back `encodeBin`'s
-bytes yields the plan itself, field for field, for every raster `Plan` the
-cache can hold (`binBounded`). A cache hit therefore equals a
-recomputation. -/
-theorem decodeBin_encodeBin_id (i : Image.Plan) (hb : binBounded i) :
-    Image.decodeBin (Image.encodeBin i) = some i := by
-  sorry
-
 -- owed: write_fonts_embedded
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
@@ -392,169 +362,11 @@ theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
     PdfRead.parseVal (PdfRead.Obj.render o) 0 = .ok (o, (PdfRead.Obj.render o).size) := by
   sorry
 
--- owed: macroDecls_fixed_point
--- owner: LeanTex.Core.Ir
--- source: the boundary-request closure defect (a document's own `\newcommand` that a picture spelled was undefined in the wrapped standalone, so the boundary tool drew nothing, E0382 fired as a dropped loss and no artifact was written at all); PLAN 2026-09-24 boundary-macro-closure entry
--- blocker: the pigeonhole the code rests on, which the statement does not mention. `macroReachNames` runs `macros.size` rounds and stops at the first round that adds nothing; correctness is that the *selected* set — `macros.filter (ns.contains ·.1)` — grows by at least one on every round that is not already the fixed point, and is bounded by `macros.size`, so a reference chain cannot outlast the round budget. The measure is over that selected set, not over `ns`: `macroReachRound` filters new names against `ns` only, so `ns` may hold a name twice and `ns.size` is not a cardinality. The named factorization is to carry the selection itself as the saturation's state (a duplicate-free `Array Nat` of indices, `Nodup` in a subtype) instead of a name set, which makes `size` the cardinality the pigeonhole needs and turns the round bound into `Nat.le_induction` over it. Sharpened 2026-09-24: the argument is not "every round grows the selection" — it cannot be, because a round adds every control name a selected body spells and most of those name no macro, so `ns` grows while the selection stands still. What is true, and what the induction should be written against, is that a round which does not grow the selection makes the *next* round the fixed point outright: the bodies of the selected set are all in `ns` after it, so nothing is fresh. There is therefore at most one wasted round and it is the last, which is what makes `macros.size` rounds enough. The direct half is proved (`macroDecls_covers`); the transitive half runs as an oracle in `boundaryChecks` ("a macro reached only through another macro's body rides too").
--- goldens: no
-/-- The carried definitions are closed under reference: a definition whose
-name another carried definition spells is carried too — the transitive half
-of `macroDecls_covers`, and the reason a macro written in terms of an
-earlier macro reaches the boundary whole. What the saturation computes; what
-this statement owes is that `macros.size` rounds always suffice to reach it,
-so no picture is ever handed a definition whose own body is undefined. -/
-theorem macroDecls_fixed_point (macros : Array (String × String)) (body n d : String)
-    (hm : (n, d) ∈ macros)
-    (hr : ∃ p ∈ Ir.macroDecls macros body, n ∈ Ir.ctrlNames p.2) :
-    (n, d) ∈ Ir.macroDecls macros body := by
-  sorry
-
--- owed: place_order_agree
--- owner: LeanTex.Core.Picture
--- source: the M8b native-node slice (PLAN 2026-09-24, slice 3): a picture whose nodes are placed relative to one another drew nothing at all before it, and every such picture went to the boundary, where one un-drawable picture cost the whole artifact (E0382). The fix makes placement a function of the reference graph rather than of writing order; this is the statement of that, and the in-suite witness is the "a forward reference resolves: the offset is the same either way round" row of `pictureNodePlaceChecks`, read off two shipped pages.
--- blocker: **the statement as written is false, and an executable counterexample exists** (2026-09-24 — executable evidence, not a theorem: the kernel does not reduce `evalFixed`, so `decide` cannot make it one). `a` and `b` range over *arbitrary* statements, and `Ev.nodes` is a list kept latest-first that `lookup` reads front-first, so two `\node` statements naming the *same* node are order-sensitive by construction. Measured: with `a = \node (n) at (0,0) {}` and `b = \node (n) at (2,3) {}`, `(evalFixed cx [a, b]).nodes.lookup "n"` gives `(3715426, 5573139)` and `[b, a]` gives `(0, 0)`. The docstring says "two independent node statements" and the statement does not: the missing hypothesis is independence — neither statement defines a name the other defines or reads (a `.set` macro pair is the same problem one channel over). The repair is the owner's to review. Behind it the factorization stands unchanged. `evalFixed` is a `for` loop over `Id.run do` whose body is `evalList` — a mutual recursion whose node table is threaded through `Ev` as one field among five, so no equation names "the table after run k" (and `LeanTex.Core.Loop`, 2026-09-24, does not help here: order-independence is a two-run *value* claim, not a safety property of one loop's state). The refactor the statement needs is a split of `Ev` into the *resolved table* and the *report* (shapes, diags, deferred, readOpts), making `evalList`'s table component a function of the seed alone; with that, order-independence is the statement that the least fixed point of the seeding map does not depend on the order `evalList` visits its statements, which is provable by induction on the statement list because each node's placement reads the table and nothing else. Until the split, the statement would have to quantify over a state the language cannot name — the case AGENTS.md calls a factorization finding.
--- goldens: no
-/-- **A node's resolved position is a function of the nodes it references,
-not of the order they were written in.** TikZ rejects a forward reference
-outright (`No shape named 'x' is known`); the engine resolves it, and the
-statement of that is this: the node table `evalFixed` settles on is the
-same whichever order two independent node statements stand in, so the page
-cannot tell the two documents apart.
-
-Stated over the engine's own walk, on the table rather than the shapes,
-because the table is what every relative placement and every edge endpoint
-reads — the shapes follow from it. `sts₁` and `sts₂` range over the same
-statements in two orders, spelled as one list with two elements
-transposed, which is the case a document actually writes and the weakest
-form that still names the fact. -/
-theorem place_order_agree (cx : Picture.Cx) (pre post : List Picture.Stmt)
-    (a b : Picture.Stmt) :
-    ∀ nm, (Picture.evalFixed cx (pre ++ a :: b :: post)).nodes.lookup nm
-        = (Picture.evalFixed cx (pre ++ b :: a :: post)).nodes.lookup nm := by
-  sorry
-
-/-! ## Discharged here, awaiting a move
-
-`floorChars_id` below is proved. Its owner is `LeanTex.Core.Ir`, which
-another agent holds in this wave, so it stands here with a real proof
-rather than a hole until that file can take it — with its `floorMask_id`
-lemma and the `filterMap_eq_map_fst` helper, which move with it. The queue
-is not a home: these three lines go into Ir.lean beside `floorChars_mem`,
-whose converse this is, in the commit that can touch that file.
-
-The proof is the loop-reading layer (`LeanTex.Core.Loop`) applied three
-times, once per loop of `floorMask`, and it needed no change to
-`floorMask` itself. -/
-
-/-- A `filterMap` that keeps every element is the projection it keeps.
-Moves into `LeanTex.Core.Ir` with `floorChars_id`. -/
-private theorem filterMap_eq_map_fst {α β : Type} (l : List (α × β)) (g : α × β → Option α)
-    (hg : ∀ p ∈ l, g p = some p.1) : l.filterMap g = l.map Prod.fst := by
-  induction l with
-  | nil => simp
-  | cons p rest ih =>
-    rw [List.filterMap_cons, hg p (by simp), List.map_cons,
-      ih (fun q hq => hg q (by simp [hq]))]
-
-/-- **The mask of a markup-free source keeps every index.** Each of
-`floorMask`'s three loops preserves "the mask is still all-true": the
-naming-argument scan because no character is a backslash, so the branch
-that drops one is unreachable; the whitespace squeeze and the trailing trim
-because no character is whitespace — and the trim's own `survives` test
-supplies the bound that makes its character readable, so the invariant
-needs nothing about the descending cursor.
-
-Moves into `LeanTex.Core.Ir` with `floorChars_id`. -/
-theorem floorMask_id (src : String)
-    (h : ∀ c ∈ src.toList, c ≠ '\\' ∧ c ∉ Ir.markupChars ∧ c.isWhitespace = false) :
-    Ir.floorMask src = Array.replicate src.toList.length true := by
-  have hat : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ∈ src.toList := by
-    intro i hi
-    rw [List.getElem?_eq_getElem hi]
-    simp [List.getElem_mem]
-  have hws : ∀ i, i < src.toList.length →
-      (src.toList[i]?.getD ' ').isWhitespace = false :=
-    fun i hi => (h _ (hat i hi)).2.2
-  have hbs : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ≠ '\\' :=
-    fun i hi => (h _ (hat i hi)).1
-  have hrep : ∀ j, ((Array.replicate src.toList.length true)[j]?).getD false = true →
-      j < src.toList.length := by
-    intro j hj
-    simp only [Array.getElem?_replicate] at hj
-    split at hj
-    · assumption
-    · simp at hj
-  simp only [Ir.floorMask, List.size_toArray]
-  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _
-    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step1) ?rest
-  case step1 =>
-    intro i _ _ b hb
-    split
-    · exact hb
-    · rename_i hlt
-      split
-      · exact hb
-      · rename_i hne
-        exact absurd (by simpa using hne) (hbs b.2 (by omega))
-  case rest =>
-  intro b hb
-  rw [hb]
-  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Bool) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _
-    (Loop.forIn_range_inv (fun (st : Array Bool × Bool) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step2) ?rest2
-  case step2 =>
-    intro i _ hi c hc
-    split
-    · split
-      · rename_i hw; exact absurd hw (by simp [hws i hi])
-      · exact hc
-    · exact hc
-  case rest2 =>
-  intro c hc
-  rw [hc]
-  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _
-    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
-      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step3) ?rest3
-  case step3 =>
-    intro i _ _ d hd
-    split
-    · exact hd
-    · split
-      · rename_i hsv
-        have hlt : d.2 - 1 < src.toList.length := hrep _ (by
-          simpa using (Bool.and_eq_true _ _ ▸ hsv : _ ∧ _).1)
-        split
-        · rename_i hw; exact absurd hw (by simp [hws _ hlt])
-        · exact hd
-      · exact hd
-  case rest3 =>
-  intro d hd
-  exact hd
-
-/-- A math source with no control sequence, no LaTeX punctuation and no
-whitespace salvages to exactly itself: the floor keeps content, it is not
-merely free to drop it.
-
-Moves into `LeanTex.Core.Ir` beside `floorChars_mem`, whose converse this
-is: that bound permits a mask which dropped everything, and so on its own
-permits a blank page where an equation stood. -/
-theorem floorChars_id (src : String)
-    (h : ∀ c ∈ src.toList,
-      c ≠ '\\' ∧ c ∉ Ir.markupChars ∧ c.isWhitespace = false) :
-    Ir.floorChars src = src.toList := by
-  simp only [Ir.floorChars, floorMask_id src h]
-  rw [filterMap_eq_map_fst]
-  · exact List.zipIdx_map_fst 0 src.toList
-  · intro p hp
-    have hmem : p.1 ∈ src.toList := by
-      have hm := List.mem_map_of_mem (f := Prod.fst) hp
-      rwa [List.zipIdx_map_fst] at hm
-    simp [Array.getElem?_replicate, (h _ hmem).2.1]
-    split <;> simp
+-- The former arbitrary-statement order claim was false: two writes to the
+-- same node name resolve differently when reversed (PictureContracts.checks).
+-- Picture.NodePlan.place_order_agree proves commutation at evalNode's actual
+-- resolving operations under independent reads and writes. This is not a
+-- theorem about permutations of evalFixed's whole source/fixed-point walk.
 
 mutual
 
@@ -610,12 +422,11 @@ end
 -- owed: nodeLabel_mem
 -- owner: LeanTex.Core.Picture
 -- source: the node-label recovery floor (PLAN 2026-09-24, the node-label floor entry and its review round): the lower bound on what a degraded node label inks. `labelFloor_accounts` is the paid-for side — a label that named a loss ships ink — and it holds for a salvage that kept nothing at all, since the placeholder then pays for it; on its own it permits a diagram of bracketed ellipses where words stood, and it permits markup on the page. This is the other side: every character a salvaged label inks, inside a coloured or a styled group as well as at the top level, is a character its body carried or one of the declared placeholder's, and none of them is LaTeX punctuation. It bounds *provenance* and not *selection* — a naming argument's characters are the body's too, so this statement cannot express "dropped the argument it was told to drop", and that half is executable only: the whole-label rows in `pictureNodeFloorChecks` ("a length argument never rides onto the page", "a starred name's star does not stand in for its argument", "every trailing option run goes with the command", "the named key never reaches the page" and their siblings) pin the salvage of sixteen shapes against the shipped page, and each is paired with a positive row over the same input so none passes under an all-dropping salvage.
--- blocker: `salList` is a mode machine (`Picture.SalMode`) threaded through a mutual walk over a token tree, and no equation names "the label after token k" — the pending text run, the closed lines and the mode advance together inside one `Sal`, so the statement needs an invariant carried through six modes and two mutual arms. The named factorization is a `Sal` split into the content built so far and the machine's pending state. Corrected 2026-09-24: this is no longer "the work `floorChars_id` waits on" — `floorChars_id` is proved, through `LeanTex.Core.Loop`, with no split of anything. The difference is the shape of the claim: that one is an identity under a hypothesis that makes every branch a no-op, which a state invariant carries; this one is a provenance census over a token tree, and a pure invariant cannot express a census. So what this row owes is a progress-indexed invariant over `salList`'s own recursion — or the `Sal` split, which buys the same thing by making the pending state nameable.
+-- blocker: the stated provenance contract is false: literal `[x]` keeps brackets that markupChars forbids, and cx.math may translate an empty math span into text absent from bodyChars (PictureContracts.checks). A sound replacement must distinguish literal source characters, declared substitutions, math-produced content and generated placeholders, then carry their provenance through salList. A character blacklist or an arbitrary callback assumption cannot supply that internal producer contract; no replacement proof is claimed here.
 -- goldens: no
-/-- Every character a salvaged node label inks — inside a coloured or a
-styled group as well as at the top level — is a character its body carried,
-or one of the declared placeholder's, and none of them is LaTeX punctuation:
-the label keeps what the body says and invents nothing. -/
+/-- Unresolved provenance specification. This old statement is false for
+literal brackets and math-produced text; its blocker records both witnesses
+and the semantic provenance contract still needed. -/
 theorem nodeLabel_mem (cx : Picture.Cx) (env : List (String × Picture.Val))
     (toks : List Picture.Tok) :
     ∀ l ∈ (Picture.nodeLabel cx env toks).1,
@@ -658,36 +469,12 @@ theorem reflow_named
     (Layout.run geom fs none doc).diags.any (·.kind == .W0386) = true := by
   sorry
 
--- owed: nodeExtent_covers
--- owner: LeanTex.Core.Picture
--- source: the picture-extent slice (PLAN 2026-09-24, the box-contains-its-ink entry): a node's extent is never measured against its label text, so `right =of` separates node *centres* by one node distance and long labels overlap whatever they say. The border arithmetic is proved and exact (`Picture.placeRight_border_exact` and its three siblings); what is wrong is the input, because the half-extent a node registers is the declared minimum only and a body with no `minimum width` registers zero. On the private reference corpus this collapsed an eight-node graph into roughly a centimetre of ink. The measured box (`Ir.Pic.Picture.inkBbox`, `inkBbox_covers`) closes the half that sent glyphs off the page; this is the half that would space the diagram correctly, and the in-suite witness meanwhile is the overrun row of `pictureInkBoxChecks`, which names a diagram whose measured ink leaves the text area instead of shipping it silently. The site and its two facts landed since (`nodeExtentChecks` pins their arithmetic on numbers, including the defect as the number it was).
--- blocker: the wiring, no longer the ordering (PLAN 2026-09-24, the face-a-node-is-measured-against entry). The arithmetic and the covering are now proved, on the IR and for every measurement: `Ir.Pic.nodeExtent` is the resolving site — the declared minimum, or the label's own reach where the text stands proud of it — `Ir.Pic.nodeExtent_covers` says a label at a node's anchor is inside the extent that node places against, and `Ir.Pic.nodeExtent_separates` says two nodes one separation plus both half-extents apart part their text. What is left is that this walk read that site: `Picture.Cx` carrying an `Ir.Pic.LabelMetric` (a function field beside `Cx.math`, which arrives the same way), `evalNode` reading the node body before it resolves the placement so there is something to measure, and `ownA`/`ownB` plus the registered `NodeGeom` coming from `Ir.Pic.nodeExtent` rather than the minimum alone. The metric's other end exists too and is not this module's: one export of layout's own `labelInk` (a second implementation would place nodes against one face and set them against another) and the driver elaborating twice, gated on `Elab.enginePictures`. Both ends are written and measured — the three-node row's labels part, W0336 falls to nothing on the reference corpus, +6.5% on a picture-heavy deck — and held back only because a signature landed in half leaves the tree red. So the statement below is provable as soon as the walk reads the site; it quantifies over a metric the walk still does not see, which is the whole of what remains.
--- goldens: yes
-/-- **A node's registered extent covers its label's ink.** The half-extents
-a named node registers (`NodeGeom.a`, `NodeGeom.b`) are what every relative
-placement measures border to border from, so a label standing at a node's
-anchor must fit inside them — otherwise the separation the placement
-theorems prove exactly is exact about the wrong box, and two nodes one node
-distance apart by their borders overlap by their text.
-
-Stated over the engine's own walk and over an arbitrary measurement, the
-same `Ir.Pic.LabelMetric` the box statements range over: whatever face
-resolves, the ink of a label at a node's anchor is inside the extent that
-node placed against. The anchor hypothesis is how a shape is tied to its
-node — the walk emits a label centred on the node's own point, and no
-channel records which node emitted which shape. -/
-theorem nodeExtent_covers (cx : Picture.Cx) (m : Ir.Pic.LabelMetric)
-    (sts : List Picture.Stmt) (nm : String) (g : Picture.NodeGeom)
-    (x y : Dim.Sp) (content : Array Ir.Inline) (c : Ir.Color) (sc : Nat)
-    (al : Ir.Pic.LabelAlign)
-    (hg : (Picture.evalFixed cx sts).nodes.lookup nm = some g)
-    (hs : Ir.Pic.Shape.label x y content c sc al ∈ (Picture.evalFixed cx sts).shapes)
-    (hanchor : x = g.x ∧ y = g.y) :
-    Ir.Pic.Box.le (Ir.Pic.labelInkBox x y al (m content sc))
-      ((g.x - g.a, g.y - g.b), (g.x + g.a, g.y + g.b)) := by
-  sorry
-
-
+-- The former node-border claim used an arbitrary metric and identified a
+-- label's owner by coordinates alone; neither premise is sound. The actual
+-- producer contract, Picture.nodeExtent_covers, covers emitted labels with
+-- the picture hull under cx.metric, absent an explicit bounding box.
+-- Negative padding and authored text dimensions can put ink outside a node
+-- border. PictureContracts.checks preserves those distinctions.
 
 -- owed: pictureKeys_named
 -- owner: LeanTex.Core.Elab
@@ -711,33 +498,10 @@ theorem pictureKeys_named (file : String) (raws : Array Parse.Raw)
         d.kind == .W0334 && d.subject == some ("picture:set:" ++ k)) = true := by
   sorry
 
-/-- How many diagnostics of one run are sites of the same loss as `d`: the
-census `Diag.tallySites` counts, read back over the public array so a
-statement can compare it with what the source contains. -/
-def lossSites (ds : Array Diag) (d : Diag) : Nat :=
-  (ds.filter (Diag.sameLoss d ·)).size
-
--- owed: warnOnce_sites_exact
--- owner: LeanTex.Core.Elab
--- source: the per-construct diagnostic census (PLAN 2026-09-24, the counted-sites entry): `warnOnce` keyed on the construct and dropped every later occurrence, so on one real document ten diagnostics stood for roughly fifty losses and two node labels were dropped with no diagnostic at all, an earlier site having spent the key. Each site now delivers a note beside the named first, and `Diag.tallySites` puts the total on the visible line. The in-log half is proved: `Diag.tallySites_exact` says the number on the line is the number of diagnostics of that loss in the run, and `tallySites_length`/`tallySites_id` say counting adds, drops and rewords nothing. What is owed is the other half — that the number of diagnostics equals the number of *sites in the source*, which is the claim a reader sizing the damage from the log actually relies on. The in-suite witnesses are `diagSiteCountChecks` (three occurrences, three diagnostics, one visible line carrying 3, each note at its own position, the count equal to the diagnostics of that loss, and a single occurrence carrying neither count nor note) and the four fixture goldens whose second site stopped being silent.
--- blocker: the source side has no census to compare against. There is no function from a raw tree to "the occurrences of construct c", and writing one here would be the spec copy the queue forbids — the occurrences are exactly the sites `elabBlocks` reaches, so the honest measure is that walk's own, which is the `Acc` split the emission-conservation rows already wait on. The form below sidesteps it by counting occurrences through repetition instead: appending a block to a document whose loss it already carries must raise that loss's count by exactly its own contribution, which is stateable over `Elab.runRaws` alone. That still needs the diagnostic-monotonicity notion `reflow_named` names (a `DiagsExtend` beside `PagesExtend`) plus the fact that elaborating a concatenation elaborates each part — neither exists, and the second is the compositionality `compose-fuzz.lean` currently stands in for.
--- goldens: no
-/-- No site is silent, stated through repetition: elaborating a document's
-body twice over names every loss twice as often. The site count a reader
-takes from the default line is then the number of occurrences in the source
-and not merely the number in the log — which is the whole claim, since a
-census that undercounts is exactly the defect this replaced. Restricted to
-losses the single copy already names, because a repetition can create a loss
-of its own (a second `\maketitle` is refused where a first is not), and
-those have no count in the single copy to double. -/
-theorem warnOnce_sites_exact (file : String) (pre body : String) :
-    ∀ d ∈ (Elab.run file (pre ++ "\\begin{document}" ++ body ++ "\\end{document}")).2,
-      d.subject.isSome →
-        lossSites (Elab.run file
-            (pre ++ "\\begin{document}" ++ body ++ body ++ "\\end{document}")).2 d =
-          2 * lossSites (Elab.run file
-            (pre ++ "\\begin{document}" ++ body ++ "\\end{document}")).2 d := by
-  sorry
+-- Body duplication does not double preamble diagnostics. The old source
+-- doubling claim is refuted by elabWarningContractChecks. The proved
+-- Elab.warnOnce_sites_exact counts one actual reporting call, keyed by code,
+-- output and subject; it does not prove that every source loss reaches one.
 
 /-- The ink baselines the flow ships, in page and line order: the measure a
 vertical-monotonicity statement compares two runs by. -/
@@ -873,35 +637,13 @@ theorem ctrl_groups_never_ink :
         (·.subject == some s.subject) = true) := by
   sorry
 
--- owed: formulaFloor_covers
--- owner: LeanTex.Core.Ir
--- source: the recovery-floor policy (PLAN 2026-09-24, the floor-as-a-function-of-the-loss entry): `Ir.FloorHonest` is the one judge every floor is checked against, and `floorInk_covers` discharges it for the filtered salvage — the math source floor — for every registered code. This is the same statement at the engine's other translated salvage: a formula the parser *did* model but the page cannot set (W0003, `degraded`, so `Floor.content`) inks its glyph text, and the paid-for clause says it inks *something* whenever the construct carried content. `carried` is read through `Ir.floorChars` over the formula's own source rather than off the parsed list, deliberately: the scalars are both the floor's output and, read as `carried`, its reference set, so a statement over them is vacuous and would certify a floor that shipped nothing at all. The executable witness is the no-math-face rows of `recoveryChecks` and the `floorPolicyChecks` rows beside them, read off `Layout.Out`; the space-only shapes (`$\,$`, `${}$`, `$\quad$`) are the boundary the statement has to permit, since their source carries no content character either and a placeholder there would invent ink where an author wrote a thin space.
--- blocker: there is no relation between a `.formula`'s `src` and its `body` at the IR, and there cannot be one: `Ir.Inline.formula` carries both as independent fields, so the statement is false for an arbitrary pair and has to be conditioned on the parse — `MathParse.parseMath (rawsOf src) = .ok (body, _)`. That condition is a fold inversion over `parseToks`, which threads a token cursor, a pending grid and a note array through one mutual recursion, so no equation names "the list after token k" and nothing yet says that a content character of the source reaches the atom list. It is the same `Acc`-split, accumulator-statability work `floorChars_id` and `nodeLabel_mem` wait on at the other two floors, which is why all three are queued rather than one being asserted from the others.
--- goldens: no
-/-- A formula the page cannot set inks something whenever its source carried
-content: the paid-for clause of `Ir.FloorHonest` at the translated salvage,
-the side `floorInk_accounts` holds unconditionally at the filtered one. -/
-theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (display : Bool)
-    (raws : Array Parse.Raw) (body : Math.MList) (notes : Array MathParse.Note)
-    (hp : MathParse.parseMath display raws = .ok (body, notes)) :
-    Ir.FloorHonest c.floor .translated
-      (Ir.floorChars (Parse.rawSrc raws)) (Ir.formulaFloor body).toList := by
-  sorry
-
--- owed: formulaFloor_separates
--- owner: LeanTex.Core.Ir
--- source: the `\cancelto` corollary (PLAN 2026-09-24, "a floor may be lossy; it may not be false"), carried from the one construct that was fixed by a table row to the family that cannot be. `\cancelto{0}{x}` inked `0x` — a product where the source says `x` cancels to `0` — and `Ir.floorNamedArgs` closed it by dropping the naming argument. A fraction has no naming argument: both operands are content, and the translated floor concatenates them, so `$\frac{1}{2}$` inks `12` and `$\binom{n}{k}$` inks `nk`. That is the identical defect with no table row available, and it is not confined to a faceless host: `Ir.plainTextOne` reads this floor for alt text, running heads, the PDF outline and the tagged structure tree, so a heading carrying `$\frac{1}{2}$` is announced as `12` even where the page sets the fraction correctly. The corpus already ships one: `math.tex`'s `$\sqrt[3]{x + 1}$` reads `3x + 1`. Measured before this record: `Half $\frac{1}{2}$ done` gives the plain-text reading `Half 12 done`. The statement is the general repair — two content operands of one nucleus are separated, so a kept pair can never read as an application of the operator standing between them — and it is false today, which is the point of stating it before the code.
--- blocker: not a proof wall but an unmade design decision, and it is not this file's to make alone. The separator vocabulary is user-visible in four channels at once (page ink, SVG label text, PDF outline, tagged tree) and has no locale-free answer for every nucleus: `/` reads correctly for a fraction but needs parentheses around a compound operand to stay true (`\frac{a+b}{c}` is not `a+b/c`), `√` is a glyph the body face may not carry so the repair would trade a false reading for a missing-glyph diagnostic, and `\binom` has no plain-text spelling that is not invented notation. The engine's own line is also not yet drawn: `^` and `_` are on `Ir.markupChars`, so the filtered floor already ships `x2` for `$x^2$` and the project accepted that as lossy rather than false — a rule that separates fraction operands and not scripts is answering half the question. What the statement fixes is the *shape* of the repair, so the vocabulary decision lands against it rather than around it, and `formulaFloor` grows its own walk over `Math.MList` instead of reusing `Math.MList.scalarsList`, whose job is the coverage census and whose omissions (no radical sign is ever pushed) are correct there and wrong here.
--- goldens: yes
-/-- **A floor may be lossy; it may not be false.** The two content operands
-of one nucleus never reach the page as their bare juxtaposition, so a reader
-cannot read a fraction as a product. Stated as the inequality rather than as
-a spelling, because what is owed is the separation and not the separator. -/
-theorem formulaFloor_separates (num den : Math.MList)
-    (hn : Ir.formulaFloor num ≠ "") (hd : Ir.formulaFloor den ≠ "") :
-    Ir.formulaFloor (.cons (.atom .ord (.frac {} num den) .nil .nil false) .nil)
-      ≠ Ir.formulaFloor num ++ Ir.formulaFloor den := by
-  sorry
+-- The old raw-source content premise was false even after successful
+-- parsing: invisible delimiters and layout parameters carry source
+-- punctuation/digits but declare no glyphs (Tests.formulaFloorChecks).
+-- Ir.formulaFloor_covers instead bounds the structural reading against the
+-- independent parsed glyph census; source-to-parser conservation remains
+-- outside that contract. Ir.formulaFloor_separates proves the former
+-- fraction separator obligation without its nonempty-operand hypotheses.
 
 -- The prefix LaTeX puts before a refused name on its way to a filename now
 -- lives with the scan that reads it (`Compat.nameRefusalAsk`), where it is
@@ -914,7 +656,7 @@ theorem formulaFloor_separates (num den : Math.MList)
 -- owed: nameRefusals_asked
 -- owner: LeanTex.Core.Compat
 -- source: theme-loading audit 2026-09-24, the generalised invariant: the defect was not about themes but about a refusal that never asked, and `\usefonttheme`/`\useinnertheme`/`\useoutertheme` sat one keystroke from the same bug
--- blocker: the channel is no longer missing and the statement is no longer vacuous, which turns this row from unstatable into *false for one of its two registry entries* — stated anyway, as `formulaFloor_separates` is, so the repair lands against it. What the channel fixed: `Diag.subject` is the dedup key, namespaced for some codes and unset for others, and W0103 and W0319 set nothing there at all, so the old spelling read the empty option and the whole quantification was trivially true. `Diag.refused` carries the name structurally (`Diag.of_refused`), `Compat.nameRefusalAsk` is the registry, and `nameRefusalRegistryChecks` closes it against the code list in both directions over the witness registry every code owes — a third name-refusal can no longer arrive invisibly, which is how `\usetheme` escaped. What remains is not a proof wall: W0319 is raised by *two* doors with different answers — the compat spellings, which do ask for `beamerthemeX.sty`, and the native `\theme{X}`, where no file beside the document would define a built-in bundle — so a per-code claim cannot be right for both. The registry needs the door rather than the code, or the native refusal needs a code of its own; that is a user-visible decision and Compat's to make. The wall this row carried behind that is now down to spelling: the quantification runs over `Elab.runRaws`'s whole diagnostic surface, an imperative preamble fold, and `LeanTex.Core.Loop` carries an invariant through a `forIn` that breaks — so what is left there is stating the invariant inside Elab, not factoring the fold
+-- blocker: the channel is no longer missing and the statement is no longer vacuous, which turns this row from unstatable into *false for one of its two registry entries* — retained here so the repair lands against its stated counterexample. What the channel fixed: `Diag.subject` is the dedup key, namespaced for some codes and unset for others, and W0103 and W0319 set nothing there at all, so the old spelling read the empty option and the whole quantification was trivially true. `Diag.refused` carries the name structurally (`Diag.of_refused`), `Compat.nameRefusalAsk` is the registry, and `nameRefusalRegistryChecks` closes it against the code list in both directions over the witness registry every code owes — a third name-refusal can no longer arrive invisibly, which is how `\usetheme` escaped. What remains is not a proof wall: W0319 is raised by *two* doors with different answers — the compat spellings, which do ask for `beamerthemeX.sty`, and the native `\theme{X}`, where no file beside the document would define a built-in bundle — so a per-code claim cannot be right for both. The registry needs the door rather than the code, or the native refusal needs a code of its own; that is a user-visible decision and Compat's to make. The wall this row carried behind that is now down to spelling: the quantification runs over `Elab.runRaws`'s whole diagnostic surface, an imperative preamble fold, and `LeanTex.Core.Loop` carries an invariant through a `forIn` that breaks — so what is left there is stating the invariant inside Elab, not factoring the fold
 -- goldens: no
 /-- **A declaration the engine refuses as unknown has no file beside the
 document that would define it.** The pure half, which is the half the engine
