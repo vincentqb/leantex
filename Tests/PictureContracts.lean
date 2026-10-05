@@ -9,6 +9,10 @@ private def nodeStmtAt (name : String) (x y : Int) (body : List Picture.Tok := [
   .node #[.sym '(', .ident name, .sym ')', .ident "at",
     .sym '(', .num x, .sym ',', .num y, .sym ')', .group body]
 
+private def relative (name target direction : String) : Picture.Stmt :=
+  .node #[.sym '[', .ident direction, .sym '=', .ident "of", .ident target, .sym ']',
+    .sym '(', .ident name, .sym ')', .group []]
+
 private def cx : Picture.Cx :=
   { pal := {}, math := fun _ _ => (.text "computed", #[]) }
 
@@ -50,5 +54,31 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   check "picture explicit bounding box remains authoritative"
     (tiny.box metric == ((0, 0), (0, 0)) &&
       p.box metric != tiny.box metric)
+  let directions : Array (String × Picture.Dir) :=
+    #[("left", .left), ("right", .right), ("above", .above), ("below", .below),
+      ("above left", .aboveLeft), ("above right", .aboveRight),
+      ("below left", .belowLeft), ("below right", .belowRight)]
+  for (name, dir) in directions do
+    let root := nodeStmtAt "root" 3000 (-5000)
+    let p := relative "p" "root" name
+    let q := nodeStmtAt "q" 7000 9000
+    let before := Picture.evalFixed cx [root, p, q]
+    let after := Picture.evalFixed cx [root, q, p]
+    let forward := Picture.evalFixed cx [p, root, q]
+    check s!"picture independent source placements commute: {name}"
+      (["root", "p", "q"].all fun n => before.nodes.lookup n == after.nodes.lookup n)
+    check s!"picture forward reference resolves: {name}"
+      (before.nodes.lookup "p" == forward.nodes.lookup "p")
+    match before.nodes.lookup "root", before.nodes.lookup "p" with
+    | some g, some placed =>
+      let plan : Picture.NodePlan :=
+        { name := some "p", placement := .relative dir "root" cx.dist
+          shape := { placed with x := 0, y := 0, base := placed.base - placed.y } }
+      check s!"picture emission uses the measured placement resolver: {name}"
+        ((plan.run [("root", g)]).1.toOption == some placed)
+    | _, _ => check s!"picture source placement emits both nodes: {name}" false
+  let missing := Picture.evalFixed cx [relative "p" "absent" "right"]
+  check "picture missing references stay unregistered and diagnosed"
+    (missing.nodes.lookup "p" == none && !missing.diags.isEmpty)
 
 end PictureContracts

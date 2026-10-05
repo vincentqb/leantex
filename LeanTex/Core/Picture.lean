@@ -2748,6 +2748,131 @@ def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   | .belowLeft => (-sep.2, -sep.1)
   | .belowRight => (sep.2, -sep.1)
 
+/-- A node's placement after its coordinate expressions and options have
+been read. Relative placement names exactly one geometry to read; absolute
+placement reads none. Keeping that dependency explicit lets the resolver's
+order contract cover every direction without assuming that arbitrary
+source statements commute. -/
+inductive NodePlacement where
+  | absolute (x y : Sp)
+  | relative (dir : Dir) (target : String) (sep : Sp × Sp)
+  deriving Repr, Inhabited
+
+def NodePlacement.target : NodePlacement → Option String
+  | .absolute .. => none
+  | .relative _ name _ => some name
+
+/-- Resolve the centre from the declared gap and both nodes' anchor
+extents. Failure carries the missing name so the caller can account for
+it without recovering a name from diagnostic text. -/
+def NodePlacement.position (p : NodePlacement) (a b : Sp)
+    (nodes : List (String × NodeGeom)) : Except String (Sp × Sp) :=
+  match p with
+  | .absolute x y => .ok (x, y)
+  | .relative dir target sep =>
+    match nodes.lookup target with
+    | none => .error target
+    | some g =>
+      let (ox, oy) := dir.offset (sep.1 + g.b + b, sep.2 + g.a + a)
+      .ok (g.x + ox, g.y + oy)
+
+/-- The measured node and its optional name, before placement. `shape.base`
+is the text baseline relative to the node centre; resolution translates
+it together with the centre. `evalNode` uses this value for both the
+geometry it emits and the geometry later nodes read. -/
+structure NodePlan where
+  name : Option String
+  placement : NodePlacement
+  shape : NodeGeom
+  deriving Repr, Inhabited
+
+def NodePlan.resolve (p : NodePlan) (nodes : List (String × NodeGeom)) :
+    Except String NodeGeom :=
+  (p.placement.position p.shape.a p.shape.b nodes).map fun (x, y) =>
+    { p.shape with x, y, base := y + p.shape.base }
+
+def NodePlan.register (p : NodePlan) (resolved : Option NodeGeom)
+    (nodes : List (String × NodeGeom)) : List (String × NodeGeom) :=
+  match p.name, resolved with
+  | some name, some g => (name, g) :: nodes
+  | _, _ => nodes
+
+/-- Resolve once, then register precisely that geometry if the node has a
+name. An unnamed or unresolved node cannot change another node's lookup. -/
+def NodePlan.run (p : NodePlan) (nodes : List (String × NodeGeom)) :
+    Except String NodeGeom × List (String × NodeGeom) :=
+  let resolved := p.resolve nodes
+  (resolved, p.register resolved.toOption nodes)
+
+/-- Two placements are independent when their writes are distinct and
+neither reads the other's write. Repeated names and a node placed against
+the other node fail these conditions; both are legitimate source programs
+whose order can matter. -/
+def NodePlan.Independent (p q : NodePlan) : Prop :=
+  (∀ n, p.name = some n → q.name ≠ some n) ∧
+  (∀ n, p.placement.target = some n → q.name ≠ some n) ∧
+  (∀ n, q.placement.target = some n → p.name ≠ some n)
+
+theorem NodePlan.register_lookup (p : NodePlan) (g : Option NodeGeom)
+    (nodes : List (String × NodeGeom)) (n : String) (h : p.name ≠ some n) :
+    (p.register g nodes).lookup n = nodes.lookup n := by
+  cases hn : p.name with
+  | none => simp [register, hn]
+  | some name =>
+    have ne : n ≠ name := by intro he; subst name; exact h hn
+    have hne : (n == name) = false := beq_eq_false_iff_ne.mpr ne
+    cases g <;> simp [register, hn, List.lookup_cons, hne]
+
+theorem NodePlan.resolve_register (p q : NodePlan) (g : Option NodeGeom)
+    (nodes : List (String × NodeGeom))
+    (h : ∀ n, p.placement.target = some n → q.name ≠ some n) :
+    p.resolve (q.register g nodes) = p.resolve nodes := by
+  unfold resolve
+  cases hp : p.placement with
+  | absolute x y => rfl
+  | relative dir target sep =>
+    simp only [NodePlacement.position]
+    rw [q.register_lookup g nodes target (h target (by simp [NodePlacement.target, hp]))]
+
+theorem NodePlan.register_order (p q : NodePlan) (pg qg : Option NodeGeom)
+    (nodes : List (String × NodeGeom))
+    (h : ∀ n, p.name = some n → q.name ≠ some n) (n : String) :
+    (p.register pg (q.register qg nodes)).lookup n =
+      (q.register qg (p.register pg nodes)).lookup n := by
+  cases hp : p.name with
+  | none => simp [register, hp]
+  | some pn =>
+    cases hq : q.name with
+    | none => simp [register, hq]
+    | some qn =>
+      have ne : pn ≠ qn := by intro he; subst qn; exact h pn hp hq
+      cases pg <;> cases qg <;> simp [register, hp, hq, List.lookup_cons]
+      split <;> split <;> simp_all
+
+/-- Independent measured placements commute for every named lookup, even
+when a reference is missing. This is a contract of the resolver `evalNode`
+uses, not of arbitrary statements: redefining a node or changing a macro
+between nodes can intentionally change the result. -/
+theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String × NodeGeom))
+    (h : p.Independent q) (name : String) :
+    (q.run (p.run nodes).2).2.lookup name =
+      (p.run (q.run nodes).2).2.lookup name := by
+  simp only [NodePlan.run]
+  rw [NodePlan.resolve_register _ _ _ _ h.2.1,
+      NodePlan.resolve_register _ _ _ _ h.2.2]
+  exact (NodePlan.register_order _ _ _ _ _ h.1 name).symm
+
+/-- Distinct named absolute placements, as produced by `at (x,y)`, satisfy
+the independence premise for all positions and measured shapes. -/
+theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
+    (px py qx qy : Sp) (pg qg : NodeGeom) :
+    Independent ⟨some pn, .absolute px py, pg⟩ ⟨some qn, .absolute qx qy, qg⟩ := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro n hn hq
+    exact hne ((Option.some.inj hn).trans (Option.some.inj hq).symm)
+  · intro n hn; cases hn
+  · intro n hn; cases hn
+
 /-- TikZ's `auto` anchor, including diagonal corners. tikz.code.tex's
 `tikz@auto@anchor` ignores normalized tangent components within ±.05;
 comparing twenty times the component with the length avoids division.
@@ -3449,31 +3574,31 @@ outside the rendered picture subset; the label is not drawn")
       if isCircle then (max ox oy, max ox oy) else (ox, oy)
   let anchA : Sp := ownA + outA
   let anchB : Sp := ownB + outB
-  let pos : Except PDiag (Sp × Sp) :=
+  let placement : Except PDiag NodePlacement :=
     match atCoord with
     | some (xs, ys) =>
       match evalNum env xs, evalNum env ys with
-      | .ok xm, .ok ym => .ok (cx.toSp xm, cx.toSp ym)
+      | .ok xm, .ok ym => .ok (.absolute (cx.toSp xm) (cx.toSp ym))
       | .error e, _ | _, .error e =>
         .error (.E0333, s!"in '\\node', {e}; the node is not drawn")
     | none =>
       match place with
-      | none => .ok (0, 0)
-      | some (dir, target, sep) =>
-        match ev.nodes.lookup target with
-        | some g =>
-          -- pgf's `positioning` leaves `node distance` between the two
-          -- nodes' anchors, so the centres stand that much plus an anchor's
-          -- reach from each node apart: the target's registered geometry,
-          -- and this node's own reach above.
-          let (ox, oy) := dir.offset (sep.1 + g.b + anchB, sep.2 + g.a + anchA)
-          .ok (g.x + ox, g.y + oy)
-        | none =>
-          if ev.gapped || cx.parseGap then
-            .error (.W0334, s!"'{target}' is declared inside a construct outside \
+      | none => .ok (.absolute 0 0)
+      | some (dir, target, sep) => .ok (.relative dir target sep)
+  let pos : Except PDiag (NodeGeom × List (String × NodeGeom)) := do
+    let placement ← placement
+    let plan : NodePlan :=
+      { name := nodeName, placement
+        shape := { x := 0, y := 0, a := anchA, b := anchB, circle := isCircle, base } }
+    let (resolved, nodes) := plan.run ev.nodes
+    match resolved with
+    | .ok geom => return (geom, nodes)
+    | .error target =>
+      if ev.gapped || cx.parseGap then
+        .error (.W0334, s!"'{target}' is declared inside a construct outside \
 the rendered picture subset, so no node carries it; the node is not drawn")
-          else
-            .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
+      else
+        .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
 this one against; the node is not drawn")
   -- The body: its own `{...}` group, or what a `node contents=` key
   -- supplied — a style that carries the body is how pgf lets a bundle
@@ -3489,7 +3614,9 @@ this one against; the node is not drawn")
   -- not draw, because an empty diagram tells a reader nothing where a
   -- degraded word tells them almost everything.
   match pos with
-  | .ok (sx, sy) =>
+  | .ok (geom, nodes) =>
+        let sx := geom.x
+        let sy := geom.y
         -- pgf's natural bounding box includes the node's shape — its text
         -- box plus `inner sep`, or the declared minimum where larger —
         -- whether or not a path paints it (§17.2.2); a drawn outline is
@@ -3499,14 +3626,9 @@ this one against; the node is not drawn")
           else
             ((sx - ownA, sy + min (boxLo - sepY) (-declB)),
              (sx + ownA, sy + max (boxHi + sepY) declB))
-        ev := { ev with borders := ev.borders.push border }
-        -- A named node registers its anchoring geometry whether or not
-        -- its border draws: pgf anchors edges on the shape's border even
-        -- when the path itself is never painted.
-        if let some nm := nodeName then
-          let geom : NodeGeom :=
-            { x := sx, y := sy, a := anchA, b := anchB, circle := isCircle, base := sy + base }
-          ev := { ev with nodes := (nm, geom) :: ev.nodes }
+        -- The resolver registered the same geometry the node now uses.
+        -- pgf anchors on a named shape even when its path is never painted.
+        ev := { ev with borders := ev.borders.push border, nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. A declared extent is the declared minimum (pgf manual
         -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
@@ -4688,23 +4810,14 @@ private def dedupNodes (ns : List (String × NodeGeom)) :
       out := out.push (n, g)
   return out.toList
 
-/-- Evaluate to the node table's fixed point.
+/-- Retry unresolved references using the previous pass's node table.
 
-A node placed relative to one *declared later* cannot resolve on a first
-pass, so the walk runs again with what the previous run learned already in
-scope. This is what makes placement a function of the reference graph
-rather than of writing order — TikZ rejects the forward reference outright,
-and the engine's answer is the same page either way round
-(`place_order_agree`).
-
-No fuel: `Ev.deferred` counts the nodes a run refused for a reference not
-yet in scope, and every re-run that resolves one strictly decreases it, so
-the first run's count bounds the loop — the bound is the loop's own range,
-not a budget. That the bound is *sufficient* (an acyclic graph of names
-that all exist resolves within it) is the owed `place_order_agree`'s other
-half, and unproved here. A count that stops falling is a cycle or a name no
-node carries, and the run carrying those refusals is the one returned: the
-loss is named, never silent.
+The walk stops when all references resolve or their unresolved count
+ceases to fall. The first pass's count bounds the number of retries.
+This permits forward references without claiming that arbitrary source
+permutations agree: repeated names and macro assignments are ordered
+writes. `NodePlan.place_order_agree` gives the local commutation contract
+for resolved operations whose reads and writes are independent.
 
 The common case costs one run. A picture whose placements all read
 backwards — every picture written the way TikZ demands — defers nothing and
