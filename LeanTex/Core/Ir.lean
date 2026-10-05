@@ -13786,25 +13786,20 @@ def ctrlNamesGo : List Char → Option String → Array String → Array String
 
 def ctrlNames (src : String) : Array String := ctrlNamesGo src.toList none #[]
 
-/-- One round of the reachability saturation: every name a selected
-definition spells joins the set. Push-only, so the round is monotone by
-construction (`mem_macroReachRound`) and a round that grows the set by
-nothing is the fixed point. -/
-def macroReachRound (macros : Array (String × String)) (ns : Array String) : Array String :=
-  let fresh := (macros.filter fun p => ns.contains p.1).flatMap fun p =>
-    (ctrlNames p.2).filter fun m => !ns.contains m
-  ns ++ fresh
-
-/-- The names reachable in at most `k` rounds, stopping at the fixed
-point. Structural on `k`, so total with no fuel argument in the surface:
-the caller passes `macros.size`, and reachability over a set of that many
-definitions cannot need more rounds than it has elements
-(`macroDecls_fixed_point`, owed). -/
-def macroReachNames (macros : Array (String × String)) : Nat → Array String → Array String
-  | 0, ns => ns
-  | k + 1, ns =>
-    let ns' := macroReachRound macros ns
-    if ns'.size == ns.size then ns' else macroReachNames macros k ns'
+/-- Consume each reachable declaration once, adding the names its body
+spells. Removing the declaration supplies the termination measure, including
+cycles and repeated names; no round budget stands in for closure.
+`macroReachNames_contract` states both root retention and closure. -/
+def macroReachNames (pending : List (String × String)) (ns : Array String) : Array String :=
+  match _h : pending.find? (fun p => ns.contains p.1) with
+  | none => ns
+  | some p => macroReachNames (pending.erase p) (ns ++ ctrlNames p.2)
+termination_by pending.length
+decreasing_by
+  have hp := List.mem_of_find?_eq_some _h
+  rw [List.length_erase_of_mem hp]
+  have hn := List.length_pos_of_mem hp
+  omega
 
 /-- The document's own macro definitions a picture body reaches: every
 definition whose name the body spells, and transitively every definition
@@ -13814,7 +13809,7 @@ document's definition of a name TeX or TikZ already owns is the picture's
 to see only where the picture asks for it, and the cache key then moves
 only when a definition the picture reads moves. -/
 def macroDecls (macros : Array (String × String)) (body : String) : Array (String × String) :=
-  let ns := macroReachNames macros macros.size (ctrlNames body)
+  let ns := macroReachNames macros.toList (ctrlNames body)
   macros.filter fun p => ns.contains p.1
 
 /-- The carried definitions as the standalone's preamble reads them, one
@@ -13923,39 +13918,56 @@ theorem paletteDecls_local_exact (pal pal' : Palette) (body : String)
   intro n hn
   rw [h n (Array.mem_def.mpr hn)]
 
-/-- A round only adds. -/
-theorem mem_macroReachRound (macros : Array (String × String)) (ns : Array String)
-    (x : String) (h : x ∈ ns) : x ∈ macroReachRound macros ns := by
-  simp only [macroReachRound]
-  exact Array.mem_append.mpr (Or.inl h)
-
-/-- Saturation only adds, at any round count. -/
-theorem mem_macroReachNames (macros : Array (String × String)) (k : Nat) :
-    ∀ (ns : Array String) (x : String), x ∈ ns → x ∈ macroReachNames macros k ns := by
-  induction k with
-  | zero => intro ns x h; exact h
-  | succ k ih =>
-    intro ns x h
-    simp only [macroReachNames]
-    split
-    · exact mem_macroReachRound macros ns x h
-    · exact ih _ x (mem_macroReachRound macros ns x h)
+/-- Every root remains, and every reached declaration's dependencies remain.
+The step consumes one declaration; it covers that declaration from the new
+roots and every other declaration from the remaining worklist. -/
+theorem macroReachNames_contract (pending : List (String × String)) (ns : Array String) :
+    (∀ n ∈ ns, n ∈ macroReachNames pending ns) ∧
+    (∀ p ∈ pending, p.1 ∈ macroReachNames pending ns →
+      ∀ n ∈ ctrlNames p.2, n ∈ macroReachNames pending ns) := by
+  induction pending, ns using macroReachNames.induct with
+  | case1 pending ns h =>
+    rw [macroReachNames, h]
+    refine ⟨fun _ h => h, ?_⟩
+    intro p hp hn
+    exact False.elim ((List.find?_eq_none.mp h p hp) (Array.contains_iff_mem.mpr hn))
+  | case2 pending ns p h ih =>
+    rw [macroReachNames, h]
+    refine ⟨fun n hn => ih.1 n (Array.mem_append_left _ hn), ?_⟩
+    intro q hq hn n hdep
+    by_cases he : q = p
+    · subst q
+      exact ih.1 n (Array.mem_append_right _ hdep)
+    · exact ih.2 q ((List.mem_erase_of_ne he).mpr hq) hn n hdep
 
 /-- **A definition the picture spells is carried.** A control sequence the
 body spells that the document itself defined is declared in the request the
 wrapper produces — the closure property the preamble's closed list could
 not have: a list closed over the commands the engine knows cannot hold a
 name the document invented, so the boundary tool met an undefined control
-sequence and drew nothing. The transitive half, that a definition reached
-only through another carried definition is carried too, is what the
-saturation computes and `macroDecls_fixed_point` owes. -/
+sequence and drew nothing. `macroDecls_fixed_point` supplies the transitive
+half for definitions reached only through another carried definition. -/
 theorem macroDecls_covers (macros : Array (String × String)) (body n d : String)
     (hn : n ∈ ctrlNames body) (hm : (n, d) ∈ macros) :
     (n, d) ∈ macroDecls macros body := by
   simp only [macroDecls]
   refine Array.mem_filter.mpr ⟨hm, ?_⟩
   exact Array.contains_iff_mem.mpr
-    (mem_macroReachNames macros macros.size (ctrlNames body) n hn)
+    ((macroReachNames_contract macros.toList (ctrlNames body)).1 n hn)
+
+/-- The carried definitions are closed under reference: a definition whose
+name another carried definition spells is carried too. This holds for every
+declaration array, including cycles and repeated names. -/
+theorem macroDecls_fixed_point (macros : Array (String × String)) (body n d : String)
+    (hm : (n, d) ∈ macros)
+    (hr : ∃ p ∈ macroDecls macros body, n ∈ ctrlNames p.2) :
+    (n, d) ∈ macroDecls macros body := by
+  obtain ⟨p, hp, hn⟩ := hr
+  simp only [macroDecls] at hp ⊢
+  obtain ⟨hm', hp⟩ := Array.mem_filter.mp hp
+  refine Array.mem_filter.mpr ⟨hm, Array.contains_iff_mem.mpr ?_⟩
+  exact (macroReachNames_contract macros.toList (ctrlNames body)).2 p
+    (Array.mem_def.mp hm') (Array.contains_iff_mem.mp hp) n hn
 
 /-- **Only the document's own definitions ride.** Nothing reaches the
 boundary that the document did not declare: the request's macro block is
