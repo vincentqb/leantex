@@ -8070,30 +8070,103 @@ the baseline the line is set on. -/
 def labelVExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (labelVStep fs size) (0, 0)
 
-/-- How far a label line's glyphs themselves reach above and below its
-baseline — the TeX box the line makes, each glyph read off its own outline
-at its run's size and raise. A glyph whose outline does not decode reaches
-its run's declared band, the measurement it would otherwise have had; an
-image stands on the baseline and a rule on its raise. This is what a node's
-text box is (pgf's), where the band above is what places the letters. -/
-def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
-  segs.foldl (fun acc seg => match seg with
+/-- A glyph's vertical reach in the run that actually paints it. Outline
+coordinates and the declared fallback both use that run's face, size and
+raise; the paragraph's face cannot measure a mixed-font label. -/
+def glyphVExtent (font : Font) (size raise : Sp) (g : Nat) : Sp × Sp :=
+  match font.yExtent g with
+  | some (lo, hi) =>
+    (hi * size / (font.unitsPerEm : Int) + raise,
+     (-lo) * size / (font.unitsPerEm : Int) - raise)
+  | none =>
+    (scaledAt size font font.capHeight.toNat + raise,
+     scaledAt size font (-font.descent).toNat - raise)
+
+private def growExtent (acc extent : Sp × Sp) : Sp × Sp :=
+  (max acc.1 extent.1, max acc.2 extent.2)
+
+private def ExtentLe (a b : Sp × Sp) : Prop := a.1 ≤ b.1 ∧ a.2 ≤ b.2
+
+private theorem extentLe_trans {a b c : Sp × Sp} (hab : ExtentLe a b)
+    (hbc : ExtentLe b c) : ExtentLe a c :=
+  ⟨Int.le_trans hab.1 hbc.1, Int.le_trans hab.2 hbc.2⟩
+
+private theorem growExtent_left (a b : Sp × Sp) : ExtentLe a (growExtent a b) :=
+  ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩
+
+private theorem growExtent_right (a b : Sp × Sp) : ExtentLe b (growExtent a b) :=
+  ⟨Int.le_max_right _ _, Int.le_max_right _ _⟩
+
+private theorem foldExtent_preserves {α : Type} (f : (Sp × Sp) → α → Sp × Sp)
+    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a : Sp × Sp) :
+    ExtentLe a (xs.foldl f a) :=
+  Array.foldl_induction (motive := fun _ b => ExtentLe a b)
+    ⟨Int.le_refl _, Int.le_refl _⟩
+    (fun i b h => extentLe_trans h (hf b xs[i]))
+
+private theorem foldExtent_covers {α : Type} (f : (Sp × Sp) → α → Sp × Sp)
+    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a e : Sp × Sp)
+    (x : α) (hx : x ∈ xs) (he : ∀ b, ExtentLe e (f b x)) :
+    ExtentLe e (xs.foldl f a) := by
+  obtain ⟨j, hj, hget⟩ := Array.mem_iff_getElem.mp hx
+  have h : j < xs.size → ExtentLe e (xs.foldl f a) := by
+    refine Array.foldl_induction (motive := fun n b => j < n → ExtentLe e b) ?_ ?_
+    · omega
+    · intro i b ih hnext
+      by_cases hprev : j < i.val
+      · exact extentLe_trans (ih hprev) (hf b xs[i])
+      · have hij : i.val = j := by omega
+        simpa [hij, hget] using he b
+  exact h hj
+
+/-- One segment's measured contribution. The accumulator can only grow,
+including for negative raises, images, rules and polygonal math marks. -/
+def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
+  match seg with
     | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
       let font := fs.get idx
       let sz := if sz == 0 then size else sz
-      glyphs.foldl (fun acc (g, _) =>
-        match font.yExtent g with
-        | some (lo, hi) =>
-          (max acc.1 (hi * sz / (font.unitsPerEm : Int) + raise),
-           max acc.2 ((-lo) * sz / (font.unitsPerEm : Int) - raise))
-        | none =>
-          (max acc.1 (scaledAt sz font font.capHeight.toNat + raise),
-           max acc.2 (scaledAt sz font (-font.descent).toNat - raise))) acc
+      glyphs.foldl (fun acc (g, _) => growExtent acc (glyphVExtent font sz raise g)) acc
     | .image _ _ h => (max acc.1 h, acc.2)
     | .rule _ t raise _ | .decoration _ _ t raise _ =>
-      (max acc.1 (raise + t), max acc.2 (-raise))
-    | .poly pts _ => pts.foldl (fun acc (_, y) => (max acc.1 y, max acc.2 (-y))) acc
-    | .gap _ _ | .decoratedGap _ _ _ => acc) (0, 0)
+      growExtent acc (raise + t, -raise)
+    | .poly pts _ => pts.foldl (fun acc (_, y) => growExtent acc (y, -y)) acc
+    | .gap _ _ | .decoratedGap _ _ _ => acc
+
+/-- How far a label line's glyphs themselves reach above and below its
+baseline. This measured box reserves space; `labelVExtent` independently
+places the baseline using the face's stable alignment band. -/
+def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
+  segs.foldl (labelGlyphStep fs size) (0, 0)
+
+private theorem labelGlyphStep_grows (fs : FontSet) (size : Sp)
+    (a : Sp × Sp) (seg : Seg) : ExtentLe a (labelGlyphStep fs size a seg) := by
+  cases seg with
+  | run =>
+    exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
+  | image => exact ⟨Int.le_max_left _ _, Int.le_refl _⟩
+  | rule | decoration => exact growExtent_left _ _
+  | poly => exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
+  | gap | decoratedGap => exact ⟨Int.le_refl _, Int.le_refl _⟩
+
+/-- Every painted glyph is covered on both sides of the baseline, in its
+own face and resolved size. This is a measurement theorem, not a claim
+that a font's cap-height bounds arbitrary outlines. -/
+theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array Seg)
+    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (attr : Attribution)
+    (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
+    (g : Nat × Char × Sp) (hg : g ∈ glyphs) :
+    let e := glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1
+    e.1 ≤ (labelGlyphExtent fs size segs).1 ∧
+      e.2 ≤ (labelGlyphExtent fs size segs).2 := by
+  apply foldExtent_covers _ (labelGlyphStep_grows fs size) segs (0, 0) _
+    _ hrun
+  intro a
+  exact foldExtent_covers _ (fun _ _ => growExtent_left _ _) glyphs a _
+    g hg (fun _ => growExtent_right _ _)
 
 /-- A run emptied of its glyphs contributes exactly what it contributed
 full: no arm of the step reads the payload. -/
@@ -8138,7 +8211,8 @@ The design that behaviour serves is kept, not discarded: an extent-derived
 box is what stops diacritics and descenders clipping or colliding
 (CSS 2.1 §10.6.1, css-inline-3 §5.2), so the band here is still the face's
 declared ink band rather than a magic fraction, and ink that leaves it is
-owed a name (`ink_covered_or_named`). -/
+reserved separately by `labelGlyphExtent_covers`, without moving the
+baseline. -/
 theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array Seg) :
     labelVExtent fs size (segs.map Seg.stripGlyphs) = labelVExtent fs size segs := by
   unfold labelVExtent
@@ -8168,6 +8242,26 @@ theorem vphantom_absorbed (fs : FontSet) (size : Sp) (segs : Array Seg) (r : Seg
   unfold labelVExtent
   rw [Array.foldl_push, labelVStep_glyph_id, Array.foldl_push, labelVStep_idem]
 
+/-- Resolve a set label line once: the font band places its baseline and
+the measured glyph extent reserves its ink. Both picture consumers read
+this record, so increasing the reserved reach cannot move the baseline. -/
+def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+    Ir.Pic.LabelInk :=
+  let band := labelVExtent fs size segs
+  let ink := labelGlyphExtent fs size segs
+  { w := width, height := band.1, depth := band.2
+    boxHeight := ink.1, boxDepth := ink.2, ex := ex }
+
+/-- The label metric carries the measured bounds without rounding or a
+font-metric substitution. This is the backend projection of the two
+separate extent fields in `Ir.Pic.LabelInk`. -/
+theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
+    (segs : Array Seg) :
+    let m := measureLabelLine fs size width ex segs
+    (m.height, m.depth) = labelVExtent fs size segs ∧
+      (m.boxHeight, m.boxDepth) = labelGlyphExtent fs size segs :=
+  ⟨rfl, rfl⟩
+
 /-- One label line of a picture, set and measured: the segments its
 inlines make, the size they set at, and the ink the line occupies — its
 set width and its reach above and below the baseline.
@@ -8177,24 +8271,93 @@ question and the picture walk has no face (`Ir.Pic.LabelMetric`), so the
 two sides that need it — the box a picture reserves on the page and the
 line the placement actually sets — read it here, from one function of the
 resolved face, and cannot drift apart. -/
-private def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
     (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
-    Option (Array Seg × Sp × Ir.Pic.LabelInk) := Id.run do
+    Option (Array Seg × Sp × Ir.Pic.LabelInk) :=
   let size := geom.fontSize * (scale : Int) / 1000
   -- A label is generated ink of the picture (its one leaf has no census
   -- text): `.block` of the picture leaf, `.unattributed` when the picture
   -- owns none.
-  let (items, _, _, _) := itemsOfInlines none size xHeight fs {}
+  let items := (itemsOfInlines none size xHeight fs {}
     #[.colored color none content] {} (.fixed ((leaf.map .block).getD .unattributed)) imgs
-    geom.textWidth geom.textHeight (ladder := geom.scale)
-  let breaks := kp items geom.textWidth
-  let some brk := breaks[0]? | return none
-  let (segs, w, _, _) := setLine items (lineStart items 0) brk geom.textWidth false
-  let (hgt, dep) := labelVExtent fs size segs
-  let (bh, bd) := labelGlyphExtent fs size segs
-  return some (segs, size, { w := w, height := hgt, depth := dep
-                             boxHeight := bh, boxDepth := bd
-                             ex := xHeight * (scale : Int) / 1000 })
+    geom.textWidth geom.textHeight (ladder := geom.scale)).1
+  (kp items geom.textWidth)[0]?.map fun brk =>
+    let line := setLine items (lineStart items 0) brk geom.textWidth false
+    (line.1, size,
+      measureLabelLine fs size line.2.1 (xHeight * (scale : Int) / 1000) line.1)
+
+/-- The label producer returns the metric measured from the very segments
+it sets. Both placement and reservation consume this result. -/
+theorem labelInk_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (ink : Ir.Pic.LabelInk)
+    (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink)) :
+    ink = measureLabelLine fs size ink.w ink.ex segs := by
+  simp only [labelInk, Option.map_eq_some_iff] at h
+  obtain ⟨brk, _, heq⟩ := h
+  cases heq
+  rfl
+
+/-- Place a measured label by the IR's baseline and horizontal anchor.
+The font band chooses the baseline; the separate glyph box reserves ink. -/
+def labelLine (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
+    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) : LineOut :=
+  { x := (place.toPage (Ir.Pic.labelInkBox x y align ink).1).1
+    y := (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2
+    size := size, segs := segs, setWidth := ink.w, leaf := leaf }
+
+/-- Placement reads the same baseline as the IR's reserved glyph box,
+for every anchor and page transform. -/
+theorem labelLine_projects (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
+    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) :
+    (labelLine place x y align ink segs size leaf).y =
+      (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2 := rfl
+
+/-- Every glyph returned by the actual label producer fits vertically in
+the reserved glyph box after page placement. This projects the IR extent
+contract through the glyph's own face, size and raise; cap height is never
+used as a bound on an arbitrary outline. -/
+theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (ink : Ir.Pic.LabelInk)
+    (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
+    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (attr : Attribution)
+    (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
+    (g : Nat × Char × Sp) (hg : g ∈ glyphs)
+    (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign) :
+    let e := glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1
+    let line := labelLine place x y align ink segs size leaf
+    let box := Ir.Pic.labelGlyphBox x y align ink
+    (place.toPage box.2).2 ≤ line.y - e.1 ∧
+      line.y + e.2 ≤ (place.toPage box.1).2 := by
+  have hm := labelInk_projects fs imgs geom xHeight leaf content color scale segs size ink h
+  have he := labelGlyphExtent_covers fs size segs idx runColor link width glyphs sz leading
+    decorations raise ground attr hrun g hg
+  have hhi : (glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1).1 ≤
+      ink.boxHeight := by
+    have hheight := congrArg Ir.Pic.LabelInk.boxHeight hm
+    simp only [measureLabelLine] at hheight
+    rw [hheight]
+    exact he.1
+  have hlo : (glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1).2 ≤
+      ink.boxDepth := by
+    have hdepth := congrArg Ir.Pic.LabelInk.boxDepth hm
+    simp only [measureLabelLine] at hdepth
+    rw [hdepth]
+    exact he.2
+  have hb := Ir.Pic.labelGlyphBox_covers_extent x y align ink _ _ hhi hlo
+  have reflect : ∀ t m baseline hi lo bottom top : Int,
+      bottom ≤ baseline - lo → baseline + hi ≤ top →
+      t + (m - top) ≤ t + (m - baseline) - hi ∧
+        t + (m - baseline) + lo ≤ t + (m - bottom) := by
+    intro t m baseline hi lo bottom top hbottom htop
+    omega
+  exact reflect place.yTop place.ymax _ _ _ _ _ hb.1 hb.2
 
 /-- The measurement a picture's box is computed with: `labelInk` read as an
 `Ir.Pic.LabelMetric`, the seam the IR states its containment over. A label
@@ -10669,18 +10832,10 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
                               fill := some st.color, leaf := leaf }
     | .label lx ly content color scale align =>
       if let some (segs, size, ink) := labelInk fs imgs b.geom b.xHeight leaf content color scale then
-        -- Where the label's ink stands around its anchor is one fact, and
-        -- `Ir.Pic.labelInkBox` is where it is stated: the box the picture
-        -- reserved (`pictureBox`, above) and the line set here are the same
-        -- box through the same transform, so a label cannot land outside
-        -- the space measured for it.
-        let ((ix0, _), (_, iy1)) := Ir.Pic.labelInkBox lx ly align ink
-        let (x, top) := place.toPage (ix0, iy1)
         -- Label lines ride with the picture: they share the shrink
         -- above it, so a page set short moves the diagram as one
         -- (pushed below through `pushLabels`, the rider door).
-        lines := lines.push { x := x, y := top + ink.height,
-                              size := size, segs := segs, setWidth := ink.w, leaf := leaf }
+        lines := lines.push (labelLine place lx ly align ink segs size leaf)
   b := ({ b with pageStretch := stretch }.pushSibling (fills := fills) (paths := paths)).pushLabels
     lines above fils
   b := { b with

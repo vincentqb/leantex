@@ -5472,8 +5472,8 @@ half and a word with a descender floats up — 1.155 pt between `value` and
 Asserted over `Layout.Out` (the baselines two sibling labels are actually
 set on) and over the exported measurement, never over an IR dump. Three
 things are checked, one per constraint: the wobble is gone, a hand-written
-correction stays inert, and the reason the extent-based design exists is
-still visible as a named debt rather than a silent crop. -/
+correction stays inert, and the separately measured extent covers glyphs
+that reach above the alignment band. -/
 def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
@@ -5557,10 +5557,8 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (boxJ.1.2 <= boxV.1.2 && boxV.2.2 <= boxJ.2.2
       && (inkV.join deeper).depth == inkV.depth + Dim.pt 2
       && (inkV.join deeper).height == inkV.height)
-  -- Constraint three: keep the reason the extent-based design exists. The
-  -- band is the face's *declared* ink band, and a diacritic inks above it —
-  -- so the box does not cover every glyph, and nothing yet says so. This is
-  -- `ink_covered_or_named`'s witness: the debt is real, not hypothetical.
+  -- Constraint three: cap height places the baseline but does not bound
+  -- glyph ink. The reserved box reads the actual outlines independently.
   let font := oneFace.body
   let capTop : Option (Int × Int) := do
     let g ← font.gid 'É'
@@ -5580,6 +5578,26 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       let (lo, _) ← font.yExtent g
       return lo) with
      | some lo => font.descent <= lo
+     | none => false)
+  let accent : Ir.Pic.Picture := { shapes := #[
+    .label 0 0 #[.text "É"] Ir.Color.black 1000 .center] }
+  let accentInk := m #[.text "É"] 1000
+  let accentBase := Ir.Pic.labelBaseline 0 .center accentInk
+  let accentBox := Ir.Pic.labelGlyphBox 0 0 .center accentInk
+  t "the reserved box covers a diacritic above the alignment band"
+    (accentInk.boxHeight > accentInk.height
+      && accentBase + accentInk.boxHeight <= accentBox.2.2)
+  t "the shipped diacritic stays inside the picture's measured top"
+    (match (run #[.picture accent]).pages[0]? with
+     | some pg =>
+       (pg.lines.filter (!·.furniture)).any fun l =>
+         l.segs.any fun s => match s with
+         | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
+           glyphs.any fun (g, ch, _) =>
+             ch == 'É' && l.y -
+               (Layout.glyphVExtent (oneFace.get idx)
+                 (if sz == 0 then l.size else sz) raise g).1 >= geom.vmargin
+         | _ => false
      | none => false)
 
 /-- The block half of `role_transparent_layout`, pinned executably: an
