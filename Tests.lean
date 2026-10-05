@@ -53,6 +53,7 @@ import Tests.MathAlphaSemantics
 import Tests.MathAlphaEntry
 import Tests.Struct
 import Tests.PdfConformance
+import Tests.PdfStructCoherence
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.CompatGate
@@ -593,6 +594,7 @@ def main (args : List String) : IO UInt32 := do
   visibleRunAccountingChecks ref
   monoSlotChecks ref
   structChecks ref
+  pdfStructCoherenceChecks ref
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref

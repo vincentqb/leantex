@@ -392,38 +392,6 @@ theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
     PdfRead.parseVal (PdfRead.Obj.render o) 0 = .ok (o, (PdfRead.Obj.render o).size) := by
   sorry
 
--- owed: skeleton_leafKids_nodup
--- owner: LeanTex.Core.PdfStruct
--- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the structure elements hold each leaf's marked content once — the hypothesis `parentTree_covers` reads, and what makes the leaf tags a function (`leafTags`) rather than a last-writer-wins fold; the executable witness is the per-fixture row "every leaf placeholder is held by exactly one element" in Tests/Backends.
--- blocker: the skeleton walk threads an element accumulator through a mutual recursion (`skelList`/`skelStep`) that also modifies earlier elements in place (`pushElem`, `addKid`), so the census of its `.leaf` placeholders needs the accumulator-generalised statement `leafKids (skelList es …) = leafKids es ++ <the tree's leaf ids outside asides>` proved through `Array.modify`'s equational theory before `structTree_leaves_id` (the ids are `range n`) gives the nodup; the heading census (`pdf_headings_covers`) went the same route and is closed — this row is the leaf half of that induction.
--- goldens: no
-/-- The skeleton holds every leaf of a document's structure tree at most
-once: no two elements carry the same `.leaf k` placeholder, so a leaf's
-marked content lands in one element and the parent tree names it. -/
-theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
-    (Pdf.leafKids (Pdf.skeleton (Struct.ofDoc doc))).Nodup := by
-  sorry
-
--- owed: parentTree_covers
--- owner: LeanTex.Core.PdfStruct
--- source: the pdf-tag-skeleton slice (modern output, wave 2 W2.8; pdf-tagging audit "theorems (PDF projection corollaries)"): the parent tree entry of every marked-content identifier is the element that lists it — ISO 32000-2 §14.7.5.4's contract, which every reader's structure walk relies on; the executable witness is the per-fixture row "the parent tree maps every identifier back to the element listing it" in Tests/Backends, read back through the engine's reader.
--- blocker: **the statement as written is false, and a machine-checked counterexample exists** (2026-09-24). `es` is arbitrary, and `fill` passes an element's pre-existing `.mcid p m` kid through unchanged (`fillKid`'s third arm) — so take `es = #[{ s := "Document", kids := #[.mcid 0 0] }]`, `n = 0`, `marks = #[]`: `leafKids es = []`, so `hnodup` and `hlt` hold vacuously and `hpos` is vacuous, `.mcid 0 0` is a kid of `(fill es …)[0]`, and `parentTreeOf #[] _ = #[]`, whose `[0]?` is `none ≠ some (some 0)`. The engine never builds such an `es` — `skeleton` emits only `.elem` and `.leaf` kids — which is exactly the hypothesis the statement is missing. `structKids_mem`, proved in PdfStruct, already carries that case as an explicit disjunct, which is the corroboration: the same gap was seen once and named there. The repair is the owner's to review, not this file's to make: either add `∀ e ∈ es, ∀ k ∈ e.kids, ¬ ∃ p m, k = .mcid p m`, or range the statement over `skeleton t` and prove the freshness as a lemma about `skeleton`. Behind the repair the original three lemmas stand unchanged — two fold inversions over `Id`-style array folds, `leafPagesOf` (a `(page, mcid)` pair lands in slot `k` exactly when the marks of that page carry `(mcid, k)`) and `leafOwners` (an owner recorded for `k` is the element carrying `.leaf k`, unique under `skeleton_leafKids_nodup`), plus `numberMarks_mcids_exact` read as "position is identifier" on `pageMarks`.
--- goldens: no
-/-- The parent tree covers every marked-content reference: for elements
-filled from the pages' marks (`fill` over `leafPagesOf`), if element `i`
-lists `(page, mcid)` then the parent tree built from the same marks and
-owners (`parentTreeOf`) answers `i` at `[page][mcid]` — given the marks are
-positional (identifier = index, `numberMarks_mcids_exact`), the leaf
-placeholders are held once (`skeleton_leafKids_nodup`) and lie within the
-leaf count. -/
-theorem parentTree_covers (es : Array Pdf.StructElem) (n : Nat) (marks : Array (Array (Nat × Nat)))
-    (hpos : ∀ p (hp : p < marks.size) i (hi : i < marks[p].size), (marks[p][i]).1 = i)
-    (hnodup : (Pdf.leafKids es).Nodup) (hlt : ∀ k ∈ Pdf.leafKids es, k < n) :
-    ∀ i (hi : i < (Pdf.fill es (Pdf.leafPagesOf n marks)).size) p m,
-      Pdf.StructKid.mcid p m ∈ (Pdf.fill es (Pdf.leafPagesOf n marks))[i].kids →
-        ((Pdf.parentTreeOf marks (Pdf.leafOwners es n))[p]?).bind (·[m]?) = some (some i) := by
-  sorry
-
 -- owed: macroDecls_fixed_point
 -- owner: LeanTex.Core.Ir
 -- source: the boundary-request closure defect (a document's own `\newcommand` that a picture spelled was undefined in the wrapped standalone, so the boundary tool drew nothing, E0382 fired as a dropped loss and no artifact was written at all); PLAN 2026-09-24 boundary-macro-closure entry
