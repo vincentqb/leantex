@@ -6176,8 +6176,11 @@ end
 /-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
 py1))` the viewBox declares: the same evaluated shapes the PDF paints,
 through the typed tree so every label passes the escaper. SVG's y grows
-downward, so the transform is the PDF path's: flip against the box's top. -/
-def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp) : Array Node :=
+downward, so the transform is the PDF path's: flip against the box's top.
+Labels use the same metric as that box. Without a font environment the
+zero metric leaves the source anchor as the alphabetic baseline. -/
+def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) : Array Node :=
   pic.shapes.map fun shape =>
     -- The paint attributes of a stroked/filled shape: fill (or none —
     -- SVG's default is black, not TikZ's), then stroke colour, width,
@@ -6212,17 +6215,14 @@ def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp) : Array Node :=
         | .center | .south | .north => "middle"
         | .west => "start"
         | .east => "end"
-      let baseline := match align with
-        | .center | .west | .east => "central"
-        | .south => "text-after-edge"
-        | .north => "hanging"
+      let baseline := Ir.Pic.labelBaseline ly align (metric content scale)
       Html.elem "text" nodes #[
         ("x", (lx - px0).toPtString),
-        ("y", (py1 - ly).toPtString),
+        ("y", (py1 - baseline).toPtString),
         ("fill", cssColor color),
         ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
         ("text-anchor", anchor),
-        ("dominant-baseline", baseline)]
+        ("dominant-baseline", "alphabetic")]
     | .circle sx sy r st fl =>
       Html.elem "circle" #[] (#[
         ("cx", (sx - px0).toPtString),
@@ -6251,6 +6251,23 @@ L {px t.x3} {py t.y3} Z"),
         | none => #[]
       Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
         ++ paint (some st) none)] ++ tipNodes) #[]
+
+/-- **Every emitted label baseline projects the IR's measured band**
+(`_projects`): SVG declares the alphabetic baseline at `labelBaseline`,
+whose `Ir.Pic.labelBaseline_box_exact` also identifies the native page's
+box-top-plus-height placement after its y flip. This holds at every label
+index, independent of alignment, font, scale and the surrounding shapes. -/
+theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+    (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
+    (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
+    (h : pic.shapes[i]? = some (.label x y content color scale align)) :
+    (match (pictureKids pic px0 py1 metric)[i]? with
+      | some (.elem _ attrs _) =>
+        (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
+      | _ => (none, none)) =
+      (some (py1 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
+        some "alphabetic") := by
+  simp [pictureKids, h, Html.elem, attrOf?]
 
 /-- The picture's box as the element's own size. Lengths are pt, the unit
 the viewBox declares — and in flow classes the element's own size too:
@@ -6379,7 +6396,7 @@ def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
   -- The declared baseline is where the line stands (`Ir.Pic.Picture.rise`),
   -- the value the PDF sets the picture's depth by.
-  Html.elem "svg" (pictureKids pic px0 py1)
+  Html.elem "svg" (pictureKids pic px0 py1 cfg.labelMetric)
     (pictureBox cfg (px1 - px0) (py1 - py0) (pic.rise cfg.labelMetric) ++
       pictureRole cfg.locale pic ++ #[("overflow", "visible")])
 
