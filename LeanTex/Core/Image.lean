@@ -2,6 +2,7 @@ import LeanTex.Core.Diag
 import LeanTex.Core.Dim
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfRead
+import LeanTex.Core.Binary
 
 namespace LeanTex.Core.Image
 
@@ -1804,8 +1805,7 @@ A plan as bytes: the value the driver files under the source's content key
 and the parameters' key, so the expensive plan (inflate, split, deflate)
 runs once per content and parameters. Only raster fields ride — a form
 XObject never enters the cache; its plan is cheap and its `wf` witness
-cannot be serialized. Transparency is `decodeBin_encodeBin_id` (staged in
-`Obligations/`, exercised in `lake test`): a cache hit *is* the
+cannot be serialized. Transparency is `decodeBin_encodeBin_id`: a cache hit *is* the
 recomputation's value, keeping the artifact a function of the document
 and the font environment. The magic carries a format version: a change
 here orphans old entries rather than misreading them. -/
@@ -1813,29 +1813,42 @@ here orphans old entries rather than misreading them. -/
 /-- `LTIMG3`, the magic-and-format-version the decoder checks: version 3 is
 the typed plan (three tag bytes for the three sums, the ledger, the
 orientation), so every `LTIMG1` and `LTIMG2` entry is a miss. -/
-private def binMagic : List Nat := [76, 84, 73, 77, 71, 51]
+private def binMagic : ByteArray := [76, 84, 73, 77, 71, 51].toByteArray
 
-private def colorTag : ColorSpaceDecl → UInt8
+private def colorTag : ColorSpaceDecl → Nat
   | .gray => 0
   | .rgb => 1
   | .indexed _ => 2
   | .iccBased _ _ => 3
 
-private def filterTag : FilterDecl → UInt8
+private def filterTag : FilterDecl → Nat
   | .flatePredictor => 0
   | .dct => 1
 
-private def alphaTag : Alpha → UInt8
+private def alphaTag : Alpha → Nat
   | .opaque => 0
   | .colorKey _ => 1
   | .soft _ _ => 2
 
-private def lossTag : PlanLoss → UInt8
+private def lossTag : PlanLoss → Nat
   | .iccDropped => 0
   | .orientationDropped => 1
 
-/-- The fixed header's length: magic, four tag bytes, fourteen u32 fields. -/
-private def binHeader : Nat := 6 + 4 + 4 * 14
+private def colorParts : ColorSpaceDecl → ByteArray × Nat × ByteArray
+  | .gray | .rgb => (.empty, 0, .empty)
+  | .indexed pal => (pal, 0, .empty)
+  | .iccBased n prof => (.empty, n, prof)
+
+private def alphaParts : Alpha → Array Nat × Nat × ByteArray
+  | .opaque => (#[], 0, .empty)
+  | .colorKey keys => (keys, 0, .empty)
+  | .soft plane bpc => (#[], bpc, plane)
+
+private def binFields (i : Plan) : Array Nat :=
+  let (palette, iccN, profile) := colorParts i.color
+  let (keys, softBpc, plane) := alphaParts i.alpha
+  #[i.pxW, i.pxH, i.dpiX, i.dpiY, i.bitDepth, i.orientation, iccN,
+    palette.size, profile.size, keys.size, softBpc, plane.size, i.data.size, i.losses.size]
 
 /-- Serialize a raster `Plan` (`form` is dropped; the cache never holds
 one — `Plan.recodes` gates what is cached). Layout: magic; the colour,
@@ -1844,101 +1857,169 @@ height, two densities, bit depth, orientation), then the variable parts'
 sizes (profile components, palette, profile, key count, soft-mask depth,
 plane, data, losses); then the key values as u32s, the loss tags, and the
 palette, profile, plane and data bytes. -/
-def encodeBin (i : Plan) : ByteArray := Id.run do
-  let (palette, iccN, profile) := match i.color with
-    | .gray => (ByteArray.empty, 0, ByteArray.empty)
-    | .rgb => (ByteArray.empty, 0, ByteArray.empty)
-    | .indexed pal => (pal, 0, ByteArray.empty)
-    | .iccBased n prof => (ByteArray.empty, n, prof)
-  let (keys, softBpc, plane) := match i.alpha with
-    | .opaque => (#[], 0, ByteArray.empty)
-    | .colorKey ks => (ks, 0, ByteArray.empty)
-    | .soft pl bpc => (#[], bpc, pl)
-  let mut out := ByteArray.emptyWithCapacity
-    (binHeader + 4 * keys.size + i.losses.size + palette.size + profile.size + plane.size +
-      i.data.size)
-  for v in binMagic do
-    out := out.push (UInt8.ofNat v)
-  out := out.push (colorTag i.color)
-  out := out.push (filterTag i.filter)
-  out := out.push (alphaTag i.alpha)
-  out := out.push (if i.recoded then 1 else 0)
-  out := Flate.pushBe32 out i.pxW
-  out := Flate.pushBe32 out i.pxH
-  out := Flate.pushBe32 out i.dpiX
-  out := Flate.pushBe32 out i.dpiY
-  out := Flate.pushBe32 out i.bitDepth
-  out := Flate.pushBe32 out i.orientation
-  out := Flate.pushBe32 out iccN
-  out := Flate.pushBe32 out palette.size
-  out := Flate.pushBe32 out profile.size
-  out := Flate.pushBe32 out keys.size
-  out := Flate.pushBe32 out softBpc
-  out := Flate.pushBe32 out plane.size
-  out := Flate.pushBe32 out i.data.size
-  out := Flate.pushBe32 out i.losses.size
-  for v in keys do
-    out := Flate.pushBe32 out v
-  for l in i.losses do
-    out := out.push (lossTag l)
-  return out ++ palette ++ profile ++ plane ++ i.data
+def encodeBin (i : Plan) : ByteArray :=
+  let (palette, _, profile) := colorParts i.color
+  let (keys, _, plane) := alphaParts i.alpha
+  binMagic ++ Binary.natBE 1 (colorTag i.color) ++ Binary.natBE 1 (filterTag i.filter) ++
+    Binary.natBE 1 (alphaTag i.alpha) ++ Binary.natBE 1 (if i.recoded then 1 else 0) ++
+    Binary.array (Binary.natBE 4) (binFields i) ++ Binary.array (Binary.natBE 4) keys ++
+    Binary.array (fun l => Binary.natBE 1 (lossTag l)) i.losses ++
+    palette ++ profile ++ plane ++ i.data
 
-/-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
-truncated, or older-format file is a cache miss, never a wrong image. -/
-def decodeBin (b : ByteArray) : Option Plan := do
-  guard (sliceEq b 0 binMagic)
-  let cTag ← u8? b 6
-  let filter ← match ← u8? b 7 with
-    | 0 => some FilterDecl.flatePredictor
-    | 1 => some FilterDecl.dct
-    | _ => none
-  let aTag ← u8? b 8
-  let rc ← u8? b 9
-  let pxW ← u32be? b 10
-  let pxH ← u32be? b 14
-  let dpiX ← u32be? b 18
-  let dpiY ← u32be? b 22
-  let bitDepth ← u32be? b 26
-  let orientation ← u32be? b 30
-  let iccN ← u32be? b 34
-  let pLen ← u32be? b 38
-  let prLen ← u32be? b 42
-  let kLen ← u32be? b 46
-  let softBpc ← u32be? b 50
-  let plLen ← u32be? b 54
-  let dLen ← u32be? b 58
-  let lLen ← u32be? b 62
-  -- The size check first: it bounds the loops below by the file.
-  guard (b.size == binHeader + 4 * kLen + lLen + pLen + prLen + plLen + dLen)
-  let mut keys : Array Nat := Array.emptyWithCapacity kLen
-  for j in [0:kLen] do
-    keys := keys.push (← u32be? b (binHeader + 4 * j))
-  let lossBase := binHeader + 4 * kLen
-  let mut losses : Array PlanLoss := Array.emptyWithCapacity lLen
-  for j in [0:lLen] do
-    losses := losses.push (← match ← u8? b (lossBase + j) with
-      | 0 => some PlanLoss.iccDropped
-      | 1 => some PlanLoss.orientationDropped
-      | _ => none)
-  let base := lossBase + lLen
-  let palette := b.extract base (base + pLen)
-  let profile := b.extract (base + pLen) (base + pLen + prLen)
-  let plane := b.extract (base + pLen + prLen) (base + pLen + prLen + plLen)
-  let data := b.extract (base + pLen + prLen + plLen) (base + pLen + prLen + plLen + dLen)
-  let color ← match cTag with
-    | 0 => some ColorSpaceDecl.gray
-    | 1 => some ColorSpaceDecl.rgb
-    | 2 => some (ColorSpaceDecl.indexed palette)
-    | 3 => some (ColorSpaceDecl.iccBased iccN profile)
-    | _ => none
-  let alpha ← match aTag with
-    | 0 => some Alpha.opaque
-    | 1 => some (Alpha.colorKey keys)
-    | 2 => some (Alpha.soft plane softBpc)
-    | _ => none
+private def readFilter : Nat → Option FilterDecl
+  | 0 => some .flatePredictor
+  | 1 => some .dct
+  | _ => none
+
+private def readLoss : Nat → Option PlanLoss
+  | 0 => some .iccDropped
+  | 1 => some .orientationDropped
+  | _ => none
+
+private def readColor (tag : Nat) (palette : ByteArray) (iccN : Nat) (profile : ByteArray) :
+    Option ColorSpaceDecl :=
+  match tag with
+  | 0 => some .gray
+  | 1 => some .rgb
+  | 2 => some (.indexed palette)
+  | 3 => some (.iccBased iccN profile)
+  | _ => none
+
+private def readAlpha (tag : Nat) (keys : Array Nat) (softBpc : Nat) (plane : ByteArray) :
+    Option Alpha :=
+  match tag with
+  | 0 => some .opaque
+  | 1 => some (.colorKey keys)
+  | 2 => some (.soft plane softBpc)
+  | _ => none
+
+private def readBin : Binary.Reader Plan := do
+  Binary.Reader.expect binMagic
+  let cTag ← Binary.Reader.nat 1
+  let filter ← (Binary.Reader.nat 1).map? readFilter
+  let aTag ← Binary.Reader.nat 1
+  let rc ← Binary.Reader.nat 1
+  let fields ← Binary.Reader.array 4 14 (Binary.Reader.nat 4)
+  let [pxW, pxH, dpiX, dpiY, bitDepth, orientation, iccN,
+      pLen, prLen, kLen, softBpc, plLen, dLen, lLen] := fields.toList | Binary.Reader.lift none
+  let keys ← Binary.Reader.array 4 kLen (Binary.Reader.nat 4)
+  let losses ← Binary.Reader.array 1 lLen ((Binary.Reader.nat 1).map? readLoss)
+  let palette ← Binary.Reader.bytes pLen
+  let profile ← Binary.Reader.bytes prLen
+  let plane ← Binary.Reader.bytes plLen
+  let data ← Binary.Reader.bytes dLen
+  let color ← Binary.Reader.lift (readColor cTag palette iccN profile)
+  let alpha ← Binary.Reader.lift (readAlpha aTag keys softBpc plane)
   return { pxW, pxH, dpiX, dpiY, bitDepth, color, filter, data, alpha
            recoded := rc == 1, losses, orientation }
 
+/-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
+truncated, or older-format file is a cache miss, never a wrong image. -/
+def decodeBin (b : ByteArray) : Option Plan := readBin.run b
+
+/-- Raster cache representability: every stored natural and payload length fits
+its unsigned 32-bit field. PDF forms are deliberately outside this format. -/
+def binBounded (i : Plan) : Prop :=
+  i.form = none ∧ i.pxW < 4294967296 ∧ i.pxH < 4294967296 ∧
+    i.dpiX < 4294967296 ∧ i.dpiY < 4294967296 ∧ i.bitDepth < 4294967296 ∧
+    i.orientation < 4294967296 ∧ i.data.size < 4294967296 ∧ i.losses.size < 4294967296 ∧
+    (match i.color with
+      | .gray | .rgb => True
+      | .indexed palette => palette.size < 4294967296
+      | .iccBased n profile => n < 4294967296 ∧ profile.size < 4294967296) ∧
+    (match i.alpha with
+      | .opaque => True
+      | .colorKey ranges => ranges.size < 4294967296 ∧ ∀ v ∈ ranges, v < 4294967296
+      | .soft plane bpc => plane.size < 4294967296 ∧ bpc < 4294967296)
+
+private theorem binFields_bounded (i : Plan) (hb : binBounded i) :
+    ∀ v ∈ binFields i, v < 256 ^ 4 := by
+  cases hc : i.color <;> cases ha : i.alpha <;>
+    simp_all [binBounded, binFields, colorParts, alphaParts]
+
+private theorem binKeys_bounded (i : Plan) (hb : binBounded i) :
+    ∀ v ∈ (alphaParts i.alpha).1, v < 256 ^ 4 := by
+  cases ha : i.alpha <;> simp_all [binBounded, alphaParts]
+
+private theorem readFilter_tag (f : FilterDecl) :
+    Binary.Reads ((Binary.Reader.nat 1).map? readFilter) f (Binary.natBE 1 (filterTag f)) :=
+  Binary.Reads.map? _ _ _ _ _
+    (Binary.Reads.nat 1 (filterTag f) (by cases f <;> decide)) (by cases f <;> rfl)
+
+private theorem readLoss_tag (l : PlanLoss) :
+    Binary.Reads ((Binary.Reader.nat 1).map? readLoss) l (Binary.natBE 1 (lossTag l)) :=
+  Binary.Reads.map? _ _ _ _ _
+    (Binary.Reads.nat 1 (lossTag l) (by cases l <;> decide)) (by cases l <;> rfl)
+
+private theorem readColor_parts (c : ColorSpaceDecl) :
+    readColor (colorTag c) (colorParts c).1 (colorParts c).2.1 (colorParts c).2.2 =
+      some c := by cases c <;> rfl
+
+private theorem readAlpha_parts (a : Alpha) :
+    readAlpha (alphaTag a) (alphaParts a).1 (alphaParts a).2.1 (alphaParts a).2.2 =
+      some a := by cases a <;> rfl
+
+private theorem readBin_encodeBin (i : Plan) (hb : binBounded i) :
+    Binary.Reads readBin i (encodeBin i) := by
+  simp only [encodeBin, ByteArray.append_assoc]
+  unfold readBin
+  refine Binary.Reads.bind _ _ _ _ _ _ (Binary.Reads.expect _) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.nat 1 (colorTag i.color) (by cases i.color <;> simp [colorTag])) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _ (readFilter_tag i.filter) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.nat 1 (alphaTag i.alpha) (by cases i.alpha <;> simp [alphaTag])) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.nat 1 (if i.recoded then 1 else 0) (by split <;> decide)) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.array (Binary.Reader.nat 4) (Binary.natBE 4) (binFields i) 4
+      (by simp) (fun v hv => Binary.Reads.nat 4 v (binFields_bounded i hb v hv))) ?_
+  dsimp only [binFields]
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.array (Binary.Reader.nat 4) (Binary.natBE 4) (alphaParts i.alpha).1 4
+      (by simp) (fun v hv => Binary.Reads.nat 4 v (binKeys_bounded i hb v hv))) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _
+    (Binary.Reads.array ((Binary.Reader.nat 1).map? readLoss)
+      (fun l => Binary.natBE 1 (lossTag l)) i.losses 1
+      (by simp) (fun l _ => readLoss_tag l)) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _ (Binary.Reads.bytes (colorParts i.color).1) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _ (Binary.Reads.bytes (colorParts i.color).2.2) ?_
+  refine Binary.Reads.bind _ _ _ _ _ _ (Binary.Reads.bytes (alphaParts i.alpha).2.2) ?_
+  simpa only [ByteArray.append_empty] using
+    (Binary.Reads.bind _ _ _ _ _ .empty (Binary.Reads.bytes i.data) (by
+      intro pre post
+      change (do
+        let (color, pos) ← Binary.Reader.lift
+          (readColor (colorTag i.color) (colorParts i.color).1
+            (colorParts i.color).2.1 (colorParts i.color).2.2)
+          (pre ++ ByteArray.empty ++ post) pre.size
+        let (alpha, pos) ← Binary.Reader.lift
+          (readAlpha (alphaTag i.alpha) (alphaParts i.alpha).1
+            (alphaParts i.alpha).2.1 (alphaParts i.alpha).2.2)
+          (pre ++ ByteArray.empty ++ post) pos
+        pure ({ i with
+          color := color
+          alpha := alpha
+          recoded := (if i.recoded then 1 else 0) == (1 : Nat)
+          form := none }, pos)) = _
+      simp only [Binary.Reader.lift, readColor_parts, readAlpha_parts, Option.map_some]
+      have hr : ((if i.recoded then 1 else 0) == (1 : Nat)) = i.recoded := by
+        cases i.recoded <;> rfl
+      simp only [hr, ← hb.1]
+      rfl))
+
+/-- Every representable raster plan survives the persisted LTIMG3 codec,
+including empty payloads and every color, alpha and filter variant. -/
+theorem decodeBin_encodeBin_id (i : Plan) (hb : binBounded i) :
+    decodeBin (encodeBin i) = some i :=
+  Binary.Reads.run_id readBin i (encodeBin i) (readBin_encodeBin i hb)
+
+/-- Equal cache bytes identify the same representable raster plan. -/
+theorem encodeBin_inj (a b : Plan) (ha : binBounded a) (hb : binBounded b)
+    (h : encodeBin a = encodeBin b) : a = b := by
+  have h := congrArg decodeBin h
+  rw [decodeBin_encodeBin_id a ha, decodeBin_encodeBin_id b hb] at h
+  exact Option.some.inj h
 
 /-! ## The store: effects as data
 

@@ -194,7 +194,7 @@ private def Reader.arrayLoop (read : Reader α) : Nat → Array α → Reader (A
       arrayLoop read count (acc.push value)
 
 /-- Read fixed-width elements. Check the declared extent before allocating
-or entering the loop, so a corrupt count cannot demand work beyond the file. -/
+or entering the loop. For a positive element width, the file bounds the count. -/
 def Reader.array (width count : Nat) (read : Reader α) : Reader (Array α) :=
   fun bytes pos =>
     if pos + width * count ≤ bytes.size then Reader.arrayLoop read count #[] bytes pos
