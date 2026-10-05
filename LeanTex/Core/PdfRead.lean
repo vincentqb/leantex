@@ -1,10 +1,12 @@
 import LeanTex.Core.Dim
+import LeanTex.Core.PdfLex
 import LeanTex.Core.Flate
 import Std.Data.HashMap
 
 namespace LeanTex.Core.PdfRead
 
 open LeanTex.Core.Dim
+open PdfLex
 
 /-! # Reading a PDF page as a form XObject
 
@@ -31,67 +33,6 @@ Structure and section references are ISO 32000-2. -/
 holds any figure this engine should meet; past it the file is refused by
 name. -/
 def maxDecoded : Nat := 1 <<< 26
-
--- ## The byte vocabulary (bounded reads, ISO 32000-2 §7.2)
-
-private def isWs (c : Nat) : Bool :=
-  c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
-
-private def isDelim (c : Nat) : Bool :=
-  c == 40 || c == 41 || c == 60 || c == 62 || c == 91 || c == 93 ||
-  c == 123 || c == 125 || c == 47 || c == 37
-
-private def at? (b : ByteArray) (i : Nat) : Nat :=
-  (b[i]?.map (·.toNat)).getD 256
-
-/-- Skip whitespace and `%` comments (§7.2.3–4). -/
-private def skipWs (b : ByteArray) (i0 : Nat) : Nat := Id.run do
-  let mut i := i0
-  for _ in [0:b.size + 1] do
-    let c := at? b i
-    if isWs c then
-      i := i + 1
-    else if c == 37 then
-      for _ in [0:b.size + 1] do
-        let d := at? b i
-        if d == 10 || d == 13 || d == 256 then break
-        i := i + 1
-    else
-      break
-  return i
-
-/-- A run of digits as a `Nat`, or `none` when none stand at `i`. -/
-private def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := Id.run do
-  let mut i := i0
-  let mut v := 0
-  let mut any := false
-  for _ in [0:b.size + 1] do
-    let c := at? b i
-    if 48 ≤ c && c ≤ 57 then
-      v := v * 10 + (c - 48)
-      i := i + 1
-      any := true
-    else
-      break
-  return if any then some (v, i) else none
-
-/-- Does the keyword stand at `i`, ended by whitespace, a delimiter, or the
-file's end? Returns the position after it. -/
-private def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat := Id.run do
-  let bytes := kw.toUTF8
-  for k in [0:bytes.size] do
-    if at? b (i + k) != (bytes[k]?.getD 0).toNat then
-      return none
-  let after := at? b (i + bytes.size)
-  if after == 256 || isWs after || isDelim after then
-    return some (i + bytes.size)
-  return none
-
-private def hexVal (c : Nat) : Option Nat :=
-  if 48 ≤ c && c ≤ 57 then some (c - 48)
-  else if 65 ≤ c && c ≤ 70 then some (c - 55)
-  else if 97 ≤ c && c ≤ 102 then some (c - 87)
-  else none
 
 -- ## Objects (§7.3)
 
@@ -171,78 +112,6 @@ def Obj.sp? (o : Obj) : Option Sp :=
     return some (if neg then -v else v)
   | _ => none
 
-/-- Scan a literal string `(…)` (§7.3.4.2): parentheses balance, and a
-backslash escapes the next byte. Returns the position after the closing
-parenthesis. -/
-private def scanLitString (b : ByteArray) (i0 : Nat) : Option Nat := Id.run do
-  let mut i := i0 + 1
-  let mut depth := 1
-  for _ in [0:b.size + 1] do
-    let c := at? b i
-    if c == 256 then
-      return none
-    else if c == 92 then
-      i := i + 2
-    else if c == 40 then
-      depth := depth + 1
-      i := i + 1
-    else if c == 41 then
-      depth := depth - 1
-      i := i + 1
-      if depth == 0 then
-        return some i
-    else
-      i := i + 1
-  return none
-
-/-- A name after its solidus (§7.3.5), `#`-escapes decoded. -/
-private def parseName (b : ByteArray) (i0 : Nat) : String × Nat := Id.run do
-  let mut i := i0 + 1
-  let mut out := ""
-  for _ in [0:b.size + 1] do
-    let c := at? b i
-    if c == 256 || isWs c || isDelim c then
-      break
-    if c == 35 then
-      match hexVal (at? b (i + 1)), hexVal (at? b (i + 2)) with
-      | some h, some l =>
-        out := out.push (Char.ofNat (h * 16 + l))
-        i := i + 3
-      | _, _ =>
-        out := out.push '#'
-        i := i + 1
-    else
-      out := out.push (Char.ofNat c)
-      i := i + 1
-  return (out, i)
-
-/-- The characters a number token is made of. -/
-private def numByte (c : Nat) : Bool :=
-  (48 ≤ c && c ≤ 57) || c == 43 || c == 45 || c == 46
-
-private def scanNumber (b : ByteArray) (i0 : Nat) : String × Nat := Id.run do
-  let mut i := i0
-  let mut out := ""
-  for _ in [0:b.size + 1] do
-    let c := at? b i
-    if numByte c then
-      out := out.push (Char.ofNat c)
-      i := i + 1
-    else
-      break
-  return (out, i)
-
-/-- After a non-negative integer, does ` gen R` follow (§7.3.10)? The
-two-token lookahead an indirect reference needs. -/
-private def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
-  let (gen, j) ← parseUInt b (skipWs b i0)
-  let k := skipWs b j
-  if at? b k == 82 then  -- 'R'
-    let after := at? b (k + 1)
-    if after == 256 || isWs after || isDelim after then
-      return (gen, k + 1)
-  none
-
 private inductive Frame where
   | arr (xs : Array Obj)
   | dct (es : Array (String × Obj)) (key : Option String)
@@ -282,11 +151,7 @@ def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) := Id.run d
         return .error s!"malformed PDF: dictionary key /{k} has no value"
       | _ => return .error "malformed PDF: unbalanced '>>'"
     else if c == 60 then  -- <hex string>
-      let mut j := i + 1
-      for _ in [0:b.size + 1] do
-        let d := at? b j
-        if d == 62 || d == 256 then break
-        j := j + 1
+      let j := scanHexEnd b (i + 1)
       if at? b j != 62 then
         return .error "truncated PDF: a hex string never closes"
       v? := some (.str (b.extract i (j + 1)))
@@ -346,26 +211,7 @@ def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) := Id.run d
 
 -- ## Rendering an object back to bytes (§7.3)
 
-/-- A nibble as its uppercase hex digit — the spelling `#xx` escapes and
-`parseName`'s `hexVal` read back. -/
-private def hexChar (n : Nat) : Char :=
-  let d := n % 16
-  if d < 10 then Char.ofNat (48 + d) else Char.ofNat (55 + d)
-
-/-- A name's escape (§7.3.5), the inverse of `parseName`'s decoding: a byte
-a name may carry stands, anything else rides as `#xx`. The writer's
-escaper, stated beside the reader's decoder so the pair's inversion is one
-module's fact. An empty name is not writable — `/` alone names nothing —
-so the fallback names the object instead, and every inversion over names
-carries `s ≠ ""` as its side condition. -/
-def escapeName (s : String) : String := Id.run do
-  let mut out := ""
-  for c in s.toList do
-    if c.isAlphanum || c == '-' || c == '.' then
-      out := out.push c
-    else
-      out := out ++ "#" ++ String.ofList [hexChar (c.toNat / 16), hexChar c.toNat]
-  return if out == "" then "Embedded" else out
+abbrev escapeName := PdfLex.escapeName
 
 /-! ### `render`, the writer's one spelling
 
