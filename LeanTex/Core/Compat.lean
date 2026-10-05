@@ -108,13 +108,11 @@ def beamerFontElements : List (String × String × String) :=
    ("author", "titlepage", "author-font"),
    ("abstract title", "abstract", "font")]
 
-/-- Beamer's font keys, whose values are already TeX font commands (beamer's
-"Fonts" part, beamerbasefont.sty): the value *is* the translation, so the
-engine adds no vocabulary and invents no canonical order — the commands
-compose in the order the author wrote them, which is what a
-`\fontsize{..}{..}\selectfont` value needs. `parent` is inheritance the
-engine does not model and is named where it stands. -/
-def beamerFontKeys : List String := ["size", "series", "shape", "family"]
+/-- Beamer's font axes in selection order (`beamerbasefont.sty`,
+`\beamer@usebeamerfont`): each declaration replaces its named fields, and
+selection runs size, shape, series, family regardless of declaration order.
+`parent` is inheritance the engine does not model and names where it stands. -/
+def beamerFontKeys : List String := ["size", "shape", "series", "family"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -884,13 +882,20 @@ private structure St where
   preamble. Applied after rewriting, including to blocks in definitions
   made before the addition: beamer reads its template when a block opens. -/
   beamerBlockBegin : Array Raw := #[]
-  /-- A theme's own beamer font elements, as `\setbeamerfont` declared
-  them: what `\usebeamerfont{<element>}` selects in a template the engine
-  reads (`TitleTemplate.read`). Latest declaration wins. -/
-  beamerFonts : Array (String × TitleTemplate.Font) := #[]
+  /-- Local field definitions shared by native element styles and template
+  font selection. A nonstarred declaration replaces only supplied fields;
+  a starred declaration starts empty (`beamerbasefont.sty`). -/
+  beamerFonts : Array (String × List (String × String)) := #[]
   /-- A global numbered footer is read at the document seam, after its font
   declarations. Keeping the last body also handles end-preamble hooks. -/
   beamerFootline : Option (String × Pos × Array Raw) := none
+  /-- Preamble group primitives stay flat for the declaration reader.
+  Save the same font and footer fields that brace groups restore. -/
+  beamerScopes : List (String × Array (String × List (String × String)) ×
+    Option (String × Pos × Array Raw)) := []
+  /-- Successful captures, including local assignments whose values were
+  restored. Only these justify removing an otherwise empty preamble group. -/
+  beamerCaptures : Nat := 0
 
 private abbrev M := StateM St
 
@@ -930,6 +935,16 @@ dispatcher's silence guard reads. Every `modify`/`set` in this file outside
 cannot mutate state invisibly to the guard. -/
 private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
+
+/-- Beamer's font and template definitions are local TeX assignments.
+Input wrappers do not introduce a scope; groups and environments do. -/
+private def withBeamerScope (act : M α) : M α := do
+  let st0 ← get
+  let result ← act
+  write fun st => { st with beamerFonts := st0.beamerFonts,
+                            beamerFootline := st0.beamerFootline,
+                            beamerScopes := st0.beamerScopes }
+  return result
 
 /-- The TeX82 primitive control words — a closed, documented list (Knuth,
 The TeXbook, Appendix I marks each primitive in its index; canonically the
@@ -1150,6 +1165,64 @@ private def braceGroups (s : String) : Array String := Id.run do
     else if depth != 0 then
       cur := cur.push c
   return out
+
+/-- `size` and `size*` assign the same beamer field. -/
+private def beamerFontAxis (key : String) : String :=
+  if key == "size*" then "size" else key
+
+/-- Keep empty values: they clear one field. Split only outer commas, and
+remove a whole value's bracing without stripping `size*`'s operands. -/
+private def beamerFontUpdate (old : List (String × String)) (src : String) :
+    List (String × String) := Id.run do
+  let mut fields := old
+  for entry in Decl.splitEntries src do
+    match entry.splitOn "=" with
+    | key :: value :: rest =>
+      let key := key.trimAscii.toString
+      let value := (String.intercalate "=" (value :: rest)).trimAscii.toString
+      let value := if key != "size*" then
+          match (braceGroups value).toList with
+          | [inner] => if value == "{" ++ inner ++ "}" then inner.trimAscii.toString else value
+          | _ => value
+        else value
+      fields := (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)
+    | _ => pure ()
+  return fields
+
+/-- Native font commands select the stored fields in beamer's order. -/
+private def beamerFontCommands (fields : List (String × String)) : String :=
+  String.join (beamerFontKeys.map fun axis =>
+    match fields.find? (fun e => beamerFontAxis e.1 == axis) with
+    | some ("size*", value) =>
+      let gs := braceGroups value
+      if gs.size == 2 then s!"\\fontsize\{{gs[0]!}}\{{gs[1]!}}\\selectfont" else ""
+    | some (_, value) => value
+    | none => "")
+
+/-- The title-template reader carries measured size and leading separately.
+The other axes use the same selection order as native element styles. -/
+private def beamerTemplateFont (element : String) (fields : List (String × String)) :
+    TitleTemplate.Font := Id.run do
+  let mut font : TitleTemplate.Font :=
+    { cmds := beamerFontCommands (fields.filter fun e => beamerFontAxis e.1 != "size") }
+  match fields.find? (fun e => beamerFontAxis e.1 == "size") with
+  | some ("size*", value) =>
+    let gs := braceGroups value
+    font := { font with size := gs[0]?, leading := gs[1]? }
+    if gs.size < 2 then
+      font := { font with unread := font.unread.push s!"'size*' of '{element}'" }
+    if gs.size > 2 then
+      font := { font with unread := font.unread.push s!"extra size fields of '{element}'" }
+  | some (_, value) =>
+    let name := if value.startsWith "\\" then (value.drop 1).toString else value
+    match TitleTemplate.beamerSizes.lookup name with
+    | some (size, leading) => font := { font with size := some size, leading := some leading }
+    | none => font := { font with cmds := value ++ font.cmds }
+  | none => pure ()
+  for (key, _) in fields do
+    unless beamerFontKeys.contains (beamerFontAxis key) do
+      font := { font with unread := font.unread.push s!"'{key}' of '{element}'" }
+  return font
 
 /-- One `FontFace = {series}{shape}{font}` entry, validated: the native
 `slot.<series>[.italic] = "face"` part it becomes, or `none` after a
@@ -2877,6 +2950,23 @@ scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
 and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
 def groupPrimitives : List (String × String) :=
   [("begingroup", "endgroup"), ("bgroup", "egroup")]
+
+/-- A flat preamble scope closes before the document starts. Unmatched
+primitives stay in the stream for the existing diagnostic. -/
+private def beamerScopeClosed (raws : Array Raw) (start : Nat) (close : String) : Bool :=
+  Id.run do
+    let mut closers := [close]
+    for i in [start:raws.size] do
+      match raws[i]! with
+      | .ctrl n _ =>
+        if closers.head? == some n then
+          closers := closers.tail
+          if closers.isEmpty then return true
+        else if let some next := groupPrimitives.lookup n then
+          closers := next :: closers
+      | .env "document" _ _ => return false
+      | _ => pure ()
+    return false
 
 mutual
 
@@ -5760,18 +5850,24 @@ footer declarations as ordinary document content. Box dimensions are not
 content: the shared footer band determines those, with a named adaptation. -/
 private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   let some (file, pos, body) := (← get).beamerFootline | return (#[], #[])
+  let savedFile := (← get).file
+  let wrap (rs : Array Raw) : Array Raw :=
+    if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
+  if body.isEmpty then
+    return (wrap (← synthAt "\\runningfoot{\\hfill}" pos),
+      wrap #[Raw.ctrl "framefoot" pos, Raw.group #[] pos])
   let some (left, counter, fontName, options) := numberedFootline? body
     | return (#[], #[])
-  let savedFile := (← get).file
   write fun st => { st with file := file }
   let mut fontPrefix : Array Raw := #[]
   let mut unread : Array String := #[]
   if let some name := fontName then
-    if let some font := (← get).beamerFonts.toList.lookup name then
-      fontPrefix ← synthAt font.cmds pos
+    if let some fields := (← get).beamerFonts.toList.lookup name then
+      let font := beamerTemplateFont name fields
       if let some size := font.size then
         fontPrefix := fontPrefix.push (.ctrl (fontSizeMark ++ size ++ fontSizeSep ++
           font.leading.getD "") pos)
+      fontPrefix := fontPrefix ++ (← synthAt font.cmds pos)
       unread := font.unread
       -- premise: beamerTemplateChecks — the selected font reaches the footer note in both outputs
       write fun st => { st with diags := st.diags.filter fun d =>
@@ -5788,8 +5884,6 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
       (help := "use \\framefoot{...} for its note and \\chrome{footer={right=\\framefraction}} for numbering")
   let pre ← synthAt s!"\\chrome\{footer=\{right=\\{counter}}}" pos
   let note := #[Raw.ctrl "framefoot" pos, Raw.group (fontPrefix ++ left) pos]
-  let wrap (rs : Array Raw) : Array Raw :=
-    if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
   write fun st => { st with file := savedFile }
   return (wrap pre, wrap note)
 
@@ -6436,18 +6530,21 @@ is skipped" pos
     -- premise: beamerTemplateChecks — preamble and deferred declarations
     -- carry footer content through the native frame furniture.
     else if element == "footline" &&
-        ((← docPreamble) || ((← get).seam && !(← get).inGroup)) then
-      let (_, k) := takeOpt raws j
+        (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
+      let (variant, k) := takeOpt raws j
       let (bodyArgs, k) := takeGroups raws k 1
+      if bodyArgs.size != 1 then return none
       let body := bodyArgs.getD 0 #[]
       if (numberedFootline? body).isSome then
         let file := (← get).file
-        write fun st => { st with beamerFootline := some (file, pos, body) }
+        write fun st => { st with beamerFootline := some (file, pos, body),
+                                  beamerCaptures := st.beamerCaptures + 1 }
         became "\\setbeamertemplate{footline}" "a footer note and frame counter" pos
-      else if (rawSrc body).trimAscii.toString.isEmpty then
-        sayOnce "beamer:setbeamertemplate" .W0104
-          "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
-          (help := beamerNative.lookup "setbeamertemplate")
+      else if variant.isNone && (rawSrc body).trimAscii.toString.isEmpty then
+        let file := (← get).file
+        write fun st => { st with beamerFootline := some (file, pos, #[]),
+                                  beamerCaptures := st.beamerCaptures + 1 }
+        became "\\setbeamertemplate{footline}" "an empty footer band" pos
       else
         say .E0111
           "'\\setbeamertemplate{footline}' is dropped with its template body, which carries content" pos
@@ -6461,7 +6558,9 @@ is skipped" pos
       -- node (`TitleTemplate.read`, `.native`). What the reader meets and
       -- does not model is one named loss, never a fallback.
       let (bodyArgs, k) := takeGroups raws j 1
-      match TitleTemplate.read (← get).beamerFonts.toList (bodyArgs.getD 0 #[]) with
+      let fonts := (← get).beamerFonts.toList.map fun (n, fields) =>
+        (n, beamerTemplateFont n fields)
+      match TitleTemplate.read fonts (bodyArgs.getD 0 #[]) with
       | some rd@{ mixed := some datum, .. } =>
         -- A datum beside literal text has no slot to stand in, and a
         -- datum is never dropped: the template is not read, the built-in
@@ -6573,17 +6672,22 @@ is skipped" pos
     became s!"\\{name}" "its content, kept in the line" pos
     return some (#[], k)
   | "setbeamerfont" =>
-    -- The other half of the same finding: the W0104 help named
-    -- `\style{element}{ font = {...} }` and then dropped the declaration.
-    -- beamer's font keys are TeX font commands already
-    -- (`beamerFontKeys`), so the value side needs no vocabulary of its
-    -- own — the commands compose in the order the author wrote them, and
-    -- the engine invents no canonical order. `beamerFontElements` carries
-    -- the element mapping and its source.
+    -- Store the fields once for mapped elements and template selection.
+    -- `beamerbasefont.sty` merges nonstarred calls and clears starred
+    -- ones, then selects the fields in `beamerFontKeys` order.
     let j := skipStar raws start
+    let starred := j != start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
       let element := (rawSrc args[0]).trimAscii.toString
+      let source := rawSrc args[1]
+      let stored := (← get).beamerFonts.toList.lookup element |>.getD []
+      let previous := if starred then [] else stored
+      let fields := beamerFontUpdate previous source
+      unless element == "normal text" do
+        write fun st => { st with
+          beamerFonts := (st.beamerFonts.filter (·.1 != element)).push (element, fields)
+          beamerCaptures := st.beamerCaptures + 1 }
       match beamerFontElements.lookup element with
       | none =>
         if element == "normal text" then
@@ -6600,64 +6704,39 @@ not an element style; skipped" pos
             s!"'\\setbeamerfont\{{element}}' names a beamer font element the engine \
 has no styleable element for; skipped" pos
             (help := beamerNative.lookup "setbeamerfont")
-          -- A theme's own element is the font a template selects by name
-          -- (`\usebeamerfont{<element>}`, beamerbasefont.sty), so it is
-          -- also recorded for the one template reader the engine has: a
-          -- read template that selects it withdraws this skip by its
-          -- subject, and what the record could not take joins that
-          -- template's own named loss. `size*` takes the existing native
-          -- font-size path, carrying both size and leading.
-          let mut font : TitleTemplate.Font := {}
-          for e in (rawSrc args[1]).splitOn "," do
-            match (e.splitOn "=").map (·.trimAscii.toString) with
-            | [key, v] =>
-              if key == "size" then
-                let n := if v.startsWith "\\" then (v.drop 1).toString else v
-                match TitleTemplate.beamerSizes.lookup n with
-                | some (size, leading) => font := { font with size := some size, leading := some leading }
-                | none => font := { font with cmds := font.cmds ++ v }
-              else if key == "size*" then
-                let gs := braceGroups v
-                font := { font with size := gs[0]?, leading := gs[1]? }
-                if gs.size < 2 then
-                  font := { font with unread := font.unread.push s!"'size*' of '{element}'" }
-                if gs.size > 2 then
-                  let note := s!"extra size fields of '{element}'"
-                  font := { font with unread := font.unread.push note }
-              else if beamerFontKeys.contains key then font := { font with cmds := font.cmds ++ v }
-              else
-                let note := s!"'{key}' of '{element}'"
-                font := { font with unread := font.unread.push note }
-            | _ => pure ()
-          write fun st => { st with beamerFonts :=
-            (st.beamerFonts.filter (·.1 != element)).push (element, font) }
         return some (#[], k)
       | some (target, styleKey) =>
-        let mut cmds : String := ""
-        for e in (rawSrc args[1]).splitOn "," do
-          match (e.splitOn "=").map (·.trimAscii.toString) with
-          | [key, v] =>
-            if key == "parent" then
-              sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-                s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
+        let updates := beamerFontUpdate [] source
+        for (key, value) in updates do
+          if key == "parent" then
+            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+              s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
 no font inheritance, so only declared commands are taken" pos
-                (help := beamerNative.lookup "setbeamerfont")
-            else if beamerFontKeys.contains key then
-              cmds := cmds ++ v
-            else
-              -- Never pasted into the template: an unknown key's value
-              -- would set as prose beside the element it was meant to size.
-              sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-                s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
+              (help := beamerNative.lookup "setbeamerfont")
+          else if key == "size*" && (braceGroups value).size != 2 then
+            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+              s!"'\\setbeamerfont\{{element}}' needs two braced dimensions for 'size*'; \
 its value is skipped" pos
-                (help := beamerNative.lookup "setbeamerfont")
-          | _ => pure ()
-        if cmds.isEmpty then
-          return some (#[], k)
-        else
+              (help := "write size*={font size}{baseline distance}")
+          else if !beamerFontKeys.contains (beamerFontAxis key) then
+            -- An unknown field is data, never template text.
+            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+              s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
+its value is skipped" pos
+              (help := beamerNative.lookup "setbeamerfont")
+        -- premise: beamerTemplateChecks — an empty declared field clears
+        -- that field; unknown fields alone leave the native style intact.
+        if starred || updates.any (fun e => beamerFontKeys.contains (beamerFontAxis e.1)) then
+          -- premise: beamerTemplateChecks — a preamble group's font fields
+          -- are usable inside it, but no native style escapes its scope.
+          if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
+            became s!"\\setbeamerfont\{{element}}" "local font fields" pos
+            return some (#[], k)
+          let cmds := beamerFontCommands fields
           let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }"
           became s!"\\setbeamerfont\{{element}}" native pos
           return some (← synthAt native pos, k)
+        else return some (#[], k)
     else return none
   | "tikz" =>
     -- TikZ's inline picture (pgfmanual §12.2.2): `\tikz[opts]{commands}`, or
@@ -6971,6 +7050,21 @@ private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : 
 where
   rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
       M (Option (Array Raw × Nat)) := do
+  -- premise: beamerTemplateChecks — flat preamble group pairs restore
+  -- font and footer capture just as the brace-group walk does.
+  if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
+    if let some close := groupPrimitives.lookup name then
+      if beamerScopeClosed raws start close then
+        write fun st => { st with beamerScopes :=
+          (close, st.beamerFonts, st.beamerFootline) :: st.beamerScopes }
+        became s!"\\{name}" "a local font and footer scope" pos
+        return some (#[], start)
+    if let (close, fonts, footline) :: rest := (← get).beamerScopes then
+      if name == close then
+        write fun st => { st with beamerFonts := fonts, beamerFootline := footline,
+                                  beamerScopes := rest }
+        became s!"\\{name}" "the enclosing font and footer scope" pos
+        return some (#[], start)
   if let some tok := literalReplace.lookup name then
     return some (#[tok pos], start)
   -- premise: biblatexChecks — `\cite` under biblatex's authoryear sets bare
@@ -8927,7 +9021,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
 recursion is structural on `Raw`: the body is a field of the head, not a tail
 of the list. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
-  | .group body p => do
+  | .group body p => withBeamerScope do
     if (← get).inPicture then
       return .group (← rewriteList inBody body #[] body.toList 0 0) p
     -- A group is a macro body when a definition announced one. The count is
@@ -8942,6 +9036,7 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedTop := (← get).tableTop
     let savedDefTop := (← get).defTop
     let savedBound := (← get).bound
+    let savedCaptures := (← get).beamerCaptures
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
                               tableTop := false, defTop := saved > 0, localLengths := #[] }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
@@ -8953,6 +9048,12 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
                               lens := savedLens, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
+    -- premise: beamerTemplateChecks — a consumed local font declaration
+    -- leaves no preamble content; nonempty groups still reach its checker.
+    if (← get).wholeDoc && !(← get).inDoc && !savedDef && saved == 0 &&
+        (← get).beamerCaptures > savedCaptures && !body.all (· == .space) &&
+        restores.isEmpty && body'.all (· == .space) then
+      return .space
     return .group (body' ++ restores) p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
@@ -8963,7 +9064,7 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       let body' ← rewriteList inBody body #[] body.toList 0 0
       write fun st => { st with file := saved }
       return .env n body' p
-    | none =>
+    | none => withBeamerScope do
       if mathEnvs.contains n then
         return .env n body p
       -- premise: pictureBoundaryChecks — requests retain TeX
