@@ -8970,7 +8970,7 @@ private def flushRunning : M (Array Raw) := do
 
 /-- Split the raws of a replayed hook body across the seam
 `\begin{document}` is: the native declarations the preamble reads
-(`hookPreambleSide`, with their optional argument and one group) to the
+(`hookPreambleSide`, with their optional argument and complete groups) to the
 preamble side, everything else to the body side. Both halves keep their
 order.
 
@@ -8987,7 +8987,7 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
   | .ctrl name pos :: rest, i, 0, (pre, body) =>
     if hookPreambleSide.contains name then
       let (_, j) := takeOpt raws (i + 1)
-      let (_, k) := takeGroups raws j 1
+      let (_, k) := takeGroups raws j (if name == "style" then 2 else 1)
       seamSplit raws rest (i + 1) (k - (i + 1))
         (pre ++ raws.extract i k, body)
     else

@@ -52,6 +52,17 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     t s!"marker template {element}: native PDF and HTML content"
       (reprStr (layoutOf fonts actual).pages == reprStr (layoutOf fonts expected).pages &&
         templateHtmlFacts actual == templateHtmlFacts expected)
+    for decl in [s!"\\setbeamertemplate\{{element}}\{{marker}}",
+        s!"\\style\{{native}}\{marker=\{{marker}}}"] do
+      let (hooked, hookDs) := elabStr (templateDeck
+        ("\\AtBeginDocument{" ++ decl ++ "\\framefoot{Hook note}}") items)
+      let hookNative := (elabStr (templateDeck
+        s!"\\style\{{native}}\{marker=\{{marker}}}"
+        ("\\framefoot{Hook note}" ++ items))).1
+      t s!"marker hook {element}: both style arguments stay together; the following note stays in the body"
+        (!hookDs.any (fun d => d.severity == .error || d.code == "W0301") &&
+          reprStr (layoutOf fonts hooked).pages == reprStr (layoutOf fonts hookNative).pages &&
+          templateHtmlFacts hooked == templateHtmlFacts hookNative)
   let (raised, raiseDs) := elabStr (templateDeck
     "\\setbeamertemplate{itemize item}{\\raisebox{0.18ex}[1ex][0pt]{\\scriptsize A}}"
     items)
