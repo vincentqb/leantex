@@ -41,6 +41,7 @@ import Tests.AnimatedGraphics
 import Tests.AnimatedFaces
 import Tests.PdfPageSelection
 import Tests.PdfReadObjects
+import Tests.PdfReadRoundtrip
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
@@ -61,6 +62,7 @@ import Tests.MathAlphaSemantics
 import Tests.MathAlphaEntry
 import Tests.Struct
 import Tests.PdfConformance
+import Tests.PdfWriter
 import Tests.PdfStructCoherence
 import Tests.Artifact
 import Tests.UnderlineSpacing
@@ -429,6 +431,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   imageCodecChecks ref
   pdfFormChecks ref oneFace
   pdfCensusChecks ref oneFace
+  pdfWriterChecks ref oneFace
   pdfContractChecks ref oneFace arts
   objTableChecks ref oneFace
   featureCensusChecks ref oneFace
@@ -624,6 +627,7 @@ def main (args : List String) : IO UInt32 := do
   monoSlotChecks ref
   structChecks ref
   pdfStructCoherenceChecks ref
+  pdfReadRoundtripChecks ref
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref

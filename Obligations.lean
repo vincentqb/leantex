@@ -272,7 +272,7 @@ theorem contrast_judged_complete
 -- owed: inflate_deflate_id
 -- owner: LeanTex.Core.Flate
 -- source: the build-cache slice (2026-09-21 survey wave): the engine grew a real compressor, and it owns both halves of the round trip — deflate emits only symbols inflate's tables decode, so the identity is the engine's to prove, not an interop hope. The executable oracle is scripts/flate-fuzz.lean (adversarial and random inputs, the fixtures' decoded planes, every stream cross-checked against a foreign inflater); the in-suite witnesses are the deflate-roundtrip rows in Tests/Backends.
--- blocker: NOT the loops. Corrected 2026-09-24: `LeanTex.Core.Loop` reads a `forIn` loop that breaks, so the inflate side is no longer opaque, and the loop shape was never what this round trip turns on. The blocker is the algebra underneath: a round trip is a *value* claim about two inverse encodings, and no invariant over a loop state supplies the symbol-level commutation. The factorization it needs, unchanged: the encoder split into the block-structure functions the proof can walk (header emission, one Huffman-coded token, the code-length prelude), each with an emit/decode commutation lemma, and a bit-reader/bit-writer adjunction (`Br.bits` after `Bw.push`) at the bottom. The deflate-fast rewrite (2026-09-21) did not change the shape — the tokenizer is still fuel-shaped tail recursion — but the writer now carries its invariant explicitly (fewer than eight pending bits between pushes, so `Bw.pushU` is a pure two-case function of `(bits, nbits)`), which is the adjunction's base case.
+-- blocker: the component algebra now has proofs: `Flate.bitField_bits_exact` and `Flate.pushU_read_exact` cover bit spelling and reading after a bounded write; `Flate.mkHuff_counts_exact`, `Flate.canonCodes_reverseBits_exact` and `Flate.push_huff_decode_exact` cover code-length counts and canonical symbol encoding; `Flate.tokenize_covers` and `Flate.backref_copy_exact` cover source progress and overlapping copies. The remaining work is composing these contracts through the actual zlib/block headers, code-length prelude, constructed Huffman tables, token emission/decoding, and end-of-block handling. The symbol contract assumes its canonical interval; proving the encoder and decoder construct matching intervals is still owed. The progress-indexed loop contracts expose consumed input, but do not supply this whole-stream inversion.
 -- goldens: no
 /-- The engine's inflate inverts its deflate on every input: the compressed
 streams the PDF writer emits (content, fonts, image planes, metadata, the
@@ -285,13 +285,13 @@ theorem inflate_deflate_id (b : ByteArray) :
 -- owed: write_fonts_embedded
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
--- blocker: two walls, one of them not the record's original. (1) The census reads the fonts out of the *object stream*, which `write` always deflates (measured: 76 of 76 golden fixtures), so `PdfCensus.census ∘ Pdf.write` runs through `Flate.inflate` and this row sits behind `inflate_deflate_id` — a statement this module does not own and whose own blocker is the encoder's shape. (2) The string/parser crossing the record named is now half closed: the dictionary sites are `PdfRead.Obj` values rendered by one `Obj.render` (2026-09-24), so what remains of it is `parseVal_render_id` — the inversion, blocked on `parseVal`'s loop. With both, the census over `write`'s output becomes the census over the values `write` built and the font arm is a fold over `keepFaces`.
+-- blocker: the unrestricted statement is false: 65,536 synthetic outline entries overflow a compressed object's 16-bit index; the writer's root/count still read, but object recovery fails and the font census returns an error. The representable domain must bound direct offsets and object-stream ids to 32 bits, compressed indices to 16 bits, and decoded structural streams to `PdfRead.maxDecoded`. `Pdf.fontObjects_links_exact` proves the actual writer's dictionary references for both font formats; `Pdf.fontObjects_census_contract` proves the census from recovered font dictionaries and descriptors, without assuming the census result. Reader recovery still needs `inflate_deflate_id`, a corrected `parseVal_render_id`, Adler verification and object-stream lookup composition. Those internal facts are obligations, not external hypotheses that construction proves.
 -- goldens: no
-/-- The writer embeds every font it names: for an image-free document
-(no copied graph can bring a foreign face), the census of the bytes
-`Pdf.write` emits says every font is embedded — the internal check
-`fonts.all_embedded` reads, holding of the writer's own output by proof
-rather than by the corpus sweep. -/
+/-- Staged writer/census contract for image-free output. Its unrestricted
+input domain is too wide: a compressed object index can exceed the field
+the file declares. A representable-size domain and proof of reader
+recovery are still owed. The component font-reference laws do not close
+this claim about the bytes. -/
 theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array PageOut) (info : Ir.Meta) (outline : Array OutlineEntry) :
     (PdfCensus.census (Pdf.write geom fs pages info {} outline)).map (·.fontsEmbedded)
@@ -301,7 +301,7 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
 -- owed: write_readXref_exact
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-conformance-gate slice (modern output, wave 1 S3; pdf-validation F/gap 1–2, S3 red 1–2): the engine's own reader accepts every file the engine writes — today the executable witness is the reference walk over every corpus PDF in Tests/PdfConformance (`walkPdf`) and the six mutants it refuses by name.
--- blocker: one wall, and it is not this module's. `readXref` parses the cross-reference *stream*, which `write` always deflates (measured: 76 of 76 golden fixtures carry `/Filter /FlateDecode` on their `/Type /XRef` object), so `readXref ∘ Pdf.write` composes through `Flate.inflate` and this row sits behind `inflate_deflate_id`. The writer-side factorization the record asked for is done (2026-09-24): `ObjTable` holds every id with `objTable_ids_exact`/`_inj`/`_covers`, the dictionaries are `PdfRead.Obj` values rendered by one `Obj.render`, and `serialize : ByteArray → Array Row → ByteArray × Array (Nat × Nat)` writes the objects and reports their offsets together — `serialize_locs_id` says the first lands at the head's own size and `serialize_locs_covers` that there is one offset per row in the rows' order, so the cross-reference is built from the fold's answer and nothing records a position beside the writing. What the writer still owes past inflate is the *read* direction: `parseVal_render_id` for the trailer's `/Size`, and the xref stream's own row decoding, which is `PdfRead.parseXrefStream`'s bounded `for` — the same loop wall.
+-- blocker: `Pdf.serialize_row_exact` now locates every emitted row's bytes, and `Pdf.Xref.row_fields_exact` proves all declared [1,4,2] fields read back under their width bounds. These strengthen the writer-side offset/count contracts but do not prove `PdfRead.readXref`: startxref discovery, trailer parsing, stream decompression with Adler verification, and the xref row loop still need composition. This includes `inflate_deflate_id` and a corrected `parseVal_render_id`, together with the reader's decoded-size limits. The current conclusion checks root/count only; it does not certify the locations or object-stream indices, which can overflow while that conclusion still holds.
 -- goldens: no
 /-- The writer and the engine's reader agree on the cross-reference
 (`_exact`, artifact-specific: a fact of the file's own bookkeeping, with
@@ -317,12 +317,13 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
       (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
   sorry
 
-/-! The objects this writer can build, as the side conditions its spelling
-carries — Bool with `List` companions so the walk is structural: a name is
-non-empty (`escapeName` renames the empty name), a real's spelling holds a
-point (a dotless real reads back `.int`), and a string's payload opens with
-its own delimiter, `(` or `<`, as `Obj.str` keeps it. The writer's `ptObj`,
-`ratObj` and `litObj` produce exactly these. -/
+/-! Historical candidate domain for object round trips, retained with its
+open statement. It is insufficient: a decimal point is not a number
+grammar, an opening delimiter does not ensure a complete string, and a
+nonempty name need not belong to the byte alphabet. The executable
+counterexamples in `pdfReadRoundtripChecks` exercise all three defects.
+A corrected domain must apply the same constraints recursively, including
+dictionary keys; this predicate does not certify writer/parser agreement. -/
 mutual
 
 def renderableB : PdfRead.Obj → Bool
@@ -351,13 +352,13 @@ def renderable (o : PdfRead.Obj) : Prop := renderableB o = true
 -- owed: parseVal_render_id
 -- owner: LeanTex.Core.PdfRead
 -- source: the pdfobj factorization (2026-09-24), the keystone `write_fonts_embedded` and `write_readXref_exact` both name: `Obj.render` now exists, so every dictionary the writer emits is a typed value and the census over `write`'s bytes can become the census over the values `write` built — once the round trip is a theorem. The executable witnesses are the reference walk over every corpus PDF in Tests/PdfConformance and the written-census rows in Tests/Backends, which read back exactly these values.
--- blocker: `parseVal` is one `Id.run` whose state is a `Frame` stack mutated inside `for _ in [0:b.size + 2]` with eight early returns, and `forIn` over a `Std.Range` carries no equational theory an induction over `Obj` can enter — the same wall the nine loop-shaped rows name. Every helper the arms call (`parseName`, `scanNumber`, `scanLitString`) is a bounded `for` of the same shape, so the wall is uniform and not confined to the driver. The factorization: the reader's core as explicit recursion on the remaining bytes (`b.size - i` decreases because every arm consumes at least one byte, so the advance lemmas per helper are the measure facts), the stack becoming the recursion, and then the inversion is induction on the object with one arm per constructor. The side conditions the statement carries are honest and not the wall: a name is non-empty (`escapeName` renames the empty name), a `.real` spelling contains a point (a dotless real reads back `.int`), and a `.str` payload is a balanced literal or a closed hex string — the writer's `ptObj`, `ratObj` and `litObj` produce exactly these.
+-- blocker: the current premise is false as a sufficient domain: `pdfReadRoundtripChecks` holds seven counterexamples accepted by `renderableB`, covering malformed/trailing real and string bytes and a non-byte name. The domain must require the real grammar, one complete literal/hex spelling, and byte-valued names and dictionary keys. `PdfRead.Number.int_toString_id`, `PdfLex.parseName_escapeName_id`, `PdfLex.scanNumber_exact`, `PdfLex.parseUInt_exact`, `PdfLex.scanLitString_exact` and `PdfLex.scanHexEnd_exact` now prove the lexical components on independent source domains; the hex-end law locates its delimiter, not hex-digit validity. `Loop.forIn_range_stops_exact` proves finite scanner traces under sufficient budgets. The remaining proof must compose keywords, reference lookahead, array/dictionary stack transitions and lexical consumption through the actual `parseVal` driver, under a corrected recursive domain; the component laws do not establish that composition.
 -- goldens: no
-/-- The writer's spelling and the engine's reader are inverse on every
-object the writer can build (`_id`): parsing the bytes `render` emits
-yields that object and consumes exactly them. The keystone both write-side
-census statements need — with it, the census over the file's bytes is the
-census over the values `write` built. -/
+/-- Staged object round-trip contract (`_id`). The candidate `renderable`
+premise is insufficient, as the registered counterexamples show. The
+intended replacement must describe complete reversible spellings and
+prove the writer's constructors satisfy that domain before composing the
+reader's lexical laws with its object stack. -/
 theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
     PdfRead.parseVal (PdfRead.Obj.render o) 0 = .ok (o, (PdfRead.Obj.render o).size) := by
   sorry
