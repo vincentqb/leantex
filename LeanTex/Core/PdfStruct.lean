@@ -233,17 +233,18 @@ leaf placeholders in place of marked content. -/
 def skeleton (t : Struct.Tree) : Array StructElem :=
   skelList #[rootElem] 0 0 false none t.children.toList
 
+private def assignOwner (i : Nat) (out : Array (Option Nat)) : StructKid → Array (Option Nat)
+  | .leaf j => out.setIfInBounds j (some i)
+  | .elem _ => out
+  | .mcid _ _ => out
+
 /-- The element holding each leaf `k < n`: the one whose kids carry
 `.leaf k`. The soundness half — an owner listed does hold the leaf — is
 `leafOwners_mem`; that each leaf is held once is the skeleton's
 (`skeleton_leafKids_nodup`). -/
 def leafOwners (es : Array StructElem) (n : Nat) : Array (Option Nat) :=
   (es.toList.zipIdx).foldl (fun out (e, i) =>
-    e.kids.foldl (fun out k =>
-      match k with
-      | .leaf j => out.setIfInBounds j (some i)
-      | .elem _ => out
-      | .mcid _ _ => out) out) (Array.replicate n none)
+    e.kids.foldl (assignOwner i) out) (Array.replicate n none)
 
 /-- Every owner an answer map records holds the leaf it is recorded for:
 the invariant `leafOwners`' fold preserves. -/
@@ -252,14 +253,11 @@ private def OwnerSound (es : Array StructElem) (out : Array (Option Nat)) : Prop
 
 private theorem ownerSound_kids {es : Array StructElem} {e : StructElem} {i : Nat}
     (hi : es[i]? = some e) {out : Array (Option Nat)} (ho : OwnerSound es out) :
-    OwnerSound es (e.kids.foldl (fun out k =>
-      match k with
-      | .leaf j => out.setIfInBounds j (some i)
-      | .elem _ => out
-      | .mcid _ _ => out) out) := by
+    OwnerSound es (e.kids.foldl (assignOwner i) out) := by
   refine Array.foldl_induction (motive := fun _ acc => OwnerSound es acc) ho ?_
   intro idx acc hacc
   have hmem : e.kids[idx.1] ∈ e.kids := e.kids.getElem_mem idx.isLt
+  unfold assignOwner
   split
   next j0 hk =>
     intro j' i' hj'
@@ -822,5 +820,327 @@ theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
     rfl
   rw [this]
   exact List.nodup_range
+
+/-- Before filling, every marked-content reference must come from a leaf
+placeholder. This premise is specific to the PDF projection: an arbitrary
+`StructElem` can already carry an `.mcid` absent from the page streams. -/
+def Unfilled (es : Array StructElem) : Prop :=
+  ∀ e ∈ es, ∀ p m, StructKid.mcid p m ∉ e.kids
+
+private theorem forall_modify {α : Type} (P : α → Prop) (xs : Array α)
+    (hxs : ∀ x ∈ xs, P x) (i : Nat) (f : α → α)
+    (hf : ∀ x, P x → P (f x)) : ∀ x ∈ xs.modify i f, P x := by
+  intro x hx
+  obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hx
+  rw [Array.getElem_modify]
+  split
+  · exact hf _ (hxs _ (xs.getElem_mem (by simpa using hj)))
+  · exact hxs _ (xs.getElem_mem (by simpa using hj))
+
+private theorem unfilled_addKid (es : Array StructElem) (h : Unfilled es)
+    (holder : Nat) (kid : StructKid) (hk : ∀ p m, kid ≠ .mcid p m) :
+    Unfilled (addKid es holder kid) := by
+  apply forall_modify (fun (e : StructElem) => ∀ p m, StructKid.mcid p m ∉ e.kids) es h
+  intro e he p m
+  simp only [Array.mem_push]
+  rintro (hold | hnew)
+  · exact he p m hold
+  · exact hk p m hnew.symm
+
+private theorem unfilled_pushElem (es : Array StructElem) (h : Unfilled es)
+    (parent : Nat) (e : StructElem) (he : ∀ p m, StructKid.mcid p m ∉ e.kids) :
+    Unfilled (pushElem es parent e).1 := by
+  intro e' he'
+  rcases Array.mem_push.mp he' with hold | rfl
+  · exact unfilled_addKid es h parent (.elem es.size) (by simp) e' hold
+  · exact he
+
+private theorem unfilled_bibEntryElems (es : Array StructElem) (h : Unfilled es)
+    (parent : Nat) (openList : Option Nat) :
+    Unfilled (bibEntryElems es parent openList).1 := by
+  cases openList <;>
+    simp only [bibEntryElems] <;>
+    repeat apply unfilled_pushElem
+  all_goals first | exact h | simp
+
+private theorem unfilled_altElem (es : Array StructElem) (h : Unfilled es)
+    (parent k : Nat) (a : Ir.Alt) : Unfilled (altElem es parent k a) := by
+  cases a
+  case decorative => exact h
+  all_goals exact unfilled_pushElem es h parent _ (by simp [figureElem])
+
+mutual
+
+private theorem unfilled_skelList : ∀ (l : List Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat),
+    Unfilled es → Unfilled (skelList es parent holder inline openList l)
+  | [], _, _, _, _, _, h => h
+  | n :: rest, es, parent, holder, inline, openList, h => by
+    exact unfilled_skelList rest _ _ _ _ _
+      (unfilled_skelStep n es parent holder inline openList h)
+
+private theorem unfilled_skelStep : ∀ (n : Struct.Node) (es : Array StructElem)
+    (parent holder : Nat) (inline : Bool) (openList : Option Nat),
+    Unfilled es → Unfilled (skelStep es parent holder inline openList n).1
+  | .leaf k l, es, parent, holder, inline, openList, h => by
+    cases l
+    case text | linebreak => exact unfilled_addKid es h holder (.leaf k) (by simp)
+    case image src a | picture a => exact unfilled_altElem es h parent k a
+  | .node kind kids, es, parent, holder, inline, openList, h => by
+    cases kind
+    case aside => exact h
+    case label => exact unfilled_skelList kids.toList es parent holder inline none h
+    case bibEntry =>
+      exact unfilled_skelList kids.toList _ _ _ _ _
+        (unfilled_bibEntryElems es h parent openList)
+    all_goals
+      simp only [skelStep]
+      split <;> exact unfilled_skelList kids.toList _ _ _ _ _
+        (unfilled_pushElem es h parent _ (by simp [elemOf]))
+
+end
+
+/-- Every skeleton starts without marked-content references, for any input
+tree. Thus `fill` alone introduces them from the numbered page streams. -/
+theorem skeleton_unfilled_contract (t : Struct.Tree) : Unfilled (skeleton t) :=
+  unfilled_skelList t.children.toList #[rootElem] 0 0 false none
+    (by simp [Unfilled, rootElem])
+
+/-- A fold reaches a persistent property when any of its inputs establishes
+it. The state invariant supplies the premise of that establishing step. -/
+private theorem foldl_reaches {α β : Type} (I Q : β → Prop) (f : β → α → β)
+    (stable : ∀ b a, I b → I (f b a))
+    (keep : ∀ b a, I b → Q b → Q (f b a)) :
+    ∀ (xs : List α) (b : β), I b →
+      (∃ a ∈ xs, ∀ b, I b → Q (f b a)) → Q (xs.foldl f b) := by
+  intro xs
+  induction xs with
+  | nil => simp
+  | cons a rest ih =>
+    intro b hb ⟨hit, hh, force⟩
+    rcases List.mem_cons.mp hh with heq | hh
+    · subst hit
+      have pair : I (rest.foldl f (f b a)) ∧ Q (rest.foldl f (f b a)) := by
+        refine List.foldlRecOn (motive := fun out => I out ∧ Q out) rest f
+          ⟨stable b a hb, force b hb⟩ ?_
+        intro out ho x _
+        exact ⟨stable out x ho.1, keep out x ho.1 ho.2⟩
+      exact pair.2
+    · exact ih (f b a) (stable b a hb) ⟨hit, hh, force⟩
+
+private theorem assignOwner_size (i : Nat) (out : Array (Option Nat)) (kid : StructKid) :
+    (assignOwner i out kid).size = out.size := by
+  cases kid <;> simp [assignOwner]
+
+private theorem assignOwner_present (i k : Nat) (out : Array (Option Nat)) (kid : StructKid)
+    (h : ∃ j, out[k]? = some (some j)) :
+    ∃ j, (assignOwner i out kid)[k]? = some (some j) := by
+  cases kid with
+  | elem | mcid => exact h
+  | leaf l =>
+    by_cases hl : l = k
+    · subst l
+      obtain ⟨j, hj⟩ := h
+      have hk : k < out.size := (Array.getElem?_eq_some_iff.mp hj).1
+      exact ⟨i, by simp [assignOwner, hk]⟩
+    · simpa [assignOwner, Array.getElem?_setIfInBounds, hl] using h
+
+private theorem ownerKids_size (e : StructElem) (i : Nat) (out : Array (Option Nat)) :
+    (e.kids.foldl (assignOwner i) out).size = out.size := by
+  refine Array.foldl_induction
+    (motive := fun _ (acc : Array (Option Nat)) => acc.size = out.size) rfl ?_
+  intro idx acc h
+  exact (assignOwner_size i acc e.kids[idx]).trans h
+
+private theorem ownerKids_present (e : StructElem) (i k : Nat) (out : Array (Option Nat))
+    (h : ∃ j, out[k]? = some (some j)) :
+    ∃ j, (e.kids.foldl (assignOwner i) out)[k]? = some (some j) := by
+  refine Array.foldl_induction (motive := fun _ acc => ∃ j, acc[k]? = some (some j)) h ?_
+  intro idx acc h
+  exact assignOwner_present i k acc e.kids[idx] h
+
+private theorem ownerKids_reaches (e : StructElem) (i k : Nat) (out : Array (Option Nat))
+    (hk : k < out.size) (hmem : StructKid.leaf k ∈ e.kids) :
+    ∃ j, (e.kids.foldl (assignOwner i) out)[k]? = some (some j) := by
+  rw [← Array.foldl_toList]
+  apply foldl_reaches (fun acc => acc.size = out.size)
+    (fun acc => ∃ j, acc[k]? = some (some j)) (assignOwner i)
+    (fun acc kid h => (assignOwner_size i acc kid).trans h)
+    (fun acc kid _ h => assignOwner_present i k acc kid h) _ out rfl
+  refine ⟨.leaf k, by simpa using hmem, ?_⟩
+  intro acc hsize
+  exact ⟨i, by simp [assignOwner, hsize, hk]⟩
+
+private theorem leafOwners_present (es : Array StructElem) (n k : Nat) (e : StructElem)
+    (he : e ∈ es) (hk : k < n) (hmem : StructKid.leaf k ∈ e.kids) :
+    ∃ j, (leafOwners es n)[k]? = some (some j) := by
+  unfold leafOwners
+  apply foldl_reaches (fun acc => acc.size = n)
+    (fun acc => ∃ j, acc[k]? = some (some j)) _
+    (fun acc row h => (ownerKids_size row.1 row.2 acc).trans h)
+    (fun acc row _ h => ownerKids_present row.1 row.2 k acc h) _ _ (by simp)
+  obtain ⟨i, hi, hie⟩ := Array.mem_iff_getElem.mp he
+  refine ⟨(e, i), ?_, ?_⟩
+  · apply List.mk_mem_zipIdx_iff_getElem?.mpr
+    simpa using (Array.getElem?_eq_some_iff.mpr ⟨hi, hie⟩)
+  · intro acc hsize
+    exact ownerKids_reaches e i k acc (by omega) hmem
+
+private theorem flatMap_owner_unique {α β : Type} (f : α → List β) (xs : List α)
+    (hn : (xs.flatMap f).Nodup) {i j : Nat} {a b : α} {x : β}
+    (hi : xs[i]? = some a) (hj : xs[j]? = some b)
+    (ha : x ∈ f a) (hb : x ∈ f b) : i = j := by
+  obtain ⟨hibound, rfl⟩ := List.getElem?_eq_some_iff.mp hi
+  obtain ⟨hjbound, rfl⟩ := List.getElem?_eq_some_iff.mp hj
+  have hp := (List.pairwise_flatMap.mp (List.nodup_iff_pairwise_ne.mp hn)).2
+  rcases Nat.lt_trichotomy i j with h | h | h
+  · exact False.elim (hp.rel_getElem_of_lt hibound hjbound h x ha x hb rfl)
+  · exact h
+  · exact False.elim (hp.rel_getElem_of_lt hjbound hibound h x hb x ha rfl)
+
+private theorem leafIdsOf_mem (e : StructElem) (k : Nat) (h : StructKid.leaf k ∈ e.kids) :
+    k ∈ leafIdsOf e :=
+  List.mem_filterMap.mpr ⟨.leaf k, Array.mem_toList_iff.mpr h, rfl⟩
+
+/-- Completeness of the owner map: a bounded, uniquely held leaf names its
+actual element. Together with `leafOwners_mem`, this is the inverse of the
+skeleton's leaf-to-element relation, rather than a last-writer convention. -/
+theorem leafOwners_covers (es : Array StructElem) (n : Nat)
+    (hnodup : (leafKids es).Nodup) (i : Nat) (e : StructElem) (k : Nat)
+    (hi : es[i]? = some e) (hk : k < n) (hmem : StructKid.leaf k ∈ e.kids) :
+    (leafOwners es n)[k]? = some (some i) := by
+  obtain ⟨j, hj⟩ := leafOwners_present es n k e (Array.mem_of_getElem? hi) hk hmem
+  obtain ⟨e', he', hk'⟩ := leafOwners_mem es n k j hj
+  have hij : i = j := flatMap_owner_unique leafIdsOf es.toList hnodup
+    (by simpa using hi) (by simpa using he') (leafIdsOf_mem e k hmem) (leafIdsOf_mem e' k hk')
+  exact hij ▸ hj
+
+private def PagesSound (marks : Array (Array (Nat × Nat)))
+    (out : Array (Array (Nat × Nat))) : Prop :=
+  ∀ (k p m : Nat), (p, m) ∈ (out[k]?).getD #[] →
+    ∃ pm, marks[p]? = some pm ∧ (m, k) ∈ pm
+
+private theorem pagesSound_kids (marks : Array (Array (Nat × Nat))) (pm : Array (Nat × Nat))
+    (p : Nat) (hp : marks[p]? = some pm) (out : Array (Array (Nat × Nat)))
+    (ho : PagesSound marks out) :
+    PagesSound marks (pm.foldl (fun acc (m, k) => acc.modify k (·.push (p, m))) out) := by
+  refine Array.foldl_induction (motive := fun _ acc => PagesSound marks acc) ho ?_
+  intro idx acc hacc k p' m' hm
+  rw [Array.getElem?_modify] at hm
+  split at hm
+  next heq =>
+    cases hget : acc[k]? with
+    | none => simp [hget] at hm
+    | some pairs =>
+      simp only [hget, Option.map_some, Option.getD_some, Array.mem_push] at hm
+      rcases hm with hold | hnew
+      · exact hacc k p' m' (by simpa [hget] using hold)
+      · rcases Prod.mk.inj hnew with ⟨rfl, rfl⟩
+        exact ⟨pm, hp, by
+          simpa only [← heq, Prod.eta, Fin.getElem_fin] using pm.getElem_mem idx.isLt⟩
+  next => exact hacc k p' m' hm
+
+/-- Every filled leaf reference comes from the marks of the named page.
+This is the soundness invariant of both folds in `leafPagesOf`; it does
+not assume that a leaf is bounded or that stream identifiers are ordered. -/
+theorem leafPagesOf_mem (n : Nat) (marks : Array (Array (Nat × Nat))) (k p m : Nat)
+    (h : (p, m) ∈ ((leafPagesOf n marks)[k]?).getD #[]) :
+    ∃ pm, marks[p]? = some pm ∧ (m, k) ∈ pm := by
+  have base : PagesSound marks (Array.replicate n #[]) := by
+    intro k p m hm
+    rw [Array.getElem?_replicate] at hm
+    split at hm <;> simp_all
+  have sound : PagesSound marks (leafPagesOf n marks) := by
+    unfold leafPagesOf
+    refine List.foldlRecOn _ _ base ?_
+    intro out ho row hr
+    exact pagesSound_kids marks row.1 row.2 (by
+      simpa using List.mk_mem_zipIdx_iff_getElem?.mp hr) out ho
+  exact sound k p m h
+
+/-- Filling an unfilled element introduces exactly the marked-content
+references of its own leaves. No reference can arrive from another element
+or survive from an unrelated earlier fill. -/
+theorem fillKids_mcid_exact (e : StructElem) (lp : Array (Array (Nat × Nat)))
+    (he : ∀ p m, StructKid.mcid p m ∉ e.kids) (p m : Nat) :
+    StructKid.mcid p m ∈ e.kids.flatMap (fillKid lp) ↔
+      ∃ k, StructKid.leaf k ∈ e.kids ∧ (p, m) ∈ (lp[k]?).getD #[] := by
+  constructor
+  · intro hm
+    obtain ⟨kid, hk, hm⟩ := Array.mem_flatMap.mp hm
+    cases kid with
+    | elem i => simp [fillKid] at hm
+    | leaf k =>
+      obtain ⟨⟨p', m'⟩, hpm, h⟩ := Array.mem_map.mp hm
+      cases h
+      exact ⟨k, hk, hpm⟩
+    | mcid p' m' => exact False.elim (he p' m' hk)
+  · rintro ⟨k, hk, hpm⟩
+    exact Array.mem_flatMap.mpr ⟨.leaf k, hk, Array.mem_map.mpr ⟨(p, m), hpm, rfl⟩⟩
+
+/-- Every marked-content reference of a filled element has that element as
+its parent-tree entry (ISO 32000-2 §14.7.5.4). The skeleton must contain no
+earlier `.mcid` references: `fill` preserves those, and an arbitrary one
+need not occur in any page stream. `skeleton_unfilled_contract` proves that premise
+for the producer, while `skeleton_leafKids_nodup` supplies unique ownership. -/
+theorem parentTree_covers (es : Array StructElem) (n : Nat)
+    (marks : Array (Array (Nat × Nat)))
+    (hpos : ∀ p (hp : p < marks.size) j (hj : j < marks[p].size), (marks[p][j]).1 = j)
+    (hnodup : (leafKids es).Nodup) (hlt : ∀ k ∈ leafKids es, k < n)
+    (hunfilled : Unfilled es) :
+    ∀ i (hi : i < (fill es (leafPagesOf n marks)).size) p m,
+      StructKid.mcid p m ∈ (fill es (leafPagesOf n marks))[i].kids →
+      ((parentTreeOf marks (leafOwners es n))[p]?).bind (·[m]?) = some (some i) := by
+  intro i hi p m hm
+  have hie : i < es.size := by simpa [fill] using hi
+  have hem := es.getElem_mem hie
+  have hm' : StructKid.mcid p m ∈ es[i].kids.flatMap (fillKid (leafPagesOf n marks)) := by
+    simpa only [fill, Array.getElem_map] using hm
+  obtain ⟨k, hk, hpm⟩ := (fillKids_mcid_exact es[i] _ (hunfilled es[i] hem) p m).mp hm'
+  have hkall : k ∈ leafKids es :=
+    List.mem_flatMap.mpr ⟨es[i], Array.mem_toList_iff.mpr hem, leafIdsOf_mem es[i] k hk⟩
+  have howner := leafOwners_covers es n hnodup i es[i] k
+    (Array.getElem?_eq_getElem hie) (hlt k hkall) hk
+  obtain ⟨pm, hp, hmark⟩ := leafPagesOf_mem n marks k p m hpm
+  obtain ⟨hpbound, hpage⟩ := Array.getElem?_eq_some_iff.mp hp
+  obtain ⟨j, hj, hentry⟩ := Array.mem_iff_getElem.mp hmark
+  have hmj : m = j := by
+    have h := hpos p hpbound j (by simpa [hpage] using hj)
+    simpa [hpage, hentry] using h
+  have hslot : pm[m]? = some (m, k) := by
+    subst m
+    exact Array.getElem?_eq_some_iff.mpr ⟨hj, hentry⟩
+  simp [parentTreeOf, hp, hslot, howner]
+
+/-- Every placeholder a skeleton holds is drawn from its input tree.
+Speaker notes and decorative figures may omit leaves, but cannot invent
+one; this is the range premise of the parent-tree projection. -/
+theorem skeleton_leafKids_mem (t : Struct.Tree) (k : Nat) (hk : k ∈ leafKids (skeleton t)) :
+    k ∈ t.leaves.toList.map Prod.fst := by
+  have hperm := skelList_leafKids t.children.toList #[rootElem] 0 0 false none (by simp)
+  have hroot : leafKids #[rootElem] = [] := by
+    simp [leafKids_eq_flatMap, leafIdsOf, rootElem]
+  rw [hroot, List.nil_append] at hperm
+  exact (skelLeafIds_sublist _).subset (hperm.mem_iff.mp hk)
+
+/-- The actual document producer satisfies every skeleton premise:
+fresh references, unique owners, and in-range leaf identifiers. Only the
+page-stream numbering premise remains, supplied by `numberMarks_mcids_exact`
+when content streams are numbered. -/
+theorem doc_parentTree_covers (doc : Ir.Doc) (marks : Array (Array (Nat × Nat)))
+    (hpos : ∀ p (hp : p < marks.size) j (hj : j < marks[p].size), (marks[p][j]).1 = j) :
+    let t := Struct.ofDoc doc
+    let es := skeleton t
+    let n := t.leaves.size
+    ∀ i (hi : i < (fill es (leafPagesOf n marks)).size) p m,
+      StructKid.mcid p m ∈ (fill es (leafPagesOf n marks))[i].kids →
+      ((parentTreeOf marks (leafOwners es n))[p]?).bind (·[m]?) = some (some i) := by
+  apply parentTree_covers _ _ marks hpos (skeleton_leafKids_nodup doc)
+    _ (skeleton_unfilled_contract _)
+  intro k hk
+  have hm := skeleton_leafKids_mem (Struct.ofDoc doc) k hk
+  change k ∈ (Struct.leaves (Struct.ofBlocks doc.body)).toList.map Prod.fst at hm
+  rw [Struct.structTree_leaves_id] at hm
+  exact List.mem_range.mp hm
 
 end LeanTex.Core.Pdf
