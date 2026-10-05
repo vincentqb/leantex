@@ -6,6 +6,7 @@ import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
+import LeanTex.Core.Tcolorbox
 
 namespace LeanTex.Core.Compat
 
@@ -2575,7 +2576,7 @@ private def condNoExpand : List String :=
 content: `definesNext` and the environment definers. A definition's replacement
 text is expanded where the definition is used, never where it is made. -/
 private def condDefiners : List String :=
-  definesNext ++ ["newenvironment", "renewenvironment"]
+  definesNext ++ ["newenvironment", "renewenvironment", "newtcolorbox", "renewtcolorbox"]
 
 /-- Is `n` the setter of a declared flag (`\Xtrue`, `\Xfalse`)? -/
 private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :=
@@ -2833,7 +2834,9 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
        | some (some v) => v.live
        | _ => false)
   | .group body _ => condLiveList flags binds body.toList
-  | .env n body _ => overlayTitled n || pictureEnvs.contains n || condLiveList flags binds body.toList
+  | .env n body _ =>
+    overlayTitled n || pictureEnvs.contains n || n == "tcolorbox" ||
+      binds.contains (Tcolorbox.bindingName n) || condLiveList flags binds body.toList
   | .math _ body _ => condLiveList flags binds body.toList
   | .word _ _ => false
   | .space => false
@@ -2891,6 +2894,7 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     if k < raws.size then return some { stop := k + 1, bodies := [] }
     return none
   if d == "newcommand" || d == "renewcommand" || d == "providecommand" ||
+      d == "newtcolorbox" || d == "renewtcolorbox" ||
       d == "DeclareRobustCommand" || d == "DeclareMathOperator" then
     let j := starred (i + 1)
     unless named j do return none
@@ -3095,6 +3099,26 @@ a `\global` prefix among the definer's prefixes? -/
 private def definesGlobally (raws : Array Raw) (i : Nat) (d : String) : Bool :=
   d == "gdef" || d == "xdef" || (definerPrefixes raws i).contains "global"
 
+/-- The documented `\newtcolorbox{name}[arity][default]{keys}` head.
+Only its shape is read here; key values and replacement text execute at
+the environment's use through the ordinary argument binder. -/
+private def tcolorboxValue (raws : Array Raw) (i : Nat) :
+    Option (String × CondVal) := do
+  let j := skipSpaces raws (i + 1)
+  let some (.group #[.word name _] _) := raws[j]? | none
+  let (count, k) := takeOpt raws (j + 1)
+  let arity ← match count with
+    | none => some 0
+    | some s => s.trimAscii.toString.toNat?
+  if arity > 9 then none else do
+    let (defaultArg, k) := takeRawOpt raws k
+    if defaultArg.isSome && arity == 0 then none else do
+      let some (.group keys _) := raws[skipSpaces raws k]? | none
+      let key := Tcolorbox.bindingName name
+      some (name, {
+        raws := keys, long := true, prot := false, arity, live := true
+        optional := defaultArg.map fun arg => (key, ungroupArg arg) })
+
 /-- The first control word of a group: the name a `\pgfmathsetmacro` sets. -/
 private def condFirstCtrl (g : Array Raw) : Array String :=
   match g.find? (· matches .ctrl _ _) with
@@ -3205,6 +3229,7 @@ private structure CondRun where
   raws : Array Raw
   stop : Nat
   tail : Array Raw := #[]
+  box : Option Tcolorbox.Prepared := none
 
 mutual
 
@@ -3430,6 +3455,41 @@ private def condList [Monad m]
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
           (st.useSite.getD pos)
       condList ex [] raws following out stack rest (i + 1) 0
+    else if n == "newtcolorbox" || n == "renewtcolorbox" then
+      condStopSpaces
+      match definerShape raws i n with
+      | none =>
+        condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
+      | some sh =>
+        match tcolorboxValue raws i with
+        | none =>
+          sayOnce ("tcolorbox:definition:" ++ n) .W0104
+            s!"'\\{n}' has an unread argument declaration; the definition is skipped"
+            (st.useSite.getD pos)
+            (help := "use a braced environment name, 0–9 arguments, and at most one default")
+        | some (name, value) =>
+          let key := Tcolorbox.bindingName name
+          let known := st.binds.contains key
+          -- premise: TcolorboxChecks.tcolorboxScopeChecks — refused definitions leave
+          -- built-in environments and existing scoped definitions unchanged.
+          if st.provideKeeps.contains key || (n == "newtcolorbox" && known) ||
+              (n == "renewtcolorbox" && !known) then
+            sayOnce ("tcolorbox:definition:" ++ name) .W0104
+              s!"'\\{n}\{{name}}' cannot replace this environment; its definition is skipped"
+              (st.useSite.getD pos)
+              (help := "use a new environment name, or renew an existing box")
+          else
+            let value := if stack.any (· matches .opaque) then none else some value
+            recordValue key value (definesGlobally raws i n)
+            became s!"\\{n}\{{name}}" "a scoped native block definition" (st.useSite.getD pos)
+        condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
+    else if n == "tcbuselibrary" then
+      condStopSpaces
+      let (args, stop) := takeGroups raws (i + 1) 1
+      if args.size == 1 then
+        discard "\\tcbuselibrary" "box keys are handled at each use" n (st.useSite.getD pos)
+        condList ex [] raws following out stack rest (i + 1) (stop - (i + 1))
+      else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if condDefiners.contains n then
       condStopSpaces
       let bound := if definesNext.contains n then
@@ -3608,14 +3668,28 @@ private def condOne [Monad m]
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
+      let box ← ex (Tcolorbox.bindingName n) p body 0
       -- The title argument belongs to this environment's selector window,
       -- just as it does in overlayInputsRaw after execution.
       let head := if overlayTitled n then #[Raw.ctrl "titled overlay" p] else #[]
-      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray head) [] body.toList 0 0
+      let front := head ++ (box.map (·.tail)).getD #[]
+      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray front) [] body.toList 0
+        ((box.map (·.stop)).getD 0)
+      let result ← match box.bind (·.box) with
+        | some prepared => do
+          let lowered := prepared.lower body'.raws p
+          became s!"\\begin\{{n}}" "a native block" p
+          unless lowered.unsupported.isEmpty do
+            say .W0110
+              s!"these box keys are not fully applied: {String.intercalate ", " lowered.unsupported.toList}"
+              p (help := "use native block styles for portable decoration")
+              (subject := some ("tcolorbox:" ++ n))
+          pure (Raw.group lowered.raws p)
+        | none => pure (.env n (body'.raws.extract head.size body'.raws.size) p)
       let _ ← swapTop top
       condClose m
       write fun st => { st with inPicture := inPic }
-      return .env n (body'.raws.extract head.size body'.raws.size) p
+      return result
   | r => do
     condStopSpaces
     pure r
@@ -3679,6 +3753,47 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
     (raws : Array Raw) (start : Nat) : EvalM m (Option CondRun) := do
   let st ← get
   let site := st.useSite
+  if let some name := Tcolorbox.boundName? n then
+    let call := if name == "tcolorbox" then
+        let (options, stop) := takeRawOpt raws start
+        some (options.getD #[], stop, #[])
+      else do
+        let v ← (condValueOf st.binds n).bind id
+        let usePos := site.getD pos
+        let atUse := fun p : Pos => { p with line := usePos.line, col := usePos.col }
+        let defaultArg := v.optional.map fun (_, arg) => arg.map (rebase atUse false)
+        let (args, stop, tail) ← takeCondArgs raws start v.arity defaultArg
+        if args.size != v.arity then none else
+          some (bindRawArgsList args #[] (rebaseList atUse false v.raws.toList), stop, tail)
+    let some (options, stop, tail) := call | return none
+    -- A template selects fields, rather than expanding a named command.
+    -- Spend the text stage once while retaining the caller's binding order:
+    -- helpers defined after the box remain visible. The original body is
+    -- still walked structurally by condOne with its caller's expander.
+    -- premise: TcolorboxChecks.tcolorboxScopeChecks — late helpers, local
+    -- definitions and unused/refused values are checked at separate uses.
+    if _hstage : 0 < textBound then
+      let prepared := Tcolorbox.prepare options pos
+      let title ← condOne
+        (fun n p rs k => condExpandAt reader bound 0 n p rs k)
+        true (.group prepared.title pos)
+      let decls ← condList
+        (fun n p rs k => condExpandAt reader bound 0 n p rs k)
+        [] prepared.bodyDecls #[] (OverlayPrefix.ofArray #[]) []
+        prepared.bodyDecls.toList 0 0
+      let title := match title with
+        | .group body _ => body
+        | _ => prepared.title
+      return some {
+        raws := #[], stop, tail
+        box := some { prepared with title, bodyDecls := decls.raws } }
+    else
+      say .W0104
+        "a box title or style recursively requests another box; its template is left unexpanded"
+        (site.getD pos)
+        (help := "place nested boxes in the body")
+        (subject := some ("tcolorbox:" ++ name))
+      return none
   let inPic := st.inPicture
   let own := st.picBound.contains n || st.provideKeeps.contains n ||
     (inPic && picWalkCtrls.contains n)
@@ -3784,12 +3899,15 @@ without that selection or those changes")
     return answer.map fun answer => { raws := answer, stop := j + 1 }
 termination_by (bound, textBound)
 decreasing_by
-  simp_wf
-  split
-  · apply Prod.Lex.left
-    assumption
-  · apply Prod.Lex.right
-    omega
+  all_goals
+    simp_wf
+    first
+    | exact Prod.Lex.right _ _hstage
+    | (split
+       · apply Prod.Lex.left
+         assumption
+       · apply Prod.Lex.right
+         omega)
 
 /-- The expander running text uses: every definition made so far is visible. -/
 private def condTopExpand [Monad m] (reader : Option (InputReader m))

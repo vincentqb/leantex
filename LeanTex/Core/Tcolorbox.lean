@@ -5,6 +5,15 @@ namespace LeanTex.Core.Tcolorbox
 
 open Parse
 
+/-- Environment bindings use the same scoped meaning table as commands.
+The space cannot occur in an authored control word, so the namespaces
+remain distinct without another definition store. -/
+def bindingName (name : String) : String := "tcolorbox " ++ name
+
+/-- The inverse of the reserved binding spelling. -/
+def boundName? (name : String) : Option String :=
+  name.dropPrefix? "tcolorbox " |>.map (·.toString)
+
 /-- A tcolorbox use expressed through the native block surface. Declaration
 arguments are bound by the compatibility reader before this function runs.
 Keys with unsupported paint or layout effects remain explicitly accounted,
@@ -141,23 +150,43 @@ private def gap (v : Option String) (pos : Pos) : Array Raw :=
     #[.ctrl "block" pos, .sym '[' pos, .word ("before = " ++ s) pos,
       .sym ']' pos, .group #[] pos]
 
+/-- Selected content and declarations, separated from keys the engine cannot
+apply. Only these token fields are executed; refused values are inert. -/
+structure Prepared where
+  title : Array Raw
+  bodyDecls : Array Raw
+  before : Option String
+  after : Option String
+  unsupported : Array String
+  deriving Repr
+
+/-- Select the last assignments before executing any key's value. -/
+def prepare (options : Array Raw) (pos : Pos) : Prepared :=
+  let s := settings options
+  let titleInk := ink s.titleInk pos
+  let titleDecls := s.fontTitle ++ titleInk
+  { title := if s.title.isEmpty || titleDecls.isEmpty then s.title
+      else #[.group (titleDecls ++ s.title) pos]
+    bodyDecls := s.fontUpper ++ ink (s.textInk.map (·.2)) pos
+    before := s.before
+    after := s.after
+    unsupported := s.unsupported }
+
+/-- Assemble the already-selected fields around the original body. -/
+def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
+  let block := Raw.env "block"
+    #[.group s.title pos, .group (s.bodyDecls ++ body) pos] pos
+  let before := gap s.before pos
+  let after := gap s.after pos
+  { raws := before.push block ++ after
+    unsupported := s.unsupported }
+
 /-- Lower already-bound options and an untouched body through native block
 semantics. No author text is lexed or parsed a second time. The gaps use
 native block spacing; tcolorbox's addvspace/parskip collision rules and
 decorations are not reimplemented. -/
 def lower (options body : Array Raw) (pos : Pos) : Lowered :=
-  let s := settings options
-  let titleInk := ink s.titleInk pos
-  let titleDecls := s.fontTitle ++ titleInk
-  let title := if s.title.isEmpty || titleDecls.isEmpty then s.title
-    else #[.group (titleDecls ++ s.title) pos]
-  let bodyDecls := s.fontUpper ++ ink (s.textInk.map (·.2)) pos
-  let block := Raw.env "block"
-    #[.group title pos, .group (bodyDecls ++ body) pos] pos
-  let before := gap s.before pos
-  let after := gap s.after pos
-  { raws := before.push block ++ after
-    unsupported := s.unsupported }
+  (prepare options pos).lower body pos
 
 /-- A raw block carries the complete ordered body after only its local
 declarations. This is a surface property, before an IR exists; the native
@@ -167,15 +196,15 @@ def CarriesBody (rs body : Array Raw) (pos : Pos) : Prop :=
     #[.group title pos, .group (decls ++ body) pos] pos ∈ rs.toList
 
 /-- Every option combination retains the original body verbatim in the
-native block, including when an option is unsupported. -/
+native block, including after a title or declaration has been expanded. -/
+theorem Prepared.lower_body_covers (s : Prepared) (body : Array Raw) (pos : Pos) :
+    CarriesBody (s.lower body pos).raws body pos := by
+  refine ⟨s.title, s.bodyDecls, ?_⟩
+  simp [Prepared.lower]
+
+/-- The direct lowering projects the same body-preserving assembly. -/
 theorem lower_body_covers (options body : Array Raw) (pos : Pos) :
-    CarriesBody (lower options body pos).raws body pos := by
-  let s := settings options
-  let titleInk := ink s.titleInk pos
-  let titleDecls := s.fontTitle ++ titleInk
-  let title := if s.title.isEmpty || titleDecls.isEmpty then s.title
-    else #[.group (titleDecls ++ s.title) pos]
-  refine ⟨title, s.fontUpper ++ ink (s.textInk.map (·.2)) pos, ?_⟩
-  simp [lower, s, title, titleDecls, titleInk]
+    CarriesBody (lower options body pos).raws body pos :=
+  (prepare options pos).lower_body_covers body pos
 
 end LeanTex.Core.Tcolorbox

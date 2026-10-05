@@ -15690,7 +15690,8 @@ def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.executeInputs reader file raws
-    (provideKeeps := renderedBuiltins ++ structuralNames) (diags := splitDiags)
+    (provideKeeps := renderedBuiltins ++ structuralNames ++
+      builtinEnvNames.map Tcolorbox.bindingName) (diags := splitDiags)
 
 /-- A file answer enters the same execution state after its own parse
 recovery. Its source wrapper remains intact, so requests and diagnostics
@@ -15721,7 +15722,8 @@ def prepare (file : String) (raws : Array Raw) : Prepared :=
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
-    (provideKeeps := renderedBuiltins ++ structuralNames)
+    (provideKeeps := renderedBuiltins ++ structuralNames ++
+      builtinEnvNames.map Tcolorbox.bindingName)
   let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
