@@ -878,6 +878,9 @@ private structure St where
   them: what `\usebeamerfont{<element>}` selects in a template the engine
   reads (`TitleTemplate.read`). Latest declaration wins. -/
   beamerFonts : Array (String × TitleTemplate.Font) := #[]
+  /-- A global numbered footer is read at the document seam, after its font
+  declarations. Keeping the last body also handles end-preamble hooks. -/
+  beamerFootline : Option (String × Pos × Array Raw) := none
 
 private abbrev M := StateM St
 
@@ -5486,6 +5489,78 @@ and elaboration removes the spelling before any IR value exists. -/
 def fontSizeMark : String := "@fontsize:"
 def fontSizeSep : String := "\u0000"
 
+/-- Beamer's three marker templates select the corresponding list depth
+(beamerbaseauxtemplates.sty). Their bodies remain inline templates. -/
+private def beamerMarkerElement : String → Option String
+  | "itemize item" => some "itemize"
+  | "itemize subitem" => some "itemize2"
+  | "itemize subsubitem" => some "itemize3"
+  | _ => none
+
+/-- A colour-box footer with a left note and a right frame counter is the
+native two-slot footer. Only this structural shape is claimed; unrelated
+template code still belongs to the existing whole-body refusal. -/
+private def numberedFootline? (body : Array Raw) :
+    Option (Array Raw × String × Option String × String) := do
+  let [Raw.env "beamercolorbox" box _] := body.toList.filter (· != .space)
+    | none
+  let (options, j) := takeOpt box 0
+  let (args, j) := takeGroups box j 1
+  if args.size != 1 || (rawSrc (args.getD 0 #[])).trimAscii.toString != "footline" then none
+  let j := skipSpaces box j
+  let (font, j) := match box[j]? with
+    | some (.ctrl "usebeamerfont" _) =>
+      let (args, k) := takeGroups box (j + 1) 1
+      (args[0]?.map (fun rs => (rawSrc rs).trimAscii.toString), k)
+    | _ => (none, j)
+  let content := box.extract j box.size
+  let split ← content.findIdx? (fun r => r matches .ctrl "hfill" _)
+  let right := String.ofList
+    (((rawSrc (content.extract (split + 1) content.size)).replace "\\," "").toList.filter
+      (!·.isWhitespace))
+  let counter ← if right == "\\insertframenumber" then some "framenumber"
+    else if right == "\\insertframenumber/\\inserttotalframenumber" then some "framefraction"
+    else none
+  some (content.extract 0 split, counter, font, options.getD "")
+
+/-- Resolve a stored footer through the same font-size marker and native
+footer declarations as ordinary document content. Box dimensions are not
+content: the shared footer band determines those, with a named adaptation. -/
+private def flushBeamerFootline : M (Array Raw × Array Raw) := do
+  let some (file, pos, body) := (← get).beamerFootline | return (#[], #[])
+  let some (left, counter, fontName, options) := numberedFootline? body
+    | return (#[], #[])
+  let savedFile := (← get).file
+  write fun st => { st with file := file }
+  let mut fontPrefix : Array Raw := #[]
+  let mut unread : Array String := #[]
+  if let some name := fontName then
+    if let some font := (← get).beamerFonts.toList.lookup name then
+      fontPrefix ← synthAt font.cmds pos
+      if let some size := font.size then
+        fontPrefix := fontPrefix.push (.ctrl (fontSizeMark ++ size ++ fontSizeSep ++
+          font.leading.getD "") pos)
+      unread := font.unread
+      -- premise: beamerTemplateChecks — the selected font reaches the footer note in both outputs
+      write fun st => { st with diags := st.diags.filter fun d =>
+        !(d.code == DiagCode.W0104.code &&
+          d.subject == some ("beamer:setbeamerfont:" ++ name)) }
+    else
+      unread := unread.push s!"font '{name}'"
+  unless options.isEmpty do unread := unread.push "colour-box dimensions"
+  if fontName.isSome then unread := unread.push "counter font"
+  unless unread.isEmpty do
+    sayOnce "beamer:setbeamertemplate:footline" .W0110
+      s!"the footer note and frame counter use the native footer band; not applied: \
+{String.intercalate ", " unread.toList}" pos
+      (help := "use \\framefoot{...} for its note and \\chrome{footer={right=\\framefraction}} for numbering")
+  let pre ← synthAt s!"\\chrome\{footer=\{right=\\{counter}}}" pos
+  let note := #[Raw.ctrl "framefoot" pos, Raw.group (fontPrefix ++ left) pos]
+  let wrap (rs : Array Raw) : Array Raw :=
+    if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
+  write fun st => { st with file := savedFile }
+  return (wrap pre, wrap note)
+
 /-- Local option diagnostics travel with the spliced file until conditionals
 and `\endinput` have selected its live text. A space is in no control word:
 these requests cannot be written by a document. The load request checks for
@@ -6119,6 +6194,33 @@ is skipped" pos
     if element == "frame footer" then
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
       return some (← synthAt "\\framefoot" pos, j)
+    else if let some native := beamerMarkerElement element then
+      let (bodyArgs, k) := takeGroups raws j 1
+      if bodyArgs.size != 1 then return none
+      let marker := rawSrc (bodyArgs.getD 0 #[])
+      let source := s!"\\style\{{native}}\{marker=\{{marker}}}"
+      became s!"\\setbeamertemplate\{{element}}" source pos
+      return some (← synthAt source pos, k)
+    -- premise: beamerTemplateChecks — preamble and deferred declarations
+    -- carry footer content through the native frame furniture.
+    else if element == "footline" &&
+        ((← docPreamble) || ((← get).seam && !(← get).inGroup)) then
+      let (_, k) := takeOpt raws j
+      let (bodyArgs, k) := takeGroups raws k 1
+      let body := bodyArgs.getD 0 #[]
+      if (numberedFootline? body).isSome then
+        let file := (← get).file
+        write fun st => { st with beamerFootline := some (file, pos, body) }
+        became "\\setbeamertemplate{footline}" "a footer note and frame counter" pos
+      else if (rawSrc body).trimAscii.toString.isEmpty then
+        sayOnce "beamer:setbeamertemplate" .W0104
+          "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
+          (help := beamerNative.lookup "setbeamertemplate")
+      else
+        say .E0111
+          "'\\setbeamertemplate{footline}' is dropped with its template body, which carries content" pos
+          (help := beamerNative.lookup "setbeamertemplate")
+      return some (#[], k)
     else if element == "title page" then
       let (_, j) := takeOpt raws j
       -- A template of the overlay shape — one picture on the page, a fill
@@ -6208,6 +6310,14 @@ is skipped" pos
         else BeamerColor.starMarker
       return some (#[.ctrl marker pos, .group args[0] pos, .group args[1] pos], k)
     else return none
+  | "raisebox" =>
+    let (args, j) := takeGroups raws start 1
+    if args.size != 1 then return none
+    let (_, j) := takeOpts raws j 2
+    sayOnce "ctrl:raisebox" .W0104
+      "'\\raisebox' lift, height and depth are not applied; its content keeps the line's baseline" pos
+      (help := "remove the box dimensions to use the surrounding line's natural spacing")
+    return some (#[], j)
   | "mbox" | "makebox" =>
     -- An hbox's geometry is not modelled — neither command breaks lines, so
     -- neither reduces to a box of declared measure — and dropping it
@@ -8891,6 +9001,10 @@ def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array Str
         let (p, b) := seamSplit body body.toList 0 0 (#[], #[])
         preSide := preSide ++ wrap p
         bodySide := bodySide ++ wrap b
+    let (footerPre, footerBody) ← flushBeamerFootline
+    preSide := preSide ++ footerPre
+    let footerBody ← rewriteList false footerBody #[] footerBody.toList 0 0
+    bodySide := footerBody ++ bodySide
     write fun st => { st with inDoc := saved, file := savedFile, seam := false }
     let counters := (← get).preCounters
     let isBody : Raw → Bool

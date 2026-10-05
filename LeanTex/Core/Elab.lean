@@ -525,6 +525,10 @@ structure ESt where
   author : Option (Array Inline) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
+  /-- Beamer's optional short forms, read by its `\insertshort...`
+  commands. A new declaration without a short form restores the full
+  datum as its fallback (beamerbasetitle.sty). -/
+  shortTitles : List (TitleDatum × Array Inline) := []
   /-- A `\maketitle` already set the title: LaTeX typesets a title once
   (classes.dtx: `\maketitle` ends with `\global\let\maketitle\relax`), and
   keeping to that is what makes the level-0 heading unique by
@@ -654,6 +658,37 @@ structure ESt where
   spans : SpanRecords := {}
   /-- The document-global algorithm state the preamble declared. -/
   alg : AlgSt := {}
+
+/-- The declared title datum, shared by ordinary Beamer inserts and the
+short form's fallback. An undeclared datum contributes no content. -/
+def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
+  | .title => st.title.getD #[]
+  | .subtitle => st.subtitle.getD #[]
+  | .author => st.author.getD #[]
+  | .institute => st.institute.getD #[]
+  | .date => st.date.getD #[]
+
+/-- Read the Beamer insert family from the metadata already elaborated at
+its declaration. This does not reparse or re-expand the author's text. -/
+def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
+  if name.startsWith "insertshort" then
+    let datum ← TitleDatum.ofName? (name.drop "insertshort".length).copy
+    return (st.shortTitles.lookup datum).getD (st.titlePart datum)
+  else if name.startsWith "insert" then
+    let datum ← TitleDatum.ofName? (name.drop "insert".length).copy
+    return st.titlePart datum
+  else none
+
+/-- Every full insert is exactly the declared datum; backend layout never
+has to recover metadata from a command spelling. -/
+theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
+    st.titleInsert? ("insert" ++ datum.name) = some (st.titlePart datum) := by
+  have hdrop : (("insert" ++ datum.name).drop "insert".length).copy = datum.name := by
+    apply String.toList_injective
+    simp [← String.length_toList]
+  dsimp only [ESt.titleInsert?]
+  rw [hdrop]
+  cases datum <;> simp +decide [TitleDatum.name, TitleDatum.ofName?]
 
 /-- **The reporting state a trial elaboration starts from.** A trial swaps
 `diags` for an empty array, and every field that indexes that array or
@@ -1962,6 +1997,14 @@ private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
 /-- The source between the brackets `scanBracketArg` took from `i` to `k`. -/
 private def bracketSrc (raws : Array Raw) (i k : Nat) : String :=
   rawSrc (raws.extract (skipSpaces raws i + 1) (k - 1))
+
+/-- The optional argument's parsed contents, only when its shared scanner
+consumed a complete argument. Malformed content stays with recovery. -/
+private def bracketArgRaws? (raws : Array Raw) (i : Nat) (anchor : Pos) :
+    Option (Array Raw) :=
+  match scanBracketArg raws i anchor with
+  | .took k => some (raws.extract (skipSpaces raws i + 1) (k - 1))
+  | _ => none
 
 /-- The point a box's `[pos]` stands it on its row's baseline by (latex.ltx
 `\@iiiparbox`: `t` builds a `\vtop`, `b` a `\vbox`, `c` a `\vcenter`;
@@ -5300,6 +5343,8 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageNumber) ""
   else if name == "pagecount" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
+  else if let some content := (← get).titleInsert? name then
+    elabInlinesFrom ctx raws (i + 1) (flushText acc sb ++ content) ""
   else if name == "textcolor" then
     let head := selectorHead raws (i + 1)
     let j0 := head.2
@@ -6630,8 +6675,15 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
 /-- Store one `\title`-family part; both doors — the body's
 `takeTitleDecl` and the preamble's `.titleDecl` arm — write through
 here. -/
-private def storeTitlePart (name : String) (content : Array Inline) : EM Unit :=
-  modify fun st => match name with
+private def storeTitlePart (name : String) (content : Array Inline)
+    (short : Option (Array Inline)) : EM Unit :=
+  modify fun (st : ESt) =>
+    let st := match TitleDatum.ofName? name with
+      | some datum =>
+        let rest := st.shortTitles.filter (fun (entry : TitleDatum × Array Inline) => entry.1 != datum)
+        { st with shortTitles := short.elim rest (fun value => (datum, value) :: rest) }
+      | none => st
+    match name with
     | "title" => { st with title := some content }
     | "subtitle" => { st with subtitle := some content }
     | "author" => { st with author := some content }
@@ -6644,14 +6696,15 @@ of an unclosed optional argument for the caller to keep where content can
 live. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM ({ j : Nat // start ≤ j } × Array Raw) := do
-  -- `\title[short]{long}`: the short form feeds furniture we do not render.
+  -- `\title[short]{long}`: the short form feeds Beamer's running inserts.
   -- Past an unclosed `[`, the group the author wrote is still there —
   -- wherever the line break falls — and best effort takes it as the
   -- argument rather than failing the build.
   let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
-    storeTitlePart name (← elabInlines ctx body)
+    let short ← (bracketArgRaws? raws start pos).mapM (elabInlines ctx)
+    storeTitlePart name (← elabInlines ctx body) short
     return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
@@ -13288,7 +13341,7 @@ inductive PDecl where
   first declaration, the reading a `\begin{document}` hook body gets. -/
   | bodyStart (marker : String) (pos : Pos)
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
-      (body : Option (Array Raw)) (pos : Pos)
+      (body : Option (Array Raw × Option (Array Raw))) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
   | unknownCmd (name : String) (unclosed : Option Pos) (pos : Pos)
   /-- `\SetKw` and family in the preamble: a document-global algorithm
@@ -13646,8 +13699,10 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           let (j, recovered, _, unclosed) := scanOptArg preamble i pos
           match preamble[j]? with
           | some (.group b _) =>
+            let short := bracketArgRaws? preamble i pos
             i := j + 1
-            out := out.push (.titleDecl name unclosed recovered (some b) pos)
+            out := out.push (.titleDecl name unclosed recovered
+              (some (b, short)) pos)
           | _ =>
             out := out.push (.titleDecl name unclosed recovered none pos)
             if recovered then
@@ -14326,8 +14381,9 @@ its declared layout" pos
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     match body with
-    | some b =>
-      storeTitlePart name (← elabInlines s.ctx b)
+    | some (b, short) =>
+      let short ← short.mapM (elabInlines s.ctx)
+      storeTitlePart name (← elabInlines s.ctx b) short
       return s
     | none =>
       if recovered then
