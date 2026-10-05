@@ -3476,6 +3476,56 @@ def Box.join (a b : Box) : Box :=
 def Box.le (a b : Box) : Prop :=
   b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
 
+/-- Translate a measured interval beside an anchor. A positive direction
+puts its lower edge one gap beyond the anchor; a negative direction puts
+its upper edge one gap before it. A zero direction centres the interval.
+The bounds name the attachment: text ink, advance, or a line box is the
+caller's choice, never an incidental font descent. -/
+def Box.axisOffset (anchor lo hi gap direction : Sp) : Sp :=
+  if 0 < direction then anchor + gap - lo
+  else if direction < 0 then anchor - gap - hi
+  else anchor - (lo + hi) / 2
+
+/-- Exact clearance in either direction, and centring within one scaled
+point when no direction is requested. Quantified over arbitrary bounds
+and gaps: the two axes of a box instantiate the same constraint. -/
+theorem Box.axisOffset_contract (anchor lo hi gap direction : Int) :
+    (0 < direction → lo + axisOffset anchor lo hi gap direction = anchor + gap) ∧
+    (direction < 0 → hi + axisOffset anchor lo hi gap direction = anchor - gap) ∧
+    (direction = 0 →
+      2 * anchor ≤ lo + hi + 2 * axisOffset anchor lo hi gap direction ∧
+      lo + hi + 2 * axisOffset anchor lo hi gap direction ≤ 2 * anchor + 1) := by
+  by_cases hp : 0 < direction
+  · simp only [axisOffset, ite_eq_left hp]
+    omega
+  · by_cases hn : direction < 0
+    · simp only [axisOffset, ite_eq_right hp, ite_eq_left hn]
+      omega
+    · simp only [axisOffset, ite_eq_right hp, ite_eq_right hn]
+      omega
+
+/-- Attach a whole box, preserving its internal rhythm. Corner placement
+applies the interval constraint to both axes; side placement centres the
+unconstrained axis. The result is a translation, not a new measurement. -/
+def Box.attachOffset (box : Box) (anchor direction gap : Sp × Sp) : Sp × Sp :=
+  (axisOffset anchor.1 box.1.1 box.2.1 gap.1 direction.1,
+   axisOffset anchor.2 box.1.2 box.2.2 gap.2 direction.2)
+
+/-- Both components of the actual attachment satisfy the interval
+contract: the requested endpoint is placed exactly, or the doubled centre
+is within one scaled point of the anchor's. Gaps remain signed; this is
+placement, not a non-overlap claim about arbitrary bounds. -/
+theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Sp × Sp) :
+    let offset := attachOffset box anchor direction gap
+    let onAxis (a lo hi g d shift : Int) : Prop :=
+      (0 < d → lo + shift = a + g) ∧
+      (d < 0 → hi + shift = a - g) ∧
+      (d = 0 → 2 * a ≤ lo + hi + 2 * shift ∧ lo + hi + 2 * shift ≤ 2 * a + 1)
+    onAxis anchor.1 box.1.1 box.2.1 gap.1 direction.1 offset.1 ∧
+    onAxis anchor.2 box.1.2 box.2.2 gap.2 direction.2 offset.2 :=
+  ⟨axisOffset_contract anchor.1 box.1.1 box.2.1 gap.1 direction.1,
+   axisOffset_contract anchor.2 box.1.2 box.2.2 gap.2 direction.2⟩
+
 /-- A label line's measured ink: the width it sets to, and how far its
 glyphs reach above and below its baseline. A font question, so it is a
 value the measuring side supplies rather than something a shape can
@@ -3575,6 +3625,27 @@ theorem labelBaseline_box_exact (x y : Sp) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align m = (labelInkBox x y align m).2.2 - m.height := by
   cases align <;> rfl
 
+/-- The text's measured TeX box on its resolved baseline, without adding
+the anchor or the font band to its vertical extent. Attachments read this
+box so a descender, a second line, or a font change cannot eat their gap. -/
+def labelTextBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+  let band := labelInkBox x y align m
+  let b := labelBaseline y align m
+  ((band.1.1, b - m.boxDepth), (band.2.1, b + m.boxHeight))
+
+/-- Translating a label's coordinates translates its whole measured text
+box exactly. The shared baseline and ink-box arithmetic commute with the
+same offset for every alignment and metric, including rounded dimensions. -/
+theorem labelTextBox_translate_exact (x y : Sp) (align : LabelAlign) (m : LabelInk)
+    (offset : Sp × Sp) :
+    let box := labelTextBox x y align m
+    labelTextBox (x + offset.1) (y + offset.2) align m =
+      ((box.1.1 + offset.1, box.1.2 + offset.2),
+       (box.2.1 + offset.1, box.2.2 + offset.2)) := by
+  cases align <;>
+    simp [labelTextBox, labelBaseline, labelInkBox, labelInkSpan,
+      Int.sub_eq_add_neg, Int.add_assoc, Int.add_left_comm, Int.add_comm]
+
 /-- **Where a label's glyphs stand**: the TeX box its text makes, on the
 baseline the band places — the band's width, and the glyphs' own reach above
 and below that baseline (`LabelInk.boxHeight`/`boxDepth`) — held to cover the
@@ -3583,9 +3654,8 @@ the band is a placement reference, deeper than a word with no descender
 sets anything, and pgf's natural box holds a node's text box, not its
 font's. -/
 def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
-  let band := labelInkBox x y align m
-  let b := labelBaseline y align m
-  ((band.1.1, min y (b - m.boxDepth)), (band.2.1, max y (b + m.boxHeight)))
+  let box := labelTextBox x y align m
+  ((box.1.1, min y box.1.2), (box.2.1, max y box.2.2))
 
 /-- The anchor is inside the glyphs' box, as it is inside the band
 (`labelInkSpan_covers_anchor`): widening a label from its anchor to its

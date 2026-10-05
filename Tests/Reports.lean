@@ -57,6 +57,8 @@ import Tests.SourceAnnotations
 import Tests.InputOrigins
 import Tests.ImageOrigins
 import Tests.SlideLabels
+import Tests.PictureLabelSpacing
+import Tests.PictureHtmlBaseline
 import scripts.LandCore
 
 /-!
@@ -642,7 +644,19 @@ def reports : List Report := [
       "three typed font-size assertions and a rendered Firefox text-target comparison failed before an equivalent calc spelling preserved the measured font ratio on family changes",
       "Firefox and Chromium render the same baseline projection and all forty-two script-size cases; screen and printed artifacts retain each head and target",
       "the private reference corpus builds in both formats and its affected native pages show the target beyond the arrow tip"]
-    state := .guarded "9ede34c4" .before .author }
+    state := .guarded "9ede34c4" .before .author },
+  { id := "R85", date := "2026-10-05"
+    what := "path labels sat too close to strokes, multiline labels lost their clearance, diagonal or curved labels used the wrong attachment side, and browser label baselines differed from native pages"
+    pins := [check% PictureLabelSpacing.checks, check% pictureHtmlBaselineChecks,
+      thm% Ir.Pic.Box.axisOffset_contract, thm% Ir.Pic.Box.attachOffset_contract,
+      thm% Ir.Pic.labelTextBox_translate_exact, thm% Picture.translateLabel_box_projects,
+      thm% Picture.autoDir_swap_exact,
+      thm% Ir.Pic.labelBaseline_box_exact, thm% HtmlDoc.pictureLabelBaseline_projects]
+    accept := ["one hundred eighteen shipped-geometry assertions failed before measured whole-label attachment, covering fonts, stroke widths, explicit separation, styles, path reversal, corners and local curve tangents",
+      "five hundred eighty-one artifact assertions failed before SVG alphabetic baselines projected the same measured IR band as native pages, including multiline and declared-height nodes",
+      "eighty follow-up assertions failed before font-relative padding retained its surrounding dimension font, rectangle paths retained automatic attachment, and multiline labels read the document body size",
+      "forty-two synthetic LuaLaTeX builds checked 263 assertions over sourced separation defaults, font and length ordering, and automatic corner placement"]
+    state := .guarded "df359890" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

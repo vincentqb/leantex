@@ -90,6 +90,8 @@ import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
 import Tests.PictureKeys
+import Tests.PictureLabelSpacing
+import Tests.PictureHtmlBaseline
 import Tests.TextSym
 import Tests.InlineVerb
 import Tests.VerbatimAmbient
@@ -284,6 +286,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureOutlineChecks ref oneFace
   pictureNodeCentreChecks ref oneFace
   pictureOuterSepChecks ref oneFace
+  PictureLabelSpacing.checks ref oneFace
+  pictureHtmlBaselineChecks ref oneFace
   boundaryUnfinishedChecks ref
   pictureHtmlFaceChecks ref
   pictureInlineLineChecks ref oneFace

@@ -4377,7 +4377,7 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) :
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula {floorWording (Parse.rawSrc raws)}")])
   Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
-    ctx.pic.macros argStyles ctx.page.scale declStyles
+    ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw

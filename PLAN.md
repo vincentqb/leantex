@@ -26540,3 +26540,38 @@ The combined warnings-as-failures build, full test suite, publication and
 SVG closure guards, and private reference acceptance builds in both formats
 pass. The allocation guard runs in the main suite beside compatibility
 checks; it is independent of wall-clock timing.
+
+### 2026-10-05 — Attach whole path labels and project their baselines
+
+Path labels now attach their whole measured text box to the path, including
+descenders and subsequent lines. Straight segments, curves, rectangles and
+closing paths share one placement step. Automatic placement selects a side
+or corner from the local tangent, with reversal and swap using the same
+direction rule.
+
+Separation follows PGF's sourced rectangle defaults: inner separation is
+.3333em in the surrounding dimension font; undeclared outer separation is
+half the path's stroke width. Explicit axis separation and style expansion
+use the same resolver. A text font switch changes the label's glyphs without
+changing the dimension font, and multiline leading reads the document's
+actual body size. Forty-two synthetic LuaLaTeX builds checked 263 assertions
+over these defaults, declaration order and corner placement.
+
+The IR interval contract proves exact clearance on either directed axis
+and centring within one scaled point on an undirected axis. The box contract
+composes those two facts; translation preserves the measured text box for
+every alignment and metric. The picture emitter projects that translation,
+and SVG alphabetic baselines project the same IR baseline as native pages.
+No browser-dependent middle-baseline heuristic remains for picture labels.
+
+Report R85 records 118 failing shipped-geometry assertions, 581 failing HTML
+baseline assertions, and 80 failing follow-up dimension-font and path
+assertions before their respective fixes. The private reference audit
+separates explicit node-height declarations from the engine's attachment
+defaults; authored ports and curved paths remain intentional choices.
+
+The full build and test suite pass. The final rendered audit covers twelve
+diagrams and sixty-one labels on nine reference slides in native PDF and
+Firefox. Browser captures retain each shipped slide subtree and its
+styles/fonts unchanged. Whole-label clearance and baseline placement agree
+across the two outputs; no individual label offset is needed.

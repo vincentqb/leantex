@@ -932,12 +932,8 @@ structure Cx where
   `\itshape` italic, …): the elaborator's own table, as `argStyles` is, so
   a `font=` switch means what the same declaration does in a paragraph. -/
   declStyles : List (String × Ir.Style) := []
-  /-- The body size a node label's lines are spaced against
-  (`nodeLineLead`). The nominal until the elaborator passes the document's
-  own: the picture walk has no face and no page spec, which is the same
-  missing measurement that stops a node body's extent being known — a
-  label's *set* size is resolved in layout, against the geometry, and only
-  the vertical gap between two of them has to be decided here. -/
+  /-- The document's body size, passed by the elaborator: the dimension
+  font for relative separation and the size `nodeLineLead` scales. -/
   bodySize : Sp := Ir.baseFontSize
   /-- How a label's content measures at a per-mille size: the face,
   arriving as a function because the walk has none of its own. The driver
@@ -1818,50 +1814,6 @@ theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
     intro d i s h1 h2; omega
   exact step decl ink sep hd hs
 
-/-- Which side of a segment `auto` puts a label on, as the two decisions
-that name it: does the segment run mostly horizontally, and does the label
-stand on the positive side of that axis? Factored out of `autoAlign` so the
-statement below can case on it — the arithmetic and the naming are separate
-facts and only the second is what an anchor reads. -/
-def autoSide (left : Bool) (dx dy : Sp) : Bool × Bool :=
-  let ax := if dx < 0 then -dx else dx
-  let ay := if dy < 0 then -dy else dy
-  let horiz := ay ≤ ax
-  (horiz, (0 ≤ if horiz then dx else dy) == left)
-
-/-- **Where `auto` puts an edge's label.** pgf's automatic placement (TikZ
-manual §17.8, the `auto` / `swap` keys): the node is set *beside* the path
-rather than centred on it, on the left of the path's own direction, and
-`swap` (spelled `'`) takes the other side. The four anchors a label shape
-carries are the four cardinal ones, so the side is quantised to whichever
-axis the segment runs along more — which is the whole of what `auto` can
-mean for a label that carries one anchor.
-
-A path running right has its left side up, so the label stands *above* the
-line and its anchor is `south`; running up, the left side is toward smaller
-x, so the label stands left and its anchor is `east`. -/
-def autoAlign (left : Bool) (dx dy : Sp) : Ir.Pic.LabelAlign :=
-  match autoSide left dx dy with
-  | (true, true) => .south
-  | (true, false) => .north
-  | (false, true) => .east
-  | (false, false) => .west
-
-/-- **An `auto` label is never centred on its own path.** The registered
-`_mem` shape: the result is drawn from the four off-line anchors, so the one
-placement `auto` exists to prevent cannot come out of it.
-
-That placement is exactly what the defect shipped. `auto` was not read at
-all, so an edge's label kept the `center` alignment a label with no
-placement takes, sat on the segment's midpoint, and the line was stroked
-through the middle of it. The user's words were "GR is on the line instead
-of right above". -/
-theorem autoAlign_mem (left : Bool) (dx dy : Sp) :
-    autoAlign left dx dy ∈ [Ir.Pic.LabelAlign.north, .south, .east, .west] := by
-  unfold autoAlign
-  rcases h : autoSide left dx dy with ⟨a, b⟩
-  cases a <;> cases b <;> simp
-
 /-- A named node's anchoring geometry: centre and border half-extents (a
 circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
 structure NodeGeom where
@@ -2175,12 +2127,8 @@ engine's own leading over the size the *following* line sets at, as TeX's
 the engine's vertical rhythm — a second constant here would drift from the
 one every paragraph uses.
 
-The size is the picture's declared body size times the label's scale.
-`Cx.bodySize` is where a document's own body size would arrive; until the
-elaborator passes it the nominal stands, so a document set larger than the
-nominal gets a lead that does not track it. That is the one named remainder
-of this function, and it is the same missing measurement that stops a node
-body's extent being known at all. -/
+The size is the document's body size times the label's scale, the same
+size the artifact's label metric reads. -/
 def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
   Ir.leadingFor (bodySize * (scale : Int) / 1000)
 
@@ -2778,6 +2726,28 @@ def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   | .aboveRight => (sep.2, sep.1)
   | .belowLeft => (-sep.2, -sep.1)
   | .belowRight => (sep.2, -sep.1)
+
+/-- TikZ's `auto` anchor, including diagonal corners. tikz.code.tex's
+`tikz@auto@anchor` ignores normalized tangent components within ±.05;
+comparing twenty times the component with the length avoids division.
+Swapping sides reverses the tangent before making the same decision. -/
+def autoDir (left : Bool) (dx dy : Sp) : Dir :=
+  let x := if left then dx else -dx
+  let y := if left then dy else -dy
+  let n := isqrt (x * x + y * y)
+  if 20 * x > n then
+    if 20 * y > n then .aboveLeft
+    else if 20 * y < -n then .aboveRight else .above
+  else if 20 * x < -n then
+    if 20 * y > n then .belowLeft
+    else if 20 * y < -n then .belowRight else .below
+  else if y > 0 then .left else .right
+
+/-- Reversing a path and swapping its automatic side attach to the same
+side of the same label box, for every tangent, including a zero tangent. -/
+theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
+    autoDir (!left) dx dy = autoDir left (-dx) (-dy) := by
+  cases left <;> simp [autoDir]
 
 /-- **A relative placement leaves exactly the declared separation between
 the two borders.** pgf's `positioning` rule, as arithmetic over the values
@@ -3791,6 +3761,67 @@ private inductive DrawOp where
   (pgf manual §14.2). -/
   | cycle
 
+/-- A path node's resolved text and attachment. Separation is per axis,
+as in pgf's rectangle shape; an undeclared outer separation reads the
+path's eventual stroke width. -/
+private structure EdgeLabel where
+  lines : Array LabelLine
+  color : Ir.Color
+  scale : Nat
+  placement : Option Dir
+  autoLeft : Option Bool
+  align : Ir.Pic.LabelAlign
+  inner : Sp × Sp
+  outer : Option Sp × Option Sp
+
+/-- Move an already measured label without changing its text or baseline
+rule. Other shapes are unchanged: this is the final step of path-label
+placement, after the path itself has been resolved. -/
+def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
+  | .label x y content color size align =>
+    .label (x + offset.1) (y + offset.2) content color size align
+  | s@(.rect ..) | s@(.circle ..) | s@(.frame ..) | s@(.edge ..) => s
+
+/-- The emitted label's text box is exactly the translated IR box.
+Attachments can therefore use `Box.attachOffset_contract` without a
+second, backend-dependent measurement. -/
+theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
+    (content : Array Ir.Inline) (color : Ir.Color) (size : Nat)
+    (align : Ir.Pic.LabelAlign) (metric : Ir.Pic.LabelMetric) :
+    match translateLabel offset (.label x y content color size align) with
+    | .label u v text _ scale al =>
+      let box := Ir.Pic.labelTextBox x y align (metric content size)
+      Ir.Pic.labelTextBox u v al (metric text scale) =
+        ((box.1.1 + offset.1, box.1.2 + offset.2),
+         (box.2.1 + offset.1, box.2.2 + offset.2))
+    | .rect .. | .circle .. | .frame .. | .edge .. => False :=
+  Ir.Pic.labelTextBox_translate_exact x y align (metric content size) offset
+
+/-- Stack and align once, then attach the whole measured text box. All
+path operations use this translation: individual lines retain their
+leading, and both backends receive the same coordinates and baselines.
+The anchor is the path point; direction is explicit or its local tangent's
+automatic side. pgfmoduleshapes.code.tex declares inner sep=.3333em and
+outer sep=.5\pgflinewidth; the caller resolves the font-relative inner sep.
+`Ir.Pic.Box.attachOffset_contract` guarantees each requested clearance. -/
+private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
+    (anchor tangent : Sp × Sp) : Array Ir.Pic.Shape :=
+  let lines := alignLabels cx.metric label.align
+    (stackLabels 0 0 cx.bodySize label.scale label.color .center label.lines #[])
+  let direction := label.placement.orElse fun _ =>
+    label.autoLeft.map fun left => autoDir left tangent.1 tangent.2
+  let offset := match direction with
+    | none => anchor
+    | some dir =>
+      let box := Ir.Pic.Box.hull (lines.filterMap fun (shape : Ir.Pic.Shape) => match shape with
+        | .label x y content _ size align =>
+          some (Ir.Pic.labelTextBox x y align (cx.metric content size))
+        | .rect .. | .circle .. | .frame .. | .edge .. => none)
+      let gap := (label.inner.1 + label.outer.1.getD (width / 2),
+                  label.inner.2 + label.outer.2.getD (width / 2))
+      box.attachOffset anchor (dir.offset (1, 1)) gap
+  lines.map (translateLabel offset)
+
 /-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
 chain between named nodes and coordinates, border-anchored at named
 endpoints (along the declared tangent for a curve), with `rectangle`
@@ -3957,8 +3988,7 @@ picture subset; the edge is not drawn")
       | none =>
         return .error (unreachedName (ev.gapped || cx.parseGap) nm)
   let mut pts : Array Anchor := #[]
-  let mut ops : Array (DrawOp × Option (Array LabelLine × Ir.Color × Nat ×
-    Option Ir.Pic.LabelAlign × Bool × Ir.Pic.LabelAlign)) := #[]
+  let mut ops : Array (DrawOp × Option EdgeLabel) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
@@ -4059,9 +4089,8 @@ rendered picture subset; the option is dropped")
         return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
 outside the rendered picture subset; the edge is not drawn")
       -- an in-path `node[...] {...}`: an edge label at the segment's
-      -- midpoint; a placement option (`right`, …) loses only itself
-      let mut mid : Option (Array LabelLine × Ir.Color × Nat ×
-        Option Ir.Pic.LabelAlign × Bool × Ir.Pic.LabelAlign) := none
+      -- midpoint; placement attaches the whole text box there
+      let mut mid : Option EdgeLabel := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
         -- An edge label reads its own bracket alone: neither the picture's
@@ -4076,8 +4105,12 @@ the rendered picture subset; the keys are dropped")
         -- `none` is "this label declared no placement": it then takes the
         -- side `auto` computes from the path's direction, or the path's
         -- midpoint where no `auto` is in force.
-        let mut malign : Option Ir.Pic.LabelAlign := none
+        let mut malign : Option Dir := none
+        let mut mAuto := autoOn
         let mut mLeft := autoLeft
+        -- Keep dimension keys separate from text-font keys. PGF's `font=`
+        -- and body switches change the text box, not its dimension font.
+        let mut mseps : Array (String × List Tok) := #[]
         -- `align=`: the side the label's lines stand flush to.
         let mut mtext : Ir.Pic.LabelAlign := .center
         -- An edge label is a node: what `every text node part` declared
@@ -4096,7 +4129,7 @@ the rendered picture subset; the keys are dropped")
             return ev.diag (.E0333, "an edge node's options miss their ']'; the \
 edge is not drawn")
           i := j + 1
-          mopts := mopts ++ splitTop inner ','
+          mopts := mopts ++ expandOpts cx.styles inner
         for opt in mopts do
           match opt.toList with
           | .ident "font" :: .sym '=' :: rest =>
@@ -4118,24 +4151,55 @@ dropped")
             | none =>
               ev := ev.diag (.W0334, s!"edge node option 'align={String.join (rest.map tokText)}' \
 is outside the rendered picture subset; the lines stay centred")
-          -- placement: pgf §17.5.2 — `right` is anchor=west, the label
-          -- standing right of the point, and so around
-          | [.ident "right"] => malign := some .west
-          | [.ident "left"] => malign := some .east
-          | [.ident "above"] => malign := some .south
-          | [.ident "below"] => malign := some .north
+          | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("inner sep", rest)
+          | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("inner xsep", rest)
+          | .ident "inner" :: .ident "ysep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("inner ysep", rest)
+          | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("outer sep", rest)
+          | .ident "outer" :: .ident "xsep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("outer xsep", rest)
+          | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
+            mseps := mseps.push ("outer ysep", rest)
           -- The label's own side, on top of whatever the path set.
           | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
-          | [.ident "auto"] => pure ()
+          | [.ident "auto"] => mAuto := true
+          | [.ident "auto", .sym '=', .ident "left"] => mAuto := true; mLeft := true
+          | [.ident "auto", .sym '=', .ident "right"] => mAuto := true; mLeft := false
+          | [.ident "auto", .sym '=', .ident "false"] => mAuto := false
           | [] => pure ()
           | o :: rest =>
-            ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
+            match (keyName (o :: rest)).bind dirOf with
+            | some d => malign := some d
+            | none =>
+              ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
 the rendered picture subset; the option is dropped")
         match ts[i]? with
         | some (.group body) =>
           let (lines, mdiags) := nodeLabel cx env body
           ev := mdiags.foldl Ev.diag ev
-          mid := some (fontLines mstyles lines, mcolor, mscale, malign, mLeft, mtext)
+          let lines := fontLines mstyles lines
+          let em := cx.bodySize * (factor : Int) / 1000
+          let ex := (cx.metric #[.text "x"] factor).ex
+          let mut inner := (innerSep em, innerSep em)
+          let mut outer : Option Sp × Option Sp := (none, none)
+          for (key, value) in mseps do
+            match readNodeDim em ex value with
+            | .error e =>
+              ev := ev.diag (.W0334, s!"in edge node '{key}', {e}; the option is dropped")
+            | .ok v =>
+              match key with
+              | "inner sep" => inner := (v, v)
+              | "inner xsep" => inner := (v, inner.2)
+              | "inner ysep" => inner := (inner.1, v)
+              | "outer sep" => outer := (some v, some v)
+              | "outer xsep" => outer := (some v, outer.2)
+              | _ => outer := (outer.1, some v)
+          mid := some { lines, color := mcolor, scale := mscale, placement := malign
+                        autoLeft := if mAuto then some mLeft else none
+                        align := mtext, inner, outer }
           i := i + 1
         | _ =>
           return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
@@ -4182,10 +4246,9 @@ edge is not drawn")
           frames := frames.push (.frame (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
             (max y1 y2 - min y1 y2) (some stroke) none)
         -- A node on a rectangle stands on its diagonal, as on a straight side.
-        if let some (lines, mc, msc, mal, _, mta) := mid then
-          labels := labels ++ alignLabels cx.metric mta
-            (stackLabels ((x1 + x2) / 2) ((y1 + y2) / 2) cx.bodySize msc mc (mal.getD .center)
-              lines #[])
+        if let some label := mid then
+          labels := labels ++ label.place cx width
+            ((x1 + x2) / 2, (y1 + y2) / 2) (x2 - x1, y2 - y1)
         subStart := none
         cur := some (x2, y2)
       | .cycle =>
@@ -4200,10 +4263,9 @@ edge is not drawn")
             let mx := (sx + x2) / 2
             let my := (sy + y2) / 2
             segs := (segs.set! f (.line mx my x2 y2)).push (.line sx sy mx my)
-          if let some (lines, mc, msc, mal, mlf, mta) := mid then
-            let al := mal.getD (if autoOn then autoAlign mlf (sx - ex) (sy - ey) else .center)
-            labels := labels ++ alignLabels cx.metric mta
-              (stackLabels ((ex + sx) / 2) ((ey + sy) / 2) cx.bodySize msc mc al lines #[])
+          if let some label := mid then
+            labels := labels ++ label.place cx width
+              ((ex + sx) / 2, (ey + sy) / 2) (sx - ex, sy - ey)
           subStart := none
           cur := some (sx, sy)
         | _, _ => pure ()
@@ -4222,14 +4284,9 @@ edge is not drawn")
         -- as pgf moves to a node's border toward the next point.
         if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
         cur := some p2
-        if let some (lines, mc, msc, mal, mlf, mta) := mid then
-          -- A label that declared no placement of its own takes the side
-          -- `auto` computes from this segment's direction, and the segment's
-          -- midpoint where no `auto` is in force.
-          let al := mal.getD
-            (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
-          labels := labels ++ alignLabels cx.metric mta
-            (stackLabels ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2) cx.bodySize msc mc al lines #[])
+        if let some label := mid then
+          labels := labels ++ label.place cx width
+            ((p1.1 + p2.1) / 2, (p1.2 + p2.2) / 2) (p2.1 - p1.1, p2.2 - p1.2)
       | .curve spec =>
         -- Absolute tangents anchor each end on its border along its own
         -- angle and aim the controls along those angles. Relative ones
@@ -4259,16 +4316,13 @@ edge is not drawn")
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
-        if let some (lines, mc, msc, mal, mlf, mta) := mid then
-          -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint. `auto`
-          -- reads the chord's direction rather than the tangent at that
-          -- point: the four cardinal anchors cannot tell the two apart
-          -- for any curve this subset's control distance produces.
-          let al := mal.getD
-            (if autoOn then autoAlign mlf (p2.1 - p1.1) (p2.2 - p1.2) else .center)
-          labels := labels ++ alignLabels cx.metric mta (stackLabels
-            ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) cx.bodySize msc mc al lines #[])
+        if let some label := mid then
+          -- B(½) and its local tangent B′(½), with the common positive
+          -- factor 3/4 omitted: the chord can point to a different side.
+          labels := labels ++ label.place cx width
+            ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8,
+             (p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8)
+            (-p1.1 - c1.1 + c2.1 + p2.1, -p1.2 - c1.2 + c2.2 + p2.2)
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them. A chain of
@@ -4989,7 +5043,8 @@ it would set every styled node label in the regular face, the defect the
 parameter exists to close. `ladder` and `declStyles` are the document's
 size ladder and the elaborator's declaration table, without defaults for
 the same reason: a forgotten ladder sets a venue's `\small` at the engine's
-step. -/
+step. `bodySize` is likewise required: label leading and relative lengths
+must read the same document size as their artifact measurement. -/
 def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -4998,7 +5053,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (macros : Array (String × String) := #[])
     (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat))
-    (declStyles : List (String × Ir.Style)) :
+    (declStyles : List (String × Ir.Style)) (bodySize : Sp) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRaws raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
@@ -5098,6 +5153,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    ladder := ladder
                    declStyles := declStyles
                    metric := metric
+                   bodySize := bodySize
                    -- A declaration the parse skipped is gone before
                    -- evaluation begins, so a name that then resolves to
                    -- nothing traces to that gap (`unreachedName`).
@@ -5156,4 +5212,3 @@ def placeholder (code : String) : Ir.Pic.Picture :=
       .label (side / 2) (side / 2) #[.text code] grey 1000 .center] }
 
 end LeanTex.Core.Picture
-

@@ -3992,11 +3992,6 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
       p.shapes.any fun s => match s with
         | .label x y content _ _ _ => x == cm && y == 0 && content == #[.text "mid"]
         | _ => false) == some true)
-  t "an edge label's placement option anchors the named side on the point"
-    ((picOf (wrap "\\draw (0,0) -- node[right] {m} (2,0);")).map (fun p =>
-      p.shapes.any fun s => match s with
-        | .label _ _ _ _ _ al => al == .west
-        | _ => false) == some true)
   t "a chained to path keeps every waypoint segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (1,1) to[out=0,in=180] (2,0);")).map
       (fun p => p.shapes.any fun s => match s with
@@ -8115,7 +8110,8 @@ still wins, as every inner setting does.
 
 Read off `Layout.Out`: whether a label clears its line is a fact about
 where the shipped ink stands, and only the page can say it.
-`Picture.autoAlign_mem` is the invariant. Invented content. -/
+`Ir.Pic.Box.axisOffset_contract` holds the requested clearance.
+Invented content. -/
 def pictureAutoLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
