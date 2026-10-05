@@ -656,7 +656,13 @@ def reports : List Report := [
       "five hundred eighty-one artifact assertions failed before SVG alphabetic baselines projected the same measured IR band as native pages, including multiline and declared-height nodes",
       "eighty follow-up assertions failed before font-relative padding retained its surrounding dimension font, rectangle paths retained automatic attachment, and multiline labels read the document body size",
       "forty-two synthetic LuaLaTeX builds checked 263 assertions over sourced separation defaults, font and length ordering, and automatic corner placement"]
-    state := .guarded "df359890" .before .author }
+    state := .guarded "df359890" .before .author },
+  { id := "R86", date := "2026-10-05"
+    what := "continuous integration failed because image validation and conversion tools required by the artifact tests were absent"
+    pins := [check% htmlContainedPublicationChecks, check% htmlContainedSvgColorChecks]
+    accept := ["seventeen existing artifact assertions failed in continuous integration and in a local run with image tools absent from the process search path",
+      "the same assertions pass with the declared image tools available before the build and test action"]
+    state := .guarded "7e7ce504" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
