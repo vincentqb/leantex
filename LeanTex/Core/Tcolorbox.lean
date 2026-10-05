@@ -160,17 +160,52 @@ structure Prepared where
   unsupported : Array String
   deriving Repr
 
-/-- Select the last assignments before executing any key's value. -/
-def prepare (options : Array Raw) (pos : Pos) : Prepared :=
-  let s := settings options
+/-- tcolorbox 6.9.0 captures its `.colorlet` keys before opening saveboxes;
+`tcb@saveupperbox` and `tcb@set@@title` select that color before their
+respective font hooks. Explicit colors in those hooks therefore win. -/
+private def Settings.prepared (s : Settings) (pos : Pos) : Prepared :=
   let titleInk := ink s.titleInk pos
-  let titleDecls := s.fontTitle ++ titleInk
+  let titleDecls := titleInk ++ s.fontTitle
   { title := if s.title.isEmpty || titleDecls.isEmpty then s.title
       else #[.group (titleDecls ++ s.title) pos]
-    bodyDecls := s.fontUpper ++ ink (s.textInk.map (·.2)) pos
+    bodyDecls := ink (s.textInk.map (·.2)) pos ++ s.fontUpper
     before := s.before
     after := s.after
     unsupported := s.unsupported }
+
+/-- Select the last assignments before executing any key's value. -/
+def prepare (options : Array Raw) (pos : Pos) : Prepared :=
+  (settings options).prepared pos
+
+/-- Capture the selected color operands at the use site before either font
+hook executes. The caller resolves tokens through its existing bindings;
+this module neither interprets them nor runs effects. A failed capture
+refuses that key, while unsupported ground/foreground pairs are filtered
+before any capture. Returned declarations use the ordinary native resolver. -/
+def prepareM [Monad m]
+    (capture : String → Array Raw → m (Option (Array Raw)))
+    (options : Array Raw) (pos : Pos) : m Prepared := do
+  let mut s := settings options
+  if let some (key, rs) := s.textInk then
+    match ← capture key rs with
+    | some rs => s := { s with textInk := some (key, rs) }
+    | none => s := { s.refuse key with textInk := none }
+  if let some rs := s.titleInk then
+    match ← capture "coltitle" rs with
+    | some rs => s := { s with titleInk := some rs }
+    | none => s := { s.refuse "coltitle" with titleInk := none }
+  return s.prepared pos
+
+/-- With already-resolved operands the staged API and direct lowering
+produce identical raw content, declarations, spacing and loss accounting. -/
+theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
+    prepareM (m := Id) (fun _ rs => pure (some rs)) options pos =
+      prepare options pos := by
+  unfold prepareM prepare
+  generalize settings options = s
+  cases s with
+  | mk title fontTitle fontUpper textInk titleInk bodyGround titleGround before after unsupported =>
+    cases textInk <;> cases titleInk <;> rfl
 
 /-- Assemble the already-selected fields around the original body. -/
 def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
