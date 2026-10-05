@@ -225,6 +225,23 @@ no theme gets the `daylight` bundle — warm paper, one azure accent, no title b
 `\usetheme{default}` does. `theme-modern.tex` sketches the rest of the M5b
 bundle (dark variant, chrome) and does not build yet.
 
+To author a palette from ink, paper and an accent, build `LeanTex` and run:
+
+```sh
+lake env lean --run scripts/palette.lean sample 192A3D FFFFFF C45B77
+```
+
+The output is ordinary `\definecolor` declarations for both LeanTeX and
+LuaLaTeX. The three seeds stay unchanged. Muted text, subdued diagram edges
+and decorative fills follow the ink/paper Oklab segment; accent text gets
+separate light- and dark-ground roles. Generation checks normal text at
+4.5:1 and essential graphics at 3:1 in the engine's fixed-point contrast
+metric, against every declared adjacent ground,
+including panels and progress tracks. It refuses a family whose generated
+roles fail those checks. Save the declarations in a shared theme file;
+compiling that file needs no generator. These contracts cover declared
+role/background pairs, not arbitrary combinations or color-only meaning.
+
 Builds and runs on Linux and macOS. On the Amazon Linux 2 host the engine is
 developed on, the `LEAN_CC`/`LIBRARY_PATH` exports in AGENTS.md work around an
 old glibc. macOS needs no additional compiler setup beyond the quick start;

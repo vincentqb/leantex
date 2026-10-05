@@ -45,6 +45,7 @@ import Tests.SourceAnnotations
 import Tests.InputOrigins
 import Tests.ImageOrigins
 import Tests.Themes
+import Tests.SeedPalette
 import Tests.SlideLabels
 import Tests.FontMath
 import Tests.MathAlphaGeometry
@@ -195,6 +196,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   titleSlotShipChecks ref oneFace
   beamerHookChecks ref oneFace
   beamerColorsChecks ref oneFace
+  seedPaletteChecks ref oneFace
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace
   headingRhythmChecks ref oneFace

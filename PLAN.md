@@ -26575,3 +26575,36 @@ diagrams and sixty-one labels on nine reference slides in native PDF and
 Firefox. Browser captures retain each shipped slide subtree and its
 styles/fonts unchanged. Whole-label clearance and baseline placement agree
 across the two outputs; no individual label offset is needed.
+
+### 2026-10-05 — Derive palette roles from declared seed colors
+
+`Core.SeedPalette` is an opt-in authoring utility over three RGB seeds:
+ink, paper and accent. Neutral text, essential edges and decorative fills
+follow the seed-to-ground Oklab segment. One wash token supplies both pale
+fills; text on the two opposing grounds has separate roles. Accent text
+reuses the existing contrast search. Authored seeds remain unchanged.
+`scripts/palette.lean` exports ordinary xcolor declarations, so generated
+themes need no runtime generator in either engine.
+
+The role/ground separation follows the models described by
+[Material](https://m3.material.io/styles/color/roles) and
+[Radix](https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale).
+The thresholds come from WCAG 2.2
+[text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
+and [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html);
+the implementation uses the engine's existing fixed-point ratio.
+It does not claim to certify aesthetic quality or color-only meaning.
+
+`generated_contract` quantifies over every declared role/ground pair,
+and `tint_mem` bounds generated neutral colors to the sampled segment.
+Generation returns a palette with its checked contract or refuses the
+family; it never substitutes a passing claim for a failed pair. The accent
+must contrast against panels and progress tracks as well as paper.
+A neutral accent passed on paper but failed against both pale fills:
+the adjacency refusal guard failed before those two contract rows and
+passes after them. Invalid seed contrast and CMYK inputs are refused too.
+
+`seedPaletteChecks` covers eighteen invented seed/polarity families,
+their contrast hierarchy, and exported declarations through shipped PDF
+glyphs and typed HTML text. The utility changes no compiler defaults or
+bounded repairs of authored document colors.

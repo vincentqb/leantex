@@ -31,6 +31,7 @@ import LeanTex.Core.Theme
 import LeanTex.Core.Oklab
 import LeanTex.Core.Contrast
 import LeanTex.Core.ContrastContract
+import LeanTex.Core.SeedPalette
 import LeanTex.Core.Locale
 import LeanTex.Core.LocaleData
 import LeanTex.Core.LocaleContract
