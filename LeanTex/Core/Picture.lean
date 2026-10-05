@@ -2040,6 +2040,27 @@ structure Ev where
 def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
 
+/-- The evaluated marks and authored bounds passed to both backends.
+Node anchor borders and measured text remain separate: a declared text
+height or negative padding may deliberately put text outside its border. -/
+def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
+  { shapes := ev.shapes, declared := ev.declared, borders := ev.borders, baseline }
+
+/-- Every emitted label's measured text lies in the reserved picture
+extent, unless the author explicitly replaced that extent. This projects
+the IR hull contract onto the actual picture producer; it does not claim
+that an authored node border encloses its text. -/
+theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
+    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
+    (hs : Ir.Pic.Shape.label x y content color scale align ∈ ev.shapes)
+    (hd : ev.declared = none) :
+    Ir.Pic.Box.le (Ir.Pic.labelTextBox x y align (m content scale))
+      ((ev.toPicture baseline).box m) := by
+  have cover := (Ir.Pic.Picture.box_covers (ev.toPicture baseline) m hd).1 _ hs
+  apply Ir.Pic.Box.le_trans (b := Ir.Pic.labelGlyphBox x y align (m content scale)) _ cover
+  exact ⟨Int.le_refl _, Int.min_le_right _ _, Int.le_refl _, Int.le_max_right _ _⟩
+
 /-- `(x,y) rectangle (x',y')` (or `++(dx,dy)`, relative) from token `i` to
 the end: the rectangle's corners in sp, sorted — `(x0, y0, x1, y1)` with
 `x0 ≤ x1` and `y0 ≤ y1`. `what` names the statement and `cost` what a
@@ -4698,6 +4719,20 @@ def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
     prev := ev
   return prev
 
+/-- Every label resolved from the source fits the picture's reserved
+extent under the resolving context's metric. Explicit bounding boxes are
+authoritative; node borders need not enclose text when the author changes
+text dimensions or uses negative padding. The shared IR hull, projected
+through the actual producer, covers all alignments, sizes and placements. -/
+theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
+    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
+    (hs : Ir.Pic.Shape.label x y content color scale align ∈ (evalFixed cx sts).shapes)
+    (hd : (evalFixed cx sts).declared = none) :
+    Ir.Pic.Box.le (Ir.Pic.labelTextBox x y align (cx.metric content scale))
+      (((evalFixed cx sts).toPicture baseline).box cx.metric) :=
+  Ev.labelExtent_covers _ _ _ _ _ _ _ _ _ hs hd
+
 /-- A document macro as the picture walk uses it: how many arguments it
 takes, and its body's tokens. -/
 structure Macro where
@@ -5191,8 +5226,7 @@ or node; the option is dropped")
     unless seen.contains d.2 do
       seen := seen.push d.2
       out := out.push d
-  return ({ shapes := ev.shapes, declared := ev.declared, borders := ev.borders
-            baseline := baseline }, out)
+  return (ev.toPicture baseline, out)
 
 /-- The stand-in for a picture whose every construct was refused: one
 outlined box carrying the diagnostic code, following the image precedent
