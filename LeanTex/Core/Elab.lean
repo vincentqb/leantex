@@ -824,7 +824,8 @@ private def warnOnceKey (key : String) : Option Diag.Output → String
   | some .pdf => key ++ "\npdf"
   | some .html => key ++ "\nhtml"
 
-private def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+/-- Record one loss site. Repetition changes presentation, never accounting. -/
+def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) : ESt :=
@@ -842,6 +843,34 @@ theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (
     (warnOnceState ctx key code msg pos help demote st trigger recovery output).diags =
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
         (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output) := rfl
+
+/-- Each call adds exactly one site to its own loss group and none to any
+other group. The law ranges over the actual reporting operation, not over
+repeated source text: declarations and stateful bodies need not execute the
+same sites twice. Output scope, code and subject are the census identity;
+message wording, location, help and demotion cannot change the count. -/
+theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) (d : Diag)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    ((warnOnceState ctx key code msg pos help demote st trigger recovery output).diags.filter
+      (Diag.sameLoss d)).size =
+      (st.diags.filter (Diag.sameLoss d)).size +
+        if d.kind = code ∧ d.output = output ∧ d.subject = some key then 1 else 0 := by
+  have hid (first : Bool) :
+      Diag.sameLoss d (warnOnceDiag ctx key code msg pos help demote first
+        trigger recovery output) =
+        decide (d.kind = code ∧ d.output = output ∧ d.subject = some key) := by
+    unfold warnOnceDiag diagOf Diag.of Diag.demote
+    dsimp only
+    split <;> simp only [Diag.sameLoss]
+    all_goals
+      by_cases hs : d.subject = some key
+      · simp [hs]
+      · simp [hs]
+  rw [warnOnceState_diags_exact ctx key code msg pos help demote st trigger recovery output,
+    Array.filter_push, hid]
+  split <;> simp_all
 
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false)
