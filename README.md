@@ -3,6 +3,23 @@
 leantex compiles a LaTeX-shaped `.tex` document straight to PDF 2.0 or HTML
 in one fast run — no TeX installation, no preamble, no aux-file reruns.
 
+## Implementation and proof boundary
+
+The parser, document model, layout, PDF writer, palette derivation, and
+regression harness are written in Lean 4. There are deliberate external
+execution boundaries: HTML slide navigation
+runs emitted JavaScript; additional syntax lexers run through a bounded Python
+bridge to installed Pygments; SVG conversion and optional TeX picture fallback
+use external tools. Lean checks Pygments replies against the complete source
+before accepting classifications; this proves source preservation, not that a
+provider chose the right syntax class.
+
+The repository also has an offline Python generator for the invented test
+font and a shell entry point for Git's Lean pre-commit gate. Lean's kernel
+checks the stated theorems. Browser behavior, external tools, and agreement
+between the model and rendered pages also need artifact tests; writing code
+in Lean alone does not establish those properties.
+
 ## Quick start
 
 Prerequisite on macOS: the Xcode Command Line Tools, for the linker
@@ -233,8 +250,9 @@ lake env lean --run scripts/palette.lean sample 192A3D FFFFFF C45B77
 
 The output is ordinary `\definecolor` declarations for both LeanTeX and
 LuaLaTeX. The three seeds stay unchanged. Muted text, subdued diagram edges
-and decorative fills follow the ink/paper Oklab segment; accent text gets
-separate light- and dark-ground roles. Generation checks normal text at
+and neutral panels follow the ink/paper Oklab segment; accent fills follow
+the accent/paper segment. Accent text gets separate light- and dark-ground
+roles. Generation checks normal text at
 4.5:1 and essential graphics at 3:1 in the engine's fixed-point contrast
 metric, against every declared adjacent ground,
 including panels and progress tracks. It refuses a family whose generated
