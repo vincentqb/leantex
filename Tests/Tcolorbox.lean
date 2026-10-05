@@ -336,17 +336,21 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 instantiated at use, including a default and a macro defined later. -/
 def sourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
+  let later := "\\newcommand{\\later}[1]{#1}"
   let source := "\\documentclass{beamer}\\theme{default}" ++
     "\\newtcolorbox{panel}[2][Default]{title={\\later{#1}: #2},fontupper=\\small\\bfseries}" ++
-    "\\newcommand{\\later}[1]{#1}" ++
+    later ++
     "\\begin{document}\\begin{frame}[t]{}" ++
     "\\begin{panel}{First}FirstBody\\end{panel}" ++
     "\\begin{panel}[Chosen]{Second}SecondBody\\end{panel}" ++
     "\\end{frame}\\end{document}"
   let (actual, ds) := elabStr source
+  -- Keep the helper's native style identity in the control, including
+  -- its PDF run boundaries and typed HTML spans.
   let expected := nativeDoc
-    ("\\begin{block}{Default: First}{\\small\\bfseries FirstBody}\\end{block}" ++
-     "\\begin{block}{Chosen: Second}{\\small\\bfseries SecondBody}\\end{block}")
+    (later ++
+     "\\begin{block}{\\later{Default}: First}{\\small\\bfseries FirstBody}\\end{block}" ++
+     "\\begin{block}{\\later{Chosen}: Second}{\\small\\bfseries SecondBody}\\end{block}")
   t "tcolorbox source: argument-bound native blocks match both artifacts"
     (samePages fonts actual expected)
   let lines := (bodyLines (layoutOf fonts actual)).map lineText
