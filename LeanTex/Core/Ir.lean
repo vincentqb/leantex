@@ -5,6 +5,7 @@ import LeanTex.Core.Image
 import LeanTex.Core.Math
 import LeanTex.Core.LocaleContract
 import LeanTex.Core.ListingHighlight
+import LeanTex.Core.Loop
 import Std.Data.HashMap
 
 namespace LeanTex.Core.Ir
@@ -8036,9 +8037,9 @@ recoveries this replaced shipped the source itself, markup and all.
 
 What this does *not* say, since the distinction matters: it is an upper
 bound. It rules out invention and markup, and it holds for any `floorMask`
-whatever — including one that dropped everything. The lower bound is owed,
-not implied: `floorChars_id` states it and is staged, because it has to read
-the index loop and this one does not. The executable half meanwhile is the
+whatever — including one that dropped everything. The lower bound is
+`floorChars_id`, which reads the index loops to establish the converse
+for literal content. The executable half meanwhile is the
 whole-string rows in `recoveryChecks`, which fail under both an
 all-dropping and an all-keeping mask. -/
 theorem floorChars_mem (src : String) :
@@ -8058,6 +8059,111 @@ theorem floorChars_mem (src : String) :
   · simp only [Bool.not_eq_true] at hk
     simp only [hk] at hq
     simp at hq
+
+/-- A `filterMap` that keeps every element is the projection it keeps. -/
+private theorem filterMap_eq_map_fst {α β : Type} (l : List (α × β)) (g : α × β → Option α)
+    (hg : ∀ p ∈ l, g p = some p.1) : l.filterMap g = l.map Prod.fst := by
+  induction l with
+  | nil => simp
+  | cons p rest ih =>
+    rw [List.filterMap_cons, hg p (by simp), List.map_cons,
+      ih (fun q hq => hg q (by simp [hq]))]
+
+/-- **The mask of a markup-free source keeps every index.** Each of
+`floorMask`'s three loops preserves "the mask is still all-true": the
+naming-argument scan because no character is a backslash, so the branch
+that drops one is unreachable; the whitespace squeeze and the trailing trim
+because no character is whitespace — and the trim's own `survives` test
+supplies the bound that makes its character readable, so the invariant
+needs nothing about the descending cursor. -/
+theorem floorMask_id (src : String)
+    (h : ∀ c ∈ src.toList, c ≠ '\\' ∧ c ∉ markupChars ∧ c.isWhitespace = false) :
+    floorMask src = Array.replicate src.toList.length true := by
+  have hat : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ∈ src.toList := by
+    intro i hi
+    rw [List.getElem?_eq_getElem hi]
+    simp [List.getElem_mem]
+  have hws : ∀ i, i < src.toList.length →
+      (src.toList[i]?.getD ' ').isWhitespace = false :=
+    fun i hi => (h _ (hat i hi)).2.2
+  have hbs : ∀ i, i < src.toList.length → (src.toList[i]?.getD ' ') ≠ '\\' :=
+    fun i hi => (h _ (hat i hi)).1
+  have hrep : ∀ j, ((Array.replicate src.toList.length true)[j]?).getD false = true →
+      j < src.toList.length := by
+    intro j hj
+    simp only [Array.getElem?_replicate] at hj
+    split at hj
+    · assumption
+    · simp at hj
+  simp only [floorMask, List.size_toArray]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step1) ?rest
+  case step1 =>
+    intro i _ _ b hb
+    split
+    · exact hb
+    · rename_i hlt
+      split
+      · exact hb
+      · rename_i hne
+        exact absurd (by simpa using hne) (hbs b.2 (by omega))
+  case rest =>
+  intro b hb
+  rw [hb]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Bool) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Bool) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step2) ?rest2
+  case step2 =>
+    intro i _ hi c hc
+    split
+    · split
+      · rename_i hw; exact absurd hw (by simp [hws i hi])
+      · exact hc
+    · exact hc
+  case rest2 =>
+  intro c hc
+  rw [hc]
+  refine Loop.bind_eq_of_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _
+    (Loop.forIn_range_inv (fun (st : Array Bool × Nat) =>
+      st.1 = Array.replicate src.toList.length true) _ _ _ _ rfl ?step3) ?rest3
+  case step3 =>
+    intro i _ _ d hd
+    split
+    · exact hd
+    · split
+      · rename_i hsv
+        have hlt : d.2 - 1 < src.toList.length := hrep _ (by
+          simpa using (Bool.and_eq_true _ _ ▸ hsv : _ ∧ _).1)
+        split
+        · rename_i hw; exact absurd hw (by simp [hws _ hlt])
+        · exact hd
+      · exact hd
+  case rest3 =>
+  intro d hd
+  exact hd
+
+/-- A math source with no control sequence, no LaTeX punctuation and no
+whitespace salvages to exactly itself: the floor keeps content, it is not
+merely free to drop it. The membership bound alone permits an all-dropping mask;
+this identity rules that out on literal content. -/
+theorem floorChars_id (src : String)
+    (h : ∀ c ∈ src.toList,
+      c ≠ '\\' ∧ c ∉ markupChars ∧ c.isWhitespace = false) :
+    floorChars src = src.toList := by
+  simp only [floorChars, floorMask_id src h]
+  rw [filterMap_eq_map_fst]
+  · exact List.zipIdx_map_fst 0 src.toList
+  · intro p hp
+    have hmem : p.1 ∈ src.toList := by
+      have hm := List.mem_map_of_mem (f := Prod.fst) hp
+      rwa [List.zipIdx_map_fst] at hm
+    simp [Array.getElem?_replicate, (h _ hmem).2.1]
+    split <;> simp
+
 
 /-- The same fact over what actually reaches the page: every character a
 degraded formula inks is a character of its source or one of the declared
