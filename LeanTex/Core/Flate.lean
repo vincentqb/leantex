@@ -1,3 +1,7 @@
+import LeanTex.Core.Flate.BitPacking
+import LeanTex.Core.Flate.Canonical
+import LeanTex.Core.Flate.Progress
+
 namespace LeanTex.Core.Flate
 
 /-! # Flate: inflate and a stored-block deflate
@@ -36,12 +40,112 @@ private def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) := Id.run do
       r := r'
   return some (v.toNat, r)
 
+/-- A little-endian bit field in the actual input bytes. -/
+def BitField (data : ByteArray) (start width value : Nat) : Prop :=
+  start + width ≤ data.size * 8 ∧
+    ∀ k < width,
+      ((data[(start + k) / 8]?.getD 0).toNat >>> ((start + k) % 8)) &&& 1 =
+        (value >>> k) &&& 1
+
+/-- Reading a present field recovers its entire value and advances exactly its width.
+This invariant follows the existing early-return loop and its `UInt64` accumulator. -/
+theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
+    (hv : v < 2 ^ n) (hf : BitField r.data r.bitPos n v) :
+    r.bits n = some (v, { r with bitPos := r.bitPos + n }) := by
+  have hb (k : Nat) (hk : k < n) :
+      ({r with bitPos := r.bitPos + k} : Br).bit =
+        some ((v >>> k) &&& 1, {r with bitPos := r.bitPos + (k + 1)}) := by
+    have hindex : (r.bitPos + k) / 8 < r.data.size := by
+      have := hf.1
+      omega
+    have heq := hf.2 k hk
+    simp only [getElem?_pos r.data ((r.bitPos + k) / 8) hindex, Option.getD_some] at heq
+    simp only [Br.bit, getElem?_pos r.data ((r.bitPos + k) / 8) hindex, heq, Nat.add_assoc]
+  let P (k : Nat) (s : Option (Option (Nat × Br)) × Br × UInt64) : Prop :=
+    s = (none, {r with bitPos := r.bitPos + k}, (v % 2 ^ k).toUInt64)
+  unfold Br.bits
+  simp only [Id.run, bind, pure]
+  generalize hres : (forIn [0:n] (none, r, (0 : UInt64)) _ :
+    Id (Option (Option (Nat × Br)) × Br × UInt64)) = result
+  have hloop : P n result := by
+    rw [← hres]
+    apply Progress.forIn_range_exact P (P n) _ 0 n _ (Nat.zero_le _)
+      (by simp [P, Nat.mod_one]) _ (fun _ h => h)
+    intro k _ hk s hs
+    dsimp only [P] at hs
+    subst s
+    rw [hb k hk]
+    change (none, {r with bitPos := r.bitPos + (k + 1)},
+      (v % 2 ^ k).toUInt64 ||| (((v >>> k) &&& 1).toUInt64 <<< k.toUInt64)) = _
+    congr 2
+    apply UInt64.toNat_inj.mp
+    rw [BitPacking.appendBit_exact v k (by omega)]
+    simp only [Nat.toUInt64, UInt64.toNat_ofNat']
+    exact (Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le
+      (Nat.mod_lt v (Nat.two_pow_pos (k + 1)))
+      (Nat.pow_le_pow_right (by decide) (show k + 1 ≤ 64 by omega)))).symm
+  dsimp only [P] at hloop
+  rw [hloop]
+  simp only [Nat.mod_eq_of_lt hv, Nat.toUInt64, UInt64.toNat_ofNat']
+  rw [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le hv
+    (Nat.pow_le_pow_right (by decide) (Nat.le_of_lt hn)))]
+
+
 /-- A canonical Huffman table: `counts[len]` codes of each length, and the
 symbols in canonical order. The construction never fails; an over-subscribed
 set of lengths simply fails to decode, which the caller reports. -/
 private structure Huff where
   counts : Array Nat
   symbols : Array Nat
+
+/-- Exact width buckets: zero and widths above the RFC's 15-bit limit do
+not contribute to the table, including its unused zero-width bucket. -/
+def CountsFor (lengths : List Nat) (counts : Array Nat) : Prop :=
+  counts.size = 16 ∧ ∀ k, counts[k]?.getD 0 =
+    if 0 < k ∧ k < 16 then lengths.count k else 0
+
+/-- The shared counting loop in both Huffman table builders counts precisely
+the widths it has consumed. -/
+theorem huffCounts_loop_exact (lengths : Array Nat) :
+    CountsFor lengths.toList (Id.run do
+      let mut counts := Array.replicate 16 0
+      for l in lengths do
+        if l > 0 && l < 16 then
+          counts := counts.set! l (counts[l]?.getD 0 + 1)
+      return counts) := by
+  simp only [Id.run, bind, pure]
+  apply Progress.forIn_array_exact CountsFor (CountsFor lengths.toList) _ lengths _
+  · constructor
+    · simp
+    · intro k
+      by_cases hk : k < 16 <;> simp [hk]
+  · intro before l _ _ counts hc
+    simp only [Id.run, Bool.and_eq_true, decide_eq_true_eq]
+    by_cases hl : 0 < l ∧ l < 16
+    · simp only [hl]
+      change CountsFor (before ++ [l]) (counts.set! l (counts[l]?.getD 0 + 1))
+      refine ⟨by simpa only [Array.size_set!] using hc.1, ?_⟩
+      intro k
+      rw [Array.set!_eq_setIfInBounds, Array.getElem?_setIfInBounds]
+      by_cases he : l = k
+      · subst k
+        have hi : l < counts.size := by have := hc.1; omega
+        simp only [ite_true, hi, Option.getD_some]
+        rw [hc.2 l]
+        simp [hl]
+      · simp only [he, ite_false, hc.2 k, List.count_append,
+          List.count_singleton, beq_iff_eq, Nat.add_zero]
+    · simp only [hl, ite_false]
+      change CountsFor (before ++ [l]) counts
+      refine ⟨hc.1, ?_⟩
+      intro k
+      rw [hc.2 k, List.count_append, List.count_singleton]
+      by_cases hk : 0 < k ∧ k < 16
+      · have he : l ≠ k := by rintro rfl; exact hl hk
+        simp only [hk, beq_iff_eq, he, ite_false, Nat.add_zero]
+      · simp only [hk, ite_false]
+  · intro counts hc
+    exact hc
 
 private def mkHuff (lengths : Array Nat) : Huff := Id.run do
   let mut counts : Array Nat := Array.replicate 16 0
@@ -54,6 +158,12 @@ private def mkHuff (lengths : Array Nat) : Huff := Id.run do
       if lengths[s]! == len then
         symbols := symbols.push s
   return { counts, symbols }
+
+/-- The decoder's actual table contains exactly the declared width counts. -/
+theorem mkHuff_counts_exact (lengths : Array Nat) :
+    CountsFor lengths.toList (mkHuff lengths).counts := by
+  simpa only [mkHuff, Id.run, bind, pure, Array.getElem!_eq_getD,
+    Array.getD_eq_getD_getElem?, Nat.default_eq_zero] using huffCounts_loop_exact lengths
 
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
 private def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do
@@ -73,6 +183,101 @@ private def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do
       index := index + count
       first := (first + count) * 2
   return none
+
+/-- A codeword's most-significant-first bits in the actual byte stream. -/
+def CodeField (data : ByteArray) (start width code : Nat) : Prop :=
+  start + width ≤ data.size * 8 ∧
+    ∀ k < width,
+      ((data[(start + k) / 8]?.getD 0).toNat >>> ((start + k) % 8)) &&& 1 =
+        code / 2 ^ (width - 1 - k) % 2
+
+/-- The actual bounded Huffman decoder recognizes every code in its canonical
+interval. Earlier lengths cannot consume a prefix of that code. -/
+theorem huff_decode_exact (h : Huff) (r : Br) (width code : Nat)
+    (hw : 1 ≤ width ∧ width ≤ 15) (hcode : code < 2 ^ width)
+    (hf : CodeField r.data r.bitPos width code)
+    (hlo : Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) ≤ code)
+    (hhi : code <
+      Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) +
+        h.counts[width]?.getD 0) :
+    h.decode r = some
+      (h.symbols[Canonical.index (fun k => h.counts[k]?.getD 0) (width - 1) +
+        (code - Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1))]?.getD 0,
+        {r with bitPos := r.bitPos + width}) := by
+  let count := fun (k : Nat) => h.counts[k]?.getD 0
+  let answer := some
+    (h.symbols[Canonical.index count (width - 1) +
+      (code - Canonical.first count (width - 1))]?.getD 0,
+      {r with bitPos := r.bitPos + width})
+  let P (k : Nat) (s : Option (Option (Nat × Br)) × Nat × Nat × Nat × Br) : Prop :=
+    k ≤ width ∧ s = (none, code / 2 ^ (width + 1 - k),
+      Canonical.first count (k - 1), Canonical.index count (k - 1),
+      {r with bitPos := r.bitPos + (k - 1)})
+  let Q (s : Option (Option (Nat × Br)) × Nat × Nat × Nat × Br) : Prop :=
+    s.1 = some answer
+  have hb (k : Nat) (hk : 1 ≤ k) (hkw : k ≤ width) :
+      ({r with bitPos := r.bitPos + (k - 1)} : Br).bit =
+        some (code / 2 ^ (width - k) % 2,
+          {r with bitPos := r.bitPos + k}) := by
+    have hindex : (r.bitPos + (k - 1)) / 8 < r.data.size := by
+      have := hf.1
+      omega
+    have heq := hf.2 (k - 1) (by omega)
+    have he1 : width - 1 - (k - 1) = width - k := by omega
+    have he2 : r.bitPos + (k - 1) + 1 = r.bitPos + k := by omega
+    simp only [getElem?_pos r.data ((r.bitPos + (k - 1)) / 8) hindex,
+      Option.getD_some, he1] at heq
+    simp only [Br.bit, getElem?_pos r.data ((r.bitPos + (k - 1)) / 8) hindex,
+      heq, he2]
+  unfold Huff.decode
+  simp only [Id.run, bind, pure]
+  generalize hres : (forIn [1:16] (none, 0, 0, 0, r) _ :
+    Id (Option (Option (Nat × Br)) × Nat × Nat × Nat × Br)) = result
+  have hloop : Q result := by
+    rw [← hres]
+    apply Progress.forIn_range_exact P Q _ 1 16 _ (by decide) ?_ ?_ ?_
+    · simp [P, Canonical.first, Canonical.index, Nat.div_eq_of_lt hcode, hw.1]
+    · intro k hk _ s hs
+      obtain ⟨hkw, hs⟩ := hs
+      subst s
+      rw [hb k hk hkw]
+      dsimp only
+      have he : width + 1 - k = (width - k) + 1 := by omega
+      rw [he, Canonical.readBit_prefix_exact]
+      by_cases hlast : k = width
+      · subst k
+        simp only [Nat.sub_self, Nat.pow_zero, Nat.div_one]
+        have hhi' : code <
+            Canonical.first count (width - 1) + h.counts[width]?.getD 0 := hhi
+        simp only [hhi', ite_true, Id.run, Q, answer]
+      · have hskip := Canonical.first_prefix_between count width k code hk (by omega) hlo
+        have hskip' : ¬ code / 2 ^ (width - k) <
+            Canonical.first count (k - 1) + h.counts[k]?.getD 0 := Nat.not_lt.mpr hskip
+        simp only [hskip', ite_false]
+        change k + 1 ≤ width ∧
+          (none, code / 2 ^ (width - k),
+            (Canonical.first count (k - 1) + count k) * 2,
+            Canonical.index count (k - 1) + count k,
+            {r with bitPos := r.bitPos + k}) = _
+        refine ⟨by omega, ?_⟩
+        have hk1 : k - 1 + 1 = k := by omega
+        have hw1 : width + 1 - (k + 1) = width - k := by omega
+        have hfirst : Canonical.first count k =
+            (Canonical.first count (k - 1) + count k) * 2 := by
+          simpa only [hk1] using
+            (show Canonical.first count (k - 1 + 1) =
+              (Canonical.first count (k - 1) + count (k - 1 + 1)) * 2 from rfl)
+        have hindex : Canonical.index count k =
+            Canonical.index count (k - 1) + count k := by
+          simpa only [hk1] using
+            (show Canonical.index count (k - 1 + 1) =
+              Canonical.index count (k - 1) + count (k - 1 + 1) from rfl)
+        simp only [hw1, Nat.add_sub_cancel_right, hfirst, hindex]
+    · intro s hs
+      have := hs.1
+      omega
+  change result.1 = some answer at hloop
+  rw [hloop]
 
 private def lenBase : Array Nat :=
   #[3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
@@ -324,6 +529,125 @@ private def Bw.push (w : Bw) (v n : Nat) : Bw := w.pushU v.toUInt64 n.toUInt64
 private def Bw.flush (w : Bw) : ByteArray :=
   if w.nbits == 0 then w.out else w.out.push w.bits.toUInt8
 
+/-- The writer has fewer than one byte pending and no set bits above it. -/
+def Bw.Valid (w : Bw) : Prop :=
+  w.nbits.toNat < 8 ∧ w.bits.toNat < 2 ^ w.nbits.toNat
+
+theorem pushU_payload_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) :
+    (w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)).toNat =
+      w.bits.toNat + v.toNat % 2 ^ n.toNat * 2 ^ w.nbits.toNat := by
+  have hn64 : n.toNat < 64 := by omega
+  have hmask : (v &&& ((1 <<< n) - 1)).toNat = v.toNat % 2 ^ n.toNat := by
+    simpa only [Nat.toUInt64, UInt64.ofNat_toNat] using
+      BitPacking.takeBits_exact v n.toNat hn64
+  have hhi : (v &&& ((1 <<< n) - 1)).toNat < 2 ^ (64 - w.nbits.toNat) := by
+    rw [hmask]
+    exact Nat.lt_of_lt_of_le (Nat.mod_lt _ (Nat.two_pow_pos _))
+      (Nat.pow_le_pow_right (by decide) (by have := hw.1; omega))
+  have hp := BitPacking.packBits_exact
+    (v &&& ((1 <<< n) - 1)).toNat w.bits.toNat w.nbits.toNat
+    (by have := hw.1; omega) hw.2 hhi
+  simp only [Nat.toUInt64, UInt64.ofNat_toNat] at hp
+  rw [hmask] at hp
+  simpa only [UInt64.or_comm, Nat.add_comm] using hp
+
+theorem pushU_payload_between (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) :
+    (w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)).toNat <
+      2 ^ (w.nbits.toNat + n.toNat) := by
+  rw [pushU_payload_exact w v n hw hn, Nat.add_comm, Nat.pow_add]
+  have hm := Nat.mod_lt v.toNat (Nat.two_pow_pos n.toNat)
+  calc
+    v.toNat % 2 ^ n.toNat * 2 ^ w.nbits.toNat + w.bits.toNat
+      < v.toNat % 2 ^ n.toNat * 2 ^ w.nbits.toNat + 2 ^ w.nbits.toNat :=
+        Nat.add_lt_add_left hw.2 _
+    _ = (v.toNat % 2 ^ n.toNat + 1) * 2 ^ w.nbits.toNat := by
+      rw [Nat.add_mul, Nat.one_mul]
+    _ ≤ 2 ^ n.toNat * 2 ^ w.nbits.toNat := Nat.mul_le_mul_right _ hm
+    _ = _ := Nat.mul_comm _ _
+
+
+/-- Draining the packed payload emits exactly its complete bytes and retains
+exactly its high, incomplete byte. No runtime arithmetic wraps. -/
+theorem pushU_pending_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) :
+    let total := w.nbits.toNat + n.toNat
+    let payload := w.bits.toNat + v.toNat % 2 ^ n.toNat * 2 ^ w.nbits.toNat
+    (w.pushU v n).nbits.toNat = total % 8 ∧
+      (w.pushU v n).bits.toNat = payload / 2 ^ (total / 8 * 8) ∧
+      (w.pushU v n).out.size = w.out.size + total / 8 := by
+  have hw8 := hw.1
+  have hsum : (w.nbits + n).toNat = w.nbits.toNat + n.toNat := by
+    rw [UInt64.toNat_add, Nat.mod_eq_of_lt (by omega)]
+  have hp := pushU_payload_exact w v n hw hn
+  dsimp only
+  unfold Bw.pushU
+  dsimp only
+  split
+  · rename_i h16
+    have ht : 16 ≤ w.nbits.toNat + n.toNat := by
+      simpa [UInt64.le_iff_toNat_le, hsum] using h16
+    have hd : (w.nbits.toNat + n.toNat) / 8 = 2 := by omega
+    simp only [UInt64.toNat_sub_of_le _ _ h16, hsum, UInt64.toNat_shiftRight,
+      Nat.shiftRight_eq_div_pow, hp, ByteArray.size_push, hd, UInt64.toNat_ofNat,
+      Nat.reducePow, Nat.reduceMod, Nat.reduceMul]
+    constructor
+    · omega
+    · constructor
+      · trivial
+      · trivial
+  · rename_i h16
+    have ht : w.nbits.toNat + n.toNat < 16 := by
+      simp [UInt64.le_iff_toNat_le, hsum] at h16
+      omega
+    split
+    · rename_i h8
+      have ht8 : 8 ≤ w.nbits.toNat + n.toNat := by
+        simpa [UInt64.le_iff_toNat_le, hsum] using h8
+      have hd : (w.nbits.toNat + n.toNat) / 8 = 1 := by omega
+      simp only [UInt64.toNat_sub_of_le _ _ h8, hsum, UInt64.toNat_shiftRight,
+        Nat.shiftRight_eq_div_pow, hp, ByteArray.size_push, hd, UInt64.toNat_ofNat,
+      Nat.reducePow, Nat.reduceMod, Nat.reduceMul]
+      constructor
+      · omega
+      · exact ⟨trivial, trivial⟩
+    · rename_i h8
+      have ht8 : w.nbits.toNat + n.toNat < 8 := by
+        simp [UInt64.le_iff_toNat_le, hsum] at h8
+        omega
+      simp only [hsum, hp, Nat.div_eq_of_lt ht8, Nat.mod_eq_of_lt ht8,
+        Nat.zero_mul, Nat.pow_zero, Nat.div_one, Nat.add_zero, and_self]
+
+
+/-- The pending-bit invariant is preserved by every supported writer push. -/
+theorem pushU_valid (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) : (w.pushU v n).Valid := by
+  have hp := pushU_pending_exact w v n hw hn
+  have hb := pushU_payload_between w v n hw hn
+  rw [pushU_payload_exact w v n hw hn] at hb
+  unfold Bw.Valid
+  constructor
+  · rw [hp.1]
+    exact Nat.mod_lt _ (by decide)
+  · rw [hp.1, hp.2.1]
+    apply (Nat.div_lt_iff_lt_mul (Nat.two_pow_pos _)).2
+    rw [← Nat.pow_add]
+    have he : (w.nbits.toNat + n.toNat) % 8 +
+        (w.nbits.toNat + n.toNat) / 8 * 8 = w.nbits.toNat + n.toNat := by omega
+    rw [he]
+    exact hb
+
+/-- A push advances the bit position by exactly its field width. -/
+theorem pushU_position_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) :
+    8 * (w.pushU v n).out.size + (w.pushU v n).nbits.toNat =
+      8 * w.out.size + w.nbits.toNat + n.toNat := by
+  have hp := pushU_pending_exact w v n hw hn
+  rw [hp.1, hp.2.2]
+  omega
+
+
 /-- Optimal length-limited Huffman code lengths by boundary package-merge
 (Larmore & Hirschberg 1990): lengths ≤ `limit`, zero for a symbol never
 seen, and a single-symbol alphabet gets the one-bit code RFC 1951 §3.2.7
@@ -412,6 +736,34 @@ private def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
       codes := codes.set! s rev
   return codes
 
+/-- The bit-reversal loop used by `canonCodes` has exactly the declared bit order.
+The invariant records both the reversed prefix and the unconsumed code suffix. -/
+theorem canonCodes_reverseBits_exact (code width : Nat) :
+    (Id.run do
+      let mut rev := 0
+      let mut v := code
+      for _ in [0:width] do
+        rev := rev * 2 + v % 2
+        v := v / 2
+      return rev) = Canonical.reverseBits code width := by
+  let P (k : Nat) (s : Nat × Nat) : Prop :=
+    s = (Canonical.reverseBits code k, code / 2 ^ k)
+  simp only [Id.run, bind, pure]
+  generalize hres : (forIn [0:width] (0, code) _ : Id (Nat × Nat)) = result
+  have hloop : P width result := by
+    rw [← hres]
+    apply Progress.forIn_range_exact P (P width) _ 0 width _ (Nat.zero_le _)
+      (by simp [P, Canonical.reverseBits]) _ (fun _ h => h)
+    intro k _ _ s hs
+    dsimp only [P] at hs
+    subst s
+    change (Canonical.reverseBits code k * 2 + code / 2 ^ k % 2,
+      code / 2 ^ k / 2) = _
+    rw [Nat.div_div_eq_div_mul, ← Nat.pow_succ]
+    rfl
+  dsimp only [P] at hloop
+  rw [hloop]
+
 /-- Largest length code whose base is ≤ `len` — code 285 alone covers 258
 (RFC 1951 §3.2.5's table). -/
 private def lenSymOf (len : Nat) : Nat := Id.run do
@@ -440,6 +792,46 @@ private def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf 
 and `dist-1` packed beside it. -/
 private def matchToken (len dist : Nat) : UInt32 :=
   (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
+
+/-- Match payload and tag occupy disjoint bits throughout the RFC range. -/
+theorem matchToken_toNat (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
+    (hd : 1 ≤ dist ∧ dist ≤ 32768) :
+    (matchToken len dist).toNat = 2147483648 + (len - 3) * 32768 + (dist - 1) := by
+  have hlow31 : (len - 3) * 32768 + (dist - 1) < 2 ^ 31 := by omega
+  have hl32 : len - 3 < 2 ^ 32 := by omega
+  have hd32 : dist - 1 < 2 ^ 32 := by omega
+  have hs32 : (len - 3) * 32768 < 2 ^ 32 := by clear hlow31; omega
+  have hd15 : dist - 1 < 2 ^ 15 := by omega
+  simp only [matchToken, UInt32.toNat_or, UInt32.toNat_shiftLeft, Nat.toUInt32,
+    UInt32.toNat_ofNat', UInt32.reduceToNat, Nat.reduceMod,
+    Nat.mod_eq_of_lt hl32, Nat.mod_eq_of_lt hd32, Nat.shiftLeft_eq,
+    Nat.reducePow, Nat.mod_eq_of_lt hs32]
+  rw [Nat.or_assoc]
+  have hlo : ((len - 3) * 32768 ||| (dist - 1)) =
+      (len - 3) * 32768 + (dist - 1) := by
+    simpa only [Nat.shiftLeft_eq, Nat.reducePow] using
+      BitPacking.or_shift_exact (len - 3) (dist - 1) 15 hd15
+  rw [hlo, Nat.or_comm]
+  change _ ||| 2 ^ 31 = _
+  rw [Nat.or_two_pow_eq_add_of_lt hlow31]
+  simp only [Nat.reducePow, Nat.add_assoc, Nat.add_comm]
+
+/-- The actual scalar token reader recovers both fields without truncation. -/
+theorem matchToken_fields_exact (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
+    (hd : 1 ≤ dist ∧ dist ≤ 32768) :
+    (((matchToken len dist >>> 15) &&& 255).toNat + 3 = len) ∧
+      ((matchToken len dist &&& 32767).toNat + 1 = dist) ∧
+      256 ≤ (matchToken len dist).toNat := by
+  simp only [UInt32.toNat_and, UInt32.toNat_shiftRight, UInt32.reduceToNat,
+    Nat.reduceMod, matchToken_toNat len dist hl hd, Nat.shiftRight_eq_div_pow,
+    Nat.reducePow]
+  have mask8 (x : Nat) : x &&& 255 = x % 256 :=
+    Nat.and_two_pow_sub_one_eq_mod x 8
+  have mask15 (x : Nat) : x &&& 32767 = x % 32768 :=
+    Nat.and_two_pow_sub_one_eq_mod x 15
+  rw [mask8, mask15]
+  omega
+
 
 /-- A match token read back: its length, its distance, and the distance
 code that distance selects — the inverse of `matchToken`'s packing, spelled
@@ -475,6 +867,41 @@ private def matchLen (raw : ByteArray) (c i : Nat) (hci : c < i) : Nat → Nat �
       if raw[c + l]'(by omega) == raw[i + l] then matchLen raw c i hci fuel (l + 1) else l
     else l
 
+theorem matchLen_between (raw : ByteArray) (c i : Nat) (hci : c < i)
+    (fuel l : Nat) (hl : l ≤ raw.size - i) :
+    l ≤ matchLen raw c i hci fuel l ∧
+      matchLen raw c i hci fuel l ≤ min (l + fuel) (raw.size - i) := by
+  induction fuel generalizing l with
+  | zero => simp [matchLen, hl]
+  | succ fuel ih =>
+    rw [matchLen]
+    split
+    · split
+      · have hm := ih (l + 1) (by omega)
+        simp only [Nat.le_min] at hm ⊢
+        omega
+      · simp [Nat.le_min, hl]
+    · simp [Nat.le_min, hl]
+
+theorem matchLen_agree (raw : ByteArray) (c i : Nat) (hci : c < i)
+    (fuel l k : Nat) (hlo : l ≤ k) (hhi : k < matchLen raw c i hci fuel l) :
+    raw[c + k]? = raw[i + k]? := by
+  induction fuel generalizing l with
+  | zero => simp only [matchLen] at hhi; omega
+  | succ fuel ih =>
+    rw [matchLen] at hhi
+    split at hhi
+    · rename_i hin
+      split at hhi
+      · rename_i heq
+        by_cases hkl : k = l
+        · subst k
+          simpa [getElem?_pos, hin, show c + l < raw.size by omega] using
+            congrArg some (beq_iff_eq.mp heq)
+        · exact ih (l + 1) (by omega) hhi
+      · omega
+    · omega
+
 /-- The hash tables as one array: `head` in the first `mask + 1` slots,
 the `prev` ring in the next — one value threads the walk, no pair to
 allocate per step. -/
@@ -483,6 +910,11 @@ private def prevSlot (mask c : Nat) : Nat := mask + 1 + (c &&& mask)
 /-- A match packed for return: `len <<< 16 ||| dist`, a scalar. -/
 private def packMatch (len dist : Nat) : UInt64 :=
   (len.toUInt64 <<< 16) ||| dist.toUInt64
+
+theorem packMatch_exact (len dist : Nat) (hl : len < 2 ^ 48) (hd : dist < 65536) :
+    (packMatch len dist >>> 16).toNat = len ∧
+      (packMatch len dist &&& 65535).toNat = dist := by
+  exact BitPacking.unpackBits_exact len dist 16 (by decide) hd hl
 
 /-- Walk the hash chain for the best match at `i`: candidates verified
 byte-wise (a stale ring entry can only cost a candidate, never
@@ -505,6 +937,68 @@ private def bestMatch (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat) :
           else bestMatch raw tab mask i limit fuel next best bestDist
         else bestMatch raw tab mask i limit fuel next best bestDist
     else packMatch best bestDist
+
+/-- A verified source match. Zero length is the initial search result; every
+positive result stays within the input and the RFC 1951 distance window. -/
+def Backref (raw : ByteArray) (i len dist : Nat) : Prop :=
+  dist ≤ 32768 ∧
+    (len = 0 ∨
+      (0 < dist ∧ dist ≤ i ∧ i + len ≤ raw.size ∧
+        ∀ k < len, raw[i - dist + k]? = raw[i + k]?))
+
+private theorem bestMatch_run (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat)
+    (fuel c best dist : Nat) (hbest : best ≤ limit)
+    (hmatch : Backref raw i best dist) :
+    ∃ len d, bestMatch raw tab mask i limit fuel c best dist = packMatch len d ∧
+      best ≤ len ∧ len ≤ limit ∧ Backref raw i len d := by
+  induction fuel generalizing c best dist with
+  | zero =>
+    exact ⟨best, dist, rfl, Nat.le_refl _, hbest, hmatch⟩
+  | succ fuel ih =>
+    rw [bestMatch]
+    split
+    · rename_i hci
+      split
+      · exact ⟨best, dist, rfl, Nat.le_refl _, hbest, hmatch⟩
+      · rename_i hgo
+        dsimp only
+        generalize hlonger : (if h : i + best < raw.size then
+          raw[c + best]'(by omega) == raw[i + best] else false) = longer
+        split
+        · split
+          · rename_i hlong
+            have hm := matchLen_between raw c i hci limit 0 (Nat.zero_le _)
+            simp only [Nat.zero_add, Nat.le_min] at hm
+            have href : Backref raw i (matchLen raw c i hci limit 0) (i - c) := by
+              refine ⟨?_, Or.inr ⟨by omega, by omega, by omega, ?_⟩⟩
+              · simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, not_or] at hgo
+                omega
+              · intro k hk
+                rw [Nat.sub_sub_self (Nat.le_of_lt hci)]
+                exact matchLen_agree raw c i hci limit 0 k (Nat.zero_le _) hk
+            obtain ⟨len, d, heq, hlo, hhi, hd⟩ :=
+              ih _ _ _ hm.2.1 href
+            exact ⟨len, d, heq, by omega, hhi, hd⟩
+          · exact ih _ _ _ hbest hmatch
+        · exact ih _ _ _ hbest hmatch
+    · exact ⟨best, dist, rfl, Nat.le_refl _, hbest, hmatch⟩
+
+/-- Hash contents only choose candidates; each returned byte has been compared
+to the input. The field-width premise prevents scalar result truncation. -/
+theorem bestMatch_covers (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat)
+    (hlimit : limit < 2 ^ 48) (fuel c best dist : Nat) (hbest : best ≤ limit)
+    (hmatch : Backref raw i best dist) :
+    let m := bestMatch raw tab mask i limit fuel c best dist
+    best ≤ (m >>> 16).toNat ∧ (m >>> 16).toNat ≤ limit ∧
+      Backref raw i (m >>> 16).toNat (m &&& 65535).toNat := by
+  obtain ⟨len, d, heq, hlo, hhi, hd⟩ :=
+    bestMatch_run raw tab mask i limit fuel c best dist hbest hmatch
+  dsimp only
+  rw [heq]
+  have hp := packMatch_exact len d (by omega) (by have := hd.1; omega)
+  rw [hp.1, hp.2]
+  exact ⟨hlo, hhi, hd⟩
+
 
 /-- Enter positions `j, j+1, …` (`fuel` many) into the hash tables. -/
 private def insertHashes (raw : ByteArray) (mask : Nat) : Nat → Nat → Array Nat → Array Nat
@@ -551,6 +1045,52 @@ private def tokenize (raw : ByteArray) : Array UInt32 :=
   let n := raw.size
   let mask := if n ≥ 65536 then 32767 else 4095
   tokGo raw mask n 0 (Array.replicate (2 * (mask + 1)) n) #[]
+
+/-- The tokens spell exactly the indicated input interval. A match may overlap
+its own destination: the byte equality quantifies over every copied position. -/
+inductive TokensFor (raw : ByteArray) : Nat → Array UInt32 → Nat → Prop
+  | empty (i : Nat) (hi : i ≤ raw.size) : TokensFor raw i #[] i
+  | literal {start i : Nat} {tokens : Array UInt32}
+      (earlier : TokensFor raw start tokens i) (hi : i < raw.size) :
+      TokensFor raw start (tokens.push (raw[i]?.getD 0).toUInt32) (i + 1)
+  | backref {start i len dist : Nat} {tokens : Array UInt32}
+      (earlier : TokensFor raw start tokens i) (hlen : 3 ≤ len ∧ len ≤ 258)
+      (href : Backref raw i len dist) :
+      TokensFor raw start (tokens.push (matchToken len dist)) (i + len)
+
+private theorem tokGo_tokens (raw : ByteArray) (mask fuel start i : Nat)
+    (tab : Array Nat) (tokens : Array UInt32) (hi : i ≤ raw.size)
+    (hf : raw.size - i ≤ fuel) (hp : TokensFor raw start tokens i) :
+    TokensFor raw start (tokGo raw mask fuel i tab tokens) raw.size := by
+  induction fuel generalizing i tab tokens with
+  | zero =>
+    have heq : i = raw.size := by omega
+    simpa only [tokGo, heq] using hp
+  | succ fuel ih =>
+    rw [tokGo]
+    dsimp only
+    split
+    · have heq : i = raw.size := by omega
+      simpa only [heq] using hp
+    · rename_i hlt
+      split
+      · exact ih _ _ _ (by omega) (by omega) (.literal hp (by omega))
+      · have hm := bestMatch_covers raw tab mask i (min 258 (raw.size - i))
+          (by have := Nat.min_le_left 258 (raw.size - i); omega) 32 (tab[hash3 raw mask i]?.getD i) 0 0
+          (Nat.zero_le _) ⟨by decide, Or.inl rfl⟩
+        dsimp only at hm
+        split
+        · rename_i hmatch
+          have href := hm.2.2
+          have hpos := href.2.resolve_left (by omega)
+          exact ih _ _ _ (by omega) (by omega)
+            (.backref hp ⟨by omega, by have := hm.2.1; omega⟩ href)
+        · exact ih _ _ _ (by omega) (by omega) (.literal hp (by omega))
+
+/-- The hash-chain tokenizer spells every input byte, for any input size. -/
+theorem tokenize_covers (raw : ByteArray) : TokensFor raw 0 (tokenize raw) raw.size := by
+  exact tokGo_tokens raw _ raw.size 0 0 _ #[] (Nat.zero_le _) (by omega)
+    (.empty 0 (Nat.zero_le _))
 
 /-- The code-length sequence's run-length form (RFC 1951 §3.2.7): symbols
 0–18 with each one's extra-bits payload. -/
@@ -825,5 +1365,246 @@ def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
     .ok (unfilterAll raw pxH rowBytes bpp)
   else
     .error "corrupt PNG: a scanline filter type above 4"
+
+/-- A byte array is exactly the source prefix through `n`. -/
+def BytePrefix (raw : ByteArray) (n : Nat) (out : ByteArray) : Prop :=
+  out.size = n ∧ n ≤ raw.size ∧ ∀ k < n, out[k]? = raw[k]?
+
+theorem BytePrefix.push {raw out : ByteArray} {n : Nat} {b : UInt8}
+    (hp : BytePrefix raw n out) (hn : n < raw.size) (hb : some b = raw[n]?) :
+    BytePrefix raw (n + 1) (out.push b) := by
+  refine ⟨by simp [hp.1], by omega, ?_⟩
+  intro k hk
+  rw [getElem?_push, hp.1]
+  by_cases hkn : k < n
+  · rw [ite_eq_left hkn]
+    exact hp.2.2 k hkn
+  · have heq : k = n := by omega
+    subst k
+    rw [ite_eq_right (Nat.lt_irrefl _), ite_eq_left rfl]
+    exact hb
+
+/-- The inflater's actual overlapping-copy loop extends a verified prefix.
+The invariant advances with the loop index, so completion states its length. -/
+theorem backref_copy_exact (raw out : ByteArray) (i len dist : Nat)
+    (hp : BytePrefix raw i out) (href : Backref raw i len dist) :
+    let copied := Id.run do
+      let mut result := out
+      for _ in [0:len] do
+        result := result.push (result[result.size - dist]?.getD 0)
+      return result
+    BytePrefix raw (i + len) copied := by
+  change BytePrefix raw (i + len)
+    (forIn [0:len] out (fun _ result =>
+      pure (.yield (result.push (result[result.size - dist]?.getD 0)))) : Id ByteArray).run
+  apply Progress.forIn_range_exact (fun k result => BytePrefix raw (i + k) result)
+    (BytePrefix raw (i + len)) _ 0 len out (Nat.zero_le _)
+    (by simpa using hp) _ (fun _ h => h)
+  intro k _ hk result hresult
+  have hnonempty := href.2.resolve_left (by omega)
+  have hj : result.size - dist < i + k := by have := hresult.1; omega
+  have hrange : i + k < raw.size := by omega
+  have hsame : result.size - dist = i - dist + k := by have := hresult.1; omega
+  have hr : result[result.size - dist]? = some (raw[i + k]'hrange) := by
+    rw [hresult.2.2 _ hj, hsame, hnonempty.2.2.2 k hk]
+    simp only [getElem?_pos, hrange]
+  change BytePrefix raw (i + (k + 1))
+    (result.push (result[result.size - dist]?.getD 0))
+  rw [hr]
+  simpa only [Nat.add_assoc, Option.getD_some] using
+    hresult.push hrange (by simp only [getElem?_pos, hrange])
+
+/-- The infinite zero-padded bit view of completed bytes and pending payload. -/
+private def Bw.bitValue (w : Bw) (i : Nat) : Bool :=
+  if i < 8 * w.out.size then
+    ((w.out[i / 8]?.getD 0).toNat).testBit (i % 8)
+  else w.bits.toNat.testBit (i - 8 * w.out.size)
+
+private theorem drainByte_bits_exact (out : ByteArray) (bits n n' : UInt64) (i : Nat) :
+    ({out := out.push bits.toUInt8, bits := bits >>> 8, nbits := n'} : Bw).bitValue i =
+      ({out, bits, nbits := n} : Bw).bitValue i := by
+  unfold Bw.bitValue
+  dsimp only
+  rw [ByteArray.size_push]
+  by_cases h : i < 8 * out.size
+  · have h' : i < 8 * (out.size + 1) := by omega
+    have hi : i / 8 < out.size := by omega
+    simp only [h, h', ite_true, getElem?_push, hi]
+  · by_cases h' : i < 8 * (out.size + 1)
+    · have hi : i / 8 = out.size := by omega
+      have hk : i % 8 < 8 := Nat.mod_lt _ (by decide)
+      have he : i - 8 * out.size = i % 8 := by omega
+      simp only [h, h', ite_true, ite_false, getElem?_push, hi, Nat.lt_irrefl,
+        Option.getD_some, UInt64.toNat_toUInt8, Nat.testBit_mod_two_pow, hk,
+        decide_true, Bool.true_and, he]
+    · have he : 8 + (i - 8 * (out.size + 1)) = i - 8 * out.size := by omega
+      simp [h, h', UInt64.toNat_shiftRight, Nat.testBit_shiftRight, he]
+
+private theorem pushU_drain_bits (w : Bw) (v n : UInt64) (i : Nat) :
+    (w.pushU v n).bitValue i =
+      ({ w with
+          bits := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
+          nbits := w.nbits + n } : Bw).bitValue i := by
+  let p := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
+  have hr : (p >>> 8) >>> 8 = p >>> 16 := by
+    apply UInt64.toNat_inj.mp
+    simp [UInt64.toNat_shiftRight, ← Nat.shiftRight_add]
+  unfold Bw.pushU
+  dsimp only
+  split
+  · change ({ out := (w.out.push p.toUInt8).push (p >>> 8).toUInt8
+              bits := p >>> 16
+              nbits := _ } : Bw).bitValue i = _
+    rw [← hr]
+    exact (drainByte_bits_exact (w.out.push p.toUInt8) (p >>> 8) 0 0 i).trans
+      (drainByte_bits_exact w.out p 0 0 i)
+  · split
+    · exact drainByte_bits_exact w.out p 0 0 i
+    · rfl
+
+/-- Appending a field preserves every old bit and supplies exactly its new bits. -/
+private theorem pushU_bits_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) (i : Nat)
+    (hi : i < 8 * w.out.size + w.nbits.toNat + n.toNat) :
+    (w.pushU v n).bitValue i =
+      if i < 8 * w.out.size + w.nbits.toNat then w.bitValue i
+      else v.toNat.testBit (i - (8 * w.out.size + w.nbits.toNat)) := by
+  rw [pushU_drain_bits]
+  by_cases ho : i < 8 * w.out.size
+  · have hp : i < 8 * w.out.size + w.nbits.toNat := by omega
+    simp only [Bw.bitValue, ho, hp, ite_true]
+  · have hp := BitPacking.packField_bits_exact w.bits.toNat v.toNat
+      w.nbits.toNat n.toNat (i - 8 * w.out.size) hw.2 (by omega)
+    simp only [Bw.bitValue, ho, ite_false, pushU_payload_exact w v n hw hn]
+    rw [hp]
+    by_cases hh : i < 8 * w.out.size + w.nbits.toNat
+    · have hl : i - 8 * w.out.size < w.nbits.toNat := by omega
+      simp only [hh, hl, ite_true]
+    · have hl : ¬ i - 8 * w.out.size < w.nbits.toNat := by omega
+      have he : i - 8 * w.out.size - w.nbits.toNat =
+          i - (8 * w.out.size + w.nbits.toNat) := by omega
+      simp only [hh, hl, ite_false, he]
+
+private theorem flush_position_between (w : Bw) (hw : w.Valid) :
+    8 * w.out.size + w.nbits.toNat ≤ 8 * w.flush.size := by
+  by_cases hn : w.nbits = 0
+  · simp [Bw.flush, hn]
+  · simp only [Bw.flush, beq_iff_eq, hn, ite_false, ByteArray.size_push]
+    have := hw.1
+    omega
+
+private theorem flush_bits_exact (w : Bw) (hw : w.Valid) (i : Nat)
+    (hi : i < 8 * w.out.size + w.nbits.toNat) :
+    ((w.flush[i / 8]?.getD 0).toNat).testBit (i % 8) = w.bitValue i := by
+  by_cases hn : w.nbits = 0
+  · have ho : i < 8 * w.out.size := by simpa [hn] using hi
+    simp only [Bw.flush, hn, beq_self_eq_true, ite_true, Bw.bitValue, ho]
+  · by_cases ho : i < 8 * w.out.size
+    · have hb : i / 8 < w.out.size := by omega
+      simp only [Bw.flush, beq_iff_eq, hn, ite_false, Bw.bitValue, ho, ite_true,
+        getElem?_push, hb]
+    · have hs := hw.1
+      have hb : i / 8 = w.out.size := by omega
+      have he : i - 8 * w.out.size = i % 8 := by omega
+      have hk : i % 8 < 8 := Nat.mod_lt _ (by decide)
+      simp only [Bw.flush, beq_iff_eq, hn, ite_false, Bw.bitValue, ho,
+        getElem?_push, hb, Nat.lt_irrefl, ite_true, Option.getD_some,
+        UInt64.toNat_toUInt8, Nat.testBit_mod_two_pow, hk, decide_true,
+        Bool.true_and, he]
+
+/-- A field already written, including the writer's pending incomplete byte. -/
+private def Bw.Field (w : Bw) (start width value : Nat) : Prop :=
+  start + width ≤ 8 * w.out.size + w.nbits.toNat ∧
+    ∀ k < width, w.bitValue (start + k) = value.testBit k
+
+private theorem Bw.Field.pushU (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) {start width value : Nat} (hf : w.Field start width value) :
+    (w.pushU v n).Field start width value := by
+  constructor
+  · rw [pushU_position_exact w v n hw hn]
+    have := hf.1
+    omega
+  · intro k hk
+    have hh : start + k < 8 * w.out.size + w.nbits.toNat := by have := hf.1; omega
+    rw [pushU_bits_exact w v n hw hn _ (by omega)]
+    simpa only [hh, ite_true] using hf.2 k hk
+
+private theorem pushU_field_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) :
+    (w.pushU v n).Field (8 * w.out.size + w.nbits.toNat) n.toNat v.toNat := by
+  constructor
+  · rw [pushU_position_exact w v n hw hn]
+    exact Nat.le_refl _
+  · intro k hk
+    have hh : ¬ 8 * w.out.size + w.nbits.toNat + k <
+        8 * w.out.size + w.nbits.toNat := by omega
+    rw [pushU_bits_exact w v n hw hn _ (by omega)]
+    simp only [hh, ite_false, Nat.add_sub_cancel_left]
+
+private theorem Bw.Field.flush (w : Bw) (hw : w.Valid) {start width value : Nat}
+    (hf : w.Field start width value) : BitField w.flush start width value := by
+  constructor
+  · simpa only [Nat.mul_comm] using Nat.le_trans hf.1 (flush_position_between w hw)
+  · intro k hk
+    have hi : start + k < 8 * w.out.size + w.nbits.toNat := by have := hf.1; omega
+    have he := congrArg Bool.toNat ((flush_bits_exact w hw _ hi).trans (hf.2 k hk))
+    simpa only [Nat.toNat_testBit, Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod] using he
+
+/-- A field pushed through the actual writer is read back by the actual reader. -/
+theorem pushU_read_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
+    (hn : n.toNat ≤ 16) (hv : v.toNat < 2 ^ n.toNat) :
+    ({data := (w.pushU v n).flush, bitPos := 8 * w.out.size + w.nbits.toNat} : Br).bits
+        n.toNat =
+      some (v.toNat, { data := (w.pushU v n).flush
+                       bitPos := 8 * w.out.size + w.nbits.toNat + n.toNat }) := by
+  exact bitField_bits_exact _ _ _ (by omega) hv
+    (Bw.Field.flush (w.pushU v n) (pushU_valid w v n hw hn)
+      (pushU_field_exact w v n hw hn))
+
+/-- Reversing the encoder's value turns the writer's little-endian field into
+the decoder's most-significant-first codeword. -/
+theorem BitField.codeField {data : ByteArray} {start width code : Nat}
+    (hf : BitField data start width (Canonical.reverseBits code width)) :
+    CodeField data start width code := by
+  refine ⟨hf.1, ?_⟩
+  intro k hk
+  rw [hf.2 k hk]
+  have hb := congrArg Bool.toNat (Canonical.reverseBits_bit_exact code width k hk)
+  simpa only [Nat.toNat_testBit, Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod] using hb
+
+/-- A bounded canonical code written by the actual bit writer is decoded by
+the actual Huffman decoder, at any valid starting byte alignment. The table
+interval identifies the decoded symbol; constructing that interval is separate. -/
+theorem push_huff_decode_exact (w : Bw) (h : Huff) (width code : Nat)
+    (hw : w.Valid) (hwidth : 1 ≤ width ∧ width ≤ 15) (hcode : code < 2 ^ width)
+    (hlo : Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) ≤ code)
+    (hhi : code <
+      Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) +
+        h.counts[width]?.getD 0) :
+    h.decode
+      { data := (w.push (Canonical.reverseBits code width) width).flush
+        bitPos := 8 * w.out.size + w.nbits.toNat } =
+      some
+        (h.symbols[Canonical.index (fun k => h.counts[k]?.getD 0) (width - 1) +
+          (code - Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1))]?.getD 0,
+          { data := (w.push (Canonical.reverseBits code width) width).flush
+            bitPos := 8 * w.out.size + w.nbits.toNat + width }) := by
+  have hn64 : width < 2 ^ 64 := by omega
+  have hn : width.toUInt64.toNat = width := by
+    simp only [Nat.toUInt64, UInt64.toNat_ofNat', Nat.mod_eq_of_lt hn64]
+  have hr64 : Canonical.reverseBits code width < 2 ^ 64 :=
+    Nat.lt_of_lt_of_le (Canonical.reverseBits_between _ _)
+      (Nat.pow_le_pow_right (by decide) (by omega))
+  have hr : (Canonical.reverseBits code width).toUInt64.toNat =
+      Canonical.reverseBits code width := by
+    simp only [Nat.toUInt64, UInt64.toNat_ofNat', Nat.mod_eq_of_lt hr64]
+  have hn16 : width.toUInt64.toNat ≤ 16 := by omega
+  apply huff_decode_exact _ _ _ _ hwidth hcode _ hlo hhi
+  apply BitField.codeField
+  simpa only [Bw.push, hn, hr] using
+    (Bw.Field.flush
+      (w.pushU (Canonical.reverseBits code width).toUInt64 width.toUInt64)
+      (pushU_valid w _ _ hw hn16)
+      (pushU_field_exact w _ _ hw hn16))
 
 end LeanTex.Core.Flate
