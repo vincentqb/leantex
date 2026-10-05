@@ -8883,22 +8883,35 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
   | [], _, _ => pure out
   | _ :: rest, i, skip + 1 => rewriteList inBody raws out rest (i + 1) skip
   | .ctrl "define" pos :: rest, i, 0 => do
-    write fun st => { st with bodyNext := 1 }
+    unless (← get).inPicture do
+      write fun st => { st with bodyNext := 1 }
     rewriteList inBody raws (out.push (.ctrl "define" pos)) rest (i + 1) 0
   | .ctrl name pos :: rest, i, 0 => do
-    match ← rewriteCtrl (overlayName name) pos raws (i + 1) with
+    let inPicture := (← get).inPicture
+    -- Pictures may leave through the TeX boundary. Native block, length
+    -- and font markers have no TeX meaning; preserve their source here.
+    -- Plain alert is the shared exception: its textcolor/bfseries bridge
+    -- is understood by both the native label reader and standalone TeX.
+    let rewritten : Option (Array Raw × Nat) ← if inPicture then do
+        if overlayName name == "alert" &&
+            (raws[skipSpaces raws (i + 1)]?.bind overlayWord?).isNone then
+          pure ((← alertPlain pos raws (i + 1)).map fun (repl, j) =>
+            (repl, j - (i + 1)))
+        else pure none
+      else rewriteCtrl (overlayName name) pos raws (i + 1)
+    match rewritten with
     | some (repl, consumed) => rewriteList inBody raws (out ++ repl) rest (i + 1) consumed
     | none =>
       -- Item is a structural delimiter and cannot be redefined by a
       -- document (Elab.builtinNames); its saved meaning is the same token.
-      let name := if overlayName name == "item" then "item" else name
+      let name := if inPicture || overlayName name == "item" then overlayName name else name
       rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0
   -- `#k` is the native parameter `\ak`. The digits may be glued to text
   -- (`#1,`), so the word is split. Outside a body `#` is literal: a colour.
   | .sym '#' p :: .word w wp :: rest, i, 0 => do
     let digits := w.toList.takeWhile Char.isDigit
     let tail := String.ofList (w.toList.drop digits.length)
-    if !inBody || digits.isEmpty then
+    if (← get).inPicture || !inBody || digits.isEmpty then
       rewriteList inBody raws ((out.push (.sym '#' p)).push (.word w wp)) rest (i + 2) 0
     else
       let param : Raw := .ctrl ("a" ++ String.ofList digits) p
@@ -8912,6 +8925,8 @@ recursion is structural on `Raw`: the body is a field of the head, not a tail
 of the list. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
   | .group body p => do
+    if (← get).inPicture then
+      return .group (← rewriteList inBody body #[] body.toList 0 0) p
     -- A group is a macro body when a definition announced one. The count is
     -- zeroed for the descent and restored one lower on the way out, so a
     -- definition inside the body manages its own following group without
@@ -8948,6 +8963,16 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     | none =>
       if mathEnvs.contains n then
         return .env n body p
+      -- premise: pictureBoundaryChecks — requests retain TeX
+      -- commands while native styled labels still ship.
+      else if (← get).inPicture || pictureEnvs.contains n then
+        -- Every nested group/environment remains in the same source
+        -- language; no native scope-restoration metadata enters a request.
+        let saved := (← get).inPicture
+        write fun st => { st with inPicture := true }
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        write fun st => { st with inPicture := saved }
+        return .env n body' p
       else if n == "otherlanguage" || n == "otherlanguage*" then
         -- The environment form of the switch: the body takes the language
         -- attribute; the starred form differs only in date handling the
