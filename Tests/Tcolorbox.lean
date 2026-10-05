@@ -109,6 +109,158 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     (missing.any (fun d => d.code == "E0336"))
   groundChecks ref fonts
 
+/-- Source controls compare complete PDF page models and serialized typed HTML,
+including fonts, positions, grouping and whitespace. A permitted loss still
+needs a keyed diagnostic; permitting it cannot make a missing diagnostic pass. -/
+private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
+    (label pre body control : String) (loss : Option DiagCode := none)
+    (trigger : Option String := none) (subject : Option String := none) : IO Unit := do
+  let doc (p b : String) := "\\documentclass{beamer}\\theme{default}" ++ p ++
+    "\\begin{document}\\begin{frame}[t]{}" ++ b ++ "\\end{frame}\\end{document}"
+  let (ds, actual, html, _) := sourceArtifacts fonts (doc pre body)
+  let (controlDs, expected, expectedHtml, _) := sourceArtifacts fonts (doc "" control)
+  let t := check ref
+  t s!"tcolorbox source: {label}: native control is supported"
+    (controlDs.all (·.severity == .note))
+  t s!"tcolorbox source: {label}: PDF pages"
+    (reprStr actual.pages == reprStr expected.pages)
+  t s!"tcolorbox source: {label}: typed HTML"
+    (html == expectedHtml)
+  t s!"tcolorbox source: {label}: only declared loss"
+    (ds.all (fun d => d.severity == .note || loss == some d.kind))
+  if let some code := loss then
+    t s!"tcolorbox source: {label}: loss is named"
+      (ds.any (fun d => d.kind == code && d.subject.isSome))
+    if let some command := trigger then
+      t s!"tcolorbox source: {label}: loss belongs to written command"
+        (ds.filter (·.kind == code) |>.all (·.trigger == some command))
+    if let some name := subject then
+      t s!"tcolorbox source: {label}: subject names authored environment"
+        (ds.filter (·.kind == code) |>.all fun d =>
+          d.subject.any fun s => s == name || s.endsWith (":" ++ name))
+
+/-- tcolorbox uses ordinary environment arguments and TeX declaration scope
+(tcolorbox manual, “Creation of New Environments”). Synthetic LuaLaTeX probes
+also pin the less obvious cases: unused arguments stay inert, an empty optional
+argument overrides its default, unbraced parameters consume one token, and a
+body-local definition changes neither its title nor the surrounding scope. -/
+def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  for (label, pre, body, control) in [
+      ("unused installer",
+        "\\newcommand{\\installpanel}[1]{\\newtcolorbox{panel}{title={#1}}}",
+        "\\newtcolorbox{panel}{title={Fresh}}\\begin{panel}Body\\end{panel}",
+        "\\begin{block}{Fresh}Body\\end{block}"),
+      ("invoked installer",
+        "\\newcommand{\\installpanel}[1]{\\newtcolorbox{panel}{title={#1}}}",
+        "\\installpanel{Installed}\\begin{panel}Body\\end{panel}",
+        "\\begin{block}{Installed}Body\\end{block}"),
+      ("skipped declaration",
+        "\\iffalse\\newtcolorbox{panel}{title={Hidden}}\\fi",
+        "\\newtcolorbox{panel}{title={Fresh}}\\begin{panel}Body\\end{panel}",
+        "\\begin{block}{Fresh}Body\\end{block}"),
+      ("late title and font lookup",
+        "\\newtcolorbox{panel}{title={\\headingprobe},fontupper=\\fontprobe}" ++
+          "\\def\\headingprobe{Early}\\def\\fontprobe{\\small}",
+        "\\begin{panel}First\\end{panel}" ++
+          "\\def\\headingprobe{Late}\\def\\fontprobe{\\bfseries}" ++
+          "\\begin{panel}Second\\end{panel} Outside",
+        "\\begin{block}{Early}{\\small First}\\end{block}" ++
+          "\\begin{block}{Late}{\\bfseries Second}\\end{block} Outside"),
+      ("conditional lookup at each use",
+        "\\newif\\ifchoiceprobe" ++
+          "\\newtcolorbox{panel}{title={\\headingprobe},fontupper=\\fontprobe}" ++
+          "\\def\\headingprobe{\\ifchoiceprobe Chosen\\else Default\\fi}" ++
+          "\\def\\fontprobe{\\ifchoiceprobe\\bfseries\\else\\small\\fi}",
+        "\\begin{panel}First\\end{panel}\\choiceprobetrue" ++
+          "\\begin{panel}Second\\end{panel}",
+        "\\begin{block}{Default}{\\small First}\\end{block}" ++
+          "\\begin{block}{Chosen}{\\bfseries Second}\\end{block}"),
+      ("title before local body definition",
+        "\\def\\headingprobe{Outer}\\newtcolorbox{panel}{title={\\headingprobe}}",
+        "\\begin{panel}\\def\\headingprobe{Inner}\\headingprobe\\end{panel} \\headingprobe",
+        "\\begin{block}{Outer}Inner\\end{block} Outer"),
+      ("unused default and explicit arguments",
+        "\\newif\\ifusedprobe" ++
+          "\\newtcolorbox{panel}[2][\\usedprobetrue]{title={#2}}",
+        "\\begin{panel}{First}DefaultBody\\end{panel}" ++
+          "\\begin{panel}[\\usedprobetrue]{Second}ExplicitBody\\end{panel}" ++
+          "\\ifusedprobe Leaked\\else Inert\\fi",
+        "\\begin{block}{First}DefaultBody\\end{block}" ++
+          "\\begin{block}{Second}ExplicitBody\\end{block}Inert"),
+      ("empty optional overrides default",
+        "\\newtcolorbox{panel}[2][Default]{title={#1/#2}}",
+        "\\begin{panel}[]{Empty}Body\\end{panel}",
+        "\\begin{block}{/Empty}Body\\end{block}"),
+      ("grouped optional value",
+        "\\newtcolorbox{panel}[2][Default]{title={#1/#2}}",
+        "\\begin{panel}[{Chosen, x={Y}}]{Grouped}Body\\end{panel}",
+        "\\begin{block}{Chosen, x={Y}/Grouped}Body\\end{block}"),
+      ("unbraced token arguments",
+        "\\newtcolorbox{panel}[2]{title={#1/#2}}",
+        "\\begin{panel}ABTail\\end{panel}",
+        "\\begin{block}{A/B}Tail\\end{block}"),
+      ("control token argument",
+        "\\newtcolorbox{panel}[2]{title={#1/#2}}\\def\\argprobe{Expanded}",
+        "\\begin{panel}\\argprobe{Second}Body\\end{panel}",
+        "\\begin{block}{Expanded/Second}Body\\end{block}"),
+      ("zero arity retains first body group",
+        "\\newtcolorbox{panel}[0]{title={Zero}}",
+        "\\begin{panel}{\\bfseries First} Rest\\end{panel} Outside",
+        "\\begin{block}{Zero}{\\bfseries First} Rest\\end{block} Outside"),
+      ("parameterized font and local body styles",
+        "\\newtcolorbox{panel}[2]{title={#1},fontupper={#2}}",
+        "\\begin{panel}{Heading}{\\small\\bfseries}" ++
+          "{\\itshape First} Rest\n\nSecond\\end{panel} Outside",
+        "\\begin{block}{Heading}{\\small\\bfseries " ++
+          "{\\itshape First} Rest\n\nSecond}\\end{block} Outside")] do
+    sourceCaseChecks ref fonts label pre body control
+  for (label, enter, leave) in [
+      ("brace", "{", "}"), ("begingroup", "\\begingroup", "\\endgroup")] do
+    sourceCaseChecks ref fonts (label ++ " local declaration") ""
+      (enter ++ "\\newtcolorbox{localpanel}{title={Local}}" ++
+        "\\begin{localpanel}Body\\end{localpanel}" ++ leave ++
+        "\\newtcolorbox{localpanel}{title={Fresh}}" ++
+        "\\begin{localpanel}Restored\\end{localpanel}")
+      ("{\\begin{block}{Local}Body\\end{block}}" ++
+        "\\begin{block}{Fresh}Restored\\end{block}")
+    sourceCaseChecks ref fonts (label ++ " local redefinition")
+      "\\newtcolorbox{panel}{title={Outer},fontupper=\\small}"
+      (enter ++ "\\renewtcolorbox{panel}{title={Inner},fontupper=\\bfseries}" ++
+        "\\begin{panel}First\\end{panel}" ++ leave ++
+        "\\begin{panel}Second\\end{panel}")
+      ("{\\begin{block}{Inner}{\\bfseries First}\\end{block}}" ++
+        "\\begin{block}{Outer}{\\small Second}\\end{block}")
+  for (key, value) in [
+      ("enhanced", ""), ("arc", "=2pt"),
+      ("unknown", "={\\def\\hiddenprobe{Leaked}Secret, option}")] do
+    sourceCaseChecks ref fonts ("unsupported " ++ key)
+      ("\\newtcolorbox{panel}{title={Heading}," ++ key ++ value ++ "}")
+      ("\\begin{panel}Body\\end{panel}" ++
+        "\\ifdefined\\hiddenprobe Leaked\\else Inert\\fi")
+      "\\begin{block}{Heading}Body\\end{block}Inert"
+      (some .W0110) (some "\\begin") (some "panel")
+  -- A refused declaration preserves the existing environment and argument
+  -- signature; its warning belongs to the definer, never the later body.
+  for (label, pre, body, control, command) in [
+      ("builtin declaration refused",
+        "\\newtcolorbox{itemize}{title={Discarded},fontupper=\\small}",
+        "\\begin{itemize}\\item First\\item Second\\end{itemize}",
+        "\\begin{itemize}\\item First\\item Second\\end{itemize}",
+        "\\newtcolorbox"),
+      ("undefined renewal refused",
+        "\\renewtcolorbox{panel}[1]{title={#1},fontupper=\\small}",
+        "\\newtcolorbox{panel}{title={Fresh}}\\begin{panel}Body\\end{panel}",
+        "\\begin{block}{Fresh}Body\\end{block}",
+        "\\renewtcolorbox"),
+      ("existing declaration refused",
+        "\\newtcolorbox{panel}[1]{title={Original: #1},fontupper=\\small}" ++
+          "\\newtcolorbox{panel}[2][Discarded]{title={#1/#2},fontupper=\\bfseries}",
+        "\\begin{panel}{Kept}Body\\end{panel}",
+        "\\begin{block}{Original: Kept}{\\small Body}\\end{block}",
+        "\\newtcolorbox")] do
+    sourceCaseChecks ref fonts label pre body control (some .W0104) (some command)
+
 /-- Full declaration probes for the compatibility owner: options are
 instantiated at use, including a default and a macro defined later. -/
 def sourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -135,5 +287,6 @@ def sourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
     (["Default: First", "Chosen: Second"].all (hasStr (htmlFacts actual).2 ·))
   t "tcolorbox source: declaration and uses introduce no unknown body errors"
     (!ds.any (fun d => d.severity == .error || d.code == "W0301" || d.code == "W0302"))
+  tcolorboxScopeChecks ref fonts
 
 end TcolorboxChecks
