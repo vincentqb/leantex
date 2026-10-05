@@ -3669,6 +3669,19 @@ theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelInk) :
   have hi : ∀ a b : Int, a ≤ max a b := by intro a b; omega
   exact ⟨hx.1, lo _ _, hx.2.2.1, hi _ _⟩
 
+/-- Every measured vertical extent held by the label's metrics remains
+inside its glyph box on the resolved baseline. Taking the hull with the
+anchor can only enlarge that box, for every alignment. -/
+theorem labelGlyphBox_covers_extent (x y : Sp) (align : LabelAlign) (m : LabelInk)
+    (hi lo : Sp) (hhi : hi ≤ m.boxHeight) (hlo : lo ≤ m.boxDepth) :
+    (labelGlyphBox x y align m).1.2 ≤ labelBaseline y align m - lo ∧
+    labelBaseline y align m + hi ≤ (labelGlyphBox x y align m).2.2 := by
+  simp only [labelGlyphBox, labelTextBox]
+  have bottom := Int.min_le_right y (labelBaseline y align m - m.boxDepth)
+  have top := Int.le_max_right y (labelBaseline y align m + m.boxHeight)
+  exact ⟨Int.le_trans bottom (Int.sub_le_sub_left hlo _),
+    Int.le_trans (Int.add_le_add_left hhi _) top⟩
+
 /-- **A label's baseline does not read its set width.** So the advances of
 the glyphs it sets — which face, which kerning, which characters — cannot
 move it vertically: the horizontal measurement and the vertical placement
