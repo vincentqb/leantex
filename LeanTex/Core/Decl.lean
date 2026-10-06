@@ -1,14 +1,15 @@
-import LeanTex.Core.Diag
-import LeanTex.Core.Dim
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Dim
 
 namespace LeanTex.Core.Decl
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- A declaration value. Absolute dimensions resolve here; font-relative
-units (ex, em) are not accepted yet — they need the symbolic lengths that
-arrive with `\tokens`. -/
-inductive Value where
+/-- A parsed declaration value. Absolute dimensions resolve immediately;
+font-relative dimensions and glue retain their symbolic components. -/
+public inductive Value where
   | str (s : String)
   | dim (sp : Sp)
   | int (n : Int)
@@ -22,7 +23,7 @@ inductive Value where
   | glue (g : SymGlue)
   deriving Repr, BEq
 
-def Value.kindName : Value → String
+public def Value.kindName : Value → String
   | .str _ => "string"
   | .dim _ => "dimension"
   | .int _ => "number"
@@ -32,7 +33,7 @@ def Value.kindName : Value → String
   | .cmyk _ _ _ _ => "color"
   | .glue _ => "length"
 
-structure Entry where
+public structure Entry where
   key : String
   value : Value
   deriving Repr, BEq
@@ -40,12 +41,12 @@ structure Entry where
 /-- One non-negative decimal component, kept as the exact rational the
 source wrote. `scale` is a power of ten and nonzero for every value made by
 `parseColorSpec`; consumers use the numeric fields, never reparsing text. -/
-structure ColorComponent where
+public structure ColorComponent where
   num : Nat
   scale : Nat
   deriving Repr
 
-instance : BEq ColorComponent where
+public instance : BEq ColorComponent where
   beq a b := a.num * b.scale == b.num * a.scale
 
 private def decimalFraction (num scale : Nat) : String :=
@@ -60,13 +61,13 @@ private def decimalFraction (num scale : Nat) : String :=
 
 /-- A unit component as a canonical PDF decimal, without losing source
 precision. -/
-def ColorComponent.pdfUnit (c : ColorComponent) : String :=
+public def ColorComponent.pdfUnit (c : ColorComponent) : String :=
   decimalFraction c.num c.scale
 
 /-- The value xcolor stores for a `\definecolor` unit component. Its
 `XC@calcR` keeps five fractional digits (truncating, not rounding) before the
 driver sees the colour; direct modeled uses retain their source values. -/
-def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
+public def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
   { num := c.num * 100000 / c.scale, scale := 100000 }
 
 private def texScaledDecimal (sp : Nat) : String := Id.run do
@@ -84,30 +85,30 @@ private def texScaledDecimal (sp : Nat) : String := Id.run do
 /-- xcolor's RGB/HTML driver conversion: read the source number at TeX's
 scaled-point precision, divide by 255 as the driver does, then use TeX's own
 scaled-decimal printer. -/
-def ColorComponent.pdfRgb (c : ColorComponent) : String :=
+public def ColorComponent.pdfRgb (c : ColorComponent) : String :=
   let sourceSp := (c.num * 65536 + c.scale / 2) / c.scale
   texScaledDecimal (sourceSp / 255)
 
 /-- xcolor's HTML projection of a unit component. Parsing to TeX's 16-bit
 fixed point before scaling reproduces the package's half-boundary behavior. -/
-def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
+public def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
   let sp := (c.num * 65536 + c.scale / 2) / c.scale
   UInt8.ofNat ((sp * 255 + 32768) / 65536)
 
 /-- An RGB-range component projected to the nearest byte. -/
-def ColorComponent.rgbByte (c : ColorComponent) : UInt8 :=
+public def ColorComponent.rgbByte (c : ColorComponent) : UInt8 :=
   UInt8.ofNat ((c.num + c.scale / 2) / c.scale)
 
 /-- The existing internal CMYK arithmetic uses thousandths; this is its one
 projection from an exact source component. -/
-def ColorComponent.milli (c : ColorComponent) : Nat :=
+public def ColorComponent.milli (c : ColorComponent) : Nat :=
   (c.num * 1000 + c.scale / 2) / c.scale
 
 /-- The source model of one xcolor specification. The constructors are the
 models the engine can project without guessing: HTML is an exact byte triple;
 RGB keeps its 0–255 decimals; rgb, gray, and cmyk keep their exact unit
 components until each backend chooses its own projection. -/
-inductive ColorSpec where
+public inductive ColorSpec where
   | named (expr : String)
   | html (r g b : UInt8)
   | rgbByte (r g b : ColorComponent)
@@ -118,7 +119,7 @@ inductive ColorSpec where
 
 /-- xcolor definitions normalize unit models through `XC@calcR`; direct
 modelled uses retain their source values. -/
-def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
+public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
   | .named expr => .named expr
   | .html r g b => .html r g b
   | .rgbByte r g b => .rgbByte r g b
@@ -129,16 +130,16 @@ def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
 
 /-- Compatibility-only carrier marking a modeled value that passed through
 xcolor's `\definecolor` storage semantics before entering the palette. -/
-def xcolorDefinitionPrefix : String := "@xcolor-definition:"
+public def xcolorDefinitionPrefix : String := "@xcolor-definition:"
 
-inductive ColorSpecError where
+public inductive ColorSpecError where
   | unsupported (model : String)
   | malformed (model detail : String)
   deriving Repr, BEq
 
 /-- The public model names accepted by `parseColorSpec`, with xcolor's
 case-sensitive spellings. -/
-def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk"]
+public def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk"]
 
 private def hexDigit? (c : Char) : Option Nat :=
   if c.isDigit then some (c.toNat - '0'.toNat)
@@ -146,13 +147,13 @@ private def hexDigit? (c : Char) : Option Nat :=
   else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
   else none
 
-def isIdentChar (c : Char) : Bool :=
+public def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
 /-- Split on commas that are not inside braces, brackets, parentheses, or
 quotes. Public because a declaration whose entries may refer to earlier
 entries has to walk them one at a time. -/
-def splitEntries (s : String) : List String := Id.run do
+public def splitEntries (s : String) : List String := Id.run do
   let mut out : List String := []
   let mut cur := ""
   let mut depth := 0
@@ -181,7 +182,7 @@ def splitEntries (s : String) : List String := Id.run do
     if t.isEmpty then none else some t
 
 /-- Decimal literal as mantissa and scale: "0.5" ↦ (5, 10). -/
-def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
+public def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
   let cs := s.toList
   let (neg, cs) := match cs with
     | '-' :: rest => (true, rest)
@@ -300,7 +301,7 @@ private def parseModeledColor (model value : String) : Except ColorSpecError Col
 case-sensitive model grammar. With no model, native `#RGB`/`#RRGGBB` and the
 modelled `MODEL(...)` carrier are read; every other value remains a named
 xcolor expression for `Palette.resolveSpec` to resolve. -/
-def parseColorSpec (model : Option String) (raw : String) :
+public def parseColorSpec (model : Option String) (raw : String) :
     Except ColorSpecError ColorSpec :=
   let value := raw.trimAscii.toString
   match model with
@@ -378,7 +379,7 @@ private def unitScale : String → Option (Int × Nat)
 the inch (1157 dd = 1238 TeX pt and 7227 TeX pt = 100 in, TeXbook ch. 10;
 the dd fraction is stored unreduced so its relation below is literal). A
 typo in any one entry breaks a relation here. -/
-theorem unitScale_consistent :
+private theorem unitScale_consistent :
     unitScale "bp" = unitScale "pt" ∧
     unitScale "pt" = (unitScale "sp").map (fun u => (spPerPt * u.1, u.2)) ∧
     unitScale "in" = (unitScale "pt").map (fun u => (72 * u.1, u.2)) ∧
@@ -393,7 +394,7 @@ theorem unitScale_consistent :
 /-- Every `true` unit denotes exactly its plain counterpart — stated over
 the whole table, so a unit added without this identity breaks the build,
 not a document. -/
-theorem unitScale_true :
+private theorem unitScale_true :
     unitScale "truesp" = unitScale "sp" ∧ unitScale "truept" = unitScale "pt" ∧
     unitScale "truebp" = unitScale "bp" ∧ unitScale "truein" = unitScale "in" ∧
     unitScale "truecm" = unitScale "cm" ∧ unitScale "truemm" = unitScale "mm" ∧
@@ -414,7 +415,7 @@ private def lengthOfUnit (mantissa : Int) (scale : Nat) (unit : String) :
       Length.ofSp (mantissa * num / (scale * den : Nat))
 
 /-- A single length term: a number with an absolute or font-relative unit. -/
-def parseLength (s : String) : Option Length :=
+public def parseLength (s : String) : Option Length :=
   let s := s.trimAscii.toString
   let digits := s.toList.takeWhile fun c => c.isDigit || c == '.' || c == '-' || c == '+'
   let unit := (String.ofList (s.toList.drop digits.length)).trimAscii.toString
@@ -423,7 +424,7 @@ def parseLength (s : String) : Option Length :=
   | some (mantissa, scale) => lengthOfUnit mantissa scale unit
 
 /-- A stretch in one of TeX's infinite units and its order. -/
-def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
+public def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
   let t := s.trimAscii.toString
   let digits := t.toList.takeWhile fun c => c.isDigit || c == '.' || c == '+'
   let order := match String.ofList (t.toList.drop digits.length) with
@@ -434,7 +435,7 @@ def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
   order.bind fun o => (parseDecimal (String.ofList digits)).map (·, o)
 
 /-- `<len> [plus <len>] [minus <len>]`, TeX's glue spelling. -/
-def parseGlue (s : String) : Option SymGlue := do
+public def parseGlue (s : String) : Option SymGlue := do
   let words := (s.trimAscii.toString.splitOn " ").filterMap fun w =>
     let t := w.trimAscii.toString
     if t.isEmpty then none else some t
@@ -454,7 +455,7 @@ def parseGlue (s : String) : Option SymGlue := do
     go g rest
 
 /-- A scale factor `0.6 * name`, resolved against already-declared tokens. -/
-def parseScaled (tokens : Array (String × SymGlue)) (s : String) : Option Value :=
+private def parseScaled (tokens : Array (String × SymGlue)) (s : String) : Option Value :=
   match s.splitOn "*" with
   | [factor, name] => do
     let (mantissa, scale) ← parseDecimal (factor.trimAscii.toString)
@@ -490,12 +491,12 @@ cycle is unrepresentable, and a forward or unknown name is diagnosed by
 name (`eval_absent_named`), never defaulted to zero. -/
 
 /-- A parsed length expression whose references are still source names. -/
-abbrev LenExpr := Affine String
+public abbrev LenExpr := Affine String
 
 namespace LenExpr
 
 /-- Whether an expression reads a token name: what its value may depend on. -/
-def reads : LenExpr → String → Bool
+public def reads : LenExpr → String → Bool
   | .lit _, _ => false
   | .ref m, n => m == n
   | .scale _ _ e, n => reads e n
@@ -505,7 +506,7 @@ def reads : LenExpr → String → Bool
 the checker's acceptance is the termination proof, and an unknown name is
 an error carrying that name. The matches are explicit so the exactness
 proof below can follow them case by case. -/
-def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
+public def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
   | .lit g => .ok g
   | .ref n =>
     match look n with
@@ -528,7 +529,7 @@ def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
 
 /-- Resolution is deterministic: one expression and one lookup answer
 produce one value, independently of ambient state. -/
-theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
+public theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
     (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
   induction e with
   | lit g => rfl
@@ -544,7 +545,7 @@ to. Sums and differences are integer sums and differences; scaling is
 stated rounding, TeX's own (`\divide` and `xn_over_d` both truncate
 toward zero; only e-TeX's `\dimexpr` division rounds to nearest, which is
 why that spelling is refused rather than mapped). -/
-def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
+public def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
   | .lit g, part => .ok (part g.width)
   | .ref n, _ =>
     match look n with
@@ -571,7 +572,7 @@ no drift is introduced anywhere, and the only rounding is the stated
 truncation in `scale`. (The same proof shape holds for every component;
 sp is the one
 print geometry rides on.) -/
-theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
+public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
     (eval look e).map (fun g => g.width.sp)
       = evalInt (fun n => (look n).map (fun g => g.width.sp)) e (fun l => l.sp) := by
   induction e with
@@ -607,7 +608,7 @@ theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
 
 /-- Absent is diagnosed, never defaulted: an unknown token name in an
 expression errors *as that name* — it never resolves to zero. -/
-theorem eval_absent_named (look : String → Option SymGlue) (n : String)
+public theorem eval_absent_named (look : String → Option SymGlue) (n : String)
     (h : look n = none) : eval look (.ref n) = .error n := by
   simp [eval, h]
 
@@ -842,14 +843,14 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
 /-- Parse one length expression without resolving its references. The raw
 TeX controls and the normalized declaration spelling share this one grammar;
 `\\dimexpr ... \\relax` contributes grouping only. -/
-def parseLengthSyntax (s : String) : Except String LenExpr := do
+public def parseLengthSyntax (s : String) : Except String LenExpr := do
   let some toks := exprToks s.trimAscii.toString
     | throw "malformed expression"
   exprParse toks
 
 /-- Read a length expression against declared tokens. Local measure names
 are intentionally absent here: declaration values are resolved eagerly. -/
-def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
+public def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
     Except String SymGlue := do
   let e ← parseLengthSyntax s
   match e.eval (fun n => (tokens.find? (·.1 == n)).map (·.2)) with
@@ -860,7 +861,7 @@ def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
 local measures become typed references that resolve only where geometry is
 known. A measure the context cannot represent is returned by its typed name;
 no source spelling can cross into the IR. -/
-def parseAffineLengthExprFor (tokens : Array (String × SymGlue))
+public def parseAffineLengthExprFor (tokens : Array (String × SymGlue))
     (admits : Measure → Bool) (s : String) : Except String (Affine Measure) := do
   let e ← parseLengthSyntax s
   Affine.bind (fun n =>
@@ -874,14 +875,14 @@ def parseAffineLengthExprFor (tokens : Array (String × SymGlue))
       | none => .error s!"'{n}' is not a declared token or local measure") e
 
 /-- The unrestricted typed parser, for consumers that supply all measures. -/
-def parseAffineLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
+public def parseAffineLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
     Except String (Affine Measure) :=
   parseAffineLengthExprFor tokens (fun _ => true) s
 
 /-- Does the length-expression grammar read `s`? Its syntax alone, names
 unresolved: what a rewrite that composes an expression checks before it
 emits one, so it never hands the declaration a value the grammar refuses. -/
-def readsAsLengthExpr (s : String) : Bool :=
+public def readsAsLengthExpr (s : String) : Bool :=
   match exprToks s.trimAscii.toString with
   | some toks => (exprParse toks).isOk
   | none => false
@@ -890,7 +891,7 @@ def readsAsLengthExpr (s : String) : Bool :=
 value: an operator or a parenthesis somewhere, or a coefficient directly
 against a name (`2cardbleed`). Routing, not validation — the parser has
 the final say. -/
-def looksLikeExpr (s : String) : Bool := Id.run do
+public def looksLikeExpr (s : String) : Bool := Id.run do
   let cs := s.toList
   let mut prevDigit := false
   let mut i := 0
@@ -930,7 +931,7 @@ private def isRatioName (s : String) : Bool :=
       a.toList.all (·.isDigit) && b.toList.all (·.isDigit)
   | _ => false
 
-def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
+public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
     some (.str (String.ofList (s.toList.drop 1).dropLast))
@@ -975,7 +976,7 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
 
 /-- Parse a `key = value, ...` block. Reports malformed entries; the caller
 validates keys, so an unknown key is not an error here. -/
-def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
+public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
     (tokens : Array (String × SymGlue) := #[]) : Array Entry × Array Diag := Id.run do
   let mut entries : Array Entry := #[]
   let mut diags : Array Diag := #[]
@@ -1012,7 +1013,7 @@ def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
   return (entries, diags)
 
 /-- Split one `key = value` entry. -/
-def splitEntry (entry : String) : Option (String × String) :=
+public def splitEntry (entry : String) : Option (String × String) :=
   match entry.splitOn "=" with
   | key :: rest =>
     let k := key.trimAscii.toString
@@ -1021,12 +1022,12 @@ def splitEntry (entry : String) : Option (String × String) :=
   | [] => none
 
 /-- Reject keys the declaration does not define, naming the ones it does. -/
-def unknownKey (file : String) (what key : String) (known : List String)
+public def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
   Diag.of .E0322 s!"'\\{what}' has no key '{key}'" (some ⟨file, pos⟩)
     (help := s!"known keys: {String.intercalate ", " known}")
 
-def wrongType (file : String) (what key expected : String) (got : Value)
+public def wrongType (file : String) (what key expected : String) (got : Value)
     (pos : Pos) : Diag :=
   Diag.of .E0323 s!"'{key}' in '\\{what}' expects {expected}, got a {got.kindName}"
     (some ⟨file, pos⟩)

@@ -13,6 +13,7 @@ import LeanTex.Core.FaData
 import LeanTex.Core.NfcData
 import LeanTex.Core.TextSymData
 import LeanTex.Core.Dim
+import LeanTex.Core.Decl
 import LeanTex.Core.Nfc
 import LeanTex.Core.FaIcons
 import LeanTex.Core.HtmlResource
@@ -69,6 +70,16 @@ example : Bib.Entry → String → Option String := Bib.Entry.field?
 example : String → Bib.Parsed := Bib.parse
 example : String → Bib.Name := Bib.parseName
 example : Bib.Name → String := Bib.Name.full
+example : String → Option Dim.Length := Decl.parseLength
+example : String → Option Dim.SymGlue := Decl.parseGlue
+example : String → Except String Decl.LenExpr := Decl.parseLengthSyntax
+example : Option String → String → Except Decl.ColorSpecError Decl.ColorSpec :=
+  Decl.parseColorSpec
+example : Decl.ColorComponent → String := Decl.ColorComponent.pdfUnit
+example (look : String → Option Dim.SymGlue) (name : String)
+    (missing : look name = none) :
+    Decl.LenExpr.eval look (.ref name) = .error name :=
+  Decl.LenExpr.eval_absent_named look name missing
 example : HtmlResource.Media.png.mime = "image/png" := by rfl
 example (resources : Array HtmlResource.Embedded) (svgChecked : Array ByteArray)
     (script lang : String) (head body : Array Html.Node) :
@@ -95,4 +106,9 @@ example : True := by
   fail_if_success have := Hyphen.rawBreaks
   fail_if_success have := Bib.monthKeys
   fail_if_success have := Bib.readWhile
+  fail_if_success have := Decl.parseScaled
+  fail_if_success have := Decl.ETok
+  fail_if_success have := Decl.exprToks
+  fail_if_success have := Decl.exprParse
+  fail_if_success have := Decl.unitScale
   trivial
