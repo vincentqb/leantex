@@ -907,11 +907,17 @@ structure InputRequest where
   command : String
   file : String
   pos : Pos
-  name : String
-  options : String := ""
-  /-- The original command and its operands, for the existing local-style
-  candidate and splice readers. No argument is reconstructed from text. -/
-  call : Array Raw := #[]
+  /-- The call token's position, distinct from a macro's attributed use site. -/
+  callPos : Pos
+  /-- The executed operand slice. Filename, options and the style-file
+  candidate scan all read this one value, so they cannot disagree about
+  which expanded call reached the driver. -/
+  operands : Array Raw
+
+/-- The actual call offered to the driver's existing candidate and splice
+readers. Its command is the request's command; operands stay parsed syntax. -/
+def InputRequest.call (request : InputRequest) : Array Raw :=
+  #[.ctrl request.command request.callPos] ++ request.operands
 
 /-- The execution state at a file read. Only `resumeInput` can run a
 fragment against it; the driver carries it without inspecting meanings. -/
@@ -1437,6 +1443,14 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | some (r@(.ctrl _ _)) => out := out.push #[r]; j := k + 1
     | _ => break
   return (out, j)
+
+/-- Filename read from the same executed call the local-style reader sees. -/
+def InputRequest.name (request : InputRequest) : String :=
+  rawSrc ((takeGroups request.call (takeOpt request.call 1).2 1).1.getD 0 #[])
+
+/-- Options read from the same executed call as the filename. -/
+def InputRequest.options (request : InputRequest) : String :=
+  ((takeOpt request.call 1).1.getD "").trimAscii.toString
 
 private theorem takeGroups_loop_exact (raws : Array Raw) (i n : Nat) :
     takeGroups raws i n = (forIn [0:n] (#[], i) (fun _ => takeGroupsStep raws)).run := rfl
@@ -4159,16 +4173,18 @@ without that selection or those changes")
     if st.settling.isSome then return none
     let some reader := reader | return none
     let input := ["input", "include", "markdownInput"].contains n
-    let style := st.fileTop && !st.condInDoc &&
+    -- premise: frontendInputRequestChecks — a live macro can load a local
+    -- style in the preamble. Settlement is excluded above; fileTop is not
+    -- execution provenance and would suppress this genuine file request.
+    let style := !st.condInDoc &&
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     unless input || style do return none
-    let (opt, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
+    let (_, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
     let j := skipSpaces raws k
-    let some (.group name _) := raws[j]? | return none
+    let some (.group _ _) := raws[j]? | return none
     let request : InputRequest :=
       { command := n, file := st.file, pos := site.getD pos
-        name := rawSrc name, options := (opt.getD "").trimAscii.toString
-        call := #[.ctrl n pos] ++ raws.extract start (j + 1) }
+        callPos := pos, operands := raws.extract start (j + 1) }
     let (answer, context) ← reader request { state := st }
     write fun _ => context.state
     return answer.map fun answer => { raws := answer, stop := j + 1 }
