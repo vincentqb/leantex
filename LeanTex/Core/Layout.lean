@@ -1,5 +1,7 @@
 import Std.Data.HashSet
 import Init.Internal.Order.While
+import Init.Data.Range.Lemmas
+import Init.Data.List.Monadic
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
@@ -14732,6 +14734,328 @@ private def collectDocBody (rd : Rd) (doc : Doc) (cover : Ir.Cover)
   for h : i in [0:doc.body.size] do
     st := collectDocBlock rd doc cover frameSpans nums i h.upper st
   return st.1
+
+/- Source ownership through the actual paragraph collector and its source-indexed loop.
+The bound is the structural census of the input, before any job is staged. -/
+private theorem ParaJob.SourceBound.mono {n m : Nat} {j : ParaJob}
+    (h : j.SourceBound n) (hn : n ≤ m) : j.SourceBound m := by
+  refine ⟨?_, h.notes, h.marker, h.rule⟩
+  rcases h.source with ⟨k, hk, hb⟩ | hg
+  · exact Or.inl ⟨k, hk, Nat.lt_of_lt_of_le hb hn⟩
+  · exact Or.inr hg
+
+private theorem Op.SourceBound.mono {n m : Nat} {op : Op}
+    (h : op.SourceBound n) (hn : n ≤ m) : op.SourceBound m := by
+  cases op <;> simp only [Op.SourceBound] at h ⊢
+  all_goals first | exact h.mono hn | exact h
+
+private def Acc.SourceBound (n : Nat) (a : Acc) : Prop :=
+  ∀ op ∈ a.ops, op.SourceBound n
+
+private theorem Acc.SourceBound.mono {n m : Nat} {a : Acc}
+    (h : a.SourceBound n) (hn : n ≤ m) : a.SourceBound m :=
+  fun op ho => (h op ho).mono hn
+
+private theorem sourceBound_owedOp (a : Acc) (g : Glue) (n : Nat) :
+    (a.owedOp g).SourceBound n := by
+  cases h : a.dispAlt <;> simp [Acc.owedOp, h, Op.SourceBound]
+
+private theorem sourceBound_flushAnchored {n : Nat} (a : Acc) (r : Rd)
+    (k : Nat) (h : a.SourceBound n) : (a.flushAnchored r k).SourceBound n := by
+  intro op ho
+  simp only [Acc.flushAnchored, Array.mem_append] at ho
+  rcases ho with (ho | ho) | ho
+  · exact h op ho
+  · split at ho <;> simp_all [Op.SourceBound]
+  · simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at ho
+    rcases ho with rfl | rfl | rfl <;> trivial
+
+private theorem sourceBound_flushGap {n : Nat} (a : Acc) (r : Rd)
+    (h : a.SourceBound n) : (a.flushGap r).SourceBound n := by
+  cases hk : a.anchorAt with
+  | some k =>
+    simpa only [Acc.SourceBound, Acc.flushGap, hk] using
+      sourceBound_flushAnchored a r k h
+  | none =>
+    simp only [Acc.SourceBound, Acc.flushGap, hk]
+    repeat' split
+    all_goals
+      intro op ho
+      first
+      | exact h op ho
+      | simp only [Array.mem_push] at ho
+        rcases ho with ho | rfl
+        · first
+          | exact h op ho
+          | rcases ho with ho | rfl
+            · exact h op ho
+            · trivial
+        · first | exact sourceBound_owedOp a _ n | trivial
+
+private theorem flushGap_leafNext (a : Acc) (r : Rd) :
+    (a.flushGap r).leafNext = a.leafNext := by
+  unfold Acc.flushGap
+  repeat' split
+  all_goals rfl
+
+private theorem itemsOfInlines_empty (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (baseStyle : TextStyle) (cache : Std.HashMap String (Array Nat))
+    (ctr : LeafCtr) (imgs : Image.Store) (textW textH : Sp) (noteOk : Bool)
+    (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp))) :
+    (itemsOfInlines pats size xHeight fs baseStyle #[] cache ctr imgs textW textH
+      noteOk ladder step roleMetrics).1 =
+      #[.glue { fil := true, parfill := true },
+        .pen 0 forcedCost false 0 Ir.Color.black #[]] := by
+  rfl
+
+private theorem raggedItems_noGlyph (items : Array Item)
+    (h : ∀ it ∈ items, it.NoGlyph) : ∀ it ∈ raggedItems items, it.NoGlyph := by
+  intro it hi
+  obtain ⟨x, hx, rfl⟩ := Array.mem_map.mp hi
+  have hg := h x hx
+  cases x <;> dsimp only at hg ⊢
+  all_goals first | exact hg | split <;> trivial
+
+private theorem collectPara_leafNext (r : Rd) (a : Acc)
+    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat) :
+    (collectPara r a xs indent false r.geom.fontSize
+      (leaf := leaf) (span := span)).leafNext = a.leafNext := by
+  simp only [collectPara]
+  exact flushGap_leafNext a r
+
+private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
+    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (ha : a.SourceBound n) (hp : PlainInlines xs)
+    (hs : (∃ k, leaf = some k ∧ k < n) ∨ xs = #[]) :
+    (collectPara r a xs indent false r.geom.fontSize
+      (leaf := leaf) (span := span)).SourceBound n := by
+  have hn := itemsOfInlines_plainNotes r.pats r.geom.fontSize r.xHeight r.fs
+    ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground } : TextStyle)
+    xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
+    ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
+    r.geom.textHeight true r.geom.scale r.step r.roleMetrics hp
+  simp only [collectPara, show (Color.black == Color.black) = true from rfl,
+    BEq.rfl, Bool.false_eq_true, ↓reduceIte]
+  rw [hn]
+  simp only [Array.isEmpty_empty, ↓reduceIte]
+  intro op ho
+  simp only [Array.mem_push] at ho
+  rcases ho with ho | rfl
+  · exact sourceBound_flushGap a r ha _ ho
+  · refine ⟨?_, rfl, rfl, rfl⟩
+    rcases hs with hs | rfl
+    · exact Or.inl hs
+    · apply Or.inr
+      have hi : ∀ it ∈ (itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
+          ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground } : TextStyle)
+          #[] (a.flushGap r).hyphCache (LeafCtr.of leaf span #[]) r.imgs
+          ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
+          r.geom.textHeight true r.geom.scale r.step r.roleMetrics).1, it.NoGlyph := by
+        rw [itemsOfInlines_empty]
+        intro it hi
+        simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hi
+        rcases hi with rfl | rfl <;> first | rfl | trivial
+      split
+      · exact hi
+      · exact raggedItems_noGlyph _ hi
+
+private theorem plainInlines_rawCount (xs : List Inline) (out : Array Struct.Node)
+    (hp : ∀ x ∈ xs, ∃ s, x = .text s) :
+    (Struct.leaves (Struct.inlinesRaw out xs)).size =
+      (Struct.leaves out).size + xs.length := by
+  induction xs generalizing out with
+  | nil => simp [Struct.inlinesRaw]
+  | cons x xs ih =>
+    obtain ⟨s, rfl⟩ := hp x (by simp)
+    rw [Struct.inlinesRaw, ih _ (fun y hy => hp y (by simp [hy]))]
+    simp only [Struct.inlineRaw, Struct.leaves, Array.toList_push,
+      Struct.leavesList_snoc, Struct.leavesOne_leaf_exact, Array.size_push,
+      List.length_cons]
+    omega
+
+private theorem plainInlines_leafCount (xs : Array Inline)
+    (hp : ∀ x ∈ xs, ∃ s, x = .text s) :
+    Struct.leafCountInlines xs = xs.size := by
+  simpa [Struct.leafCountInlines, Struct.leaves, Struct.leavesList_nil_exact] using
+    plainInlines_rawCount xs.toList #[] (by simpa using hp)
+
+private def sourceLeafSum (bs : List Block) : Nat :=
+  (bs.map fun b => Struct.leafCountBlocks #[b]).sum
+
+private theorem blocksRaw_leafCount (bs : List Block) (out : Array Struct.Node) :
+    (Struct.leaves (Struct.blocksRaw out bs)).size =
+      (Struct.leaves out).size + sourceLeafSum bs := by
+  induction bs generalizing out with
+  | nil => simp [Struct.blocksRaw, sourceLeafSum]
+  | cons b bs ih =>
+    rw [Struct.blocksRaw, ih]
+    rw [Struct.blockRaw_acc]
+    simp only [Struct.leaves, Array.toList_append, Struct.leavesList_append]
+    rw [Struct.leavesList_acc]
+    simp only [Array.size_append]
+    simp only [sourceLeafSum, List.map_cons, List.sum_cons, Struct.leafCountBlocks,
+      Struct.blocksRaw, Struct.leaves]
+    omega
+
+private theorem sourceLeafSum_append (as bs : List Block) :
+    sourceLeafSum (as ++ bs) = sourceLeafSum as + sourceLeafSum bs := by
+  simp [sourceLeafSum]
+
+private theorem sourceLeafSum_take_le (bs : List Block) (i : Nat) :
+    sourceLeafSum (bs.take i) ≤ sourceLeafSum bs := by
+  have h := sourceLeafSum_append (bs.take i) (bs.drop i)
+  rw [List.take_append_drop] at h
+  omega
+
+private theorem sourceLeafSum_para (xs : Array Inline) :
+    Struct.leafCountBlocks #[.para xs] = Struct.leafCountInlines xs := by
+  simp [Struct.leafCountBlocks, Struct.blocksRaw, Struct.blockRaw, Struct.leaves,
+    Struct.leavesList_cons_exact, Struct.leavesOne_node_exact,
+    Struct.leavesList_nil_exact, Struct.leafCountInlines]
+
+private theorem sourceLeafSum_ofDoc (doc : Doc) :
+    (Struct.ofDoc doc).leaves.size = sourceLeafSum doc.body.toList := by
+  simp only [Struct.ofDoc, Struct.ofBlocks, Struct.Tree.leaves, Struct.leaves,
+    Struct.number, Struct.numberList_leafCount]
+  simpa [Struct.leaves, Struct.leavesList_nil_exact] using
+    blocksRaw_leafCount doc.body.toList #[]
+
+private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
+    (indent : Sp) (hp : PlainInlines xs) :
+    collectParaBlock r a xs indent =
+      collectPara r (a.leafRange (leafCount xs)).1 xs indent false r.geom.fontSize
+        (leaf := (a.leafRange (leafCount xs)).2) (span := leafCount xs) := by
+  unfold collectParaBlock
+  split
+  · rename_i h
+    have hall := (Bool.and_eq_true_iff.mp h).2
+    by_cases he : xs = #[]
+    · simp [he] at h
+    · obtain ⟨x, hx⟩ := Array.exists_mem_of_ne_empty xs he
+      obtain ⟨s, rfl⟩ := hp x hx
+      have hh := (Array.all_eq_true_iff_forall_mem.mp hall) (.text s) hx
+      contradiction
+  · rfl
+
+private theorem collectParaBlock_leafNext (r : Rd) (a : Acc) (xs : Array Inline)
+    (indent : Sp) (hp : PlainInlines xs) :
+    (collectParaBlock r a xs indent).leafNext = a.leafNext + xs.size := by
+  rw [collectParaBlock_plain r a xs indent hp]
+  simp only [Acc.leafRange]
+  rw [collectPara_leafNext]
+  rw [leafCount, plainInlines_leafCount xs hp]
+
+private theorem sourceBound_collectParaBlock {n : Nat} (r : Rd) (a : Acc)
+    (xs : Array Inline) (indent : Sp) (ha : a.SourceBound n) (hp : PlainInlines xs)
+    (hn : a.leafNext + xs.size ≤ n) :
+    (collectParaBlock r a xs indent).SourceBound n := by
+  rw [collectParaBlock_plain r a xs indent hp]
+  simp only [Acc.leafRange]
+  apply sourceBound_collectPara
+  · exact ha
+  · exact hp
+  · by_cases he : xs = #[]
+    · exact Or.inr he
+    · apply Or.inl
+      have hs : 0 < xs.size := Array.size_pos_iff.mpr he
+      refine ⟨a.leafNext, ?_, by omega⟩
+      simp [leafCount, plainInlines_leafCount xs hp, Nat.ne_of_gt hs]
+
+private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
+    (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
+    (hb : doc.body[i] = .para xs) (hp : PlainInlines xs) :
+    (collectDocBlock rd doc cover frameSpans nums i hi st).1.leafNext =
+      st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] := by
+  simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+  dsimp only [pure, Id]
+  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp]
+  simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
+  split <;> rfl
+
+private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
+    (cover : Ir.Cover) (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
+    (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
+    (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
+    (ha : st.1.SourceBound n)
+    (hn : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n) :
+    (collectDocBlock rd doc cover frameSpans nums i hi st).1.SourceBound n := by
+  simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+  dsimp only [pure, Id]
+  rw [collectBlock]
+  apply sourceBound_collectParaBlock
+  · split <;> exact ha
+  · exact hp
+  · split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Acc.wantGap] using hn
+
+/-- A progress invariant for the source loop: after visiting index `i`,
+the state satisfies the assertion for the prefix ending at `i + 1`.
+The implementation remains the dependent `forIn'` loop. -/
+private theorem sourceRange_progress {β : Type}
+    (P : Nat → β → Prop) (lo len : Nat)
+    (f : (i : Nat) → i ∈ List.range' lo len → β → Id (ForInStep β))
+    (init : β) (h0 : P lo init)
+    (step : ∀ i hi b, P i b →
+      ∃ next, f i hi b = .yield next ∧ P (i + 1) next) :
+    P (lo + len) (forIn' (List.range' lo len) init f : Id β).run := by
+  induction len generalizing lo init with
+  | zero => simpa using h0
+  | succ len ih =>
+    simp only [List.range'_succ] at f step ⊢
+    rw [List.forIn'_cons]
+    obtain ⟨next, hf, hp⟩ := step lo (by simp) init h0
+    simp only [hf, bind, Id.run]
+    have hr := ih (lo + 1) _ next hp (fun i hi b hb =>
+      step i (List.mem_cons_of_mem lo hi) b hb)
+    simpa only [Nat.add_assoc, Nat.add_comm 1 len, Id.run] using hr
+
+
+private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (acc0 : Acc)
+    (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
+    (ha : acc0.SourceBound n)
+    (hn : acc0.leafNext + sourceLeafSum doc.body.toList ≤ n) :
+    (collectDocBody rd doc cover frameSpans acc0).SourceBound n ∧
+      (collectDocBody rd doc cover frameSpans acc0).leafNext =
+        acc0.leafNext + sourceLeafSum doc.body.toList := by
+  let P := fun i (st : Acc × Bool) => st.1.SourceBound n ∧
+    st.1.leafNext = acc0.leafNext + sourceLeafSum (doc.body.toList.take i)
+  have h0 : P 0 (acc0, true) := by simp [P, sourceLeafSum, ha]
+  have step (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (hs : P i st) :
+      P (i + 1) (collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st) := by
+    obtain ⟨xs, hb, hx⟩ := hp doc.body[i] (Array.getElem_mem hi)
+    have hprefix : sourceLeafSum (doc.body.toList.take (i + 1)) =
+        sourceLeafSum (doc.body.toList.take i) + Struct.leafCountBlocks #[doc.body[i]] := by
+      rw [List.take_succ_eq_append_getElem (by simpa using hi), sourceLeafSum_append]
+      simp only [sourceLeafSum, List.map_singleton, List.sum_cons, List.sum_nil, Nat.add_zero,
+        Array.getElem_toList]
+    have hbnd : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n := by
+      have hle := sourceLeafSum_take_le doc.body.toList (i + 1)
+      rw [hprefix] at hle
+      dsimp only [P] at hs
+      omega
+    constructor
+    · exact sourceBound_collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st
+        xs hb hx hs.1 hbnd
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ _ hb hx, hs.2, hprefix]
+      omega
+  unfold collectDocBody
+  simp only [Std.Legacy.Range.forIn'_eq_forIn'_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+  dsimp only [Id.run, bind, pure, Id]
+  have hr := sourceRange_progress P 0 doc.body.size
+    (fun i hi st => .yield (collectDocBlock rd doc cover frameSpans doc.frameNumbers
+      i (by simpa using (List.mem_range'_1.mp hi).2) st)) (acc0, true) h0 ?_
+  · have ht : doc.body.toList.take doc.body.size = doc.body.toList := by
+      simpa only [Array.length_toList] using (List.take_length (l := doc.body.toList))
+    simpa only [P, Nat.zero_add, ht, Id.run, bind, pure, Id] using hr
+  · intro i hi st hs
+    have hib : i < doc.body.size := (by simpa using (List.mem_range'_1.mp hi).2)
+    exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
+      step i hib st hs⟩
 
 /-- The existing collection/staging seam, with its postlude. The continuation
 lets the background contract inspect the exact ops placement consumes, without
