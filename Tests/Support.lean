@@ -760,6 +760,10 @@ def hasGlyphRun (l : Layout.LineOut) : Bool :=
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
     | _ => false
 
+/-- Reject diagnostics that would make a placement comparison lose its text. -/
+def noDroppedGlyph (out : Layout.Out) : Bool :=
+  !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
+
 /-- A line's text as a reader sees it: `lineText`, but a glyphless run — a
 tie, which ships as a box a space wide (Layout's no-break-space arm) —
 reads as the space the page shows. -/

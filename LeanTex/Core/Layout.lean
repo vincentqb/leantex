@@ -14795,3 +14795,810 @@ theorem page_background_survives
   exact ⟨f, hfp, hx, hy, hw, hh⟩
 
 end LeanTex.Core.Layout
+
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+/-- The real collector and page-builder states, exposed abstractly for the
+boundary contract. Their constructors and unrelated state remain private. -/
+abbrev Pending := Acc
+abbrev Context := Rd
+abbrev Page := B
+
+/-- Input values that decide ordinary element glue. Widths are already
+resolved in scaled points; font-relative declarations have no separate rule. -/
+structure PendingView where
+  owed : Array Glue
+  wantDefault : Bool
+  declaredSkip : Bool
+  trivOwed : Bool
+
+def pending (a : Pending) : PendingView :=
+  ⟨a.owed, a.wantDefault, a.declaredSkip, a.trivOwed⟩
+
+/-- Starred anchors and short-display alternatives have their own placement
+rules. This contract concerns an ordinary boundary between fixed lines. -/
+def Ordinary (a : Pending) : Prop := a.anchorAt = none ∧ a.dispAlt = none
+
+def peerGap (r : Context) : Glue := r.parskip
+def texGap (r : Context) : Glue := r.resolve r.geom.texParskip
+def merge (gs : Array Glue) (g : Glue) : Array Glue := addvOwed gs g
+def add (a : Pending) (g : Glue) : Pending := a.addvspace g
+
+theorem merge_exact (gs : Array Glue) (g : Glue) :
+    merge gs g = match gs.back? with
+      | none => #[g]
+      | some last =>
+        if last.width == 0 then gs.push g
+        else if last.width < g.width then gs.pop.push g else gs := by
+  unfold merge addvOwed
+  cases gs.back? <;> rfl
+
+theorem add_pending_exact (a : Pending) (g : Glue) :
+    pending (add a g) =
+      { pending a with
+        owed := merge (pending a).owed g
+        declaredSkip := if (pending a).owed.back?.any (fun last => last.width == 0)
+          then false else (pending a).declaredSkip } := by
+  unfold add pending Acc.addvspace merge addvOwed
+  cases h : a.owed.back? with
+  | none => simp [h]
+  | some last =>
+    by_cases h0 : last.width == 0
+    · simp [h, h0]
+    · by_cases hlt : last.width < g.width <;> simp [h, h0, hlt]
+
+theorem add_ordinary (a : Pending) (g : Glue) (h : Ordinary a) :
+    Ordinary (add a g) := by
+  unfold Ordinary add Acc.addvspace
+  rcases h with ⟨ha, hd⟩
+  cases hl : a.owed.back? with
+  | none => simp [hl, ha, hd]
+  | some last =>
+    by_cases h0 : last.width == 0
+    · simp [hl, h0, ha, hd]
+    · by_cases hlt : last.width < g.width <;> simp [hl, h0, hlt, ha, hd]
+
+/-- A read-back of the newly emitted skip operations, not a second glue
+selector. `flush_emits_exact` proves that no other operation is omitted at
+an ordinary boundary. -/
+def flushed (a : Pending) (r : Context) : Array Glue :=
+  (((a.flushGap r).ops.toList.drop a.ops.size).filterMap fun op =>
+    match op with
+    | .skip g => some g
+    | _ => none).toArray
+
+/-- The collector emitted precisely these skips after its existing prefix. -/
+def Emits (a : Pending) (r : Context) (gs : Array Glue) : Prop :=
+  (a.flushGap r).ops = a.ops ++ gs.map Op.skip
+
+theorem flush_emits_exact (a : Pending) (r : Context) (h : Ordinary a) :
+    Emits a r (flushed a r) ∧
+      flushed a r =
+        if (pending a).owed.isEmpty then
+          if (pending a).wantDefault then #[peerGap r] else #[]
+        else if (pending a).wantDefault && (pending a).declaredSkip then
+          #[if (pending a).trivOwed then texGap r else peerGap r,
+            (pending a).owed.foldl Glue.add {}]
+        else #[(pending a).owed.foldl Glue.add {}] := by
+  rcases h with ⟨ha, hd⟩
+  unfold Emits flushed pending peerGap texGap
+  simp only [Acc.flushGap, ha, Acc.owedOp, hd, Acc.gapGlue]
+  split
+  · split <;>
+      simp [← Array.length_toList]
+  · split <;>
+      simp_all [← Array.length_toList, List.append_assoc]
+    all_goals simp [Array.push_eq_append, -Array.append_singleton, Array.append_assoc]
+
+/-- Measurements read by `placeLine` for one ordinary text line. `origin`
+includes the current line's baseline and this line's metric interline.
+`skip` is the glue already present before the collector's next boundary. -/
+structure LineInput where
+  origin : Sp
+  inkBelow : Sp
+  floor : Sp
+  skip : Glue
+  shrink : Sp
+
+def input (r : Context) (b : Page) (size : Sp) (segs : Array Seg) : LineInput :=
+  let box := lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+    b.geom.leading size segs
+  ⟨b.y + b.prevBelow + box.above, box.inkBelow, b.bottom, b.skip, b.pageShrink⟩
+
+/-- Fixed prior layout: an existing non-rule line on the current page,
+without a column restart, pending notes, a depth reset, or display interline.
+The next line is text rather than a bare rule and carries no new notes. -/
+def Ready (b : Page) (segs : Array Seg) : Prop :=
+  b.cur.lines.isEmpty = false ∧ b.freshStart = false ∧
+  b.prevRuleOnly = false ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
+  b.ignoreDepth = false ∧ b.texAfter = false
+
+def baselines (b : Page) : Array Sp := b.cur.lines.map (·.y)
+def shipped (b : Page) : Array PageOut := b.pages
+def queuedGlue (b : Page) : Glue := b.skip
+
+/-- Compose the real placement steps for the skips `flushGap` emitted, then
+the real `placeLine`. This exposes a boundary of the production operations;
+it does not choose glue, measure a line, or implement a second placer. -/
+def place (a : Pending) (r : Context) (b : Page) (x size : Sp)
+    (segs : Array Seg) (width : Sp) : Page :=
+  let st : StepSt := { b }
+  let st := (flushed a r).foldl (fun st g => stepStaged r.fs r.imgs st (.skip g)) st
+  st.b.placeLine r.fs x size segs width
+
+private theorem skip_step (r : Context) (st : StepSt) (g : Glue)
+    (h : st.b.fresh = false) :
+    stepStaged r.fs r.imgs st (.skip g) =
+      { st with b := { st.b with skip := st.b.skip.add g } } := by
+  simp [stepStaged, h]
+
+private theorem skip_steps (r : Context) (b : B) (gs : Array Glue)
+    (h : b.fresh = false) :
+    gs.foldl (fun st g => stepStaged r.fs r.imgs st (.skip g)) { b } =
+      { b := { b with skip := gs.foldl Glue.add b.skip } : StepSt } := by
+  have hh := Array.foldl_hom (fun glue => ({ b := { b with skip := glue } } : StepSt))
+    (g₁ := Glue.add)
+    (g₂ := fun st g => stepStaged r.fs r.imgs st (.skip g))
+    (xs := gs) (init := b.skip) (by
+      intro glue g
+      rw [skip_step]
+      simpa [B.fresh] using h)
+  simpa using hh
+
+private theorem line_placement (r : Context) (b : Page) (x size : Sp)
+    (segs : Array Seg) (width : Sp) (h : Ready b segs)
+    (hfit : b.y + b.skip.width +
+      (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs).above) +
+      (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs).inkBelow - b.bottom ≤ b.pageShrink + b.skip.shrink) :
+    shipped (b.placeLine r.fs x size segs width) = shipped b ∧
+    baselines (b.placeLine r.fs x size segs width) =
+      (baselines b).push (b.y + b.skip.width +
+        (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+          b.geom.leading size segs).above)) := by
+  rcases h with ⟨hcur, hfresh, hpr, hrl, hnn, hid, htx⟩
+  rcases hle : lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+    b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
+  rw [hle] at hfit
+  dsimp only at hfit ⊢
+  unfold shipped baselines B.placeLine B.fitCommit
+  rw [hle]
+  dsimp only
+  simp only [displayState_cur, keepInk_cur, displayState_pages, keepInk_pages]
+  simp only [B.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, interlineFor, hnn,
+    noteFloor, htx, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
+    Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true,
+    Option.getD_none]
+  simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
+    Array.isEmpty_empty, ite_true]
+  simp
+
+theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
+    (segs : Array Seg) (width : Sp) (h : Ready b segs)
+    (hfit : let i := input r b size segs
+      let g := (flushed a r).foldl Glue.add i.skip
+      i.origin + g.width + i.inkBelow - i.floor ≤ i.shrink + g.shrink) :
+    let i := input r b size segs
+    let g := (flushed a r).foldl Glue.add i.skip
+    shipped (place a r b x size segs width) = shipped b ∧
+      baselines (place a r b x size segs width) =
+        (baselines b).push (i.origin + g.width) := by
+  have hf : b.fresh = false := by simp [B.fresh, h.1, h.2.1]
+  let g := (flushed a r).foldl Glue.add b.skip
+  have hr : Ready { b with skip := g } segs := h
+  have hp := line_placement r { b with skip := g } x size segs width hr (by
+    change b.y + g.width +
+      (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs).above) +
+      (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs).inkBelow - b.bottom ≤ b.pageShrink + g.shrink
+    unfold input at hfit
+    dsimp only at hfit
+    simpa only [Int.add_assoc, Int.add_comm, Int.add_left_comm] using hfit)
+  dsimp only [place]
+  rw [skip_steps r b _ hf]
+  constructor
+  · exact hp.1
+  · rw [hp.2]
+    simp only [baselines, input, g, Int.add_assoc, Int.add_comm, Int.add_left_comm]
+
+end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+/-- The exact production placement input, after backend projection, math
+resolution, collection and paragraph breaking have been selected. -/
+structure Program where
+  private ops : Array StagedOp
+  private initial : B
+
+/-- Observe the existing preparation continuation; no second collector or
+line breaker is used by the spacing contract. -/
+def program (geom : Geom) (fs : FontSet) (doc : Ir.Doc) : Program :=
+  withLayoutOps geom fs none (resolveDocMath fs doc).1 {}
+    (fun ops initial _ => ⟨ops, initial⟩)
+
+private def closeLast (b : B) : B :=
+  if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then
+    b.finishPage b.closingOwed
+  else b
+
+private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
+    (ship geom fs none doc).pages =
+      (closeLast (placeFrom fs {} (program geom fs doc).ops
+        { b := (program geom fs doc).initial } 0).b).pages := by
+  rfl
+
+/-- Natural-size fit and an ordinary top distribution leave every line's
+baseline unchanged at the actual closing door. -/
+private theorem close_natural (b : B)
+    (hcur : b.cur.lines.isEmpty = false)
+    (hn : b.needed ≤ 0) (hv : b.vdist = .top)
+    (hf : b.pageFils = 0) (hs : b.skip.fil = false)
+    (hp : b.pendingNotes.isEmpty = true) :
+    (closeLast b).pages.map (fun p => p.lines) =
+      (b.pages.map (fun p => p.lines)).push b.cur.lines := by
+  simp [closeLast, hcur, B.finishPage, Int.not_lt.mpr hn, hf, hs,
+    hv, VDist.aboveShare, VDist.top, filShare, B.noteLines, hp]
+
+end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+private structure LineRise (a b : LineOut) : Prop where
+  segs : a.segs = b.segs
+  size : a.size = b.size
+  note : a.note = b.note
+  furniture : a.furniture = b.furniture
+  baseline : a.y ≤ b.y
+
+private inductive LinesRise : List LineOut → List LineOut → Prop
+  | nil : LinesRise [] []
+  | cons {a b as bs} : LineRise a b → LinesRise as bs → LinesRise (a :: as) (b :: bs)
+
+private theorem LinesRise.refl (ls : List LineOut) : LinesRise ls ls := by
+  induction ls with
+  | nil => exact .nil
+  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, Int.le_refl _⟩ ih
+
+private theorem LinesRise.append {as bs cs ds : List LineOut}
+    (h : LinesRise as bs) (h' : LinesRise cs ds) :
+    LinesRise (as ++ cs) (bs ++ ds) := by
+  induction h with
+  | nil => exact h'
+  | cons hl _ ih => exact .cons hl ih
+
+/-- The fields which determine ordinary paragraph geometry and its cursor.
+Diagnostics, anchors and horizontal paint do not enter the comparison. -/
+private structure PageRise (a b : B) : Prop where
+  geom : a.geom = b.geom
+  ascent : a.ascent = b.ascent
+  capHeight : a.capHeight = b.capHeight
+  descent : a.descent = b.descent
+  xHeight : a.xHeight = b.xHeight
+  below : a.prevBelow = b.prevBelow
+  cursor : a.y + a.skip.width ≤ b.y + b.skip.width
+  lines : LinesRise a.cur.lines.toList b.cur.lines.toList
+  pages : a.pages = b.pages
+
+private def nextBaseline (fs : FontSet) (b : B) (size : Sp)
+    (segs : Array Seg) (first : Option Sp) : Sp :=
+  b.y + b.skip.width + first.getD
+    (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+      b.geom.leading size segs).above)
+
+/-- Numeric fit at the next call to the real placer, before it branches. -/
+private def LineFits (fs : FontSet) (b : B) (size : Sp)
+    (segs : Array Seg) (first : Option Sp) : Prop :=
+  nextBaseline fs b size segs first +
+    (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+      b.geom.leading size segs).inkBelow - b.bottom ≤ b.pageShrink + b.skip.shrink
+
+private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
+    (h : Ready b segs) (hf : LineFits fs b size segs first) :
+    b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors =
+      ((b.commit
+        { x, y := nextBaseline fs b size segs first, size
+          segs := segs.filter fun s => match s with
+            | .rule width _ _ _ => width != 0
+            | _ => true
+          setWidth := w, hang, expand, counted, leaf, anchors }
+        (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+          b.geom.leading size segs).inkBelow
+        (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+          b.geom.leading size segs).below
+        false true
+        (min (nextBaseline fs b size segs first +
+          (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+            b.geom.leading size segs).inkBelow - b.bottom)
+          (b.pageShrink + b.skip.shrink))).keepInk (segsInk fs segs).2).displayState
+        false (some (x + w - b.geom.hmargin)) := by
+  rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩
+  unfold B.placeLine B.fitCommit
+  dsimp only
+  simp only [B.fresh, hc, hs, Bool.false_and, hp, hr, hi, interlineFor, hn,
+    noteFloor, ht, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
+    Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true]
+  simp only [LineFits, nextBaseline] at hf
+  simp only [hf, true_or, ite_true, B.attachNotes, Array.isEmpty_empty]
+  rfl
+
+private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Sp) (opens : Bool)
+    (aa ab : Array String) (h : PageRise a b)
+    (ha : Ready a segs) (hb : Ready b segs)
+    (hfa : LineFits fs a size segs first) (hfb : LineFits fs b size segs first) :
+    PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa)
+      (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab) := by
+  have hy : nextBaseline fs a size segs first ≤ nextBaseline fs b size segs first := by
+    simp only [nextBaseline, h.geom, h.ascent, h.capHeight, h.descent, h.below]
+    exact Int.add_le_add_right h.cursor _
+  rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa ha hfa,
+      ordinary_line fs b x size segs w hang expand counted leaf first opens ab hb hfb]
+  constructor
+  · exact h.geom
+  · exact h.ascent
+  · exact h.capHeight
+  · exact h.descent
+  · exact h.xHeight
+  · simp only [B.displayState, B.keepInk, B.commit, h.geom, h.ascent, h.capHeight, h.descent]
+  · simpa only [B.displayState, B.keepInk, B.commit, Int.add_zero] using hy
+  · simp only [B.displayState, B.keepInk, B.commit, Array.toList_push]
+    exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, hy⟩ .nil)
+  · exact h.pages
+
+private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
+  let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
+  Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none)
+
+private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
+    (segs : Array Seg) (a b : B) (h : PageRise a b) :
+    PageRise (placeParaTrailer fs j brk segs a) (placeParaTrailer fs j brk segs b) := by
+  unfold placeParaTrailer
+  split
+  · refine { h with cursor := ?_ }
+    dsimp only
+    simpa only [Int.add_assoc] using Int.add_le_add_right h.cursor _
+  · exact h
+
+private theorem paragraph_step (fs : FontSet) (j : ParaJob)
+    (a b : B) (prev brk : Nat) (first : Bool)
+    (hj : j.display = none) (hn : j.notes.isEmpty = true)
+    (h : PageRise a b)
+    (ha : ParaFits fs j (a, prev, first) brk)
+    (hb : ParaFits fs j (b, prev, first) brk) :
+    PageRise (placeParaLine fs j (a, prev, first) brk).1
+      (placeParaLine fs j (b, prev, first) brk).1 := by
+  have hg : paraLineGeom fs j a first prev brk = paraLineGeom fs j b first prev brk := by
+    simp only [paraLineGeom, h.geom, h.xHeight]
+  unfold ParaFits at ha hb
+  simp only [hg] at ha
+  unfold placeParaLine
+  dsimp only
+  simp only [hg, hn, ite_true, B.openDisplayAt, hj]
+  apply trailer_rise
+  split
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+      { h with } ha.1 hb.1 ha.2 hb.2
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ h ha.1 hb.1 ha.2 hb.2
+
+/-- A proof trace of the numeric input conditions at every iteration of the
+production paragraph fold. It runs no second line-setting algorithm. -/
+private inductive ParagraphInputs (fs : FontSet) (j : ParaJob) :
+    List Nat → (B × Nat × Bool) → Prop
+  | nil (s) : ParagraphInputs fs j [] s
+  | cons {brk rest s} : ParaFits fs j s brk →
+      ParagraphInputs fs j rest (placeParaLine fs j s brk) →
+      ParagraphInputs fs j (brk :: rest) s
+
+private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
+    (hj : j.display = none) (hn : j.notes.isEmpty = true)
+    (breaks : List Nat) (a b : B × Nat × Bool)
+    (h : PageRise a.1 b.1) (hm : a.2 = b.2)
+    (ha : ParagraphInputs fs j breaks a) (hb : ParagraphInputs fs j breaks b) :
+    PageRise (breaks.foldl (placeParaLine fs j) a).1
+      (breaks.foldl (placeParaLine fs j) b).1 := by
+  induction ha generalizing b with
+  | nil => exact h
+  | @cons brk rest a ha hrest ih =>
+    cases hb with
+    | cons hb hrest' =>
+      rcases a with ⟨a, prev, first⟩
+      rcases b with ⟨b, prev', first'⟩
+      cases hm
+      exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
+
+private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
+    p.forced.size breaks.size (!p.reflows.isEmpty)
+  ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)
+
+private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
+    (a b : B) (hj : j.display = none) (hn : j.notes.isEmpty = true) (h : PageRise a b)
+    (ha : ParagraphInputs fs j breaks.toList (paragraphStart a j breaks))
+    (hb : ParagraphInputs fs j breaks.toList (paragraphStart b j breaks)) :
+    PageRise (placePara fs a j breaks) (placePara fs b j breaks) := by
+  have hs : PageRise (paragraphStart a j breaks).1 (paragraphStart b j breaks).1 := by
+    dsimp only [paragraphStart]
+    unfold B.warnReflow
+    repeat' split
+    all_goals exact { h with }
+  have hp := paragraph_fold fs j hj hn breaks.toList _ _ hs rfl ha hb
+  simpa only [placePara, paragraphStart, Array.foldl_toList] using hp
+
+end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+private theorem appendRiders_toList (fs : FontSet) (l : LineOut)
+    (lines : Array LineOut) :
+    (appendRiders fs l lines).toList =
+      lines.toList ++ (decorationRiders fs l).toList := by
+  unfold appendRiders
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  simp [← Array.foldl_toList]
+
+/-- The consumed-prefix invariant of the actual decoration loop. -/
+private theorem paintLines_toList (fs : FontSet) (lines : Array LineOut) :
+    (paintLines fs lines).toList =
+      lines.toList.flatMap (fun l => l :: (decorationRiders fs l).toList) := by
+  unfold paintLines
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  have h := Array.foldl_induction
+    (as := lines)
+    (motive := fun i (out : Array LineOut) =>
+      out.toList = (lines.toList.take i).flatMap
+        (fun l => l :: (decorationRiders fs l).toList))
+    (init := Array.mkEmpty lines.size)
+    (f := fun out l => appendRiders fs l (out.push l))
+    (by simp)
+    (by
+      intro i out hout
+      rw [appendRiders_toList, Array.toList_push, hout]
+      rw [List.take_succ_eq_append_getElem (by simp)]
+      simp [List.flatMap_append, List.append_assoc])
+  simpa [← Array.length_toList] using h
+
+private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
+    LinesRise (decorationRiders fs a).toList (decorationRiders fs b).toList := by
+  simp only [decorationRiders, Array.toList_filterMap,
+    List.filterMap_cons, List.filterMap_nil, h.segs, h.size]
+  by_cases hu : (underlineSegs fs b.size b.segs).isEmpty = true <;>
+    by_cases ht : (lineThroughSegs b.segs).isEmpty = true
+  all_goals simp only [hu, ht, ite_true]
+  · exact .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩
+      (.cons ⟨rfl, rfl, h.note, h.furniture, h.baseline⟩ .nil)
+
+private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
+    (h : LinesRise as bs) :
+    LinesRise (as.flatMap fun l => l :: (decorationRiders fs l).toList)
+      (bs.flatMap fun l => l :: (decorationRiders fs l).toList) := by
+  induction h with
+  | nil => exact .nil
+  | cons hl _ ih => exact (LinesRise.cons hl (riders_rise fs hl)).append ih
+
+/-- A text glyph is the same ink measure used by the original spacing
+obligation: white space, NBSP and discretionary soft hyphens are excluded. -/
+def textInk : Seg → List Char
+  | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
+    (String.ofList (glyphs.toList.map (·.2.1))).toList.filter fun c =>
+      !(c.isWhitespace || c == ' ' || c == '\u00a0' || c == '\u00ad')
+  | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+    | .image _ _ _ | .poly _ _ => []
+
+def inkLine (l : LineOut) : Bool :=
+  !l.furniture && !l.note && l.segs.toList.flatMap textInk != []
+
+def inkBaselines (o : Out) : List Sp :=
+  (o.pages.toList.flatMap fun p => p.lines.toList.filter inkLine).map (·.y)
+
+private theorem inkLine_rise {a b : LineOut} (h : LineRise a b) :
+    inkLine a = inkLine b := by
+  simp only [inkLine, h.segs, h.note, h.furniture]
+
+private theorem LinesRise.filter {as bs : List LineOut} (h : LinesRise as bs) :
+    LinesRise (as.filter inkLine) (bs.filter inkLine) := by
+  induction h with
+  | nil => exact .nil
+  | cons hl _ ih =>
+    simp only [List.filter_cons, inkLine_rise hl]
+    split
+    · exact .cons hl ih
+    · exact ih
+
+private theorem LinesRise.last {as bs : List LineOut} (h : LinesRise as bs) :
+    ((as.map (·.y)).getLast?.getD 0 : Int) ≤ (bs.map (·.y)).getLast?.getD 0 := by
+  induction h with
+  | nil => exact Int.le_refl _
+  | @cons a b as bs hl ht ih =>
+    cases ht with
+    | nil => simpa using hl.baseline
+    | cons _ _ => simpa using ih
+
+private theorem furniture_ink_empty (fs : FontSet) (lines : Array LineOut) :
+    (paintLines fs (lines.map furnitureLine)).toList.filter inkLine = [] := by
+  rw [paintLines_toList]
+  simp only [Array.toList_map, List.flatMap_map,
+    List.filter_flatMap]
+  apply List.flatMap_eq_nil_iff.mpr
+  intro l hl
+  simp only [List.filter_cons, inkLine, furnitureLine, Bool.not_true,
+    Bool.false_and, Bool.false_eq_true, reduceIte]
+  apply List.filter_eq_nil_iff.mpr
+  intro r hr
+  have hb := decorationRiders_band fs (furnitureLine l) r
+    (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
+  simp [inkLine, hb.1, furnitureLine]
+
+private theorem furnishLines_ink_projects (fs : FontSet)
+    (before body after : Array LineOut) :
+    (furnishLines fs before body after).toList.filter inkLine =
+      (paintLines fs body).toList.filter inkLine := by
+  unfold furnishLines
+  simp only [paintLines_toList, Array.toList_append, List.flatMap_append,
+    List.filter_append]
+  have hb := furniture_ink_empty fs before
+  have ha := furniture_ink_empty fs after
+  rw [paintLines_toList] at hb ha
+  rw [hb, ha]
+  simp
+
+private theorem furnishFrom_transforms {σ α : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (read transform : PageOut → α)
+    (hread : ∀ i p s, read { p with lines := (f i p s).1 } = transform p)
+    (pages : Array PageOut) (s : σ) (i : Nat) :
+    (furnishFrom f pages s i).1.map read =
+      pages.mapIdx (fun j p => if j < i then read p else transform p) := by
+  induction pages, s, i using furnishFrom.induct f with
+  | case1 pages s i h ls s' heq ih =>
+    have hr := hread i pages[i] s
+    rw [heq] at hr
+    rw [furnishFrom]
+    simp only [h, reduceDIte, heq]
+    rw [ih]
+    apply Array.ext
+    · simp
+    · intro j hj hj'
+      simp only [Array.getElem_mapIdx, Array.getElem_set]
+      by_cases hji : j = i
+      · subst j
+        simpa using hr
+      · have hn : (j < i + 1) = (j < i) := propext (by omega)
+        simp [Ne.symm hji, hn]
+  | case2 pages s i h =>
+    rw [furnishFrom]
+    simp only [h, reduceDIte]
+    apply Array.ext
+    · simp
+    · intro j hj hj'
+      have hi : j < i := by simp only [Array.size_map] at hj; omega
+      simp [hi]
+
+private theorem furnishFrom_transforms_zero {σ α : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (read transform : PageOut → α)
+    (hread : ∀ i p s, read { p with lines := (f i p s).1 } = transform p)
+    (pages : Array PageOut) (s : σ) :
+    (furnishFrom f pages s 0).1.map read = pages.map transform := by
+  rw [furnishFrom_transforms f read transform hread]
+  apply Array.ext
+  · simp
+  · intro j hj hj'
+    simp
+
+private theorem runPost_ink_projects (sh : Shipped) :
+    (runPost sh).pages.map (fun p => p.lines.toList.filter inkLine) =
+      sh.pages.map (fun p => (paintLines sh.fs p.lines).toList.filter inkLine) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  apply furnishFrom_transforms_zero
+  intro i p s
+  exact furnishLines_ink_projects _ _ _ _
+
+end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+/-- The paragraph already measured and broken by the production collector.
+The spacing theorem never runs a second line breaker. -/
+abbrev Paragraph := ParaJob
+
+/-- A proof trace of the actual driver's prefix. Each constructor is one
+production call; the state includes all previous layout, not just its y. -/
+private inductive Prefix (fs : FontSet) (p : Program) : FlowSt → Nat → Prop
+  | start : Prefix fs p { placed := { b := p.initial } } 0
+  | step {st i} (prior : Prefix fs p st i) (hi : i < p.ops.size)
+      (ordinary : p.ops[i] ≠ .floatOpen) :
+      Prefix fs p
+        (stepFlow fs {} st (keepAt st.placed.b fs {} p.ops i p.ops[i])) (i + 1)
+
+private theorem prefix_continue (fs : FontSet) (p : Program)
+    {st : FlowSt} {i : Nat} (h : Prefix fs p st i) :
+    placeFlowFrom fs {} p.ops { placed := { b := p.initial } } 0 =
+      placeFlowFrom fs {} p.ops st i := by
+  induction h with
+  | start => rfl
+  | @step st i _ hi hn ih =>
+    rw [ih, placeFlowFrom]
+    simp only [hi, reduceDIte]
+
+/-- The unconsumed production input is exactly the emitted ordinary skips
+and one fixed prepared paragraph. These are operation identities before
+placement, not assumptions about the output pages. -/
+private inductive ParagraphTail (ops : Array StagedOp) (j : ParaJob)
+    (t : Task (Array Nat)) : Nat → List Glue → Prop
+  | last {i} (hi : i < ops.size) (hop : ops[i] = .para j t)
+      (done : ops.size = i + 1) : ParagraphTail ops j t i []
+  | skip {i g gs} (hi : i < ops.size) (hop : ops[i] = .skip g)
+      (rest : ParagraphTail ops j t (i + 1) gs) :
+      ParagraphTail ops j t i (g :: gs)
+
+private theorem skip_step_fs (fs : FontSet) (st : StepSt) (g : Glue)
+    (h : st.b.fresh = false) :
+    stepStaged fs {} st (.skip g) =
+      { st with b := { st.b with skip := st.b.skip.add g } } := by
+  simp [stepStaged, h]
+
+private theorem para_step_b (fs : FontSet) (st : FlowSt) (j : ParaJob)
+    (t : Task (Array Nat)) (hk : j.keepNext ≤ 0) :
+    (stepFlow fs {} st (.para j t)).placed.b = placePara fs st.placed.b j t.get := by
+  simp only [stepFlow, stepStaged]
+  have hn : ¬ (0 : Int) < j.keepNext := Int.not_lt.mpr hk
+  simp only [B.keepHeading, hn, decide_false, Bool.false_and, Bool.false_eq_true, ite_false]
+  split <;> rfl
+
+private theorem paragraph_tail_place (fs : FontSet) (ops : Array StagedOp)
+    (j : ParaJob) (t : Task (Array Nat)) {i : Nat} {gs : List Glue}
+    (h : ParagraphTail ops j t i gs) (hk : j.keepNext ≤ 0)
+    (st : FlowSt) (hf : st.placed.b.fresh = false) :
+    (placeFlowFrom fs {} ops st i).placed.b =
+      placePara fs { st.placed.b with skip := gs.foldl Glue.add st.placed.b.skip } j t.get := by
+  induction h generalizing st with
+  | @last i hi hop hend =>
+    rw [placeFlowFrom]
+    simp only [hi, reduceDIte, hop, keepAt, Int.not_lt.mpr hk, ite_false]
+    rw [placeFlowFrom]
+    simp only [hend, Nat.lt_irrefl, reduceDIte]
+    simpa using para_step_b fs st j t hk
+  | @skip i g gs hi hop _ ih =>
+    rw [placeFlowFrom]
+    simp only [hi, reduceDIte, hop, keepAt]
+    rw [ih]
+    · simp only [stepFlow, skip_step_fs fs st.placed g hf, List.foldl_cons]
+    · simp only [stepFlow, skip_step_fs fs st.placed g hf]
+      simpa only [B.fresh] using hf
+
+/-- A document's actual prepared input reaches a fixed prior layout and
+then contains the named skips and prepared paragraph. This premise names
+the input boundary of `run`, including the common prefix; it contains no
+baseline, page-preservation, or monotonicity conclusion. -/
+def AtTail (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
+    (b : Page) (j : Paragraph) (breaks : Array Nat) (gs : Array Glue) : Prop :=
+  let p := program geom fs doc
+  ∃ (st : FlowSt) (i : Nat) (t : Task (Array Nat)),
+    Prefix fs p st i ∧ st.placed.b = b ∧ t.get = breaks ∧
+      ParagraphTail p.ops j t i gs.toList
+
+private theorem tail_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
+    (b : Page) (j : Paragraph) (breaks : Array Nat) (gs : Array Glue)
+    (h : AtTail geom fs doc b j breaks gs) (hk : j.keepNext ≤ 0)
+    (hf : b.fresh = false) :
+    (ship geom fs none doc).pages =
+      (closeLast (placePara fs { b with skip := gs.foldl Glue.add b.skip } j breaks)).pages := by
+  obtain ⟨st, i, t, hp, hs, ht, htail⟩ := h
+  rw [program_ship]
+  unfold placeFrom
+  rw [prefix_continue fs (program geom fs doc) hp]
+  rw [paragraph_tail_place fs _ j t htail hk st (hs.symm ▸ hf), hs, ht]
+  simp only [Array.foldl_toList]
+
+end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+/-- Numeric and mode inputs to the real page-closing door. Natural fit
+requires no shrink; top distribution and absence of fil avoid later
+redistribution. Pending footnotes have their own placement contract. -/
+private def NaturalClose (b : B) : Prop :=
+  b.cur.lines.isEmpty = false ∧ b.needed ≤ 0 ∧ b.vdist = .top ∧
+    b.pageFils = 0 ∧ b.skip.fil = false ∧ b.pendingNotes.isEmpty = true
+
+private def boundaryStart (b : B) (gs : Array Glue) : B :=
+  { b with skip := gs.foldl Glue.add b.skip }
+
+private def boundaryEnd (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) (gs : Array Glue) : B :=
+  placePara fs (boundaryStart b gs) j breaks
+
+/-- Checkable inputs to the production calls after the fixed prefix:
+ordinary paragraph modes, numeric fit before every line commit, and
+natural-size fixed-top closing. No output ordering is assumed. -/
+def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
+    (breaks : Array Nat) (gs : Array Glue) : Prop :=
+  b.fresh = false ∧ j.keepNext ≤ 0 ∧ j.display = none ∧ j.notes.isEmpty = true ∧
+    ParagraphInputs fs j breaks.toList (paragraphStart (boundaryStart b gs) j breaks) ∧
+    NaturalClose (boundaryEnd fs b j breaks gs)
+
+private def paintedInk (fs : FontSet) (ls : Array LineOut) : List LineOut :=
+  (paintLines fs ls).toList.filter inkLine
+
+private theorem run_ink_projects (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
+    (run geom fs none doc).pages.map (fun p => p.lines.toList.filter inkLine) =
+      (ship geom fs none doc).pages.map (fun p => paintedInk fs p.lines) := by
+  have hf : (shipCore geom fs none (resolveDocMath fs doc).1 {}).fs = fs := by rfl
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def,
+    paintedInk, hf] using
+    runPost_ink_projects (shipCore geom fs none (resolveDocMath fs doc).1 {})
+
+private theorem tail_baselines (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
+    (b : Page) (j : Paragraph) (breaks : Array Nat) (gs : Array Glue)
+    (ha : AtTail geom fs doc b j breaks gs)
+    (hs : ParagraphSafe fs b j breaks gs) :
+    inkBaselines (run geom fs none doc) =
+      ((boundaryEnd fs b j breaks gs).pages.toList.flatMap
+        (fun p => paintedInk fs p.lines) ++
+          paintedInk fs (boundaryEnd fs b j breaks gs).cur.lines).map (·.y) := by
+  have hr := run_ink_projects geom fs doc
+  rw [tail_ship geom fs doc b j breaks gs ha hs.2.1 hs.1] at hr
+  rcases hs.2.2.2.2.2 with ⟨hc, hn, hv, hf, hg, hp⟩
+  have hclose := close_natural (boundaryEnd fs b j breaks gs) hc hn hv hf hg hp
+  have hm := congrArg (fun xs : Array (Array LineOut) =>
+    (xs.toList.flatMap (paintedInk fs)).map (·.y)) hclose
+  have ho := congrArg (fun xs : Array (List LineOut) =>
+    xs.toList.flatten.map (·.y)) hr
+  simp only [Array.toList_map, ← List.flatMap_def] at ho
+  simp only [Array.toList_map, List.flatMap_map, Array.toList_push,
+    List.flatMap_append, List.flatMap_cons, List.flatMap_nil, List.append_nil] at hm
+  exact ho.trans hm
+
+/-- Composition through the actual driver, arbitrary paragraph line count,
+actual page close, decoration, furniture, and print-mark projection.
+The downstream element contract discharges the width premise from
+`addvOwed` and resolved default compensation. -/
+theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir.Doc)
+    (b : Page) (j : Paragraph) (breaks : Array Nat) (gs gs' : Array Glue)
+    (ha : AtTail geom fs before b j breaks gs)
+    (ha' : AtTail geom fs after b j breaks gs')
+    (hs : ParagraphSafe fs b j breaks gs)
+    (hs' : ParagraphSafe fs b j breaks gs')
+    (hw : (gs.foldl Glue.add (queuedGlue b)).width ≤
+      (gs'.foldl Glue.add (queuedGlue b)).width) :
+    ((inkBaselines (run geom fs none before)).getLast?.getD 0 : Int) ≤
+      (inkBaselines (run geom fs none after)).getLast?.getD 0 := by
+  have hb : PageRise (boundaryStart b gs) (boundaryStart b gs') :=
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, Int.add_le_add_left hw _,
+      LinesRise.refl _, rfl⟩
+  have hp := paragraph_rise fs j breaks _ _ hs.2.2.1 hs.2.2.2.1 hb
+    hs.2.2.2.2.1 hs'.2.2.2.2.1
+  change PageRise (boundaryEnd fs b j breaks gs) (boundaryEnd fs b j breaks gs') at hp
+  rw [tail_baselines geom fs before b j breaks gs ha hs,
+    tail_baselines geom fs after b j breaks gs' ha' hs']
+  apply LinesRise.last
+  rw [hp.pages]
+  apply (LinesRise.refl _).append
+  have hl := (paint_rise fs hp.lines).filter
+  simpa only [paintedInk, paintLines_toList] using hl
+
+end LeanTex.Core.Layout.Spacing

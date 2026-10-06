@@ -5,9 +5,6 @@ namespace LeanTex.Tests.LayoutContracts
 
 open Core Core.Dim Core.Ir Core.Layout Core.Font
 
-private def noDroppedGlyph (out : Out) : Bool :=
-  !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
-
 /-- Frame ownership survives an authored running footer: suppressing the
 chrome band changes furniture, not which frame produced a physical page. -/
 def ownershipChecks (fs : FontSet) : Array (String × Bool) :=
