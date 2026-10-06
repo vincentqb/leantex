@@ -15288,7 +15288,7 @@ theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
                   stepAssert, stepAllow, stepMissing]
                 all_goals rfl))
 
-/-- `sty_is_defaults`, the `\tokens` half (the sty-e2e audit's q2): a
+/-- `sty_is_defaults_tokens`, the `\tokens` half (the sty-e2e audit's q2): a
 `.sty`-sourced value is a default — for a keyed store, a document
 declaration folding after the `.sty`'s wins, never the reverse. A
 corollary of keyed last-wins (`Tokens.declare_last_wins`) plus the splice
@@ -15306,7 +15306,7 @@ theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
     ((t.declare k sty).declare k doc).find? k = some doc :=
   Tokens.declare_last_wins _ k doc
 
-/-- `sty_is_defaults`, the `\palette` half: the same corollary through the
+/-- `sty_is_defaults_palette`, the `\palette` half: the same corollary through the
 same one install door (`Palette.declare_last_wins`). -/
 theorem sty_is_defaults_palette (p : Palette) (k : String) (sty doc : Color)
     (d d' : Bool) :
