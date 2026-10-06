@@ -1,3 +1,5 @@
+module
+
 import Std.Data.HashSet
 
 /-! Pure selection over supplied font metadata. Discovery and cache policy
@@ -8,7 +10,7 @@ namespace LeanTex.Core.FontDb
 /-- A face's classification, supplied by discovery or a caller. Its fields
 are metadata, not evidence that the path is readable, the bytes still match,
 or any glyph paints ink. Selection contracts quantify over these values. -/
-structure Face where
+public structure Face where
   path : String
   family : String
   subfamily : String
@@ -20,7 +22,7 @@ structure Face where
   deriving Repr, Inhabited
 
 /-- Which face of a family a piece of text wants. -/
-structure Variant where
+public structure Variant where
   bold : Bool := false
   italic : Bool := false
   deriving Repr, BEq, Inhabited
@@ -28,11 +30,11 @@ structure Variant where
 /-- A supported standalone-font extension, ignoring case. This recognizes
 names used by selection and discovery; it does not inspect any bytes. Font
 collections (`.ttc`, `.dfont`) are not supported. -/
-def hasFontExtension (p : String) : Bool :=
+public def hasFontExtension (p : String) : Bool :=
   let ext := (p.splitOn ".").getLast? |>.map String.toLower
   ext == some "ttf" || ext == some "otf"
 
-private def norm (s : String) : String :=
+def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)
 
 /-- Does `s` normalise to exactly `target` (itself already normalised, as
@@ -41,7 +43,7 @@ the four intermediate structures `norm` allocates per name: `resolve` asks
 this of every installed face, and a build resolves twelve slot–variant
 pairs, so on a 2856-face host the `norm` form was ~15 ms of every build —
 most of what resolution cost. -/
-private def normEq (s : String) (target : Array Char) : Bool :=
+def normEq (s : String) (target : Array Char) : Bool :=
   let fin := s.foldl (init := some 0) fun i? c =>
     match i? with
     | none => none
@@ -58,18 +60,18 @@ private def normEq (s : String) (target : Array Char) : Bool :=
 is the family's plain face; anything else carries an extra descriptor
 ("Condensed Bold", "ExtraLight"), which must not win over the plain one —
 condensed faces commonly share the typographic family name. -/
-private def canonicalSubfamily (s : String) : Bool :=
+def canonicalSubfamily (s : String) : Bool :=
   ["regular", "bold", "italic", "oblique", "bolditalic", "boldoblique",
    "book", "normal"].contains (norm s)
 
 /-- Target weight for the requested variant. Real families ship a weight
 axis, so "bold" means "as close to 700 as this family gets". -/
-private def targetWeight (bold : Bool) : Nat := if bold then 700 else 400
+def targetWeight (bold : Bool) : Nat := if bold then 700 else 400
 
 /-- Distance from a target weight on the family's weight axis: the one
 spelling of the fact both scan orderings rank by (`pickWeighted` toward
 the requested variant's target, `faceLt` toward regular). -/
-private def weightDist (target : Nat) (f : Face) : Nat :=
+def weightDist (target : Nat) (f : Face) : Nat :=
   max f.weight target - min f.weight target
 
 /-- Rank candidates for a target weight: closest weight wins; ties prefer the
@@ -80,8 +82,9 @@ goes to the earlier supplied face — discovery preserves root order, so
 the first search directory that holds a family owns it.
 A fold-min, not a sort: only the best face is wanted, an earlier face
 survives every tie by never being replaced, and the head of a nonempty
-fold is a fact the totality theorem below can state. -/
-private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
+fold is a fact the totality theorem below can state. The picker is public
+so a consumer can use `pickWeighted_total` without naming private state. -/
+public def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
   let better (a b : Face) : Bool :=
     let da := weightDist target a
     let db := weightDist target b
@@ -97,7 +100,7 @@ private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
 /-- The nearest rule is total: any candidates at all yield a face,
 whatever weight was asked — the resolution half of `FontSet.index_total`,
 so a family that exists never answers a weight request empty-handed. -/
-theorem pickWeighted_total (cands : Array Face) (target : Nat)
+public theorem pickWeighted_total (cands : Array Face) (target : Nat)
     (h : 0 < cands.size) : (pickWeighted cands target).isSome := by
   unfold pickWeighted
   simp [h]
@@ -106,7 +109,7 @@ theorem pickWeighted_total (cands : Array Face) (target : Nat)
 (`LibertinusSerif-Regular.otf`) — fontspec's way of naming a font that ships
 beside the document — denotes the family of the scanned face with that file
 name, so its bold and italic are found the way every other family's are. -/
-def familyOf (faces : Array Face) (name : String) : String :=
+public def familyOf (faces : Array Face) (name : String) : String :=
   if hasFontExtension name then
     match faces.find? fun f => (f.path.splitOn "/").getLast? == some name with
     | some f => f.family
@@ -124,7 +127,7 @@ matches it exactly, the "… Italic" sibling comes along, and the named
 weight serves as that name's regular — its bold stays unsatisfied and
 warned, because picking a heavier face than the author named would be a
 silent substitution. -/
-def resolve (faces : Array Face) (family : String) (v : Variant) :
+public def resolve (faces : Array Face) (family : String) (v : Variant) :
     Option (Face × Bool) :=
   let target := (norm (familyOf faces family)).toList.toArray
   let byFamily := faces.filter fun f => normEq f.family target
@@ -153,7 +156,7 @@ def resolve (faces : Array Face) (family : String) (v : Variant) :
 /-- The face a declared per-variant name denotes: a font file name is that
 scanned file's own face; anything else resolves like a family or
 family-plus-subfamily name. -/
-def resolveNamed (faces : Array Face) (name : String) : Option Face :=
+public def resolveNamed (faces : Array Face) (name : String) : Option Face :=
   if hasFontExtension name then
     faces.find? fun f => (f.path.splitOn "/").getLast? == some name
   else
@@ -165,7 +168,7 @@ def resolveNamed (faces : Array Face) (name : String) : Option Face :=
 Returns the family stem and the weight; `none` when the name carries no
 weight word, or nothing but one. Longer words match first, so
 "ExtraLight" is 200, never "Light"'s 300. -/
-def nameWeight (name : String) : Option (String × Nat) :=
+public def nameWeight (name : String) : Option (String × Nat) :=
   let words : List (String × Nat) :=
     [("extralight", 200), ("ultralight", 200), ("semibold", 600),
      ("demibold", 600), ("extrabold", 800), ("ultrabold", 800),
@@ -190,7 +193,7 @@ A bold variant of the weighted name goes to the family's real bold
 (`targetWeight`): a face heavier than the author named is a substitution,
 and the caller says so exactly when the answer's weight differs from the
 ask. Returns the face and the weight that was asked. -/
-def resolveWeightName (faces : Array Face) (name : String) (v : Variant) :
+public def resolveWeightName (faces : Array Face) (name : String) (v : Variant) :
     Option (Face × Nat) :=
   (nameWeight name).bind fun (fam, w) =>
     let target := (norm fam).toList.toArray
@@ -205,7 +208,7 @@ arm under its own code: a missing variant of a served family (W0006), or
 a missing weight with the nearest installed weight in its place (W0366) —
 the requested and substituted weights ride along so the diagnostic can
 name both numbers. -/
-inductive Substituted where
+public inductive Substituted where
   | variant (msg : String)
   | weight (asked : String) (requested : Nat) (face : Face)
 
@@ -217,7 +220,7 @@ installed weight when the name asks for one ("Inter-Medium" with no Medium
 installed), else to the family's best variant — saying so either way.
 `none` only when the family itself has no face at all — the caller's
 E0403. -/
-def resolveVariant (faces : Array Face) (family : String) (declared : Option String)
+public def resolveVariant (faces : Array Face) (family : String) (declared : Option String)
     (v : Variant) : Option (Face × Option Substituted) :=
   let want :=
     if v.bold && v.italic then "bold italic"
@@ -261,7 +264,7 @@ the answer's weight differs from the ask. A face the document declared
 for the key (`FontFace={l}{n}{...}`, `\fonts{ body.l = ... }`) is met by
 definition; a declared face the host lacks degrades through the same
 nearest rule, saying so. -/
-def resolveWeight (faces : Array Face) (family : String)
+public def resolveWeight (faces : Array Face) (family : String)
     (declared : Option String) (weight : Nat) (italic : Bool) :
     Option (Face × Option Substituted) :=
   if weight == 400 || weight == 700 then
@@ -290,7 +293,7 @@ weight-{weight} face, which is not installed; \
 (normalised), upright before italic, weight nearest regular, then subfamily
 and path. One ordering rule, so a face picked from the scan is a function
 of what is installed, never of scan luck. -/
-def faceLt (a b : Face) : Bool :=
+public def faceLt (a b : Face) : Bool :=
   if norm a.family != norm b.family then norm a.family < norm b.family
   else if a.italic != b.italic then !a.italic && b.italic
   else
@@ -301,7 +304,7 @@ def faceLt (a b : Face) : Bool :=
     else a.path < b.path
 
 /-- One fold step of `leastBy`: keep the lesser. -/
-private def leastStep (lt : Face → Face → Bool) (best : Option Face) (f : Face) :
+def leastStep (lt : Face → Face → Bool) (best : Option Face) (f : Face) :
     Option Face :=
   match best with
   | none => some f
@@ -310,10 +313,10 @@ private def leastStep (lt : Face → Face → Bool) (best : Option Face) (f : Fa
 /-- The least face under `lt`, by one fold. `leastBy_set_eq` is what it is
 shaped for: the answer is a function of the set of faces, so a pick over it
 cannot depend on scan order. -/
-def leastBy (lt : Face → Face → Bool) (xs : Array Face) : Option Face :=
+public def leastBy (lt : Face → Face → Bool) (xs : Array Face) : Option Face :=
   xs.toList.foldl (leastStep lt) none
 
-private theorem foldl_least (lt : Face → Face → Bool)
+theorem foldl_least (lt : Face → Face → Bool)
     (htrans : ∀ f g h, lt f g → lt g h → lt f h) :
     ∀ (l : List Face) (m0 : Face),
       (∀ f g, (f = m0 ∨ f ∈ l) → (g = m0 ∨ g ∈ l) → f = g ∨ lt f g ∨ lt g f) →
@@ -387,7 +390,7 @@ private theorem foldl_least (lt : Face → Face → Bool)
           | inl h2 => exact absurd h2 hfm
           | inr h2 => exact h2
 
-private theorem leastBy_spec (lt : Face → Face → Bool)
+theorem leastBy_spec (lt : Face → Face → Bool)
     (htrans : ∀ f g h, lt f g → lt g h → lt f h) (xs : Array Face)
     (htotal : ∀ f g, f ∈ xs → g ∈ xs → f = g ∨ lt f g ∨ lt g f) :
     (xs.toList = [] ∧ leastBy lt xs = none) ∨
@@ -417,7 +420,7 @@ private theorem leastBy_spec (lt : Face → Face → Bool)
 scans listing the same faces in any orders answer the same, provided the
 order is transitive, asymmetric, and total on those faces. This is the
 scan-order-independence core of `pickCompanion_set_eq`. -/
-theorem leastBy_set_eq (lt : Face → Face → Bool)
+public theorem leastBy_set_eq (lt : Face → Face → Bool)
     (htrans : ∀ f g h, lt f g → lt g h → lt f h)
     (hasym : ∀ f g, lt f g → ¬ lt g f)
     (a b : Array Face) (hmem : ∀ f, f ∈ a ↔ f ∈ b)
@@ -457,7 +460,7 @@ theorem leastBy_set_eq (lt : Face → Face → Bool)
 declares, its designed math companion, where the pairing is documented, and
 the companion's licence (checked at the source). The engine ships none of
 these faces — a row costs nothing until the host already has the face. -/
-structure Pairing where
+public structure Pairing where
   body : String
   companion : String
   source : String
@@ -481,7 +484,7 @@ until sourced. Sources:
   Erewhon; OFL.
 - ctan.org/pkg/firamath — Fira Math, the sans math face designed to match
   Fira Sans; OFL. -/
-def mathCompanions : Array Pairing := #[
+public def mathCompanions : Array Pairing := #[
   { body := "Palatino", companion := "TeX Gyre Pagella Math"
     source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
   { body := "Palatino Linotype", companion := "TeX Gyre Pagella Math"
@@ -548,7 +551,7 @@ row naming the family, resolved against the scan as the least face (under
 the one documented order) whose family is the row's companion. `none` when
 no row names the family or no supplied face names the companion. This pure
 decision neither reads nor validates that face's MATH table. -/
-def pickCompanion (faces : Array Face) (body : String) : Option (Pairing × Face) := do
+public def pickCompanion (faces : Array Face) (body : String) : Option (Pairing × Face) := do
   let row ← mathCompanions.find? fun p =>
     normEq body ((norm p.body).toList.toArray)
   let face ← leastBy faceLt (faces.filter fun f =>
@@ -563,7 +566,7 @@ order axioms are hypotheses because `faceLt` bottoms out in string
 comparison, whose order lemmas the library does not carry; the suite checks
 them over the shipped faces, and `fontcache-check` stays the end-to-end
 oracle. -/
-theorem pickCompanion_set_eq (a b : Array Face) (body : String)
+public theorem pickCompanion_set_eq (a b : Array Face) (body : String)
     (hmem : ∀ f, f ∈ a ↔ f ∈ b)
     (htrans : ∀ f g h, faceLt f g → faceLt g h → faceLt f h)
     (hasym : ∀ f g, faceLt f g → ¬ faceLt g f)
@@ -590,7 +593,7 @@ theorem pickCompanion_set_eq (a b : Array Face) (body : String)
 /-- Installed families that resemble a name: sharing a word, or within an
 edit or two of it. `Nimbus Roman` finds `Nimbus Sans L` and `Nimbus Mono`;
 `Libertinus` finds every Libertinus face. At most eight, closest first. -/
-def nearest (families : Array String) (wanted : String) : Array String :=
+public def nearest (families : Array String) (wanted : String) : Array String :=
   let words (s : String) : List String :=
     (s.toLower.splitOn " ").filter fun w => !w.isEmpty && w.length > 1
   let want := words wanted
@@ -609,7 +612,7 @@ def nearest (families : Array String) (wanted : String) : Array String :=
   (sorted.extract 0 8).map (·.2)
 
 /-- Family names present, sorted, for diagnostics. -/
-def families (faces : Array Face) : Array String := Id.run do
+public def families (faces : Array Face) : Array String := Id.run do
   -- One normalised key per face, kept in a set. The earlier `seen.any` with
   -- `norm` on both sides re-normalised every prior name for every face:
   -- four million string allocations and two seconds on a 2856-face host,
@@ -624,7 +627,7 @@ def families (faces : Array Face) : Array String := Id.run do
   return out.qsort (· < ·)
 
 /-- Families tried, in order, when a document declares no `\fonts`. -/
-def defaultFamilies : List String :=
+public def defaultFamilies : List String :=
   ["DejaVu Sans", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans",
    "Nimbus Sans", "Inter"]
 
@@ -632,7 +635,7 @@ def defaultFamilies : List String :=
 that resolves, else the first family calling itself sans, else the first
 face of any kind. `none` only when no face is installed at all — so the
 default exists on any host with any scannable font, by construction. -/
-def defaultFamily (faces : Array Face) : Option String :=
+public def defaultFamily (faces : Array Face) : Option String :=
   match defaultFamilies.find? fun n => (resolve faces n {}).isSome with
   | some n => some n
   | none =>
