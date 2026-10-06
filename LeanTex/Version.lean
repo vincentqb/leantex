@@ -1,3 +1,5 @@
+module
+
 namespace LeanTex
 
 public def version : String := "0.1.0"

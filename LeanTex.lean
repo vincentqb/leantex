@@ -61,12 +61,14 @@ import LeanTex.Core.MarkdownDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.Layout.FramePartition
 import LeanTex.Core.Layout.SpacingContract
+import LeanTex.Core.Layout.InkContract
 import LeanTex.Core.Check
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct
 import LeanTex.Core.Pdf
 import LeanTex.Core.PdfWriteContract
 import LeanTex.Core.PdfObjectStreamProof
+import LeanTex.Core.PdfObjectHeaderProof
 import LeanTex.Core.PdfFontContract
 import LeanTex.Core.PdfProducerProof
 import LeanTex.Cli.Args

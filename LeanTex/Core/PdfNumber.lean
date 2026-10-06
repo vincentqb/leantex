@@ -1,19 +1,23 @@
+module
+
 import Init.Data.Nat.ToString
 import Init.Data.Int.ToString
 import Init.Data.String.Lemmas.Iterate
 import Init.Data.String.Lemmas.Pattern.TakeDrop.Char
 import Init.Data.String.Lemmas.Pattern.Find.Char
+import all Init.Data.String.Slice
+import all Init.Data.String.Search
 
 namespace LeanTex.Core.PdfRead.Number
 
-theorem nat_chars (n : Nat) : ∀ c ∈ (toString n).toList, c.isDigit = true := by
+public theorem nat_chars (n : Nat) : ∀ c ∈ (toString n).toList, c.isDigit = true := by
   intro c hc
   rw [Nat.toString_eq_ofList_toDigits, String.toList_ofList] at hc
   exact Nat.isDigit_of_mem_toDigits (by omega) (by omega) hc
 
-theorem nat_nonempty (n : Nat) : (toString n).toList ≠ [] := by simp
+public theorem nat_nonempty (n : Nat) : (toString n).toList ≠ [] := by simp
 
-theorem int_chars (n : Int) :
+public theorem int_chars (n : Int) :
     ∀ c ∈ (toString n).toList, c.isDigit = true ∨ c = '-' := by
   cases n with
   | ofNat n =>
@@ -29,10 +33,10 @@ theorem int_chars (n : Int) :
     · exact Or.inr (by simpa using hc)
     · exact Or.inl (nat_chars (n+1) c hc)
 
-theorem int_nonempty (n : Int) : (toString n).toList ≠ [] := by
+public theorem int_nonempty (n : Int) : (toString n).toList ≠ [] := by
   cases n <;> simp [Int.toString_eq_repr, Int.repr_eq_ite]
 
-theorem int_noDot (n : Int) : (toString n).contains '.' = false := by
+public theorem int_noDot (n : Int) : (toString n).contains '.' = false := by
   rw [String.contains_char_eq]
   apply decide_eq_false
   intro h
@@ -64,7 +68,7 @@ private theorem slice_isNat (s : String.Slice) (hd : ∀ c ∈ s.copy.toList, c.
   rw [h]
   simp [hn]
 
-theorem digits_value (n : Nat) :
+public theorem digits_value (n : Nat) :
     (Nat.toDigits 10 n).foldl (fun a c => a * 10 + (c.toNat - 48)) 0 = n := by
   induction n using Nat.strongRecOn with
   | ind n ih =>
@@ -127,7 +131,7 @@ private theorem slice_neg_int (s : String.Slice) (n : Nat) (hs : s.copy = "-" ++
 /-- Decimal integer spellings round-trip for every magnitude and sign.
 The proof follows the standard library digit generator and scanner; it
 does not bound the integer or evaluate a sample. -/
-theorem int_toString_id (n : Int) : (toString n).toInt? = some n := by
+public theorem int_toString_id (n : Int) : (toString n).toInt? = some n := by
    cases n with
    | ofNat n =>
      simp only [Int.toString_eq_repr, Int.repr_eq_ite, String.toInt?]

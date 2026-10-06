@@ -1,4 +1,6 @@
-import LeanTex.Core.Diag
+module
+
+public import LeanTex.Core.Diag
 
 namespace LeanTex.Cli.Render
 
@@ -42,7 +44,7 @@ separate: https://loguru.readthedocs.io/en/stable/api/logger.html
 Only the renderer supplies terminal styling. Message text is never a format
 template. Like a Loguru callable format, newline ownership is explicit:
 this returns no final newline; the CLI sink supplies exactly one. -/
-def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String :=
+public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String :=
   let icon := match d.severity with
     | .error => "✖"
     | .warning => "⚠"
@@ -80,7 +82,7 @@ def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String :=
     | none => ""
   head ++ scope ++ location ++ trigger ++ count ++ reason ++ recovery ++ suggestion
 
-def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
+public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
   let file := humanText "\\n" file
   if errors == 0 then
     s!"{sgr color "1;32" "✔"} {file} ({ms} ms)"
@@ -88,7 +90,7 @@ def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : Stri
     let noun := if errors == 1 then "error" else "errors"
     s!"{sgr color "1;31" "✖"} {file} — {errors} {noun} ({ms} ms)"
 
-def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
+public def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
     String :=
   let file := humanText "\\n" file
   let output := humanText "\\n" output
@@ -99,7 +101,7 @@ def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Na
     sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
   s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
 
-def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
+public def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
   let parts := counts.map fun (c, n) => if n == 1 then c else s!"{c} ×{n}"
   let total := counts.foldl (fun t (_, n) => t + n) 0
   let noun := if total == 1 then "loss" else "losses"
@@ -107,7 +109,7 @@ def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
 
 /-- The `--werror` verdict, printed after the outputs (which were written:
 the flag changes the exit code, never the rendering). -/
-def humanWerror (color : Bool) (file : String) (warnings ms : Nat) : String :=
+public def humanWerror (color : Bool) (file : String) (warnings ms : Nat) : String :=
   let file := humanText "\\n" file
   let noun := if warnings == 1 then "warning" else "warnings"
   s!"{sgr color "1;31" "✖"} {file} — {warnings} {noun} (--werror) ({ms} ms)"
@@ -147,7 +149,7 @@ consumer has to group by message text. `sites` is how many of the run's
 sites the line accounts for, absent when it is 1: the first line of a loss
 carries them all and each later one 0, so the lines' counts add up to the
 run's sites (`Diag.tallySites_sum_exact`). -/
-def porcelainDiag (d : Diag) : String :=
+public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
   let withSpan := match d.span with
@@ -172,27 +174,27 @@ def porcelainDiag (d : Diag) : String :=
     | none => all
   obj all
 
-def porcelainPhase (name detail : String) (ms : Nat) : String :=
+public def porcelainPhase (name detail : String) (ms : Nat) : String :=
   obj [("event", jstr "phase"), ("name", jstr name), ("detail", jstr detail),
     ("ms", toString ms)]
 
-def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat) : String :=
+public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file),
     ("ok", if ok then "true" else "false"), ("errors", toString errors),
     ("ms", toString ms)]
 
-def porcelainDone (file output : String) (pages ms : Nat) : String :=
+public def porcelainDone (file output : String) (pages ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
     ("output", jstr output), ("pages", toString pages), ("errors", "0"),
     ("ms", toString ms)]
 
-def porcelainAccepted (counts : List (String × Nat)) : String :=
+public def porcelainAccepted (counts : List (String × Nat)) : String :=
   let total := counts.foldl (fun t (_, n) => t + n) 0
   let codes := counts.map fun (c, n) => obj [("code", jstr c), ("count", toString n)]
   obj [("event", jstr "accepted"), ("count", toString total),
     ("codes", "[" ++ String.intercalate "," codes ++ "]")]
 
-def porcelainWerror (file : String) (warnings ms : Nat) : String :=
+public def porcelainWerror (file : String) (warnings ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file), ("ok", "false"),
     ("errors", "0"), ("warnings", toString warnings), ("ms", toString ms)]
 

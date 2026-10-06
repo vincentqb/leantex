@@ -1,13 +1,15 @@
+module
+
 namespace LeanTex.Core
 
 /-- One macro invocation in the provenance of an expanded token. The id
 distinguishes separate invocations of the same name. -/
-structure MacroOrigin where
+public structure MacroOrigin where
   id : Nat
   name : String
   deriving Repr, BEq
 
-structure Pos where
+public structure Pos where
   line : Nat := 1
   col : Nat := 1
   /-- Enclosing macro invocations, outermost first. -/
@@ -19,44 +21,44 @@ structure Pos where
 
 /-- Source-location identity ignores expansion and token provenance. Consumers that
 need macro ancestry read `Pos.origins` explicitly. -/
-instance : BEq Pos where
+public instance : BEq Pos where
   beq p q := p.line == q.line && p.col == q.col
 
-theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
+public theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
     ({ p with origins := xs } == { q with origins := ys }) = (p == q) := rfl
 
 /-- Source-token evidence, like macro ancestry, is presentation metadata:
 changing it cannot change source-location identity. -/
-theorem Pos.beq_command_exact (p q : Pos) (xs ys : Option String) :
+public theorem Pos.beq_command_exact (p q : Pos) (xs ys : Option String) :
     ({ p with command := xs } == { q with command := ys }) = (p == q) := rfl
 
-def Pos.next (p : Pos) (newline : Bool) : Pos :=
+public def Pos.next (p : Pos) (newline : Bool) : Pos :=
   if newline then { p with line := p.line + 1, col := 1 }
   else { p with col := p.col + 1 }
 
-theorem Pos.next_origins_exact (p : Pos) (newline : Bool) :
+public theorem Pos.next_origins_exact (p : Pos) (newline : Bool) :
     (p.next newline).origins = p.origins := by
   cases newline <;> rfl
 
-structure Span where
+public structure Span where
   file : String
   pos : Pos
   deriving Repr, BEq
 
-inductive Severity where
+public inductive Severity where
   | error
   | warning
   | note
   deriving Repr, BEq
 
-def Severity.label : Severity → String
+public def Severity.label : Severity → String
   | .error => "error"
   | .warning => "warning"
   | .note => "note"
 
 /-- The class letter a severity puts on its codes: `error` codes are `E…`,
 `warning` codes `W…`, `note` codes `N…`. -/
-def Severity.letter : Severity → Char
+public def Severity.letter : Severity → Char
   | .error => 'E'
   | .warning => 'W'
   | .note => 'N' 
@@ -65,7 +67,7 @@ def Severity.letter : Severity → Char
 diagnostic. Severity is a function of one question — can the reader recover
 what the document declared? — so it is derived from this classification,
 never chosen at a call site. -/
-inductive Loss where
+public inductive Loss where
   /-- Declared content is absent with nothing in its place, and the engine has
   no plan to render it: a value it cannot interpret, a construct it will not
   support. Test: deleting the construct from the source leaves the output
@@ -102,7 +104,7 @@ any remaining warning fail the exit code for a caller who wants the strict
 reading, and `\allow` in a document accepts named codes, downgrading them to
 notes (see `Diag.accept`) — an accepted loss is neither an error nor a
 warning. -/
-def Loss.severity : Loss → Severity
+public def Loss.severity : Loss → Severity
   | .dropped => .error
   | .pending => .warning
   | .degraded => .warning
@@ -113,12 +115,12 @@ def Loss.severity : Loss → Severity
 /-- The class letter of a loss is its declared severity's letter. An error
 code cannot acquire a warning letter at construction; accepting a loss
 changes its effective severity later, without changing this letter. -/
-def Loss.letter (l : Loss) : Char := l.severity.letter
+public def Loss.letter (l : Loss) : Char := l.severity.letter
 
 /-- The declared class as a machine reader sees it. A census bands on this,
 never on the rendered severity: demotion (`Diag.accept`, `Diag.demote`, a
 repeat site's note) changes what a line says it is, and never what was lost. -/
-def Loss.label : Loss → String
+public def Loss.label : Loss → String
   | .dropped => "dropped"
   | .pending => "pending"
   | .degraded => "degraded"
@@ -128,7 +130,7 @@ def Loss.label : Loss → String
 
 /-- Two classes never share a label, so banding on the label is banding on
 the loss. -/
-theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
+public theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
   cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
 
 /-- **What the construct's place on the page owes a reader.** The recovery
@@ -144,7 +146,7 @@ length beside a label, and a whole label dropped so three pages shipped an
 empty diagram frame. The law is not a property of math, or of pictures, or
 of unknown commands. It is a property of the loss class, so it belongs to
 the loss class. -/
-inductive Floor where
+public inductive Floor where
   /-- No floor exists, because no artifact does: a `dropped` loss fails the
   run, so there is no page for a recovery to stand on. -/
   | refuse
@@ -171,7 +173,7 @@ inductive Floor where
 decision, one place, the same shape `Loss.severity` has. A new diagnostic
 code inherits its floor from the class it declares; there is no site at
 which a floor is chosen. -/
-def Loss.floor : Loss → Floor
+public def Loss.floor : Loss → Floor
   | .dropped => .refuse
   | .pending => .absent
   | .degraded => .content
@@ -182,20 +184,20 @@ def Loss.floor : Loss → Floor
 /-- Does anything at all stand in the construct's place? A floor that ships
 nothing is not a recovery, and routing a salvage to a code whose floor does
 not ship puts ink where no content was lost. -/
-def Floor.ships : Floor → Bool
+public def Floor.ships : Floor → Bool
   | .content | .absent => true
   | .refuse | .inert => false
 
 /-- Must the construct's place carry ink whenever the construct carried
 content? Only `.content` owes that, and `inks_iff_degraded` says the
 converse: no other loss class quietly acquires the obligation. -/
-def Floor.inks : Floor → Bool
+public def Floor.inks : Floor → Bool
   | .content => true
   | .refuse | .absent | .inert => false
 
 /-- A floor that owes ink ships: the two questions are ordered, so no code
 can be asked for ink in a place nothing stands in. -/
-theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
+public theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
   cases f <;> simp_all [Floor.inks, Floor.ships]
 
 /-- Every diagnostic code the engine can emit: one constructor per code, so
@@ -204,7 +206,7 @@ compiler-exhaustive. The constructor names spell the rendered codes; the
 letter itself is derived from the declared `Loss` at the one construction
 site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
 equal. -/
-inductive DiagCode where
+public inductive DiagCode where
   | E0001 | E0002 | E0003
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
@@ -281,7 +283,7 @@ meaning. One code, one meaning — a new code is forced through this match,
 where a collision with an existing number is visible before it ships, and
 the compiler holds every projection exhaustive. The class letter is not
 written here: `DiagCode.code` derives it from the loss. -/
-def DiagCode.spec : DiagCode → String × Loss × String
+private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
   | .E0002 => ("0002", .dropped, "input is not valid UTF-8")
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
@@ -464,17 +466,17 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
   | .E0607 => ("0607", .dropped, "the PDF exceeds a supported storage bound; publication is refused")
 
-def DiagCode.digits (c : DiagCode) : String := c.spec.1
+public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
-def DiagCode.loss (c : DiagCode) : Loss := c.spec.2.1
+public def DiagCode.loss (c : DiagCode) : Loss := c.spec.2.1
 
-def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
+public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 
 /-- The floor a code's declared loss demands, the projection every salvage
 site reads. Beside `DiagCode.code` and `Diag.severity`: a code has no floor
 field to disagree with its class, so a new code inherits a correct recovery
 rather than choosing one. -/
-def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
+public def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
 
 /-- **Exactly the degraded codes owe ink.** The obligation table's rule — a
 `degraded` loss ships the construct's text content — is not one reading of
@@ -482,7 +484,7 @@ the registry among several: it is the whole of the ink obligation, for every
 registered code. A future loss class cannot inherit the obligation by
 looking similar to `degraded`, and a `degraded` code cannot escape it by
 being routed somewhere quiet. -/
-theorem DiagCode.inks_iff_degraded (c : DiagCode) :
+public theorem DiagCode.inks_iff_degraded (c : DiagCode) :
     c.floor.inks = (c.loss == .degraded) := by
   cases h : c.loss <;> simp only [DiagCode.floor, h, Loss.floor, Floor.inks] <;> decide
 
@@ -490,12 +492,12 @@ theorem DiagCode.inks_iff_degraded (c : DiagCode) :
 /-- The one place a code's printed name is spelled: the class letter comes
 from the declared loss, the digits from the registry. A code whose letter
 disagrees with its declared severity cannot be written. -/
-def DiagCode.code (c : DiagCode) : String :=
+public def DiagCode.code (c : DiagCode) : String :=
   String.singleton c.loss.letter ++ c.digits
 
 /-- Every code's letter agrees with its declared severity. This is a fact
 of the record, independent of the terminal format or later acceptance. -/
-theorem DiagCode.code_letter (c : DiagCode) :
+public theorem DiagCode.code_letter (c : DiagCode) :
     c.code.front = c.loss.severity.letter := by
   cases c <;> rfl
 
@@ -505,7 +507,7 @@ so applying it here names that constructor without naming it by hand, which
 is what makes `count` derivable. It is a *ceiling*, not a count: it never
 needs touching as codes are added, and a value too small is a build failure
 rather than a wrong answer (`all_complete` stops holding). -/
-def DiagCode.ctorCeiling : Nat := 65536
+private def DiagCode.ctorCeiling : Nat := 65536
 
 /-- How many codes the registry holds: read off the type, not maintained by
 hand. Four agents adding a code in one session collided on the literal this
@@ -521,22 +523,22 @@ holding — `all_complete` makes an undercount a build failure, `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the last
 constructor), so the derivation is checked in both directions rather than
 trusted. -/
-def DiagCode.count : Nat := (DiagCode.ofNat DiagCode.ctorCeiling).ctorIdx + 1
+public def DiagCode.count : Nat := (DiagCode.ofNat DiagCode.ctorCeiling).ctorIdx + 1
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never
 hand-maintained: constructor declaration order, complete and duplicate-free
 by the two theorems below, so the list cannot drift from the inductive. -/
-def DiagCode.all : List DiagCode :=
+public def DiagCode.all : List DiagCode :=
   (List.range DiagCode.count).map DiagCode.ofNat
 
-theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
+public theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl
 
-theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
+public theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 
 /-- The code a string names, for validating a document's `\allow` list. -/
-def DiagCode.ofString? (s : String) : Option DiagCode :=
+public def DiagCode.ofString? (s : String) : Option DiagCode :=
   DiagCode.all.find? (·.code == s)
 
 /-- **A code a document can name is a surface, so retiring one is a
@@ -563,7 +565,7 @@ its successor; no row is one, so the table does not carry that case.
 A row leaves this list only when a document naming the old code is
 implausible, which is a judgement about the world and not about this tree, so
 in practice rows stay. -/
-def DiagCode.retired : List (String × Option String) :=
+public def DiagCode.retired : List (String × Option String) :=
   [-- A refused command's leading `[...]` run was named by its own code at
    -- the same span as the command's refusal. Its fate is a clause of that
    -- refusal's message now, and W0301 names every unknown command, so the
@@ -577,18 +579,18 @@ def DiagCode.retired : List (String × Option String) :=
    ("W0376", some "N0376")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
-inductive Diag.Output where
+public inductive Diag.Output where
   | pdf
   | html
   deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq
 
-def Diag.Output.label : Diag.Output → String
+public def Diag.Output.label : Diag.Output → String
   | .pdf => "pdf"
   | .html => "html"
 
 /-- What the engine actually did after a loss. A proposed action belongs in
 `Diag.help`; neither field is reconstructed from message prose. -/
-inductive Diag.Recovery where
+public inductive Diag.Recovery where
   | ignored
   | skipped
   | replacedBy (replacement : String)
@@ -608,7 +610,7 @@ many times this loss occurs in the document: a once-per-document warning
 carries the total so the default log states it, and each further site rides
 beside it as a note. One writer, `tallySites`, and its default is the
 honest one for a diagnostic nothing else counted. -/
-structure Diag where
+public structure Diag where
   kind : DiagCode
   message : String
   span : Option Span := none
@@ -660,12 +662,12 @@ run's fate is a clause of `W0301`'s own message now
 (`Elab.warnUnknownCmd_push_exact` is the emitter fact: one push per call,
 carrying the construct's code and the subject `ctrl:<name>`), and
 `subjectCensusChecks` is the gate. -/
-def Loss.censused : Loss → Bool
+public def Loss.censused : Loss → Bool
   | .degraded | .pending => true
   | .dropped | .standard | .config | .info => false
 
 /-- The census question, per code — the projection a witness check reads. -/
-def DiagCode.censused (c : DiagCode) : Bool := c.loss.censused
+public def DiagCode.censused (c : DiagCode) : Bool := c.loss.censused
 
 /-- **Exactly the codes that owe ink are the codes that are counted.** The
 census obligation and the recovery obligation do not drift apart: a code
@@ -674,23 +676,23 @@ can count, and `pending` joins it because a declared absence is still a
 number the reader is owed. Stated against `Floor.ships` rather than against
 the loss list twice, so a future loss class cannot acquire one half of the
 pair by looking similar. -/
-theorem DiagCode.censused_iff_ships (c : DiagCode) :
+public theorem DiagCode.censused_iff_ships (c : DiagCode) :
     c.censused = c.floor.ships := by
   cases h : c.loss <;>
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
 /-- The rendered code string: the kind's own spelling, derived. -/
-def Diag.code (d : Diag) : String := d.kind.code
+public def Diag.code (d : Diag) : String := d.kind.code
 
 /-- Severity is a projection, never a stored field: the declared loss's
 severity, demoted to a note by policy alone. -/
-def Diag.severity (d : Diag) : Severity :=
+public def Diag.severity (d : Diag) : Severity :=
   match d.demoted with
   | true => .note
   | false => d.kind.loss.severity
 
 /-- The one door a diagnostic is made through. -/
-def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
+public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
     (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none) : Diag :=
@@ -708,27 +710,27 @@ def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
 its own words: what the door was handed is what comes back out. The fact the
 name-refusal registry rests on — a consumer enumerating refusals reads a
 field, so rewording a message cannot silently empty the registry. -/
-theorem Diag.of_refused (c : DiagCode) (message : String) (span : Option Span)
+public theorem Diag.of_refused (c : DiagCode) (message : String) (span : Option Span)
     (help subject refused : Option String) :
-    (Diag.of c message span help subject refused).refused = refused := rfl
+    (Diag.of c message span help subject refused).refused = refused := by rfl
 
 /-- Severity derives from the declared loss — structurally now: `severity`
 is a projection of the stored `kind`, so this is `rfl` and a call site
 cannot make it false anywhere, not only at construction. -/
-theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
+public theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
-    (Diag.of c message span help subject).severity = c.loss.severity := rfl
+    (Diag.of c message span help subject).severity = c.loss.severity := by rfl
 
 /-- At construction, severity and code letter both come from the code's
 `Loss`. A caller cannot choose them independently. -/
-theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
+public theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).code.front =
       (Diag.of c message span help subject).severity.letter :=
   c.code_letter
 
 /-- Unscoped diagnostics always apply. A scoped diagnostic requires its artifact. -/
-def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
+public def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
   match d.output with
   | none => true
   | some output => outputs.contains output
@@ -736,18 +738,18 @@ def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
 /-- Stable projection for the driver, before acceptance and exit accounting.
 An empty output set still retains common diagnostics. -/
 -- premise: Diag.forOutputs_mem — only diagnostics of disabled artifacts are removed.
-def Diag.forOutputs (outputs : Array Diag.Output) (ds : Array Diag) : Array Diag :=
+public def Diag.forOutputs (outputs : Array Diag.Output) (ds : Array Diag) : Array Diag :=
   ds.filter (Diag.appliesTo outputs)
 
 /-- Projection retains exactly the original records whose scope applies. -/
-theorem Diag.forOutputs_mem (outputs : Array Diag.Output) (ds : Array Diag) (d : Diag) :
+public theorem Diag.forOutputs_mem (outputs : Array Diag.Output) (ds : Array Diag) (d : Diag) :
     d ∈ Diag.forOutputs outputs ds ↔
       d ∈ ds ∧ (∀ output, d.output = some output → output ∈ outputs) := by
   simp only [Diag.forOutputs, Array.mem_filter]
   cases h : d.output <;> simp [Diag.appliesTo, h]
 
 /-- Repeated projection cannot duplicate or further change a diagnostic. -/
-theorem Diag.forOutputs_id (outputs : Array Diag.Output) (ds : Array Diag) :
+public theorem Diag.forOutputs_id (outputs : Array Diag.Output) (ds : Array Diag) :
     Diag.forOutputs outputs (Diag.forOutputs outputs ds) = Diag.forOutputs outputs ds := by
   simp [Diag.forOutputs, Array.filter_filter]
 
@@ -761,14 +763,14 @@ so a document that declares its intent emits nothing at default verbosity
 acceptance stays visible rather than silent. An accepted loss is not a
 warning, so it never trips `--werror`: that is the point of accepting it.
 Returns the resolved diagnostic and whether it was accepted. -/
-def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
+public def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
   if d.severity != .note && (allowAll || allowed.contains d.code) then
     ({ d with demoted := true }, true)
   else (d, false)
 
 /-- Acceptance changes only the policy bit, preserving the entire record,
 including present and future structured fields. -/
-theorem Diag.accept_record_exact (allowed : Array String) (allowAll : Bool) (d : Diag) :
+public theorem Diag.accept_record_exact (allowed : Array String) (allowAll : Bool) (d : Diag) :
     { (Diag.accept allowed allowAll d).1 with demoted := d.demoted } = d := by
   unfold Diag.accept
   split <;> rfl
@@ -782,17 +784,17 @@ refused" count carries it at default verbosity. The demotion bit is
 written here beside `Diag.accept`, the other policy door: severity is a
 function of the declared loss and of policy declared in this module,
 never of a call site. -/
-def Diag.demote (d : Diag) : Diag := { d with demoted := true }
+public def Diag.demote (d : Diag) : Diag := { d with demoted := true }
 
 /-- Explicit policy demotion preserves the entire record apart from its policy bit. -/
-theorem Diag.demote_record_exact (d : Diag) :
-    { Diag.demote d with demoted := d.demoted } = d := rfl
+public theorem Diag.demote_record_exact (d : Diag) :
+    { Diag.demote d with demoted := d.demoted } = d := by rfl
 
 /-- Two diagnostics are sites of the *same* loss when they carry the same
 code, structured subject and output scope. A PDF loss and an HTML loss
 must remain distinct even when they name the same construct, so filtering
 one artifact cannot inherit the other's count. -/
-def Diag.sameLoss (a b : Diag) : Bool :=
+public def Diag.sameLoss (a b : Diag) : Bool :=
   (decide (a.kind = b.kind) && decide (a.output = b.output)) &&
     decide (a.subject = b.subject) && a.subject.isSome
 
@@ -815,7 +817,7 @@ private theorem Diag.sameLoss_trans {a b c : Diag} (h₁ : Diag.sameLoss a b = t
     ⟨⟨hk.1.trans hk'.1, hk.2.trans hk'.2⟩, hs.trans hs', hi⟩
 
 /-- A census group cannot cross output scopes. -/
-theorem Diag.sameLoss_output_exact (a b : Diag) (h : Diag.sameLoss a b = true) :
+public theorem Diag.sameLoss_output_exact (a b : Diag) (h : Diag.sameLoss a b = true) :
     a.output = b.output := ((Diag.sameLoss_iff a b).mp h).1.2
 
 /-- The index whose line carries a diagnostic's count: the first diagnostic
@@ -837,7 +839,7 @@ counts on a log add up to its length (`tallySites_sum_exact`). Stamping the
 total on every site squared it for any reader who summed them. Nothing else
 moves — no diagnostic is added, removed, reordered, demoted or reworded — so
 counting cannot change what was lost, only what the reader is told about it. -/
-def Diag.tallySites (ds : Array Diag) : Array Diag :=
+public def Diag.tallySites (ds : Array Diag) : Array Diag :=
   let carriers := ds.toList.mapIdx (Diag.carrier ds.toList)
   ds.mapIdx fun i d => { d with sites := carriers.count i }
 
@@ -983,13 +985,13 @@ private theorem Diag.tallySites_getElem? (ds : Array Diag) (i : Nat) (h : i < ds
 
 /-- Counting is not filtering: the tally holds every diagnostic it was
 given, in order. -/
-theorem Diag.tallySites_length (ds : Array Diag) :
+public theorem Diag.tallySites_length (ds : Array Diag) :
     (Diag.tallySites ds).size = ds.size := Array.size_mapIdx
 
 /-- Counting changes only the count: each diagnostic keeps its code,
 message, span, help, demotion and subject, so no loss is created,
 silenced or reworded by being counted. -/
-theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+public theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ∃ d, (Diag.tallySites ds)[i]? = some d ∧ d.kind = (ds[i]).kind ∧
       d.message = (ds[i]).message ∧ d.span = (ds[i]).span ∧
       d.help = (ds[i]).help ∧ d.demoted = (ds[i]).demoted ∧
@@ -998,7 +1000,7 @@ theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
 
 /-- Counting preserves the entire record except `sites`, including all
 structured fields; this remains true when the record gains another field. -/
-theorem Diag.tallySites_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+public theorem Diag.tallySites_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ((Diag.tallySites ds)[i]?).map (fun d => { d with sites := ds[i].sites }) = some ds[i] := by
   rw [Diag.tallySites_getElem? ds i h]
   rfl
@@ -1007,7 +1009,7 @@ theorem Diag.tallySites_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.siz
 record of a run gives the number of records, whatever the run — the claim a
 reader sizing the damage makes when they add the numbers up. Each record
 counts once, on its carrier's line. -/
-theorem Diag.tallySites_sum_exact (ds : Array Diag) :
+public theorem Diag.tallySites_sum_exact (ds : Array Diag) :
     ((Diag.tallySites ds).toList.map (·.sites)).sum = ds.size := by
   have hmap : (Diag.tallySites ds).toList.map (·.sites) =
       (List.range ds.size).map ((ds.toList.mapIdx (Diag.carrier ds.toList)).count ·) := by
@@ -1028,7 +1030,7 @@ theorem Diag.tallySites_sum_exact (ds : Array Diag) :
 diagnostic of a loss — the line the default log shows — carries the count
 of diagnostics sharing that loss, so a reader who trusts the default line's
 total and a reader who counts the `-v` sites by hand reach the same number. -/
-theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
+public theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hs : (ds[i]).subject.isSome)
     (hfirst : ∀ k (hk : k < i), Diag.sameLoss ds[i] ds[k] = false) :
     ((Diag.tallySites ds)[i]?).map (·.sites) =
@@ -1046,7 +1048,7 @@ theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
 /-- **A later site rides on the first.** Every diagnostic after the first of
 its loss carries 0, so its note adds nothing to a sum the first line already
 holds. -/
-theorem Diag.tallySites_later_exact (ds : Array Diag) (i k : Nat) (h : i < ds.size)
+public theorem Diag.tallySites_later_exact (ds : Array Diag) (i k : Nat) (h : i < ds.size)
     (hk : k < i) (hsame : Diag.sameLoss ds[i] ds[k] = true) :
     ((Diag.tallySites ds)[i]?).map (·.sites) = some 0 := by
   rw [Diag.tallySites_getElem? ds i h]
@@ -1065,7 +1067,7 @@ code emitted without a subject is invisible to the grouping, and the reader
 sees one line per site instead of one line carrying the total. Nothing here
 fixes that; it says precisely what is lost, so the gate over `DiagCode.all`
 has a statement to rest on rather than a comment. -/
-theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.size)
+public theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hn : (ds[i]).subject.isNone) :
     (Diag.tallySites ds)[i]? = some { ds[i] with sites := 1 } := by
   rw [Diag.tallySites_getElem? ds i h]
@@ -1076,7 +1078,7 @@ theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.s
 /-- Diagnostics resolved against the document's acceptance, with the counts
 of every resolved phase. Counts follow acceptance, so an accepted loss is
 neither an error nor a warning. -/
-structure Resolution where
+public structure Resolution where
   diags : Array Diag := #[]
   fired : Array String := #[]
   accepted : Array String := #[]
@@ -1087,7 +1089,7 @@ structure Resolution where
 /-- Phase accounting keeps the rendered records, acceptance and exit counts
 in one value. `resolveAll_append_exact` holds this operation to resolving the
 same stream at once, including its order and repeated diagnostic codes. -/
-def Resolution.append (a b : Resolution) : Resolution :=
+public def Resolution.append (a b : Resolution) : Resolution :=
   { diags := a.diags ++ b.diags
     fired := a.fired ++ b.fired
     accepted := a.accepted ++ b.accepted
@@ -1105,7 +1107,7 @@ def Resolution.append (a b : Resolution) : Resolution :=
   simp [append]
 
 /-- Grouping phases never changes their diagnostic records or verdict. -/
-theorem Resolution.append_assoc_exact (a b c : Resolution) :
+public theorem Resolution.append_assoc_exact (a b c : Resolution) :
     (a.append b).append c = a.append (b.append c) := by
   simp [append, Array.append_assoc, Nat.add_assoc]
 
@@ -1120,7 +1122,7 @@ private theorem Resolution.record_append (a b : Resolution) (d : Diag) (accepted
     (a.append b).record d accepted = a.append (b.record d accepted) := by
   cases accepted <;> simp [record, append, -Array.push_append, Array.append_push, Nat.add_assoc]
 
-def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
+public def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) : Resolution := Id.run do
   let mut r : Resolution := {}
   for d0 in ds do
@@ -1139,7 +1141,7 @@ private theorem Diag.resolveAll_fold (allowed : Array String) (allowAll : Bool)
 /-- Resolving consecutive phases equals resolving their combined stream.
 The record equality covers diagnostic order, fired and accepted codes, and
 both exit counts under the same acceptance policy. -/
-theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
+public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
     (xs ys : Array Diag) :
     Diag.resolveAll allowed allowAll (xs ++ ys) =
       (Diag.resolveAll allowed allowAll xs).append (Diag.resolveAll allowed allowAll ys) := by
@@ -1157,7 +1159,7 @@ theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
 acceptance the document no longer needs, and warning about it is one of the
 hatch's teeth — an allow that silences nothing today may silence something
 real tomorrow. -/
-def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
+public def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
   allowed.filter (!fired.contains ·)
 
 end LeanTex.Core
