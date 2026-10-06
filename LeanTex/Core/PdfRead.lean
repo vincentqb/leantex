@@ -1,6 +1,6 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.PdfObj
-import LeanTex.Core.PdfReadProof
+import LeanTex.Core.PdfStreamSpelling
 import LeanTex.Core.PdfFooter
 import LeanTex.Core.PdfXref
 import LeanTex.Core.Binary
@@ -125,17 +125,17 @@ private theorem nat_start_skip {b : ByteArray} {i : Nat} (n : Nat)
     exact nat_numeric n d hd))
   exact skipWs_fixed_point hp.2.1 hp.2.2.1
 
-private theorem parseIndirectAt_render_span_exact {b : ByteArray} {i : Nat}
-    (n : Nat) (o : Obj) (ho : o.Representable)
-    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++ octets o.render))
-    (he : ObjReader.Stop b (i + (s!"{n} 0 obj\n").toUTF8.size + o.render.size)) :
-    parseIndirectAt b i = .ok (n, o, i + (s!"{n} 0 obj\n").toUTF8.size + o.render.size) := by
+private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
+    (n : Nat) (o : Obj) (spelling : ByteArray) (ho : o.Spelling spelling)
+    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++ octets spelling))
+    (he : ObjReader.Stop b (i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size)) :
+    parseIndirectAt b i = .ok (n, o, i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size) := by
   have hhead : (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 := rfl
   simp only [hhead, octets_append, List.append_assoc, ByteArray.size_append,
     show " 0 obj\n".toUTF8.size = 7 from rfl, ← Nat.add_assoc] at hs he ⊢
   let q := i + (toString n).toUTF8.size
   have hnum := hs.append_left
-  have hrest : Span b q (32 :: 48 :: 32 :: 111 :: 98 :: 106 :: 10 :: octets o.render) := by
+  have hrest : Span b q (32 :: 48 :: 32 :: 111 :: 98 :: 106 :: 10 :: octets spelling) := by
     simpa only [octets_length, show octets " 0 obj\n".toUTF8 = [32,48,32,111,98,106,10] from rfl,
       List.cons_append, List.nil_append] using hs.append_right
   have hb : q + 7 ≤ b.size := by
@@ -153,18 +153,18 @@ private theorem parseIndirectAt_render_span_exact {b : ByteArray} {i : Nat}
   have hobj : Span b (q+3) (octets "obj".toUTF8) := by
     change Span b (q+3) [111,98,106]
     simpa only [Nat.add_assoc, Nat.reduceAdd] using
-      hrest.tail.tail.tail.append_left (cs := [111,98,106]) (ds := 10 :: octets o.render)
-  have hov : Span b (q+7) (octets o.render) := by
+      hrest.tail.tail.tail.append_left (cs := [111,98,106]) (ds := 10 :: octets spelling)
+  have hov : Span b (q+7) (octets spelling) := by
     simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.tail.tail.tail.tail.tail
-  have he' : ObjReader.Stop b (q+7+o.render.size) := he
-  have hstart := ho.reads.start hov he'.boundary he'.marker
+  have he' : ObjReader.Stop b (q+7+spelling.size) := he
+  have hstart := ho.start hov he'
   have hskip0 := nat_start_skip n hnum
   have hn := parse_nat hnum (Or.inr (Or.inl (by rw [h32]; rfl)))
   have hskip1 : skipWs b q = q+1 := skipWs_one_exact h32
     (by rw [h48]; rfl) (by rw [h48]; decide) (by omega)
   have hz : parseUInt b (q+1) = some (0,q+2) := by
     have hzspan : Span b (q+1) (octets (toString (0 : Nat)).toUTF8) :=
-      hrest.tail.append_left (cs := [48]) (ds := 32 :: 111 :: 98 :: 106 :: 10 :: octets o.render)
+      hrest.tail.append_left (cs := [48]) (ds := 32 :: 111 :: 98 :: 106 :: 10 :: octets spelling)
     have hend : EndByte (at? b ((q+1)+(toString (0 : Nat)).toUTF8.size)) := by
       change EndByte (at? b (q+1+1))
       rw [show q+1+1=q+2 by omega, hsp]
@@ -189,8 +189,8 @@ private theorem parseIndirectAt_render_span_exact {b : ByteArray} {i : Nat}
       (by simpa only [Nat.add_assoc, Nat.reduceAdd] using hstart.whitespace)
       (by simpa only [Nat.add_assoc, Nat.reduceAdd] using hstart.comment)
       (by omega : q+6 < b.size)
-  have hp := parseVal_render_span_exact o ho hov he' hskip3
-  change parseIndirectAt b i = .ok (n,o,q+7+o.render.size)
+  have hp := parseVal_spelling_span_exact o ho hov he' hskip3
+  change parseIndirectAt b i = .ok (n,o,q+7+spelling.size)
   simp only [parseIndirectAt, hskip0, hn]
   change (do
     let some (_, j) := parseUInt b (skipWs b q) | throw _
@@ -614,17 +614,17 @@ def readXref (b : ByteArray) : Except String Xref := do
   readXrefFrom b (← readStartxref b)
 
 private theorem indirect_stream_span {b : ByteArray} {i : Nat}
-    (n : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (n : Nat) (dict : Obj) (spelling : ByteArray) (hd : dict.Spelling spelling) (raw : ByteArray)
     (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++
-      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw)) :
-    let j := i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size
+      octets spelling ++ octets "\nstream\n".toUTF8 ++ octets raw)) :
+    let j := i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size
     parseIndirectAt b i = .ok (n, dict, j) ∧
       keywordAt b (skipWs b j) "stream" = some (j+7) ∧
       at? b (j+7) = 10 ∧ j+8+raw.size ≤ b.size ∧
       b.extract (j+8) (j+8+raw.size) = raw := by
   dsimp only
-  let j := i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size
-  have hs' : Span b i ((octets (s!"{n} 0 obj\n").toUTF8 ++ octets dict.render) ++
+  let j := i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size
+  have hs' : Span b i ((octets (s!"{n} 0 obj\n").toUTF8 ++ octets spelling) ++
       (octets "\nstream\n".toUTF8 ++ octets raw)) := by
     simpa only [List.append_assoc] using hs
   have ht : Span b j ([10,115,116,114,101,97,109,10] ++ octets raw) := by
@@ -642,7 +642,7 @@ private theorem indirect_stream_span {b : ByteArray} {i : Nat}
     (by rw [hlf]; rfl) (by omega) (.non_numeric
       (by rw [hs0]; rfl) (by rw [hs0]; decide) (by rw [hs0]; decide)
       (by rw [hs0]; omega))
-  have hi := parseIndirectAt_render_span_exact n dict hd hs'.append_left he
+  have hi := parseIndirectAt_spelling_span_exact n dict spelling hd hs'.append_left he
   have hk0 : skipWs b j = j+1 := skipWs_whitespace_exact (by rw [hlf]; rfl)
     (by rw [hs0]; rfl) (by rw [hs0]; decide) (by omega)
   have hk : keywordAt b (j+1) "stream" = some (j+7) := by
@@ -673,7 +673,7 @@ private theorem readStreamSection_span_exact {b : ByteArray} {i : Nat}
     (hp : dict.get? "Prev" = none) :
     readStreamSection b i x0 =
       .ok ((readXrefSubsection data 1 4 2 0 count 0 (x0.seen dict)).1, none) := by
-  obtain ⟨hi,hk,hb,hbound,he⟩ := indirect_stream_span n dict hd raw hs
+  obtain ⟨hi,hk,hb,hbound,he⟩ := indirect_stream_span n dict dict.render (.render hd) raw hs
   have hbound' : ¬ (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1 + raw.size > b.size) := by omega
   have he' : b.extract (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1)
       (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1 + raw.size) = raw := by
@@ -1044,15 +1044,15 @@ def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
   | _, _ => False
 
 private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Option Int)
-    (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (num off : Nat) (dict : Obj) (spelling : ByteArray) (hd : dict.Spelling spelling) (raw : ByteArray)
     (hs : Span r.b off (octets (s!"{num} 0 obj\n").toUTF8 ++
-      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw ++
+      octets spelling ++ octets "\nstream\n".toUTF8 ++ octets raw ++
       octets "\nendstream\nendobj\n".toUTF8))
     (hl : dict.get? "Length" = some (.int raw.size)) :
     r.streamAfterWith intAt dict
-      (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size) = .ok (some raw) := by
-  obtain ⟨_, hk, hb, hbound, he⟩ := indirect_stream_span num dict hd raw hs.append_left
-  let j := off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size
+      (off + (s!"{num} 0 obj\n").toUTF8.size + spelling.size) = .ok (some raw) := by
+  obtain ⟨_, hk, hb, hbound, he⟩ := indirect_stream_span num dict spelling hd raw hs.append_left
+  let j := off + (s!"{num} 0 obj\n").toUTF8.size + spelling.size
   have ht : Span r.b (j+8+raw.size)
       [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] := by
     simpa only [j, List.length_append, octets_length,
@@ -1096,6 +1096,20 @@ private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Opti
 /-- A complete emitted direct stream supplies its actual local reading.
 The byte-span premise includes the closing marker, so a guessed length
 or merely parseable dictionary cannot establish this contract. -/
+theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+    (num off : Nat) (dict : Obj) (spelling : ByteArray) (hd : dict.Spelling spelling) (raw : ByteArray)
+    (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
+      octets spelling ++ octets "\nstream\n".toUTF8 ++ octets raw ++
+      octets "\nendstream\nendobj\n".toUTF8))
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hn : locs.get? num = some (.direct off)) :
+    ({num, header := num, loc := .direct off, val := dict, stream := some raw} : Entry).Reads
+      b locs (some (off + (s!"{num} 0 obj\n").toUTF8.size + spelling.size)) := by
+  refine ⟨rfl, hn, (indirect_stream_span num dict spelling hd raw hs.append_left).1, ?_⟩
+  intro intAt
+  exact Reader.streamAfter_span_exact {b, locs} intAt num off dict spelling hd raw hs hl
+
+/-- Canonical dictionary rendering is one of the concrete stream spellings. -/
 theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
     (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
@@ -1104,10 +1118,8 @@ theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (hl : dict.get? "Length" = some (.int raw.size))
     (hn : locs.get? num = some (.direct off)) :
     ({num, header := num, loc := .direct off, val := dict, stream := some raw} : Entry).Reads
-      b locs (some (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size)) := by
-  refine ⟨rfl, hn, (indirect_stream_span num dict hd raw hs.append_left).1, ?_⟩
-  intro intAt
-  exact Reader.streamAfter_span_exact {b, locs} intAt num off dict hd raw hs hl
+      b locs (some (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size)) :=
+  Entry.reads_stream_spelling_exact b locs num off dict dict.render (.render hd) raw hs hl hn
 
 /-- A compressed object's local reading follows from the actual reading of
 its containing stream, payload decoding, header slot, and value parse.
