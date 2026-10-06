@@ -1,4 +1,5 @@
 import Std.Data.HashSet
+import Init.Internal.Order.While
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
@@ -4358,6 +4359,138 @@ where
     let pad := if s.length < 4 then "".pushn '0' (4 - s.length) else ""
     return pad ++ s
 
+private def PlainInlines (xs : Array Inline) : Prop :=
+  ∀ x ∈ xs, ∃ s, x = .text s
+
+private def Tk.Plain : Tk → Prop
+  | .word _ _ _ | .space _ => True
+  | _ => False
+
+private theorem pushWord_plain (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
+    (attr : Attribution) (h : ∀ tk ∈ st.toks, tk.Plain) :
+    ∀ tk ∈ (pushWord st sty cur attr).toks, tk.Plain := by
+  intro tk ht
+  simp only [pushWord, Array.mem_push] at ht
+  rcases ht with ht | rfl
+  · exact h tk ht
+  · trivial
+
+private theorem pushChars_plain (sty : TextStyle) (attr : Attribution)
+    (cs : List Char) : ∀ (st : FlattenSt) (cur : Array Char),
+    (∀ tk ∈ st.toks, tk.Plain) →
+      ∀ tk ∈ (pushChars sty attr st cur cs).toks, tk.Plain := by
+  induction cs with
+  | nil =>
+    intro st cur h
+    simp only [pushChars]
+    split
+    · exact h
+    · exact pushWord_plain st sty cur attr h
+  | cons c rest ih =>
+    intro st cur h
+    simp only [pushChars]
+    split
+    · apply ih
+      intro tk ht
+      simp only [Array.mem_push] at ht
+      rcases ht with ht | rfl
+      · split at ht
+        · exact h tk ht
+        · exact pushWord_plain st sty cur attr h tk ht
+      · trivial
+    · exact ih st (cur.push c) h
+
+private theorem pushText_plain (st : FlattenSt) (sty : TextStyle) (s : String)
+    (h : ∀ tk ∈ st.toks, tk.Plain) :
+    ∀ tk ∈ (pushText st sty s).toks, tk.Plain :=
+  pushChars_plain sty st.ctr.take.1 s.toList _ #[] h
+
+private theorem flattenList_plain (mathOk noteOk : Bool) (sty : TextStyle)
+    (xs : List Inline) : ∀ st,
+    (∀ x ∈ xs, ∃ s, x = .text s) → (∀ tk ∈ st.toks, tk.Plain) →
+    ∀ tk ∈ (flattenList mathOk noteOk st sty xs).toks, tk.Plain := by
+  induction xs with
+  | nil => intro st _ h; exact h
+  | cons x xs ih =>
+    intro st hp ht
+    obtain ⟨s, rfl⟩ := hp x (by simp)
+    exact ih _ (fun x hx => hp x (by simp [hx])) (pushText_plain st sty s ht)
+
+private theorem flatten_plain (mathOk noteOk : Bool) (st : FlattenSt)
+    (sty : TextStyle) (xs : Array Inline) (hp : PlainInlines xs)
+    (ht : ∀ tk ∈ st.toks, tk.Plain) :
+    ∀ tk ∈ (flatten mathOk noteOk st sty xs).toks, tk.Plain := by
+  rw [flatten]
+  exact flattenList_plain mathOk noteOk sty xs.toList st
+    (fun x hx => hp x (by simpa using hx)) ht
+
+private theorem itemsOfTok_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
+    (anchors : Array (String × Nat)) (origins : Array (Option Span))
+    (source : Option Span) (h : tk.Plain) :
+    (itemsOfTok pats size xHeight fs imgs textW textH acc tk owners anchors origins source).notes =
+      acc.notes := by
+  cases tk <;> simp only [Tk.Plain] at h
+  all_goals first | contradiction | rfl
+
+private theorem itemsOfToks_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (toks : Array Tk) (h : ∀ tk ∈ toks, tk.Plain) :
+    (itemsOfToks pats size xHeight fs imgs textW textH acc toks).notes = acc.notes := by
+  unfold itemsOfToks
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : ItemsAcc × Option (TextStyle × Array Char × Attribution) ×
+        Array Attribution × Array (Option Span) × List Span × Array (String × Nat) =>
+      st.1.notes = acc.notes)
+    (Q := fun out : ItemsAcc => out.notes = acc.notes)
+  · apply Loop.forIn_array_inv
+      (P := fun st : ItemsAcc × Option (TextStyle × Array Char × Attribution) ×
+          Array Attribution × Array (Option Span) × List Span × Array (String × Nat) =>
+        st.1.notes = acc.notes)
+    · rfl
+    · intro tk htk st hst
+      have hp := h tk htk
+      rcases st with ⟨a, pending, owners, origins, scope, anchors⟩
+      cases tk <;> simp only [Tk.Plain] at hp
+      all_goals first | contradiction | skip
+      case word sty chars attr =>
+        cases pending with
+        | none => exact hst
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          dsimp only
+          split
+          · exact hst
+          · exact hst
+      case space sty =>
+        cases pending with
+        | none =>
+          cases scope.head? <;> exact hst
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          cases scope.head? <;> exact hst
+  · rintro ⟨a, pending, owners, origins, scope, anchors⟩ hst
+    cases pending with
+    | none => exact hst
+    | some prev => rcases prev with ⟨sty, word, attr⟩; exact hst
+
+private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
+    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp))) (hp : PlainInlines xs) :
+    (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
+      noteOk ladder step roleMetrics).2.2.2.2.1 = #[] := by
+  have ht := flatten_plain fs.mathFont?.isSome noteOk
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+    baseStyle xs hp (by simp)
+  have hn := itemsOfToks_plainNotes pats size xHeight fs imgs textW textH
+    { cache := cache } _ ht
+  simp only [itemsOfInlines]
+  repeat first | exact hn | split
+
 -- Knuth–Plass ------------------------------------------------------------------
 
 def canBreakAt (items : Array Item) (j : Nat) : Bool :=
@@ -4891,53 +5024,51 @@ private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bo
     | _ => pure ()
   return false
 
-private def setLine (items : Array Item) (a j : Nat) (target : Sp)
-    (justify : Bool) (protrude : Bool := false) (expand : Bool := false)
-    (wordOffsets : Std.HashMap Nat Sp := {}) :
-    Array Seg × Sp × Bool × Sp × Int := Id.run do
-  let m := measure items a j
-  -- Protrusion (stage 1): boundary glyphs hang into the margin by the
-  -- table's fraction of their own width, so the optical edge is straight.
-  -- The line is set against the enlarged target and the caller shifts its
-  -- x left by the returned hang, so interior glue absorbs exactly the
-  -- overhang. Lines with fil keep their exact margins: a last line or
-  -- an `\hfill` row never reaches the edge, so nothing is gained there
-  -- and a dates row set flush stays flush.
-  let doProt := protrude && justify && !m.fil
-  let leftHang := if doProt then protrudeLeft items a j else 0
-  let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
-  let delta := target - m.natural
-  -- Font expansion: one bounded factor per line takes its share of the
-  -- delta first; the glue arms below distribute what remains. Fil lines
-  -- never expand, as they never protrude.
-  let f : Int := if expand && justify && !m.fil then expandFactor delta m.boxW else 0
-  let mut boxTaken : Sp := 0
-  if f != 0 then
-    for k in [a:j] do
-      if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
-        boxTaken := boxTaken + expandSpan f (wordOffsets[k]?.getD 0) w - w
-    if let some (.pen w _ _ _ _ _) := items[j]? then
-      boxTaken := boxTaken + w * f / 1000
-  let delta := delta - boxTaken
-  -- Feasibility belongs to the whole line, including a forced line made
-  -- of one unbreakable box with no glue. Ragged text uses none of the
-  -- available shrink, so its natural width must fit without it.
-  let overfull := decide ((if justify then m.shrink else 0) < -delta)
-  -- Fill glue shares the leftover, but a line-running fill does not count as a
-  -- sharer when the author wrote their own `\hfill`: otherwise
-  -- `name \hfill dates` on a paragraph's last line puts the dates halfway to
-  -- the margin instead of at it, which is what LaTeX does and what nobody
-  -- setting a row of dates wants.
-  let mut explicitFils := 0
-  let mut allFils := 0
-  for k in [a:j] do
-    match items[k]? with
-    | some (.glue g) | some (.decoratedGlue g _) =>
-      if g.fil then
-        allFils := allFils + 1
-        unless g.parfill do explicitFils := explicitFils + 1
-    | _ => pure ()
-  let fils := if explicitFils > 0 then explicitFils else allFils
+private def trimLineGaps (segs : Array Seg) (width : Sp) : Array Seg × Sp := Id.run do
+  let mut segs := segs
+  let mut width := width
+  repeat
+    match segs.back? with
+    | some (.gap w _) | some (.decoratedGap w _ _) =>
+      segs := segs.pop
+      width := width - w
+    | _ => break
+  return (segs, width)
+
+/-- The actual trailing-gap loop removes segments; it never invents one.
+The recursive proof follows the loop's strictly shrinking array. -/
+private theorem trimLineGaps_mem (segs : Array Seg) (width : Sp) :
+    ∀ s ∈ (trimLineGaps segs width).1, s ∈ segs := by
+  unfold trimLineGaps
+  simp only [Id.run, bind, pure]
+  dsimp only [ForIn.forIn]
+  rw [Lean.Loop.forIn_eq_of_monadTail]
+  dsimp only
+  split
+  · rename_i w word h
+    intro s hs
+    have hp := trimLineGaps_mem segs.pop (width - w) s hs
+    obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp hp
+    exact Array.mem_of_getElem (by simpa only [Array.getElem_pop] using he)
+  · rename_i w word decorations h
+    intro s hs
+    have hp := trimLineGaps_mem segs.pop (width - w) s hs
+    obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp hp
+    exact Array.mem_of_getElem (by simpa only [Array.getElem_pop] using he)
+  · intro s hs; exact hs
+termination_by segs.size
+decreasing_by
+  all_goals
+    have hn : segs.size ≠ 0 := by
+      intro hz
+      have he : segs = #[] := Array.eq_empty_of_size_eq_zero hz
+      simp [he] at *
+    simp only [Array.size_pop]
+    omega
+
+private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
+    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp) :
+    Array Seg × Sp := Id.run do
   let mut segs : Array Seg := #[]
   let mut width : Sp := 0
   for k in [a:j] do
@@ -5025,14 +5156,147 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
           inherited.2.2.1 0 inherited.2.2.2 .hyphen)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
-  let mut segs' := segs
-  repeat
-    match segs'.back? with
-    | some (.gap w _) | some (.decoratedGap w _ _) =>
-      segs' := segs'.pop
-      width := width - w
-    | _ => break
-  return (segs', width, overfull, leftHang, f)
+  return trimLineGaps segs width
+
+private def Item.NoGlyph : Item → Prop
+  | .box _ _ _ _ glyphs .. | .pen _ _ _ _ _ glyphs => glyphs = #[]
+  | .glue _ | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+
+private def Seg.NoGlyph : Seg → Prop
+  | .run _ _ _ _ glyphs .. => glyphs = #[]
+  | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => True
+
+private theorem noGlyph_getD (items : Array Item)
+    (h : ∀ it ∈ items, it.NoGlyph) (k : Nat) : (items.getD k default).NoGlyph := by
+  rw [← Array.getElem!_eq_getD]
+  by_cases hk : k < items.size
+  · simpa only [getElem!_pos items k hk] using
+      h items[k] (Array.mem_of_getElem rfl)
+  · simp only [getElem!_neg items k hk]
+    rfl
+
+private theorem setWordBox_noGlyph (segs : Array Seg) (f offset w : Sp)
+    (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (attr : Attribution) (hg : glyphs = #[]) (hs : ∀ s ∈ segs, s.NoGlyph) :
+    ∀ s ∈ setWordBox segs f offset w fontIdx color link glyphs size leading
+      decorations raise ground attr, s.NoGlyph := by
+  subst glyphs
+  simp only [setWordBox, Array.isEmpty_empty, Bool.or_true, ite_true, Id.run_pure]
+  intro s h
+  rcases Array.mem_push.mp h with h | rfl
+  · exact hs s h
+  · rfl
+
+/-- Setting and trimming a glyph-free stream cannot manufacture text.
+This includes out-of-range item reads, whose default box has no glyphs,
+and the terminal penalty, whose glyphs are checked before appending. -/
+private theorem setLineSegments_noGlyph (items : Array Item) (a j : Nat) (m : Measure)
+    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp)
+    (h : ∀ it ∈ items, it.NoGlyph) :
+    ∀ s ∈ (setLineSegments items a j m delta f justify fils wordOffsets).1,
+      s.NoGlyph := by
+  unfold setLineSegments
+  refine Loop.bind_of_inv (P := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph)
+    (Q := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph) _ _ ?_ ?_
+  · apply Loop.forIn_range_inv
+      (P := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph)
+    · simp
+    · intro k _ _ st hs
+      have hi := noGlyph_getD items h k
+      rw [← Array.getElem!_eq_getD] at hi
+      cases he : items[k]! <;> simp only [he] at hi ⊢
+      · exact setWordBox_noGlyph _ _ _ _ _ _ _ _ _ _ _ _ _ _ hi hs
+      all_goals
+        first
+        | exact hs
+        | (intro s hh
+           rcases Array.mem_push.mp hh with hh | rfl
+           · exact hs s hh
+           · trivial)
+  · intro st hs
+    have ht : ∀ s ∈ (trimLineGaps st.1 st.2).1, s.NoGlyph :=
+      fun s hh => hs s (trimLineGaps_mem _ _ s hh)
+    dsimp only
+    split
+    · rename_i w cost flagged fontIdx color glyphs he
+      have hg : glyphs = #[] := h _ (Array.mem_of_getElem? he)
+      simp only [hg, Array.isEmpty_empty, Bool.not_true, Bool.false_eq_true, ite_false]
+      exact ht
+    · exact ht
+
+private structure LineSetting where
+  measured : Measure
+  delta : Sp
+  factor : Int
+  fils : Nat
+  overfull : Bool
+  hang : Sp
+
+private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp) :
+    LineSetting := Id.run do
+  let m := measure items a j
+  -- Protrusion (stage 1): boundary glyphs hang into the margin by the
+  -- table's fraction of their own width, so the optical edge is straight.
+  -- The line is set against the enlarged target and the caller shifts its
+  -- x left by the returned hang, so interior glue absorbs exactly the
+  -- overhang. Lines with fil keep their exact margins: a last line or
+  -- an `\hfill` row never reaches the edge, so nothing is gained there
+  -- and a dates row set flush stays flush.
+  let doProt := protrude && justify && !m.fil
+  let leftHang := if doProt then protrudeLeft items a j else 0
+  let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
+  let delta := target - m.natural
+  -- Font expansion: one bounded factor per line takes its share of the
+  -- delta first; the glue arms below distribute what remains. Fil lines
+  -- never expand, as they never protrude.
+  let f : Int := if expand && justify && !m.fil then expandFactor delta m.boxW else 0
+  let mut boxTaken : Sp := 0
+  if f != 0 then
+    for k in [a:j] do
+      if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
+        boxTaken := boxTaken + expandSpan f (wordOffsets[k]?.getD 0) w - w
+    if let some (.pen w _ _ _ _ _) := items[j]? then
+      boxTaken := boxTaken + w * f / 1000
+  let delta := delta - boxTaken
+  -- Feasibility belongs to the whole line, including a forced line made
+  -- of one unbreakable box with no glue. Ragged text uses none of the
+  -- available shrink, so its natural width must fit without it.
+  let overfull := decide ((if justify then m.shrink else 0) < -delta)
+  -- Fill glue shares the leftover, but a line-running fill does not count as a
+  -- sharer when the author wrote their own `\hfill`: otherwise
+  -- `name \hfill dates` on a paragraph's last line puts the dates halfway to
+  -- the margin instead of at it, which is what LaTeX does and what nobody
+  -- setting a row of dates wants.
+  let mut explicitFils := 0
+  let mut allFils := 0
+  for k in [a:j] do
+    match items[k]? with
+    | some (.glue g) | some (.decoratedGlue g _) =>
+      if g.fil then
+        allFils := allFils + 1
+        unless g.parfill do explicitFils := explicitFils + 1
+    | _ => pure ()
+  let fils := if explicitFils > 0 then explicitFils else allFils
+  return { measured := m, delta, factor := f, fils, overfull, hang := leftHang }
+
+private def setLine (items : Array Item) (a j : Nat) (target : Sp)
+    (justify : Bool) (protrude : Bool := false) (expand : Bool := false)
+    (wordOffsets : Std.HashMap Nat Sp := {}) :
+    Array Seg × Sp × Bool × Sp × Int :=
+  let setting := lineSetting items a j target justify protrude expand wordOffsets
+  let (segs, width) := setLineSegments items a j setting.measured setting.delta
+    setting.factor justify setting.fils wordOffsets
+  (segs, width, setting.overfull, setting.hang, setting.factor)
+
+private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Sp)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp)
+    (h : ∀ it ∈ items, it.NoGlyph) :
+    ∀ s ∈ (setLine items a j target justify protrude expand wordOffsets).1,
+      s.NoGlyph := by
+  exact setLineSegments_noGlyph _ _ _ _ _ _ _ _ _ h
 
 -- Page assembly ----------------------------------------------------------------
 
@@ -14126,6 +14390,50 @@ theorem frameSpansForPdf_covers (doc : Doc) (spans : Array (Nat × Span))
       keepForList_frame doc.body.toList i title standout valign breakable body
         (by simpa using hb)
 
+/-- One top-level source block, including the overlay rewind. The index is
+the source identity; the displayed frame number is read separately. Keeping
+this step named lets the collector's progress invariant refer to the prefix
+it has actually consumed. -/
+private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
+    (i : Nat) (hi : i < doc.body.size)
+    (st : Acc × Bool) : Acc × Bool := Id.run do
+  let blk := doc.body[i]
+  let mut acc := if st.2 || statefulBlock blk then st.1 else st.1.wantGap
+  let firstBlk := st.2 && statefulBlock blk
+  acc := { acc with frameCount := doc.frameCountAt i
+                    framesDone := if doc.frameRestart == some i then 0 else acc.framesDone }
+  match blk with
+  | .frame title standout valign breakable body =>
+    let num := nums[i]?.getD none
+    acc := { acc with frameNum := num, frameOrigin := some ⟨i, 1⟩,
+                      framesDone := num.getD acc.framesDone
+                      frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
+    let steps := Ir.frameSteps blk
+    if steps ≤ 1 then
+      acc := collectBlock rd acc
+        (.frame title standout valign breakable
+          (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
+    else
+      let leafStart := acc.leafNext
+      for k in [1:steps + 1] do
+        acc := collectBlock { rd with step := k }
+          { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
+          (.frame title standout valign breakable
+            (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
+  | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
+  return (acc, firstBlk)
+
+/-- The actual source loop. Its state records whether a real block has
+appeared, independently of stateful declarations. -/
+private def collectDocBody (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (acc0 : Acc) : Acc := Id.run do
+  let nums := doc.frameNumbers
+  let mut st := (acc0, true)
+  for h : i in [0:doc.body.size] do
+    st := collectDocBlock rd doc cover frameSpans nums i h.upper st
+  return st.1
+
 /-- The existing collection/staging seam, with its postlude. The continuation
 lets the background contract inspect the exact ops placement consumes, without
 re-running another IR walk or adding background state to the runtime builder. -/
@@ -14236,48 +14544,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- flag rides onto every step page unchanged. The number itself is read
   -- off `Ir.frameNumbers`, the one numbering (its T2–T4 are the contract);
   -- nothing below this loop counts.
-  let nums := doc.frameNumbers
-  let mut acc := acc0
-  let mut firstBlk := true
-  for h : i in [0:doc.body.size] do
-    let blk := doc.body[i]
-    -- A stateful declaration is not content: no gap before it, and the
-    -- scope's first real block stays first.
-    acc := if firstBlk || statefulBlock blk then acc else acc.wantGap
-    firstBlk := firstBlk && statefulBlock blk
-    -- The part this block stands in: its denominator, and — where the
-    -- numbering starts over — no frame of the new part elapsed yet.
-    acc := { acc with frameCount := doc.frameCountAt i
-                      framesDone := if doc.frameRestart == some i then 0 else acc.framesDone }
-    match blk with
-    | .frame title standout valign breakable body =>
-      let num := nums[i]?.getD none
-      acc := { acc with frameNum := num, frameOrigin := some ⟨i, 1⟩,
-                        framesDone := num.getD acc.framesDone
-                        frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
-      let steps := Ir.frameSteps blk
-      if steps ≤ 1 then
-        -- A one-page frame still evaluates its selectors: <0> covers at step one.
-        acc := collectBlock rd acc
-          (.frame title standout valign breakable
-            (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
-      else
-        -- The tree numbers the frame once; every step's pages name the same
-        -- leaves, so the counter rewinds to the frame's start per step
-        -- (dimming recolours and unwrapping splices: neither moves a leaf).
-        -- Alternation keeps the rewind: an `alt` node's two alternatives are
-        -- two leaves of the one frame, declared in page order, and the walk
-        -- references the id the tree gave the group it inks rather than
-        -- minting one — which is why the node survives into the walk
-        -- (`rd.step` carries the page, `alt_leaf_projects` the identity)
-        -- instead of being selected away before it.
-        let leafStart := acc.leafNext
-        for k in [1:steps + 1] do
-          acc := collectBlock { rd with step := k }
-            { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
-            (.frame title standout valign breakable
-              (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
-    | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
+  let acc := collectDocBody rd doc cover frameSpans acc0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach
   -- placement; trailing finite glue stays invisible and stays dropped.
