@@ -8,6 +8,7 @@ import LeanTex.Core.Listing
 import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
 import LeanTex.Core.Struct
+import LeanTex.Core.Loop
 
 namespace LeanTex.Core.Layout
 
@@ -10381,6 +10382,89 @@ a strike or underline as the same kind of ink as the text under it. -/
   · exact absurd hr (by simp)
   · simp only [Option.some.injEq] at hr; simp [← hr]
 
+/-- Decoration introduces no second source leaf: the attributed text stays
+on the base line, and its run-less riders carry only the drawn marks. -/
+@[simp] theorem decorationRiders_unattributed (fs : FontSet) (l : LineOut) :
+    ∀ r ∈ decorationRiders fs l, r.leaf = none := by
+  intro r hr
+  simp only [decorationRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+private def appendRiders (fs : FontSet) (l : LineOut) (lines : Array LineOut) :
+    Array LineOut := Id.run do
+  let mut out := lines
+  for r in decorationRiders fs l do
+    out := out.push r
+  return out
+
+/-- The inner production loop preserves any selection that excludes riders.
+This is a state invariant over its actual `forIn`, including its exit. -/
+private theorem appendRiders_selected (fs : FontSet) (l : LineOut) (lines : Array LineOut)
+    (select : LineOut → Bool) (hselect : ∀ r ∈ decorationRiders fs l, select r = false) :
+    (appendRiders fs l lines).filter select = lines.filter select := by
+  unfold appendRiders
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv (fun out : Array LineOut => out.filter select = lines.filter select)
+    (fun r out => pure (.yield (out.push r))) (decorationRiders fs l) lines
+  · rfl
+  · intro r hr out hout
+    simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
+      reduceIte] using hout
+
+/-- The final decoration pass, shared by every body and furniture line.
+Each original line is followed immediately by its drawn riders. -/
+def paintLines (fs : FontSet) (lines : Array LineOut) : Array LineOut := Id.run do
+  let mut out : Array LineOut := Array.mkEmpty lines.size
+  for l in lines do
+    out := out.push l
+    out := appendRiders fs l out
+  return out
+
+/-- The outer production loop's value invariant names its consumed prefix.
+The stdlib's break-free bridge reads this very `forIn`; no second runtime
+fold or independently computed census replaces the decoration pass. -/
+private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
+    (select : LineOut → Bool) (hselect : ∀ l r, r ∈ decorationRiders fs l → select r = false) :
+    (paintLines fs lines).filter select = lines.filter select := by
+  unfold paintLines
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  apply Array.toList_inj.mp
+  have h := Array.foldl_induction
+    (as := lines)
+    (motive := fun i (out : Array LineOut) =>
+      (out.filter select).toList = (lines.toList.take i).filter select)
+    (init := Array.mkEmpty lines.size)
+    (f := fun out l => appendRiders fs l (out.push l))
+    (by simp)
+    (by
+      intro i out hout
+      rw [appendRiders_selected fs _ _ select (hselect _)]
+      rw [Array.filter_push]
+      rw [List.take_succ_eq_append_getElem (by simp)]
+      simp only [List.filter_append, List.filter_cons, List.filter_nil]
+      split <;> simp_all)
+  have ht : lines.toList.take lines.toList.length = lines.toList := List.take_length
+  simp only [Array.length_toList] at ht
+  simpa [ht] using h
+
+/-- Decoration preserves every attributed line, in order and with its
+geometry and segments unchanged. -/
+theorem paintLines_attributed_projects (fs : FontSet) (lines : Array LineOut) :
+    (paintLines fs lines).filter (fun l => l.leaf.isSome) =
+      lines.filter (fun l => l.leaf.isSome) := by
+  apply paintLines_selected
+  intro l r hr
+  simp [decorationRiders_unattributed fs l r hr]
+
+/-- Drawn riders never change the counted-line ledger. -/
+theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut) :
+    (paintLines fs lines).filter (·.counted) = lines.filter (·.counted) := by
+  apply paintLines_selected
+  exact fun l r hr => decorationRiders_uncounted fs l r hr
+
 private def ParaJob.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
   else Layout.lineStart j.items (prev + 1)
@@ -12401,17 +12485,18 @@ private def furnishFrom {σ : Type}
 termination_by pages.size - i
 decreasing_by simp only [Array.size_set]; omega
 
-/-- The furniture pass preserves any observation independent of a page's
-lines, page for page and in physical order. This is an equation over the
-actual index recursion, rather than a separate fold of its inputs. -/
-private theorem furnishFrom_projects {σ α : Type}
+/-- An observation preserved by the actual furniture step survives the
+whole index recursion, page for page and in physical order. -/
+private theorem furnishFrom_preserves {σ α : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (read : PageOut → α)
-    (hread : ∀ p ls, read { p with lines := ls } = read p)
+    (hread : ∀ i p s, read { p with lines := (f i p s).1 } = read p)
     (pages : Array PageOut) (s : σ) (i : Nat) :
     (furnishFrom f pages s i).1.map read = pages.map read := by
   induction pages, s, i using furnishFrom.induct f with
   | case1 pages s i h ls s' heq ih =>
+    have hr := hread i pages[i] s
+    rw [heq] at hr
     rw [furnishFrom]
     simp only [h, reduceDIte, heq]
     rw [ih]
@@ -12423,6 +12508,16 @@ private theorem furnishFrom_projects {σ α : Type}
   | case2 pages s i h =>
     rw [furnishFrom]
     simp only [h, reduceDIte]
+
+/-- In particular, the furniture pass preserves every observation
+independent of lines, without any premise on the setter's output. -/
+private theorem furnishFrom_projects {σ α : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (read : PageOut → α)
+    (hread : ∀ p ls, read { p with lines := ls } = read p)
+    (pages : Array PageOut) (s : σ) (i : Nat) :
+    (furnishFrom f pages s i).1.map read = pages.map read :=
+  furnishFrom_preserves f read (fun _ p _ => hread p _) pages s i
 
 /-- Every output page retains the non-line data of its input page. -/
 private theorem furnishFrom_keeps {σ : Type}
@@ -12437,6 +12532,43 @@ private theorem furnishFrom_keeps {σ : Type}
   have hm : read p ∈ pages.map read := h ▸ Array.mem_map_of_mem hp
   obtain ⟨q, hq, heq⟩ := Array.mem_map.mp hm
   exact ⟨q, hq, by simpa only [read, Prod.mk.injEq] using heq.symm⟩
+
+/-- Generated page furniture has no body leaf or counted-line identity.
+Only the newly set running lines pass through this constructor. -/
+private def furnitureLine (l : LineOut) : LineOut :=
+  { l with furniture := true, leaf := none, counted := false }
+
+/-- The body keeps its lines and order; running head precedes it, and the
+numbers, footers and logos follow it. Decoration sees each line once. -/
+private def furnishLines (fs : FontSet) (before body after : Array LineOut) : Array LineOut :=
+  paintLines fs (before.map furnitureLine ++ body ++ after.map furnitureLine)
+
+private theorem furnishLines_attributed_projects (fs : FontSet)
+    (before body after : Array LineOut) :
+    (furnishLines fs before body after).filter (fun l => l.leaf.isSome) =
+      body.filter (fun l => l.leaf.isSome) := by
+  unfold furnishLines
+  rw [paintLines_attributed_projects]
+  apply Array.toList_inj.mp
+  have hempty (ls : List LineOut) : ls.filter (fun _ => false) = [] := by simp
+  simp [List.filter_map, Function.comp_def, furnitureLine, hempty]
+
+private theorem furnishLines_counted_projects (fs : FontSet)
+    (before body after : Array LineOut) :
+    (furnishLines fs before body after).filter (·.counted) = body.filter (·.counted) := by
+  unfold furnishLines
+  rw [paintLines_counted_projects]
+  apply Array.toList_inj.mp
+  have hempty (ls : List LineOut) : ls.filter (fun _ => false) = [] := by simp
+  simp [List.filter_map, Function.comp_def, furnitureLine, hempty]
+
+/-- The setter returns generated furniture separately from the page it
+annotates. Joining it to the body is the one shared, checkable operation. -/
+private def furnishStep {σ : Type} (fs : FontSet)
+    (f : Nat → PageOut → σ → (Array LineOut × Array LineOut) × σ)
+    (i : Nat) (page : PageOut) (s : σ) : Array LineOut × σ :=
+  let (ls, s') := f i page s
+  (furnishLines fs ls.1 page.lines ls.2, s')
 
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
@@ -12558,11 +12690,13 @@ def runPost (sh : Shipped) : Out := Id.run do
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   let furnishPage (i : Nat) (page : PageOut)
       (st0 : Array Diag × Std.HashMap String (Array Nat) × Nat) :
-      Array LineOut × Array Diag × Std.HashMap String (Array Nat) × Nat := Id.run do
+      (Array LineOut × Array LineOut) × Array Diag × Std.HashMap String (Array Nat) × Nat :=
+      Id.run do
     let mut diags := st0.1
     let mut cache := st0.2.1
     let mut count := st0.2.2
-    let mut lines := page.lines
+    let mut head : Array LineOut := #[]
+    let mut lines : Array LineOut := #[]
     -- The margin line numbers, one per counted body line at its own
     -- baseline, counting consecutively across pages from 1 — the count
     -- advances on every counted line, and the modulus only filters what
@@ -12601,7 +12735,7 @@ def runPost (sh : Shipped) : Out := Id.run do
         let (l?, ds, c) := runLine content page.pageState.folio headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
-        if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
+        if let some l := l? then head := #[l]
     if footOn then
       if let some content := doc.foot then
         let (l?, ds, c) := runLine content page.pageState.folio footY geom.fontSize {} cache
@@ -12707,22 +12841,8 @@ slot yields in place: shorten the content or drop a slot"))
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
-    -- One owner for drawn decoration on the page: every finalized line —
-    -- body, footnote, picture label, and the furniture set above — is
-    -- followed by its `.decoration` riders, so a strike or underline
-    -- reaches the PDF on every path, matching the HTML and the IR. An
-    -- undecorated line rides nothing (`decorationRiders` is empty), so the
-    -- common page allocates only its own lines, and a decorated line paints
-    -- exactly once.
-    let painted : Array LineOut := Id.run do
-      let mut out : Array LineOut := Array.mkEmpty lines.size
-      for l in lines do
-        out := out.push l
-        for r in decorationRiders fs l do
-          out := out.push r
-      return out
-    return (painted, diags, cache, count)
-  let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache, 0) 0
+    return ((head, lines), diags, cache, count)
+  let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
   -- Repeated overlay pages can report one source site several times.
@@ -12784,6 +12904,29 @@ theorem runPost_frames_projects (sh : Shipped) :
   unfold runPost
   dsimp only [Id.run, bind, pure, Id]
   exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
+
+/-- Running furniture and drawn decoration retain every attributed line
+from the actual shipment, on the same physical page and in the same
+order. The equality includes its segments, geometry and source leaf. -/
+theorem runPost_attributed_projects (sh : Shipped) :
+    (runPost sh).pages.map (fun p => p.lines.filter (fun l => l.leaf.isSome)) =
+      sh.pages.map (fun p => p.lines.filter (fun l => l.leaf.isSome)) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  apply furnishFrom_preserves
+  intro i p s
+  exact furnishLines_attributed_projects _ _ _ _
+
+/-- The actual postlude preserves counted lines page by page. Margin
+numbers and decoration cannot become additional body lines. -/
+theorem runPost_counted_projects (sh : Shipped) :
+    (runPost sh).pages.map (fun p => p.lines.filter (·.counted)) =
+      sh.pages.map (fun p => p.lines.filter (·.counted)) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  apply furnishFrom_preserves
+  intro i p s
+  exact furnishLines_counted_projects _ _ _ _
 
 /-- The marks step, the one seam after the furniture pass: every shipped
 page takes the derived cut-mark fills, appended after its own fills so
@@ -13259,6 +13402,29 @@ theorem page_lifecycle_projects (geom : Geom) (fs : FontSet) (pats : Option Hyph
       (ship geom fs pats doc imgs frameSpans).pages.map (·.pageState) := by
   simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
     runPost_lifecycle_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
+
+/-- Attribution crosses both postlude passes of the actual public run:
+the attributed lines, with all their ink and geometry, are exactly those
+the production placement shipped, on the same pages and in order. -/
+theorem lines_attributed_projects (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).pages.map
+        (fun p => p.lines.filter (fun l => l.leaf.isSome)) =
+      (ship geom fs pats doc imgs frameSpans).pages.map
+        (fun p => p.lines.filter (fun l => l.leaf.isSome)) := by
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+    runPost_attributed_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
+
+/-- Counted body lines cross the actual postlude and print-mark passes
+without additions, losses or changes in physical-page order. -/
+theorem lines_counted_projects (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).pages.map (fun p => p.lines.filter (·.counted)) =
+      (ship geom fs pats doc imgs frameSpans).pages.map (fun p => p.lines.filter (·.counted)) := by
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+    runPost_counted_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Page equality is the projection of the shared IR normalization fixed point. -/
 theorem run_resolve_pages_agree (geom : Geom) (fs : FontSet)
