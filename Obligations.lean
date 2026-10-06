@@ -216,48 +216,13 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
 -- ElementSpacing retains counterexamples to the old unconditional claim:
 -- replacing a larger default, signed relative lengths and page breaks.
 
-/-- How far the glyphs of a label's text reach above their baseline, read
-from the face's own outlines rather than from any declared metric: the
-measure the containment claim below is about, and exactly what
-`Layout.labelVExtent` declines to consult. Font units scaled to the label's
-size — the arithmetic only, no engine decision restated. The body face,
-because that is the face a plain label sets in; a label switching face
-mid-line is the same claim over more runs. -/
-def labelInkReach (geom : Geom) (fs : Font.FontSet) (content : Array Ir.Inline)
-    (scale : Nat) : Dim.Sp :=
-  let font := fs.body
-  let size := geom.fontSize * (scale : Int) / 1000
-  (Ir.plainText content).toList.foldl (fun acc ch =>
-    match font.gid ch with
-    | some g =>
-      match font.yExtent g with
-      | some (_, hi) => max acc (hi * size / (font.unitsPerEm : Int))
-      | none => acc
-    | none => acc) 0
-
--- owed: ink_covered_or_named
--- owner: LeanTex.Core.Layout
--- source: the label-centring slice (PLAN 2026-09-24, the what-cannot-move-a-baseline entry). A label's band is the face's declared cap height up and hhea descent down (`Layout.labelVStep`), and that band is read for two different jobs: it *places* the baseline, where being glyph-blind is the whole point (`Layout.label_centre_glyph_free`, the wobble's absence), and it is also the box a picture reserves space by (`Ir.Pic.labelInkBox` into `Ir.Pic.Picture.inkBbox`), where being glyph-blind means the box can be smaller than the ink. Measured on the three shipped faces at 10 pt: a diacritic inks 2.07–2.25 pt above the declared cap height (É in Source Serif Pro and Open Sans, Î in Fira Sans), and plain lowercase ascenders do too — six of `bdfhklt` in every face, by 0.51–0.79 pt — as do round capitals by their overshoot (0.10–0.14 pt) and, in two faces of three, every fence (`(` by 1.56 pt in Fira Sans). The descent side is sound: no descender of `gjpqy` reaches below the declared descent in any of the three. So the overflow is one-sided and it is the common case, not the exception, which is what makes this owed rather than fixed: the two consumers want different bands, and the placement band must stay where it is. The design being protected is the one the report named — an extent-derived box exists so diacritics and descenders cannot clip or collide (CSS 2.1 §10.6.1, css-inline-3 §5.2) — so the honest resolution is a second, wider *declared* band for containment (hhea ascent, which is the room a face reserves for exactly this and which all three faces' worst glyph fits inside) with the residue named, never a crop and never a diagnostic on every label carrying a `b`. The in-suite witness is the third group of `labelBaselineChecks`, which pins the overflow above the cap and the clearance under the descent as the numbers they are.
--- blocker: Layout.labelInk_projects now measures the segments returned by the actual producer, and Layout.labelLine_covers bounds every produced glyph in the separate reserved glyph box after page placement, without treating a cap-height band as containment. This older statement still uses labelInkBox and plain text measured in the body face. It needs the real per-run glyph measure and reserved box, plus a contract connecting each source label to the producer result or a named refusal through the picture walk.
--- goldens: yes
-/-- Staged source-label coverage claim. The producer now separates the
-font band used for placement from measured glyph bounds used for space
-reservation. This statement still measures plain text in one face against
-the placement box; its replacement must follow the actual producer's
-segments and reserved glyph box through the picture walk. -/
-theorem ink_covered_or_named
-    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc) (pic : Ir.Pic.Picture)
-    (x y : Dim.Sp) (content : Array Ir.Inline) (c : Ir.Color) (scale : Nat)
-    (al : Ir.Pic.LabelAlign)
-    (hpic : Ir.Block.picture pic ∈ doc.body)
-    (hs : Ir.Pic.Shape.label x y content c scale al ∈ pic.shapes) :
-    Ir.Pic.labelBaseline y al (Layout.labelMetric geom fs {} content scale)
-          + labelInkReach geom fs content scale
-        ≤ (Ir.Pic.labelInkBox x y al
-            (Layout.labelMetric geom fs {} content scale)).2.2
-      ∨ (Layout.run geom fs none doc).diags.any
-          (fun d => d.subject == some (Ir.plainText content)) := by
-  sorry
+-- Layout.run_ink_covered_or_named follows each selected label occurrence
+-- into final pages, reading every run's actual font, size and raise.
+-- Layout.run_shipped_ink_covered_or_named covers every stamped output line;
+-- run_missing_outline_named accounts for unavailable outline evidence.
+-- These use measured glyph reserves, not the baseline-alignment cap box.
+-- LayoutInkContracts.layoutInkChecks preserves the cap-box counterexample
+-- and tests occurrence identity, mixed runs, pagination and source locations.
 
 /-- A synthetic document that uses one control-plane command with its
 declared number of keyword groups, standing between two words of invented
