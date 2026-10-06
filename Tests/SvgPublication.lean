@@ -25,7 +25,7 @@ def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let initial : Image.Store := { entries := #[
         { src := source, info := some { pxW := 120, pxH := 80 } }] }
       let (imgs, diags, unconverted) ← picsToSvg
-        #[{ src := source, bytes := svgCanvasPdf, cached }] initial
+        #[{ src := source, bytes := svgCanvasPdf }] initial
       check ref s!"boundary {name}: conversion follows captured PDF bytes"
         (imgs.entries[0]!.webSvg == some expected && diags.isEmpty && unconverted.isEmpty)
       check ref s!"boundary {name}: preparation creates no output directory"
