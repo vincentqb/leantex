@@ -2,8 +2,42 @@ import Init.Data.Nat.ToString
 import Init.Data.Int.ToString
 import Init.Data.String.Lemmas.Iterate
 import Init.Data.String.Lemmas.Pattern.TakeDrop.Char
+import Init.Data.String.Lemmas.Pattern.Find.Char
 
 namespace LeanTex.Core.PdfRead.Number
+
+theorem nat_chars (n : Nat) : ∀ c ∈ (toString n).toList, c.isDigit = true := by
+  intro c hc
+  rw [Nat.toString_eq_ofList_toDigits, String.toList_ofList] at hc
+  exact Nat.isDigit_of_mem_toDigits (by omega) (by omega) hc
+
+theorem nat_nonempty (n : Nat) : (toString n).toList ≠ [] := by simp
+
+theorem int_chars (n : Int) :
+    ∀ c ∈ (toString n).toList, c.isDigit = true ∨ c = '-' := by
+  cases n with
+  | ofNat n =>
+    simp only [Int.toString_eq_repr, Int.repr_eq_ite]
+    exact fun c hc => Or.inl (nat_chars n c hc)
+  | negSucc n =>
+    have hs : toString (Int.negSucc n) = "-" ++ toString (n+1) := by
+      simp [Int.toString_eq_repr, Int.repr_eq_ite]
+    rw [hs]
+    intro c hc
+    simp only [String.toList_append, List.mem_append] at hc
+    rcases hc with hc | hc
+    · exact Or.inr (by simpa using hc)
+    · exact Or.inl (nat_chars (n+1) c hc)
+
+theorem int_nonempty (n : Int) : (toString n).toList ≠ [] := by
+  cases n <;> simp [Int.toString_eq_repr, Int.repr_eq_ite]
+
+theorem int_noDot (n : Int) : (toString n).contains '.' = false := by
+  rw [String.contains_char_eq]
+  apply decide_eq_false
+  intro h
+  have hh := int_chars n '.' h
+  simp [Char.isDigit] at hh
 
 private def natStep (c : Char) (s : Option Bool × Bool) : Id (ForInStep (Option Bool × Bool)) :=
   if c = '_' then

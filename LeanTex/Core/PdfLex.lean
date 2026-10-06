@@ -48,17 +48,21 @@ def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) :=
     (fun _ s => pure (uintStep b s)) : Id UIntState).run
   if s.seen then some (s.value, s.pos) else none
 
+/-- A keyword comparison step. A mismatch ends the scan immediately. -/
+def keywordStep (b : ByteArray) (i : Nat) (bytes : ByteArray) (k : Nat)
+    (_ : Bool) : ForInStep Bool :=
+  if at? b (i+k) == (bytes[k]?.getD 0).toNat then .yield true else .done false
+
 /-- Does the keyword stand at `i`, ended by whitespace, a delimiter, or the
 file's end? Returns the position after it. -/
-def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat := Id.run do
+def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
   let bytes := kw.toUTF8
-  for k in [0:bytes.size] do
-    if at? b (i + k) != (bytes[k]?.getD 0).toNat then
-      return none
-  let after := at? b (i + bytes.size)
-  if after == 256 || isWs after || isDelim after then
-    return some (i + bytes.size)
-  return none
+  let matched := (forIn [0:bytes.size] true
+    (fun k s => pure (keywordStep b i bytes k s)) : Id Bool).run
+  let after := at? b (i+bytes.size)
+  if matched && (after == 256 || isWs after || isDelim after) then
+    some (i+bytes.size)
+  else none
 
 def hexVal (c : Nat) : Option Nat :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)

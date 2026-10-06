@@ -6,6 +6,22 @@ import Init.Data.String.Lemmas.Basic
 
 namespace LeanTex.Core.PdfLex
 
+/-- Byte lists are used only to state source spans; the scanner and writer
+continue to operate on `ByteArray`. -/
+def octets (b : ByteArray) : List Nat := b.data.toList.map UInt8.toNat
+
+@[simp] theorem octets_length (b : ByteArray) : (octets b).length = b.size := by
+  simp [octets]
+
+@[simp] theorem octets_append (a b : ByteArray) : octets (a++b) = octets a ++ octets b := by
+  simp [octets, ByteArray.data_append]
+
+@[simp] theorem octets_push (a : ByteArray) (c : UInt8) :
+    octets (a.push c) = octets a ++ [c.toNat] := by
+  simp [octets, ByteArray.data_push]
+
+@[simp] theorem octets_empty : octets ByteArray.empty = [] := rfl
+
 theorem at?_lt (b : ByteArray) (i : Nat) (h : i < b.size) :
     at? b i = b[i].toNat := by simp [at?, getElem?_pos b i h]
 
@@ -37,6 +53,15 @@ theorem ascii_utf8 (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
       String.utf8EncodeChar_eq_singleton hc, ih (fun d hd => h d (by simp [hd]))]
     rw [← List.toByteArray_append]
     rfl
+
+theorem octets_ascii (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
+    octets (String.ofList cs).toUTF8 = cs.map Char.toNat := by
+  rw [ascii_utf8 cs h]
+  simp only [octets, List.data_toByteArray, List.toList_toArray, List.map_map]
+  apply List.map_congr_left
+  intro c hc
+  change c.toNat % 256 = c.toNat
+  exact Nat.mod_eq_of_lt (by have := h c hc; omega)
 
 /-- A source span describes its bytes and bounds, independently of any
 scanner or parsed result. -/
@@ -201,5 +226,44 @@ theorem parseUInt_none {b : ByteArray} {i : Nat}
   unfold parseUInt
   rw [Loop.forIn_range_stops_exact hs (b.size+1) (by omega)]
   rfl
+
+/-- Every step compares the stated byte. With an exact source span the
+loop cannot take its mismatch exit, and its Boolean remains true. -/
+theorem keywordAt_exact {b : ByteArray} {i : Nat} {kw : String}
+    (h : Span b i (octets kw.toUTF8))
+    (he : at? b (i+kw.toUTF8.size) = 256 ∨
+      isWs (at? b (i+kw.toUTF8.size)) = true ∨
+      isDelim (at? b (i+kw.toUTF8.size)) = true) :
+    keywordAt b i kw = some (i+kw.toUTF8.size) := by
+  have hm := Loop.forIn_range_inv (· = true)
+    (fun k s => pure (keywordStep b i kw.toUTF8 k s)) 0 kw.toUTF8.size true rfl
+    (by
+      intro k _ hk s _
+      have hh := h.byte k (by simpa using hk)
+      simp only [octets, List.getElem_map, Array.getElem_toList,
+        ← ByteArray.getElem_eq_getElem_data] at hh
+      simp only [keywordStep, hh, getElem?_pos kw.toUTF8 k hk, Option.getD_some,
+        beq_self_eq_true, ↓reduceIte]
+      rfl)
+  have hb : (at? b (i+kw.toUTF8.size) == 256 ||
+      isWs (at? b (i+kw.toUTF8.size)) ||
+      isDelim (at? b (i+kw.toUTF8.size))) = true := by
+    simpa only [Bool.or_eq_true, beq_iff_eq, or_assoc] using he
+  simp only [keywordAt, hm, hb, Bool.true_and, ↓reduceIte]
+
+theorem keywordAt_ne {b : ByteArray} {i : Nat} {kw : String}
+    (hn : 0 < kw.toUTF8.size)
+    (h : at? b i ≠ (kw.toUTF8[0]?.getD 0).toNat) : keywordAt b i kw = none := by
+  have hm : (forIn [0:kw.toUTF8.size] true
+      (fun k s => pure (keywordStep b i kw.toUTF8 k s)) : Id Bool).run = false := by
+    rw [Std.Legacy.Range.forIn_eq_forIn_range']
+    simp only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel,
+      Nat.div_one]
+    obtain ⟨n, he⟩ := Nat.exists_eq_succ_of_ne_zero (by omega : kw.toUTF8.size ≠ 0)
+    rw [he, List.range'_succ, List.forIn_cons]
+    simp only [keywordStep, Nat.add_zero, show (at? b i == (kw.toUTF8[0]?.getD 0).toNat) = false
+      from beq_eq_false_iff_ne.mpr h, Bool.false_eq_true, ↓reduceIte]
+    rfl
+  simp only [keywordAt, hm, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
 
 end LeanTex.Core.PdfLex

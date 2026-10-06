@@ -89,4 +89,31 @@ theorem Obj.renderInto_exact (a : ByteArray) (o : Obj) :
     o.renderInto a = a ++ o.render := by
   simpa [Obj.render] using Obj.renderInto_append a ByteArray.empty o
 
+theorem Obj.renderList_exact (a : ByteArray) (xs : List Obj) :
+    Obj.renderList a xs = a ++ Obj.renderList ByteArray.empty xs := by
+  simpa using Obj.renderList_append a ByteArray.empty xs
+
+theorem Obj.renderEntries_exact (a : ByteArray) (es : List (String × Obj)) :
+    Obj.renderEntries a es = a ++ Obj.renderEntries ByteArray.empty es := by
+  simpa using Obj.renderEntries_append a ByteArray.empty es
+
+theorem Obj.name_octets (s : String) (hn : s ≠ "") :
+    octets ("/" ++ escapeName s).toUTF8 =
+      47 :: (s.toList.flatMap nameChars).map Char.toNat := by
+  simp only [escapeName, PdfLex.escapeName_exact s hn]
+  have ha : ∀ c ∈ '/' :: s.toList.flatMap nameChars, c.toNat < 128 := by
+    intro c hc
+    rcases List.mem_cons.mp hc with rfl | hc
+    · decide
+    · obtain ⟨d,_,hd⟩ := List.mem_flatMap.mp hc
+      exact nameChars_ascii d c hd
+  have hh := octets_ascii _ ha
+  simpa only [String.ofList_cons, show String.singleton '/' = "/" from rfl,
+    List.map_cons, show '/'.toNat = 47 from rfl] using hh
+
+theorem Obj.name_size (s : String) (hn : s ≠ "") :
+    ("/" ++ escapeName s).toUTF8.size = 1+(s.toList.flatMap nameChars).length := by
+  have hh := congrArg List.length (Obj.name_octets s hn)
+  simpa [Nat.add_comm] using hh
+
 end LeanTex.Core.PdfRead
