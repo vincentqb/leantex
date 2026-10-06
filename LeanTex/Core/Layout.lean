@@ -12519,6 +12519,23 @@ private theorem furnishFrom_projects {σ α : Type}
     (furnishFrom f pages s i).1.map read = pages.map read :=
   furnishFrom_preserves f read (fun _ p _ => hread p _) pages s i
 
+/-- A state invariant crosses the actual page recursion independently of
+the line setter. The step premise concerns only the state it returns. -/
+private theorem furnishFrom_inv {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (P : σ → Prop) (hstep : ∀ i p s, P s → P (f i p s).2)
+    (pages : Array PageOut) (s : σ) (i : Nat) (hs : P s) :
+    P (furnishFrom f pages s i).2 := by
+  induction pages, s, i using furnishFrom.induct f with
+  | case1 pages s i h ls s' heq ih =>
+    rw [furnishFrom]
+    simp only [h, reduceDIte, heq]
+    apply ih
+    simpa only [heq] using hstep i pages[i] s hs
+  | case2 pages s i h =>
+    rw [furnishFrom]
+    simpa only [h, reduceDIte] using hs
+
 /-- Every output page retains the non-line data of its input page. -/
 private theorem furnishFrom_keeps {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
@@ -12562,13 +12579,107 @@ private theorem furnishLines_counted_projects (fs : FontSet)
   have hempty (ls : List LineOut) : ls.filter (fun _ => false) = [] := by simp
   simp [List.filter_map, Function.comp_def, furnitureLine, hempty]
 
-/-- The setter returns generated furniture separately from the page it
-annotates. Joining it to the body is the one shared, checkable operation. -/
+/-- The setter returns generated furniture and new diagnostics separately
+from the page and diagnostics it annotates. Joining each to the existing
+value is the one shared, checkable operation. -/
 private def furnishStep {σ : Type} (fs : FontSet)
-    (f : Nat → PageOut → σ → (Array LineOut × Array LineOut) × σ)
-    (i : Nat) (page : PageOut) (s : σ) : Array LineOut × σ :=
-  let (ls, s') := f i page s
-  (furnishLines fs ls.1 page.lines ls.2, s')
+    (f : Nat → PageOut → σ → (Array LineOut × Array LineOut) × Array Diag × σ)
+    (i : Nat) (page : PageOut) (s : Array Diag × σ) : Array LineOut × Array Diag × σ :=
+  let out := f i page s.2
+  (furnishLines fs out.1.1 page.lines out.1.2, s.1 ++ out.2.1, out.2.2)
+
+private abbrev DiagKey :=
+  String × String × Option String × Option (String × Nat × Nat ×
+    List (Nat × String) × Option String)
+
+private def diagKey (d : Diag) : DiagKey :=
+  (d.code, d.message, d.subject, d.span.map fun s =>
+    (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command))
+
+private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
+  if d.code == "W0005" && d.span.isNone && overfull > 1 then
+    { d with message := s!"{overfull} overfull lines (no feasible break)" }
+  else d
+
+/-- Repeated overlay pages can report one source site several times.
+Distinct declarations, including expansions at the same coordinates,
+keep their own report and their complete provenance. -/
+private def uniqueDiags (diags : Array Diag) : Array Diag := Id.run do
+  let overfull := diags.foldl (fun n d =>
+    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
+  let mut st : Std.HashSet DiagKey × Array Diag := ({}, #[])
+  for d in diags do
+    st := if st.1.contains (diagKey d) then st
+      else (st.1.insert (diagKey d), st.2.push (summarizeOverfull overfull d))
+  return st.2
+
+private def diagReported (diags : Array Diag) (code : String) (subject : Option String) : Prop :=
+  ∃ d ∈ diags, d.code = code ∧ d.subject = subject
+
+private theorem push_reported {diags : Array Diag} {code : String} {subject : Option String}
+    (d : Diag) (h : diagReported diags code subject) :
+    diagReported (diags.push d) code subject := by
+  obtain ⟨e, he, hc, hs⟩ := h
+  exact ⟨e, Array.mem_push.mpr (Or.inl he), hc, hs⟩
+
+private theorem summarizeOverfull_names (overfull : Nat) (d : Diag) :
+    (summarizeOverfull overfull d).code = d.code ∧
+    (summarizeOverfull overfull d).subject = d.subject := by
+  unfold summarizeOverfull
+  split <;> exact ⟨rfl, rfl⟩
+
+/-- The actual deduplication loop retains a representative of every code
+and subject it consumes. Its value invariant names both the consumed
+prefix and the representatives of the seen keys. The break-free bridge
+reads this `forIn`; there is no second runtime diagnostic fold. -/
+private theorem uniqueDiags_covers (diags : Array Diag) :
+    ∀ d ∈ diags, diagReported (uniqueDiags diags) d.code d.subject := by
+  unfold uniqueDiags
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  let overfull := diags.foldl (fun n d =>
+    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
+  have h := Array.foldl_induction (as := diags)
+    (motive := fun i (st : Std.HashSet DiagKey × Array Diag) =>
+      (∀ key ∈ st.1, diagReported st.2 key.1 key.2.2.1) ∧
+      (∀ d ∈ diags.toList.take i, diagReported st.2 d.code d.subject))
+    (init := ({}, #[]))
+    (f := fun st d => if st.1.contains (diagKey d) then st
+      else (st.1.insert (diagKey d), st.2.push (summarizeOverfull overfull d)))
+    (by simp)
+    (by
+      intro i st hst
+      have htake : diags.toList.take (i.val + 1) =
+          diags.toList.take i.val ++ [diags[i]] := by
+        exact List.take_succ_eq_append_getElem (by simp)
+      split
+      · rename_i hc
+        refine ⟨hst.1, ?_⟩
+        intro d hd
+        rw [htake] at hd
+        rcases List.mem_append.mp hd with hp | hp
+        · exact hst.2 d hp
+        · have he : d = diags[i] := by simpa using hp
+          subst d
+          exact hst.1 _ (Std.HashSet.contains_iff_mem.mp hc)
+      · refine ⟨?_, ?_⟩
+        · intro key hk
+          rcases Std.HashSet.mem_insert.mp hk with heq | hold
+          · have heq' : diagKey diags[i] = key := eq_of_beq heq
+            subst key
+            exact ⟨summarizeOverfull overfull diags[i],
+              Array.mem_push.mpr (Or.inr rfl), summarizeOverfull_names _ _⟩
+          · exact push_reported _ (hst.1 key hold)
+        · intro d hd
+          rw [htake] at hd
+          rcases List.mem_append.mp hd with hp | hp
+          · exact push_reported _ (hst.2 d hp)
+          · have he : d = diags[i] := by simpa using hp
+            subst d
+            exact ⟨summarizeOverfull overfull diags[i],
+              Array.mem_push.mpr (Or.inr rfl), summarizeOverfull_names _ _⟩)
+  have ht : diags.toList.take diags.size = diags.toList := by
+    simpa only [Array.length_toList] using (List.take_length (l := diags.toList))
+  simpa only [ht, Array.mem_toList_iff, overfull, Id.run, bind, pure, Id] using h.2
 
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
@@ -12689,12 +12800,12 @@ def runPost (sh : Shipped) : Out := Id.run do
               y := geom.pageH - geom.vmargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   let furnishPage (i : Nat) (page : PageOut)
-      (st0 : Array Diag × Std.HashMap String (Array Nat) × Nat) :
+      (st0 : Std.HashMap String (Array Nat) × Nat) :
       (Array LineOut × Array LineOut) × Array Diag × Std.HashMap String (Array Nat) × Nat :=
       Id.run do
-    let mut diags := st0.1
-    let mut cache := st0.2.1
-    let mut count := st0.2.2
+    let mut diags : Array Diag := #[]
+    let mut cache := st0.1
+    let mut count := st0.2
     let mut head : Array LineOut := #[]
     let mut lines : Array LineOut := #[]
     -- The margin line numbers, one per counted body line at its own
@@ -12845,25 +12956,7 @@ slot yields in place: shorten the content or drop a slot"))
   let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
-  -- Repeated overlay pages can report one source site several times.
-  -- Distinct declarations, including expansions at the same coordinates,
-  -- keep their own report and their complete provenance.
-  let mut seen : Std.HashSet
-      (String × String × Option String × Option (String × Nat × Nat ×
-        List (Nat × String) × Option String)) := {}
-  let mut unique : Array Diag := #[]
-  let overfull := diags.foldl (fun n d =>
-    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
-  for d in diags do
-    let key := (d.code, d.message, d.subject, d.span.map fun s =>
-      (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command))
-    unless seen.contains key do
-      seen := seen.insert key
-      if d.code == "W0005" && d.span.isNone && overfull > 1 then
-        unique := unique.push
-          { d with message := s!"{overfull} overfull lines (no feasible break)" }
-      else
-        unique := unique.push d
+  let unique := uniqueDiags diags
   -- The document outline, resolved: an in-document target (`#anchor`)
   -- resolves against finalized lines, just like a PDF link annotation;
   -- any other target rides as its URL.
@@ -12873,6 +12966,22 @@ slot yields in place: shorten the content or drop a slot"))
         page := (destination? out (target.drop 1).toString).map (·.1) }
     else ({ title := title, url := some target } : OutlineEntry)
   return { pages := out, diags := unique, outline := outline }
+
+/-- Furniture may add diagnostics and deduplication may merge repeated
+reports, but every shipped code and subject still has a representative
+in the actual postlude output. No premise is imposed on furniture. -/
+theorem runPost_diags_covers (sh : Shipped) :
+    ∀ d ∈ sh.diags, ∃ e ∈ (runPost sh).diags,
+      e.code = d.code ∧ e.subject = d.subject := by
+  intro d hd
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  apply uniqueDiags_covers
+  apply furnishFrom_inv _
+    (fun s : Array Diag × Std.HashMap String (Array Nat) × Nat => d ∈ s.1)
+  · intro i page s hs
+    exact Array.mem_append.mpr (Or.inl hs)
+  · exact hd
 
 /-- The postlude only adds furniture lines: every page of `runPost`'s
 output carries the fills, paths, foot band, and frame attribution of a
@@ -13383,6 +13492,23 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let (doc, diags) := resolveDocMath fs doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
+
+/-- Every code and subject reported by the actual shipment remains named
+after furniture, diagnostic deduplication, math diagnostics and print
+marks. This is the public bridge for a placement diagnostic invariant. -/
+theorem shipment_diags_covers (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
+    ∀ d ∈ (ship geom fs pats doc imgs frameSpans).diags,
+      ∃ e ∈ (run geom fs pats doc imgs frameSpans).diags,
+        e.code = d.code ∧ e.subject = d.subject := by
+  intro d hd
+  obtain ⟨e, he, hc, hs⟩ := runPost_diags_covers
+    (ship geom fs pats doc imgs frameSpans) d hd
+  refine ⟨e, ?_, hc, hs⟩
+  simpa only [run, runCore, ship, addMarks] using
+    (Array.mem_append.mpr (Or.inr he) :
+      e ∈ (resolveDocMath fs doc).2 ++
+        (runPost (ship geom fs pats doc imgs frameSpans)).diags)
 
 /-- The public run preserves the placement's frame/footer partition exactly,
 including repeated frame numbers, overlays, spills and intentionally absent
