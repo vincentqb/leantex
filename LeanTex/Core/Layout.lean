@@ -12,6 +12,7 @@ import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
 import LeanTex.Core.Struct
 import LeanTex.Core.Loop
+import LeanTex.Core.Layout.GlyphBounds
 
 namespace LeanTex.Core.Layout
 
@@ -8863,29 +8864,51 @@ theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
       (m.boxHeight, m.boxDepth) = labelGlyphExtent fs size segs :=
   ⟨rfl, rfl⟩
 
-/-- One label line of a picture, set and measured: the segments its
-inlines make, the size they set at, and the ink the line occupies — its
-set width and its reach above and below the baseline.
+/-- The actual inline producer and line break result for one picture label.
+The optional line preserves the established first-line layout, while its
+diagnostics and the number of chosen lines remain available to emission. -/
+structure LabelResult where
+  line? : Option (Array Seg × Sp × Ir.Pic.LabelInk)
+  diags : Array Diag
+  lineCount : Nat
+  source : Option Span
 
-**This is the measurement the IR cannot make.** A node's extent is a font
-question and the picture walk has no face (`Ir.Pic.LabelMetric`), so the
-two sides that need it — the box a picture reserves on the page and the
-line the placement actually sets — read it here, from one function of the
-resolved face, and cannot drift apart. -/
-def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+/-- Shape, break and measure a picture label once. A nominal extent may
+place a glyph with missing outline data, but emission must name that loss
+of geometry evidence separately. -/
+def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
     (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
-    Option (Array Seg × Sp × Ir.Pic.LabelInk) :=
+    LabelResult :=
   let size := geom.fontSize * (scale : Int) / 1000
-  -- A label is generated ink of the picture (its one leaf has no census
-  -- text): `.block` of the picture leaf, `.unattributed` when the picture
-  -- owns none.
-  let items := (itemsOfInlines none size xHeight fs {}
+  let produced := itemsOfInlines none size xHeight fs {}
     #[.colored color none content] {} (.fixed ((leaf.map .block).getD .unattributed)) imgs
-    geom.textWidth geom.textHeight (ladder := geom.scale)).1
-  (kp items geom.textWidth)[0]?.map fun brk =>
+    geom.textWidth geom.textHeight (ladder := geom.scale)
+  let items := produced.1
+  let breaks := kp items geom.textWidth
+  let line := breaks[0]?.map fun brk =>
     let line := setLine items (lineStart items 0) brk geom.textWidth false
     (line.1, size,
       measureLabelLine fs size line.2.1 (xHeight * (scale : Int) / 1000) line.1)
+  let sources := produced.2.2.2.2.2.2.2
+  let source := match breaks[0]? with
+    | some brk => lineSource sources (lineStart items 0) brk
+    | none => lineSource sources 0 items.size
+  { line? := line, diags := produced.2.1, lineCount := breaks.size, source := source }
+
+/-- Compatibility projection used by the metric consumer. Emission reads
+`labelResult` directly so a failed producer or a second line cannot vanish
+from diagnostic accounting. -/
+def labelInk (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+    (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
+    Option (Array Seg × Sp × Ir.Pic.LabelInk) :=
+  (labelResult fs imgs geom xHeight leaf content color scale).line?
+
+/-- The metric path is the exact line projection of the actual producer. -/
+theorem labelResult_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) :
+    (labelResult fs imgs geom xHeight leaf content color scale).line? =
+      labelInk fs imgs geom xHeight leaf content color scale := rfl
 
 /-- The label producer returns the metric measured from the very segments
 it sets. Both placement and reservation consume this result. -/
@@ -8895,7 +8918,7 @@ theorem labelInk_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (ink : Ir.Pic.LabelInk)
     (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink)) :
     ink = measureLabelLine fs size ink.w ink.ex segs := by
-  simp only [labelInk, Option.map_eq_some_iff] at h
+  simp only [labelInk, labelResult, Option.map_eq_some_iff] at h
   obtain ⟨brk, _, heq⟩ := h
   cases heq
   rfl
@@ -8968,6 +8991,107 @@ private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight
   match labelInk fs imgs geom xHeight none content Ir.Color.black scale with
   | some (_, _, ink) => ink
   | none => {}
+
+/-- The canonical glyph reserve used by the actual picture layout. The
+producer uses the same font environment, image store, page geometry and
+resolved x-height as the enclosing picture. -/
+def pictureLabelBox (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight x y : Sp) (content : Array Ir.Inline) (scale : Nat)
+    (align : Ir.Pic.LabelAlign) : Ir.Pic.Box :=
+  Ir.Pic.labelGlyphBox x y align (picMetric fs imgs geom xHeight content scale)
+
+/-- Whether an actual painted run lacks outline evidence. Known empty
+outlines are measured: only the font reader's `none` is unresolved. -/
+def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Bool :=
+  segs.any fun seg => match seg with
+  | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
+    glyphs.any fun g =>
+      (GlyphBounds.glyph (fs.get idx) (if sz == 0 then size else sz) raise g.1).unresolved
+  | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+    | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
+
+/-- The first line actually emitted for a label and its complete diagnostic
+account. The box argument is the canonical metric read by reservation. -/
+structure LabelEmission where
+  line? : Option LineOut := none
+  diags : Array Diag := #[]
+
+/-- Only add the label key when the producer has not already identified its
+own subject. Its code, trigger, recovery and message remain unchanged. -/
+def nameLabelDiag (key : String) (d : Diag) : Diag :=
+  { d with subject := d.subject.orElse (fun _ => some key) }
+
+/-- A label without visible text may legitimately produce no line. -/
+def labelTextBlank (content : Array Ir.Inline) : Bool :=
+  (Ir.plainText content).toList.all Char.isWhitespace
+
+/-- A producer's keyed refusal already accounts for an absent label. -/
+def labelFailureNamed (content : Array Ir.Inline) (diags : Array Diag) : Bool :=
+  diags.any fun d =>
+    d.subject == some (Ir.plainText content) &&
+      (d.kind.loss == .dropped || d.kind.loss == .pending)
+
+/-- Compare the measured glyph box with the canonical reserved glyph box.
+This checks the actual outputs of both producer calls; colour and source
+attribution are never assumed to preserve shaping or line breaking. -/
+def labelReserveCovers (actual reserved : Ir.Pic.Box) : Prop :=
+  reserved.1.2 ≤ actual.1.2 ∧ actual.2.2 ≤ reserved.2.2
+
+instance (a r : Ir.Pic.Box) :
+    Decidable (labelReserveCovers a r) := inferInstanceAs (Decidable (_ ∧ _))
+
+/-- Check and place the producer's measured line against the picture's
+reserved glyph box. This is the production decision, exposed separately
+so a check can falsify each guard by changing its own input.
+
+The comparison is against the reserved label glyph box; an author's
+explicit picture bounding box intentionally may be smaller than its ink. -/
+def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Sp) (content : Array Ir.Inline) (align : Ir.Pic.LabelAlign)
+    (result : LabelResult) (reserved : Ir.Pic.Box) : LabelEmission :=
+  let key := Ir.plainText content
+  let ds := result.diags.map (nameLabelDiag key)
+  let ds := if 1 < result.lineCount then
+      ds.push {
+        kind := .W0328
+        message := "picture label spans multiple lines; only its first line is kept"
+        span := result.source
+        subject := some key }
+    else ds
+  match result.line? with
+  | none =>
+    { diags := if labelTextBlank content || labelFailureNamed content ds then ds else
+        ds.push {
+          kind := .E0395
+          message := "picture label produced no line",
+          span := result.source
+          subject := some key } }
+  | some (segs, size, ink) =>
+    let ds := if labelGlyphUnknown fs size segs then
+        ds.push {
+          kind := .W0394
+          message := "picture label has glyphs without measured outline bounds",
+          span := result.source
+          subject := some key }
+      else ds
+    let ds := if labelReserveCovers (Ir.Pic.labelGlyphBox x y align ink) reserved then ds else
+        ds.push {
+          kind := .W0396
+          message := "picture label extends beyond its reserved glyph box",
+          span := result.source
+          subject := some key }
+    { line? := some (labelLine place x y align ink segs size leaf), diags := ds }
+
+/-- Emit the line selected by the actual producer, checking it against the
+actual canonical reservation. No correctness premise is supplied by the
+caller: `finishLabel` checks both measurements and all painted glyphs. -/
+def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (align : Ir.Pic.LabelAlign) : LabelEmission :=
+  finishLabel fs leaf place x y content align
+    (labelResult fs imgs geom xHeight leaf content color scale)
+    (pictureLabelBox fs imgs geom xHeight x y content scale align)
 
 /-- **The label measurement, for a caller that needs it before layout.**
 A node's extent is a font question and the picture walk has no face, so the
@@ -11601,6 +11725,68 @@ private def B.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
     b.spillPage
   else b
 
+/-- All marks emitted by the actual picture shape fold. Label diagnostics
+travel with the same result as the lines they describe. -/
+structure PictureEmission where
+  fills : Array Fill := #[]
+  lines : Array LineOut := #[]
+  paths : Array PathOut := #[]
+  diags : Array Diag := #[]
+
+/-- One production shape step. It appends only the marks of this shape;
+label shaping and diagnostic accounting share the `emitLabel` result. -/
+def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (out : PictureEmission) (shape : Ir.Pic.Shape) : PictureEmission := Id.run do
+  match shape with
+  | .rect rx ry rw rh color =>
+    let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
+    return { out with fills := out.fills.push { x := fx, y := fy, w := max rw (-rw), h := max rh (-rh), color := color } }
+  | .circle sx sy r st fl =>
+    let (pcx, pcy) := place.toPage (sx, sy)
+    return { out with paths := out.paths.push { path := .circle pcx pcy (max r (-r)), stroke := st, fill := fl, leaf := leaf } }
+  | .frame fx fy fw fh st fl =>
+    let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
+    let path : PathOut := {
+      path := .rect qx qy (max fw (-fw)) (max fh (-fh))
+      stroke := st, fill := fl, leaf := leaf }
+    return { out with paths := out.paths.push path }
+  | .edge segs st tip =>
+    let pt := place.toPage
+    let mapped := segs.map fun sg => match sg with
+      | .line x1 y1 x2 y2 =>
+        let (a1, b1) := pt (x1, y1)
+        let (a2, b2) := pt (x2, y2)
+        Ir.Pic.PathSeg.line a1 b1 a2 b2
+      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+        let (a1, b1) := pt (x1, y1)
+        let (u1, v1) := pt (c1x, c1y)
+        let (u2, v2) := pt (c2x, c2y)
+        let (a2, b2) := pt (x2, y2)
+        Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
+    let paths := out.paths.push { path := .segs mapped, stroke := some st, leaf := leaf }
+    let paths := match tip with
+      | none => paths
+      | some t =>
+        let (a1, b1) := pt (t.x1, t.y1)
+        let (a2, b2) := pt (t.x2, t.y2)
+        let (a3, b3) := pt (t.x3, t.y3)
+        paths.push { path := .tri a1 b1 a2 b2 a3 b3, fill := some st.color, leaf := leaf }
+    return { out with paths := paths }
+  | .label lx ly content color scale align =>
+    let label := emitLabel fs imgs geom xHeight leaf place lx ly content color scale align
+    let lines := match label.line? with
+      | none => out.lines
+      | some line => out.lines.push line
+    return { out with lines := lines, diags := out.diags ++ label.diags }
+
+/-- The actual picture emitter in source-shape order. Its fold state keeps
+label lines and their diagnostic account together. -/
+def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (pic : Ir.Pic.Picture) : PictureEmission :=
+  pic.shapes.foldl (emitPictureShape fs imgs geom xHeight leaf place) {}
+
 /-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
 the picture's height, then every shape through one affine transform —
 fills and paths as riders, label lines riding the picture's own shrink
@@ -11661,53 +11847,10 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- One transform for everything the picture ships: `Pic.Place` is the
   -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
-  let mut fills : Array Fill := #[]
-  let mut lines : Array LineOut := #[]
-  let mut paths : Array PathOut := #[]
-  for shape in pic.shapes do
-    match shape with
-    | .rect rx ry rw rh color =>
-      -- The fill's top-left corner is the rect's (min x, max y) corner
-      -- through the transform; a negative extent keeps its sorted box.
-      let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
-      fills := fills.push { x := fx, y := fy,
-                            w := max rw (-rw), h := max rh (-rh), color := color }
-    | .circle sx sy r st fl =>
-      let (pcx, pcy) := place.toPage (sx, sy)
-      paths := paths.push { path := .circle pcx pcy (max r (-r))
-                            stroke := st, fill := fl, leaf := leaf }
-    | .frame fx fy fw fh st fl =>
-      let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
-      paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
-                            stroke := st, fill := fl, leaf := leaf }
-    | .edge segs st tip =>
-      let pt := place.toPage
-      let mapped := segs.map fun sg => match sg with
-        | .line x1 y1 x2 y2 =>
-          let (a1, b1) := pt (x1, y1)
-          let (a2, b2) := pt (x2, y2)
-          Ir.Pic.PathSeg.line a1 b1 a2 b2
-        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-          let (a1, b1) := pt (x1, y1)
-          let (u1, v1) := pt (c1x, c1y)
-          let (u2, v2) := pt (c2x, c2y)
-          let (a2, b2) := pt (x2, y2)
-          Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
-      paths := paths.push { path := .segs mapped, stroke := some st, leaf := leaf }
-      if let some t := tip then
-        let (a1, b1) := pt (t.x1, t.y1)
-        let (a2, b2) := pt (t.x2, t.y2)
-        let (a3, b3) := pt (t.x3, t.y3)
-        paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
-                              fill := some st.color, leaf := leaf }
-    | .label lx ly content color scale align =>
-      if let some (segs, size, ink) := labelInk fs imgs b.geom b.xHeight leaf content color scale then
-        -- Label lines ride with the picture: they share the shrink
-        -- above it, so a page set short moves the diagram as one
-        -- (pushed below through `pushLabels`, the rider door).
-        lines := lines.push (labelLine place lx ly align ink segs size leaf)
-  b := ({ b with pageStretch := stretch }.pushSibling (fills := fills) (paths := paths)).pushLabels
-    lines above fils
+  let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic
+  b := ({ b with pageStretch := stretch
+                 diags := b.diags ++ emitted.diags }.pushSibling
+    (fills := emitted.fills) (paths := emitted.paths)).pushLabels emitted.lines above fils
   b := { b with
     pageShrink := above
     pageFils := fils
@@ -12353,7 +12496,7 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
     PagesExtend b (placePicture fs imgs b x pic leaf) := by
-  simp only [placePicture, Id.run, Id, pure, bind]
+  simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_
@@ -12367,7 +12510,7 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (h : b.noBreak = true) :
     (placePicture fs imgs b x pic leaf).pages = b.pages ∧
       (placePicture fs imgs b x pic leaf).noBreak = true := by
-  simp only [placePicture, Id.run, Id, pure, bind]
+  simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
@@ -12712,7 +12855,7 @@ private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
 private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
     BgStep b (placePicture fs imgs b x pic leaf) := by
-  simp only [placePicture, Id.run, Id, pure, bind]
+  simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
@@ -13402,7 +13545,7 @@ private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
 private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
     FrameStep b (placePicture fs imgs b x pic leaf) := by
-  simp only [placePicture, Id.run, Id, pure, bind]
+  simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
     | (refine FrameStep.of_eq ?_ ?_ <;> simp [B.frameStamp]
@@ -13901,16 +14044,23 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
     ReflowStep b (placePicture fs imgs b x pic leaf) := by
-  simp only [placePicture, Id.run, Id, pure, bind]
+  simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
-    | (refine ReflowStep.of_eq ?_ ?_ <;> simp
+    | (refine ⟨?_, ?_⟩
+       · simp
+       · intro d hd
+         simpa using Array.mem_append_left _ hd
        done)
     | (refine (reflowStep_spillPage b
         (b.y + b.prevDepth + b.skip.width + inkClearance +
           ((pictureBox b.geom fs imgs b.xHeight pic).2.snd -
             (pictureBox b.geom fs imgs b.xHeight pic).1.snd) - b.bottom -
-          (b.pageShrink + b.skip.shrink))).trans (ReflowStep.of_eq ?_ ?_) <;> simp
+          (b.pageShrink + b.skip.shrink))).trans ?_
+       refine ⟨?_, ?_⟩
+       · simp
+       · intro d hd
+         simpa using Array.mem_append_left _ hd
        done)
 
 private theorem reflowStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :

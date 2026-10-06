@@ -33,6 +33,7 @@ no row binds, charged in its provenance to the modules that apply them.
 
 open LeanTex.Core
 open Tests (listingProviderChecks htmlContainedCliChecks publicationPathChecks)
+open Tests.LayoutInkContracts (layoutInkChecks)
 
 namespace DiagAudit
 
@@ -140,6 +141,12 @@ def registry : List AuditRow :=
    ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩,
    -- A refused external classification keeps the source and names its loss.
    ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
+   -- Unknown outline data, an absent result and a reservation mismatch
+   -- are separate losses. The check mutates each guard's own input and
+   -- holds the actual emitted diagnostics to the label and full source.
+   ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
+   ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
+   ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩]

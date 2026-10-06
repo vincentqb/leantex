@@ -1,5 +1,6 @@
 import LeanTex.Cli.FontDiscovery
 import Tests.Support
+import Tests.LayoutInkContracts
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -507,6 +508,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
   | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
+  | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
+  | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395
+  | .W0396 => Tests.LayoutInkContracts.boundaryWitness one .W0396
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
   | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537)]
   -- The boundary is open by default: no declaration, and the picture
@@ -1281,6 +1285,7 @@ emission, so an added code is a one-block insertion at its sorted position
 and two additions to different codes never touch the same lines; the compare
 is per block, so a mismatch names its code. -/
 def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
+  Tests.LayoutInkContracts.fixtureChecks ref
   let probed ← runDriverProbes
   for (c, ds) in probed do
     check ref s!"driver probe {c.code}: one row per code"

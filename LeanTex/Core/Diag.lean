@@ -274,6 +274,7 @@ public inductive DiagCode where
   | N0419
   | W0435
   | W0393
+  | W0394 | E0395 | W0396
   | E0606
   | E0607
   deriving Repr, BEq, DecidableEq
@@ -387,7 +388,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0325 => ("0325", .degraded, "more than one <nav> landmark on one page")
   | .W0326 => ("0326", .degraded, "in-page link with no target anchor on the page")
   | .W0327 => ("0327", .degraded, "two distinct section titles fold to the same anchor")
-  | .W0328 => ("0328", .degraded, "running content wraps; only its first line is kept")
+  | .W0328 => ("0328", .degraded, "one-line content wraps; only its first line is kept")
   | .W0329 => ("0329", .config, "reserved layout-only construct skipped; no content is affected")
   | .W0330 => ("0330", .degraded, "declared page with a defaulted ink is illegible (WCAG 2.2)")
   | .W0331 => ("0331", .degraded, "declared marker not expressible in this backend; default substituted")
@@ -463,6 +464,9 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0419 => ("0419", .info, "a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it")
   | .W0435 => ("0435", .degraded, "a \\qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display")
   | .W0393 => ("0393", .degraded, "the installed syntax highlighter cannot classify a listing; its source is set as plain text")
+  | .W0394 => ("0394", .degraded, "picture label has glyphs without measured outline bounds")
+  | .E0395 => ("0395", .dropped, "picture label produced no line")
+  | .W0396 => ("0396", .degraded, "picture label extends beyond its reserved glyph box")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
   | .E0607 => ("0607", .dropped, "the PDF exceeds a supported storage bound; publication is refused")
 

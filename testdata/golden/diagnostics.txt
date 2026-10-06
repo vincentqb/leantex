@@ -166,6 +166,9 @@
 ✖ [E0390]
   raw HTML in markdown is refused: document content can never become markup here
   suggestion: quote the text as a code span with `...`, or delete the tag
+── E0395 (dropped) picture label produced no line
+✖ [E0395]
+  picture label produced no line
 ── E0401 (dropped) no usable font found on the host
 ✖ [E0401]
   no usable font found
@@ -486,7 +489,7 @@
 ⚠ [W0327]
   sections "Signal Path" and "Signal, Path" share the anchor 'signal-path'; the second becomes 'signal-path-2'
   suggestion: an in-page link '#signal-path' reaches only the first; retitle one section, or link to '#signal-path-2'
-── W0328 (degraded) running content wraps; only its first line is kept
+── W0328 (degraded) one-line content wraps; only its first line is kept
 ⚠ [W0328]
   running content wraps at the text width; only its first line is kept
   suggestion: the head, foot, and chrome bands hold one line each: shorten the content
@@ -741,6 +744,12 @@
 ⚠ [W0393]
   cannot highlight 'bash'; the listing is set as plain text
   suggestion: check `python3 -m pygments -L lexers`, or install Pygments for `python3` (Pygments is unavailable)
+── W0394 (degraded) picture label has glyphs without measured outline bounds
+⚠ [W0394]
+  picture label has glyphs without measured outline bounds
+── W0396 (degraded) picture label extends beyond its reserved glyph box
+⚠ [W0396]
+  picture label extends beyond its reserved glyph box
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display
