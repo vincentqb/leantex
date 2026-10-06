@@ -6045,6 +6045,97 @@ private theorem footnote_with_mark (b : B) (owed : Sp) (flush : Bool)
        intro i l
        split <;> rfl)
 
+/-- The source assignment and the actual emitted segments travel together
+when vertical distribution moves a line. -/
+private def LineOut.sourceSegs (l : LineOut) : Option Nat × Array Seg :=
+  (l.leaf, l.segs)
+
+private def LineOut.SourceBound (n : Nat) (l : LineOut) : Prop :=
+  (∃ k, l.leaf = some k ∧ k < n) ∨ ∀ s ∈ l.segs, s.NoGlyph
+
+private theorem sourceBound_of_sourceSegs {n : Nat} {l l' : LineOut}
+    (he : l.sourceSegs = l'.sourceSegs) (h : l'.SourceBound n) :
+    l.SourceBound n := by
+  have hl := congrArg Prod.fst he
+  have hs := congrArg Prod.snd he
+  simpa only [LineOut.SourceBound, LineOut.sourceSegs] using
+    (show (∃ k, l.leaf = some k ∧ k < n) ∨ ∀ s ∈ l.segs, s.NoGlyph from by
+      rw [show l.leaf = l'.leaf from hl, show l.segs = l'.segs from hs]
+      exact h)
+
+private theorem map_sourceSegs_mapIdx (xs : Array LineOut)
+    (f : Nat → LineOut → LineOut)
+    (hf : ∀ i l, (f i l).sourceSegs = l.sourceSegs) :
+    (xs.mapIdx f).map LineOut.sourceSegs = xs.map LineOut.sourceSegs := by
+  apply Array.ext
+  · simp
+  · intro i h1 h2
+    simp [hf]
+
+private theorem map_sourceSegs_zip (xs : Array LineOut) (sh : Array Sp)
+    (hsz : sh.size = xs.size) (f : LineOut × Sp → LineOut)
+    (hf : ∀ p, (f p).sourceSegs = p.1.sourceSegs) :
+    ((xs.zip sh).map f).map LineOut.sourceSegs = xs.map LineOut.sourceSegs := by
+  apply Array.ext
+  · simp [hsz]
+  · intro i h1 h2
+    simp [hf]
+
+private theorem finishPage_sourceSegs (b : B) (owed : Sp) (flush : Bool)
+    (hs : b.shrinkAbove.size = b.cur.lines.size) :
+    ((b.finishPage owed flush).pages.back?.map fun p => p.lines.map LineOut.sourceSegs) =
+      some (b.cur.lines.map LineOut.sourceSegs ++ b.noteLines.map LineOut.sourceSegs) := by
+  simp only [B.finishPage, Array.back?_push, Option.map_some, Option.some.injEq,
+    Array.map_append]
+  congr 1
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | (exact map_sourceSegs_zip _ _ hs _ (fun p => rfl))
+    | (refine map_sourceSegs_mapIdx _ _ ?_
+       intro i l
+       split <;> rfl)
+    | (refine (map_sourceSegs_mapIdx _ _ ?_).trans
+        (map_sourceSegs_zip _ _ hs _ (fun p => rfl))
+       intro i l
+       split <;> rfl)
+
+/-- Plain paragraphs have no note or repeated-chrome producer. The ledger
+length is part of the invariant: the closing zip cannot discard a line. -/
+private structure B.SourceBound (n : Nat) (b : B) : Prop where
+  current : ∀ l ∈ b.cur.lines, l.SourceBound n
+  pages : ∀ p ∈ b.pages, ∀ l ∈ p.lines, l.SourceBound n
+  notes : b.pendingNotes = #[]
+  chrome : b.chrome = none
+  ledger : b.shrinkAbove.size = b.cur.lines.size
+
+private theorem B.SourceBound.of_eq {n : Nat} {b b' : B} (hb : b.SourceBound n)
+    (hc : b'.cur.lines = b.cur.lines) (hp : b'.pages = b.pages)
+    (hn : b'.pendingNotes = b.pendingNotes) (ht : b'.chrome = b.chrome)
+    (hs : b'.shrinkAbove.size = b.shrinkAbove.size) : b'.SourceBound n := by
+  refine ⟨?_, ?_, hn.trans hb.notes, ht.trans hb.chrome, ?_⟩
+  · simpa only [hc] using hb.current
+  · simpa only [hp] using hb.pages
+  · simpa only [hc] using hs.trans hb.ledger
+
+private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Sp) (flush : Bool)
+    (hb : b.SourceBound n) : (b.finishPage owed flush).SourceBound n := by
+  refine ⟨by simp [B.finishPage], ?_, rfl, hb.chrome, rfl⟩
+  intro p hp l hl
+  change p ∈ b.pages.push _ at hp
+  rcases Array.mem_push.mp hp with hp | rfl
+  · exact hb.pages p hp l hl
+  · have he := finishPage_sourceSegs b owed flush hb.ledger
+    change ((b.pages.push _).back?.map fun p => p.lines.map LineOut.sourceSegs) = _ at he
+    simp only [Array.back?_push, Option.map_some, Option.some.injEq] at he
+    have hm := (Array.mem_map (f := LineOut.sourceSegs)).mpr ⟨l, hl, rfl⟩
+    rw [he] at hm
+    have hn : b.noteLines = #[] := by simp [B.noteLines, hb.notes]
+    simp only [hn, Array.map_empty, Array.append_empty] at hm
+    obtain ⟨l', hl', hk⟩ := Array.mem_map.mp hm
+    exact sourceBound_of_sourceSegs hk.symm (hb.current l' hl')
+
 /-- Reopen the frame's page-top chrome on a fresh page: the pinned title
 lines and bar fills repeat, and content resumes below the chrome's own
 baseline and depth. The repeated lines never move (they are the new
@@ -6802,6 +6893,78 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     box.inkBelow box.below rl box.inkBelow bottom notes).keepInk d).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
+private theorem sourceBound_warnSpill {n : Nat} (b : B) (over : Sp)
+    (hb : b.SourceBound n) : (b.warnSpill over).SourceBound n := by
+  unfold B.warnSpill
+  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_spillPage {n : Nat} (b : B) (over : Sp)
+    (hb : b.SourceBound n) : (b.spillPage over).SourceBound n := by
+  have hf := sourceBound_finishPage b 0 b.flushes hb
+  have hr : (b.finishPage 0 b.flushes).reopenChrome.SourceBound n := by
+    simpa only [B.reopenChrome, hf.chrome] using hf
+  exact (sourceBound_warnSpill _ over hr).of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_commit {n : Nat} (b : B) (l : LineOut)
+    (depth below : Sp) (rl consume : Bool) (over : Sp)
+    (hb : b.SourceBound n) (hl : l.SourceBound n) :
+    (b.commit l depth below rl consume over).SourceBound n := by
+  refine ⟨?_, hb.pages, hb.notes, hb.chrome, ?_⟩
+  · intro l' hm
+    change l' ∈ b.cur.lines.push _ at hm
+    rcases Array.mem_push.mp hm with hm | rfl
+    · exact hb.current l' hm
+    · exact hl
+  · simpa only [B.commit, Array.size_push] using congrArg (· + 1) hb.ledger
+
+private theorem sourceBound_warnNoteOverrun {n : Nat} (b : B) (y d : Sp)
+    (hb : b.SourceBound n) : (b.warnNoteOverrun y d).SourceBound n := by
+  simp only [B.warnNoteOverrun]
+  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (hb : b.SourceBound n) (hl : ∀ y, (mk y).SourceBound n) :
+    (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom #[]).SourceBound n := by
+  simp only [B.fitCommit, B.attachNotes, Array.isEmpty_empty, ite_true]
+  split
+  · exact sourceBound_warnNoteOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
+  · split
+    · exact sourceBound_commit b _ _ _ _ _ _ hb (hl _)
+    · have hs := sourceBound_spillPage b
+        (stepY b + inkBelow - bottom - (b.pageShrink + b.skip.shrink)) hb
+      split
+      · exact sourceBound_warnNoteOverrun _ _ _
+          (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+      · exact sourceBound_warnNoteOverrun _ _ _
+          (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+
+private theorem sourceBound_keepInk {n : Nat} (b : B) (d : Sp)
+    (hb : b.SourceBound n) : (b.keepInk d).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_displayState {n : Nat} (b : B) (tex : Bool)
+    (lineEnd : Option Sp) (hb : b.SourceBound n) :
+    (b.displayState tex lineEnd).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
+    (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
+    (opens : Bool) (anchors : Array String) (hb : b.SourceBound n)
+    (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
+    (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
+      anchors).SourceBound n := by
+  simp only [B.placeLine]
+  apply sourceBound_displayState
+  apply sourceBound_keepInk
+  apply sourceBound_fitCommit
+  · exact hb
+  · intro y
+    rcases hl with hl | hl
+    · exact Or.inl hl
+    · exact Or.inr fun s hs => hl s (Array.mem_of_mem_filter hs)
+
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (neither neighbour
 bare rule ink — a rule's realized gap is
@@ -7094,6 +7257,12 @@ private structure ParaJob where
   /-- The paragraph is display math, set as TeX sets a display
   (`B.placeLine`'s `display`). -/
   display : Option DisplayJob := none
+
+private structure ParaJob.SourceBound (n : Nat) (j : ParaJob) : Prop where
+  source : (∃ k, j.leaf = some k ∧ k < n) ∨ ∀ it ∈ j.items, it.NoGlyph
+  notes : j.notes = #[]
+  marker : j.markerSegs = none
+  rule : j.rule = none
 
 /-- A title slot's placement resolved to the page: which point of its box
 (`anchor`) stands at which point of the page (`pagePoint`), the shifts in
@@ -11140,6 +11309,56 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
     p.forced.size breaks.size (!p.reflows.isEmpty)
   (breaks.foldl (placeParaLine fs j)
     ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)).1
+
+private theorem sourceBound_paraLineGeom {n : Nat} (fs : FontSet) (j : ParaJob)
+    (b : B) (first : Bool) (prev brk : Nat) (hj : j.SourceBound n) :
+    (∃ k, j.leaf = some k ∧ k < n) ∨
+      ∀ s ∈ (paraLineGeom fs j b first prev brk).1, s.NoGlyph := by
+  rcases hj.source with h | h
+  · exact Or.inl h
+  · apply Or.inr
+    cases first <;>
+      simpa only [paraLineGeom, Bool.false_eq_true,
+        ite_false, ite_true, hj.marker, hj.rule] using
+        setLine_noGlyph j.items (j.lineStart _ prev) brk _ _ j.protrude
+          j.expand j.wordOffsets h
+
+private theorem sourceBound_openDisplayAt {n : Nat} (b : B) (j : ParaJob)
+    (first : Bool) (x : Sp) (segs : Array Seg) (hb : b.SourceBound n) :
+    (b.openDisplayAt j first x segs).SourceBound n := by
+  unfold B.openDisplayAt
+  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_placeParaTrailer {n : Nat} (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) (hb : b.SourceBound n) :
+    (placeParaTrailer fs j brk segs b).SourceBound n := by
+  unfold placeParaTrailer
+  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n) :
+    (placeParaLine fs j st brk).1.SourceBound n := by
+  have hg := sourceBound_paraLineGeom fs j st.1 st.2.2 st.2.1 brk hj
+  simp only [placeParaLine, hj.notes, Array.isEmpty_empty, ite_true]
+  apply sourceBound_placeParaTrailer
+  apply sourceBound_placeLine
+  · apply sourceBound_openDisplayAt
+    split
+    · exact hb.of_eq rfl rfl rfl rfl rfl
+    · exact hb
+  · exact hg
+
+private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
+    (j : ParaJob) (breaks : Array Nat) (hj : j.SourceBound n)
+    (hb : b.SourceBound n) : (placePara fs b j breaks).SourceBound n := by
+  unfold placePara
+  refine Array.foldl_induction
+    (motive := fun _ (st : B × Nat × Bool) => st.1.SourceBound n) ?_ ?_
+  · simp only [B.warnReflow]
+    split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+  · intro i st h
+    exact sourceBound_placeParaLine fs j st breaks[i] hj h
 
 /-- Content with no physical placeholder survives the physical pass whole:
 the substitution half of "the two sequences stay distinct" —
