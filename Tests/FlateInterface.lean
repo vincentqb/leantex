@@ -43,6 +43,8 @@ example : True := by
   fail_if_success have := LeanTex.Core.Flate.deflate_header_exact
   fail_if_success have := LeanTex.Core.Flate.BlockStream.readStep
   fail_if_success have := LeanTex.Core.Flate.Bw
+  fail_if_success have := LeanTex.Core.Flate.getElem?_push
+  fail_if_success have := LeanTex.Core.Flate.matchToken
   trivial
 
 end Tests.FlateInterface

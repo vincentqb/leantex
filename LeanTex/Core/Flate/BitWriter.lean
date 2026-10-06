@@ -159,7 +159,9 @@ theorem pushU_position_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
   omega
 
 
-theorem getElem?_push (a : ByteArray) (b : UInt8) (i : Nat) :
+/-- Read-back of one appended byte, shared by the bit writer, the inflater's
+prefix proof and the PNG reconstruction builder. -/
+public theorem getElem?_push (a : ByteArray) (b : UInt8) (i : Nat) :
     (a.push b)[i]? = if i < a.size then a[i]? else if i = a.size then some b else none := by
   by_cases h1 : i < a.size
   · rw [getElem?_pos (a.push b) i (by rw [ByteArray.size_push]; omega), getElem?_pos a i h1]

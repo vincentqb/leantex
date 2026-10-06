@@ -1,8 +1,10 @@
 module
 
 import LeanTex.Core.Flate.BlockStream
-import all LeanTex.Core.Flate.BitWriter
-import all LeanTex.Core.Flate.TokenSymbols
+import LeanTex.Core.Flate.BitPacking
+import LeanTex.Core.Flate.BitWriter
+import LeanTex.Core.Flate.Progress
+import LeanTex.Core.Flate.TokenSymbols
 
 namespace LeanTex.Core.Flate
 
