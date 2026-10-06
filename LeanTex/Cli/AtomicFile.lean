@@ -1,3 +1,5 @@
+module
+
 import Init.System.IO
 
 namespace LeanTex.Cli.AtomicFile
@@ -15,7 +17,7 @@ private def stage (part : System.FilePath) (bytes : ByteArray) : IO Unit := do
 
 /-- Stage beside the destination, then rename. The destination's parent
 must already exist. A name collision leaves the other writer's file intact. -/
-def write (target : System.FilePath) (bytes : ByteArray) : IO Unit := do
+public def write (target : System.FilePath) (bytes : ByteArray) : IO Unit := do
   let pid ← IO.Process.getPID
   let nonce ← IO.monoNanosNow
   let part := (target.parent.getD ".") / s!".leantex-{pid}-{nonce}.part"

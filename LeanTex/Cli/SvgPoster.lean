@@ -1,3 +1,5 @@
+module
+
 /-! A static projection of synchronized SVG animation tracks. libxslt reads
 the XML; this constant stylesheet neither runs authored code nor samples a
 timeline. The poster is the pose approached at the end of one simple duration,
@@ -6,7 +8,7 @@ opacity and absolute M/L paths are read; other timelines are refused. -/
 
 namespace LeanTex.Cli.SvgPoster
 
-def stylesheet : String := r#"<xsl:stylesheet version="1.0"
+public def stylesheet : String := r#"<xsl:stylesheet version="1.0"
   xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:s="http://www.w3.org/2000/svg" exclude-result-prefixes="s">
 <xsl:output method="xml" encoding="UTF-8"/>

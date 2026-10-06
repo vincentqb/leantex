@@ -1,3 +1,5 @@
+module
+
 import Std
 
 namespace LeanTex.Cli.Batch
@@ -5,7 +7,7 @@ namespace LeanTex.Cli.Batch
 /-- Take a bounded source prefix, stopping before a repeated resource key.
 The remainder is untouched, so repeated requests serialize without changing
 the order of results or allowing concurrent writes to one cache slot. -/
-def takeBatch [DecidableEq κ] (key : α → κ) : Nat → List κ → List α → List α × List α
+private def takeBatch [DecidableEq κ] (key : α → κ) : Nat → List κ → List α → List α × List α
   | 0, _, xs => ([], xs)
   | _ + 1, _, [] => ([], [])
   | n + 1, seen, x :: xs =>
@@ -14,7 +16,7 @@ def takeBatch [DecidableEq κ] (key : α → κ) : Nat → List κ → List α �
       let (front, rest) := takeBatch key n (key x :: seen) xs
       (x :: front, rest)
 
-theorem takeBatch_exact [DecidableEq κ] (key : α → κ) (n : Nat)
+private theorem takeBatch_exact [DecidableEq κ] (key : α → κ) (n : Nat)
     (seen : List κ) (xs : List α) :
     (takeBatch key n seen xs).1 ++ (takeBatch key n seen xs).2 = xs := by
   induction n generalizing seen xs with
@@ -29,7 +31,7 @@ theorem takeBatch_exact [DecidableEq κ] (key : α → κ) (n : Nat)
       · simp only [List.cons_append, List.cons.injEq, true_and]
         exact ih _ _
 
-theorem takeBatch_length_le [DecidableEq κ] (key : α → κ) (n : Nat)
+private theorem takeBatch_length_le [DecidableEq κ] (key : α → κ) (n : Nat)
     (seen : List κ) (xs : List α) :
     (takeBatch key n seen xs).1.length ≤ n := by
   induction n generalizing seen xs with
@@ -43,14 +45,14 @@ theorem takeBatch_length_le [DecidableEq κ] (key : α → κ) (n : Nat)
       · simp
       · simpa using Nat.succ_le_succ (ih (key x :: seen) xs)
 
-theorem takeBatch_rest_le [DecidableEq κ] (key : α → κ) (n : Nat)
+private theorem takeBatch_rest_le [DecidableEq κ] (key : α → κ) (n : Nat)
     (seen : List κ) (xs : List α) :
     (takeBatch key n seen xs).2.length ≤ xs.length := by
   have h := congrArg List.length (takeBatch_exact key n seen xs)
   simp only [List.length_append] at h
   omega
 
-theorem takeBatch_fresh [DecidableEq κ] (key : α → κ) (n : Nat)
+private theorem takeBatch_fresh [DecidableEq κ] (key : α → κ) (n : Nat)
     (seen : List κ) (xs : List α) :
     ∀ k ∈ (takeBatch key n seen xs).1.map key, k ∉ seen := by
   induction n generalizing seen xs with
@@ -67,7 +69,7 @@ theorem takeBatch_fresh [DecidableEq κ] (key : α → κ) (n : Nat)
         · assumption
         · exact fun hs => ih (key x :: seen) xs k h (List.mem_cons_of_mem _ hs)
 
-theorem takeBatch_keys_nodup [DecidableEq κ] (key : α → κ) (n : Nat)
+private theorem takeBatch_keys_nodup [DecidableEq κ] (key : α → κ) (n : Nat)
     (seen : List κ) (xs : List α) :
     ((takeBatch key n seen xs).1.map key).Nodup := by
   induction n generalizing seen xs with
@@ -85,7 +87,7 @@ theorem takeBatch_keys_nodup [DecidableEq κ] (key : α → κ) (n : Nat)
 
 /-- `extra + 1` is the concurrency bound; zero extra workers still makes
 progress. Each batch owns distinct resource keys. -/
-def plan [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) : List (List α) :=
+public def plan [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) : List (List α) :=
   match xs with
   | [] => []
   | x :: xs =>
@@ -97,7 +99,7 @@ decreasing_by
   simp only [List.length_cons]
   omega
 
-theorem plan_exact [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
+public theorem plan_exact [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
     (plan extra key xs).flatten = xs := by
   induction xs using (plan.induct extra key) with
   | case1 => simp [plan]
@@ -109,7 +111,7 @@ theorem plan_exact [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List �
     rw [ih]
     exact congrArg (List.cons x) (takeBatch_exact key extra [key x] xs)
 
-theorem plan_bounded [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
+public theorem plan_bounded [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
     ∀ batch ∈ plan extra key xs, batch.length ≤ extra + 1 := by
   induction xs using (plan.induct extra key) with
   | case1 => simp [plan]
@@ -120,7 +122,7 @@ theorem plan_bounded [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List
     · exact Nat.succ_le_succ (takeBatch_length_le key extra [key x] xs)
     · exact ih _ h
 
-theorem plan_keys_nodup [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
+public theorem plan_keys_nodup [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : List α) :
     ∀ batch ∈ plan extra key xs, (batch.map key).Nodup := by
   induction xs using (plan.induct extra key) with
   | case1 => simp [plan]
@@ -136,7 +138,7 @@ theorem plan_keys_nodup [DecidableEq κ] (extra : Nat) (key : α → κ) (xs : L
 /-- Execute the checked source partition. All started tasks are joined,
 including after a failure; an exception cannot leave cache writers running.
 Results are collected in source order, independently of completion order. -/
-def map [DecidableEq κ] (limit : Nat) (key : α → κ)
+public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
     (f : α → IO β) (xs : Array α) : IO (Array β) := do
   let mut result := #[]
   for batch in plan (limit - 1) key xs.toList do

@@ -1,7 +1,9 @@
+module
+
 namespace LeanTex.Cli
 
 /-- Which backends to run. -/
-inductive Emit where
+public inductive Emit where
   | pdf
   | html
   /-- Markdown: the llms.txt convention's plain-text twin of the page. -/
@@ -9,19 +11,19 @@ inductive Emit where
   deriving Repr, BEq
 
 /-- Which stylesheet the HTML backend writes. -/
-inductive CssChoice where
+public inductive CssChoice where
   | own
   | bulma
   | none
   deriving Repr, BEq
 
-inductive ColorMode where
+public inductive ColorMode where
   | auto
   | always
   | never
   deriving Repr, BEq
 
-inductive Cmd where
+public inductive Cmd where
   | help
   | version
   | build (file : String)
@@ -33,7 +35,7 @@ inductive Cmd where
   | themes
   deriving Repr, BEq
 
-structure Config where
+public structure Config where
   cmd : Cmd
   verbosity : Nat := 0
   quiet : Bool := false
@@ -63,13 +65,13 @@ private def vCount (s : String) : Option Nat :=
   | '-' :: vs => if !vs.isEmpty && vs.all (· == 'v') then some vs.length else none
   | _ => none
 
-def emitOne : String → Option Emit
+private def emitOne : String → Option Emit
   | "pdf" => some .pdf
   | "html" => some .html
   | "md" => some .md
   | _ => none
 
-def cssChoice : String → Option CssChoice
+private def cssChoice : String → Option CssChoice
   | "own" => some .own
   | "bulma" => some .bulma
   | "none" => some .none
@@ -81,7 +83,7 @@ private def colorMode : String → Option ColorMode
   | "never" => some .never
   | _ => none
 
-def parse (argv : List String) : Except String Config := do
+public def parse (argv : List String) : Except String Config := do
   let mut cfg : Config := { cmd := .help }
   let mut cmd : Option Cmd := none
   let mut hyphenWords : List String := []
@@ -191,13 +193,13 @@ def parse (argv : List String) : Except String Config := do
     return { cfg with cmd := .hyphenate hyphenWords hyphenFile }
   | _ => return { cfg with cmd := cmd.getD .help }
 
-def Emit.ext : Emit → String
+public def Emit.ext : Emit → String
   | .pdf => "pdf"
   | .html => "html"
   | .md => "md"
 
 /-- The backend an output name asks for, when it names one. -/
-def emitOfPath (o : String) : Option Emit :=
+public def emitOfPath (o : String) : Option Emit :=
   if o.endsWith ".pdf" then some .pdf
   else if o.endsWith ".html" then some .html
   else if o.endsWith ".md" then some .md
@@ -205,7 +207,7 @@ def emitOfPath (o : String) : Option Emit :=
 
 /-- Backends to run: the output name (`-o out.html`) > the document's
 `\output{ formats = ... }` > PDF. -/
-def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
+public def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
   if let some e := cfg.output.bind emitOfPath then #[e]
   else
     let ds := docFormats.filterMap emitOne
@@ -213,7 +215,7 @@ def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit
 
 /-- Stylesheet: the document's `\output{ css = ... }` or the default. Takes
 no `Config`, by design — see `artifact_flag_free`. -/
-def cssFor (docCss : Option String) : CssChoice :=
+public def cssFor (docCss : Option String) : CssChoice :=
   (docCss.bind cssChoice).getD .own
 
 /-- **The artifact is a function of the document and the font environment;
@@ -232,7 +234,7 @@ IO: these are the only places a `Config` value meets a backend decision —
 driver on a declared allowlist. A future flag that shapes the artifact
 must be read here, and then this proof breaks — the invariant is a build
 error, not a convention. -/
-theorem artifact_flag_free (cfg cfg' : Config)
+public theorem artifact_flag_free (cfg cfg' : Config)
     (ho : cfg.output = cfg'.output) (hm : cfg.mathBoundary = cfg'.mathBoundary)
     (docFormats : Array String) :
     (cfg.effectiveEmit docFormats, cfg.mathBoundary)
@@ -243,7 +245,7 @@ theorem artifact_flag_free (cfg cfg' : Config)
 naming this backend's extension is used as-is; anything else (the other
 backend's file, when `\output` declares several formats) falls back
 beside the source. -/
-def outPath (output : Option String) (outputIsDir : Bool) (source : String)
+public def outPath (output : Option String) (outputIsDir : Bool) (source : String)
     (e : Emit) : String :=
   let besideSource := (System.FilePath.mk source).withExtension e.ext |>.toString
   match output with
@@ -261,13 +263,13 @@ read the same answer: errors win, then failed assertions, then — only under
 `--werror` — warnings. An accepted loss was already downgraded to a note
 before it reached these counts, so `\allow` composes with `--werror` by
 construction. -/
-def exitFor (errors assertFailures warnings : Nat) (werror : Bool) : UInt32 :=
+public def exitFor (errors assertFailures warnings : Nat) (werror : Bool) : UInt32 :=
   if errors > 0 then 1
   else if assertFailures > 0 then 2
   else if werror && warnings > 0 then 1
   else 0
 
-def helpText : String :=
+public def helpText : String :=
   "leantex — compile a .tex document to PDF or HTML, fast, with no setup
 
 usage: leantex <file> [flags] · leantex <command> [args]

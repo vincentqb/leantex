@@ -1,3 +1,5 @@
+module
+
 import Init.System.IO
 
 /-! Publication destinations are checked before any artifact is written.
@@ -34,7 +36,7 @@ private def canonical (path : System.FilePath) : IO System.FilePath := do
 /-- Nothing means every requested format has a distinct resolved path and
 no destination has uninspectable hard-link aliases. Only multiple formats
 owe this independence; one output cannot overwrite another in the run. -/
-def conflict (paths : Array (String × String)) : IO (Option String) := do
+public def conflict (paths : Array (String × String)) : IO (Option String) := do
   if paths.size < 2 then return none
   try
     let mut seen : Array (String × System.FilePath) := #[]
