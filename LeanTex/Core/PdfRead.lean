@@ -819,6 +819,22 @@ private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
       throw "malformed PDF: a stream's /Length does not reach its endstream"
     return some (r.b.extract dataStart dataEnd)
 
+/-- The ordered decimal pairs at the start of an object stream (§7.5.7).
+The progress invariant is the unread header suffix together with the
+pairs already consumed. -/
+def readObjectStreamHeader (data : ByteArray) (count : Nat) :
+    Except String (Array (Nat × Nat)) := do
+  let mut i := 0
+  let mut pairs : Array (Nat × Nat) := #[]
+  for _ in [0:count] do
+    let some (onum, j1) := parseUInt data (skipWs data i)
+      | throw "malformed PDF: unreadable object stream header"
+    let some (ooff, j2) := parseUInt data (skipWs data j1)
+      | throw "malformed PDF: unreadable object stream header"
+    i := j2
+    pairs := pairs.push (onum, ooff)
+  return pairs
+
 /-- An object stream (§7.5.7) decoded: its data, the header's
 `(objnum, offset)` pairs in order, and `/First`. -/
 private def Reader.objStm (r : Reader) (stm : Nat) :
@@ -833,15 +849,7 @@ private def Reader.objStm (r : Reader) (stm : Nat) :
     | throw "malformed PDF: an object stream has no /N"
   let some first := (sd.get? "First").bind Obj.int?
     | throw "malformed PDF: an object stream has no /First"
-  let mut i := 0
-  let mut pairs : Array (Nat × Nat) := #[]
-  for _ in [0:n.toNat] do
-    let some (onum, j1) := parseUInt data (skipWs data i)
-      | throw "malformed PDF: unreadable object stream header"
-    let some (ooff, j2) := parseUInt data (skipWs data j1)
-      | throw "malformed PDF: unreadable object stream header"
-    i := j2
-    pairs := pairs.push (onum, ooff)
+  let pairs ← readObjectStreamHeader data n.toNat
   return (data, pairs, first.toNat)
 
 /-- Fetch the value without reading its stream. A direct object also
