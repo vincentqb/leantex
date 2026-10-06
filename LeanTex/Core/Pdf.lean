@@ -1273,6 +1273,96 @@ theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
   simpa [serialize, serializeList] using (serialize_row_exact head #[] rest r).1
 
+/-- The two buffers of an object stream (§7.5.7). Header offsets are
+relative to `payload`, whose bytes are appended by the same step. -/
+structure ObjectStream where
+  header : String := ""
+  payload : ByteArray := ByteArray.empty
+
+def ObjectStream.push (s : ObjectStream) (id : Nat) (value : PdfRead.Obj) : ObjectStream :=
+  { header := s.header ++ s!"{id} {s.payload.size} "
+    payload := (s.payload ++ PdfRead.Obj.render value).push 10 }
+
+/-- The actual writer's accumulator, shared by the emission and its
+offset laws. No object offsets are supplied by a caller. -/
+def objectStreamList (s : ObjectStream) : List (Nat × PdfRead.Obj) → ObjectStream
+  | [] => s
+  | (id, value) :: rest => objectStreamList (s.push id value) rest
+
+def objectStream (objects : List (Nat × PdfRead.Obj)) : ObjectStream :=
+  objectStreamList {} objects
+
+def ObjectStream.bytes (s : ObjectStream) : ByteArray :=
+  s.header.toUTF8 ++ s.payload
+
+theorem objectStreamList_append (s : ObjectStream) (before after : List (Nat × PdfRead.Obj)) :
+    objectStreamList s (before ++ after) =
+      objectStreamList (objectStreamList s before) after := by
+  induction before generalizing s with
+  | nil => rfl
+  | cons r rest ih => exact ih _
+
+theorem objectStreamList_header (objects : List (Nat × PdfRead.Obj))
+    (header : String) (payload : ByteArray) :
+    (objectStreamList ⟨header, payload⟩ objects).header =
+      header ++ (objectStreamList ⟨"", payload⟩ objects).header := by
+  induction objects generalizing header payload with
+  | nil => simp [objectStreamList]
+  | cons r rest ih =>
+    simp only [objectStreamList, ObjectStream.push, String.empty_append]
+    rw [ih, ih s!"{r.1} {payload.size} "]
+    simp [String.append_assoc]
+
+theorem objectStreamList_payload (objects : List (Nat × PdfRead.Obj)) (s : ObjectStream) :
+    (objectStreamList s objects).payload =
+      s.payload ++ (objectStream objects).payload := by
+  induction objects generalizing s with
+  | nil => simp [objectStreamList, objectStream]
+  | cons r rest ih =>
+    change (objectStreamList (s.push r.1 r.2) rest).payload =
+      s.payload ++ (objectStreamList (({} : ObjectStream).push r.1 r.2) rest).payload
+    rw [ih, ih (({} : ObjectStream).push r.1 r.2)]
+    simp only [ObjectStream.push, ByteArray.empty_append]
+    apply ByteArray.ext
+    simp only [ByteArray.data_push, ByteArray.data_append, Array.push_eq_append,
+      Array.append_assoc]
+
+/-- Every object's header entry spells the size of its actual preceding
+payload, and that offset after `/First` selects exactly its rendered
+bytes. This holds for arbitrary objects and surrounding objects; parser
+grammar and xref field bounds are separate obligations. -/
+theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj))
+    (id : Nat) (value : PdfRead.Obj) :
+    let pre := objectStream before
+    let out := objectStream (before ++ (id, value) :: after)
+    (∃ suffix, out.header = pre.header ++ s!"{id} {pre.payload.size} " ++ suffix) ∧
+      out.bytes.extract (out.header.utf8ByteSize + pre.payload.size)
+        (out.header.utf8ByteSize + pre.payload.size + (PdfRead.Obj.render value).size) =
+        PdfRead.Obj.render value := by
+  dsimp only
+  have hout : objectStream (before ++ (id, value) :: after) =
+      objectStreamList ((objectStream before).push id value) after := by
+    rw [objectStream, objectStreamList_append]
+    rfl
+  rw [hout]
+  constructor
+  · exact ⟨_, objectStreamList_header after _ _⟩
+  · simp only [ObjectStream.bytes, String.toUTF8_eq_toByteArray, ← String.size_toByteArray]
+    rw [Nat.add_assoc, ByteArray.extract_append_size_add]
+    rw [objectStreamList_payload]
+    simp only [ObjectStream.push]
+    have hp (p v : ByteArray) :
+        (p ++ v).push 10 = p ++ v ++ (ByteArray.empty.push 10) := by
+      apply ByteArray.ext
+      simp only [ByteArray.data_push, ByteArray.data_append, Array.push_eq_append,
+        ByteArray.data_empty, Array.empty_append]
+    rw [hp, ByteArray.append_assoc, ByteArray.append_assoc]
+    simpa only [Nat.add_zero] using
+      (ByteArray.extract_append_size_add (a := (objectStream before).payload)
+        (b := PdfRead.Obj.render value ++ (ByteArray.empty.push 10 ++
+          (objectStream after).payload)) (i := 0) (j := (PdfRead.Obj.render value).size)).trans
+        (ByteArray.extract_append_eq_left rfl)
+
 /-- The three dictionaries of one embedded face (ISO 32000-2 §§9.7, 9.8).
 The stream rows hold its program and ToUnicode separately. -/
 structure FontObjects where
@@ -1569,13 +1659,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs
 
   -- object stream payload
-  let mut header := ""
-  let mut payload := ByteArray.empty
-  for (id, body) in compressed do
-    header := header ++ s!"{id} {payload.size} "
-    payload := (payload ++ PdfRead.Obj.render body).push 10
-  let objStmData := header.toUTF8 ++ payload
-  let first := header.utf8ByteSize
+  let packed := objectStream compressed
+  let objStmData := packed.bytes
+  let first := packed.header.utf8ByteSize
 
   -- assemble the file: every object as a row first, then one `serialize`
   -- fold whose offsets are its own (`serialize_locs_covers`). Nothing

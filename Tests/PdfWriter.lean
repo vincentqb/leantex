@@ -37,6 +37,19 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
     (Pdf.xrefEntry table (fun _ => none) (fun _ => none) 177 1 == .free 0 0)
   t "PDF xref: allocation count includes the free-list head"
     ((Pdf.xrefEntries table (fun _ => none) (fun _ => some 99) 177).size == table.size)
+  let objects : List (Nat × PdfRead.Obj) :=
+    [(11, .int 7), (31, .str "(A\\(B\\))".toUTF8),
+      (43, .dict #[("Type", .name "Example"), ("N", .int 99)])]
+  let packed := Pdf.objectStream objects
+  t "PDF object stream: first offset follows the encoded header"
+    (packed.bytes.extract 0 packed.header.utf8ByteSize == packed.header.toUTF8)
+  for ((_, value), i) in objects.zipIdx do
+    let off := (Pdf.objectStream (objects.take i)).payload.size
+    t "PDF object stream: every declared offset selects its object"
+      ((PdfRead.parseVal packed.bytes (packed.header.utf8ByteSize + off)).toOption.any
+        fun (actual, _) => actual == value)
+  t "PDF object stream: omitting First changes the parsed object"
+    ((PdfRead.parseVal packed.bytes 0).toOption.any fun (actual, _) => actual != .int 7)
   for off in [0, 255, 256, 65535, 65536, 4294967295] do
     match PdfRead.readXref (fieldFile (Pdf.Xref.row 1 off 0)) with
     | .error _ => t "PDF xref: a representable direct row reads" false
