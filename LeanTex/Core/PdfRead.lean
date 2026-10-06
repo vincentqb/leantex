@@ -613,6 +613,166 @@ private def readXrefFrom (b : ByteArray) (off0 : Nat) : Except String Xref := Id
 def readXref (b : ByteArray) : Except String Xref := do
   readXrefFrom b (← readStartxref b)
 
+private theorem indirect_stream_span {b : ByteArray} {i : Nat}
+    (n : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw)) :
+    let j := i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size
+    parseIndirectAt b i = .ok (n, dict, j) ∧
+      keywordAt b (skipWs b j) "stream" = some (j+7) ∧
+      at? b (j+7) = 10 ∧ j+8+raw.size ≤ b.size ∧
+      b.extract (j+8) (j+8+raw.size) = raw := by
+  dsimp only
+  let j := i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size
+  have hs' : Span b i ((octets (s!"{n} 0 obj\n").toUTF8 ++ octets dict.render) ++
+      (octets "\nstream\n".toUTF8 ++ octets raw)) := by
+    simpa only [List.append_assoc] using hs
+  have ht : Span b j ([10,115,116,114,101,97,109,10] ++ octets raw) := by
+    simpa only [List.length_append, octets_length, ← Nat.add_assoc,
+      show octets "\nstream\n".toUTF8 = [10,115,116,114,101,97,109,10] from rfl]
+      using hs'.append_right
+  have hlf : at? b j = 10 := ht.head
+  have hs0 : at? b (j+1) = 115 := ht.tail.head
+  have hs7 : at? b (j+7) = 10 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using ht.tail.tail.tail.tail.tail.tail.tail.head
+  have hb : j+8+raw.size ≤ b.size := by
+    simpa only [List.length_append, List.length_cons, List.length_nil, Nat.reduceAdd,
+      octets_length, ← Nat.add_assoc] using ht.bound
+  have he : ObjReader.Stop b j := .whitespace
+    (by rw [hlf]; rfl) (by omega) (.non_numeric
+      (by rw [hs0]; rfl) (by rw [hs0]; decide) (by rw [hs0]; decide)
+      (by rw [hs0]; omega))
+  have hi := parseIndirectAt_render_span_exact n dict hd hs'.append_left he
+  have hk0 : skipWs b j = j+1 := skipWs_whitespace_exact (by rw [hlf]; rfl)
+    (by rw [hs0]; rfl) (by rw [hs0]; decide) (by omega)
+  have hk : keywordAt b (j+1) "stream" = some (j+7) := by
+    have hs' : Span b (j+1) (octets "stream".toUTF8) :=
+      ht.tail.append_left (cs := [115,116,114,101,97,109]) (ds := 10 :: octets raw)
+    have hEnd : EndByte (at? b (j+1+"stream".toUTF8.size)) := by
+      change EndByte (at? b (j+1+6))
+      rw [show j+1+6=j+7 by omega, hs7]
+      exact Or.inr (Or.inl rfl)
+    simpa only [show "stream".toUTF8.size = 6 from rfl, Nat.add_assoc, Nat.reduceAdd]
+      using keywordAt_exact hs' hEnd
+  have hr : Span b (j+8) (octets raw) := by
+    have hraw := ht.tail.tail.tail.tail.tail.tail.tail.tail
+    change Span b (j+1+1+1+1+1+1+1+1) (octets raw) at hraw
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using hraw
+  exact ⟨hi, hk0 ▸ hk, hs7, hb, hr.extract_exact⟩
+
+private theorem readStreamSection_span_exact {b : ByteArray} {i : Nat}
+    (n : Nat) (dict : Obj) (hd : dict.Representable) (raw data : ByteArray)
+    (count : Nat) (x0 : Xref)
+    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw))
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hf : decodeStream dict raw = .ok data)
+    (hw : dict.get? "W" = some (.arr #[.int 1, .int 4, .int 2]))
+    (hc : dict.get? "Size" = some (.int count))
+    (hx : dict.get? "Index" = some (.arr #[.int 0, .int count]))
+    (hp : dict.get? "Prev" = none) :
+    readStreamSection b i x0 =
+      .ok ((readXrefSubsection data 1 4 2 0 count 0 (x0.seen dict)).1, none) := by
+  obtain ⟨hi,hk,hb,hbound,he⟩ := indirect_stream_span n dict hd raw hs
+  have hbound' : ¬ (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1 + raw.size > b.size) := by omega
+  have he' : b.extract (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1)
+      (i + (s!"{n} 0 obj\n").toUTF8.size + dict.render.size + 7 + 1 + raw.size) = raw := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using he
+  simp only [readStreamSection, hi, bind, Except.bind, pure, Except.pure]
+  simp only [hk, hb, hl, Option.bind_some, Obj.int?, Int.toNat_natCast,
+    show ((10 : Nat) == 13) = false from rfl, Bool.false_and, Bool.false_eq_true,
+    beq_self_eq_true, ↓reduceIte, show ¬((raw.size : Int) < 0) from Int.not_lt.mpr (Int.natCast_nonneg _),
+    hbound', decide_false, Bool.or_self, he', hf, hw, hc, hx, hp]
+  simp [Obj.int?, Array.filterMap, Std.Legacy.Range.forIn_eq_forIn_range',
+    bind, pure]
+  simp only [Id.run, List.length_cons, List.length_nil, Nat.reduceAdd, Nat.reduceDiv,
+    List.range', List.forIn_cons, List.forIn_nil, pure, bind, Except.bind, Except.pure]
+  rfl
+
+private theorem readXrefFrom_stream_exact (b : ByteArray) (off : Nat) (x : Xref)
+    (hn : keywordAt b (skipWs b off) "xref" = none)
+    (hs : readStreamSection b off {start := off} = .ok (x, none)) :
+    readXrefFrom b off = .ok x := by
+  unfold readXrefFrom
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+  simp only [show List.range' 0 64 = 0 :: 1 :: List.range' 2 62 from rfl, List.forIn_cons]
+  simp [hn, hs, Array.back?, Array.pop, pure, bind, Id.run]
+
+private theorem readXref_span_exact {b : ByteArray} {i : Nat}
+    (n : Nat) (dict : Obj) (hd : dict.Representable) (raw data : ByteArray)
+    (count root : Nat)
+    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw))
+    (ht : readStartxref b = .ok i)
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hf : decodeStream dict raw = .ok data)
+    (hw : dict.get? "W" = some (.arr #[.int 1, .int 4, .int 2]))
+    (hc : dict.get? "Size" = some (.int count))
+    (hx : dict.get? "Index" = some (.arr #[.int 0, .int count]))
+    (hp : dict.get? "Prev" = none)
+    (hr : dict.get? "Root" = some (.ref root 0)) :
+    readXref b = .ok ((readXrefSubsection data 1 4 2 0 count 0
+      {start := i, root := some root, trailer := some dict}).1) := by
+  have hn : Span b i (octets (toString n).toUTF8) := by
+    have hs' := hs
+    rw [show (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 from rfl,
+      octets_append] at hs'
+    simpa only [List.append_assoc] using hs'.append_left.append_left.append_left.append_left
+  have hk : keywordAt b (skipWs b i) "xref" = none := by
+    rw [nat_start_skip n hn]
+    apply keywordAt_ne (by decide)
+    change at? b i ≠ 120
+    rw [numeric_octets _ (nat_numeric n)] at hn
+    have hh := hn.first_number (by simp) (by
+      intro c hc
+      obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
+      exact nat_numeric n d hd)
+    simp only [numByte, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hh
+    omega
+  have hsec := readStreamSection_span_exact n dict hd raw data count
+    {start := i} hs hl hf hw hc hx hp
+  have hx' : ({start := i} : Xref).seen dict =
+      {start := i, root := some root, trailer := some dict} := by
+    simp [Xref.seen, hr]
+  rw [hx'] at hsec
+  simp only [readXref, ht, bind, Except.bind]
+  exact readXrefFrom_stream_exact b i _ hk hsec
+
+/-- The actual footer scan, indirect-object parser, stream boundary,
+subsection loop, and section traversal recover a single emitted xref
+stream. The codec premise is local to its payload and is discharged by
+the writer's compression contract when this lemma is composed. -/
+theorem readXref_stream_exact (pre : ByteArray) (n : Nat)
+    (dict : Obj) (hd : dict.Representable) (raw data : ByteArray)
+    (count root : Nat) (hi : pre.size < 256^4)
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hf : decodeStream dict raw = .ok data)
+    (hw : dict.get? "W" = some (.arr #[.int 1, .int 4, .int 2]))
+    (hc : dict.get? "Size" = some (.int count))
+    (hx : dict.get? "Index" = some (.arr #[.int 0, .int count]))
+    (hp : dict.get? "Prev" = none)
+    (hr : dict.get? "Root" = some (.ref root 0)) :
+    readXref (pre ++ (s!"{n} 0 obj\n").toUTF8 ++ dict.render ++ "\nstream\n".toUTF8 ++
+        raw ++ "\nendstream\nendobj\n".toUTF8 ++ (s!"startxref\n{pre.size}\n%%EOF\n").toUTF8) =
+      .ok ((readXrefSubsection data 1 4 2 0 count 0
+        {start := pre.size, root := some root, trailer := some dict}).1) := by
+  apply readXref_span_exact n dict hd raw data count root
+  · have hh := Span.of_bytes pre ((s!"{n} 0 obj\n").toUTF8 ++ dict.render ++
+        "\nstream\n".toUTF8 ++ raw)
+        ("\nendstream\nendobj\n".toUTF8 ++ (s!"startxref\n{pre.size}\n%%EOF\n").toUTF8)
+    change Span _ _ (octets ((s!"{n} 0 obj\n").toUTF8 ++ dict.render ++
+      "\nstream\n".toUTF8 ++ raw)) at hh
+    simpa only [octets_append, ← ByteArray.append_assoc] using hh
+  · exact readStartxref_footer_exact _ _ hi
+  · exact hl
+  · exact hf
+  · exact hw
+  · exact hc
+  · exact hx
+  · exact hp
+  · exact hr
+
 -- ## Fetching objects
 
 private structure Reader where
