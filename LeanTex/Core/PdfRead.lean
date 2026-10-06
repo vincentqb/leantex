@@ -1043,6 +1043,93 @@ def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
       parseVal data (first + off) = .ok (e.val, j) ∧ e.stream = none
   | _, _ => False
 
+private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Option Int)
+    (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (hs : Span r.b off (octets (s!"{num} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw ++
+      octets "\nendstream\nendobj\n".toUTF8))
+    (hl : dict.get? "Length" = some (.int raw.size)) :
+    r.streamAfterWith intAt dict
+      (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size) = .ok (some raw) := by
+  obtain ⟨_, hk, hb, hbound, he⟩ := indirect_stream_span num dict hd raw hs.append_left
+  let j := off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size
+  have ht : Span r.b (j+8+raw.size)
+      [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] := by
+    simpa only [j, List.length_append, octets_length,
+      show "\nstream\n".toUTF8.size = 8 from rfl, ← Nat.add_assoc,
+      show octets "\nendstream\nendobj\n".toUTF8 =
+        [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] from rfl]
+      using hs.append_right
+  have hlf : at? r.b (j+8+raw.size) = 10 := ht.head
+  have hen : at? r.b (j+8+raw.size+1) = 101 := ht.tail.head
+  have hend : at? r.b (j+8+raw.size+10) = 10 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd]
+      using ht.tail.tail.tail.tail.tail.tail.tail.tail.tail.tail.head
+  have hskip : skipWs r.b (j+8+raw.size) = j+8+raw.size+1 :=
+    skipWs_whitespace_exact (by rw [hlf]; rfl) (by rw [hen]; rfl)
+      (by rw [hen]; decide) (by have := ht.bound; simp only [List.length_cons,
+        List.length_nil] at this; omega)
+  have hkey : keywordAt r.b (j+8+raw.size+1) "endstream" =
+      some (j+8+raw.size+10) := by
+    have hword : Span r.b (j+8+raw.size+1) (octets "endstream".toUTF8) :=
+      ht.tail.append_left (cs := [101,110,100,115,116,114,101,97,109])
+        (ds := [10,101,110,100,111,98,106,10])
+    have he : EndByte (at? r.b (j+8+raw.size+1+"endstream".toUTF8.size)) := by
+      change EndByte (at? r.b (j+8+raw.size+1+9))
+      rw [show j+8+raw.size+1+9=j+8+raw.size+10 by omega, hend]
+      exact Or.inr (Or.inl rfl)
+    simpa only [show "endstream".toUTF8.size = 9 from rfl,
+      Nat.add_assoc, Nat.reduceAdd] using keywordAt_exact hword he
+  have hbound' : ¬ (j+7+1+raw.size > r.b.size) := by dsimp only [j]; omega
+  have he' : r.b.extract (j+7+1) (j+7+1+raw.size) = raw := by
+    simpa only [j, Nat.add_assoc, Nat.reduceAdd] using he
+  change keywordAt r.b (skipWs r.b j) "stream" = some (j+7) at hk
+  change at? r.b (j+7) = 10 at hb
+  change r.streamAfterWith intAt dict j = _
+  simp only [Reader.streamAfterWith, hk, hb, hl, bind, Except.bind, pure, Except.pure,
+    show ((10 : Nat) == 13) = false from rfl, Bool.false_and, Bool.false_eq_true,
+    beq_self_eq_true, ↓reduceIte, Int.toNat_natCast,
+    show ¬((raw.size : Int) < 0) from Int.not_lt.mpr (Int.natCast_nonneg _),
+    hbound', decide_false, Bool.or_self, he']
+  simp only [show j+7+1=j+8 by omega, hskip, hkey, Option.isSome_some, ↓reduceIte]
+
+/-- A complete emitted direct stream supplies its actual local reading.
+The byte-span premise includes the closing marker, so a guessed length
+or merely parseable dictionary cannot establish this contract. -/
+theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+    (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw ++
+      octets "\nendstream\nendobj\n".toUTF8))
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hn : locs.get? num = some (.direct off)) :
+    ({num, header := num, loc := .direct off, val := dict, stream := some raw} : Entry).Reads
+      b locs (some (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size)) := by
+  refine ⟨rfl, hn, (indirect_stream_span num dict hd raw hs.append_left).1, ?_⟩
+  intro intAt
+  exact Reader.streamAfter_span_exact {b, locs} intAt num off dict hd raw hs hl
+
+/-- A compressed object's local reading follows from the actual reading of
+its containing stream, payload decoding, header slot, and value parse.
+This exposes the bootstrap composition without exporting the private reader. -/
+theorem Entry.reads_compressed_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+    (num stm idx off j count first objoff next : Nat)
+    (dict val : Obj) (raw data : ByteArray) (pairs : Array (Nat × Nat))
+    (hstm : ({num := stm, header := stm, loc := .direct off, val := dict, stream := some raw} : Entry).Reads b locs (some j))
+    (hdecode : decodeStream dict raw = .ok data)
+    (hn : dict.get? "N" = some (.int count))
+    (hf : dict.get? "First" = some (.int first))
+    (hheader : readObjectStreamHeader data count = .ok pairs)
+    (hpair : pairs[idx]? = some (num,objoff))
+    (hval : parseVal data (first+objoff) = .ok (val,next))
+    (hloc : locs.get? num = some (.inStm stm idx)) :
+    ({num, header := num, loc := .inStm stm idx, val, stream := none} : Entry).Reads
+      b locs none := by
+  obtain ⟨_, hs, hv, hr⟩ := hstm
+  refine ⟨rfl, hloc, data, pairs, first, objoff, next, ?_, hpair, hval, rfl⟩
+  simp only [Reader.objStm, hs, hv, bind, Except.bind, hr, hdecode, hn, hf,
+    Option.bind_some, Obj.int?, Int.toNat_natCast, hheader, pure, Except.pure]
+
 private def bareEntry (e : Entry) : Entry := { e with stream := none }
 
 private def ObjectScan.Consistent (r : Reader) (model : Nat → Entry × Option Nat)
