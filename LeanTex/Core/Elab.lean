@@ -5949,6 +5949,138 @@ unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
+/-- Input-side resolver misses for the ordinary recovery arm. This checks
+registries and declared context, never the result of elaborating the call.
+Pending footnote spellings also take this recovery arm, with their own code. -/
+def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
+  Compat.overlayName name == name &&
+  (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
+  !["hfill", "qedhere", "ensuremath", "\\", "par", "label", "paragraph",
+    "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
+    "nolinkurl", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
+    "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
+    "centering", "footnote", "thanks"].contains name &&
+  (accentMarkOf name).isNone && (escapeOf name).isNone &&
+  (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
+  (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
+  (refCtrlForm? name).isNone && (Ir.natbibCites.lookup name).isNone &&
+  (FaIcons.byMacro.get[name]?).isNone &&
+  (if name.startsWith "insertshort" then
+      TitleDatum.ofName? (name.drop "insertshort".length).copy
+    else if name.startsWith "insert" then
+      TitleDatum.ofName? (name.drop "insert".length).copy
+    else none).isNone &&
+  !(name.startsWith "@ink:") && (ctx.palette.resolve name).isNone &&
+  !(name.startsWith Compat.fontSizeMark) && (declStyleOf name).isNone &&
+  !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
+  (reservedCtrl.lookup name).isNone &&
+  !(declCtrl.contains name || runningCtrl.contains name) &&
+  !(blockOnly.contains name) &&
+  !(Compat.nativeSetCtrls.contains name ||
+    (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name)) &&
+  !((unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
+    Compat.codeInternal name && !ctx.atUse)
+
+private theorem elabInlinesCtrl2_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb name : String) (pos : Pos) (h : i < raws.size)
+    (ha : sliceWeight raws (i + 1) < sliceWeight raws i)
+    (hn : recoversInlineName ctx name = true) :
+    elabInlinesCtrl2 ctx raws i acc sb name pos h ha =
+      elabUnknownCtrl ctx raws i acc sb name pos h := by
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
+    Option.isNone_iff_eq_none, List.contains_cons, List.contains_nil,
+    Bool.or_eq_false_iff, Bool.or_false] at hn
+  rw [elabInlinesCtrl2]
+  simp only [hn, Bool.false_eq_true, ↓reduceIte, pure_bind, Option.isSome_none, Bool.false_or]
+
+private theorem recoversInlineName_title (ctx : Ctx) (name : String)
+    (hn : recoversInlineName ctx name = true) (st : ESt) :
+    st.titleInsert? name = none := by
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
+    Option.isNone_iff_eq_none] at hn
+  have ht : (if name.startsWith "insertshort" then
+      TitleDatum.ofName? (name.drop "insertshort".length).copy
+    else if name.startsWith "insert" then
+      TitleDatum.ofName? (name.drop "insert".length).copy
+    else none) = none := by simp only [hn]
+  unfold ESt.titleInsert?
+  split
+  · rename_i hs
+    simp only [hs, ↓reduceIte] at ht
+    simp only [ht, bind, Option.bind]
+  · rename_i hs
+    split
+    · rename_i hi
+      simp only [hs, hi, Bool.false_eq_true, ↓reduceIte] at ht
+      simp only [ht, bind, Option.bind]
+    · rfl
+
+private theorem elabInlinesCtrl_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb name : String) (pos : Pos) (h : i < raws.size)
+    (ha : sliceWeight raws (i + 1) < sliceWeight raws i)
+    (hn : recoversInlineName ctx name = true) :
+    elabInlinesCtrl ctx raws i acc sb name pos h ha =
+      elabUnknownCtrl ctx raws i acc sb name pos h := by
+  have ht := recoversInlineName_title ctx name hn
+  have htail := elabInlinesCtrl2_unknown ctx raws i acc sb name pos h ha hn
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
+    Option.isNone_iff_eq_none, List.contains_cons, List.contains_nil,
+    Bool.or_eq_false_iff, Bool.or_false] at hn
+  rw [elabInlinesCtrl]
+  simp only [hn, Bool.false_eq_true, ↓reduceIte, Bool.false_or]
+  funext st
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
+  rw [ht st, htail]
+
+/-- Ordinary recovery runs after exactly the macro-origin transition of the
+inline spine. The equation preserves both the inlines and reporting state. -/
+theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb name : String) (pos : Pos) (h : i < raws.size)
+    (hr : raws[i] = .ctrl name pos) (hn : recoversInlineName ctx name = true) :
+    elabInlinesFrom ctx raws i acc sb =
+      let (roles, acc', sb') := inlineMacroAt ctx.macroRoles raws i acc sb
+      elabUnknownCtrl {ctx with macroRoles := roles} raws i acc' sb' name pos h := by
+  rw [elabInlinesFrom]
+  generalize inlineMacroAt ctx.macroRoles raws i acc sb = state
+  rcases state with ⟨roles, acc', sb'⟩
+  dsimp only
+  rw [dite_eq_left h, hr]
+  have hn' : recoversInlineName {ctx with macroRoles := roles} name = true := hn
+  have htail := elabInlinesCtrl_unknown {ctx with macroRoles := roles}
+    raws i acc' sb' name pos h (sliceWeight_lt raws h (Nat.lt_succ_self i)) hn'
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
+    Option.isNone_iff_eq_none, List.contains_cons, List.contains_nil,
+    Bool.or_eq_false_iff, Bool.or_false, beq_iff_eq] at hn'
+  have haccent : raws[i + 1]?.bind (accentCompose name) = none := by
+    have hm : accentMarkOf name = none := by simp only [hn']
+    have ha : ∀ raw, accentCompose name raw = none := by
+      intro raw
+      simp only [accentCompose, hm, bind, Option.bind]
+    cases raws[i + 1]? <;> simp only [Option.bind, ha]
+  have hu : lookupUser {ctx with macroRoles := roles} name = none := by
+    simp only [hn']
+  simp only [hn', haccent, Bool.false_eq_true, ↓reduceIte, Bool.false_or,
+    Option.isSome_none, htail]
+  rw [hu]
+  simp only [dite_false]
+
+/-- The empty-context entry point dispatches a source command to recovery,
+including smart punctuation, without dropping its reporting state. -/
+theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw)
+    (pos : Pos) (h : 0 < raws.size) (hr : raws[0] = .ctrl name pos)
+    (hp : pos.origins = []) (hn : recoversInlineName {file} name = true) :
+    elabInlines {file} raws = (do
+      let out ← elabUnknownCtrl {file} raws 0 #[] "" name pos h
+      pure (out.map (mapSmartText none))) := by
+  rw [elabInlines]
+  simp only [MacroRoles.enter, List.map_nil, List.append_nil]
+  rw [elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn]
+  have hr' : raws[0]? = some (.ctrl name pos) := by
+    rw [Array.getElem?_eq_getElem h, hr]
+  simp only [inlineMacroAt, hr', inlineMacroStep, Raw.origins?, hp,
+    relativeOrigins, List.map_nil]
+  rfl
+
 /-- At the end of the inline input, close the active macro scope and flush text. -/
 theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (h : raws.size ≤ i) :
@@ -6107,6 +6239,28 @@ theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
   simp [inlineMacroAt, inlineMacroStep, xs, ys, flushText,
     StateT.run, bind, StateT.bind, pure, StateT.pure]
   split <;> split <;> split <;> split <;> rfl
+
+/-- A closed leading option of an unregistered command contributes no
+inline content. The command's grouped content keeps its exact source
+annotation; the diagnostic may describe the dropped option. -/
+theorem elabInlines_option_run_exact (file name w kept : String) (st : ESt)
+    (hn : recoversInlineName {file} name = true) :
+    ((elabInlines {file}
+        #[.ctrl name {line := 1, col := 1}, .sym '[' {line := 1, col := 5},
+          .word w {line := 1, col := 6}, .sym ']' {line := 1, col := 7},
+          .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]).run st).1 =
+    ((elabInlines {file}
+        #[.ctrl name {line := 1, col := 1},
+          .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]).run st).1 := by
+  rw [elabInlines_unknown_exact _ _ _ _ (by simp) rfl rfl hn,
+    elabInlines_unknown_exact _ _ _ _ (by simp) rfl rfl hn]
+  have heq := elabUnknownCtrl_option_run_exact file name w kept #[] "" st
+  simp only [StateT.run] at heq
+  simp only [StateT.run, bind, StateT.bind, pure, StateT.pure]
+  split
+  split
+  simp_all only
+
 
 /-- **The code a refusal earns is fixed by the construct's name alone.** A
 construct the engine knows and defers is named as pending, everything else as
