@@ -10,10 +10,10 @@ of the formula: a superscript contributes no parentheses or caret. -/
 def mathLabelCases : Array (String × String × String) := #[
   ("Maple$'$", "Maple′", "msup"),
   ("Birch$''$", "Birch′′", "msup"),
-  ("Cedar$_r$", "Cedarr", "msub"),
+  ("Cedar$_r$", "Cedar𝑟", "msub"),
   ("Elm$^{2}$", "Elm2", "msup"),
   ("Ash$\\frac{3}{7}$", "Ash37", "mfrac"),
-  ("Pine$\\sqrt{z}$", "Pinez", "msqrt")]
+  ("Pine$\\sqrt{z}$", "Pine𝑧", "msqrt")]
 
 def mathLabelSource (label opts : String) : String :=
   "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
@@ -53,7 +53,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
     let some original := pics[0]? | continue
     for (side, align) in #[("center", Ir.Pic.LabelAlign.center), ("west", .west),
         ("east", .east), ("north", .north), ("south", .south)] do
-      for scale in #[700, 1000, 1600] do
+      for scale in (#[700, 1000, 1600] : Array Nat) do
         let pic := { original with shapes := original.shapes.map fun shape =>
           match shape with
           | .label x y content color _ _ => .label x y content color scale align
@@ -68,12 +68,30 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
         let name := s!"picture mathematics: {label}/{side}/{scale}"
         t (name ++ " ships one native label") ((bodyLines out).size == 1)
         for svg in svgs do
+          t (name ++ " publishes as self-contained typed HTML")
+            ((HtmlResource.close #[] #[] HtmlDoc.deckScript "en" #[] #[svg]).isOk)
           t (name ++ " paints exactly the mathematical leaves")
             (String.ofList (MathMl.nodeChars #[] svg).toList == leaves)
           t (name ++ " preserves its native mathematical schema")
             (!(elemNodesOne (· == schema) #[] svg).isEmpty)
           t (name ++ " never clips the label")
             (attr svg "overflow" == some "visible")
+          -- Both formatting contexts need a zero-size font strut. A
+          -- nonzero outer math font can move its baseline below the
+          -- declared y even when mpadded itself has zero height/depth.
+          let carriers := elemNodesOne (· == "foreignObject") #[] svg
+          t (name ++ " separates the zero-size carrier from the label font")
+            (!carriers.isEmpty && carriers.all fun carrier =>
+              match carrier with
+              | .elem _ _ #[.elem "div" _ #[.elem "math" outer
+                  #[.elem "mpadded" padded #[.elem "mrow" inner _]]]] =>
+                HtmlDoc.attrOf? outer "style" ==
+                  some "font-size: 0; font-family: inherit" &&
+                HtmlDoc.attrOf? padded "height" == some "0px" &&
+                HtmlDoc.attrOf? padded "depth" == some "0px" &&
+                HtmlDoc.attrOf? inner "style" ==
+                  some s!"font-size: {(Ir.baseFontSize * (scale : Int) / 1000).toPtString}px"
+              | _ => false)
         -- Layout's first run must keep the leading letter. For scripts,
         -- measure the emitted glyphs, not a source spelling or a box guess.
         let glyphs := shippedBodyGlyphs out
@@ -120,3 +138,22 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
       (svgs.size == 1 && svgs.all fun svg =>
         String.ofList (MathMl.nodeChars #[] svg).toList == "Maple′" &&
           !(elemNodesOne (· == "msup") #[] svg).isEmpty)
+  -- The generated carrier is transparent to dependency checking, never a
+  -- way to admit opaque HTML or to reset the SVG raw-text context.
+  let carrier := fun (attrs : Array (String × String)) (kids : Array Html.Node) =>
+    Html.elem "svg" #[Html.elem "foreignObject"
+      #[Html.elem "div" kids #[("xmlns", "http://www.w3.org/1999/xhtml")]] attrs]
+  let admits := fun (node : Html.Node) =>
+    (HtmlResource.close #[] #[] HtmlDoc.deckScript "en" #[] #[node]).isOk
+  t "picture mathematics: the checked carrier accepts escaped passive text"
+    (admits (carrier #[] #[.text "<Maple & Birch>"]))
+  for (name, child) in #[
+      ("image URL", Html.elem "img" #[] #[("src", "https://example.invalid/pixel.png")]),
+      ("raw style", Html.Node.style "mtext { color: red }"),
+      ("raw script", Html.Node.script #[] HtmlDoc.deckScript),
+      ("active element", Html.elem "iframe" #[]),
+      ("event attribute", Html.elem "span" #[] #[("onclick", "alert(1)")])] do
+    t ("picture mathematics: the carrier still refuses " ++ name)
+      (!(admits (carrier #[] #[child])))
+  t "picture mathematics: the carrier's own attributes are checked"
+    (!(admits (carrier #[("onload", "alert(1)")] #[])))

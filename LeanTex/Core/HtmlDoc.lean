@@ -6043,10 +6043,9 @@ def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Node) :
 
 end
 
-/-- One piece of a picture label as its SVG `<text>` sets it: math as its
-floor — the formula's content, never its markup, the recovery policy this
-backend applies in prose (native MathML inside SVG is what M6 still owes
-there) — and every other inline its plain text. -/
+/-- The plaintext recovery for a label inline. Parsed formulas take the
+MathML arm of `labelNodesOne`: their structural floor is a reading, never
+the characters to paint. -/
 def labelPiece : Inline → String
   | .math _ src => Ir.mathFloor src
   | .formula _ _ body => Ir.formulaFloor body
@@ -6119,11 +6118,21 @@ def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
     | none => #[]
   weight ++ slant ++ cls ++ family ++ lang
 
-/-- One run of text in a face: character data where the face is the
-label's own, else a `<tspan>` carrying it. -/
-def LabelFace.run (f : LabelFace) (s : String) : Node :=
+/-- One run of text in a face: SVG character data or a `<tspan>`, and an
+`mtext` beside native mathematics. MathML uses CSS for the SVG presentation
+attributes; both read the same resolved face. `white-space: pre` retains
+the author's spaces at the text/math boundary (MathML Core §3.2.5). -/
+def LabelFace.run (f : LabelFace) (s : String) (nativeMath : Bool := false) : Node :=
   let a := f.attrs
-  if a.isEmpty then Html.text s else Html.elem "tspan" #[Html.text s] a
+  if nativeMath then
+    let css := a.toList.filterMap fun (k, v) =>
+      if k == "style" then some v
+      else if k == "font-weight" || k == "font-style" then some s!"{k}: {v}"
+      else none
+    Html.elem "mtext" #[Html.text s]
+      ((a.filter fun (k, _) => k != "style" && k != "font-weight" && k != "font-style").push
+        ("style", "; ".intercalate ("white-space: pre" :: css)))
+  else if a.isEmpty then Html.text s else Html.elem "tspan" #[Html.text s] a
 
 mutual
 
@@ -6136,37 +6145,61 @@ run's — which is what lets a reset (`\textnormal`) and a toggle (`\emph`
 inside italic) set what the PDF sets, where nested `bolder` and `italic`
 tspans could only add. A colour is a `<tspan>` of SVG's `fill`, through the
 palette role's custom property as prose's `color` is, and a role its
-class; neither touches the face. Math is an italic `<tspan>` of its floor
-under no weight at all: the PDF sets a formula in the math face, which no
-text weight reaches, so the floor keeps the label's regular weight
-whatever style surrounds it. Every other inline is its plain text in the
-face in force — the node salvage produces none of them. Every string goes
-through the escaper by construction. -/
-def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline) : Array Node :=
+class; neither touches the face. With a math configuration, runs are
+`mtext`, colour/role scopes are `mrow`, and parsed formulas use the same
+MathML emitter as prose. Text styles still reach only text runs, so a
+bold word does not bold its neighbouring formula. Every other inline is
+its plain text in the face in force — the node salvage produces none of
+them. Every string goes through the escaper by construction. -/
+def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
+    (mathCfg : Option Config := none) : Array Node :=
+  let native := mathCfg.isSome
   match x with
-  | .text s => acc.push (f.run s)
-  | .math _ _ | .formula _ _ _ =>
-    acc.push (Html.elem "tspan" #[Html.text (labelPiece x)] #[("font-style", "italic")])
+  | .text s => acc.push (f.run s native)
+  | .formula display src body =>
+    match mathCfg with
+    | some cfg => acc.push (MathMl.formula display #[("class", "math"), ("data-tex", src)]
+        body (mathMarks cfg))
+    | none => acc.push (Html.elem "tspan" #[Html.text (labelPiece x)] #[("font-style", "italic")])
+  | .math _ _ => acc.push (({ italic := true } : LabelFace).run (labelPiece x) native)
   | .styled st body => labelNodesList (f.step st) acc body.toList
+      (mathCfg.map fun cfg => { cfg with mathStyles := cfg.mathStyles.push st })
   | .colored c name body =>
     let paint := match name with
-      | some n => ("style", s!"fill: var(--{n}, {cssColor c})")
-      | none => ("fill", cssColor c)
-    acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[paint])
+      | some n => ("style", s!"{if native then "color" else "fill"}: var(--{n}, {cssColor c})")
+      | none => if native then ("style", s!"color: {cssColor c}") else ("fill", cssColor c)
+    acc.push (Html.elem (if native then "mrow" else "tspan")
+      (labelNodesList f #[] body.toList mathCfg) #[paint])
   | .role n body =>
-    acc.push (Html.elem "tspan" (labelNodesList f #[] body.toList) #[("class", roleClass n)])
-  | .located _ body => labelNodesList f acc body.toList
+    acc.push (Html.elem (if native then "mrow" else "tspan")
+      (labelNodesList f #[] body.toList mathCfg) #[("class", roleClass n)])
+  | .located _ body => labelNodesList f acc body.toList mathCfg
   | .italicCorr _ => acc
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x))
+  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
 
 /-- `labelNodesOne` over a label's inlines, threading the accumulator. -/
-def labelNodesList (f : LabelFace) (acc : Array Node) : List Inline → Array Node
+def labelNodesList (f : LabelFace) (acc : Array Node) (xs : List Inline)
+    (mathCfg : Option Config := none) : Array Node :=
+  match xs with
   | [] => acc
-  | x :: rest => labelNodesList f (labelNodesOne f acc x) rest
+  | x :: rest => labelNodesList f (labelNodesOne f acc x mathCfg) rest mathCfg
 
 end
+
+/-- **A picture formula paints exactly the shared math AST's glyph text**:
+this is the label projection of `MathMl.mathml_glyphs_agree`, for every
+formula, surrounding face and configured font environment. In particular,
+an empty nucleus contributes no punctuation around its script. -/
+theorem labelFormula_glyphs_agree (f : LabelFace) (cfg : Config)
+    (display : Bool) (src : String) (body : Math.MList) :
+    MathMl.nodeListChars #[]
+      (labelNodesOne f #[] (.formula display src body) (some cfg)).toList =
+        MathMl.listChars #[] body := by
+  simpa only [labelNodesOne, Array.toList_push, List.nil_append,
+    Array.toList_empty, MathMl.nodeListChars] using
+      MathMl.mathml_glyphs_agree display _ body (mathMarks cfg)
 
 /-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
 py1))` the viewBox declares: the same evaluated shapes the PDF paints,
@@ -6175,7 +6208,7 @@ downward, so the transform is the PDF path's: flip against the box's top.
 Labels use the same metric as that box. Without a font environment the
 zero metric leaves the source anchor as the alphabetic baseline. -/
 def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
-    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) : Array Node :=
+    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) (cfg : Config := {}) : Array Node :=
   pic.shapes.map fun shape =>
     -- The paint attributes of a stroked/filled shape: fill (or none —
     -- SVG's default is black, not TikZ's), then stroke colour, width,
@@ -6201,23 +6234,43 @@ def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
         ("height", (max rh (-rh)).toPtString),
         ("fill", cssColor color)]
     | .label lx ly content color scale align =>
-      -- The label's inline content inside SVG's <text>: the runs the PDF
-      -- sets, each in its face and colour (`labelNodesList`), math an
-      -- italic <tspan> of its floor, every string through the escaper by
-      -- construction.
-      let nodes := labelNodesList {} #[] content.toList
       let anchor := match align with
         | .center | .south | .north => "middle"
         | .west => "start"
         | .east => "end"
       let baseline := Ir.Pic.labelBaseline ly align (metric content scale)
-      Html.elem "text" nodes #[
+      let size := (Ir.baseFontSize * (scale : Int) / 1000).toPtString
+      let placed := #[
         ("x", (lx - px0).toPtString),
         ("y", (py1 - baseline).toPtString),
-        ("fill", cssColor color),
-        ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
-        ("text-anchor", anchor),
         ("dominant-baseline", "alphabetic")]
+      if Ir.anyInline (fun x => match x with | .formula _ _ _ => true | _ => false) content then
+        let shift := match align with
+          | .center | .south | .north => "-50%"
+          | .west => "0%"
+          | .east => "-100%"
+        let nodes := labelNodesList {} #[] content.toList (some { cfg with mathStyles := #[] })
+        -- MathML Core §3.3.6: zero height/depth preserve the baseline and
+        -- all ink. Zero-size XHTML and outer math fonts remove both
+        -- formatting contexts' struts; only the inner row takes the label
+        -- size. This places its natural alphabetic baseline at the SVG y.
+        -- Max-content and translation implement text-anchor.
+        -- SVG 2 §12.5 requires a positive foreignObject viewport to paint.
+        -- Its 1×1 box is only a carrier: both viewports allow all overflow.
+        Html.elem "foreignObject" #[
+          Html.elem "div" #[
+            Html.elem "math" #[
+              Html.elem "mpadded"
+                #[Html.elem "mrow" nodes #[("style", s!"font-size: {size}px")]]
+                #[("height", "0px"), ("depth", "0px")]]
+              #[("style", "font-size: 0; font-family: inherit")]]
+            #[("xmlns", "http://www.w3.org/1999/xhtml"),
+              ("style", s!"font-size: 0; line-height: 0; width: max-content; \
+transform: translateX({shift}); color: {cssColor color}")]]
+          (placed ++ #[("width", "1"), ("height", "1"), ("overflow", "visible")])
+      else
+        Html.elem "text" (labelNodesList {} #[] content.toList)
+          (placed ++ #[("fill", cssColor color), ("font-size", size), ("text-anchor", anchor)])
     | .circle sx sy r st fl =>
       Html.elem "circle" #[] (#[
         ("cx", (sx - px0).toPtString),
@@ -6255,14 +6308,17 @@ index, independent of alignment, font, scale and the surrounding shapes. -/
 theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
     (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
     (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
-    (h : pic.shapes[i]? = some (.label x y content color scale align)) :
-    (match (pictureKids pic px0 py1 metric)[i]? with
+    (h : pic.shapes[i]? = some (.label x y content color scale align)) (cfg : Config := {}) :
+    (match (pictureKids pic px0 py1 metric cfg)[i]? with
       | some (.elem _ attrs _) =>
         (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
       | _ => (none, none)) =
       (some (py1 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
         some "alphabetic") := by
-  simp [pictureKids, h, Html.elem, attrOf?]
+  by_cases hm : Ir.anyInline
+      (fun x => match x with | .formula _ _ _ => true | _ => false) content = true <;>
+    simp only [pictureKids, Array.getElem?_map, h, Option.map_some, hm, ite_true] <;>
+    rfl
 
 /-- The picture's box as the element's own size. Lengths are pt, the unit
 the viewBox declares — and in flow classes the element's own size too:
@@ -6391,7 +6447,7 @@ def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
   -- The declared baseline is where the line stands (`Ir.Pic.Picture.rise`),
   -- the value the PDF sets the picture's depth by.
-  Html.elem "svg" (pictureKids pic px0 py1 cfg.labelMetric)
+  Html.elem "svg" (pictureKids pic px0 py1 cfg.labelMetric cfg)
     (pictureBox cfg (px1 - px0) (py1 - py0) (pic.rise cfg.labelMetric) ++
       pictureRole cfg.locale pic ++ #[("overflow", "visible")])
 

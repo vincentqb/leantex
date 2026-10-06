@@ -171,7 +171,7 @@ private def passiveTag (tag : String) : Bool :=
    "time", "tr", "u", "ul", "var", "wbr", "svg", "g", "path", "rect", "circle",
    "ellipse", "line", "polyline", "polygon", "text", "tspan", "defs", "use", "symbol",
    "clippath", "mask", "lineargradient", "radialgradient", "stop", "pattern", "marker",
-   "desc", "math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "ms", "merror",
+   "desc", "foreignobject", "math", "mrow", "mi", "mn", "mo", "mtext", "mspace", "ms", "merror",
    "mfrac", "msqrt", "mroot", "mstyle", "mpadded", "mphantom", "mfenced", "menclose",
    "msub", "msup", "msubsup", "munder", "mover", "munderover", "mmultiscripts",
    "mprescripts", "none", "mtable", "mtr", "mtd", "mlabeledtr", "semantics"].contains tag
@@ -250,13 +250,24 @@ mutual
       let acc := if passiveTag tag then acc else
         acc.push (.refused ("unsupported active HTML element: " ++ tag))
       let rawTextAllowed := rawTextAllowed && passiveTag tag &&
-        !["svg", "math", "title"].contains tag && !Html.voidTags.contains tag
+        !["svg", "foreignobject", "math", "title"].contains tag && !Html.voidTags.contains tag
       listRequests rawTextAllowed acc kids.toList
 
   def listRequests (rawTextAllowed : Bool) (acc : Array Request) : List Html.Node → Array Request
     | [] => acc
     | node :: rest => listRequests rawTextAllowed (nodeRequests rawTextAllowed acc node) rest
 end
+
+/-- Artifact-specific: a typed SVG/XHTML carrier contributes every attribute
+and child dependency. It never resets the refusal of raw style/script
+payloads. Opaque SVG resources still require the external XML validator.
+`pictureMathLabelChecks` exercises passive content and active descendants. -/
+theorem foreignObject_requests_exact (rawTextAllowed : Bool) (acc : Array Request)
+    (attrs : Array (String × String)) (kids : Array Html.Node) :
+    nodeRequests rawTextAllowed acc (.elem "foreignObject" attrs kids) =
+      listRequests false (acc ++ attrRequests "foreignobject" attrs) kids.toList := by
+  simp only [nodeRequests, String.toLower, String.map_eq_internal]
+  cases rawTextAllowed <;> rfl
 
 def requests (head body : Array Html.Node) : Array Request :=
   listRequests true (listRequests true #[] head.toList) body.toList

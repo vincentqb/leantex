@@ -7189,14 +7189,23 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
 
 mutual
 
-/-- The text runs of one SVG subtree, each with the attributes of every
-`<tspan>` around it, innermost first: how the drawing presents each run. -/
+/-- The text runs of one SVG subtree, including its native MathML carrier,
+with inherited presentation attributes innermost first. CSS declarations
+are read as attributes too: XHTML and MathML use CSS where SVG accepts
+presentation attributes. Keep the original style for colour checks. -/
 def svgRunsOne (env : Array (String × String))
     (acc : Array (String × Array (String × String))) :
     Html.Node → Array (String × Array (String × String))
   | .text s => if s.isEmpty then acc else acc.push (s, env)
-  | .elem tag attrs kids =>
-    svgRunsList (if tag == "tspan" then attrs ++ env else env) acc kids.toList
+  | .elem _ attrs kids =>
+    let presented := attrs.flatMap fun (k, v) =>
+      if k == "style" then
+        ((v.splitOn ";").filterMap fun decl =>
+          match decl.splitOn ":" with
+          | [key, val] => some (key.trimAscii.toString, val.trimAscii.toString)
+          | _ => none).toArray ++ #[(k, v)]
+      else #[(k, v)]
+    svgRunsList (presented ++ env) acc kids.toList
   | .style _ => acc
   | .script _ _ => acc
 
@@ -7210,11 +7219,12 @@ end
 
 mutual
 
-/-- Every SVG `<text>` element's runs (`svgRunsOne`), in document order. -/
+/-- Every SVG label's runs (`svgRunsOne`), in document order: plain `<text>`
+or the `<foreignObject>` carrying native mathematics. -/
 def svgTextRunsOne (acc : Array (String × Array (String × String))) :
     Html.Node → Array (String × Array (String × String))
   | .elem tag _ kids =>
-    if tag == "text" then svgRunsList #[] acc kids.toList
+    if tag == "text" || tag == "foreignObject" then svgRunsList #[] acc kids.toList
     else svgTextRunsList acc kids.toList
   | .text _ => acc
   | .style _ => acc
@@ -7475,8 +7485,8 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Glyph by glyph: the character and the weight are the PDF's, and so is
   -- the slant, except where the PDF sets the glyph in the math face: math
   -- italic is a character of its own there, so the face's slant says
-  -- nothing of the glyph's shape, and the SVG sets every formula as an
-  -- italic floor (`HtmlDoc.labelPiece`), the one label math has.
+  -- nothing of the glyph's shape. Native MathML uses that math face too,
+  -- with its own script and operator layout.
   let facesAgree (src : String) : Bool :=
     let p := pdfFaces src
     let h := svgFaces src
