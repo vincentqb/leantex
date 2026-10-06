@@ -220,11 +220,15 @@ const checks = {
   mathml: () => {
     const ms = [...document.querySelectorAll('math')];
     const bad = ms.filter(m => {
-      const r = m.getBoundingClientRect();
+      // MathML Core mpadded may reserve zero height/depth while its
+      // contents still paint. Measure those contents, not the carrier.
+      const range = document.createRange();
+      range.selectNodeContents(m);
+      const r = range.getBoundingClientRect();
       return !(m.namespaceURI === 'http://www.w3.org/1998/Math/MathML' && r.width > 0 && r.height > 0);
     });
     return { ok: bad.length === 0, n: ms.length,
-      why: bad.length ? `${bad.length}/${ms.length} <math> with an empty box or outside the MathML namespace` : '' };
+      why: bad.length ? `${bad.length}/${ms.length} <math> with empty rendered contents or outside the MathML namespace` : '' };
   },
   // A text-sourced math alphabet projects to real CSS, because Chromium (and
   // WebKit) honour no non-`normal` mathvariant: so the leaf's COMPUTED
@@ -721,6 +725,32 @@ async function runReader(name) {
     return;
   }
   out('reader', name, 'version', browser.version());
+  // Both sides of the content/advance distinction, checked with the same
+  // live-page judge before any fixture can be credited to this reader.
+  const control = await browser.newPage();
+  try {
+    const visible = '<math><mi>x</mi></math>';
+    const carrier = '<math style="font-size:0"><mpadded height="0px" depth="0px">' +
+      '<mrow style="font-size:16px"><mi>x</mi></mrow></mpadded></math>';
+    for (const [label, html, want] of [
+      ['ordinary', visible, true],
+      ['zero-height carrier', carrier, true],
+      ['hidden', '<div style="display:none">' + carrier + '</div>', false],
+      ['empty', '<math></math>', false],
+      ['zero-size contents', carrier.replace('font-size:16px', 'font-size:0'), false],
+    ]) {
+      await control.setContent(html);
+      const got = await control.evaluate(checks.mathml);
+      if (got.n !== 1 || got.ok !== want) throw new Error('mathml control: ' + label);
+    }
+    await control.setContent(visible);
+    await control.evaluate(() => {
+      const wrong = document.createElementNS('http://www.w3.org/1999/xhtml', 'math');
+      wrong.textContent = 'x';
+      document.querySelector('math').replaceWith(wrong);
+    });
+    if ((await control.evaluate(checks.mathml)).ok) throw new Error('mathml control: namespace');
+  } finally { await control.close(); }
   for (const fx of fixtures) {
     const url = 'file://' + path.join(dir, fx + '.html');
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
