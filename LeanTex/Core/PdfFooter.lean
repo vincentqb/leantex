@@ -1,4 +1,7 @@
+module
+
 import LeanTex.Core.PdfReadProof
+import LeanTex.Core.PdfNumber
 
 namespace LeanTex.Core.PdfRead
 
@@ -78,7 +81,8 @@ private theorem nat_size (n : Nat) (hn : n < 256^4) :
 private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 256^4) :
     findStartxref (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) = some pre.size := by
   have hf : (s!"startxref\n{n}\n%%EOF\n").toUTF8 =
-      "startxref\n".toUTF8 ++ (toString n).toUTF8 ++ "\n%%EOF\n".toUTF8 := rfl
+      "startxref\n".toUTF8 ++ (toString n).toUTF8 ++ "\n%%EOF\n".toUTF8 := by
+    simp only [toString, utf8_append]
   let digits := octets (toString n).toUTF8
   have ndigits : ∀ c ∈ digits, c ≠ 115 := by
     intro c hc
@@ -106,13 +110,16 @@ private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n <
       (115 :: ([116,97,114,116,120,114,101,102,10] ++ digits ++ [10,37,37,69,79,70,10])) := by
     rw [hf]
     simpa only [digits, show octets "startxref\n".toUTF8 =
-      [115,116,97,114,116,120,114,101,102,10] from rfl,
-      show octets "\n%%EOF\n".toUTF8 = [10,37,37,69,79,70,10] from rfl,
+      [115,116,97,114,116,120,114,101,102,10] by
+        simp only [String.toUTF8_eq_toByteArray]; rfl,
+      show octets "\n%%EOF\n".toUTF8 = [10,37,37,69,79,70,10] by
+        simp only [String.toUTF8_eq_toByteArray]; rfl,
       List.cons_append, List.nil_append] using hs
   have size : (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8).size =
       pre.size + 17 + digits.length := by
-    simp only [hf, ByteArray.size_append, digits, octets_length]
-    change pre.size+(10+(toString n).toUTF8.size+7) = _
+    simp only [hf, ByteArray.size_append, digits, octets_length,
+      String.toUTF8_eq_toByteArray]
+    change pre.size+(10+(toString n).toByteArray.size+7) = _
     omega
   have hlen : digits.length ≤ 10 := by simpa [digits] using nat_size n hn
   apply findStartxref_last_exact
@@ -126,15 +133,19 @@ private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n <
           ([115,116,97,114,116,120,114,101,102] ++
             10 :: (digits ++ [10,37,37,69,79,70,10])) := by
         simpa only [List.append_assoc, List.cons_append, List.nil_append] using hfull
-      exact hs'.append_left
+      simpa only [show octets "startxref".toUTF8 =
+        [115,116,97,114,116,120,114,101,102] by
+          simp only [String.toUTF8_eq_toByteArray]; rfl] using hs'.append_left
     have he : at? (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) (pre.size+9) = 10 := by
       exact hfull.byte 9 (by simp)
     rw [keywordAt_exact hk (Or.inr (Or.inl (by
-      change isWs (at? _ (pre.size+9)) = true
+      simp only [show "startxref".toUTF8.size = 9 by
+        simp only [String.toUTF8_eq_toByteArray]; rfl]
       rw [he]; rfl)))]
     rfl
   · intro i hi hib
-    apply keywordAt_ne (by decide)
+    apply keywordAt_ne (by simp only [String.toUTF8_eq_toByteArray]; decide)
+    simp only [String.toUTF8_eq_toByteArray]
     change at? _ i ≠ 115
     have hj : i-(pre.size+1) <
         ([116,97,114,116,120,114,101,102,10] ++ digits ++ [10,37,37,69,79,70,10]).length := by
@@ -142,13 +153,14 @@ private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n <
       simp only [List.length_append, List.length_cons, List.length_nil]
       omega
     have he := hfull.tail.byte (i-(pre.size+1)) hj
+    simp only [String.toUTF8_eq_toByteArray] at he
     rw [show pre.size+1+(i-(pre.size+1))=i by omega] at he
     rw [he]
     exact no_s _ (List.getElem_mem hj)
 
 /-- Discover the last `startxref` in the PDF tail and read its byte offset.
 The 2048-byte search window is the reader's existing bounded policy. -/
-def readStartxref (b : ByteArray) : Except String Nat := do
+public def readStartxref (b : ByteArray) : Except String Nat := do
   let some pos := findStartxref b
     | throw "malformed PDF: no startxref"
   let some (off, _) := parseUInt b (skipWs b (pos+9))
@@ -170,22 +182,30 @@ private theorem footer_number (pre : ByteArray) (n : Nat) :
     have h := PdfLex.Span.of_bytes (pre ++ "startxref\n".toUTF8)
       (toString n).toUTF8 "\n%%EOF\n".toUTF8
     simpa only [b, octets, ByteArray.size_append,
-      show "startxref\n".toUTF8.size = 10 from rfl] using h
+      show "startxref\n".toUTF8.size = 10 by
+        simp only [String.toUTF8_eq_toByteArray]; rfl] using h
   have hlf : at? b (pre.size+9) = 10 := by
     have hs := PdfLex.Span.of_bytes pre "startxref\n".toUTF8
       ((toString n).toUTF8 ++ "\n%%EOF\n".toUTF8)
+    change PdfLex.Span
+      (pre ++ "startxref\n".toUTF8 ++ ((toString n).toUTF8 ++ "\n%%EOF\n".toUTF8))
+      pre.size (octets "startxref\n".toUTF8) at hs
+    rw [show octets "startxref\n".toUTF8 =
+      [115,116,97,114,116,120,114,101,102,10] by
+        simp only [String.toUTF8_eq_toByteArray]; rfl] at hs
     have h := hs.byte 9 (by decide)
-    change at? (pre ++ "startxref\n".toUTF8 ++ ((toString n).toUTF8 ++ "\n%%EOF\n".toUTF8))
-      (pre.size+9) = 10 at h
-    simpa only [b, ← ByteArray.append_assoc] using h
+    simpa only [b, ← ByteArray.append_assoc, List.getElem_cons_succ,
+      List.getElem_cons_zero] using h
   have hend : at? b (pre.size+10+(toString n).toUTF8.size) = 10 := by
     change at? ((pre ++ "startxref\n".toUTF8 ++ (toString n).toUTF8) ++ "\n%%EOF\n".toUTF8)
       (pre.size+10+(toString n).toUTF8.size) = _
     have hb : (pre ++ "startxref\n".toUTF8 ++ (toString n).toUTF8).size =
         pre.size+10+(toString n).toUTF8.size := by
-      simp only [ByteArray.size_append, show "startxref\n".toUTF8.size = 10 from rfl]
+      simp only [ByteArray.size_append, show "startxref\n".toUTF8.size = 10 by
+        simp only [String.toUTF8_eq_toByteArray]; rfl]
     rw [← hb, ← Nat.add_zero ((pre ++ "startxref\n".toUTF8 ++ (toString n).toUTF8).size),
       at?_append_right]
+    simp only [String.toUTF8_eq_toByteArray]
     rfl
   have hd := hn
   rw [numeric_octets _ (nat_numeric n)] at hd
@@ -210,7 +230,7 @@ private theorem footer_number (pre : ByteArray) (n : Nat) :
 /-- Every 32-bit writer offset is recovered from its exact decimal footer,
 regardless of the preceding bytes. The numeric bound implies the whole
 footer fits in the reader's search window; it is not a parser premise. -/
-theorem readStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 256^4) :
+public theorem readStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 256^4) :
     readStartxref (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) = .ok n := by
   simp only [readStartxref, findStartxref_footer_exact pre n hn, footer_number]
   rfl

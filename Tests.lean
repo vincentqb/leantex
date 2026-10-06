@@ -10,6 +10,7 @@ import Tests.ParseInterface
 import Tests.DataInterface
 import Tests.TcolorboxInterface
 import Tests.PdfReaderInterface
+import Tests.PdfBoundaryInterface
 import Tests.Batch
 import Tests.Compression
 import Tests.BrowserFaceBatch

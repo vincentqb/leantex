@@ -1,3 +1,6 @@
+module
+
+public import LeanTex.Core.PdfObjProof
 import LeanTex.Core.PdfReadProof
 
 namespace LeanTex.Core.PdfRead
@@ -74,7 +77,7 @@ mutual
 
 /-- Check every raw spelling the object encoder accepts. The recursive
 container checks share the same source tree as `Obj.renderInto`. -/
-def Obj.encodable : Obj → Bool
+public def Obj.encodable : Obj → Bool
   | .null | .bool _ | .int _ | .ref _ _ => true
   | .name s => decide (NameSpelling s)
   | .real s => decide (RealSpelling s)
@@ -96,7 +99,7 @@ mutual
 
 /-- The executable source check establishes the syntactic domain of the
 proved production parser/renderer round trip. -/
-theorem Obj.encodable_contract (v : Obj) (h : v.encodable = true) :
+private theorem Obj.encodable_sound (v : Obj) (h : v.encodable = true) :
     v.Representable := by
   cases v with
   | null => exact .null
@@ -114,7 +117,7 @@ theorem Obj.encodable_contract (v : Obj) (h : v.encodable = true) :
       (fun e hm => (he e (Array.mem_toList_iff.mpr hm)).1)
       (fun e hm => (he e (Array.mem_toList_iff.mpr hm)).2)
 
-theorem Obj.encodableList_contract (vs : List Obj) (h : encodableList vs = true) :
+private theorem Obj.encodableList_contract (vs : List Obj) (h : encodableList vs = true) :
     ∀ v ∈ vs, v.Representable := by
   cases vs with
   | nil => simp
@@ -123,10 +126,10 @@ theorem Obj.encodableList_contract (vs : List Obj) (h : encodableList vs = true)
     intro x hx
     rcases List.mem_cons.mp hx with hx | hx
     · subst x
-      exact encodable_contract v h.1
+      exact encodable_sound v h.1
     · exact encodableList_contract vs h.2 x hx
 
-theorem Obj.encodableEntries_contract (es : List (String × Obj))
+private theorem Obj.encodableEntries_contract (es : List (String × Obj))
     (h : encodableEntries es = true) :
     ∀ e ∈ es, NameSpelling e.1 ∧ e.2.Representable := by
   cases es with
@@ -136,14 +139,19 @@ theorem Obj.encodableEntries_contract (es : List (String × Obj))
     simp only [encodableEntries, Bool.and_eq_true, decide_eq_true_eq] at h
     intro e he
     rcases List.mem_cons.mp he with rfl | he
-    · exact ⟨h.1.1, encodable_contract v h.1.2⟩
+    · exact ⟨h.1.1, encodable_sound v h.1.2⟩
     · exact encodableEntries_contract es h.2 e he
 
 end
+
+/-- The source checker establishes the encoder's complete representable domain. -/
+public theorem Obj.encodable_contract (v : Obj) (h : v.encodable = true) :
+    v.Representable := encodable_sound v h
+
 /-- The executable grammar check supplies the complete parser/renderer
 round trip. This is quantified over arbitrary source trees and bytes,
 including nested containers and raw string spellings. -/
-theorem Obj.encodable_render_exact (o : Obj) (h : o.encodable = true) :
+public theorem Obj.encodable_render_exact (o : Obj) (h : o.encodable = true) :
     parseVal o.render 0 = .ok (o, o.render.size) :=
   parseVal_render_id o (o.encodable_contract h)
 
