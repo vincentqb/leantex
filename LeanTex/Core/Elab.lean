@@ -7161,16 +7161,7 @@ private def trimParaList (leading : Bool) (acc : Array Inline) :
       else (acc.push x ++ tail, false)
 end
 
-private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
-  let mut cur := cur
-  repeat
-    match cur.back? with
-    | some .space => cur := cur.pop
-    | some (.par _) => cur := cur.pop
-    | _ => break
-  if cur.isEmpty then
-    return none
-  let inlines ← elabInlines ctx cur
+private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   -- A spliced body can leave a leading space no raw-level skip saw; a
   -- paragraph never opens with a space glue. Leading label anchors ship
   -- no ink, so the paragraph's first text is judged past them.
@@ -7180,6 +7171,17 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
   return some (paraUnder (← get).flowLang (Ir.wrapDecls (← get).blockDecls inlines))
+
+private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
+  let mut cur := cur
+  repeat
+    match cur.back? with
+    | some .space => cur := cur.pop
+    | some (.par _) => cur := cur.pop
+    | _ => break
+  if cur.isEmpty then
+    return none
+  finishPara (← elabInlines ctx cur)
 
 /-- Store one `\title`-family part; both doors — the body's
 `takeTitleDecl` and the preamble's `.titleDecl` arm — write through
@@ -9915,7 +9917,7 @@ seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
-seal takeArgs mkPara flushPara stripMathMeta
+seal takeArgs mkPara finishPara flushPara stripMathMeta
 seal blockMacroStep
 seal closeBlockMacros blockControlContext
 seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
@@ -12920,7 +12922,7 @@ unseal flowStyleCtrl flowStyleArm
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
-unseal takeArgs mkPara flushPara stripMathMeta
+unseal takeArgs mkPara finishPara flushPara stripMathMeta
 unseal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
 unseal titleBlocks Picture.elabPicture MathParse.parseMath
 unseal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
@@ -12974,6 +12976,74 @@ private theorem elabInlines_recovered_head (ctx : Ctx) (name : String) (raws : A
       relativeOrigins, List.map_nil]
     rfl
   rw [elabInlines, he, elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn, hi]
+
+private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
+    elabInlines ctx #[.group body p] = (do
+      let inner ← elabInlines ctx body
+      pure (if ctx.literalText then mergeText inner
+        else (mergeText inner).map (mapSmartText ctx.literalWhen))) := by
+  have he : ctx.macroRoles.enter = ctx.macroRoles := by rw [hm]; rfl
+  have hi : inlineMacroAt ctx.macroRoles #[.group body p] 0 #[] "" =
+      (ctx.macroRoles, #[], "") := by
+    simp only [inlineMacroAt, show (#[Raw.group body p])[0]? =
+      some (.group body p) from rfl, inlineMacroStep, Raw.origins?, hp, hm,
+      relativeOrigins, List.map_nil]
+    rfl
+  have hd (inner : Array Inline) :
+      elabInlinesFrom ctx #[.group body p] 1 inner "" = pure (mergeText inner) := by
+    rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
+    simp [inlineMacroAt, inlineMacroStep, flushText, hm]
+  rw [elabInlines, he, elabInlinesFrom]
+  simp only [hi]
+  simp [flushText, hd]
+
+private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
+    (body : Array Raw) (p gp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = [])
+    (hn : recoversInlineName ctx name = true) :
+    elabInlines ctx #[.ctrl name p, .group body gp] = (do
+      warnUnknownCmd ctx name false p
+      let inner ← elabInlines ctx #[.group body gp]
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
+      pure inner) := by
+  let xs : Array Raw := #[.ctrl name p, .group body gp]
+  change elabInlines ctx xs = _
+  rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
+  have hs : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
+  have hstar : skipStar xs 1 = 1 := rfl
+  have ho : skipOptionRuns xs 1 p = (1, none) := by
+    rw [skipOptionRuns]
+    have hc : scanBracketArg xs 1 p = .content := by
+      unfold scanBracketArg
+      rw [hs]
+      rfl
+    rw [hc]
+  have ha : elabUnknownArgs ctx xs
+      (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) p).1)
+      0 #[] "" false = (do
+        let inner ← elabInlines ctx body
+        pure (inner, "", ⟨2, by simp only [hs, hstar, ho]; omega⟩, 1, false)) := by
+    have hi (j : Nat) (hj : j = 1) :
+        elabUnknownArgs ctx xs j 0 #[] "" false = (do
+          let inner ← elabInlines ctx body
+          pure (inner, "", ⟨2, by omega⟩, 1, false)) := by
+      subst j
+      rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs])]
+      simp [flushText]
+    exact hi _ (by simp only [hs, hstar, ho])
+  rw [elabUnknownCtrl]
+  simp! only [Nat.reduceAdd, hs, hstar, ho, Prod.fst, Prod.snd]
+  rw [ha, elabInlines_group ctx body gp hm hgp]
+  simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
+    ↓reduceIte]
+  have hd (inner : Array Inline) :
+      elabInlinesFrom ctx xs 2 inner "" = pure (mergeText inner) := by
+    rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp [xs])]
+    simp [inlineMacroAt, inlineMacroStep, xs, flushText, hm]
+  simp [hd, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne,
+    unknownCmdDiag_shape_id]
 
 private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp wp : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
@@ -13050,6 +13120,45 @@ private theorem trimParaList_word (ctx : Ctx) (p : Pos) (w : String)
         #[sourceInline ctx p (.text w)] := by
   simp [trimParaList, trimParaOne, sourceInline, he, hl, ht, hr]
 
+private theorem finishPara_note (code : DiagCode) (name text : String)
+    (inner : Array Inline) :
+    (do noteSalvage code name text; finishPara inner) =
+    (do let para ← finishPara inner; noteSalvage code name text; pure para) := by
+  by_cases ht : text.trimAscii.isEmpty = true <;>
+    by_cases hi : (trimParaList false #[]
+      (trimParaList true #[] inner.toList).1.toList).1.isEmpty = true <;>
+    simp [noteSalvage, finishPara, ht, hi] <;> rfl
+
+private theorem mkPara_group (ctx : Ctx) (body : Array Raw) (gp : Pos) :
+    mkPara ctx #[.group body gp] = (do
+      let inner ← elabInlines ctx #[.group body gp]
+      finishPara inner) := by
+  rw [mkPara]
+  simp only [ForIn.forIn]
+  rw [Lean.Loop.forIn_eq_of_monadTail]
+  rfl
+
+private theorem mkPara_recovery_group (ctx : Ctx) (name : String)
+    (body : Array Raw) (p gp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = [])
+    (hn : recoversInlineName ctx name = true) :
+    mkPara ctx #[.ctrl name p, .group body gp] = (do
+      warnUnknownCmd ctx name false p
+      let para ← mkPara ctx #[.group body gp]
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
+      pure para) := by
+  rw [mkPara]
+  simp only [ForIn.forIn]
+  rw [Lean.Loop.forIn_eq_of_monadTail]
+  simp only [
+    show (#[Raw.ctrl name p, Raw.group body gp]).back? =
+      some (Raw.group body gp) from rfl, pure_bind,
+    show (#[Raw.ctrl name p, Raw.group body gp]).isEmpty = false from rfl,
+    Bool.false_eq_true, ↓reduceIte]
+  rw [elabInlines_recovery_group ctx name body p gp hm hp hgp hn, mkPara_group]
+  simp only [bind_assoc, pure_bind, finishPara_note]
+
 private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
     (hp : p.origins = []) (hwp : wp.origins = [])
@@ -13073,6 +13182,7 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
     Bool.false_eq_true, ↓reduceIte]
   rw [elabInlines_recovered_word ctx name w p gp wp hm hp hwp hn hs]
   simp only [bind_assoc, pure_bind]
+  rw [finishPara]
   rw [trimParaList_word ctx wp w he hl ht hr]
   rfl
 
@@ -13164,6 +13274,218 @@ private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i :
 
 private theorem run_get (k : ESt → EM α) (st : ESt) :
     ((do let x ← get; k x) : EM α).run st = (k st).run st := rfl
+
+private theorem elabBlocksGo_recovery_ctrl (ctx : Ctx) (st : ESt) (name : String)
+    (body : Array Raw) (p gp : Pos) (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = [])
+    (hb : isBlockStart ctx name #[.ctrl name p, .group body gp] 0 #[] = false) :
+    (elabBlocksGo ctx #[.ctrl name p, .group body gp]
+      0 blocks #[] st.flowGen).run st =
+    (elabBlocksGo ctx #[.ctrl name p, .group body gp]
+      1 blocks #[.ctrl name p] st.flowGen).run st := by
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 0 blocks #[] hm (by simp)
+    (by simpa [Raw.origins?] using hp)]
+  simp only [pure_bind]
+  simp [hb]
+
+private theorem elabBlocksGo_recovery_group (ctx : Ctx) (st : ESt) (name : String)
+    (body : Array Raw) (p gp : Pos) (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : gp.origins = []) :
+    (elabBlocksGo ctx #[.ctrl name p, .group body gp]
+      1 blocks #[.ctrl name p] st.flowGen).run st =
+    (elabBlocksGo ctx #[.ctrl name p, .group body gp]
+      2 blocks #[.ctrl name p, .group body gp] st.flowGen).run st := by
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 1 blocks #[.ctrl name p] hm (by simp)
+    (by simpa [Raw.origins?] using hp)]
+  have ha : isArgument #[.ctrl name p] = true := by
+    rw [isArgument]
+    simp only [Std.Legacy.Range.forIn_eq_forIn_range']
+    simp [Std.Legacy.Range.size, List.forIn_cons]
+  simp [ha]
+
+private theorem elabBlocksGo_plain_group (ctx : Ctx) (st : ESt)
+    (body : Array Raw) (gp : Pos) (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : gp.origins = []) (hpar : body.any isParRaw = false)
+    (hblock : (body.any isCenteringRaw || bodyIsBlock body) = false) :
+    (elabBlocksGo ctx #[.group body gp] 0 blocks #[] st.flowGen).run st =
+      ((do
+        let para ← mkPara ctx #[.group body gp]
+        pure (match para with | some b => blocks.push b | none => blocks)) :
+        EM (Array Block)).run st := by
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 0 blocks #[] hm (by simp)
+    (by simpa [Raw.origins?] using hp)]
+  simp only [pure_bind]
+  simp [hpar, hblock]
+  rw [elabBlocksGo_done ctx st _ 1 blocks _ hm (by simp)]
+  rw [flushPara_pending ctx blocks _ hm rfl]
+  simp only [bind_assoc, pure_bind]
+  rfl
+
+private theorem elabBlocksGo_recovery (ctx : Ctx) (st : ESt) (name : String)
+    (body : Array Raw) (p gp : Pos) (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = [])
+    (hn : recoversInlineName ctx name = true)
+    (hb : isBlockStart ctx name #[.ctrl name p, .group body gp] 0 #[] = false) :
+    (elabBlocksGo ctx #[.ctrl name p, .group body gp]
+      0 blocks #[] st.flowGen).run st =
+      ((do
+        warnUnknownCmd ctx name false p
+        let para ← mkPara ctx #[.group body gp]
+        noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
+        pure (match para with | some b => blocks.push b | none => blocks)) :
+        EM (Array Block)).run st := by
+  rw [elabBlocksGo_recovery_ctrl ctx st name body p gp blocks hm hp hb,
+    elabBlocksGo_recovery_group ctx st name body p gp blocks hm hgp,
+    elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
+    flushPara_pending ctx blocks _ hm rfl,
+    mkPara_recovery_group ctx name body p gp hm hp hgp hn]
+  simp only [bind_assoc, pure_bind]
+
+private def enterBodyScope (st : ESt) : ESt :=
+  {st with spans := {st.spans with frames :=
+    {st.spans.frames with base := some 0, nextBase := none}}}
+
+private theorem elabBlocks_scope (ctx : Ctx) (st : ESt) (raws : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hlen : openLengthScope ctx raws =
+      (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)) :
+    (elabBlocks ctx raws).run st =
+      ((do
+        let bs ← elabBlocksGo ctx raws 0 #[] #[] st.flowGen
+        closeBlockScope ctx #[] st.spans.frames.base bs) :
+        EM (Array Block)).run (enterBodyScope st) := by
+  have henter : {ctx with macroRoles := ctx.macroRoles.enter} = ctx := by
+    cases ctx
+    cases hm
+    rfl
+  rw [elabBlocks, elabBlockScope]
+  simp only [henter, openBlockScope, hlen, bind_assoc, pure_bind]
+  rfl
+
+private theorem warnUnknownCmd_scope (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
+    ((warnUnknownCmd ctx name false p).run (enterBodyScope st)).2 =
+      enterBodyScope ((warnUnknownCmd ctx name false p).run st).2 := by
+  cases he : st.runShapes.find? (·.1 == "ctrl:" ++ name) with
+  | none =>
+    simp [warnUnknownCmd, enterBodyScope, bumpRunShape, warnOnceState, he]
+    rfl
+  | some entry =>
+    rcases entry with ⟨key, old, idx⟩
+    simp [warnUnknownCmd, enterBodyScope, bumpRunShape, warnOnceState, he]
+    rfl
+
+private theorem warnUnknownCmd_flowGen (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
+    ((warnUnknownCmd ctx name false p).run st).2.flowGen = st.flowGen := by
+  change (warnOnceState ctx ("ctrl:" ++ name) (unknownCmdDiag name (RunShape.one false)).1
+    (unknownCmdDiag name (RunShape.one false)).2.1 p
+    (unknownCmdDiag name (RunShape.one false)).2.2
+    ((unknownCmdDiag name (RunShape.one false)).1 == .W0301 &&
+      Compat.styInternal ctx.file name) (bumpRunShape name ("ctrl:" ++ name) false st)).flowGen =
+    st.flowGen
+  unfold warnOnceState bumpRunShape
+  split <;> rfl
+
+private theorem warnUnknownCmd_frameBase (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
+    ((warnUnknownCmd ctx name false p).run st).2.spans.frames.base = st.spans.frames.base := by
+  change (warnOnceState ctx ("ctrl:" ++ name) (unknownCmdDiag name (RunShape.one false)).1
+    (unknownCmdDiag name (RunShape.one false)).2.1 p
+    (unknownCmdDiag name (RunShape.one false)).2.2
+    ((unknownCmdDiag name (RunShape.one false)).1 == .W0301 &&
+      Compat.styInternal ctx.file name) (bumpRunShape name ("ctrl:" ++ name) false st)).spans.frames.base =
+    st.spans.frames.base
+  unfold warnOnceState bumpRunShape
+  split <;> rfl
+
+private theorem closeBlockScope_note (ctx : Ctx) (base : Option Nat) (blocks : Array Block)
+    (code : DiagCode) (name text : String) :
+    (do noteSalvage code name text; closeBlockScope ctx #[] base blocks) =
+    (do let bs ← closeBlockScope ctx #[] base blocks; noteSalvage code name text; pure bs) := by
+  by_cases ht : text.trimAscii.isEmpty = true <;>
+    simp [noteSalvage, closeBlockScope, closeLengthScope, setFrameSourceBase, ht] <;> rfl
+
+/-- Keep the producer's warning and recovery record around an otherwise
+ordinary content interpretation. The warning uses the command's actual
+source position and code; recovery uses its exact operand spelling. -/
+def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands : Array Raw)
+    (content : EM α) : EM α := do
+  warnUnknownCmd ctx name false pos
+  let value ← content
+  noteSalvage (unknownCmdDiag name {}).1 name (rawSrc operands)
+  pure value
+
+attribute [local irreducible] elabBlocks mkPara closeBlockScope
+  warnUnknownCmd noteSalvage in
+/-- An unhandled command's inline group is interpreted by the same complete
+block entrypoint as an ordinary braced group. Only its warning and recovery
+record surround that interpretation. The conditions concern syntax and
+dispatch, never the result or diagnostics of elaborating the content. -/
+theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
+    (body : Array Raw) (pos groupPos : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : pos.origins = []) (hgp : groupPos.origins = [])
+    (hn : recoversInlineName ctx name = true)
+    (hb : isBlockStart ctx name #[.ctrl name pos, .group body groupPos] 0 #[] = false)
+    (hpar : body.any isParRaw = false)
+    (hblock : (body.any isCenteringRaw || bodyIsBlock body) = false) :
+    elabBlocks ctx #[.ctrl name pos, .group body groupPos] =
+      withControlRecovery ctx name pos #[.group body groupPos]
+        (elabBlocks ctx #[.group body groupPos]) := by
+  funext st
+  change (elabBlocks ctx _).run st = _
+  have hlen : openLengthScope ctx #[.ctrl name pos, .group body groupPos] =
+      (#[], ⟨#[.ctrl name pos, .group body groupPos],
+        Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩) := by
+    rw [openLengthScope, lengthScopeKeys?]
+    rfl
+  have hplain : openLengthScope ctx #[.group body groupPos] =
+      (#[], ⟨#[.group body groupPos], Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩) := by
+    rw [openLengthScope, lengthScopeKeys?]
+    rfl
+  rw [elabBlocks_scope ctx st _ hm hlen]
+  change (closeBlockScope ctx #[] st.spans.frames.base
+      ((elabBlocksGo ctx _ 0 #[] #[] (enterBodyScope st).flowGen).run (enterBodyScope st)).1).run
+        ((elabBlocksGo ctx _ 0 #[] #[] (enterBodyScope st).flowGen).run (enterBodyScope st)).2 = _
+  rw [elabBlocksGo_recovery ctx (enterBodyScope st) name body pos groupPos #[] hm hp hgp hn hb]
+  change ((do
+    warnUnknownCmd ctx name false pos
+    let para ← mkPara ctx #[.group body groupPos]
+    noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
+    closeBlockScope ctx #[] st.spans.frames.base
+      (match para with | some b => #[b] | none => #[])) :
+    EM (Array Block)).run (enterBodyScope st) = _
+  simp only [closeBlockScope_note]
+  unfold withControlRecovery
+  change _ = ((do
+    let bs ← elabBlocks ctx #[.group body groupPos]
+    noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
+    pure bs) : EM (Array Block)).run ((warnUnknownCmd ctx name false pos).run st).2
+  change _ = ((do
+    noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
+    pure ((elabBlocks ctx #[.group body groupPos]).run
+      ((warnUnknownCmd ctx name false pos).run st).2).1) : EM (Array Block)).run
+      ((elabBlocks ctx #[.group body groupPos]).run
+        ((warnUnknownCmd ctx name false pos).run st).2).2
+  rw [elabBlocks_scope ctx _ _ hm hplain, warnUnknownCmd_flowGen,
+    warnUnknownCmd_frameBase]
+  change _ = ((do
+    let bs ← closeBlockScope ctx #[] st.spans.frames.base
+      ((elabBlocksGo ctx #[.group body groupPos] 0 #[] #[]
+        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false pos).run st).2)).1
+    noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
+    pure bs) : EM (Array Block)).run
+      ((elabBlocksGo ctx #[.group body groupPos] 0 #[] #[]
+        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false pos).run st).2)).2
+  rw [← warnUnknownCmd_scope]
+  have hflow : ((warnUnknownCmd ctx name false pos).run (enterBodyScope st)).2.flowGen =
+      st.flowGen := warnUnknownCmd_flowGen ctx name pos (enterBodyScope st)
+  rw [← hflow]
+  rw [elabBlocksGo_plain_group ctx _ body groupPos #[] hm hgp hpar hblock]
+  rfl
 
 private theorem elabBlocksGo_recovered_ctrl (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
     (blocks : Array Block)
@@ -16163,12 +16485,72 @@ structure DocBodyPlan where
   raws : Array Raw
   finish : Array Block → EM BodyCompletion
 
-/-- Run the production block interpreter, number its output, collect
-metadata, and attach that same output to the document. -/
-def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
-  let blocks := Ir.numberFloats (← elabBlocks plan.ctx plan.raws)
+/-- Complete the actual body through numbering, metadata and reference
+resolution. Both the production entrypoint and its braced-content contract
+use this one continuation. -/
+def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let blocks := Ir.numberFloats blocks
   let completion ← plan.finish blocks
   return (completion.attach blocks, completion.table, completion.pictureReport)
+
+/-- Run the production block interpreter and its document continuation. -/
+def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
+  finishDocBody plan (← elabBlocks plan.ctx plan.raws)
+
+/-- One unhandled control and its grouped content, at the executed body
+boundary. The group can contain arbitrary inline syntax. -/
+structure RecoveryGroup where
+  name : String
+  body : Array Raw
+  pos : Pos
+  groupPos : Pos
+
+def RecoveryGroup.call (group : RecoveryGroup) : Array Raw :=
+  #[.ctrl group.name group.pos, .group group.body group.groupPos]
+
+def RecoveryGroup.braced (group : RecoveryGroup) : Array Raw :=
+  #[.group group.body group.groupPos]
+
+/-- The dispatch domain where a group's ordinary braced spelling is an
+inline paragraph. Execution is already complete; no macro-origin run is
+open. These are syntax and context conditions, with no premise about the
+result of elaborating the group. -/
+def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGroup) : Prop :=
+  raws = group.call ∧
+  ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧
+  group.pos.origins = [] ∧ group.groupPos.origins = [] ∧
+  recoversInlineName ctx group.name = true ∧
+  isBlockStart ctx group.name group.call 0 #[] = false ∧
+  group.body.any isParRaw = false ∧
+  (group.body.any isCenteringRaw || bodyIsBlock group.body) = false
+
+/-- Interpret the ordinary braced content with the original warning and
+recovery attribution, then run the actual document continuation. This
+exposes what content recovery means without copying either interpreter. -/
+def runBracedRecovery (plan : DocBodyPlan) (group : RecoveryGroup) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let blocks ← withControlRecovery plan.ctx group.name group.pos group.braced
+    (elabBlocks plan.ctx group.braced)
+  finishDocBody plan blocks
+
+attribute [local irreducible] elabBlocks finishDocBody in
+/-- Arbitrary inline content of an unhandled control passes through the
+ordinary braced interpreter and the same numbering, metadata and reference
+resolution as production. The entire document, log and continuation state
+agree, not only a selected text census. -/
+theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : RecoveryGroup)
+    (h : RecoveryGroupInput plan.ctx plan.raws group) :
+    runDocBody plan = runBracedRecovery plan group := by
+  obtain ⟨hraw, hm, hp, hgp, hn, hb, hpar, hblock⟩ := h
+  unfold runDocBody runBracedRecovery
+  rw [hraw]
+  change (do
+    finishDocBody plan (← elabBlocks plan.ctx
+      #[.ctrl group.name group.pos, .group group.body group.groupPos])) = _
+  rw [elabBlocks_recovery_group_exact plan.ctx group.name group.body group.pos
+    group.groupPos hm hp hgp hn hb hpar hblock]
+  rfl
 
 /-- A nonempty literal word passed to an unhandled control at the actual
 body-entry boundary. No macro-origin run is open; the dispatch classifiers

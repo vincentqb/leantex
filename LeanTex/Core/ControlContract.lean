@@ -379,4 +379,82 @@ theorem runRaws_recovered_word_contract (file : String) (raws : Array Raw)
   exact ⟨runPreparedFinal_recovered_word_exact file _ earlier metric word h,
     fun item hi => runPreparedFinal_recovery_named file _ earlier metric item hi⟩
 
+/-- The group belongs to the inline recovery domain in the real body plan,
+including every withdrawal retry. Neither body output nor diagnostic
+membership is a premise. -/
+def PreparedRecoveryGroup (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
+    (group : RecoveryGroup) : Prop :=
+  ∀ withdrawn,
+    let entry := preparedBody file p metric withdrawn
+    RecoveryGroupInput entry.1.ctx entry.1.raws group
+
+/-- Complete the braced-content interpretation from the real prepared
+context and state. This shares production's document continuation and final
+judges; only the already-proved body equation changes its input. -/
+def completeBracedRecovery (file : String) (p : Prepared) (earlier : Array Diag)
+    (metric : Ir.Pic.LabelMetric) (withdrawn : Array String) (group : RecoveryGroup) :
+    Ir.Doc × Array Diag × ReqSpans :=
+  let (plan, initial) := preparedBody file p metric withdrawn
+  let ((doc, table, report), st) := (runBracedRecovery plan group).run initial
+  completePrepared file p earlier doc table report st
+
+/-- The actual prepared frontend agrees with ordinary braced interpretation
+of arbitrary inline group content, with the original control's warning and
+recovery attribution. All final document judges see that same result. -/
+theorem runPrepared_recovery_group_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
+    (group : RecoveryGroup)
+    (h : RecoveryGroupInput (preparedBody file p metric withdrawn).1.ctx
+      (preparedBody file p metric withdrawn).1.raws group) :
+    runPrepared file p earlier metric withdrawn =
+      completeBracedRecovery file p earlier metric withdrawn group := by
+  rw [runPrepared_body_exact]
+  unfold completeBracedRecovery
+  dsimp only
+  rw [runDocBody_recovery_group_exact _ group h]
+  rfl
+
+/-- Withdrawal and source erasure preserve the complete braced-content
+equation. In particular both the returned IR and final diagnostic sequence
+are fixed by that interpretation. -/
+theorem runPreparedFinal_recovery_group_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
+    (h : PreparedRecoveryGroup file p metric group) :
+    runPreparedFinal file p earlier metric =
+      finishPreparedRuns (fun withdrawn =>
+        completeBracedRecovery file p earlier metric withdrawn group) := by
+  unfold runPreparedFinal
+  apply congrArg finishPreparedRuns
+  funext withdrawn
+  exact runPrepared_recovery_group_exact file p earlier metric withdrawn group (h withdrawn)
+
+/-- The fulfilled-input entrypoint's whole recovery contract. An unhandled
+control keeps the interpretation of its arbitrary inline group, and every
+recovered item in the final document is named by its producer's code and
+subject. The consuming-control equations earlier in this module give the
+other half: registered control operands never reach that interpreter. -/
+theorem runExecuted_recovery_group_contract (file : String) (executed : Compat.Executed)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
+    (h : PreparedRecoveryGroup file (prepareExecuted file executed) metric group) :
+    runExecuted file executed earlier metric =
+      finishPreparedRuns (fun withdrawn => completeBracedRecovery file
+        (prepareExecuted file executed) earlier metric withdrawn group) ∧
+    ∀ item ∈ (runExecuted file executed earlier metric).1.salvage,
+      RecoveryNamed (runExecuted file executed earlier metric).2 item := by
+  exact ⟨runPreparedFinal_recovery_group_exact file _ earlier metric group h,
+    fun item hi => runExecuted_recovery_named file executed earlier metric item hi⟩
+
+/-- The parsed file-free entrypoint carries the identical complete contract,
+after actual compatibility execution and declaration/class preparation. -/
+theorem runRaws_recovery_group_contract (file : String) (raws : Array Raw)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
+    (h : PreparedRecoveryGroup file (prepare file raws) metric group) :
+    runRaws file raws earlier metric =
+      finishPreparedRuns (fun withdrawn => completeBracedRecovery file
+        (prepare file raws) earlier metric withdrawn group) ∧
+    ∀ item ∈ (runRaws file raws earlier metric).1.salvage,
+      RecoveryNamed (runRaws file raws earlier metric).2 item := by
+  exact ⟨runPreparedFinal_recovery_group_exact file _ earlier metric group h,
+    fun item hi => runPreparedFinal_recovery_named file _ earlier metric item hi⟩
+
 end LeanTex.Core.Elab

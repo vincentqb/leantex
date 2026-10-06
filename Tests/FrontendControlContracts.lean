@@ -74,6 +74,22 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
           Ir.blocksText final.1.body == word &&
           final.1.salvage.all (fun item => final.2.any
             (fun d => d.kind == item.code && d.subject == some item.subject)))
+  for content in #[
+      "first \\textbf{second} third",
+      "naïve \\emph{café} $x+1$",
+      "\\href{https://example.invalid}{a link}",
+      "  nested {ordinary \\textit{groups}}  ",
+      "\\zzNested{kept} and more",
+      "\\label{kept-label}text \\ref{kept-label}"] do
+    let opening := "\\documentclass{article}\\begin{document}"
+    let ending := "\\end{document}"
+    let refused := Elab.run file (opening ++ "\\zzRecovered{" ++ content ++ "}" ++ ending)
+    let braced := Elab.run file (opening ++ "{" ++ content ++ "}" ++ ending)
+    t s!"unknown grouped content follows its braced interpreter: {content}"
+      (refused.1.body == braced.1.body &&
+        refused.1.salvage.any (·.command == "zzRecovered") &&
+        refused.1.salvage.all (fun item => refused.2.any
+          (fun d => d.kind == item.code && d.subject == some item.subject)))
   let recovered : Ir.Recovered :=
     { code := .W0301, command := "zzUnaccounted", text := "kept" }
   let recoveryDoc : Ir.Doc :=
