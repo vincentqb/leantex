@@ -4699,7 +4699,11 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .env name body pos =>
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
-      if let some f := Parse.inputEnvFile? name then
+      if name == Parse.scopeEnv then
+        let acc := flushText acc sb
+        let inner ← elabInlines ctx body
+        elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
+      else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
         let inner ← elabInlines { ctx with file := f, callSite := none } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
@@ -11086,7 +11090,9 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
   have hb2 := nestedParsList_le body.toList
   let mut blocks := blocks
-  if let some f := Parse.inputEnvFile? n then
+  if n == Parse.scopeEnv then
+    blocks := blocks ++ (← elabBlockScope ctx body)
+  else if let some f := Parse.inputEnvFile? n then
     -- An \input file's blocks, elaborated under its own name so a
     -- diagnostic points at the file that holds the construct.
     let ⟨fileCtx, hm⟩ : MCtx ctx ←

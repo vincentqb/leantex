@@ -443,6 +443,11 @@ def inputEnvFile? (name : String) : Option String :=
   if name.startsWith "input " then some ((name.drop "input ".length).toString)
   else none
 
+/-- A generated declaration scope is not an authored argument group.
+The space keeps this wrapper outside the environment names a document can
+spell, as with `inputEnv`. Serializing it restores ordinary TeX braces. -/
+def scopeEnv : String := "scope "
+
 /-- The index past the leading run of `.space` raws at `i`: the one spaces
 scan over sibling raws, shared by every consumer of `Raw` — a caller never
 hand-rolls its own. -/
@@ -476,7 +481,9 @@ def rawSrcOne (r : Raw) : String :=
   | .math d body _ =>
     let inner := rawSrc body
     if d then s!"\\[{inner}\\]" else s!"${inner}$"
-  | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
+  | .env n body _ =>
+    if n == scopeEnv then "{" ++ rawSrc body ++ "}"
+    else s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
   | .verb env s _ =>
     if env == "verb" then
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
@@ -484,6 +491,12 @@ def rawSrcOne (r : Raw) : String :=
     else s!"\\begin\{{env}}{s}\\end\{{env}}"
 
 end
+
+/-- Generated scopes retain the source spelling of ordinary TeX groups;
+their distinct surface node prevents argument readers from consuming them. -/
+theorem scopeEnv_source_exact (body : Array Raw) (p : Pos) :
+    rawSrcOne (.env scopeEnv body p) = rawSrcOne (.group body p) := by
+  simp only [rawSrcOne, BEq.rfl, ↓reduceIte]
 
 mutual
 

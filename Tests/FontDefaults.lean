@@ -1,9 +1,9 @@
-import Main
+import LeanTex.Cli.FontAssembly
 import Tests.FontMath
 
 namespace Tests
 
-open LeanTex.Core LeanTex.Cli
+open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly
 
 private def fontDefaultSource (slides : Bool) (spec : Ir.FontSpec) : String :=
   let declarations := [

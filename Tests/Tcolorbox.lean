@@ -420,6 +420,33 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     sourceCaseChecks ref fonts label pre body control (some .W0104) (some command)
   tcolorboxEffectChecks ref fonts
 
+/-- A generated box scope cannot become a frame title argument. Omitting
+the title and explicitly declaring an empty title ship identical complete
+PDF pages and typed HTML, including styles after the scope closes. -/
+def tcolorboxFrameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
+    IO Unit := do
+  let pre := "\\documentclass{beamer}\\theme{default}" ++
+    "\\newtcolorbox{panel}[1]{title={#1},fontupper=\\small}" ++
+    "\\begin{document}"
+  for (name, body) in [
+      ("direct", "\\begin{tcolorbox}[title={Heading}]Body\\end{tcolorbox}After"),
+      ("defined", "\\begin{panel}{Heading}Body\\end{panel}After"),
+      ("nested", "\\begin{panel}{Outer}\\begin{panel}{Inner}Body\\end{panel}\\end{panel}After"),
+      ("title command", "\\begin{panel}{Heading}Body\\end{panel}\\frametitle{FrameTitle}After")] do
+    for options in ["", "[t]", "[plain]"] do
+      let source (title : String) := pre ++ "\\begin{frame}" ++ options ++ title ++
+        body ++ "\\end{frame}\\end{document}"
+      let (ds, actual, html, _) := sourceArtifacts fonts (source "")
+      let (controlDs, expected, expectedHtml, _) := sourceArtifacts fonts (source "{}")
+      let label := "tcolorbox frame: " ++ name ++ options
+      check ref (label ++ ": explicit empty title is supported")
+        (controlDs.all (·.severity == .note))
+      check ref (label ++ ": generated scope is not a title argument")
+        (ds.all (·.severity == .note))
+      check ref (label ++ ": PDF pages")
+        (reprStr actual.pages == reprStr expected.pages)
+      check ref (label ++ ": typed HTML") (html == expectedHtml)
+
 /-- Full declaration probes for the compatibility owner: options are
 instantiated at use, including a default and a macro defined later. -/
 def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -453,5 +480,6 @@ def tcolorboxSourceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   tcolorboxScopeChecks ref fonts
   tcolorboxPreparationChecks ref fonts
   tcolorboxTitleBindingChecks ref fonts
+  tcolorboxFrameChecks ref fonts
 
 end TcolorboxChecks

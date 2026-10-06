@@ -1244,8 +1244,11 @@ private theorem rebaseList_source (mapPos : Pos → Pos) (groups : Bool) (rs : L
 including nested groups, math and file wrappers. -/
 theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r := by
-  cases r <;> simp only [rebase, rawSrcOne, rebaseArray_source]
-  split <;> simp only [rebaseArray_source]
+  cases r with
+  | env n body p =>
+    simp only [rebase]
+    split <;> simp only [rawSrcOne, rebaseArray_source]
+  | _ => simp only [rebase, rawSrcOne, rebaseArray_source]
 
 end
 
@@ -3784,7 +3787,7 @@ private def condOne [Monad m]
               s!"these box keys are not fully applied: {String.intercalate ", " lowered.unsupported.toList}"
               p (help := "use native block styles for portable decoration")
               (subject := some ("tcolorbox:" ++ n))
-          pure (Raw.group lowered.raws p)
+          pure (Raw.env Parse.scopeEnv lowered.raws p)
         | some .refused => pure (.group (body'.raws.extract head.size body'.raws.size) p)
         | none => pure (.env n (body'.raws.extract head.size body'.raws.size) p)
       let _ ← swapTop top
