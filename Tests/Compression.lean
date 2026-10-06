@@ -49,53 +49,79 @@ private def compressionConcurrencyChecks (ref : IO.Ref (List String)) : IO Unit 
       check ref s!"compression {kind}/{limit}: bounded tasks serialize actual cache paths"
         (!seen.collision && seen.peak ≤ max 1 limit &&
           seen.active.isEmpty && seen.finished.size == inputs.size)
+      check ref s!"compression {kind}/{limit}: small computations stay serial"
+        (seen.peak == 1)
 
-    let started ← Std.Mutex.new (0 : Nat)
-    let overlapped ← Std.Mutex.new (0 : Nat)
-    let compute := fun input => do
-      started.atomically (modify (· + 1))
-      for _ in [:1000] do
-        if (← started.atomically get) == 2 then
-          overlapped.atomically (modify (· + 1))
-          break
-        IO.sleep 1
-      return Flate.deflate input
-    if fonts then
-      discard <| Compression.fontZdata none 2 #[1, 0] #[(a, false), (b, true)] 2 compute
-    else
-      discard <| Compression.pageStreams none #[a, b] 2 compute
-    check ref s!"compression {kind}: independent computations overlap"
-      ((← overlapped.atomically get) == 2)
-
+    -- Exercise the task path above the compressor's larger-table boundary.
+    let padding := ByteArray.mk (Array.replicate 65536 0)
+    let largeA := a ++ padding
+    let largeB := b ++ padding
+    let largeC := c ++ padding
     let state ← Std.Mutex.new ({} : Compressing)
-    let d := "not started after failure".toUTF8
+    let overlapped ← Std.Mutex.new (0 : Nat)
     let compute := fun input => do
       let key := Compression.cachePath "." input
       state.atomically do
-        modify fun s => { s with active := key :: s.active, started := s.started.push input }
+        modify fun s => { s with
+          collision := s.collision || s.active.contains key
+          active := key :: s.active
+          peak := max s.peak (s.active.length + 1)
+          started := s.started.push input }
       try
-        if input == a then
-          IO.sleep 20
-          throw (IO.userError "first source failure")
-        if input == b then throw (IO.userError "second source failure")
-        IO.sleep 10
-        return Flate.deflate input
+        for _ in [:1000] do
+          if (← state.atomically get).started.size ≥ 2 then
+            overlapped.atomically (modify (· + 1))
+            break
+          IO.sleep 1
+        return input
       finally
         state.atomically do
           modify fun s => { s with
             active := s.active.erase key, finished := s.finished.push input }
-    let ending ← (do
-      if fonts then
-        discard <| Compression.fontZdata none 4 #[0, 1, 2, 3]
-          (#[(a, false), (b, true), (c, false), (d, false)]) 3 compute
-      else
-        discard <| Compression.pageStreams none #[a, b, c, d] 3 compute).toBaseIO
+    if fonts then
+      let got ← Compression.fontZdata none 2 #[1, 0, 1, 0]
+        #[(largeA, false), (largeB, true), (largeA, true), (largeB, false)] 2 compute
+      check ref "compression large fonts: source indices survive task completion order"
+        (got == #[some largeB, some largeA])
+    else
+      let got ← Compression.pageStreams none #[largeA, largeB, largeA, largeB] 2 compute
+      check ref "compression large pages: pairs survive task completion order"
+        (got == #[largeA, largeB, largeA, largeB].map (fun input => (input, some input)))
     let seen ← state.atomically get
-    check ref s!"compression {kind}: drains the failed batch and reports the first source error"
-      ((match ending with
-        | .error e => e.toString == (IO.userError "first source failure").toString
-        | .ok _ => false) && seen.active.isEmpty &&
-        seen.finished.size == 3 && !seen.started.contains d)
+    check ref s!"compression {kind}: large computations overlap with bounded, distinct cache paths"
+      ((← overlapped.atomically get) == 4 && seen.peak == 2 &&
+        !seen.collision && seen.active.isEmpty && seen.finished.size == 4)
+
+    for (a, b, c) in #[(a, b, c), (largeA, largeB, largeC)] do
+      let state ← Std.Mutex.new ({} : Compressing)
+      let d := "not started after failure".toUTF8
+      let compute := fun input => do
+        let key := Compression.cachePath "." input
+        state.atomically do
+          modify fun s => { s with active := key :: s.active, started := s.started.push input }
+        try
+          if input == a then
+            IO.sleep 20
+            throw (IO.userError "first source failure")
+          if input == b then throw (IO.userError "second source failure")
+          IO.sleep 10
+          return Flate.deflate input
+        finally
+          state.atomically do
+            modify fun s => { s with
+              active := s.active.erase key, finished := s.finished.push input }
+      let ending ← (do
+        if fonts then
+          discard <| Compression.fontZdata none 4 #[0, 1, 2, 3]
+            (#[(a, false), (b, true), (c, false), (d, false)]) 3 compute
+        else
+          discard <| Compression.pageStreams none #[a, b, c, d] 3 compute).toBaseIO
+      let seen ← state.atomically get
+      check ref s!"compression {kind}/{a.size}: finishes the failed batch with the first source error"
+        ((match ending with
+          | .error e => e.toString == (IO.userError "first source failure").toString
+          | .ok _ => false) && seen.active.isEmpty &&
+          seen.finished.size == 3 && !seen.started.contains d)
 
 private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do

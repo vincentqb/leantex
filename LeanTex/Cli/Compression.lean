@@ -104,11 +104,20 @@ private def mapCached (root : Option System.FilePath) (input : α → ByteArray)
     let warm ← prepared.mapM fun (path, job) => do
       return (← readCached? path).map (result job)
     if let some out := (warm.mapM id : Option (Array β)) then return out
-  -- A fully warm batch needs no tasks. Misses still go through the cache
-  -- inside each task, so repeated content can reuse an earlier batch's write.
-  Batch.map limit Prod.fst (fun (path, job) => do
+  let run := fun (path, job) => do
     let z ← deflateAtPath (root.map fun _ => path) (input job) compute
-    return result job z) prepared
+    return result job z
+  let mut out := #[]
+  for batch in Batch.plan (limit - 1) Prod.fst prepared.toList do
+    -- Avoid worker startup for singletons and streams below tokenize's
+    -- 64 KiB larger-table boundary.
+    let done ← if batch.length ≤ 1 || batch.all (fun (_, job) => (input job).size < 65536) then do
+        let answers ← batch.toArray.mapM fun job => (run job).toBaseIO
+        EIO.ofExcept (answers.mapM id)
+      else
+        Batch.map limit Prod.fst run batch.toArray
+    out := out ++ done
+  return out
 
 /-- The driver supplies rendered page bytes in source order. -/
 def pageStreams (root : Option System.FilePath) (pages : Array ByteArray)
