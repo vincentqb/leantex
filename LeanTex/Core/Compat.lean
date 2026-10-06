@@ -945,13 +945,31 @@ private def write (f : St → St) : M Unit :=
 
 /-- Beamer's font and template definitions are local TeX assignments.
 Input wrappers do not introduce a scope; groups and environments do. -/
-private def withBeamerScope (act : M α) : M α := do
-  let st0 ← get
-  let result ← act
-  write fun st => { st with beamerFonts := st0.beamerFonts,
-                            beamerFootline := st0.beamerFootline,
-                            beamerScopes := st0.beamerScopes }
-  return result
+private def closeBeamerScope (saved : St) (result : α × St) : α × St :=
+  (result.1, (write fun st => { st with
+    beamerFonts := saved.beamerFonts
+    beamerFootline := saved.beamerFootline
+    beamerScopes := saved.beamerScopes }) result.2 |>.2)
+
+private def withBeamerScope (act : M α) : M α := fun st =>
+  closeBeamerScope st (act st)
+
+/-- `\begin{document}` runs `\normalsize`, which resets the size-owned
+lengths. This is the state transition the document body really enters. -/
+private def openDocumentBody : M Unit :=
+  write fun st =>
+    let lens := st.lens.filter fun e => !sizeReset e.1
+    { st with inDoc := true, lens := lens, preLens := st.preLens.orElse fun _ => some lens }
+
+private def closeDocumentBody (pos : Pos) (result : Array Raw × St) : Raw × St :=
+  (.env "document" result.1 pos,
+    (write fun st => { st with inDoc := false }) result.2 |>.2)
+
+/-- The document environment's body call and return. Keeping that boundary
+explicit lets a consumed control be followed through its actual enclosing
+environment without unfolding unrelated environment interpreters. -/
+private def rewriteDocumentBody (body : M (Array Raw)) (pos : Pos) : M Raw := fun st =>
+  closeDocumentBody pos (body (openDocumentBody st).2)
 
 /-- The TeX82 primitive control words — a closed, documented list (Knuth,
 The TeXbook, Appendix I marks each primitive in its index; canonically the
@@ -1128,6 +1146,16 @@ argument that decided the discard where one did (`usepackage:url`,
 `Diag.tallySites` counts the sites of one discard and never lumps two. -/
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
+
+/-- Log controls' accounting reads their descriptor, never their arguments. -/
+private def meaningFreeReport (name : String) (pos : Pos) (note : Option String) : M Unit :=
+  match note with
+  | some why => discard s!"\\{name}" why name pos
+  | none => pure ()
+
+private def configSkipReport (name : String) (pos : Pos)
+    (msg : String) (help : Option String) : M Unit :=
+  sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
 
 /-- The preamble proper: the preamble's top level. That is outside the
 document environment, outside a `\begin{document}` hook's replay (routed to
@@ -7064,7 +7092,7 @@ and \\tokens declare the design directly")
     match configSkip.lookup name with
     | some (n, msg, help) =>
       let (_, k) := takeGroups raws start n
-      sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
+      configSkipReport name pos msg help
       return some (#[], k)
     | none =>
     -- A size command at the preamble's top level sets nothing LaTeX keeps:
@@ -7077,8 +7105,7 @@ and \\tokens declare the design directly")
     match meaningFree.lookup name with
     | some (n, note) =>
       let (_, k) := takeGroups raws start n
-      if let some why := note then
-        discard s!"\\{name}" why name pos
+      meaningFreeReport name pos note
       return some (#[], k)
     | none => return none
 
@@ -9199,14 +9226,7 @@ and patterns stand in" p
       else if n == "document" then
         -- Inside the document environment a preamble declaration is a
         -- placement defect; the flag is what the `\usepackage` arm reads.
-        -- `\begin{document}` runs `\normalsize`, which sets the size's
-        -- lengths again (size10.clo), so the preamble's values of them end.
-        write fun st =>
-          let lens := st.lens.filter fun e => !sizeReset e.1
-          { st with inDoc := true, lens := lens, preLens := st.preLens.orElse fun _ => some lens }
-        let body' ← rewriteList inBody body #[] body.toList 0 0
-        write fun st => { st with inDoc := false }
-        return .env n body' p
+        rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) p
       else if n == "frame" then
         -- `Raw.env` carries no argument field, so a frame's `<spec>`, `[opts]`
         -- and `{title}` all arrive at the head of its body, and beamer writes
@@ -9344,7 +9364,7 @@ private theorem meaningFree_routes_exact (name : String) (n : Nat) (note : Optio
     styOptionsRequest name pos raws start = pure none ∧
     rewriteCtrlLaterNamed name pos raws start = (do
       let (_, k) := takeGroups raws start n
-      if let some why := note then discard s!"\\{name}" why name pos
+      meaningFreeReport name pos note
       return some (#[], k)) := by
   simp only [meaningFree, List.mem_cons, List.not_mem_nil, or_false,
     Prod.mk.injEq] at hm
@@ -9377,6 +9397,30 @@ private theorem rewriteCtrl_meaningFree_exact (s : St) (pos : Pos)
   rw [hLater]
   cases note <;> rfl
 
+/-- The descriptor's only state effect, including the dispatcher's guard.
+There is deliberately no source-array or operand parameter. -/
+private def meaningFreeState (s : St) (name : String) (pos : Pos)
+    (note : Option String) : St :=
+  (account name pos s (meaningFreeReport name pos note s).2).2
+
+private def configSkipState (s : St) (name : String) (pos : Pos)
+    (msg : String) (help : Option String) : St :=
+  (account name pos s (configSkipReport name pos msg help s).2).2
+
+private theorem rewriteCtrl_meaningFree_state (s : St) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (name : String) (n : Nat) (note : Option String)
+    (hm : (name, n, note) ∈ meaningFree)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    (rewriteCtrl name pos raws start s).2 = meaningFreeState s name pos note := by
+  obtain ⟨hLit, hCite, hAppendix, hKernel, hSimple, hHooks, hAssign,
+    hNamed, hOptions, hLater⟩ := meaningFree_routes_exact name n note hm pos raws start
+  unfold rewriteCtrl
+  rw [rewriteCtrlAt_named_exact name pos raws start s hd hl
+    hLit hCite hAppendix hKernel hSimple hHooks hAssign, hNamed]
+  simp only [rewriteCtrlLater, hOptions, bind, StateT.bind, pure]
+  rw [hLater]
+  cases note <;> rfl
+
 private theorem rewriteCtrl_configSkip_exact (s : St) (pos : Pos)
     (raws : Array Raw) (start : Nat) (name : String) (n : Nat)
     (msg : String) (help : Option String)
@@ -9388,6 +9432,20 @@ private theorem rewriteCtrl_configSkip_exact (s : St) (pos : Pos)
     Prod.mk.injEq] at hm
   obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
   rw [rewriteCtrl_value_exact, rewriteCtrlAt_named_exact "sloppy" pos raws start s hd hl
+    rfl rfl rfl rfl rfl rfl rfl]
+  rfl
+
+private theorem rewriteCtrl_configSkip_state (s : St) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (name : String) (n : Nat)
+    (msg : String) (help : Option String)
+    (hm : (name, n, msg, help) ∈ configSkip)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    (rewriteCtrl name pos raws start s).2 = configSkipState s name pos msg help := by
+  simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
+    Prod.mk.injEq] at hm
+  obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
+  unfold rewriteCtrl
+  rw [rewriteCtrlAt_named_exact "sloppy" pos raws start s hd hl
     rfl rfl rfl rfl rfl rfl rfl]
   rfl
 
@@ -9432,6 +9490,46 @@ private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
     simp only [List.cons_append, List.length_cons]
     rw [rewriteList, ih]
     congr 1 <;> omega
+
+/-- Literal material surrounding an ordinary body control. Its text is
+arbitrary; there is no command reader whose operands could cross the hole.
+The raw syntax, rather than a test of the rewritten result, states this
+boundary. -/
+inductive LiteralRaws : List Raw → Prop where
+  | nil : LiteralRaws []
+  | word (text : String) (pos : Pos) : LiteralRaws rest →
+      LiteralRaws (.word text pos :: rest)
+  | space : LiteralRaws rest → LiteralRaws (.space :: rest)
+  | par (pos : Pos) : LiteralRaws rest → LiteralRaws (.par pos :: rest)
+  | verb (env text : String) (pos : Pos) : LiteralRaws rest →
+      LiteralRaws (.verb env text pos :: rest)
+
+private theorem rewriteList_literal_prefix (inBody : Bool) (raws out : Array Raw)
+    (pre rest : List Raw) (i : Nat) (hpre : LiteralRaws pre) :
+    rewriteList inBody raws out (pre ++ rest) i 0 =
+      rewriteList inBody raws (out ++ pre.toArray) rest (i + pre.length) 0 := by
+  induction hpre generalizing out i with
+  | nil => simp
+  | word text pos _ ih
+  | space _ ih
+  | par pos _ ih
+  | verb env text pos _ ih =>
+    rw [List.cons_append, rewriteList]
+    all_goals try simp
+    change rewriteList inBody raws (out.push _) (_ ++ rest) (i + 1) 0 = _
+    rw [ih]
+    congr 1
+    · apply Array.toList_inj.mp
+      simp only [Array.toList_append, Array.toList_push,
+        List.append_assoc, List.singleton_append]
+    · omega
+
+private theorem rewriteList_literal_exact (inBody : Bool) (raws out : Array Raw)
+    (rest : List Raw) (i : Nat) (st : St) (hrest : LiteralRaws rest) :
+    rewriteList inBody raws out rest i 0 st = (out ++ rest.toArray, st) := by
+  have h := rewriteList_literal_prefix inBody raws out rest [] i hrest
+  simp only [List.append_nil, rewriteList] at h
+  exact congrFun h st
 
 private theorem rewriteList_control_exact (inBody : Bool) (raws out : Array Raw)
     (name : String) (pos : Pos) (taken rest : List Raw) (i : Nat) (s s' : St)
@@ -9502,6 +9600,37 @@ private theorem rewriteList_configSkip_exact (inBody : Bool) (raws out : Array R
   apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hnames.1 hp
   rw [hnames.2]
   exact Prod.ext hvalue rfl
+
+private theorem rewriteList_meaningFree_body_exact (inBody : Bool)
+    (raws out : Array Raw) (name : String) (n : Nat) (note : Option String)
+    (pos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
+    (i : Nat) (s : St) (hm : (name, n, note) ∈ meaningFree)
+    (hd : s.inDoc = true) (hl : s.inList = false) (hp : s.inPicture = false)
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
+    (hg : GroupPrefix raws (i + pre.length + 1) args
+      (i + pre.length + 1 + taken.length)) :
+    rewriteList inBody raws out (pre ++ .ctrl name pos :: (taken ++ post)) i 0 s =
+      (out ++ pre.toArray ++ post.toArray, meaningFreeState s name pos note) := by
+  rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
+    rewriteList_meaningFree_exact _ _ _ _ _ _ _ _ _ _ _ _ hm hd hl hp hn hg,
+    rewriteCtrl_meaningFree_state _ _ _ _ _ _ _ hm hd hl,
+    rewriteList_literal_exact _ _ _ _ _ _ hpost]
+
+private theorem rewriteList_configSkip_body_exact (inBody : Bool)
+    (raws out : Array Raw) (name : String) (n : Nat) (msg : String)
+    (help : Option String) (pos : Pos) (pre taken post : List Raw)
+    (args : List (Array Raw)) (i : Nat) (s : St)
+    (hm : (name, n, msg, help) ∈ configSkip)
+    (hd : s.inDoc = true) (hl : s.inList = false) (hp : s.inPicture = false)
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
+    (hg : GroupPrefix raws (i + pre.length + 1) args
+      (i + pre.length + 1 + taken.length)) :
+    rewriteList inBody raws out (pre ++ .ctrl name pos :: (taken ++ post)) i 0 s =
+      (out ++ pre.toArray ++ post.toArray, configSkipState s name pos msg help) := by
+  rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
+    rewriteList_configSkip_exact _ _ _ _ _ _ _ _ _ _ _ _ _ hm hd hl hp hn hg,
+    rewriteCtrl_configSkip_state _ _ _ _ _ _ _ _ hm hd hl,
+    rewriteList_literal_exact _ _ _ _ _ _ hpost]
 
 /-- An ordinary body control consumes exactly its declared argument prefix.
 The source cursor agrees with the array the actual dispatcher reads.
@@ -9575,6 +9704,141 @@ theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
   refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl, ?_⟩
   rw [hsource]
   exact rewriteList_unknown_exact inBody raws out pos rest i s hd hl hp
+
+/-- A checkpoint of the production compatibility walk. The source array is
+kept intact because command readers address it by index. `out` is the
+already rewritten prefix; the remaining input is exactly `raws.drop index`.
+The execution state is opaque outside its owner module. -/
+structure RewriteCursor where
+  inBody : Bool
+  raws : Array Raw
+  out : Array Raw := #[]
+  index : Nat := 0
+  private state : St
+  private complete : (Array Raw × St) → (Array Raw × St) := id
+
+/-- The ordinary document-body dispatch, excluding the list-parameter and
+picture interpreters which give the same token a different meaning. -/
+def RewriteCursor.inDocument (cursor : RewriteCursor) : Prop :=
+  cursor.state.inDoc = true ∧ cursor.state.inList = false ∧
+    cursor.state.inPicture = false
+
+/-- The scope permits entry into an ordinary document environment. -/
+def RewriteCursor.outsidePicture (cursor : RewriteCursor) : Prop :=
+  cursor.state.inPicture = false
+
+/-- The ordinary document entry does not inherit a list-parameter scope. -/
+def RewriteCursor.outsideList (cursor : RewriteCursor) : Prop :=
+  cursor.state.inList = false
+
+/-- Replace the unread final document at a checkpoint while retaining its
+already executed state, output prefix and enclosing continuation. This
+boundary is after macro/input execution: operands may themselves have had
+effects before reaching it. -/
+def RewriteCursor.withDocument (cursor : RewriteCursor) (body : Array Raw)
+    (pos : Pos) : RewriteCursor :=
+  { cursor with raws := #[.env "document" body pos], index := 0 }
+
+/-- Resume the actual walk at a checkpoint. This is also the operation used
+by whole-document compatibility completion. -/
+private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
+  cursor.complete (rewriteList cursor.inBody cursor.raws cursor.out
+    (cursor.raws.toList.drop cursor.index) cursor.index 0 cursor.state)
+
+/-- The continuation after an accounted control has consumed its groups.
+Only the command dispatch runs: no raw from the consumed prefix is rewritten
+or appended to the output. -/
+def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
+    (pos : Pos) (consumed : Nat) : RewriteCursor :=
+  { cursor with
+    index := cursor.index + 1 + consumed
+    state := (rewriteCtrl name pos cursor.raws (cursor.index + 1) cursor.state).2 }
+
+/-- Descend into the document environment at this checkpoint. Its return
+continuation restores the real enclosing scope and resumes the containing
+walk. In particular the document's consumed groups do not become a separate
+top-level compatibility run. -/
+def RewriteCursor.enterDocument (cursor : RewriteCursor)
+    (body : Array Raw) (pos : Pos) : RewriteCursor :=
+  { inBody := cursor.inBody
+    raws := body
+    state := (openDocumentBody cursor.state).2
+    complete := fun result =>
+      let (raw, st) := closeBeamerScope cursor.state (closeDocumentBody pos result)
+      cursor.complete (rewriteList cursor.inBody cursor.raws (cursor.out.push raw)
+        (cursor.raws.toList.drop (cursor.index + 1)) (cursor.index + 1) 0 st) }
+
+private theorem rewriteRaw_document_exact (inBody : Bool) (body : Array Raw)
+    (pos : Pos) (st : St) (hp : st.inPicture = false) :
+    rewriteRaw inBody (.env "document" body pos) st =
+      closeBeamerScope st
+        (rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) pos st) := by
+  rw [rewriteRaw]
+  simp only [Parse.inputEnvFile?, String.startsWith_string_iff]
+  simp [withBeamerScope, closeBeamerScope, mathEnvs, pictureEnvs, hp,
+    bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
+
+private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
+    (body : Array Raw) (pos : Pos) (rest : List Raw)
+    (hp : cursor.state.inPicture = false)
+    (hs : cursor.raws.toList.drop cursor.index = .env "document" body pos :: rest) :
+    rewriteCursor cursor = rewriteCursor (cursor.enterDocument body pos) := by
+  have ht : cursor.raws.toList.drop (cursor.index + 1) = rest := by
+    rw [← List.drop_drop, hs]
+    rfl
+  simp only [rewriteCursor, hs]
+  rw [rewriteList]
+  case x_3 => simp
+  case x_4 => simp
+  case x_5 => simp
+  simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ hp,
+    RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody]
+
+private def closeLastDocument (cursor : RewriteCursor) (pos : Pos)
+    (result : Array Raw × St) : Array Raw × St :=
+  let (raw, st) := closeBeamerScope cursor.state (closeDocumentBody pos result)
+  cursor.complete (cursor.out.push raw, st)
+
+private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)
+    (body : Array Raw) (pos : Pos) (hp : cursor.outsidePicture)
+    (hs : cursor.raws.toList.drop cursor.index = [.env "document" body pos]) :
+    rewriteCursor cursor =
+      closeLastDocument cursor pos
+        (rewriteList cursor.inBody body #[] body.toList 0 0
+          (openDocumentBody cursor.state).2) := by
+  rw [rewriteCursor_document_exact cursor body pos [] hp hs]
+  have ht : cursor.raws.toList.drop (cursor.index + 1) = [] := by
+    rw [← List.drop_drop, hs]
+    rfl
+  simp only [rewriteCursor, RewriteCursor.enterDocument, List.drop_zero, ht,
+    rewriteList, closeLastDocument]
+  rfl
+
+private theorem drop_control_rest (raws : Array Raw) (i : Nat)
+    (name : String) (pos : Pos) (taken rest : List Raw)
+    (h : raws.toList.drop i = .ctrl name pos :: (taken ++ rest)) :
+    raws.toList.drop (i + 1 + taken.length) = rest := by
+  rw [Nat.add_assoc, ← List.drop_drop, h, Nat.add_comm 1,
+    List.drop_succ_cons, List.drop_left]
+
+/-- Registered controls erase their operands at the production checkpoint,
+including arbitrary nested raws in those operands. The result is the entire
+remaining walk and its state, not just the control's replacement array. -/
+private theorem rewriteCursor_control_exact (cursor : RewriteCursor)
+    (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
+    (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
+    (hd : cursor.inDocument)
+    (hs : cursor.raws.toList.drop cursor.index = .ctrl name pos :: (taken ++ rest))
+    (hn : args.length = arity)
+    (hg : GroupPrefix cursor.raws (cursor.index + 1) args
+      (cursor.index + 1 + taken.length)) :
+    rewriteCursor cursor =
+      rewriteCursor (cursor.afterControl name pos taken.length) := by
+  obtain ⟨hd, hl, hp⟩ := hd
+  have h := (hc cursor.inBody cursor.raws cursor.out pos args taken rest
+    cursor.index cursor.state hd hl hp hs hn hg).2.1
+  simpa only [rewriteCursor, RewriteCursor.afterControl,
+    drop_control_rest _ _ _ _ _ _ hs] using congrArg cursor.complete h
 
 /-- Emit the gathered running content as one declaration each. -/
 private def flushRunning : M (Array Raw) := do
@@ -9710,18 +9974,30 @@ def executeInputs [Monad m] (reader : InputReader m) (file : String)
     m Executed :=
   executeBy (some reader) file raws provideKeeps #[] [] diags
 
-/-- Finish the compatibility rewrite after execution and file fulfilment.
-The gathered running content lands just before the document, and deferred
-text is translated at its recorded seam without executing it again. -/
-def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
+/-- The production passes before the compatibility walk: overlay inputs,
+live groups, delimiters, columns and overprints. Execution and file effects
+have already happened and are not replayed when this cursor resumes. -/
+def beginRewrite (executed : Executed) : RewriteCursor :=
   let raws := overlayInputs executed.raws
   let go : M (Array Raw) := do
     -- After the conditionals: only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
     let raws := (splitColumnsList raws.toList).toArray
-    let raws ← overprintList raws.toList #[] 0
-    let out ← rewriteList false raws #[] raws.toList 0 0
+    overprintList raws.toList #[] 0
+  let st0 : St :=
+    { executed.state with
+      boundaryOpen := !boundaryRefused raws,
+      wholeDoc := raws.any (· matches .env "document" _ _) }
+  let (raws, st) := go.run st0
+  { inBody := false, raws := raws, state := st }
+
+/-- The production tail after the compatibility walk, shared by whole
+documents and checkpoint completion. -/
+private def finishRewritten (result : Array Raw × St) :
+    Array Raw × Array Diag × Array String :=
+  let go : M (Array Raw) := do
+    let out := result.1
     -- After the idiom rewrite, so a `\parbox` is the box it became.
     let out ← boxRowList #[] out.toList
     let out ← boxRowEmit out
@@ -9772,14 +10048,121 @@ def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array Str
           | none => #[]
         out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
       | none => out ++ running ++ preSide ++ bodySide
-  let st0 : St :=
-    { executed.state with
-      boundaryOpen := !boundaryRefused raws,
-      wholeDoc := raws.any (· matches .env "document" _ _) }
-  let (out, st) := go.run st0
+  let (out, st) := go.run result.2
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   (out, st.diags, st.warned)
+
+/-- Complete a production rewrite checkpoint, including boxes, running
+content, deferred hooks, counters and block hooks. -/
+def finishRewrite (cursor : RewriteCursor) : Array Raw × Array Diag × Array String :=
+  finishRewritten (rewriteCursor cursor)
+
+/-- Finish the compatibility rewrite after execution and file fulfilment.
+The gathered running content lands just before the document, and deferred
+text is translated at its recorded seam without executing it again. -/
+def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
+  finishRewrite (beginRewrite executed)
+
+/-- The checkpoint and completion are the actual whole-document path. -/
+theorem rewriteExecuted_cursor_exact (executed : Executed) :
+    rewriteExecuted executed = finishRewrite (beginRewrite executed) := rfl
+
+/-- Entering the actual document body preserves the whole compatibility
+result, including its enclosing continuation and final diagnostics. -/
+theorem finishRewrite_document_exact (cursor : RewriteCursor)
+    (body : Array Raw) (pos : Pos) (rest : List Raw)
+    (hp : cursor.outsidePicture)
+    (hs : cursor.raws.toList.drop cursor.index = .env "document" body pos :: rest) :
+    finishRewrite cursor = finishRewrite (cursor.enterDocument body pos) :=
+  congrArg finishRewritten (rewriteCursor_document_exact cursor body pos rest hp hs)
+
+/-- Consumed groups cannot reach any later compatibility pass. The entire
+completed result agrees with the continuation after the accounted dispatch,
+including deferred material and the returned diagnostics. -/
+theorem finishRewrite_control_exact (cursor : RewriteCursor)
+    (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
+    (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
+    (hd : cursor.inDocument)
+    (hs : cursor.raws.toList.drop cursor.index = .ctrl name pos :: (taken ++ rest))
+    (hn : args.length = arity)
+    (hg : GroupPrefix cursor.raws (cursor.index + 1) args
+      (cursor.index + 1 + taken.length)) :
+    finishRewrite cursor = finishRewrite (cursor.afterControl name pos taken.length) :=
+  congrArg finishRewritten
+    (rewriteCursor_control_exact cursor name arity hc pos args taken rest hd hs hn hg)
+
+/-- Complete a consumed control's document using only the retained body
+and its registered reporting effect. No operand or operand position is
+read by this completion. The enclosing scope and deferred hooks still run. -/
+def finishMeaningFreeDocument (cursor : RewriteCursor) (name : String)
+    (note : Option String) (pos docPos : Pos) (kept : Array Raw) :
+    Array Raw × Array Diag × Array String :=
+  finishRewritten (closeLastDocument cursor docPos
+    (kept, meaningFreeState (openDocumentBody cursor.state).2 name pos note))
+
+def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
+    (help : Option String) (pos docPos : Pos) (kept : Array Raw) :
+    Array Raw × Array Diag × Array String :=
+  finishRewritten (closeLastDocument cursor docPos
+    (kept, configSkipState (openDocumentBody cursor.state).2 name pos msg help))
+
+/-- The consumed operands cannot be read indirectly through the cursor's
+source field either. The final-document completion reads only the saved
+state, retained output prefix and enclosing continuation. -/
+theorem finishMeaningFreeDocument_source_exact (cursor : RewriteCursor)
+    (body kept : Array Raw) (name : String) (note : Option String) (pos docPos : Pos) :
+    finishMeaningFreeDocument (cursor.withDocument body docPos) name note pos docPos kept =
+      finishMeaningFreeDocument cursor name note pos docPos kept := rfl
+
+theorem finishConfigSkipDocument_source_exact (cursor : RewriteCursor)
+    (body kept : Array Raw) (name msg : String) (help : Option String) (pos docPos : Pos) :
+    finishConfigSkipDocument (cursor.withDocument body docPos) name msg help pos docPos kept =
+      finishConfigSkipDocument cursor name msg help pos docPos kept := rfl
+
+/-- Exact completed document for every consuming row. The surrounding
+literal material is arbitrary, as are the consumed groups and their nested
+syntax. Execution has already run; this is the compatibility-to-elaboration
+boundary. The complete result depends only on `pre ++ post` and the
+descriptor's report, including every later hook and diagnostic. -/
+theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
+    (body : Array Raw) (name : String) (n : Nat) (note : Option String)
+    (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
+    (hm : (name, n, note) ∈ meaningFree)
+    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
+    (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
+    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
+    (hg : GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length)) :
+    finishRewrite cursor =
+      finishMeaningFreeDocument cursor name note pos docPos (pre.toArray ++ post.toArray) := by
+  unfold finishRewrite
+  rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
+  have hbody := rewriteList_meaningFree_body_exact cursor.inBody body #[] name n note
+    pos pre taken post args 0 (openDocumentBody cursor.state).2 hm rfl hl hp
+    hpre hpost hn (by simpa only [Nat.zero_add] using hg)
+  rw [hbody]
+  simp only [Array.empty_append, finishMeaningFreeDocument]
+
+theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
+    (body : Array Raw) (name : String) (n : Nat) (msg : String) (help : Option String)
+    (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
+    (hm : (name, n, msg, help) ∈ configSkip)
+    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
+    (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
+    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
+    (hg : GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length)) :
+    finishRewrite cursor =
+      finishConfigSkipDocument cursor name msg help pos docPos
+        (pre.toArray ++ post.toArray) := by
+  unfold finishRewrite
+  rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
+  have hbody := rewriteList_configSkip_body_exact cursor.inBody body #[] name n msg help
+    pos pre taken post args 0 (openDocumentBody cursor.state).2 hm rfl hl hp
+    hpre hpost hn (by simpa only [Nat.zero_add] using hg)
+  rw [hbody]
+  simp only [Array.empty_append, finishConfigSkipDocument]
 
 /-- Rewrite a whole parsed document. The gathered running content lands just
 before `\begin{document}`, where a declaration belongs.

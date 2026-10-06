@@ -16320,17 +16320,28 @@ def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.Inpu
   let (raws, splitDiags) := settleSplits file raws
   Compat.resumeInput reader context raws splitDiags
 
+/-- The production preparation tail. Picture and macro metadata come from
+the caller's specified scan stage; the completed compatibility walk supplies
+the only source sent to text rewriting and then body elaboration. -/
+def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
+    (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
+    (priorDiags : Array Diag)
+    (rewritten : Array Raw × Array Diag × Array String) : Prepared :=
+  let (raws, compatDiags, warned) := rewritten
+  let (raws, textDiags, warned) := Compat.rewriteText file raws warned
+  { raws := raws, picPre := picScan.pre, picSets := picScan.sets
+    picMacros := picMacros, warned := warned
+    compatDiags := priorDiags ++ compatDiags ++ textDiags
+    sourceTriggers := sourceTriggers }
+
 /-- Prepare a document whose macro and input execution already ran. Scans
 see the fulfilled surface, and compatibility translation continues from
 that execution's state rather than replaying any effects. -/
 def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let picScan := Compat.boundaryScan executed.raws
   let picMacros := macroScan executed.raws
-  let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
-  let (raws, textDiags, warned) := Compat.rewriteText file raws warned
-  { raws := raws, picPre := picScan.pre, picSets := picScan.sets
-    picMacros := picMacros, warned := warned, compatDiags := compatDiags ++ textDiags
-    sourceTriggers := executed.sourceTriggers }
+  prepareRewritten file picScan picMacros executed.sourceTriggers #[]
+    (Compat.rewriteExecuted executed)
 
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
@@ -16343,12 +16354,8 @@ def prepare (file : String) (raws : Array Raw) : Prepared :=
   let executed := Compat.execute file raws
     (provideKeeps := renderedBuiltins ++ structuralNames ++
       builtinEnvNames.map Tcolorbox.bindingName)
-  let (raws, compatDiags, warned) := Compat.rewriteExecuted executed
-  let (raws, textDiags, warned) := Compat.rewriteText file raws warned
-  { raws := raws, picPre := picScan.pre, picSets := picScan.sets
-    picMacros := picMacros, warned := warned
-    compatDiags := splitDiags ++ compatDiags ++ textDiags
-    sourceTriggers := executed.sourceTriggers }
+  prepareRewritten file picScan picMacros executed.sourceTriggers splitDiags
+    (Compat.rewriteExecuted executed)
 
 /-- What a source's own pictures could ask a face for. `draws` is whether an
 environment the native subset draws stands anywhere in the rewritten tree;
