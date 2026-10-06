@@ -5185,6 +5185,9 @@ private structure B where
   declared `[allowframebreaks]`. `none` outside a frame — an article page
   close is flow, never a spill to report. -/
   frameBreak : Option Bool := none
+  /-- Opening environment of the current logical frame. It stays with the
+  frame across overlay collection and every continuation page. -/
+  frameSource : Option Span := none
   /-- The open frame has already been reported once (W0384): a frame three
   pages tall is one loss, named once, not one per page close. -/
   spillWarned : Bool := false
@@ -5710,6 +5713,7 @@ private def B.warnSpill (b : B) (over : Sp) : B :=
     { b with diags := b.diags.push (Diag.of .W0384
         (s!"{who} is {over.toPtString}pt taller than its page; " ++
           "it continues on the next page")
+        (span := b.frameSource)
         (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
         (subject := b.curFrame.map toString))
              spillWarned := true }
@@ -6765,7 +6769,7 @@ private inductive Op where
   the builder knows which mid-frame page close is a declared continuation
   and which is an overflow to report (`warnSpill_accounts`). Cleared at the
   frame's `.brk`. -/
-  | frameOpen (breakable : Bool)
+  | frameOpen (breakable : Bool) (source : Option Span)
   /-- A colour bar behind the line just placed — a titled block's title.
   Unlike the frame's bar it stands mid-page: `x` across `w` (the measure
   in force where the block stands), one `pad` above the line's ink top to
@@ -6932,6 +6936,8 @@ private structure Acc where
   frame. Threaded by `run`'s driver off the one numbering — nothing in the
   walk counts. -/
   frameNum : Option Nat := none
+  /-- Source declaration, before an overlay makes several collected frames. -/
+  frameSource : Option Span := none
   /-- Countable frames elapsed at this point, read off the same numbering
   (the last `some` the driver threaded): a section page's progress bar is
   the deck position. -/
@@ -9208,7 +9214,7 @@ The shared band rule keeps that furniture choice separate from counting
 the standout, and selects an explicitly restored standout note. -/
 private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
   let a := a.pageBreak
-  let a := { a with ops := a.ops.push (.frameOpen breakable) }
+  let a := { a with ops := a.ops.push (.frameOpen breakable a.frameSource) }
   if a.footAllowed then
     let band := a.chromeFoot standout
     let foot := Op.foot band a.frameNum
@@ -10643,7 +10649,7 @@ private inductive StagedOp where
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | pageGround (bg : Option Ir.Color)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
-  | frameOpen (breakable : Bool)
+  | frameOpen (breakable : Bool) (source : Option Span)
   | blockBar (color : Ir.Color) (pad x w : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
@@ -11017,13 +11023,14 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
       b := { b.finishPage b.closingOwed with
-               chrome := none, frameBreak := none, spillWarned := false }
+               chrome := none, frameBreak := none, frameSource := none, spillWarned := false }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
                     openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
-                    frameBreak := none, spillWarned := false, opened := false }
-  | .frameOpen br => b := { b with frameBreak := some br, spillWarned := false }
+                    frameBreak := none, frameSource := none, spillWarned := false, opened := false }
+  | .frameOpen br source =>
+    b := { b with frameBreak := some br, frameSource := source, spillWarned := false }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
@@ -12693,18 +12700,21 @@ slot yields in place: shorten the content or drop a slot"))
   let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
-  -- One report per problem: the same missing glyph or overfull shape in
-  -- thirty code blocks is one thing to fix, not thirty lines of console.
-  -- W0005 is spanless and always the same words, so its collapse keeps the
-  -- count: the number is the only signal of scale the warning has.
-  let mut seen : Std.HashSet (String × String) := {}
+  -- Repeated overlay pages can report one source site several times.
+  -- Distinct declarations, including expansions at the same coordinates,
+  -- keep their own report and their complete provenance.
+  let mut seen : Std.HashSet
+      (String × String × Option String × Option (String × Nat × Nat ×
+        List (Nat × String) × Option String)) := {}
   let mut unique : Array Diag := #[]
-  let overfull := diags.foldl (fun n d => if d.code == "W0005" then n + 1 else n) 0
+  let overfull := diags.foldl (fun n d =>
+    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
   for d in diags do
-    let key := (d.code, d.message)
+    let key := (d.code, d.message, d.subject, d.span.map fun s =>
+      (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command))
     unless seen.contains key do
       seen := seen.insert key
-      if d.code == "W0005" && overfull > 1 then
+      if d.code == "W0005" && d.span.isNone && overfull > 1 then
         unique := unique.push
           { d with message := s!"{overfull} overfull lines (no feasible break)" }
       else
@@ -12799,7 +12809,8 @@ lets the background contract inspect the exact ops placement consumes, without
 re-running another IR walk or adding background state to the runtime builder. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
-    (k : Array StagedOp → B → (StepSt → Out) → α) : α := Id.run do
+    (k : Array StagedOp → B → (StepSt → Out) → α)
+    (frameSpans : Array (Nat × Span) := #[]) : α := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
   -- owns.
@@ -12919,7 +12930,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     match blk with
     | .frame title standout valign breakable body =>
       let num := nums[i]?.getD none
-      acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
+      acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone
+                        frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
       let steps := Ir.frameSteps blk
       if steps ≤ 1 then
         -- A one-page frame still evaluates its selectors: <0> covers at step one.
@@ -12961,7 +12973,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .pageStyle bg c => .pageStyle bg c
     | .pageGround bg => .pageGround bg
     | .titleBar color pad strut => .titleBar color pad strut
-    | .frameOpen br => .frameOpen br
+    | .frameOpen br source => .frameOpen br source
     | .blockBar color pad x w => .blockBar color pad x w
     | .hrule color th => .hrule color th
     | .tableRule th x w segs => .tableRule th x w segs
@@ -13093,9 +13105,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
 /-- The pre-marks pipeline: the staged ops, placement, final close, and
 furniture pass. -/
 private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) : Out :=
-  withLayoutOps geom fs pats doc imgs fun staged b0 post =>
-    post (placeFrom fs imgs staged { b := b0 } 0)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
+  withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
+    post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans
 
 /-- The precondition for an all-pages background claim: no collected palette
 epoch removes `bg`. This observes the same staging seam as `run`, including
@@ -13120,11 +13132,15 @@ def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patte
 the caller via `Geom.ofPage`, so layout has one source of truth. Printer's
 cut marks, when declared, join every shipped face here — the marks seam
 (`addMarks`) after the furniture pass, so spilled, stepped, and chrome
-pages alike carry the same eight, painted over any background. -/
+pages alike carry the same eight, painted over any background.
+`frameSpans` supplies opening-environment provenance keyed by top-level
+indices in `(pdfView doc).body`, before overlay expansion. The caller has
+the source syntax; layout carries each supplied span unchanged through
+every continuation of that frame. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
-    (imgs : Image.Store := {}) : Out :=
+    (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
   let (doc, diags) := resolveDocMath fs doc
-  let out := addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
+  let out := addMarks (runCore geom fs pats doc imgs frameSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
 
 /-- Page equality is the projection of the shared IR normalization fixed point. -/
