@@ -62,6 +62,7 @@ import LeanTex.Core.Layout
 import LeanTex.Core.Layout.FramePartition
 import LeanTex.Core.Layout.SpacingContract
 import LeanTex.Core.Layout.InkContract
+import LeanTex.Core.Layout.InkOutput
 import LeanTex.Core.Check
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct

@@ -13,6 +13,7 @@ import LeanTex.Core.Diag
 import LeanTex.Core.Struct
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
+import LeanTex.Core.Layout.LabelAudit
 
 namespace LeanTex.Core.Layout
 
@@ -822,6 +823,9 @@ structure LineOut where
   the run channel (`Seg.run`'s `Attribution`) names it apart, atom by
   atom. -/
   leaf : Option Nat := none
+  /-- A collected picture label's occurrence and glyph reserve, carried
+  with its baseline through fitting, page movement and furniture. -/
+  pictureLabel : Option LabelAudit.Stamp := none
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -9010,11 +9014,45 @@ def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Bool :=
   | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
 
+/-- Read each painted run in its own face, size and raise against the
+producer's reserve. Missing outline answers are checked independently. -/
+def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stamp) :
+    LabelAudit.Observation :=
+  { stamp := stamp
+    known := !labelGlyphUnknown fs line.size line.segs
+    bounded := line.segs.all fun seg => match seg with
+      | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
+        let font := fs.get idx
+        let size := if sz == 0 then line.size else sz
+        glyphs.all fun g => match font.yExtent g.1 with
+          | none => true
+          | some (lo, hi) =>
+            decide (hi * size / (font.unitsPerEm : Int) + raise ≤ stamp.above ∧
+              (-lo) * size / (font.unitsPerEm : Int) - raise ≤ stamp.below)
+      | .image _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+        | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => true }
+
+/-- This census reads the final page lines, after placement and furniture;
+it cannot count a producer result which failed to reach a page. -/
+def labelObservations (fs : FontSet) (pages : Array PageOut) :
+    Array LabelAudit.Observation :=
+  pages.flatMap fun page =>
+    page.lines.filterMap fun line => line.pictureLabel.map (observeLabel fs line)
+
+/-- Reconcile the independent pre-placement request census with the actual
+page lines. Geometry and text are untouched; every failed check retains
+the complete diagnostic source. -/
+def auditLabelInk (fs : FontSet) (requests : Array LabelAudit.Request) (out : Out) : Out :=
+  { out with diags := LabelAudit.finish requests (labelObservations fs out.pages) out.diags }
+
 /-- The first line actually emitted for a label and its complete diagnostic
 account. The box argument is the canonical metric read by reservation. -/
 structure LabelEmission where
   line? : Option LineOut := none
   diags : Array Diag := #[]
+  source : Option Span := none
+  lineCount : Nat := 0
+  reserved : Ir.Pic.Box := ((0, 0), (0, 0))
 
 /-- Only add the label key when the producer has not already identified its
 own subject. Its code, trigger, recovery and message remain unchanged. -/
@@ -9060,7 +9098,8 @@ def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
     else ds
   match result.line? with
   | none =>
-    { diags := if labelTextBlank content || labelFailureNamed content ds then ds else
+    { source := result.source, lineCount := result.lineCount, reserved := reserved
+      diags := if labelTextBlank content || labelFailureNamed content ds then ds else
         ds.push {
           kind := .E0395
           message := "picture label produced no line",
@@ -9080,7 +9119,8 @@ def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
           message := "picture label extends beyond its reserved glyph box",
           span := result.source
           subject := some key }
-    { line? := some (labelLine place x y align ink segs size leaf), diags := ds }
+    { line? := some (labelLine place x y align ink segs size leaf), diags := ds
+      source := result.source, lineCount := result.lineCount, reserved := reserved }
 
 /-- Emit the line selected by the actual producer, checking it against the
 actual canonical reservation. No correctness premise is supplied by the
@@ -11639,7 +11679,7 @@ private inductive StagedOp where
   | colNext
   | colClose
   | setLogo (content : Array Ir.Inline)
-  | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat)
+  | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
   | floatOpen
   | floatClose
   | anchor (slug : String)
@@ -11660,6 +11700,43 @@ private def StagedOp.SourceBound (n : Nat) : StagedOp → Prop
   | .para j _ => j.SourceBound n
   | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
   | _ => False
+
+-- conserves: none — reads provenance through the generic inline fold.
+private def labelSource (content : Array Ir.Inline) : Option Span :=
+  Ir.foldInlines (fun source inline => match inline with
+    | .located span _ => source.orElse (fun _ => some span)
+    | .text _ | .math _ _ | .formula _ _ _ | .styled _ _
+      | .colored _ _ _ | .role _ _ | .link _ _ | .label _
+      | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
+      | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
+      | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
+      | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => source)
+    none content
+
+/-- Occurrences in a selected picture, indexed before placement. Matching
+uses this identity as well as the label key, so equal text at another
+source site cannot stand in for a missing line. -/
+def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
+    Array LabelAudit.Request :=
+  (pic.shapes.mapIdx fun i shape => match shape with
+    | .label _ _ content _ _ _ =>
+      some ({ origin := (origin, i)
+              key := Ir.plainText content
+              source := labelSource content
+              blank := labelTextBlank content } : LabelAudit.Request)
+    | .rect _ _ _ _ _ | .circle _ _ _ _ _ | .frame _ _ _ _ _ _
+      | .edge _ _ _ => none).filterMap id
+
+private def stagedLabelRequests (ops : Array StagedOp) : Array LabelAudit.Request :=
+  ops.flatMap fun op => match op with
+    | .picture _ pic _ origin => pictureLabelRequests origin pic
+    | .skip _ | .skipAlt _ _ | .bodyOpen _ | .brk | .pageOpening _
+      | .pageStyle _ _ | .pageGround _ | .titleBar _ _ _ | .frameOpen _ _ _
+      | .frameClose | .blockBar _ _ _ _ | .hrule _ _ | .tableRule _ _ _ _
+      | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .linkOpen _
+      | .linkClose | .colOpen _ | .colNext | .colClose | .setLogo _
+      | .floatOpen | .floatClose | .anchor _ | .slotOpen | .slotClose _
+      | .anchorRule _ | .noInterline => #[]
 
 /-- One column of a row as placed: where its ink starts in the page's
 arrays, its first baseline when a picture opened it (a label line is no
@@ -11737,7 +11814,8 @@ structure PictureEmission where
 label shaping and diagnostic accounting share the `emitLabel` result. -/
 def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (out : PictureEmission) (shape : Ir.Pic.Shape) : PictureEmission := Id.run do
+    (out : PictureEmission) (shape : Ir.Pic.Shape)
+    (origin : Option (Nat × Nat) := none) : PictureEmission := Id.run do
   match shape with
   | .rect rx ry rw rh color =>
     let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
@@ -11777,15 +11855,31 @@ def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     let label := emitLabel fs imgs geom xHeight leaf place lx ly content color scale align
     let lines := match label.line? with
       | none => out.lines
-      | some line => out.lines.push line
+      | some line =>
+        let line := match origin with
+          | none => line
+          | some id => { line with pictureLabel := some {
+              origin := id
+              key := Ir.plainText content
+              source := label.source
+              above := line.y - (place.toPage label.reserved.2).2
+              below := (place.toPage label.reserved.1).2 - line.y
+              lineCount := label.lineCount } }
+        out.lines.push line
     return { out with lines := lines, diags := out.diags ++ label.diags }
 
 /-- The actual picture emitter in source-shape order. Its fold state keeps
 label lines and their diagnostic account together. -/
 def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (pic : Ir.Pic.Picture) : PictureEmission :=
-  pic.shapes.foldl (emitPictureShape fs imgs geom xHeight leaf place) {}
+    (pic : Ir.Pic.Picture) (origin : Option Nat := none) : PictureEmission :=
+  match origin with
+  | none => pic.shapes.foldl (fun out shape =>
+      emitPictureShape fs imgs geom xHeight leaf place out shape) {}
+  | some id =>
+    (pic.shapes.foldl (fun (state : Nat × PictureEmission) shape =>
+      (state.1 + 1, emitPictureShape fs imgs geom xHeight leaf place state.2 shape
+        (some (id, state.1)))) (0, {})).2
 
 /-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
 the picture's height, then every shape through one affine transform —
@@ -11794,7 +11888,7 @@ fills and paths as riders, label lines riding the picture's own shrink
 case analysis stays inside the elaboration budget and the page facts
 (`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
 private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
-    (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) : B := Id.run do
+    (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) : B := Id.run do
   -- The picture's bottom edge is a baseline (TikZ's default: the lower end
   -- of the picture on the baseline), so the next line stands a leading
   -- below it, as TeX's `\baselineskip` from a box of depth zero does.
@@ -11847,7 +11941,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- One transform for everything the picture ships: `Pic.Place` is the
   -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
-  let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic
+  let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
   b := ({ b with pageStretch := stretch
                  diags := b.diags ++ emitted.diags }.pushSibling
     (fills := emitted.fills) (paths := emitted.paths)).pushLabels emitted.lines above fils
@@ -12185,9 +12279,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         j.markerSegs.isNone && j.rule.isNone then
       prose := max prose breaks.size
     b := placePara fs (b.keepHeading j breaks.size) j breaks
-  | .picture x pic leaf =>
+  | .picture x pic leaf origin =>
     let before := b.cur.lines.size
-    b := placePicture fs imgs b x pic leaf
+    b := placePicture fs imgs b x pic leaf origin
     -- A picture that opens a column is the column's first baseline; its
     -- label lines are not.
     if let some save := colSaves.back? then
@@ -12494,8 +12588,8 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     | exact attachNotes_mem _ ns nb hnb l hl
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
-    PagesExtend b (placePicture fs imgs b x pic leaf) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    PagesExtend b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
@@ -12507,9 +12601,10 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
        done)
 
 private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (h : b.noBreak = true) :
-    (placePicture fs imgs b x pic leaf).pages = b.pages ∧
-      (placePicture fs imgs b x pic leaf).noBreak = true := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
+    (h : b.noBreak = true) :
+    (placePicture fs imgs b x pic leaf origin).pages = b.pages ∧
+      (placePicture fs imgs b x pic leaf origin).noBreak = true := by
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
@@ -12713,7 +12808,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | exact placeLine_noBreak (h := h) ..
     | (rw [keepHeading_noBreak _ _ _ h]; exact placePara_noBreak _ _ _ _ h)
     | exact placePara_noBreak _ _ _ _ h
-    | exact placePicture_noBreak _ _ _ _ _ _ h
+    | exact placePicture_noBreak _ _ _ _ _ _ _ h
     | exact placeSlot_noBreak (h := h) ..
     | exact alignRow_pages_noBreak (h := h) ..
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
@@ -12853,8 +12948,8 @@ private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
   exact bgStep_fitCommit ..
 
 private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
-    BgStep b (placePicture fs imgs b x pic leaf) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    BgStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
@@ -13008,7 +13103,7 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
     | .skip g => keepExt b fs imgs staged (k + 1) (glue + g.width)
     | .skipAlt g _ => keepExt b fs imgs staged (k + 1) (glue + g.width)
     | .anchor _ => keepExt b fs imgs staged (k + 1) glue
-    | .picture _ pic _ =>
+    | .picture _ pic _ _ =>
       let ((_, py0), (_, py1)) := pictureBox b.geom fs imgs b.xHeight pic
       glue + inkClearance + (py1 - py0)
     | .para j t =>
@@ -13543,8 +13638,8 @@ private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
   split <;> exact FrameStep.of_eq rfl rfl
 
 private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
-    FrameStep b (placePicture fs imgs b x pic leaf) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    FrameStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
@@ -13610,7 +13705,7 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
   | para j task =>
     simp only [stepStaged, Id.run, Id, pure]
     split <;> exact hb.step ((frameStep_keepHeading ..).trans (frameStep_placePara ..))
-  | picture x pic leaf =>
+  | picture x pic leaf origin =>
     simp only [stepStaged, Id.run, Id, pure]
     repeat' split
     all_goals exact hb.step (frameStep_placePicture ..)
@@ -14042,8 +14137,8 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
   exact named.step (reflowStep_paraLines fs j breaks (_, 0, true))
 
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
-    ReflowStep b (placePicture fs imgs b x pic leaf) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    ReflowStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
@@ -14254,6 +14349,7 @@ structure Shipped where
   measure-band check's. -/
   diags : Array Diag
   paragraphBreaks : Array ParagraphBreaks := #[]
+  labelRequests : Array LabelAudit.Request := #[]
   doc : Doc
   geom : Geom
   xHeight : Sp
@@ -15487,7 +15583,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
-  let staged : Array StagedOp := accF.ops.map fun op =>
+  let staged : Array StagedOp := accF.ops.mapIdx fun origin op =>
     match op with
     | .skip g => .skip g
     | .skipAlt l sh => .skipAlt l sh
@@ -15513,7 +15609,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .colNext => .colNext
     | .colClose => .colClose
     | .setLogo c => .setLogo c
-    | .picture x pic leaf => .picture x pic leaf
+    | .picture x pic leaf => .picture x pic leaf origin
     | .floatOpen => .floatOpen
     | .floatClose => .floatClose
     | .anchor sl => .anchor sl
@@ -15610,6 +15706,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       footGap := b.footGap
       diags := shipDiags
       paragraphBreaks := b.paragraphBreaks
+      labelRequests := stagedLabelRequests staged
       doc := doc
       geom := geom
       xHeight := xHeight
@@ -15672,10 +15769,15 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
   apply (close _ _ _ ?_).pages
   apply sourceBound_placeFrom
   · intro sop hs
-    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
-    have ho : op.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
-      apply sourceBound_trailing _ ?_ op hop
+    obtain ⟨i, hi, he⟩ := Array.mem_mapIdx.mp hs
+    rw [← he]
+    have bound := sourceBound_trailing (n := (Struct.ofDoc (pdfView doc)).leaves.size)
+      _ ?collected _ (Array.getElem_mem hi)
+    case collected =>
       exact sourceBound_collected _ _ _ _ _ hp rfl rfl (Nat.le_refl _)
+    generalize hop : (_ : Array Op)[i]'hi = op
+    have ho : op.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
+      simpa only [hop] using bound
     cases op <;> simp only [StagedOp.SourceBound, Op.SourceBound] at ho ⊢
     all_goals exact ho
   · exact ⟨by simp, by simp, rfl, rfl, rfl⟩
@@ -15685,10 +15787,16 @@ private def frameOpeningsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen
   withLayoutOps geom fs pats doc imgs (fun staged _ _ =>
     staged.filterMap StagedOp.frameOpening?) frameSpans
 
+private def labelRequestsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
+    Array LabelAudit.Request :=
+  withLayoutOps geom fs pats doc imgs (fun staged _ _ => stagedLabelRequests staged) frameSpans
+
 /-- The pre-marks pipeline consumes the shipment value directly. -/
 private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
-  runPost (shipCore geom fs pats doc imgs frameSpans)
+  let sh := shipCore geom fs pats doc imgs frameSpans
+  auditLabelInk fs sh.labelRequests (runPost sh)
 
 /-- The precondition for an all-pages background claim: no collected palette
 epoch removes `bg`. This observes the same staging seam as `run`, including
@@ -15719,6 +15827,14 @@ def frameOpenings (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) :
     Array FrameOpening :=
   frameOpeningsCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
+
+/-- Label occurrences selected by the actual collector's resolved PDF view
+and overlay expansion. This census precedes pagination and is independent
+of which label lines survive into the final pages. -/
+def labelRequests (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) :
+    Array LabelAudit.Request :=
+  labelRequestsCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
 /-- Inspect the same resolved document that the public layout entry sets. -/
 def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
@@ -15832,6 +15948,7 @@ private theorem sourceBound_run (geom : Geom) (fs : FontSet)
       Struct.ofDoc (pdfView doc) := by
     simp only [Struct.ofDoc, he]
   intro p hpage l hline hf
+  simp only [run, runCore, addMarks, auditLabelInk] at hpage
   obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hpage
   have hs := sourceBound_runPost _
     (shipCore_source geom fs pats (resolveDocMath fs doc).1 imgs frameSpans hp)
@@ -15853,6 +15970,95 @@ theorem lines_attributed_covers (geom : Geom) (fs : FontSet)
   · exact h
   · exact False.elim (hi (noGlyph_glyphChars l h))
 
+/-- The request census belongs to collection, before any placement step.
+The shipment carries that same value through its final close. -/
+theorem ship_labelRequests_projects (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    (ship geom fs pats doc imgs frameSpans).labelRequests =
+      labelRequests geom fs pats doc imgs frameSpans := by
+  rfl
+
+/-- Print marks change fills only; the label audit reads exactly the
+lines in the public output after all page and furniture placement. -/
+theorem run_labelObservations_projects (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    labelObservations fs (run geom fs pats doc imgs frameSpans).pages =
+      labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages := by
+  simp only [run, runCore, ship, addMarks, auditLabelInk, labelObservations,
+    Array.flatMap_map]
+
+/-- Each selected occurrence is reconciled with the actual final pages.
+No producer or placement correctness premise is assumed. The geometry
+ adapter in `InkOutput` turns the successful checks into outline bounds. -/
+theorem run_label_accounts (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (r : LabelAudit.Request)
+    (hr : r ∈ labelRequests geom fs pats doc imgs frameSpans) :
+    LabelAudit.accounted r (labelObservations fs (run geom fs pats doc imgs frameSpans).pages)
+      (run geom fs pats doc imgs frameSpans).diags := by
+  rw [run_labelObservations_projects]
+  have hr' : r ∈ (ship geom fs pats doc imgs frameSpans).labelRequests := by
+    rw [ship_labelRequests_projects]
+    exact hr
+  have h := LabelAudit.finish_accounts
+    (ship geom fs pats doc imgs frameSpans).labelRequests
+    (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+    (runPost (ship geom fs pats doc imgs frameSpans)).diags r hr'
+  apply LabelAudit.accounted_mono _ _ _ _ h
+  intro d hd
+  simpa only [run, runCore, ship, addMarks, auditLabelInk] using
+    (Array.mem_append.mpr (Or.inr hd) :
+      d ∈ (resolveDocMath fs doc).2 ++
+        LabelAudit.finish (ship geom fs pats doc imgs frameSpans).labelRequests
+          (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+          (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+
+/-- Every final label line is checked, including a repeated occurrence.
+Checking a different line with the same key never pays for this line. -/
+theorem run_label_observed_accounts (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (o : LabelAudit.Observation)
+    (ho : o ∈ labelObservations fs (run geom fs pats doc imgs frameSpans).pages) :
+    LabelAudit.Observed o (run geom fs pats doc imgs frameSpans).diags := by
+  rw [run_labelObservations_projects] at ho
+  have h := LabelAudit.finish_observed_accounts
+    (ship geom fs pats doc imgs frameSpans).labelRequests
+    (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+    (runPost (ship geom fs pats doc imgs frameSpans)).diags o ho
+  apply LabelAudit.Observed.mono _ _ _ h
+  intro d hd
+  simpa only [run, runCore, ship, addMarks, auditLabelInk] using
+    (Array.mem_append.mpr (Or.inr hd) :
+      d ∈ (resolveDocMath fs doc).2 ++
+        LabelAudit.finish (ship geom fs pats doc imgs frameSpans).labelRequests
+          (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+          (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+
+/-- Unresolved outlines on any shipped label are named even when another
+loss, including truncation, already names the same label and source. -/
+theorem run_label_unknown_named (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (o : LabelAudit.Observation)
+    (ho : o ∈ labelObservations fs (run geom fs pats doc imgs frameSpans).pages)
+    (hu : o.known = false) :
+    LabelAudit.named o.stamp.key o.stamp.source .W0394
+      (run geom fs pats doc imgs frameSpans).diags := by
+  rw [run_labelObservations_projects] at ho
+  have h := LabelAudit.finish_unknown_named
+    (ship geom fs pats doc imgs frameSpans).labelRequests
+    (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+    (runPost (ship geom fs pats doc imgs frameSpans)).diags o ho hu
+  apply LabelAudit.named_mono _ _ _ _ _ h
+  intro d hd
+  simpa only [run, runCore, ship, addMarks, auditLabelInk] using
+    (Array.mem_append.mpr (Or.inr hd) :
+      d ∈ (resolveDocMath fs doc).2 ++
+        LabelAudit.finish (ship geom fs pats doc imgs frameSpans).labelRequests
+          (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+          (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+
 /-- Every code and subject reported by the actual shipment remains named
 after furniture, diagnostic deduplication, math diagnostics and print
 marks. This is the public bridge for a placement diagnostic invariant. -/
@@ -15864,11 +16070,16 @@ theorem shipment_diags_covers (geom : Geom) (fs : FontSet) (pats : Option Hyphen
   intro d hd
   obtain ⟨e, he, hc, hs⟩ := runPost_diags_covers
     (ship geom fs pats doc imgs frameSpans) d hd
+  have kept := LabelAudit.finish_keeps
+    (ship geom fs pats doc imgs frameSpans).labelRequests
+    (labelObservations fs (runPost (ship geom fs pats doc imgs frameSpans)).pages)
+    _ e he
   refine ⟨e, ?_, hc, hs⟩
-  simpa only [run, runCore, ship, addMarks] using
-    (Array.mem_append.mpr (Or.inr he) :
+  simpa only [run, runCore, ship, addMarks, auditLabelInk] using
+    (Array.mem_append.mpr (Or.inr kept) :
       e ∈ (resolveDocMath fs doc).2 ++
-        (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+        (auditLabelInk fs (ship geom fs pats doc imgs frameSpans).labelRequests
+          (runPost (ship geom fs pats doc imgs frameSpans))).diags)
 
 private theorem shipCore_frames (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
@@ -15974,7 +16185,7 @@ theorem frame_pages_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) =
       (ship geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) := by
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_frames_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Running furniture and cut marks preserve the source/step partition
@@ -15987,7 +16198,7 @@ theorem frame_origins_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphe
         (fun p => (p.frameOrigin, p.frame, p.foot)) =
       (ship geom fs pats doc imgs frameSpans).pages.map
         (fun p => (p.frameOrigin, p.frame, p.foot)) := by
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_frameOrigins_projects
       (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
@@ -16033,7 +16244,7 @@ theorem page_lifecycle_projects (geom : Geom) (fs : FontSet) (pats : Option Hyph
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map (·.pageState) =
       (ship geom fs pats doc imgs frameSpans).pages.map (·.pageState) := by
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_lifecycle_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Attribution crosses both postlude passes of the actual public run:
@@ -16046,7 +16257,7 @@ theorem lines_attributed_projects (geom : Geom) (fs : FontSet)
         (fun p => p.lines.filter (fun l => l.leaf.isSome)) =
       (ship geom fs pats doc imgs frameSpans).pages.map
         (fun p => p.lines.filter (fun l => l.leaf.isSome)) := by
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_attributed_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Counted body lines cross the actual postlude and print-mark passes
@@ -16056,7 +16267,7 @@ theorem lines_counted_projects (geom : Geom) (fs : FontSet)
     (frameSpans : Array (Nat × Span)) :
     (run geom fs pats doc imgs frameSpans).pages.map (fun p => p.lines.filter (·.counted)) =
       (ship geom fs pats doc imgs frameSpans).pages.map (fun p => p.lines.filter (·.counted)) := by
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def] using
     runPost_counted_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Page equality is the projection of the shared IR normalization fixed point. -/
@@ -16091,7 +16302,8 @@ private theorem runCore_bg
       simp at h
     · exact h
   intro p hp
-  unfold runCore shipCore withLayoutOps at hp
+  change p ∈ (runPost (shipCore geom fs pats doc imgs)).pages at hp
+  unfold shipCore withLayoutOps at hp
   unfold pageGroundsDeclaredCore withLayoutOps at hepoch
   dsimp only [Id.run, bind, pure, Id] at hp hepoch
   obtain ⟨q, hq, hfills, -, -, -, -⟩ := runPost_pages _ p hp
@@ -16144,8 +16356,11 @@ theorem page_background_survives
         f.x = -geom.bleed ∧ f.y = -geom.bleed ∧ f.w = geom.pageW + 2 * geom.bleed ∧
           f.h = geom.pageH + 2 * geom.bleed := by
   intro p hp
-  unfold run at hp
-  obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
+  change p ∈ (addMarks (runCore geom fs pats (resolveDocMath fs doc).1 imgs)
+    (markFillsOf geom (resolveDocMath fs doc).1)).pages at hp
+  obtain ⟨p0, hp0, hpf⟩ := addMarks_mem
+    (runCore geom fs pats (resolveDocMath fs doc).1 imgs)
+    (markFillsOf geom (resolveDocMath fs doc).1) p hp
   obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats (resolveDocMath fs doc).1 imgs hbg hepoch p0 hp0
   have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
   have hfp : f ∈ p.fills.toList := by
@@ -16907,7 +17122,7 @@ private theorem run_ink_projects (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
     (run geom fs none doc).pages.map (fun p => p.lines.toList.filter inkLine) =
       (ship geom fs none doc).pages.map (fun p => paintedInk fs p.lines) := by
   have hf : (shipCore geom fs none (resolveDocMath fs doc).1 {}).fs = fs := by rfl
-  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def,
+  simpa only [run, runCore, ship, addMarks, auditLabelInk, Array.map_map, Function.comp_def,
     paintedInk, hf] using
     runPost_ink_projects (shipCore geom fs none (resolveDocMath fs doc).1 {})
 
@@ -16969,7 +17184,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 -- Exact equality retains colour spellings and source provenance, which
 -- the display-oriented BEq instances intentionally omit.
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
-deriving instance DecidableEq for MacroOrigin, Pos, Span, Diag
+deriving instance DecidableEq for Diag
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
 deriving instance DecidableEq for NoteBlock, DisplayJob

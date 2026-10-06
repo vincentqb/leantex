@@ -2,6 +2,7 @@ import Tests.Support
 import Tests.CliFoundationInterface
 import Tests.DiagInterface
 import Tests.LeafInterfaces
+import Tests.MathInterface
 import Tests.Batch
 import Tests.Compression
 import Tests.BrowserFaceBatch

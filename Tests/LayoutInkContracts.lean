@@ -1,4 +1,4 @@
-import LeanTex.Core.Layout.InkContract
+import LeanTex.Core.Layout.InkOutput
 import Tests.Support
 
 namespace Tests.LayoutInkContracts
@@ -175,6 +175,97 @@ def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Fo
       (ds.any fun d => d.kind == code && d.span.any fun s =>
         s.file == "label.tex" && s.pos.line == 7 && s.pos.col == 4 &&
           s.pos.origins == [⟨2, "caption"⟩] && s.pos.command == some "\\node")
+
+  let traced : Array Ir.Inline := #[.located source accent]
+  let tracedDoc := inkContractDoc (inkContractPicture traced)
+  let requests := Layout.labelRequests geom fs none tracedDoc
+  let tracedOut := Layout.run geom fs none tracedDoc
+  let observations := Layout.labelObservations fs tracedOut.pages
+  record "the pre-pagination census matches the actual shipped label occurrence"
+    (requests.size == 1 && observations.size == 1 &&
+      requests.all fun r => observations.any fun o =>
+        decide (Layout.LabelAudit.Matches r o) &&
+          o.known && o.bounded && o.stamp.lineCount == 1)
+  let checkedOut := Layout.auditLabelInk fs requests tracedOut
+  record "rechecking healthy output preserves its text, geometry and diagnostic count"
+    (placement checkedOut == placement tracedOut &&
+      checkedOut.diags.size == tracedOut.diags.size)
+  let rewriteLabels (f : Layout.LineOut → Option Layout.LineOut) (o : Layout.Out) :=
+    { o with pages := o.pages.map fun page =>
+      { page with lines := page.lines.filterMap fun line =>
+          if line.pictureLabel.isSome then f line else some line } }
+  let dropped := rewriteLabels (fun _ => none) tracedOut
+  let droppedCheck := Layout.auditLabelInk fs requests dropped
+  record "a requested label lost after production is named on the actual output"
+    (labelPaintedText droppedCheck == "" && named droppedCheck .E0395 traced &&
+      droppedCheck.diags.any fun d =>
+        d.kind == .E0395 && decide (d.span = some source))
+  let shrunken := rewriteLabels (fun line => some
+    { line with pictureLabel := line.pictureLabel.map fun stamp =>
+        { stamp with above := 0, below := 0 } }) tracedOut
+  let shrunkenCheck := Layout.auditLabelInk fs requests shrunken
+  record "the final audit detects actual glyphs beyond a damaged reserve"
+    (placement shrunkenCheck == placement tracedOut &&
+      named shrunkenCheck .W0396 traced && !(named shrunkenCheck .W0394 traced))
+  let truncated := rewriteLabels (fun line => some
+    { line with pictureLabel := line.pictureLabel.map fun stamp =>
+        { stamp with lineCount := 2 } }) tracedOut
+  let truncatedCheck := Layout.auditLabelInk unknownFonts requests truncated
+  record "the final audit independently names truncation and unknown outlines"
+    (named truncatedCheck .W0328 traced && named truncatedCheck .W0394 traced &&
+      placement truncatedCheck == placement tracedOut)
+  let blankCheck := Layout.auditLabelInk unknownFonts
+    (requests.map fun r => { r with blank := true }) tracedOut
+  record "a blank request flag cannot silence an unknown outline that actually shipped"
+    (named blankCheck .W0394 traced)
+
+  let duplicatePic : Ir.Pic.Picture :=
+    { (inkContractPicture traced) with shapes := #[
+      .label 0 0 traced .black 1000 .center,
+      .label (Dim.pt 20) 0 traced .black 1000 .center] }
+  let duplicateDoc := inkContractDoc duplicatePic
+  let duplicateRequests := Layout.labelRequests geom fs none duplicateDoc
+  let duplicateOut := Layout.run geom fs none duplicateDoc
+  let duplicateObservations := Layout.labelObservations fs duplicateOut.pages
+  let firstOnly := rewriteLabels (fun line =>
+    if line.pictureLabel.any (fun stamp => stamp.origin.2 == 0)
+    then some line else none) duplicateOut
+  let duplicateCheck := Layout.auditLabelInk fs duplicateRequests firstOnly
+  record "equal-text labels carry distinct collected occurrence identities"
+    (duplicateRequests.size == 2 && duplicateObservations.size == 2 &&
+      (duplicateRequests.map (·.origin)).toList.eraseDups.length == 2)
+  record "one equal-text occurrence cannot cover another lost before shipping"
+    (labelPaintedText firstOnly == "É" && firstOnly.diags.isEmpty &&
+      named duplicateCheck .E0395 traced)
+
+  let otherSource : Span :=
+    { source with pos := {
+      source.pos with
+      origins := [⟨9, "other"⟩]
+      command := some "\\caption" } }
+  let otherTraced : Array Ir.Inline := #[.located otherSource accent]
+  let sourcePic : Ir.Pic.Picture :=
+    { duplicatePic with shapes := #[
+      .label 0 0 traced .black 1000 .center,
+      .label (Dim.pt 20) 0 otherTraced .black 1000 .center] }
+  let sourceOut := Layout.run geom unknownFonts none (inkContractDoc sourcePic)
+  record "full provenance survives equal-key equal-position diagnostic deduplication"
+    (sourceOut.diags.any (fun d =>
+      d.kind == .W0394 && decide (d.span = some source)) &&
+      sourceOut.diags.any (fun d =>
+        d.kind == .W0394 && decide (d.span = some otherSource)))
+  record "the final audit does not duplicate an existing full-provenance account"
+    ((sourceOut.diags.filter fun d =>
+      d.kind == .W0394 && decide (d.span = some source)).size == 1 &&
+      (sourceOut.diags.filter fun d =>
+        d.kind == .W0394 && decide (d.span = some otherSource)).size == 1)
+
+  let pageRequests := Layout.labelRequests geom unknownFonts none pagesDoc
+  let pageObservations := Layout.labelObservations unknownFonts pagesOut.pages
+  record "the final census retains label identities and outline checks across page closure"
+    (pageRequests.size == 2 && pageObservations.size == 2 &&
+      pageRequests.all fun r => pageObservations.any fun o =>
+        decide (Layout.LabelAudit.Matches r o) && !o.known)
 
 /-- Load the committed fonts and run the shipped-page and guard checks from
 the diagnostic suite, whose witness registry consumes the same decisions. -/

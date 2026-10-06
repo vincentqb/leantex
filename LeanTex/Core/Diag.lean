@@ -7,7 +7,7 @@ distinguishes separate invocations of the same name. -/
 public structure MacroOrigin where
   id : Nat
   name : String
-  deriving Repr, BEq
+  deriving Repr, BEq, DecidableEq
 
 public structure Pos where
   line : Nat := 1
@@ -17,7 +17,7 @@ public structure Pos where
   /-- The exact control token read by the TeX lexer, including its backslash.
   Desugared or otherwise synthetic positions have no written command. -/
   command : Option String := none
-  deriving Repr
+  deriving Repr, DecidableEq
 
 /-- Source-location identity ignores expansion and token provenance. Consumers that
 need macro ancestry read `Pos.origins` explicitly. -/
@@ -43,7 +43,7 @@ public theorem Pos.next_origins_exact (p : Pos) (newline : Bool) :
 public structure Span where
   file : String
   pos : Pos
-  deriving Repr, BEq
+  deriving Repr, BEq, DecidableEq
 
 public inductive Severity where
   | error
