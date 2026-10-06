@@ -1104,6 +1104,47 @@ structure FrameOrigin where
   step : Nat
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The break decisions committed by one paragraph placement. Positions
+index its actual item array. The final forced end closes the paragraph;
+the preceding forced ends are the segments the author explicitly ended.
+An end-fill immediately before a forced end is the same source boundary. -/
+structure ParagraphBreaks where
+  site : Nat
+  leaf : Option Nat
+  frame : Option FrameOrigin
+  forced : Array Nat
+  chosen : Array Nat
+  endFills : Array Nat
+  deriving Repr, Inhabited
+
+def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
+  s!"paragraph:{p.site}"
+
+/-- A chosen break splits an authored segment if it occurs before an
+interior forced end and is neither a forced end nor its preceding fill.
+Wrapping the paragraph's final segment does not lose an authored shape. -/
+def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
+  k ∈ p.chosen ∧ (∃ stop ∈ p.forced.pop, k < stop) ∧
+    k ∉ p.forced ∧ k ∉ p.endFills
+
+/-- The actual warning census, over the breaker choices and authored ends
+recorded where the paragraph is placed. -/
+def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
+  p.chosen.filter fun k =>
+    p.forced.pop.any (k < ·) && !p.forced.contains k && !p.endFills.contains k
+
+theorem ParagraphBreaks.reflows_mem (p : ParagraphBreaks) (k : Nat) :
+    k ∈ p.reflows ↔ p.Splits k := by
+  simp only [ParagraphBreaks.reflows, ParagraphBreaks.Splits, Array.mem_filter,
+    Bool.and_eq_true, Bool.not_eq_true', Array.contains_eq_mem,
+    Array.any_eq_true', decide_eq_true_eq, decide_eq_false_iff_not, and_assoc]
+
+/-- Every actually split authored segment has its paragraph's structured
+diagnostic key. Repeated breaks within a paragraph share one report. -/
+def ReflowsNamed (paragraphs : Array ParagraphBreaks) (diags : Array Diag) : Prop :=
+  ∀ p ∈ paragraphs, ∀ k, p.Splits k →
+    ∃ d ∈ diags, d.code = "W0386" ∧ d.subject = some p.subject
+
 structure PageOut where
   /-- The shared logical folio and running style at shipment. Physical
   page indices and `from` gates keep their separate meaning. -/
@@ -1162,6 +1203,8 @@ structure OutlineEntry where
 structure Out where
   pages : Array PageOut
   diags : Array Diag
+  /-- Actual committed paragraph decisions, retained through furniture. -/
+  paragraphBreaks : Array ParagraphBreaks := #[]
   /-- The document outline: one entry per unpinned-nav link, in document
   order; empty when the document declares no unpinned nav. -/
   outline : Array OutlineEntry := #[]
@@ -5255,6 +5298,7 @@ private structure B where
   what the fit test in `placeLine` reserves above `bodyBottom`. -/
   notesH : Sp := 0
   diags : Array Diag := #[]
+  paragraphBreaks : Array ParagraphBreaks := #[]
 
 /-- The floor of the text area on the page being built — what every fit
 test, the note block and the page close read: `Geom.bodyBottom`, except on
@@ -10702,54 +10746,42 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))),
     brk, false)
 
-/-- How many lines the document declared for a paragraph: one per forced
-break in its items. Every paragraph carries a trailing forced break —
-`itemsOfInlines` appends one where the content does not end in the
-author's own — so the count is the segment count exactly: a paragraph
-with no `\\` declares one line, `k` interior breaks declare `k + 1`, and
-a `\\` with nothing after it ends its own segment rather than opening a
-new one. -/
-private def declaredLines (items : Array Item) : Nat :=
-  items.foldl (fun n it => match it with
-    | .pen _ cost _ _ _ _ => if cost ≤ forcedCost then n + 1 else n
-    | _ => n) 0
+/-- The breaker may choose the end-fill immediately before a forced
+newline. Both choices end the same source segment (`lineStart` skips the
+penalty after the fill).
+premise: mintedSettingsChecks — kept boundaries and indentation
+ship unchanged; a genuinely split declared line still raises W0386. -/
+def isEndFill (items : Array Item) (k : Nat) : Bool :=
+  match items[k]? with
+  | some (.glue g) => g.parfill && isForced items (k + 1)
+  | _ => false
 
-/-- The forced break that ends the last line the author ended: the last
-forced break but one. The last is where the paragraph's own end closes its
-last line — `itemsOfInlines` appends it, or the author's own trailing `\\`
-stands in its place — so that line is prose, not a declared line. `none`
-when the paragraph declares fewer than two lines. -/
-private def lastDeclaredEnd? (items : Array Item) : Option Nat := Id.run do
-  let mut last : Option Nat := none
-  let mut prev : Option Nat := none
-  for k in [0:items.size] do
-    if isForced items k then
-      prev := last
-      last := some k
-  return prev
+/-- Read the actual item boundaries and the actual breaking task's result
+once, at paragraph placement. No page text or displayed frame counter is
+used to infer the authored segmentation afterwards. -/
+def paragraphBreaksOf (site : Nat) (leaf : Option Nat) (frame : Option FrameOrigin)
+    (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
+  { site := site, leaf := leaf, frame := frame
+    forced := (Array.range items.size).filter (isForced items)
+    chosen := breaks
+    endFills := breaks.filter (isEndFill items) }
 
-/-- Did a line the author ended re-flow? A break the breaker chose at a
-forced penalty ends a declared line; a break anywhere else splits one. Only
-a split before the last declared end counts: the paragraph's last line may
-set as many lines as it needs, as a paragraph with no `\\` may, since the
-author ended every line before it and the paragraph ended that one. -/
-private def declaredReflow (items : Array Item) (breaks : Array Nat) : Bool :=
-  match lastDeclaredEnd? items with
-  | none => false
-  | some cut => breaks.any fun k =>
-    -- The breaker can choose the end-fill immediately before a forced
-    -- newline. Both end the same source line; lineStart skips the penalty.
-    -- premise: Tests.mintedSettingsChecks — kept boundaries and indentation
-    -- ship unchanged; a genuinely split declared line still raises W0386.
-    let atEndFill := match items[k]? with
-      | some (.glue g) => g.parfill && isForced items (k + 1)
-      | _ => false
-    k < cut && !isForced items k && !atEndFill
+theorem paragraphBreaksOf_forced_mem (site : Nat) (leaf : Option Nat)
+    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
+    k ∈ (paragraphBreaksOf site leaf frame items breaks).forced ↔
+      k < items.size ∧ isForced items k = true := by
+  simp only [paragraphBreaksOf, Array.mem_filter, Array.mem_range]
+
+theorem paragraphBreaksOf_endFills_mem (site : Nat) (leaf : Option Nat)
+    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
+    k ∈ (paragraphBreaksOf site leaf frame items breaks).endFills ↔
+      k ∈ breaks ∧ isEndFill items k = true := by
+  simp [paragraphBreaksOf]
 
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
 a legal break inside it — so the remainder returns to the flush-left margin
-and the page shows one shape where another was declared (`declaredReflow`).
+and the page shows one shape where another was declared (`ParagraphBreaks.Splits`).
 Named, not refused: the degraded state at full strength, since refusing the
 break would run ink off the measure instead (display type is ragged and
 unhyphenated, so the breaker has nowhere to put it). Silent where nothing
@@ -10767,7 +10799,7 @@ private def B.warnReflow (b : B) (declared shipped : Nat) (reflowed : Bool) : B 
           s!"{declared} lines were declared, {shipped} ship")
         (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-        (subject := b.curFrame.map toString)) }
+        (subject := some s!"paragraph:{b.paragraphBreaks.size}")) }
   else b
 
 @[simp] private theorem warnReflow_pages (b : B) (d s : Nat) (r : Bool) :
@@ -10802,7 +10834,7 @@ line alone set more than one line, adds none. The `_accounts` shape
 (`rewriteCtrl_accounts`, `warnSpill_accounts`): the re-flow is paid for by
 the warning, decided on what the builder already holds — the forced breaks
 in the items it is about to place and the breaks the breaker returned
-(`declaredReflow`) — never by reading the shipped pages back afterwards. -/
+(`ParagraphBreaks.reflows`) — never by reading the shipped pages back afterwards. -/
 private theorem warnReflow_accounts (b : B) (declared shipped : Nat) (reflowed : Bool) :
     (b.warnReflow declared shipped reflowed).diags.size =
       b.diags.size + (if reflowed then 1 else 0) := by
@@ -10810,9 +10842,11 @@ private theorem warnReflow_accounts (b : B) (declared shipped : Nat) (reflowed :
   split <;> simp_all
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
+    p.forced.size breaks.size (!p.reflows.isEmpty)
   (breaks.foldl (placeParaLine fs j)
-    (({ b with diags := b.diags ++ j.diags }).warnReflow
-      (declaredLines j.items) breaks.size (declaredReflow j.items breaks), 0, true)).1
+    ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)).1
 
 /-- Content with no physical placeholder survives the physical pass whole:
 the substitution half of "the two sequences stay distinct" —
@@ -12244,6 +12278,7 @@ private def restartColumn (start latest : B) : B :=
                opened := !start.fresh, freshStart := start.fresh
                openLinks := start.openLinks.map LinkStart.nextPage, closedLinks := #[]
                diags := latest.diags
+               paragraphBreaks := latest.paragraphBreaks
                pendingAnchors := latest.pendingAnchors }
 
 /-- Join ink on a physical page. A second flow's page ground precedes
@@ -12309,6 +12344,7 @@ private def joinColumn (first : Nat) (a b : B) : B :=
     pages := mergeColumnPages b.geom first left.pages right.pages
     geom := b.geom, docBg := b.docBg
     pendingAnchors := b.pendingAnchors
+    paragraphBreaks := b.paragraphBreaks
     diags := b.diags ++ left.diags.extract a.diags.size left.diags.size ++
       right.diags.extract b.diags.size right.diags.size }
 
@@ -12491,6 +12527,363 @@ private def placeFrom (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
   (placeFlowFrom fs imgs staged { placed := st } si).placed
 
+/-! The reflow account crosses the actual placement state. Non-paragraph
+steps retain the recorded breaks and every existing diagnostic. A paragraph
+records the task's chosen breaks before its line fold, naming each split
+there. Float replay discards both the tentative record and its diagnostics;
+column rewind carries both from the latest cursor. -/
+
+private def ReflowStep (a b : B) : Prop :=
+  b.paragraphBreaks = a.paragraphBreaks ∧ ∀ d ∈ a.diags, d ∈ b.diags
+
+private theorem ReflowStep.refl (b : B) : ReflowStep b b :=
+  ⟨rfl, fun _ h => h⟩
+
+private theorem ReflowStep.of_eq {a b : B}
+    (hp : b.paragraphBreaks = a.paragraphBreaks) (hd : b.diags = a.diags) :
+    ReflowStep a b :=
+  ⟨hp, fun _ h => hd ▸ h⟩
+
+private theorem ReflowStep.trans {a b c : B}
+    (hab : ReflowStep a b) (hbc : ReflowStep b c) : ReflowStep a c :=
+  ⟨hbc.1.trans hab.1, fun d hd => hbc.2 d (hab.2 d hd)⟩
+
+private def B.ReflowsNamed (b : B) : Prop :=
+  Layout.ReflowsNamed b.paragraphBreaks b.diags
+
+private theorem B.ReflowsNamed.step {a b : B} (ha : a.ReflowsNamed)
+    (h : ReflowStep a b) : b.ReflowsNamed := by
+  intro p hp k hk
+  rw [h.1] at hp
+  obtain ⟨d, hd, hc, hs⟩ := ha p hp k hk
+  exact ⟨d, h.2 d hd, hc, hs⟩
+
+@[simp] private theorem attachNotes_paragraphBreaks (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).paragraphBreaks = b.paragraphBreaks := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction
+      (motive := fun _ (acc : B) => acc.paragraphBreaks = b.paragraphBreaks)
+      rfl (fun _ _ h => h)
+
+@[simp] private theorem attachNotes_diags (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).diags = b.diags := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.diags = b.diags)
+      rfl (fun _ _ h => h)
+
+private theorem reflowStep_attachNotes (b : B) (ns : Array NoteBlock) :
+    ReflowStep b (b.attachNotes ns) :=
+  ReflowStep.of_eq (attachNotes_paragraphBreaks ..) (attachNotes_diags ..)
+
+private theorem reflowStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
+    ReflowStep b (b.finishPage owed flush) := by
+  refine ⟨rfl, ?_⟩
+  intro d hd
+  simp only [B.finishPage]
+  split
+  · exact Array.mem_push.mpr (Or.inl hd)
+  · exact hd
+
+@[simp] private theorem reopenChrome_paragraphBreaks (b : B) :
+    b.reopenChrome.paragraphBreaks = b.paragraphBreaks := by
+  unfold B.reopenChrome
+  split <;> rfl
+
+@[simp] private theorem reopenChrome_diags (b : B) :
+    b.reopenChrome.diags = b.diags := by
+  unfold B.reopenChrome
+  split <;> rfl
+
+private theorem reflowStep_warnSpill (b : B) (over : Sp) :
+    ReflowStep b (b.warnSpill over) := by
+  unfold B.warnSpill
+  split
+  · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
+  · exact ReflowStep.refl b
+
+private theorem reflowStep_spillPage (b : B) (over : Sp) :
+    ReflowStep b (b.spillPage over) :=
+  (reflowStep_finishPage b 0 b.flushes).trans
+    ((ReflowStep.of_eq (reopenChrome_paragraphBreaks ..) (reopenChrome_diags ..)).trans
+      ((reflowStep_warnSpill ..).trans (ReflowStep.of_eq rfl rfl)))
+
+@[simp] private theorem pushSibling_paragraphBreaks (b : B) (l : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills paths shrink fils).paragraphBreaks = b.paragraphBreaks := by
+  cases l <;> simp only [B.pushSibling] <;> split <;> rfl
+
+@[simp] private theorem pushSibling_diags (b : B) (l : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills paths shrink fils).diags = b.diags := by
+  cases l <;> simp only [B.pushSibling] <;> split <;> rfl
+
+@[simp] private theorem pushLabels_paragraphBreaks (b : B) (ls : Array LineOut)
+    (shrink : Sp) (fils : Nat) :
+    (b.pushLabels ls shrink fils).paragraphBreaks = b.paragraphBreaks := by
+  unfold B.pushLabels
+  exact Array.foldl_induction
+    (motive := fun _ (acc : B) => acc.paragraphBreaks = b.paragraphBreaks)
+    rfl (fun _ _ h => by rw [pushSibling_paragraphBreaks]; exact h)
+
+@[simp] private theorem pushLabels_diags (b : B) (ls : Array LineOut)
+    (shrink : Sp) (fils : Nat) :
+    (b.pushLabels ls shrink fils).diags = b.diags := by
+  unfold B.pushLabels
+  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.diags = b.diags)
+    rfl (fun _ _ h => by rw [pushSibling_diags]; exact h)
+
+private theorem reflowStep_commit (b : B) (l : LineOut) (depth below : Sp)
+    (ruleLine consume : Bool) (overflow : Sp) :
+    ReflowStep b (b.commit l depth below ruleLine consume overflow) :=
+  ReflowStep.of_eq rfl rfl
+
+private theorem reflowStep_warnNoteOverrun (b : B) (y depth : Sp) :
+    ReflowStep b (b.warnNoteOverrun y depth) := by
+  simp only [B.warnNoteOverrun]
+  split
+  · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
+  · exact ReflowStep.refl b
+
+private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+    ReflowStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) := by
+  simp only [B.fitCommit]
+  split
+  · exact ((reflowStep_commit b ..).trans (reflowStep_attachNotes ..)).trans
+      (reflowStep_warnNoteOverrun ..)
+  · split
+    · exact (reflowStep_commit b ..).trans (reflowStep_attachNotes ..)
+    · split
+      · exact (reflowStep_spillPage b _).trans
+          (((reflowStep_commit _ _ depth below rl false 0).trans
+            (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
+      · exact (reflowStep_spillPage b _).trans
+          (((reflowStep_commit _ _ depth below rl false 0).trans
+            (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
+
+private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) :
+    ReflowStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+  simp only [B.placeLine]
+  exact reflowStep_fitCommit ..
+
+private theorem reflowStep_warnOverfull (b : B) (source : Option Span) :
+    ReflowStep b (b.warnOverfull source) :=
+  ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
+
+private theorem reflowStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
+    (x : Sp) (segs : Array Seg) :
+    ReflowStep b (b.openDisplayAt j first x segs) := by
+  unfold B.openDisplayAt
+  split <;> exact ReflowStep.of_eq rfl rfl
+
+private theorem reflowStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
+    (segs : Array Seg) (b : B) : ReflowStep b (placeParaTrailer fs j k segs b) := by
+  unfold placeParaTrailer
+  split <;> exact ReflowStep.of_eq rfl rfl
+
+private theorem reflowStep_placeParaLine (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) :
+    ReflowStep st.1 (placeParaLine fs j st brk).1 := by
+  simp only [placeParaLine]
+  refine ReflowStep.trans (ReflowStep.trans (ReflowStep.trans ?_
+    (reflowStep_openDisplayAt ..)) (reflowStep_placeLine ..)) (reflowStep_placeParaTrailer ..)
+  split
+  · exact reflowStep_warnOverfull ..
+  · exact ReflowStep.refl _
+
+private theorem reflowStep_paraLines (fs : FontSet) (j : ParaJob)
+    (breaks : Array Nat) (st : B × Nat × Bool) :
+    ReflowStep st.1 (breaks.foldl (placeParaLine fs j) st).1 :=
+  Array.foldl_induction
+    (motive := fun _ (acc : B × Nat × Bool) => ReflowStep st.1 acc.1)
+    (ReflowStep.refl _) (fun _ _ h => h.trans (reflowStep_placeParaLine ..))
+
+/-- The actual paragraph producer records exactly this task result once;
+the line fold, including its spills and notes, preserves the record. -/
+private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) :
+    (placePara fs b j breaks).paragraphBreaks =
+      b.paragraphBreaks.push
+        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks) :=
+  (reflowStep_paraLines ..).1
+
+private theorem reflowStep_warnReflow (b : B) (declared shipped : Nat) (split : Bool) :
+    ReflowStep b (b.warnReflow declared shipped split) := by
+  unfold B.warnReflow
+  split
+  · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
+  · exact ReflowStep.refl b
+
+private theorem warnReflow_diag (b : B) (declared shipped : Nat) :
+    ∃ d ∈ (b.warnReflow declared shipped true).diags,
+      d.code = "W0386" ∧ d.subject = some s!"paragraph:{b.paragraphBreaks.size}" := by
+  unfold B.warnReflow
+  exact ⟨_, Array.mem_push_self, rfl, rfl⟩
+
+private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) (hb : b.ReflowsNamed) :
+    (placePara fs b j breaks).ReflowsNamed := by
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
+    p.forced.size breaks.size (!p.reflows.isEmpty)
+  have appended : ReflowStep b { b with diags := b.diags ++ j.diags } :=
+    ⟨rfl, fun _ h => Array.mem_append.mpr (Or.inl h)⟩
+  have old : start.ReflowsNamed :=
+    hb.step (appended.trans (reflowStep_warnReflow ..))
+  have startBreaks : start.paragraphBreaks = b.paragraphBreaks :=
+    (reflowStep_warnReflow ..).1
+  have named : ({ start with paragraphBreaks := b.paragraphBreaks.push p } : B).ReflowsNamed := by
+    intro q hq k hk
+    rcases Array.mem_push.mp hq with hq | rfl
+    · exact old q (startBreaks.symm ▸ hq) k hk
+    · have hm : k ∈ p.reflows := (ParagraphBreaks.reflows_mem p k).mpr hk
+      have he : (!p.reflows.isEmpty) = true := by
+        rw [Bool.not_eq_true', Array.isEmpty_eq_false_iff_exists_mem]
+        exact ⟨k, hm⟩
+      change ∃ d ∈ (({ b with diags := b.diags ++ j.diags }).warnReflow
+        p.forced.size breaks.size (!p.reflows.isEmpty)).diags,
+          d.code = "W0386" ∧ d.subject = some p.subject
+      rw [he]
+      exact warnReflow_diag { b with diags := b.diags ++ j.diags } p.forced.size breaks.size
+  exact named.step (reflowStep_paraLines fs j breaks (_, 0, true))
+
+private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
+    ReflowStep b (placePicture fs imgs b x pic leaf) := by
+  simp only [placePicture, Id.run, Id, pure, bind]
+  repeat' split
+  all_goals first
+    | (refine ReflowStep.of_eq ?_ ?_ <;> simp
+       done)
+    | (refine (reflowStep_spillPage b
+        (b.y + b.prevDepth + b.skip.width + inkClearance +
+          ((pictureBox b.geom fs imgs b.xHeight pic).2.snd -
+            (pictureBox b.geom fs imgs b.xHeight pic).1.snd) - b.bottom -
+          (b.pageShrink + b.skip.shrink))).trans (ReflowStep.of_eq ?_ ?_) <;> simp
+       done)
+
+private theorem reflowStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
+    ReflowStep b (b.keepHeading j n) := by
+  unfold B.keepHeading
+  split
+  · exact reflowStep_spillPage b 0
+  · exact ReflowStep.refl b
+
+private theorem reflowStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+    (spec : SlotSpec) : ReflowStep b (b.placeSlot fs save spec) := by
+  obtain ⟨col, l0, f0⟩ := save
+  simp only [B.placeSlot]
+  split <;> exact ReflowStep.of_eq rfl rfl
+
+private theorem reflowStep_alignRow (b : B) (save : ColSave) :
+    ReflowStep b (b.alignRow save) := by
+  refine ReflowStep.of_eq ?_ ?_ <;> simp [B.alignRow]
+
+private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (op : StagedOp) (hb : st.b.ReflowsNamed) :
+    (stepStaged fs imgs st op).b.ReflowsNamed := by
+  cases op <;> simp only [stepStaged, Id.run, Id, pure, B.openBody] <;> repeat' split
+  all_goals first
+    | (refine hb.step (ReflowStep.of_eq ?_ ?_) <;> simp
+       done)
+    | exact hb.step (reflowStep_fitCommit ..)
+    | exact hb.step (reflowStep_placeLine ..)
+    | exact placePara_reflows _ _ _ _ (hb.step (reflowStep_keepHeading ..))
+    | exact placePara_reflows _ _ _ _ hb
+    | exact hb.step (reflowStep_placePicture ..)
+    | exact hb.step (reflowStep_placeSlot ..)
+    | exact hb.step ((ReflowStep.of_eq rfl rfl).trans (reflowStep_alignRow ..))
+    | (refine hb.step ((reflowStep_finishPage _ st.b.closingOwed false).trans
+        (ReflowStep.of_eq ?_ ?_)) <;> simp
+       done)
+
+private theorem foldSteps_reflows (fs : FontSet) (imgs : Image.Store)
+    (group : Array StagedOp) (st : StepSt) (hb : st.b.ReflowsNamed) :
+    (group.foldl (stepStaged fs imgs) st).b.ReflowsNamed :=
+  Array.foldl_induction
+    (motive := fun _ (acc : StepSt) => acc.b.ReflowsNamed)
+    hb (fun _ _ h => stepStaged_reflows _ _ _ _ h)
+
+private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (group : Array StagedOp) (hb : st.b.ReflowsNamed) :
+    (runFloat fs imgs st group).b.ReflowsNamed := by
+  have finish : ∀ (b : B) (c : Prop) [Decidable c] (d : Diag), b.ReflowsNamed →
+      ({ (if c then { b with diags := b.diags.push d } else b) with
+          noBreak := false } : B).ReflowsNamed := by
+    intro b c inst d h
+    split
+    · exact h.step ⟨rfl, fun _ hm => Array.mem_push.mpr (Or.inl hm)⟩
+    · exact h.step (ReflowStep.of_eq rfl rfl)
+  simp only [LeanTex.Core.Layout.runFloat]
+  split
+  · exact foldSteps_reflows fs imgs group st hb
+  · have hc : (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+        then st.b else st.b.finishPage).ReflowsNamed := by
+      split
+      · exact hb
+      · exact hb.step (reflowStep_finishPage ..)
+    have hr := foldSteps_reflows fs imgs group
+      { st with b :=
+        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+           else st.b.finishPage) with noBreak := true } }
+      (hc.step (ReflowStep.of_eq rfl rfl))
+    exact finish _ _ _ hr
+
+private theorem reflowStep_restartColumn (start latest : B) :
+    ReflowStep latest (restartColumn start latest) :=
+  ReflowStep.of_eq rfl rfl
+
+private theorem reflowStep_joinColumn (first : Nat) (a b : B) :
+    ReflowStep b (joinColumn first a b) :=
+  ⟨rfl, fun _ h => Array.mem_append.mpr (Or.inl (Array.mem_append.mpr (Or.inl h)))⟩
+
+private theorem reflowStep_columnAdd (save : ColumnFlow) (b : B) :
+    ReflowStep b (save.add b) := by
+  unfold ColumnFlow.add
+  split
+  · exact ReflowStep.refl b
+  · exact reflowStep_joinColumn ..
+
+private theorem stepFlow_reflows (fs : FontSet) (imgs : Image.Store)
+    (st : FlowSt) (op : StagedOp) (hb : st.placed.b.ReflowsNamed) :
+    (stepFlow fs imgs st op).placed.b.ReflowsNamed := by
+  unfold stepFlow
+  split
+  · exact stepStaged_reflows _ _ _ _ hb
+  · split
+    · exact stepStaged_reflows _ _ _ _ hb
+    · exact hb.step (reflowStep_restartColumn ..)
+  · exact stepStaged_reflows _ _ _ _ (hb.step (reflowStep_columnAdd ..))
+  · exact stepStaged_reflows _ _ _ _ hb
+
+private theorem placeFlowFrom_reflows (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : FlowSt) (si : Nat)
+    (hb : st.placed.b.ReflowsNamed) :
+    (placeFlowFrom fs imgs staged st si).placed.b.ReflowsNamed := by
+  rw [placeFlowFrom]
+  split
+  · have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+      matchingClose_ge staged (si + 1) 1
+    split
+    · exact placeFlowFrom_reflows _ _ _ _ _ (runFloat_reflows _ _ _ _ hb)
+    · exact placeFlowFrom_reflows _ _ _ _ _ (stepFlow_reflows _ _ _ _ hb)
+  · exact hb
+termination_by staged.size - si
+decreasing_by all_goals omega
+
+private theorem placeFrom_reflows (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat) (hb : st.b.ReflowsNamed) :
+    (placeFrom fs imgs staged st si).b.ReflowsNamed :=
+  placeFlowFrom_reflows fs imgs staged { placed := st } si hb
+
 private theorem placeFlowFrom_ground (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (st : FlowSt) (si : Nat) {g : Geom} {d : Bool}
     (hg : ∀ op ∈ staged, op.preservesGround = true) (hs : FlowGround g d st) :
@@ -12567,6 +12960,7 @@ structure Shipped where
   /-- The diagnostics as of shipping — the builder's own plus the
   measure-band check's. -/
   diags : Array Diag
+  paragraphBreaks : Array ParagraphBreaks := #[]
   doc : Doc
   geom : Geom
   xHeight : Sp
@@ -13078,7 +13472,8 @@ slot yields in place: shorten the content or drop a slot"))
       { title := title
         page := (destination? out (target.drop 1).toString).map (·.1) }
     else ({ title := title, url := some target } : OutlineEntry)
-  return { pages := out, diags := unique, outline := outline }
+  return { pages := out, diags := unique, outline := outline
+           paragraphBreaks := sh.paragraphBreaks }
 
 /-- Furniture may add diagnostics and deduplication may merge repeated
 reports, but every shipped code and subject still has a representative
@@ -13547,6 +13942,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       pages := b.pages
       footGap := b.footGap
       diags := shipDiags
+      paragraphBreaks := b.paragraphBreaks
       doc := doc
       geom := geom
       xHeight := xHeight
@@ -13634,6 +14030,72 @@ theorem shipment_diags_covers (geom : Geom) (fs : FontSet) (pats : Option Hyphen
     (Array.mem_append.mpr (Or.inr he) :
       e ∈ (resolveDocMath fs doc).2 ++
         (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+
+private theorem shipCore_reflows (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ReflowsNamed (shipCore geom fs pats doc imgs frameSpans).paragraphBreaks
+      (shipCore geom fs pats doc imgs frameSpans).diags := by
+  have close : ∀ (c : Prop) [Decidable c] (b : B), b.ReflowsNamed →
+      (if c then b.finishPage b.closingOwed else b).ReflowsNamed := by
+    intro c inst b hb
+    split
+    · exact hb.step (reflowStep_finishPage ..)
+    · exact hb
+  have measured : ∀ (a b c : Prop) [Decidable a] [Decidable b] [Decidable c]
+      (ps : Array ParagraphBreaks) (ds : Array Diag) (d : Diag),
+      ReflowsNamed ps ds →
+        ReflowsNamed ps
+          (if a then if b then if c then ds.push d else ds else ds else ds) := by
+    intro a b c ia ib ic ps ds d h
+    repeat' split
+    all_goals first
+      | exact h
+      | exact fun p hp k hk => by
+          obtain ⟨e, he, hc, hs⟩ := h p hp k hk
+          exact ⟨e, Array.mem_push.mpr (Or.inl he), hc, hs⟩
+  unfold shipCore withLayoutOps
+  dsimp only [Id.run, bind, pure, Id]
+  apply measured
+  apply close
+  apply placeFrom_reflows
+  intro p hp
+  simp at hp
+
+/-- Every split recorded by actual paragraph placement is named after the
+flow driver's float replay, column joins, and final page close. The record
+uses the actual breaker result and the authored ends of its item array. -/
+theorem ship_reflows_named (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ReflowsNamed (ship geom fs pats doc imgs frameSpans).paragraphBreaks
+      (ship geom fs pats doc imgs frameSpans).diags :=
+  shipCore_reflows geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
+
+/-- Furniture and marks do not rewrite the break choices committed by
+placement. The diagnostic contract below crosses their separate account. -/
+theorem paragraph_breaks_projects (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).paragraphBreaks =
+      (ship geom fs pats doc imgs frameSpans).paragraphBreaks := rfl
+
+/-- A chosen break before an authored segment end is named in the actual
+public result by its paragraph key. Splits of the final paragraph segment
+alone do not satisfy the premise. This composes the producer and placement
+invariant with furniture, diagnostic deduplication, and the public run. -/
+theorem reflow_named (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ReflowsNamed (run geom fs pats doc imgs frameSpans).paragraphBreaks
+      (run geom fs pats doc imgs frameSpans).diags := by
+  intro p hp k hk
+  rw [paragraph_breaks_projects] at hp
+  obtain ⟨d, hd, hc, hs⟩ :=
+    ship_reflows_named geom fs pats doc imgs frameSpans p hp k hk
+  obtain ⟨e, he, ec, es⟩ :=
+    shipment_diags_covers geom fs pats doc imgs frameSpans d hd
+  exact ⟨e, he, ec.trans hc, es.trans hs⟩
 
 /-- The public run preserves the placement's frame/footer partition exactly,
 including repeated frame numbers, overlays, spills and intentionally absent
