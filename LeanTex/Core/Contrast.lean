@@ -1,4 +1,5 @@
 import LeanTex.Core.ContrastRatio
+import LeanTex.Core.ContrastPaint
 import LeanTex.Core.Theme
 import LeanTex.Core.Layout
 import Std.Data.HashMap
@@ -904,10 +905,10 @@ private def docWalk (doc : Doc) : UseAcc :=
         (doc.chrome.hasFooter || hasFrameFoot) }
   usesBlocks cx { pal := doc.palette } doc.body.toList
 
-/-- Every use a document puts on a page: the body walk's, plus the page
-furniture's. The chrome footer reads its frame's epoch and band ground;
-running heads and feet are document state and read epoch 0. One site, read by the
-per-use judge and by the judged-pair census. -/
+/-- The uses the document plan enumerates: the body walk's, plus running
+heads and feet and the chrome footer. The chrome footer reads its frame's
+epoch and band ground; running heads and feet are document state and read
+epoch 0. One site, read by the per-use judge and by the judged-pair census. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
   let mut acc := { walk with pal := doc.palette }
@@ -1308,8 +1309,9 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
     let done := s.done.insert key
     let allLarge := (large[key]?).getD true
     let threshold := if allLarge then aaLargeText else aaText
-    let milli := contrastMilli u.color u.surface
-    if milli < threshold then
+    let assessment := assessPair threshold u.color u.surface
+    let milli := assessment.ratio
+    if !assessment.passes then
       -- A role-named use realizes: the hue is the declaration's, the
       -- lightness the ground's choice — normalised at the text threshold
       -- (4.5:1 covers the large-scale 3:1, and one value per (role,
@@ -1698,10 +1700,11 @@ coloured use on the surface it stood on (the running head and foot and
 the chrome footer's muted key included, exactly as `docDiags`' walk reads
 them), and the resolved design-site pairs per epoch that ships one — the
 frame-title bar, the standout inversion, the titled blocks.
-`contrast_judged_complete` (Obligations) ranges over this projection: a
-shipped glyph run whose (colour, ground) pair falls outside this set
-would be a run the judge never saw, and the obligation is that no such
-run exists.
+This is a domain of the document realization plan, not a census of placed
+glyphs or of emitted diagnostics. Overlay dimming computes additional
+colours, picture labels have their own paint, and exempt uses need not emit
+a diagnostic. `contrastContractChecks` pins actual placed counterexamples
+to the former claim that this domain contains every shipped pair.
 
 One family per operand, each the same array the matching judge iterates
 (`docWalk`, `docUses`, the one resolving sites) — declarative rather than
@@ -1851,7 +1854,10 @@ private theorem useStep_no_writes (site : ColorSite) (large : Std.HashMap UseKey
   unfold useStep
   split
   · exact h
-  · simpa [hthr] using h
+  · have hpass := (assessPair_contract
+      (if (large[u.key]?).getD true then aaLargeText else aaText)
+      u.color u.surface).2.mpr (Nat.not_lt.mp hthr)
+    simpa only [hpass, Bool.not_true, Bool.false_eq_true, ↓reduceIte] using h
 
 private theorem declaredUseJudged_no_writes (site : ColorSite) (doc : Doc) (walk : UseAcc)
     (h : ∀ u ∈ (docUses doc walk).uses, aaText ≤ contrastMilli u.color u.surface) :
@@ -1950,5 +1956,22 @@ theorem realizeDoc_id (doc : Doc) (site : ColorSite)
       (docWalk doc).standoutPals (docWalk doc).titlePagePals (docWalk doc).pendingPals
       (docWalk doc).blockPals hB hT hS hTP,
     hu.1, hu.2.1, hu.2.2.1, hu.2.2.2]
+
+/-- Every nonempty glyph run returned by the actual layout entry has an
+arithmetic assessment with its recorded paint and address. The only
+premises locate the run and say it is nonempty. An absent ground uses the
+effective document page; this does not certify overlapping picture fills
+or infer exemptions from a colour value. -/
+theorem layoutAudit_covers (geom : Layout.Geom) (fs : Font.FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store) (required : Nat)
+    (hp : (Layout.run geom fs pats doc imgs).pages[p]? = some page)
+    (hl : page.lines[l]? = some line)
+    (hs : line.segs[s]? =
+      some (.run font ink link width glyphs size leading decorations raise ground attr))
+    (hne : glyphs.isEmpty = false) :
+    assessRun (effectivePair doc).bg required
+      { page := p, line := l, segment := s, ink, ground } ∈
+        shippedAudit (effectivePair doc).bg required (Layout.run geom fs pats doc imgs) :=
+  shippedAudit_covers _ _ _ hp hl hs hne
 
 end LeanTex.Core.Contrast

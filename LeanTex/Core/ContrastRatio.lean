@@ -31,6 +31,28 @@ def contrastMilli (a b : Color) : Nat :=
   let lb := luminance b
   ((max la lb + 500000) * 1000) / (min la lb + 500000)
 
+/-- An arithmetic assessment, before a caller's exemption policy. Ratios
+and thresholds use the units of `contrastMilli`. -/
+structure PairAssessment where
+  ratio : Nat
+  required : Nat
+  deriving Repr, BEq
+
+def PairAssessment.passes (a : PairAssessment) : Bool :=
+  decide (a.required ≤ a.ratio)
+
+/-- The integer comparison shared by the document use judge and the
+placed-run audit. This asserts the implemented arithmetic, not equality
+to an unrounded real-valued WCAG computation. -/
+def assessPair (required : Nat) (ink ground : Color) : PairAssessment :=
+  { ratio := contrastMilli ink ground, required }
+
+theorem assessPair_contract (required : Nat) (ink ground : Color) :
+    (assessPair required ink ground).ratio = contrastMilli ink ground ∧
+    ((assessPair required ink ground).passes = true ↔
+      required ≤ contrastMilli ink ground) := by
+  exact ⟨rfl, decide_eq_true_iff⟩
+
 /-- SC 1.4.3 (AA), normal text: 4.5:1. -/
 def aaText : Nat := 4500
 /-- SC 1.4.3 (AA), large-scale text (≥ 18pt, or ≥ 14pt bold): 3:1. -/
