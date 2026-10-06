@@ -5949,6 +5949,165 @@ unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
+/-- At the end of the inline input, close the active macro scope and flush text. -/
+theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) (h : raws.size ≤ i) :
+    elabInlinesFrom ctx raws i acc sb =
+      let (_, acc', sb') := inlineMacroAt ctx.macroRoles raws i acc sb
+      pure (mergeText (flushText acc' sb')) := by
+  rw [elabInlinesFrom]
+  simp only [show ¬ i < raws.size from Nat.not_lt_of_ge h, dite_false]
+
+/-- A positioned word under the empty context is independent of elaboration state. -/
+theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origins = []) :
+    elabInlines {file} #[.word w p] =
+      pure (#[sourceInline {file} p (.text w)].map (mapSmartText none)) := by
+  rw [elabInlines, elabInlinesFrom]
+  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, Raw.origins?,
+    relativeOrigins, hp, flushText]
+  rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
+  simp [inlineMacroAt, inlineMacroStep, flushText, mergeText]
+
+/-- Recovery beyond the input keeps the accumulated content and state. -/
+theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
+    (j count : Nat) (acc : Array Inline) (sb : String) (spaceAfter : Bool)
+    (h : raws.size ≤ j) :
+    elabUnknownArgs ctx raws j count acc sb spaceAfter =
+      pure (acc, sb, ⟨j, Nat.le_refl j⟩, count, spaceAfter) := by
+  rw [elabUnknownArgs]
+  split
+  · rfl
+  · split
+    · rename_i body pos hj
+      have hn : raws[j]? = none := Array.getElem?_eq_none h
+      rw [hj] at hn
+      cases hn
+    · rfl
+
+/-- A final argument group runs its own elaboration exactly once, retaining
+its returned content and state. No assumption about that child run is needed. -/
+theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
+    (j : Nat) (body : Array Raw) (pos : Pos) (acc : Array Inline) (sb : String)
+    (spaceAfter : Bool) (hg : raws[j]? = some (.group body pos))
+    (hend : raws.size ≤ j + 1) :
+    elabUnknownArgs ctx raws j 0 acc sb spaceAfter =
+      (do
+        let inner ← elabInlines ctx body
+        pure (flushText acc sb ++ inner, "", ⟨j + 1, by omega⟩, 1, false)) := by
+  have hs : skipSpaces raws (j + 1) = j + 1 := by
+    rw [skipSpaces]
+    simp [show ¬ j + 1 < raws.size from by omega]
+  rw [elabUnknownArgs]
+  simp only [show ¬ 9 ≤ 0 from by omega, ↓reduceIte]
+  rw [hg]
+  dsimp only
+  simp only [show ¬ (0 : Nat) > 0 from by omega, ↓reduceIte,
+    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl]
+  simp only [elabUnknownArgs_end_exact _ _ _ _ _ _ _
+    (Nat.le_trans hend (skipSpaces_ge raws (j + 1))), pure_bind]
+  simp only [hs, bne_self_eq_false]
+
+/-- Once dispatch has selected unknown recovery, a closed option contributes
+no inline; the braced word retains the same positioned content for every
+option, content string, accumulator and initial state. -/
+theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
+    (acc : Array Inline) (sb : String) (st : ESt) :
+    ((elabUnknownCtrl {file}
+        #[.ctrl name {line := 1, col := 1}, .sym '[' {line := 1, col := 5},
+          .word w {line := 1, col := 6}, .sym ']' {line := 1, col := 7},
+          .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]
+        0 acc sb name {line := 1, col := 1} (by simp)).run st).1 =
+    ((elabUnknownCtrl {file}
+        #[.ctrl name {line := 1, col := 1},
+          .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]
+        0 acc sb name {line := 1, col := 1} (by simp)).run st).1 := by
+  let xs : Array Raw :=
+    #[.ctrl name {line := 1, col := 1}, .sym '[' {line := 1, col := 5},
+      .word w {line := 1, col := 6}, .sym ']' {line := 1, col := 7},
+      .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]
+  let ys : Array Raw :=
+    #[.ctrl name {line := 1, col := 1},
+      .group #[.word kept {line := 1, col := 9}] {line := 1, col := 8}]
+  change ((elabUnknownCtrl {file} xs 0 acc sb name {} _).run st).1 =
+    ((elabUnknownCtrl {file} ys 0 acc sb name {} _).run st).1
+  have sx1 : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
+  have sx4 : skipSpaces xs 4 = 4 := by rw [skipSpaces]; rfl
+  have sy1 : skipSpaces ys 1 = 1 := by rw [skipSpaces]; rfl
+  have close : closeBracketFrom xs 2 = some 3 := by
+    rw [closeBracketFrom]
+    change closeBracketFrom xs 3 = some 3
+    rw [closeBracketFrom]
+    rfl
+  have scan1 : scanBracketArg xs 1 {} = .took 4 := by
+    unfold scanBracketArg
+    rw [sx1]
+    change (match closeBracketFrom xs 2 with
+      | some c => ArgScan.took (c + 1) | none => .unclosed {col := 5}) = .took 4
+    rw [close]
+  have scan4 : scanBracketArg xs 4 {} = .content := by
+    unfold scanBracketArg
+    rw [sx4]
+    rfl
+  have opt4 : skipOptionRuns xs 4 {} = (4, none) := by
+    rw [skipOptionRuns, scan4]
+  have opt1 : skipOptionRuns xs 1 {} = (4, none) := by
+    rw [skipOptionRuns, scan1]
+    exact opt4
+  have noopt : skipOptionRuns ys 1 {} = (1, none) := by
+    rw [skipOptionRuns]
+    have scan : scanBracketArg ys 1 {} = .content := by
+      unfold scanBracketArg
+      rw [sy1]
+      rfl
+    rw [scan]
+  have starx : skipStar xs 1 = 1 := rfl
+  have stary : skipStar ys 1 = 1 := rfl
+  have ax : elabUnknownArgs {file} xs 4 0 acc sb false =
+      pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+        "", ⟨5, by omega⟩, 1, false) := by
+    rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs]),
+      elabInlines_word_exact file kept {col := 9} rfl]
+    simp only [pure_bind]
+  have ay : elabUnknownArgs {file} ys 1 0 acc sb false =
+      pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+        "", ⟨2, by omega⟩, 1, false) := by
+    rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [ys]),
+      elabInlines_word_exact file kept {col := 9} rfl]
+    simp only [pure_bind]
+  have ax0 : elabUnknownArgs {file} xs
+      (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) {}).1)
+      0 acc sb false =
+      pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+        "", ⟨5, by simp only [sx1, starx, opt1, sx4]; omega⟩, 1, false) := by
+    have atIndex (j : Nat) (hj : j = 4) :
+        elabUnknownArgs {file} xs j 0 acc sb false =
+          pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+            "", ⟨5, by omega⟩, 1, false) := by
+      subst j
+      exact ax
+    exact atIndex _ (by simp only [sx1, starx, opt1, sx4])
+  have ay0 : elabUnknownArgs {file} ys
+      (skipSpaces ys (skipOptionRuns ys (skipStar ys (skipSpaces ys 1)) {}).1)
+      0 acc sb false =
+      pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+        "", ⟨2, by simp only [sy1, stary, noopt]; omega⟩, 1, false) := by
+    have atIndex (j : Nat) (hj : j = 1) :
+        elabUnknownArgs {file} ys j 0 acc sb false =
+          pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
+            "", ⟨2, by omega⟩, 1, false) := by
+      subst j
+      exact ay
+    exact atIndex _ (by simp only [sy1, stary, noopt])
+  rw [elabUnknownCtrl, elabUnknownCtrl]
+  simp! only [Nat.reduceAdd, sx1, sy1, starx, stary, opt1, noopt, Prod.fst, Prod.snd, sx4]
+  rw [ax0, ay0]
+  simp only [pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  rw [elabInlinesFrom_done_exact _ xs 5 _ _ (by simp [xs]),
+    elabInlinesFrom_done_exact _ ys 2 _ _ (by simp [ys])]
+  simp [inlineMacroAt, inlineMacroStep, xs, ys, flushText,
+    StateT.run, bind, StateT.bind, pure, StateT.pure]
+  split <;> split <;> split <;> split <;> rfl
+
 /-- **The code a refusal earns is fixed by the construct's name alone.** A
 construct the engine knows and defers is named as pending, everything else as
 unknown, and the call's argument shape does not enter: a leading `[...]` run
