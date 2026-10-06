@@ -1,6 +1,7 @@
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Decl
+import LeanTex.Core.Loop
 
 /-!
 The rendered `tikzpicture` subset: a coordinate system with `scale=`,
@@ -2531,12 +2532,10 @@ warning said so where no reader looks.
 
 What it does not say, since the distinction matters: it is one-sided. It
 holds for a salvage that kept nothing at all, because the placeholder then
-pays for it. The other side — that the salvage keeps a body's readable
-characters and none of its markup — is `nodeLabel_mem`, owed and staged:
-the walk is a mode machine over a token tree with no equational theory, so
-the statement needs an invariant carried through it. The executable half
-meanwhile is the whole-label rows in `pictureNodeFloorChecks`, which fail
-under both an all-dropping and an all-keeping salvage. -/
+pays for it. `nodeLabel_source_mem` bounds the result by its actual text
+sources, including elaborated mathematics. The whole-label rows in
+`pictureNodeFloorChecks` cover selection: naming arguments are discarded
+and readable content is kept. -/
 theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named) :
     Sal.inked (labelFloor lines named) := by
   unfold labelFloor
@@ -2578,6 +2577,386 @@ theorem nodeLabel_accounts (cx : Cx) (env : List (String × Val)) (toks : List T
   intro hd
   simp only [nodeLabel] at hd ⊢
   exact labelFloor_accounts _ _ (by simpa using hd)
+
+private def textFrom (P : Char → Prop) (s : String) : Prop :=
+  ∀ c ∈ s.toList, P c
+
+private def inlinesFrom (P : Char → Prop) (xs : Array Ir.Inline) : Prop :=
+  ∀ i ∈ xs, textFrom P (Ir.plainTextOne i)
+
+private def linesFrom (P : Char → Prop) (lines : Array LabelLine) : Prop :=
+  ∀ line ∈ lines, inlinesFrom P line.1
+
+private def Sal.from (P : Char → Prop) (s : Sal) : Prop :=
+  linesFrom P s.lines ∧ inlinesFrom P s.out ∧ textFrom P s.text
+
+@[simp] private theorem textFrom_empty (P : Char → Prop) : textFrom P "" := by
+  simp [textFrom]
+
+@[simp] private theorem textFrom_append (P : Char → Prop) (s t : String) :
+    textFrom P (s ++ t) ↔ textFrom P s ∧ textFrom P t := by
+  simp only [textFrom, String.toList_append, List.mem_append]
+  constructor
+  · intro h
+    exact ⟨fun c hc => h c (Or.inl hc), fun c hc => h c (Or.inr hc)⟩
+  · rintro ⟨hs, ht⟩ c (hc | hc)
+    · exact hs c hc
+    · exact ht c hc
+
+private theorem plainTextList_from (P : Char → Prop) (xs : List Ir.Inline) :
+    textFrom P (Ir.plainTextList xs) ↔
+      ∀ i ∈ xs, textFrom P (Ir.plainTextOne i) := by
+  induction xs with
+  | nil => simp [Ir.plainTextList]
+  | cons i xs ih => simp [Ir.plainTextList, ih]
+
+private theorem plainText_from (P : Char → Prop) (xs : Array Ir.Inline) :
+    textFrom P (Ir.plainText xs) ↔ inlinesFrom P xs := by
+  simpa [Ir.plainText, inlinesFrom] using plainTextList_from P xs.toList
+
+@[simp] private theorem inlinesFrom_empty (P : Char → Prop) :
+    inlinesFrom P #[] := by
+  simp [inlinesFrom]
+
+@[simp] private theorem linesFrom_empty (P : Char → Prop) :
+    linesFrom P #[] := by
+  simp [linesFrom]
+
+@[simp] private theorem inlinesFrom_singleton (P : Char → Prop) (i : Ir.Inline) :
+    inlinesFrom P #[i] ↔ textFrom P (Ir.plainTextOne i) := by
+  simp [inlinesFrom]
+
+@[simp] private theorem inlinesFrom_append (P : Char → Prop) (xs ys : Array Ir.Inline) :
+    inlinesFrom P (xs ++ ys) ↔ inlinesFrom P xs ∧ inlinesFrom P ys := by
+  simp only [inlinesFrom, Array.mem_append]
+  constructor
+  · intro h
+    exact ⟨fun i hi => h i (Or.inl hi), fun i hi => h i (Or.inr hi)⟩
+  · rintro ⟨hx, hy⟩ i (hi | hi)
+    · exact hx i hi
+    · exact hy i hi
+
+@[simp] private theorem textFrom_styled (P : Char → Prop) (st : Ir.Style)
+    (xs : Array Ir.Inline) :
+    textFrom P (Ir.plainTextOne (.styled st xs)) ↔ inlinesFrom P xs :=
+  plainText_from P xs
+
+@[simp] private theorem textFrom_colored (P : Char → Prop) (c : Ir.Color)
+    (role : Option String) (xs : Array Ir.Inline) :
+    textFrom P (Ir.plainTextOne (.colored c role xs)) ↔ inlinesFrom P xs :=
+  plainText_from P xs
+
+private theorem styles_from (P : Char → Prop) (sts : Array Ir.Style)
+    (xs : Array Ir.Inline) (hx : inlinesFrom P xs) :
+    inlinesFrom P (sts.foldr (fun st inner => #[.styled st inner]) xs) := by
+  apply Array.foldr_induction (motive := fun _ acc => inlinesFrom P acc) hx
+  intro i acc hacc
+  simpa using hacc
+
+private theorem appendRun_from (P : Char → Prop) (xs ys : Array Ir.Inline)
+    (hx : inlinesFrom P xs) (hy : inlinesFrom P ys) :
+    inlinesFrom P (ys.foldl Array.push xs) := by
+  have eq : ys.foldl Array.push xs = xs ++ ys := by
+    simpa using (Array.foldl_push_eq_append (as := ys) (bs := xs) (f := id) rfl)
+  rw [eq]
+  exact (inlinesFrom_append P xs ys).mpr ⟨hx, hy⟩
+
+private theorem Sal.str_from (P : Char → Prop) (s : Sal) (t : String)
+    (hs : s.from P) (ht : textFrom P t) : (s.str t).from P := by
+  unfold str
+  split
+  · exact hs
+  · exact ⟨hs.1, hs.2.1, (textFrom_append P s.text t).mpr ⟨hs.2.2, ht⟩⟩
+
+private theorem Sal.flush_from (P : Char → Prop) (s : Sal)
+    (hs : s.from P) : s.flush.from P := by
+  unfold flush
+  split
+  · exact hs
+  · exact ⟨hs.1, appendRun_from P _ _ hs.2.1
+      (styles_from P _ _ (by simpa [Ir.plainTextOne] using hs.2.2)), textFrom_empty P⟩
+
+private theorem Sal.inlines_from (P : Char → Prop) (s : Sal) (xs : Array Ir.Inline)
+    (hs : s.from P) (hx : inlinesFrom P xs) : (s.inlines xs).from P := by
+  unfold inlines
+  split
+  · exact hs
+  · have hf := s.flush_from P hs
+    exact ⟨hf.1, appendRun_from P _ _ hf.2.1 (styles_from P _ _ hx), hf.2.2⟩
+
+private theorem Sal.inline_from (P : Char → Prop) (s : Sal) (i : Ir.Inline)
+    (hs : s.from P) (hi : textFrom P (Ir.plainTextOne i)) :
+    (s.inline i).from P :=
+  s.inlines_from P _ hs ((inlinesFrom_singleton P i).mpr hi)
+
+private theorem Sal.trimEnds_from (P : Char → Prop) (left right : Bool)
+    (xs : Array Ir.Inline) (hx : inlinesFrom P xs) :
+    inlinesFrom P (Sal.trimEnds left right xs) := by
+  have trimL (s : String) (h : textFrom P s) :
+      textFrom P (String.ofList (s.toList.dropWhile (· == ' '))) := by
+    intro c hc
+    exact h c (List.dropWhile_subset _ (by simpa using hc))
+  have trimR (s : String) (h : textFrom P s) :
+      textFrom P (String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)) := by
+    intro c hc
+    apply h c
+    exact List.mem_reverse.mp (List.dropWhile_subset _ (by simpa using hc))
+  intro i hi
+  obtain ⟨k, hk, rfl⟩ := Array.exists_of_mem_mapIdx (Array.mem_filter.mp hi).1
+  have h := hx xs[k] (Array.getElem_mem hk)
+  split
+  · rename_i text he
+    have ht : textFrom P text := by simpa [he, Ir.plainTextOne] using h
+    dsimp only [Ir.plainTextOne]
+    split
+    · apply trimR
+      split
+      · exact trimL _ ht
+      · exact ht
+    · split
+      · exact trimL _ ht
+      · exact ht
+  · exact h
+
+private theorem Sal.newline_from (P : Char → Prop) (s : Sal) (hs : s.from P) :
+    s.newline.from P := by
+  have hf := s.flush_from P hs
+  refine ⟨?_, inlinesFrom_empty P, textFrom_empty P⟩
+  intro line hl
+  rcases Array.mem_push.mp hl with h | h
+  · exact hf.1 line h
+  · subst line
+    exact trimEnds_from P _ _ _ hf.2.1
+
+@[simp] private theorem Sal.inner_from (P : Char → Prop) (s : Sal) :
+    s.inner.from P := by
+  simp [inner, sub, Sal.from]
+
+private theorem fontCmdInlines_from (P : Char → Prop) (st : Ir.Style)
+    (edges : Bool × Bool) (xs : Array Ir.Inline) (hx : inlinesFrom P xs) :
+    inlinesFrom P (Ir.fontCmdInlines st edges xs) := by
+  rcases edges with ⟨l, r⟩
+  cases l <;> cases r <;>
+    simp [Ir.fontCmdInlines, inlinesFrom, Ir.plainTextOne,
+      plainTextList_from, Ir.plainTextList] <;> exact hx
+
+private theorem Sal.settle_from (P : Char → Prop) (s : Sal) (t : Tok)
+    (hs : s.from P) : (Sal.settle t s).from P := by
+  unfold Sal.settle
+  split <;> (try split) <;> exact hs
+
+/-- Content safety for the existing splice loop. Consumption is accounted
+for by `salList_from`'s induction over the source tree. -/
+private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
+    (wrap : Bool → Bool → Array Ir.Inline → Array Ir.Inline)
+    (hs : s.from P) (hb : body.from P)
+    (hw : ∀ first last xs, inlinesFrom P xs → inlinesFrom P (wrap first last xs)) :
+    (s.splice body wrap).from P := by
+  have hbody := body.newline_from P hb
+  unfold Sal.splice
+  dsimp only
+  refine Loop.bind_of_inv (fun s : Sal => s.from P) (fun s : Sal => s.from P) _ _ ?_ ?_
+  · apply Loop.forIn_range_inv
+    · exact hs
+    · intro k _ _ s hs
+      split
+      · rename_i xs scale heq
+        have hl : inlinesFrom P xs := hbody.1 (xs, scale) (Array.mem_of_getElem? heq)
+        split
+        · split
+          · exact s.newline_from P hs
+          · apply Sal.inlines_from
+            · exact s.newline_from P hs
+            · exact hw _ _ _ (Sal.trimEnds_from P _ _ _ hl)
+        · split
+          · exact hs
+          · exact Sal.inlines_from P _ _ hs (hw _ _ _ (Sal.trimEnds_from P _ _ _ hl))
+      · exact hs
+  · intro s hs
+    exact hs
+
+mutual
+
+/-- Collect potential label sources without copying the remaining walk
+at each token. This census reads source tokens, bindings and the math
+callback only; it does not run the salvage machine. -/
+def labelSourceList (cx : Cx) (env : List (String × Val))
+    (acc : Array String) : List Tok → Array String
+  | [] => acc
+  | t :: rest => labelSourceList cx env (acc.push (labelSource cx env t)) rest
+
+/-- One token's possible contribution to a label. Literal punctuation is
+content; braces and other grouping syntax have already become token nodes. -/
+def labelSource (cx : Cx) (env : List (String × Val)) : Tok → String
+  | .ident w => w
+  | .num m => milliString m
+  | .sym c => String.singleton c
+  | .space => " "
+  | .ctrl n => match env.lookup n with
+    | some v => v.text
+    | none => ""
+  | .group ts => String.join (labelSourceList cx env #[] ts).toList
+  | .math d ts => Ir.plainTextOne (cx.math d ts.toArray).1
+  | .other _ => ""
+
+end
+
+/-- Potential readable label characters, including bound values and the
+math elaborator's result. Groups contribute their own sources; command
+names and parser markers contribute none. The salvage may discard sources
+used as options or names, so this is a provenance bound, not an equality. -/
+def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
+  String.join (labelSourceList cx env #[] ts).toList
+
+/-- The source census preserves its existing chunks exactly. Its
+equational API separates the accumulator from the remaining source. -/
+theorem labelSourceList_prefix_exact (cx : Cx) (env : List (String × Val))
+    (initial acc : Array String) (ts : List Tok) :
+    labelSourceList cx env (initial ++ acc) ts =
+      initial ++ labelSourceList cx env acc ts := by
+  induction ts generalizing acc with
+  | nil => rfl
+  | cons t ts ih =>
+    simpa only [labelSourceList, Array.append_push] using
+      ih (acc.push (labelSource cx env t))
+
+theorem labelSources_cons (cx : Cx) (env : List (String × Val)) (t : Tok) (ts : List Tok) :
+    labelSources cx env (t :: ts) = labelSource cx env t ++ labelSources cx env ts := by
+  unfold labelSources
+  change String.join (labelSourceList cx env (#[labelSource cx env t] ++ #[]) ts).toList = _
+  rw [labelSourceList_prefix_exact]
+  simp
+
+private theorem salCtrl_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
+    (n : String) (s : Sal) (hs : s.from P)
+    (ht : textFrom P (labelSource cx env (.ctrl n))) :
+    (salCtrl cx env n s).from P := by
+  unfold salCtrl
+  split
+  · rename_i v hv
+    exact s.str_from P _ hs (by simpa [labelSource, hv] using ht)
+  · repeat' first
+      | exact hs
+      | exact s.newline_from P hs
+      | exact s.flush_from P hs
+      | split
+
+mutual
+
+private theorem salList_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
+    (ts : List Tok) (s : Sal) (hs : s.from P)
+    (ht : textFrom P (labelSources cx env ts)) :
+    (salList cx env ts s).from P := by
+  cases ts with
+  | nil => exact hs
+  | cons t ts =>
+    rw [labelSources_cons] at ht
+    have ⟨head, tail⟩ := (textFrom_append P _ _).mp ht
+    exact salList_from P cx env ts _ (salOne_from P cx env t _ hs head) tail
+
+private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
+    (t : Tok) (s : Sal) (hs : s.from P)
+    (ht : textFrom P (labelSource cx env t)) :
+    (salOne cx env t s).from P := by
+  have hs := Sal.settle_from P _ t (Sal.settle_from P _ t hs)
+  unfold salOne
+  generalize Sal.settle t (Sal.settle t s) = settled at hs ⊢
+  dsimp only
+  cases hm : settled.mode with
+  | optMaybe k => dsimp only; split <;> exact hs
+  | optDrop k => dsimp only; split <;> exact hs
+  | dropArgs n => exact hs
+  | colorRole =>
+    cases t <;> try exact hs
+    dsimp only
+    split <;> exact hs
+  | colorBody c role =>
+    cases t with
+    | group g =>
+      apply Sal.splice_from P _ _ _ hs
+      · exact salList_from P cx env g _ (Sal.inner_from P settled) ht
+      · intro first last xs hx
+        simpa using hx
+    | _ => exact hs
+  | styleBody st =>
+    cases t with
+    | group g =>
+      apply Sal.splice_from P _ _ _ hs
+      · exact salList_from P cx env g _ (Sal.inner_from P settled) ht
+      · intro first last xs hx
+        exact fontCmdInlines_from P _ _ _ hx
+    | ident w =>
+      apply Sal.inlines_from P _ _ hs
+      apply fontCmdInlines_from
+      simpa [labelSource, Ir.plainTextOne] using ht
+    | num m =>
+      apply Sal.inlines_from P _ _ hs
+      apply fontCmdInlines_from
+      simpa [labelSource, Ir.plainTextOne] using ht
+    | sym c =>
+      apply Sal.inlines_from P _ _ hs
+      apply fontCmdInlines_from
+      simpa [labelSource, Ir.plainTextOne] using ht
+    | _ => exact hs
+  | text =>
+    cases t with
+    | ident w => exact Sal.str_from P _ _ hs ht
+    | num m => exact Sal.str_from P _ _ hs ht
+    | space => exact Sal.str_from P _ _ hs ht
+    | sym c => exact Sal.str_from P _ _ hs ht
+    | group g =>
+      have hi := salList_from P cx env g
+        { settled with depth := settled.depth + 1, consumeNocorr := false, mode := .text } hs ht
+      dsimp only
+      split
+      · exact hi
+      · exact Sal.flush_from P _ hi
+    | math d body => exact Sal.inline_from P _ _ hs ht
+    | other _ => exact hs
+    | ctrl n => exact salCtrl_from P cx env n _ hs ht
+
+end
+
+private theorem labelFloor_from (P : Char → Prop) (lines : Array LabelLine)
+    (named : Bool) (hs : linesFrom P lines) (hp : textFrom P nodeFloorPlaceholder) :
+    linesFrom P (labelFloor lines named) := by
+  unfold labelFloor
+  split
+  · exact hs
+  · simpa [linesFrom, inlinesFrom, Ir.plainTextOne] using hp
+
+private theorem nodeLabel_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
+    (toks : List Tok) (ht : textFrom P (labelSources cx env toks))
+    (hp : textFrom P nodeFloorPlaceholder) :
+    linesFrom P (nodeLabel cx env toks).1 := by
+  let walked := salList cx env toks {}
+  have hw : walked.from P := salList_from P cx env toks {} (by simp [Sal.from]) ht
+  let closed := if Sal.settled walked.mode then walked
+    else walked.refuse "a node body that ends mid-construct"
+  have hc : closed.from P := by
+    dsimp only [closed]
+    split <;> exact hw
+  exact labelFloor_from P _ _ (Sal.newline_from P closed hc).1 hp
+
+/-- Every character returned by the label reader comes from literal text,
+a resolved macro value, the math elaborator's output, or the declared
+fallback. This holds inside all style and colour wrappers and across line
+breaks. Literal punctuation remains content; command names and parser
+markers cannot become a source merely because the reader encountered them.
+
+The bound is on provenance, not selection: options may carry readable
+characters which the reader intentionally discards. `nodeLabel_accounts`
+covers the separate guarantee that a named loss leaves visible ink. -/
+theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    ∀ line ∈ (nodeLabel cx env toks).1,
+      ∀ c ∈ (Ir.plainText line.1).toList,
+        c ∈ (labelSources cx env toks).toList ∨ c ∈ Ir.mathFloorPlaceholder := by
+  let P := fun c => c ∈ (labelSources cx env toks).toList ∨ c ∈ Ir.mathFloorPlaceholder
+  have h := nodeLabel_from P cx env toks
+    (fun _ hc => Or.inl hc)
+    (fun _ hc => Or.inr (by simpa [nodeFloorPlaceholder] using hc))
+  intro line hl
+  exact (plainText_from P line.1).mpr (h line hl)
 
 /-- A label's lines as shapes, stacked so the block centres on the anchor:
 one `Ir.Pic.Shape.label` per line, baselines `nodeLineLead` apart, each at
