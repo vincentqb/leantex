@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
@@ -98,7 +99,7 @@ private def identity (dir : System.FilePath) (tools : Array String) : IO (Option
 
 private def cacheDir : IO (Option System.FilePath) := do
   try
-    let some root ← FontDb.cacheDir | return none
+    let some root ← FontDiscovery.cacheDir | return none
     let dir := root / "convs"
     IO.FS.createDirAll dir
     return some dir

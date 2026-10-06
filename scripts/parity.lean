@@ -43,6 +43,7 @@ with nothing written:
 The oracle is never "must match". Every fixture's number is what the engine
 reaches today; the ladder's whole claim is that it does not go down.
 -/
+import LeanTex.Cli.FontDiscovery
 import scripts.ParityCore
 import scripts.Board
 
@@ -215,7 +216,7 @@ def envOf : IO Env := do
   let .ok font := Font.parse fontData | throw (IO.userError "parity: corpus font unparsable")
   let oneFace := oneFaceOf font
   return { pats := Hyphen.english.get, oneFace, mathSet := ← mathSetOf oneFace
-           shipped := ← FontDb.scanRoots [testFonts] }
+           shipped := ← FontDiscovery.scanRoots [testFonts] }
 
 /-- Every pairing is read relative to the working directory — `tests/parity`,
 and the pinned inputs beside it — so the selftest drives this over a staged

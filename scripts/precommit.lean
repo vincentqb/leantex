@@ -546,8 +546,8 @@ def tagStringEmit (l : String) : Bool :=
   ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
     rest.trimAscii.toString.startsWith patAppend
 
-/-- `pat` with no identifier character following — so `FontDb.scan` does not
-match `FontDb.scanRoots`. `hasWord` cannot carry a dotted name: the dot is
+/-- `pat` with no identifier character following — so `FontDiscovery.scan` does not
+match `FontDiscovery.scanRoots`. `hasWord` cannot carry a dotted name: the dot is
 a word delimiter. -/
 def hasCall (line pat : String) : Bool :=
   ((line.splitOn pat).drop 1).any fun rest =>
@@ -555,10 +555,10 @@ def hasCall (line pat : String) : Bool :=
     | [] => true
     | c :: _ => !isWordChar c
 
-/-- A host font scan in a test: `FontDb.scan` where only the shipped-corpus
-`FontDb.scanRoots [testFonts]` is hermetic (AGENTS.md, Conventions). -/
+/-- A host font scan in a test: `FontDiscovery.scan` where only the shipped-corpus
+`FontDiscovery.scanRoots [testFonts]` is hermetic (AGENTS.md, Conventions). -/
 def fontScanInTest (l : String) : Bool :=
-  hasCall (stripLineComment (stripStrings l)) "FontDb.scan"
+  hasCall (stripLineComment (stripStrings l)) "FontDiscovery.scan"
 
 /-- The marker stating why an `Ir.dump` read in a test is not a page claim;
 its presence on the line is the escape the gate honours. -/
@@ -608,7 +608,6 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/Elab.lean", 3),
   ("LeanTex/Core/Flate.lean", 2),
   ("LeanTex/Core/Font.lean", 3),
-  ("LeanTex/Core/FontDb.lean", 11),
   ("LeanTex/Core/HtmlDoc.lean", 4),
   ("LeanTex/Core/Hyphen.lean", 4),
   ("LeanTex/Core/Ir.lean", 2),
@@ -1058,7 +1057,7 @@ def gates : List Gate := [
   there — 'see PLAN.md' shipped in real output (the diag-voice defect).
   Fix: say what happens and what to write instead; the voice lint in
   Tests.lean judges the registered text." },
-  { applies := (· == "Main.lean")
+  { applies := fun f => f == "Main.lean" || f == "LeanTex/Cli/Driver.lean"
     flag := undeclaredConfigRead
     what := fun f => s!"a Config read in {f} not on the driver's declared list"
     help := "  The artifact is a function of the document and the font environment;
@@ -1069,12 +1068,12 @@ def gates : List Gate := [
   breaks the theorem artifact_flag_free instead of growing the list.
   Fix: make it a document declaration (\\output) rather than a flag; a
   flag about where/when/how-loudly goes on the list, deliberately." },
-  { applies := fun f => f.startsWith "LeanTex/Core/" && f != "LeanTex/Core/FontDb.lean"
+  { applies := fun f => f.startsWith "LeanTex/Core/"
     flag := ioInCore
     what := fun f => s!"IO in {f}"
-    help := "  Modules under LeanTex/Core/ do no IO (FontDb is the one exception): files
+    help := "  Modules under LeanTex/Core/ do no IO: files
   and fonts surface as request values the CLI driver fulfills.
-  Fix: return a request value and fulfill it in Main.lean." },
+  Fix: return a request value and fulfill it under LeanTex/Cli/." },
   { applies := (·.startsWith "LeanTex/Core/")
     flag := identityArm
     what := fun f => s!"identity catch-all arm (`| x => x`) in {f}"
@@ -1122,8 +1121,8 @@ def gates : List Gate := [
   Fix: build the node with the typed constructors; the renderer emits it." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := fontScanInTest
-    what := fun f => s!"FontDb.scan in {f}"
-    help := "  Tests scan only the shipped corpus fonts — FontDb.scanRoots [testFonts]
+    what := fun f => s!"FontDiscovery.scan in {f}"
+    help := "  Tests scan only the shipped corpus fonts — FontDiscovery.scanRoots [testFonts]
   (AGENTS.md, Conventions); a host scan makes the suite depend on what
   this machine has installed.
   Fix: ship the font in tests/corpus/fonts/ and scan through testFonts." },
@@ -1311,8 +1310,9 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
       diags := []
     diags := diags ++ diagBindings code
     let ns := names code
-    let writer := file == "Main.lean" && writers.contains owner
-    let sink := file == "Main.lean" && owner == "Ui.diag"
+    let driver := file == "LeanTex/Cli/Driver.lean"
+    let writer := driver && writers.contains owner
+    let sink := driver && owner == "Ui.diag"
     let terminal := ns.any fun n =>
       ["IO.print", "IO.println", "IO.eprint", "IO.eprintln",
         "print", "println", "eprint", "eprintln", "putStr", "putStrLn"].contains n ||
@@ -1324,7 +1324,7 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
       ["IO.getStdout", "IO.getStderr", "getStdout", "getStderr"].contains n ||
       n.endsWith ".outStream" || n.endsWith ".errStream"
     -- The shared def-name reader stops before the apostrophe in Ui.mk'.
-    if (terminal && !writer) || (stream && !writer && !(file == "Main.lean" && owner == "Ui.mk")) then
+    if (terminal && !writer) || (stream && !writer && !(driver && owner == "Ui.mk")) then
       out := out.push (row + 1, "terminal write or stream outside a UI/command handler")
     if rendered && !sink && file != "LeanTex/Cli/Render.lean" then
       out := out.push (row + 1, "diagnostic rendered before the typed sink")
@@ -1834,12 +1834,12 @@ def selftest : IO UInt32 := do
 
   expect "fontScanInTest" fontScanInTest [
     -- the driver's spelling, which in a test is the hermeticity break
-    ("  let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))", true),
-    ("  let faces ← FontDb.scan", true),
+    ("  let faces ← FontDiscovery.scan (cfg.fontDirs.toList ++ (← texFontDirs))", true),
+    ("  let faces ← FontDiscovery.scan", true),
     -- the hermetic spelling, a comment, and a string naming the call
-    ("  let shipped ← FontDb.scanRoots [testFonts]", false),
-    ("  -- FontDb.scan here would break hermeticity", false),
-    ("  t \"a message naming FontDb.scan stays data\" true", false)]
+    ("  let shipped ← FontDiscovery.scanRoots [testFonts]", false),
+    ("  -- FontDiscovery.scan here would break hermeticity", false),
+    ("  t \"a message naming FontDiscovery.scan stays data\" true", false)]
 
   expect "irDumpUnmarked" irDumpUnmarked [
     -- dump and its walk companions, unmarked: all must fire
@@ -1995,7 +1995,7 @@ def selftest : IO UInt32 := do
     ("          mathBoundary := ui.cfg.mathBoundary", false),
     ("  if ui.cfg.porcelain then", false),
     ("    let allowAll := ui.cfg.bestEffort", false),
-    ("  let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))", false),
+    ("  let faces ← FontDiscovery.scan (cfg.fontDirs.toList ++ (← texFontDirs))", false),
     -- comments, strings, and non-Config names stay legal
     ("  -- ui.cfg.frobnicate would be rejected here", false),
     ("  say s!\"a message naming cfg.frobnicate\"", false),
@@ -2071,86 +2071,88 @@ def selftest : IO UInt32 := do
   -- Break the real output boundary, including aliases and multiline
   -- calls; leave status/help/startup failures and structured builders legal.
   let diagCases : List (String × String × List String × Bool) := [
-    ("direct stderr", "Main.lean",
+    ("entry point cannot print diagnostics", "Main.lean",
+      ["def main := IO.eprintln msg"], true),
+    ("direct stderr", "LeanTex/Cli/Driver.lean",
       ["def report (d : Diag) : IO Unit :=", "  IO.eprintln d.message"], true),
     ("CLI module printing", "LeanTex/Cli/DriverDiag.lean",
       ["def report (d : Diag) : IO Unit :=", "  IO.println d.code"], true),
-    ("opened IO namespace", "Main.lean",
+    ("opened IO namespace", "LeanTex/Cli/Driver.lean",
       ["open IO", "def report (d : Diag) := eprintln d.message"], true),
     ("opened stream namespace", "LeanTex/Cli/DriverDiag.lean",
       ["open IO.FS.Stream", "def report (s : IO.FS.Stream) := putStrLn s msg"], true),
-    ("multiline stream write", "Main.lean",
+    ("multiline stream write", "LeanTex/Cli/Driver.lean",
       ["def report (ui : Ui) (d : Diag) : IO Unit := do", "  ui.errStream.putStrLn",
        "    d.message"], true),
-    ("stream alias", "Main.lean",
+    ("stream alias", "LeanTex/Cli/Driver.lean",
       ["def report (ui : Ui) := do", "  let s := ui.errStream", "  pure s"], true),
-    ("print alias", "Main.lean",
+    ("print alias", "LeanTex/Cli/Driver.lean",
       ["def report := do", "  let emit := IO.eprintln", "  emit msg"], true),
     ("early human render", "LeanTex/Cli/Input.lean",
       ["def text (d : Diag) := Render.human false d"], true),
-    ("early machine render", "Main.lean",
+    ("early machine render", "LeanTex/Cli/Driver.lean",
       ["def text := Render.porcelainDiag"], true),
-    ("sink bypass", "Main.lean",
+    ("sink bypass", "LeanTex/Cli/Driver.lean",
       ["def Ui.diag (ui : Ui) (d : Diag) := do", "  IO.eprintln d.message"], true),
-    ("sink raw suffix", "Main.lean",
+    ("sink raw suffix", "LeanTex/Cli/Driver.lean",
       ["def Ui.diag (ui : Ui) (d : Diag) := do",
        "  ui.errStream.putStrLn (Render.human ui.color d ++ d.message)"], true),
-    ("command field alias", "Main.lean",
+    ("command field alias", "LeanTex/Cli/Driver.lean",
       ["def main := do", "  let msg := d.message", "  IO.println msg"], true),
-    ("status interpolation", "Main.lean",
+    ("status interpolation", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := do", "  IO.eprintln s!\"{d.code}: {d.message}\""], true),
-    ("literal diagnostic", "Main.lean",
+    ("literal diagnostic", "LeanTex/Cli/Driver.lean",
       ["def main := do", "  IO.eprintln \"warning: lost text\""], true),
-    ("warning icon headline", "Main.lean",
+    ("warning icon headline", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.eprintln \"⚠ [W0301] lost text\""], true),
-    ("error icon headline", "Main.lean",
+    ("error icon headline", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.eprintln \"✖ [E0001] lost text\""], true),
-    ("info icon headline", "Main.lean",
+    ("info icon headline", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.eprintln \"ℹ [N0100] translated text\""], true),
-    ("icon headline interpolation", "Main.lean",
+    ("icon headline interpolation", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.eprintln s!\"⚠ [{code}] lost text\""], true),
-    ("multiline icon headline", "Main.lean",
+    ("multiline icon headline", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := do", "  IO.eprintln", "    \"⚠[W0301] lost text\""], true),
-    ("typed sink", "Main.lean",
+    ("typed sink", "LeanTex/Cli/Driver.lean",
       ["def Ui.diag (ui : Ui) (d : Diag) := do", "  if d.severity != .note then",
        "    ui.errStream.putStrLn (Render.human ui.color d)",
        "    ui.errStream.putStrLn (Render.human ui.color d ui.showOutput)",
        "  ui.outStream.putStrLn (Render.porcelainDiag d)"], false),
-    ("literal status summaries", "Main.lean",
+    ("literal status summaries", "LeanTex/Cli/Driver.lean",
       ["def Ui.done := IO.println \"✔ demo.tex → demo.pdf — 1 page (1 ms) · 2 notes (-v)\"",
        "def Ui.summary := IO.eprintln \"✖ demo.tex — 1 error (1 ms)\"",
        "def Ui.werror := IO.eprintln \"✖ demo.tex — 1 warning (--werror) (1 ms)\""], false),
-    ("headline word boundaries", "Main.lean",
+    ("headline word boundaries", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.println \"information: scanning fonts\"",
        "def Ui.summary := IO.println \"warnings: 2\""], false),
-    ("commented headlines", "Main.lean",
+    ("commented headlines", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := do", "  /- IO.eprintln \"⚠ [W0301] lost text\" -/",
        "  -- IO.eprintln \"Info [N0100] translated text\"",
        "  IO.println \"finished\""], false),
-    ("status and verdict", "Main.lean",
+    ("status and verdict", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.println s!\"{name}: {detail}\"", "def Ui.werror := do",
        "  ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)"], false),
-    ("help and startup failure", "Main.lean",
+    ("help and startup failure", "LeanTex/Cli/Driver.lean",
       ["def main := do", "  IO.println helpText", "  let stderr ← IO.getStderr",
        "  stderr.putStrLn s!\"leantex: {msg}\"", "  stderr.putStrLn \"try 'leantex --help'\""], false),
-    ("command output", "Main.lean",
+    ("command output", "LeanTex/Cli/Driver.lean",
       ["def dump := IO.print (Ir.dump front.doc front.diags)",
        "def hyphenate := IO.println (showHyphens pats w)"], false),
     ("structured builder and policy", "LeanTex/Cli/DriverDiag.lean",
       ["def make := Diag.of .E0001 msg", "def fatal (d : Diag) := d.severity == .error",
        "def scope (d : Diag) := d.output"], false),
-    ("output paths beside a diagnostic", "Main.lean",
+    ("output paths beside a diagnostic", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase (d : Diag) (cfg : Config) := do", "  ui.diag d",
        "  IO.println cfg.output", "  IO.println s!\"{ui.cfg.output}\""], false),
-    ("output context ends at the next definition", "Main.lean",
+    ("output context ends at the next definition", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase (d : Diag) := ui.diag d",
        "def main (d : Config) := IO.println d.output"], false),
-    ("output type names are exact", "Main.lean",
+    ("output type names are exact", "LeanTex/Cli/Driver.lean",
       ["def main (cfg : Diag.Config) := IO.println cfg.output"], false),
-    ("output status and subprocess", "Main.lean",
+    ("output status and subprocess", "LeanTex/Cli/Driver.lean",
       ["def main := do", "  let result ← IO.Process.output command",
        "  IO.println result.stdout", "  IO.println s!\"wrote {doc.output.formats}\""], false),
-    ("output context ignores documentation", "Main.lean",
+    ("output context ignores documentation", "LeanTex/Cli/Driver.lean",
       ["def main := do", "  /- (cfg : Diag) -/", "  let help := \"(cfg : Diag)\"",
        "  IO.println cfg.output"], false),
     ("documentation", "LeanTex/Cli/Input.lean",
@@ -2162,31 +2164,31 @@ def selftest : IO UInt32 := do
        "Render.human -- /- quotes are not comments here", "end\""], false),
     ("quote character", "LeanTex/Cli/Input.lean",
       ["def isQuote (c : Char) := c == '\"'", "def report := IO.eprintln msg"], true),
-    ("inline nested comment", "Main.lean",
+    ("inline nested comment", "LeanTex/Cli/Driver.lean",
       ["def report := do", "  /- outer /- inner -/ done -/ IO.eprintln msg"], true),
     ("other tools are out of scope", "scripts/example.lean",
       ["def main := IO.eprintln \"warning: a tool status\""], false)] ++
     (["Warning", "ERROR", "note", "Info"].flatMap fun label =>
       [": lost text", "[W0301] lost text", " [W0301] lost text", " - lost text"].map fun tail =>
-        (s!"literal {label}{tail}", "Main.lean",
+        (s!"literal {label}{tail}", "LeanTex/Cli/Driver.lean",
           ["def Ui.phase := IO.eprintln \"" ++ label ++ tail ++ "\""], true)) ++
     ["trigger", "recovery", "output"].flatMap fun field =>
       -- All use permitted writers: the field rule itself must reject them,
       -- not the independent rule against an unaudited terminal writer.
-      [(s!"structured {field} direct", "Main.lean",
+      [(s!"structured {field} direct", "LeanTex/Cli/Driver.lean",
         ["def Ui.phase (d : Diag) := IO.eprintln (reprStr d." ++ field ++ ")"], true),
-       (s!"structured {field} accessor", "Main.lean",
+       (s!"structured {field} accessor", "LeanTex/Cli/Driver.lean",
         ["def Ui.phase (d : Diag) := IO.eprintln (reprStr d." ++ field ++ ".isSome)"], true),
-       (s!"structured {field} alias", "Main.lean",
+       (s!"structured {field} alias", "LeanTex/Cli/Driver.lean",
         ["def main := do", "  let d : Diag := make",
          "  let text := reprStr d." ++ field, "  IO.println text"], true),
-       (s!"structured {field} interpolation", "Main.lean",
+       (s!"structured {field} interpolation", "LeanTex/Cli/Driver.lean",
         ["def Ui.phase", "    (notice : LeanTex.Core.Diag) :=",
          "  IO.eprintln s!\"{reprStr notice." ++ field ++ "}\""], true),
-       (s!"structured {field} constructor", "Main.lean",
+       (s!"structured {field} constructor", "LeanTex/Cli/Driver.lean",
         ["def main := do", "  let d := Diag.of .E0001 msg",
          "  IO.println (reprStr d." ++ field ++ ")"], true),
-       (s!"structured {field} sink suffix", "Main.lean",
+       (s!"structured {field} sink suffix", "LeanTex/Cli/Driver.lean",
         ["def Ui.diag (d : Diag) :=",
          "  IO.eprintln (Render.human false d ++ reprStr d." ++ field ++ ")"], true)]
   for (what, file, lines, bad) in diagCases do

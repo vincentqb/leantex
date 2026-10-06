@@ -9,14 +9,13 @@ check and the CLI before running:
 
 ```
 lake build leantex Tests.SvgValidation Tests.SvgTerminal Tests.SvgBrowser Tests.SvgFaces Tests.SvgPublication
-lake env lean scripts/svg-check.lean
+lake env lean --run scripts/svg-check.lean
 ```
 
-The driver checks import Main, so this entry uses `#eval`; run without
-`--run`. Requires xmllint, xsltproc, rsvg-convert and Poppler; all documents
+Requires xmllint, xsltproc, rsvg-convert and Poppler; all documents
 are synthetic and no network inputs are used. -/
 
-#eval (do
+def main : IO UInt32 := do
   let failures ← IO.mkRef []
   Tests.svgBrowserSourceChecks failures
   Tests.svgFacePreparationChecks failures
@@ -28,6 +27,4 @@ are synthetic and no network inputs are used. -/
   for name in failed.reverse do
     IO.eprintln s!"FAIL: {name}"
   IO.println s!"SVG converter oracle: {failed.length} failures"
-  if !failed.isEmpty then
-    throw <| IO.userError "SVG converter oracle failed"
-  : IO Unit)
+  return if failed.isEmpty then 0 else 1

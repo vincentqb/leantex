@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import Tests.Support
 import Tests.Artifact
 
@@ -259,7 +260,7 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((FontDb.resolveVariant (betas.push betaLight) "Beta Sans Light" none {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
   -- A declared file name denotes that exact scanned face.
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   t "a declared file name denotes that exact face"
     ((FontDb.resolveVariant shipped "Open Sans" (some "SourceSerifPro-Bold.otf")
       { bold := true }).map (fun r => (r.1.path, subMsg r.2)) ==
@@ -584,8 +585,8 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "docScalars is sorted" (scalars == scalars.qsort (· < ·))
   -- The scanned-face pick order is documented: families in normalised order,
   -- upright regular first — never scan luck.
-  let shipped ← FontDb.scanRoots [testFonts]
-  let picks ← FontDb.fallbackPicks shipped #['∀', '₿', '𓀀']
+  let shipped ← FontDiscovery.scanRoots [testFonts]
+  let picks ← FontDiscovery.fallbackPicks shipped #['∀', '₿', '𓀀']
   t "picks the first covering family in sorted order"
     (picks.contains ('∀', testFonts ++ "/FiraMath-Regular.otf"))
   t "picks the regular face of a family with variants"
@@ -598,11 +599,11 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- under the documented order; a scan with no MATH face at all gets none
   -- (and layout degrades with W0003, pinned in mathChecks).
   t "companion branch: Fira Sans finds Fira Math with its sourced row"
-    ((← FontDb.pickMathFace shipped "Fira Sans").map
+    ((← FontDiscovery.pickMathFace shipped "Fira Sans").map
         (fun (f, r) => (f.family, (r.map (·.license)).getD "")) ==
       some ("Fira Math", "SIL Open Font License"))
   t "no-companion branch: the first MATH-table face serves, rowless"
-    ((← FontDb.pickMathFace shipped "Source Serif Pro").map
+    ((← FontDiscovery.pickMathFace shipped "Source Serif Pro").map
         (fun (f, r) => (f.family, r.isNone)) == some ("Fira Math", true))
   -- GPOS pair kerning (PairPos formats 1+2 + ClassDef; legacy kern
   -- table as HarfBuzz's fallback rule). The −41 is hb-shape's own
@@ -775,7 +776,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "font edge: a nested nocorr is not consumed as the command's edge marker"
     (nestedNocorrDs.map (·.code) == #["W0301"])
   t "no MATH face anywhere: the pick is none"
-    ((← FontDb.pickMathFace
+    ((← FontDiscovery.pickMathFace
         (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))
         "Fira Sans").isNone)
   t "every pairing row names a face, a source, and a licence"
@@ -798,22 +799,22 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       (FontDb.pickCompanion shipped "Fira Sans").map (·.2.path))
   -- Malformed and missing candidates stay total: no answer, never an abort.
   t "tableImage of a missing file is none"
-    ((← FontDb.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
+    ((← FontDiscovery.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
   let corrupt := System.FilePath.mk "/tmp" / "leantex-test-corrupt-fallback.otf"
   IO.FS.writeBinFile corrupt ("OTTO".toUTF8 ++ ByteArray.mk (Array.replicate 40 0xff))
   t "a corrupt candidate yields no cmap image"
-    ((← FontDb.tableImage corrupt.toString (· == "cmap")).isNone)
+    ((← FontDiscovery.tableImage corrupt.toString (· == "cmap")).isNone)
   IO.FS.removeFile corrupt
 
   -- The document's own faces outrank the host's: the documented order
   -- picks Fira Math for '∀' (asserted above), but a preference on the
   -- Source Code Pro path — a document that ships that face — wins.
-  let prefPicks ← FontDb.fallbackPicksPreferring
+  let prefPicks ← FontDiscovery.fallbackPicksPreferring
     (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['∀']
   t "a preferred (document-shipped) face answers first for what it covers"
     (prefPicks.contains ('∀', testFonts ++ "/SourceCodePro-Regular.otf"))
   t "what a preferred face leaves uncovered still reaches the full scan"
-    (((← FontDb.fallbackPicksPreferring
+    (((← FontDiscovery.fallbackPicksPreferring
         (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['\uF09B']).find?
       (·.1 == '\uF09B')).any (fun e => (e.2.splitOn "ExampleIcons").length ≥ 2))
 
@@ -886,16 +887,16 @@ def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
       "Tie Sans" {}).map (·.1.path) == some "/z/tie.ttf")
   for d in ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
       "/Library/Fonts", "/opt/homebrew/share/fonts", "/usr/local/share/fonts"] do
-    t s!"searchDirs covers {d}" (FontDb.searchDirs.contains d)
+    t s!"searchDirs covers {d}" (FontDiscovery.searchDirs.contains d)
   if let some home ← IO.getEnv "HOME" then
     t "extraDirs covers ~/Library/Fonts"
-      ((← FontDb.extraDirs).contains (home ++ "/Library/Fonts"))
+      ((← FontDiscovery.extraDirs).contains (home ++ "/Library/Fonts"))
   -- A .ttc never reaches probe via the scan (isFontFile skips it), but probe
   -- fed one directly must classify it as unusable, never abort: its reads
   -- are bounded checks, not trusted offsets.
   let ttc := System.FilePath.mk "/tmp" / "leantex-test-synthetic.ttc"
   IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
-  t "probe rejects a ttc without aborting" ((← FontDb.probe ttc.toString).isNone)
+  t "probe rejects a ttc without aborting" ((← FontDiscovery.probe ttc.toString).isNone)
   IO.FS.removeFile ttc
 
 /-- The shipped fonts make the suite hermetic: what `lake test` sees is a
@@ -908,7 +909,7 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   let t := check ref
   let paths := faces.map (·.path)
   t "scan order is sorted path order" (paths == paths.qsort (· < ·))
-  t "scanning again gives the same faces" ((← FontDb.scanRoots [testFonts]).map (·.path) == paths)
+  t "scanning again gives the same faces" ((← FontDiscovery.scanRoots [testFonts]).map (·.path) == paths)
   t "a file name denotes its family"
     (FontDb.familyOf faces "SourceSerifPro-Regular.otf" == "Source Serif Pro")
   t "an unknown file name denotes itself" (FontDb.familyOf faces "Nope.otf" == "Nope.otf")
@@ -997,19 +998,19 @@ without moving the version fails here. -/
 def probeCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let path := testFonts ++ "/SourceCodePro-Regular.otf"
-  let some key ← FontDb.probeKey path
+  let some key ← FontDiscovery.probeKey path
     | failures ref "probe cache: the shipped Source Code Pro cannot be stat'd"; return
   let stale := key ++ "\tOld Classifier\tRegular\tfalse\tfalse\tfalse\t400\n"
   let scanWith (file : String) : IO (Option FontDb.Face) := do
     let dir ← IO.FS.createTempDir
     IO.FS.writeFile (dir / file) stale
-    let faces ← FontDb.scanRootsIn (some dir) [testFonts]
+    let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
     IO.FS.removeDirAll dir
     return faces.find? (·.path == path)
   let legacy ← scanWith "fontdb.tsv"
   t "probe cache: a row an earlier classifier wrote is not read"
     ((legacy.map fun f => (f.family, f.fixedPitch)) == some ("Source Code Pro", true))
-  let live ← scanWith FontDb.probeCacheName
+  let live ← scanWith FontDiscovery.probeCacheName
   t "probe cache: the same row in this classifier's own file is read, so the name is what refuses it"
     ((live.map fun f => (f.family, f.fixedPitch)) == some ("Old Classifier", false))
   t s!"classifier pins: recorded under version {classifierPinsVersion}, the classifier is \
@@ -1045,7 +1046,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}x\\end{document}") == ["E0322"])
 
   -- Resolution runs on the shipped faces, never the host's.
-  let faces ← FontDb.scanRoots [testFonts]
+  let faces ← FontDiscovery.scanRoots [testFonts]
   t "fontdb finds the twelve shipped faces" (faces.size == 12)
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref

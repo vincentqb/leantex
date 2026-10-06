@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.FontAssembly
 import Tests.FontMath
 
@@ -27,7 +28,7 @@ resolved text face; a green family lookup alone cannot establish that.
 Every matrix document declares a family, so a caller's LEANTEX_FONT cannot
 influence this matrix. The separate process checks cover that override. -/
 def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let scanned ← FontDb.scanRootsIn none [testFonts]
+  let scanned ← FontDiscovery.scanRootsIn none [testFonts]
   -- Fix the default candidate order without depending on host fonts.
   let faces := scanned.filter (·.family == "Open Sans") ++
     scanned.filter (·.family != "Open Sans")

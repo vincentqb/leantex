@@ -213,8 +213,8 @@ in this repo; refer to the private reference corpus abstractly.
   checked-in file the first time one of the pair is edited alone, and no
   check can see it: regeneration needs this host's TeX tree, so CI cannot.
 
-- Pure core: modules under `LeanTex/Core/` do no IO (`FontDb` is the one
-  exception; the pre-commit hook rejects new IO in core). Files, fonts,
+- Pure core: modules under `LeanTex/Core/` do no IO (the
+  pre-commit hook enforces the boundary). Files, fonts,
   anything external surfaces as request values the CLI driver fulfills
   (effects as data).
 - The artifact is a function of the document and the font environment;
@@ -366,7 +366,7 @@ in this repo; refer to the private reference corpus abstractly.
 - Fixtures and tests never depend on what this host has installed. A fixture
   that names a font ships it in `tests/corpus/fonts/` (with its license) and
   declares `\fonts{ dir = "fonts" }`; `Tests.lean` scans only that directory
-  (`FontDb.scanRoots [testFonts]`), never `FontDb.scan`. To prove a change
+  (`FontDiscovery.scanRoots [testFonts]`), never `FontDiscovery.scan`. To prove a change
   hermetic, build the corpus in a namespace with the font directories
   emptied: `unshare -Urm`, `mount -t tmpfs none /usr/share/fonts` (and the
   TeX Live tree), `HOME` and `PATH` pointed at empty directories.

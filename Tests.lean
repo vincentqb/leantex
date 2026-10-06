@@ -11,6 +11,7 @@ import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.ContrastContracts
 import Tests.FontSize
+import Tests.FontSelection
 import Tests.CancelRegression
 import Tests.CancelHtml
 import Tests.CancelAlignment

@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.FontEnv
 import LeanTex.Core.Layout
 
@@ -53,7 +54,7 @@ every host, whatever else is installed.
 Per-glyph fallback is precomputed here, against the document's own scalars
 (`Layout.docScalars`): a scalar some declared face covers maps to the first
 covering face in declaration order, and one no declared face covers goes to
-`FontDb.fallbackPicks`, whose face is loaded at the end of the set. Layout
+`FontDiscovery.fallbackPicks`, whose face is loaded at the end of the set. Layout
 consults the map only on a missing glyph. The `LEANTEX_FONT` override is a
 single face with no scan behind it, so it gets no fallback.
 
@@ -247,7 +248,7 @@ def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     -- answers first for every scalar it covers.
     let inDocDir (path : String) : Bool :=
       docDirs.any fun d => path.startsWith (d ++ "/") || path.startsWith d
-    for (c, path) in ← FontDb.fallbackPicksPreferring inDocDir faces uncovered do
+    for (c, path) in ← FontDiscovery.fallbackPicksPreferring inDocDir faces uncovered do
       match paths.findIdx? (· == path) with
       | some i => fallback := fallback.push (c, i)
       | none =>

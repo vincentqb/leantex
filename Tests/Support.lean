@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import LeanTex
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -1065,7 +1066,7 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
 
 /-- The font set a golden fixture lays out under in the suite: `oneFace`,
 plus the math face a build would resolve — `mathSet` (the shipped Fira
-Math) when the fixture declares a math face, else `FontDb.pickMathFace`
+Math) when the fixture declares a math face, else `FontDiscovery.pickMathFace`
 over the shipped corpus faces when the document reaches math — plus a
 fallback face per Private Use Area scalar an icon needs, found the way a
 build finds it (the scan over the shipped corpus). Everything else keeps
@@ -1078,7 +1079,7 @@ def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face
   let fs ← if doc.fonts.math.isSome then pure mathSet
     else if (Layout.docMathScalars doc).isEmpty then pure oneFace
     else do
-      match ← FontDb.pickMathFace shipped (doc.fonts.body.getD "") with
+      match ← FontDiscovery.pickMathFace shipped (doc.fonts.body.getD "") with
       | some (face, _) =>
         match Font.parse (← IO.FS.readBinFile face.path) with
         | .ok f => pure { oneFace with
@@ -1094,7 +1095,7 @@ def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face
       fs.fonts.all fun f => (f.gid ch).isNone
   if uncovered.isEmpty then return fs
   let mut fs := fs
-  for (ch, path) in ← FontDb.fallbackPicks shipped uncovered do
+  for (ch, path) in ← FontDiscovery.fallbackPicks shipped uncovered do
     match Font.parse (← IO.FS.readBinFile path) with
     | .ok f =>
       let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with

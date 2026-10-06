@@ -30,6 +30,7 @@ rather than word-for-word on purpose: Poppler groups glyphs into words by
 its own spacing rules while the engine reads the writer's runs, so the two
 segment differently and only their union is comparable.
 -/
+import LeanTex.Cli.FontDiscovery
 import Tests.Artifact
 
 open LeanTex.Core LeanTex.Cli
@@ -205,7 +206,7 @@ def main (args : List String) : IO UInt32 := do
   let .ok font := Font.parse fontData | throw (IO.userError "ink-oracle: corpus font unparsable")
   let oneFace := oneFaceOf font
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let dir ← IO.FS.createTempDir
   let mut verdicts : Array Verdict := #[]
   for n in goldenNames do

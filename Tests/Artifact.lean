@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import Tests.Backends
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -1161,7 +1162,7 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (artKnownOffences.length ==
       (artKnownOffences.map fun (n, p, _) => s!"{n}/{p.name}").eraseDups.length)
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut bandsSeen := 0
   let mut multiPage := 0
   let mut contentPaths := 0
@@ -1238,7 +1239,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let build (n : String) :
       IO (Font.FontSet × Layout.Geom × Ir.Doc × Layout.Out × Image.Store) := do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
@@ -1652,7 +1653,7 @@ def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     else
       t s!"band parity mutant, {label}: the judge accepts it: {offs.toList}" offs.isEmpty
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut paintedSeen := 0
   let mut declaredSeen := 0
   let mut carriedSeen := 0
@@ -1799,7 +1800,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"ground parity mutant, {label}: the judge accepts it: {offs.toList}"
         offs.isEmpty
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut paintedSeen := 0
   let mut declaredSeen := 0
   let mut carriedSeen := 0
@@ -2063,7 +2064,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     else
       t s!"stage ground mutant, {label}: the judge accepts it: {offs.toList}" offs.isEmpty
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut judged := 0
   let mut declared := 0
   for n in goldenNames do

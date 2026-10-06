@@ -40,10 +40,11 @@ is not `pass`. The run record (tool versions, per-fixture verdicts, the
 DSSIM calibration, the raster hashes, the matrix diff, the validator's raw
 summaries) lands under /tmp/leantex-agents/modern-output/pdf-oracles-<date>.md.
 -/
+import LeanTex.Cli.FontDiscovery
 import Lean.Data.Json
 import Tests.PdfConformance
 
-open LeanTex.Core Lean
+open LeanTex.Core LeanTex.Cli Lean
 
 def die (msg : String) : IO Unit := do
   IO.eprintln s!"pdf-oracles: FAIL {msg}"
@@ -147,7 +148,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
     | some fam => pure ((FontDb.resolveVariant faces fam none {}).map (·.1))
     | none =>
       if (Layout.docMathScalars doc).isEmpty then pure none
-      else pure ((← FontDb.pickMathFace faces (spec.body.getD "")).map (·.1))
+      else pure ((← FontDiscovery.pickMathFace faces (spec.body.getD "")).map (·.1))
   if let some face := mathPick then
     match paths.findIdx? (· == face.path) with
     | some k => if (fonts[k]!).math.isSome then mathIdx := some k
@@ -168,7 +169,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
     match (Array.range fonts.size).find? (fun k => ((fonts[k]!).gid c).isSome) with
     | some k => fallback := fallback.push (c, k)
     | none => uncovered := uncovered.push c
-  for (c, path) in ← FontDb.fallbackPicksPreferring (·.startsWith "tests/corpus") faces uncovered do
+  for (c, path) in ← FontDiscovery.fallbackPicksPreferring (·.startsWith "tests/corpus") faces uncovered do
     match paths.findIdx? (· == path) with
     | some k => fallback := fallback.push (c, k)
     | none =>
@@ -643,7 +644,7 @@ def main : IO Unit := do
     s!"chrome {chromeV.getD "absent"}", s!"pdfjs {pdfjsV.getD "absent"}"]
   IO.println s!"pdf-oracles: {toolsLine veraV}"
   IO.println s!"pdf-oracles: node {nodeV.getD "absent"}  magick {magickV.getD "absent"}  browsers {if browsers then "on" else "off"}"
-  let faces ← FontDb.scanRoots (["tests/corpus/fonts"] ++ (← FontDb.systemRoots []))
+  let faces ← FontDiscovery.scanRoots (["tests/corpus/fonts"] ++ (← FontDiscovery.systemRoots []))
   let pats := Hyphen.english.get
   -- The fixtures: every corpus document that declares a PDF output or
   -- declares none, built by the shipped binary.

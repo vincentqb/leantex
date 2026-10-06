@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -1211,9 +1212,9 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   for (n, _) in censusTable do
     check ref s!"census row {n} names a golden fixture" (goldenNames.contains n)
   -- A fixture that reaches math without declaring a face resolves it the
-  -- way the driver does (FontDb.pickMathFace over the shipped faces), so
+  -- way the driver does (FontDiscovery.pickMathFace over the shipped faces), so
   -- the census exercises the same decision a build runs.
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   for (n, facts) in censusTable do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src

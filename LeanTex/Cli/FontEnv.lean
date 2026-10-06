@@ -1,4 +1,5 @@
 import LeanTex.Core.Font
+import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.DriverDiag
 
 /-! The font environment, as the driver's own decisions: the `LEANTEX_FONT`
@@ -175,7 +176,7 @@ def resolveMath (faces : Array FontDb.Face) (declared : Option String)
   else if wantsMath then
     let bodyFam := body.getD ""
     let choice : Option (FontDb.Face × Option String) ←
-      (← FontDb.pickMathFace faces bodyFam).mapM fun (face, row?) =>
+      (← FontDiscovery.pickMathFace faces bodyFam).mapM fun (face, row?) =>
         pure (face, row?.map fun _ => bodyFam)
     if let some (face, companionOf) := choice then
       let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path

@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -137,10 +138,10 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       | .error d => return (Boundary.withdraw "lualatex" #[id] #[(src, .answered d none)] #[]).notes
       | .ok _ => return #[]),
     (.W0011, fun _ => do
-      let faces ← FontDb.scanRoots [testFonts]
+      let faces ← FontDiscovery.scanRoots [testFonts]
       return (← FontEnv.resolveMath faces (some "Open Sans") none false #[] #[] #[]).diags),
     (.N0016, fun _ => do
-      let faces ← FontDb.scanRoots [testFonts]
+      let faces ← FontDiscovery.scanRoots [testFonts]
       let companion ← FontEnv.resolveMath faces none (some "Fira Sans") true #[] #[] #[]
       let first ← FontEnv.resolveMath faces none (some "Open Sans") true #[] #[] #[]
       return companion.diags ++ first.diags),

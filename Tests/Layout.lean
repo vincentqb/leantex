@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
@@ -1586,7 +1587,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- on every shipped fixture face the whole band — position down to
   -- position minus thickness — stays inside the metric descent, so the
   -- rule and the descenders it clears share one region.
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut bandOk := true
   for face in shipped do
     if let .ok f := Font.parse (← IO.FS.readBinFile face.path) then
@@ -6064,7 +6065,7 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc0, _) ← elabFixture n src
@@ -6262,7 +6263,7 @@ def inlineAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut labelFixtures : Array String := #[]
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"

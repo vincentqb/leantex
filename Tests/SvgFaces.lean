@@ -1,9 +1,9 @@
-import Main
+import LeanTex.Cli.Driver
 import Tests.Support
 
 namespace Tests
 
-open LeanTex.Core
+open LeanTex.Core LeanTex.Cli.Driver
 
 /-- Preparing an image twice must keep the same published faces and native
 canvas. Conversion always consumes the captured source; a previous browser

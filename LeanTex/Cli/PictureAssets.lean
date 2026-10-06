@@ -1,3 +1,4 @@
+import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.ConvCache
 
 /-! Fulfil standalone picture requests with owned scratch and checked cache
@@ -20,7 +21,7 @@ structure Answer where
 
 def cacheDir : IO (Option System.FilePath) := do
   try
-    let some root ← FontDb.cacheDir | return none
+    let some root ← FontDiscovery.cacheDir | return none
     let dir := root / "pics"
     IO.FS.createDirAll dir
     return some dir

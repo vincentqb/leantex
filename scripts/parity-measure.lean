@@ -25,9 +25,10 @@ The three premises, from the ladder's design:
      baseline and comparing the line texts — the reading the page-level
      order level is blind to.
 -/
+import LeanTex.Cli.FontDiscovery
 import scripts.ParityCore
 
-open LeanTex.Core Parity
+open LeanTex.Core LeanTex.Cli Parity
 
 /-- One line of a page, as the file paints it: a baseline and the scalars
 on it. Runs are grouped by their `y`, which both writers set per line. -/
@@ -212,7 +213,7 @@ def main : IO UInt32 := do
   let .ok font := Font.parse fontData | throw (IO.userError "parity-measure: corpus font unparsable")
   let oneFace := oneFaceOf font
   let mathSet ← mathSetOf oneFace
-  let shipped ← FontDb.scanRoots [testFonts]
+  let shipped ← FontDiscovery.scanRoots [testFonts]
   IO.println "parity-measure: the ladder's three premises, on the committed pairings"
   for stem in ← parityNames do
     let sidecarPath := System.FilePath.mk parityDir / (stem ++ ".ref.txt")

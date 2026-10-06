@@ -74,6 +74,7 @@ because a ratchet can only point one way: with `higher is better` fixed for
 every tier, one comparison serves all of them and no tier can quietly
 invert the test.
 -/
+import LeanTex.Cli.FontDiscovery
 import LeanTex
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
@@ -1584,7 +1585,7 @@ def shippedFaces (dir : System.FilePath) : IO (Array FontDb.Face) := do
   let mut out : Array FontDb.Face := #[]
   for e in (← dir.readDir).qsort (·.fileName < ·.fileName) do
     if isFaceFile e.fileName then
-      if let some f ← FontDb.probe e.path.toString then out := out.push f
+      if let some f ← FontDiscovery.probe e.path.toString then out := out.push f
   return out
 
 /-- The font set a fixture's page is keyed under: the suite's shape for a
@@ -1601,14 +1602,14 @@ def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.Fo
     | none => pure oneFace
   let fs ← if doc.fonts.math.isSome then withMath (fontsDir / "FiraMath-Regular.otf").toString
     else if (Layout.docMathScalars doc).isEmpty then pure oneFace
-    else match ← FontDb.pickMathFace faces (doc.fonts.body.getD "") with
+    else match ← FontDiscovery.pickMathFace faces (doc.fonts.body.getD "") with
       | some (face, _) => withMath face.path
       | none => pure oneFace
   let uncovered := (Layout.docScalars doc).filter fun ch =>
     0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF && fs.fonts.all fun f => (f.gid ch).isNone
   if uncovered.isEmpty then return fs
   let mut fs := fs
-  for (ch, path) in ← FontDb.fallbackPicks faces uncovered do
+  for (ch, path) in ← FontDiscovery.fallbackPicks faces uncovered do
     if let some f ← loadFont cache path then
       let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with
         | some (_, i) => i
