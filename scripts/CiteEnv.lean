@@ -44,11 +44,18 @@ structure Response where
 
 def moduleFile (name : String) : String := name.replace "." "/" ++ ".lean"
 
+/-- Inventory paths contain raw module components, including dashed script
+names. Construct those components directly; String.toName parses identifiers
+and rejects these names unless each component is quoted. -/
+def toModuleName (name : String) : Name :=
+  (name.splitOn ".").foldl Name.str .anonymous
+
 def requireCompiled (modules : Array String) : IO Unit := do
   for name in modules do
-    try
-      let _ ← findOLean name.toName
-    catch _ =>
+    let compiled ← try
+      (← findOLean (toModuleName name)).pathExists
+    catch _ => pure false
+    unless compiled do
       let quoted := String.intercalate "." ((name.splitOn ".").map ("«" ++ · ++ "»"))
       throw <| IO.userError s!"cites: no compiled {moduleFile name}. \
         Build every maintained source first: lake build '+{quoted}:olean'"
@@ -58,7 +65,7 @@ initializers. Alias extension state is not initialized in this mode, but its
 persisted entries remain available. -/
 def load (modules : Array String) : IO Environment := do
   requireCompiled modules
-  let env ← importModules (modules.map fun name => { module := name.toName }) {}
+  let env ← importModules (modules.map fun name => { module := toModuleName name }) {}
     (loadExts := false) (level := .private)
   let mut aliases := getAliasState env
   for i in [:env.header.moduleNames.size] do
@@ -70,7 +77,7 @@ def moduleIndices (env : Environment) (modules : Array String) :
     IO (Array (Nat × String)) := do
   let mut out := #[]
   for name in modules do
-    let some i := env.header.moduleNames.findIdx? (· == name.toName)
+    let some i := env.header.moduleNames.findIdx? (· == toModuleName name)
       | throw <| IO.userError s!"cites: import omitted maintained module {name}"
     out := out.push (i, name)
   return out
@@ -81,7 +88,7 @@ def sites (env : Environment) (modules : Array String) : IO (Array Site) := do
   let mut out := #[]
   for (i, name) in ← moduleIndices env modules do
     let file := moduleFile name
-    for doc in (getModuleDoc? env name.toName).getD #[] do
+    for doc in (getModuleDoc? env (toModuleName name)).getD #[] do
       out := out.push {
         moduleName := name, file, line := doc.declarationRange.pos.line
         ns := .anonymous, subject := "the module docstring", text := doc.doc }
@@ -119,7 +126,7 @@ A resolver answer with projection suffixes is not a declaration, and reserved
 names count only after the compiler has actually created their constants. -/
 def resolvesIn (env : Environment) (moduleName : String) (ns : Name)
     (opens : List OpenDecl) (token : String) : Bool :=
-  (ResolveName.resolveGlobalName (env.setMainModule moduleName.toName) {}
+  (ResolveName.resolveGlobalName (env.setMainModule (toModuleName moduleName)) {}
     ns opens token.toName).any fun (name, projections) =>
       projections.isEmpty && (env.checked.get.find? name).isSome
 

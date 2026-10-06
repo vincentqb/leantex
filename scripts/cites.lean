@@ -383,6 +383,11 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
         /-- The private contract `Local.local_invariant` is checked. -/\n\
         private theorem local_invariant (n : Nat) : n = n := rfl\n\
         end Local\n"),
+      ("Extra-Library.dashed-source", "module\nnamespace Dashed\n\
+        /-- The private contract `dashed_invariant` is checked. -/\n\
+        private theorem dashed_invariant : True := trivial\n\
+        /-- The private claim `missing_dashed_invariant` must fail. -/\n\
+        private def anchor : Nat := 0\nend Dashed\n"),
       ("Obligations", "module\nnamespace Obligations\n\
         public theorem staged_invariant : True := trivial\nend Obligations\n"),
       ("Tools.One", "/-- The executable claim `missing_one_invariant` must fail. -/\n\
@@ -403,7 +408,8 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
     let tree ← loadTree dir
     expect "inventory omitted an unimported library or executable"
       ((tree.batches.flatMap id).size == fixtures.size)
-    for subject in ["`Extra.hiddenAnchor`", "`Extra.anchor`", "`Local.local_invariant`"] do
+    for subject in ["`Extra.hiddenAnchor`", "`Extra.anchor`", "`Local.local_invariant`",
+        "`Dashed.anchor`"] do
       expect s!"compiled private/public docstring absent or mangled: {subject}"
         (tree.sites.any fun site => site.subject == subject && site.line > 0)
     expect "modern module docstring absent"
@@ -420,6 +426,8 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
       ("private bare name", q "private_invariant" `Extra, .scope),
       ("private qualified name", q "Extra.private_invariant", .scope),
       ("modern private doc namespace", q "Local.local_invariant" `Local "LeanTex.CiteProbe", .scope),
+      ("dashed module private context",
+        q "dashed_invariant" `Dashed "Extra-Library.dashed-source", .scope),
       ("exported alias", q "Extra.alias_invariant", .scope),
       ("short exported alias", q "alias_invariant" `Extra, .scope),
       ("alias across namespaces", q "alias_invariant" `Elsewhere "Tools.One", .tree),
@@ -431,22 +439,26 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
     let (bad, dead, census) ← scan tree []
     let names := bad.map fun (name, _, _, _) => name
     let missing := #["missing_module_invariant", "missing_private_invariant",
-      "missing_public_invariant", "missing_one_invariant", "missing_two_invariant"]
+      "missing_public_invariant", "missing_one_invariant", "missing_two_invariant",
+      "missing_dashed_invariant"]
     expect "full compiled scan missed a phantom or rejected a valid private/alias citation"
       (names.size == missing.size && missing.all names.contains && dead.isEmpty)
     expect "private phantom lost its actionable source location"
       (census.phantoms.contains ⟨"missing_private_invariant",
         "Extra/Unimported.lean", "Extra.hiddenAnchor"⟩ &&
         bad.any fun (name, _, line, _) => name == "missing_private_invariant" && line > 0)
-    IO.FS.writeFile (dir / "Unbuilt.lean")
-      "/-- The uncompiled claim `missing_unbuilt_invariant` cannot be read as compiled. -/\ndef x := 0\n"
-    let missingRejected ← try
-      let _ ← loadTree dir
-      pure false
-    catch e =>
-      pure (containsSub e.toString "no compiled Unbuilt.lean" &&
-        containsSub e.toString "lake build")
-    expect "missing compiled source did not fail with a build instruction" missingRejected
+    for name in ["Unbuilt", "Extra.Unbuilt"] do
+      let file := dir / moduleFile name
+      IO.FS.writeFile file
+        "/-- The uncompiled claim `missing_unbuilt_invariant` cannot be read as compiled. -/\ndef x := 0\n"
+      let missingRejected ← try
+        let _ ← loadTree dir
+        pure false
+      catch e =>
+        pure (containsSub e.toString s!"no compiled {moduleFile name}" &&
+          containsSub e.toString "lake build")
+      expect s!"missing compiled {name} did not fail with a build instruction" missingRejected
+      IO.FS.removeFile file
     return (← failures.get).reverse
   finally
     searchPathRef.set before
