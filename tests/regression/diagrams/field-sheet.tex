@@ -1,0 +1,38 @@
+\documentclass{article}
+\fonts{dir="../../corpus/fonts",body="Source Serif Pro",math="Fira Math"}
+\usepackage{markdown}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{amsmath}
+\pictures{tool=none}
+\newtcolorbox{fieldpanel}{
+  enhanced,
+  arc=2pt,
+  colback=blue!5,
+  colframe=blue,
+  title={Packing reminder},
+  fonttitle=\bfseries,
+  fontupper=\small
+}
+\title{A field sheet for paper shapes}
+\author{}
+\date{}
+\begin{document}
+\maketitle
+
+Prepare a small tray of paper shapes before starting the fictional exercise.
+The insert below supplies the sorting procedure.
+
+\markdownInput{inputs/sorting-notes.md}
+
+\begin{fieldpanel}
+Keep the folded pieces beside the flat pieces until the count is complete.
+The comparison weight is \(\frac{5}{\sqrt{q}}\), so record the denominator
+as well as the count.
+
+\underline{\href{https://example.org/field-guide}{Read the field guide}}
+\end{fieldpanel}
+
+After the insert and reminder, return every piece to the tray.
+\end{document}
