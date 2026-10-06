@@ -1,3 +1,7 @@
+module
+
+public import LeanTex.Core.Flate.BitWriter
+public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.TokenSymbols
 import LeanTex.Core.Flate.BitStream
 import LeanTex.Core.Flate.DecodeLoop
@@ -37,7 +41,7 @@ def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
     else return .inr (copy out len d, r)
 
 /-- The symbol loop remains bounded by the caller's declared output size. -/
-def read (lit dist : Huff) (r : Br) (out : ByteArray) (maxOut : Nat) :
+public def read (lit dist : Huff) (r : Br) (out : ByteArray) (maxOut : Nat) :
     Except String (ByteArray × Br) :=
   DecodeLoop.run (maxOut + 2) (readStep lit dist maxOut) (out, r)
     "deflate: block did not end"
@@ -68,7 +72,7 @@ def write (litLens litCodes distLens distCodes : Array Nat)
   BitStream.write (writeEntry litLens litCodes distLens distCodes) tokens w
 
 /-- The token payload includes its terminating symbol. -/
-def writePayload (litLens distLens : Array Nat) (tokens : Array UInt32) (w : Bw) : Bw :=
+public def writePayload (litLens distLens : Array Nat) (tokens : Array UInt32) (w : Bw) : Bw :=
   let litCodes := canonCodes litLens
   let distCodes := canonCodes distLens
   let w := write litLens litCodes distLens distCodes tokens w

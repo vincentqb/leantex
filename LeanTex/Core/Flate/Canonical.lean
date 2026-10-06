@@ -1,3 +1,5 @@
+module
+
 namespace LeanTex.Core.Flate.Canonical
 
 /-- First canonical code of width `k + 1`, after widths `1` through `k`. -/

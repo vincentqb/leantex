@@ -1,6 +1,9 @@
-import LeanTex.Core.Flate.CodeLengthsReader
-import LeanTex.Core.Flate.CodeLengthsWriter
-import LeanTex.Core.Flate.BitStreamProof
+module
+
+import all LeanTex.Core.Flate.CodeLengthsReader
+import all LeanTex.Core.Flate.CodeLengthsWriter
+import all LeanTex.Core.Flate.BitStreamProof
+import all LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate.CodeLengths
 

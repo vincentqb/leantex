@@ -1,7 +1,11 @@
-import LeanTex.Core.Flate
-import LeanTex.Core.Flate.BitStreamProof
-import LeanTex.Core.Flate.TokenSymbolsProof
-import LeanTex.Core.Flate.TokenFrequencies
+module
+
+import all LeanTex.Core.Flate
+import all LeanTex.Core.Flate.BitStreamProof
+import all LeanTex.Core.Flate.TokenSymbolsProof
+import all LeanTex.Core.Flate.TokenFrequencies
+import all LeanTex.Core.Flate.TokenBlock
+import all LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate
 

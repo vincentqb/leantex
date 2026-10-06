@@ -1,5 +1,8 @@
-import LeanTex.Core.Flate.FieldStream
-import LeanTex.Core.Flate.BitStreamProof
+module
+
+import all LeanTex.Core.Flate.FieldStream
+import all LeanTex.Core.Flate.BitStreamProof
+import all LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate.FieldStream
 

@@ -1,6 +1,8 @@
-import LeanTex.Core.Flate.DynamicHeader
-import LeanTex.Core.Flate.FieldStreamProof
-import LeanTex.Core.Flate.CodeLengthsCodecProof
+module
+
+import all LeanTex.Core.Flate.DynamicHeader
+import all LeanTex.Core.Flate.FieldStreamProof
+import all LeanTex.Core.Flate.CodeLengthsCodecProof
 import Init.Data.Array.Extract
 
 namespace LeanTex.Core.Flate.DynamicHeader

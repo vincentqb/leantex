@@ -1,5 +1,8 @@
-import LeanTex.Core.Flate.CodeLengths
-import LeanTex.Core.Flate.Huffman
+module
+
+import all LeanTex.Core.Flate.CodeLengths
+import all LeanTex.Core.Flate.Huffman
+public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate.CodeLengths
@@ -41,7 +44,7 @@ def readStep (table : Huff) (count : Nat) (state : Array Nat × Br) :
 
 /-- The production dynamic table reader. Every entry adds at least one length;
 one further iteration observes the completed table. -/
-def read (table : Huff) (count : Nat) (r : Br) : Except String (Array Nat × Br) :=
+public def read (table : Huff) (count : Nat) (r : Br) : Except String (Array Nat × Br) :=
   DecodeLoop.run (count + 1) (readStep table count) (#[], r)
     "deflate: code lengths overrun their table"
 

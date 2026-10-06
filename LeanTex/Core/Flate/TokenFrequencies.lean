@@ -1,5 +1,9 @@
+module
+
 import LeanTex.Core.Flate.TokenSymbols
 import LeanTex.Core.Flate.Alphabet
+import LeanTex.Core.Flate.Frequencies
+import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.TokenBlock
 
@@ -78,7 +82,7 @@ theorem frequencies_contract (tokens : Array UInt32) :
 
 /-- Trim only unused suffixes, before assigning codes. Thus both the writer
 and the declared wire alphabet use exactly the same length vector. -/
-def alphabets (tokens : Array UInt32) : Array Nat × Array Nat :=
+public def alphabets (tokens : Array UInt32) : Array Nat × Array Nat :=
   let (lit, dist) := frequencies tokens
   (Frequencies.trim 257 lit, Frequencies.trim 1 dist)
 

@@ -1,4 +1,6 @@
-import LeanTex.Core.Flate.PackageKraft
+module
+
+import all LeanTex.Core.Flate.PackageKraft
 
 namespace LeanTex.Core.Flate.PackageMerge
 

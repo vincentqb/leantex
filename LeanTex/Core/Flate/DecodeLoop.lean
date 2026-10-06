@@ -1,10 +1,12 @@
+module
+
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.DecodeLoop
 
 /-- A bounded decoder keeps its continuation state separate from a completed
 answer. The bound is the format's input or output bound, supplied by its caller. -/
-@[specialize] def run {ε σ α : Type} (count : Nat)
+@[specialize] public def run {ε σ α : Type} (count : Nat)
     (step : σ → Except ε (Sum α σ)) (initial : σ) (exhausted : ε) : Except ε α :=
   let result := (forIn [0:count] (none, initial) fun _ state => do
     match step state.2 with

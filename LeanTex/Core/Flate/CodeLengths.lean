@@ -1,8 +1,10 @@
+module
+
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.CodeLengths
 
-abbrev Entry := Nat × Nat × Nat
+public abbrev Entry := Nat × Nat × Nat
 
 /-- The run is a range of the actual code-length vector. -/
 def Run (seq : Array Nat) (p count value : Nat) : Prop :=
@@ -223,7 +225,7 @@ theorem emitRun_covers {seq : Array Nat} {start p v r bound : Nat} {out : Array 
     simpa only [he] using hr.slice (result.2.1 - p) result.2.2 (by omega)
 
 /-- RFC 1951 code-length RLE. Each iteration consumes at least one length. -/
-def encode (seq : Array Nat) : Array Entry := Id.run do
+public def encode (seq : Array Nat) : Array Entry := Id.run do
   let mut out : Array Entry := #[]
   let mut p := 0
   for _ in [0:seq.size] do

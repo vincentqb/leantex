@@ -1,6 +1,12 @@
+module
+
+public import LeanTex.Core.Flate.BitWriter
+public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.TokenBlock
 import LeanTex.Core.Flate.TokenFrequencies
 import LeanTex.Core.Flate.DynamicHeader
+import LeanTex.Core.Flate.DecodeLoop
+import LeanTex.Core.Flate.PackageMerge
 
 namespace LeanTex.Core.Flate.BlockStream
 
@@ -45,7 +51,7 @@ def readStep (maxOut : Nat) (state : ByteArray × Br) :
 
 /-- Every block consumes at least three bits. The original format-derived
 bound drives the production loop, including malformed and nonfinal input. -/
-def read (r : Br) (out : ByteArray) (maxOut : Nat) : Except String ByteArray :=
+public def read (r : Br) (out : ByteArray) (maxOut : Nat) : Except String ByteArray :=
   DecodeLoop.run (8 * r.data.size / 3 + 2) (readStep maxOut) (out, r)
     "deflate: no final block"
 
@@ -57,7 +63,7 @@ def lengths (tokens : Array UInt32) : Array Nat × Array Nat :=
 
 /-- Write a final dynamic block. The transmitted header and payload receive
 the very same two length arrays. -/
-def write (tokens : Array UInt32) (w : Bw) : Bw :=
+public def write (tokens : Array UInt32) (w : Bw) : Bw :=
   let (litLens, distLens) := lengths tokens
   let w := (w.push 1 1).push 2 2
   let w := DynamicHeader.write litLens distLens w

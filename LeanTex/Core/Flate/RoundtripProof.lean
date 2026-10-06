@@ -1,5 +1,8 @@
-import LeanTex.Core.Flate.BlockStreamProof
-import LeanTex.Core.Flate.StreamProof
+module
+
+public import LeanTex.Core.Flate
+import all LeanTex.Core.Flate.BlockStreamProof
+import all LeanTex.Core.Flate.StreamProof
 
 namespace LeanTex.Core.Flate
 
@@ -31,7 +34,7 @@ theorem deflate_header_exact (raw : ByteArray) :
 for every byte array. The proof uses the hash-chain token conservation,
 frequency-derived package-merge tables, transmitted dynamic header, bit
 writer, match copies, end markers, final byte flush, and zlib wrapper. -/
-theorem inflate_deflate_id (raw : ByteArray) :
+public theorem inflate_deflate_id (raw : ByteArray) :
     inflate (deflate raw) raw.size = .ok raw := by
   have hh := deflate_header_exact raw
   have hr := BlockStream.read_write_exact raw (tokenize raw) (tokenize_covers raw)
@@ -43,7 +46,7 @@ theorem inflate_deflate_id (raw : ByteArray) :
 /-- A caller may reserve more output space than the source requires. The
 decoder still returns exactly the compressed input, with its ordinary output
 checks and token-loop budget both justified by the declared capacity. -/
-theorem inflate_deflate_bounded_id (raw : ByteArray) (maxOut : Nat)
+public theorem inflate_deflate_bounded_id (raw : ByteArray) (maxOut : Nat)
     (hmax : raw.size ≤ maxOut) :
     inflate (deflate raw) maxOut = .ok raw := by
   have hh := deflate_header_exact raw

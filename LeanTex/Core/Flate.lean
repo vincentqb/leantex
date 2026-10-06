@@ -1,4 +1,8 @@
+module
+
 import LeanTex.Core.Flate.BlockStream
+import all LeanTex.Core.Flate.BitWriter
+import all LeanTex.Core.Flate.TokenSymbols
 
 namespace LeanTex.Core.Flate
 
@@ -21,7 +25,7 @@ wrapper that a PDF viewer's `/FlateDecode` reader accepts. -/
 size a PNG's samples must have; anything else is malformed). The Adler-32
 trailer is not verified: the sample data is judged by its shape, as chunk
 CRCs are. -/
-def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
+public def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
   let some cmf := data[0]? | .error "zlib: empty stream"
   let some flg := data[1]? | .error "zlib: truncated header"
   if cmf.toNat % 16 != 8 then .error "zlib: not deflate"
@@ -32,7 +36,7 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
 the high word, `s1` in the low — and reduce modulo 65521 once per 5552
 bytes, zlib's `NMAX`: the longest run after which both still fit their
 words. The byte loop then divides nothing and carries one scalar. -/
-def adler32 (data : ByteArray) : Nat := Id.run do
+public def adler32 (data : ByteArray) : Nat := Id.run do
   let mut s : UInt64 := 1
   let mut i := 0
   for _ in [0:data.size / 5552 + 1] do
@@ -58,7 +62,7 @@ def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
 
 /-- A zlib stream of stored blocks: bytes back into a shape `/FlateDecode`
 accepts, without owning a compressor. -/
-def deflateStored (raw : ByteArray) : ByteArray := Id.run do
+public def deflateStored (raw : ByteArray) : ByteArray := Id.run do
   let mut out := ByteArray.empty
   out := out.push 0x78
   out := out.push 0x01
@@ -351,20 +355,20 @@ one dynamic-Huffman block, both code sets optimal for this data. The
 engine's own `inflate` inverts it by `inflate_deflate_id` in
 `Flate/RoundtripProof.lean`; `scripts/flate-fuzz.lean` also checks foreign zlib.
 `deflateStored` stays for callers that must never pay compression time. -/
-def deflate (raw : ByteArray) : ByteArray :=
+public def deflate (raw : ByteArray) : ByteArray :=
   pushBe32 (deflateWriter raw).flush (adler32 raw)
 
 /-- FNV-1a over bytes: the content hash the PDF trailer ID and the
 driver's content-keyed caches share. Not cryptographic — a fingerprint
 for change detection, as ISO 32000-2 §14.4 asks of the file ID. -/
-def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
+public def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
   let mut h := seed
   for byte in b do
     h := (h ^^^ byte.toUInt64) * 1099511628211
   return h
 
 /-- Sixteen hex digits of a 64-bit hash. -/
-def hex16 (x : UInt64) : String := Id.run do
+public def hex16 (x : UInt64) : String := Id.run do
   let digits := "0123456789ABCDEF".toList.toArray
   let mut s := ""
   let mut v := x
@@ -375,7 +379,7 @@ def hex16 (x : UInt64) : String := Id.run do
 
 /-- A 128-bit content key: two independent FNV-64 passes, hex. The key a
 content-addressed cache files a value under — 32 filename-safe chars. -/
-def contentKey (b : ByteArray) : String :=
+public def contentKey (b : ByteArray) : String :=
   hex16 (fnv64 14695981039346656037 b) ++ hex16 (fnv64 1099511628211 b)
 
 /-! ## A byte array as one equation
@@ -386,7 +390,7 @@ a statement — `getElem?_build` reads byte `j` off the definition, no loop
 to unroll — while the run stays one tail-recursive push per byte into a
 uniquely owned, pre-sized array. -/
 
-@[specialize] def build (n : Nat) (f : ByteArray → UInt8) : ByteArray :=
+@[specialize] public def build (n : Nat) (f : ByteArray → UInt8) : ByteArray :=
   go (ByteArray.emptyWithCapacity n)
 where
   @[specialize] go (out : ByteArray) : ByteArray :=
@@ -421,14 +425,14 @@ theorem build_succ (n : Nat) (f : ByteArray → UInt8) :
     build (n + 1) f = (build n f).push (f (build n f)) :=
   build.go_succ n f (ByteArray.emptyWithCapacity (n + 1)) (Nat.zero_le _)
 
-theorem size_build (n : Nat) (f : ByteArray → UInt8) : (build n f).size = n := by
+public theorem size_build (n : Nat) (f : ByteArray → UInt8) : (build n f).size = n := by
   induction n with
   | zero => rw [build_zero]; rfl
   | succ n ih => rw [build_succ, ByteArray.size_push, ih]
 
 /-- Byte `j` of `build n f` is `f` of the `j` bytes before it: the equation
 the whole array is. -/
-theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj : j < n) :
+public theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj : j < n) :
     (build n f)[j]? = some (f (build j f)) := by
   induction n with
   | zero => omega
@@ -444,7 +448,7 @@ theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj : j < n
 raw byte plus its prediction from the left, upper, and upper-left
 neighbours, modulo 256. Types above 4 predict as Paeth here and are
 refused before this is reached (`pngUnfilter`). -/
-def predict (f x left up upLeft : Nat) : Nat :=
+public def predict (f x left up upLeft : Nat) : Nat :=
   (x + (if f == 0 then 0 else if f == 1 then left else if f == 2 then up
     else if f == 3 then (left + up) / 2
     else
@@ -459,7 +463,7 @@ def predict (f x left up upLeft : Nat) : Nat :=
 row `j / rowBytes`, column `j % rowBytes`, predicted from the plane's own
 earlier bytes `bpp` to the left and `rowBytes` above (ISO/IEC 15948 §9).
 Total over any bytes — a missing input byte reads as 0. -/
-def unfilterByte (raw : ByteArray) (rowBytes bpp : Nat) (out : ByteArray) : UInt8 :=
+@[expose] public def unfilterByte (raw : ByteArray) (rowBytes bpp : Nat) (out : ByteArray) : UInt8 :=
   let j := out.size
   let r := j / rowBytes
   let i := j % rowBytes
@@ -473,11 +477,11 @@ def unfilterByte (raw : ByteArray) (rowBytes bpp : Nat) (out : ByteArray) : UInt
 
 /-- Every reconstructed sample of a predicted stream, as one equation
 (`unfilterByte`); `pngUnfilter` is the checked door in front of it. -/
-def unfilterAll (raw : ByteArray) (pxH rowBytes bpp : Nat) : ByteArray :=
+@[expose] public def unfilterAll (raw : ByteArray) (pxH rowBytes bpp : Nat) : ByteArray :=
   build (pxH * rowBytes) (unfilterByte raw rowBytes bpp)
 
 /-- Two byte arrays agreeing at every index are one. -/
-theorem ext_of_getElem? (a b : ByteArray) (hs : a.size = b.size)
+public theorem ext_of_getElem? (a b : ByteArray) (hs : a.size = b.size)
     (h : ∀ i, i < a.size → a[i]? = b[i]?) : a = b := by
   apply ByteArray.ext_getElem hs
   intro i hi hi'
@@ -492,7 +496,7 @@ then `unfilterAll` is the plane. Two consumers share it: the image tests'
 semantic route, and PDF streams whose `/DecodeParms` declare a PNG
 predictor — cross-reference streams routinely do (ISO 32000-2 §7.4.4.4,
 Predictor 10–15). -/
-def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
+@[expose] public def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
     Except String ByteArray :=
   if raw.size < pxH * (1 + rowBytes) then
     .error "corrupt PNG: truncated scanlines"

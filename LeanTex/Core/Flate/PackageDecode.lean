@@ -1,5 +1,7 @@
-import LeanTex.Core.Flate.PackageLengths
-import LeanTex.Core.Flate.HuffmanKraft
+module
+
+import all LeanTex.Core.Flate.PackageLengths
+import all LeanTex.Core.Flate.HuffmanKraft
 
 namespace LeanTex.Core.Flate
 

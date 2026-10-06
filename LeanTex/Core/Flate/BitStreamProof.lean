@@ -1,5 +1,7 @@
-import LeanTex.Core.Flate.BitStream
-import LeanTex.Core.Flate.BitWriterProof
+module
+
+import all LeanTex.Core.Flate.BitStream
+import all LeanTex.Core.Flate.BitWriterProof
 
 namespace LeanTex.Core.Flate
 

@@ -1,21 +1,23 @@
+module
+
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.Frequencies
 
 /-- Increment a symbol in a bounded alphabet. Out-of-alphabet symbols leave the
 table unchanged, as `Array.set!` does in the encoder. -/
-def bump (freqs : Array Nat) (symbol : Nat) : Array Nat :=
+public def bump (freqs : Array Nat) (symbol : Nat) : Array Nat :=
   freqs.set! symbol (freqs[symbol]?.getD 0 + 1)
 
-theorem bump_size (freqs : Array Nat) (symbol : Nat) :
+public theorem bump_size (freqs : Array Nat) (symbol : Nat) :
     (bump freqs symbol).size = freqs.size := Array.size_set! ..
 
-theorem bump_positive (freqs : Array Nat) (symbol : Nat) (h : symbol < freqs.size) :
+public theorem bump_positive (freqs : Array Nat) (symbol : Nat) (h : symbol < freqs.size) :
     0 < (bump freqs symbol)[symbol]?.getD 0 := by
   simp [bump, Array.set!_eq_setIfInBounds,
     Array.getElem?_setIfInBounds_self_of_lt h]
 
-theorem bump_monotone (freqs : Array Nat) (symbol index : Nat) :
+public theorem bump_monotone (freqs : Array Nat) (symbol index : Nat) :
     freqs[index]?.getD 0 ≤ (bump freqs symbol)[index]?.getD 0 := by
   by_cases h : index = symbol
   · subst index
@@ -27,7 +29,7 @@ theorem bump_monotone (freqs : Array Nat) (symbol index : Nat) :
 
 /-- Count the selected alphabet symbol of each entry. `none` is an entry that
 does not use this alphabet, such as a literal in the distance table. -/
-@[specialize] def count {α : Type} (key : α → Option Nat)
+@[specialize] public def count {α : Type} (key : α → Option Nat)
     (entries : Array α) (initial : Array Nat) : Array Nat := Id.run do
   let mut freqs := initial
   for entry in entries do
@@ -38,7 +40,7 @@ does not use this alphabet, such as a literal in the distance table. -/
 
 /-- The actual counter keeps its alphabet size, preserves the initial
 frequencies, and gives every in-range emitted symbol positive frequency. -/
-theorem count_contract {α : Type} (key : α → Option Nat)
+public theorem count_contract {α : Type} (key : α → Option Nat)
     (entries : Array α) (initial : Array Nat) :
     (count key entries initial).size = initial.size ∧
       (∀ i : Nat, initial[i]?.getD 0 ≤ (count key entries initial)[i]?.getD 0) ∧

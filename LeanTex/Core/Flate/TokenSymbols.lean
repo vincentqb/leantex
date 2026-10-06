@@ -1,21 +1,23 @@
+module
+
 import LeanTex.Core.Flate.BitPacking
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate
 
-def lenBase : Array Nat :=
+public def lenBase : Array Nat :=
   #[3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
     67, 83, 99, 115, 131, 163, 195, 227, 258]
 
-def lenExtra : Array Nat :=
+public def lenExtra : Array Nat :=
   #[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4,
     5, 5, 5, 5, 0]
 
-def distBase : Array Nat :=
+public def distBase : Array Nat :=
   #[1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513,
     769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
 
-def distExtra : Array Nat :=
+public def distExtra : Array Nat :=
   #[0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
     11, 11, 12, 12, 13, 13]
 
@@ -34,7 +36,7 @@ def distSymOf (d : Nat) : Nat := Id.run do
   return sym
 
 /-- `len → length code`, indexed directly by the length (3–258). -/
-def lenSymTab : Array Nat := (Array.range 259).map lenSymOf
+public def lenSymTab : Array Nat := (Array.range 259).map lenSymOf
 
 /-- `dist → distance code` for distances ≤ 256. -/
 def distSymTab1 : Array Nat := (Array.range 257).map distSymOf
@@ -45,7 +47,7 @@ def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf (k * 128
 
 /-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15`
 and `dist-1` packed beside it. -/
-def matchToken (len dist : Nat) : UInt32 :=
+public def matchToken (len dist : Nat) : UInt32 :=
   (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
 
 /-- Match payload and tag occupy disjoint bits throughout the RFC range. -/
@@ -93,7 +95,7 @@ code that distance selects — the inverse of `matchToken`'s packing, spelled
 once for the two loops that read every token (frequencies, then bits). The
 bit work stays in `UInt32`: a `Nat` shift is an out-of-line bignum call
 with no scalar fast path, which is `Bw`'s own lesson one loop out. -/
-def matchOf (t : UInt32) : Nat × Nat × Nat :=
+public def matchOf (t : UInt32) : Nat × Nat × Nat :=
   let distBits := t &&& 32767
   let dist := distBits.toNat + 1
   ((((t >>> 15) &&& 255).toNat + 3, dist,

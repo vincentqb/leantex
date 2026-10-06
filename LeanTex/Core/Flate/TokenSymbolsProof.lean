@@ -1,4 +1,8 @@
-import LeanTex.Core.Flate.TokenSymbols
+module
+
+import all LeanTex.Core.Flate.TokenSymbols
+import all Init.Data.Array.Basic
+import all Init.Data.Range.Basic
 
 namespace LeanTex.Core.Flate
 

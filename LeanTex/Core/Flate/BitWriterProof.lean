@@ -1,5 +1,7 @@
-import LeanTex.Core.Flate.BitWriter
-import LeanTex.Core.Flate.PackageDecode
+module
+
+import all LeanTex.Core.Flate.BitWriter
+import all LeanTex.Core.Flate.PackageDecode
 
 namespace LeanTex.Core.Flate
 

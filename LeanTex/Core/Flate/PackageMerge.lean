@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.PackageMerge
@@ -71,7 +73,7 @@ def backtrace (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool)) :
 /-- Length-limited package-merge. Each selected leaf increases the length
 of its symbol; a one-symbol alphabet uses the one-bit code required by
 RFC 1951 §3.2.7. The alphabet must fit `limit` bits. -/
-def lengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
+public def lengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
   let syms := (Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0
   let n := syms.size
   if n == 0 then

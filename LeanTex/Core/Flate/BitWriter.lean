@@ -1,4 +1,6 @@
-import LeanTex.Core.Flate.Huffman
+module
+
+import all LeanTex.Core.Flate.Huffman
 
 /-! The production bit writer and its pending-bit and field invariants.
 Keeping the state and its equations together lets stream proofs retain earlier
@@ -13,13 +15,13 @@ bits alike. Fewer than eight bits are pending between pushes, so a push
 of at most sixteen drains at most two bytes. Fixed-width arithmetic
 throughout: `Nat`'s shift is an out-of-line bignum call with no scalar
 fast path (measured at ~80 ns; it was three quarters of the compressor). -/
-structure Bw where
+public structure Bw where
   out : ByteArray
   bits : UInt64
   nbits : UInt64
 
 /-- Append `n` bits of `v` (`n ≤ 16`). -/
-def Bw.pushU (w : Bw) (v n : UInt64) : Bw :=
+public def Bw.pushU (w : Bw) (v n : UInt64) : Bw :=
   let bits := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
   let nbits := w.nbits + n
   if nbits ≥ 16 then
@@ -33,9 +35,9 @@ def Bw.pushU (w : Bw) (v n : UInt64) : Bw :=
   else
     { w with bits, nbits }
 
-def Bw.push (w : Bw) (v n : Nat) : Bw := w.pushU v.toUInt64 n.toUInt64
+public def Bw.push (w : Bw) (v n : Nat) : Bw := w.pushU v.toUInt64 n.toUInt64
 
-def Bw.flush (w : Bw) : ByteArray :=
+public def Bw.flush (w : Bw) : ByteArray :=
   if w.nbits == 0 then w.out else w.out.push w.bits.toUInt8
 
 /-- The writer has fewer than one byte pending and no set bits above it. -/

@@ -1,21 +1,23 @@
+module
+
 import LeanTex.Core.Flate.BitPacking
-import LeanTex.Core.Flate.Canonical
+import all LeanTex.Core.Flate.Canonical
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate
 
-structure Br where
+public structure Br where
   data : ByteArray
   bitPos : Nat
 
-def Br.bit (r : Br) : Option (Nat × Br) :=
+public def Br.bit (r : Br) : Option (Nat × Br) :=
   match r.data[r.bitPos / 8]? with
   | none => Option.none
   | some b => some ((b.toNat >>> (r.bitPos % 8)) &&& 1, { r with bitPos := r.bitPos + 1 })
 
 /-- Read `n ≤ 16` bits, LSB-first. The accumulator is a `UInt64`: a `Nat`
 shift has no scalar fast path in the runtime. -/
-def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) := Id.run do
+public def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) := Id.run do
   let mut r := r
   let mut v : UInt64 := 0
   for k in [0:n] do
@@ -80,7 +82,7 @@ theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
 /-- A canonical Huffman table: `counts[len]` codes of each length, and the
 symbols in canonical order. The construction never fails; an over-subscribed
 set of lengths simply fails to decode, which the caller reports. -/
-structure Huff where
+public structure Huff where
   counts : Array Nat
   symbols : Array Nat
 
@@ -148,7 +150,7 @@ def huffSymbols (lengths : Array Nat) : Array Nat := Id.run do
         symbols := symbols.push s
   return symbols
 
-def mkHuff (lengths : Array Nat) : Huff :=
+public def mkHuff (lengths : Array Nat) : Huff :=
   { counts := huffCounts lengths, symbols := huffSymbols lengths }
 
 /-- The decoder's actual table contains exactly the declared width counts. -/
@@ -157,7 +159,7 @@ theorem mkHuff_counts_exact (lengths : Array Nat) :
   exact huffCounts_loop_exact lengths
 
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
-def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do
+public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do
   let mut code := 0
   let mut first := 0
   let mut index := 0
@@ -300,7 +302,7 @@ def reverseCode (code width : Nat) : Nat := Id.run do
 /-- Canonical codes from lengths — the same assignment `mkHuff` decodes
 (RFC 1951 §3.2.2), each code's bits reversed so the LSB-first writer
 emits them most-significant first as §3.1.1 requires. -/
-def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
+public def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
   let mut nextCode := codeStarts (huffCounts lengths)
   let mut codes := Array.replicate lengths.size 0
   for s in [0:lengths.size] do

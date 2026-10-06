@@ -1,4 +1,6 @@
-import LeanTex.Core.Flate.Huffman
+module
+
+import all LeanTex.Core.Flate.Huffman
 
 namespace LeanTex.Core.Flate
 

@@ -1,3 +1,7 @@
+module
+
+public import LeanTex.Core.Flate.BitWriter
+public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.Alphabet
 import LeanTex.Core.Flate.FieldStream
 import LeanTex.Core.Flate.CodeLengthsReader
@@ -31,7 +35,7 @@ def codeLengths (litLens distLens : Array Nat) : Array Nat :=
 /-- Write the declared alphabet sizes, the three-bit fields, and the RLE
 length vector. The payload writer receives these same literal and distance
 arrays, so the transmitted tables are its actual tables. -/
-def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
+public def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
   let lengths := codeLengths litLens distLens
   let values := fields lengths
   let w := ((w.push (litLens.size - 257) 5).push (distLens.size - 1) 5).push
@@ -41,7 +45,7 @@ def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
 
 /-- Read a dynamic block's two length arrays before constructing the payload
 tables. This boundary exposes the concrete arrays the bit stream declared. -/
-def read (r : Br) : Except String (Array Nat × Array Nat × Br) := do
+public def read (r : Br) : Except String (Array Nat × Array Nat × Br) := do
   let some (hlit, r) := r.bits 5 | .error "deflate: truncated"
   let some (hdist, r) := r.bits 5 | .error "deflate: truncated"
   let some (hclen, r) := r.bits 4 | .error "deflate: truncated"

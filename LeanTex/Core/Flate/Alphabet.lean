@@ -1,4 +1,7 @@
+module
+
 import LeanTex.Core.Flate.Frequencies
+import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.Frequencies
 
@@ -47,12 +50,12 @@ theorem usedCount_contract (minimum : Nat) (freqs : Array Nat) :
     · simp [getElem?_neg freqs s hi] at hs
   exact h.2.2 s hi hs
 
-def trim (minimum : Nat) (freqs : Array Nat) : Array Nat :=
+public def trim (minimum : Nat) (freqs : Array Nat) : Array Nat :=
   freqs.extract 0 (usedCount minimum freqs)
 
 /-- Trimming removes only zero frequencies. Every symbol's frequency,
 including a live symbol at the final retained index, is preserved exactly. -/
-theorem trim_contract (minimum : Nat) (freqs : Array Nat) :
+public theorem trim_contract (minimum : Nat) (freqs : Array Nat) :
     min minimum freqs.size ≤ (trim minimum freqs).size ∧
       (trim minimum freqs).size ≤ freqs.size ∧
       ∀ s : Nat, (trim minimum freqs)[s]?.getD 0 = freqs[s]?.getD 0 := by

@@ -1,6 +1,8 @@
-import LeanTex.Core.Flate.BlockStream
-import LeanTex.Core.Flate.TokenCodecProof
-import LeanTex.Core.Flate.DynamicHeaderProof
+module
+
+import all LeanTex.Core.Flate.BlockStream
+import all LeanTex.Core.Flate.TokenCodecProof
+import all LeanTex.Core.Flate.DynamicHeaderProof
 
 namespace LeanTex.Core.Flate.BlockStream
 

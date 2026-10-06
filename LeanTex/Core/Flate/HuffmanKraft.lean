@@ -1,4 +1,6 @@
-import LeanTex.Core.Flate.HuffmanProof
+module
+
+import all LeanTex.Core.Flate.HuffmanProof
 import Init.Data.List.Nat.Sum
 
 namespace LeanTex.Core.Flate.Canonical

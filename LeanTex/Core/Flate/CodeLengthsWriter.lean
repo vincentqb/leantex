@@ -1,11 +1,14 @@
-import LeanTex.Core.Flate.CodeLengths
+module
+
+public import LeanTex.Core.Flate.CodeLengths
+public import LeanTex.Core.Flate.BitWriter
 import LeanTex.Core.Flate.BitStream
 import LeanTex.Core.Flate.Frequencies
 
 namespace LeanTex.Core.Flate.CodeLengths
 
 /-- Frequencies of the dynamic prelude's RLE alphabet (RFC 1951 §3.2.7). -/
-def frequencies (entries : Array Entry) : Array Nat :=
+public def frequencies (entries : Array Entry) : Array Nat :=
   Frequencies.count (fun entry => some entry.1) entries (Array.replicate 19 0)
 
 /-- Emit the canonical code and extra bits of one dynamic table entry. -/
@@ -14,7 +17,7 @@ def writeEntry (lengths codes : Array Nat) (w : Bw) (entry : Entry) : Bw :=
   if entry.2.2 > 0 then w.push entry.2.1 entry.2.2 else w
 
 /-- The actual dynamic-table entry loop, shared with the stream proof. -/
-def write (lengths codes : Array Nat) (entries : Array Entry) (w : Bw) : Bw :=
+public def write (lengths codes : Array Nat) (entries : Array Entry) (w : Bw) : Bw :=
   BitStream.write (writeEntry lengths codes) entries w
 
 end LeanTex.Core.Flate.CodeLengths

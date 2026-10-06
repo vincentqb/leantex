@@ -1,16 +1,18 @@
-import LeanTex.Core.Flate.BitWriter
+module
+
+public import LeanTex.Core.Flate.BitWriter
 
 namespace LeanTex.Core.Flate
 
 /-- A zero-width extra field consumes neither bits nor a writer operation. -/
-def Bw.pushExtra (w : Bw) (value width : Nat) : Bw :=
+public def Bw.pushExtra (w : Bw) (value width : Nat) : Bw :=
   if 0 < width then w.push value width else w
 
 namespace BitStream
 
 /-- Shared array-writing loop. Specialization retains the scalar writer state
 for each concrete emitter; proofs read this loop through its append equation. -/
-@[specialize] def write {α : Type} (emit : Bw → α → Bw) (entries : Array α)
+@[specialize] public def write {α : Type} (emit : Bw → α → Bw) (entries : Array α)
     (initial : Bw) : Bw := Id.run do
   let mut w := initial
   for entry in entries do
