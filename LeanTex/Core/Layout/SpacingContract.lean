@@ -207,4 +207,45 @@ theorem elementSpace_monotone (geom : Geom) (fs : Font.FontSet)
     sum_width_from (flushed (add a g) r) (queuedGlue b)]
   exact Int.add_le_add_left (flushed_width_monotone a r g ha hg) _
 
+/-- A certificate discharges the staging and fit premises of the whole-run
+contract. The remaining inequality compares resolved input glue, before
+placement; the common queued glue cancels. -/
+theorem TailPair.run_monotone {geom : Geom} {fs : Font.FontSet}
+    {before after : Ir.Doc} (c : TailPair geom fs before after)
+    (hw : (c.beforeSkips.foldl Glue.add {}).width ≤
+      (c.afterSkips.foldl Glue.add {}).width) :
+    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
+      (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by
+  apply run_tail_monotone geom fs before after c.page c.paragraph c.breaks
+    c.beforeSkips c.afterSkips c.before_reaches c.after_reaches
+    c.before_safe c.after_safe
+  rw [sum_width_from c.beforeSkips (queuedGlue c.page),
+    sum_width_from c.afterSkips (queuedGlue c.page)]
+  exact Int.add_le_add_left hw _
+
+/-- A sufficient-input check for arbitrary actual documents. The bounded
+two-paragraph certificate checks common preparation and numeric fit; this
+last check compares only the resolved intervening glue. `false` can mean an
+unsupported document shape, changed preparation, failed fit bounds, or decreasing
+glue. It is not a completeness claim about all monotone document changes. -/
+def twoParagraphIncreasing (geom : Geom) (fs : Font.FontSet)
+    (before after : Ir.Doc) : Bool :=
+  match twoParagraphPair? geom fs before after with
+  | none => false
+  | some c => decide ((c.beforeSkips.foldl Glue.add {}).width ≤
+      (c.afterSkips.foldl Glue.add {}).width)
+
+/-- An accepted input check proves the real `Layout.run` comparison for
+every supplied font environment and document pair. Callers need neither
+private staging identities nor an assumed output-page comparison. -/
+theorem twoParagraphIncreasing_contract (geom : Geom) (fs : Font.FontSet)
+    (before after : Ir.Doc) (h : twoParagraphIncreasing geom fs before after = true) :
+    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
+      (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by
+  cases hc : twoParagraphPair? geom fs before after with
+  | none => simp [twoParagraphIncreasing, hc] at h
+  | some c =>
+    apply c.run_monotone
+    exact of_decide_eq_true (by simpa [twoParagraphIncreasing, hc] using h)
+
 end LeanTex.Core.Layout.Spacing

@@ -16168,3 +16168,190 @@ theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir.Doc)
   simpa only [paintedInk, paintLines_toList] using hl
 
 end LeanTex.Core.Layout.Spacing
+
+namespace LeanTex.Core.Layout.Spacing
+
+open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
+
+-- Exact equality retains colour spellings and source provenance, which
+-- the display-oriented BEq instances intentionally omit.
+deriving instance DecidableEq for Ir.PdfColor, Ir.Color
+deriving instance DecidableEq for MacroOrigin, Pos, Span, Diag
+deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations
+deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
+deriving instance DecidableEq for NoteBlock, DisplayJob
+
+private def bucketEq :
+    DecidableEq (Std.DHashMap.Internal.AssocList Nat (fun _ => Sp))
+  | .nil, .nil => isTrue rfl
+  | .nil, .cons _ _ _ => isFalse (by intro h; cases h)
+  | .cons _ _ _, .nil => isFalse (by intro h; cases h)
+  | .cons a b t, .cons a' b' t' =>
+    letI := bucketEq t t'
+    decidable_of_iff (a = a' ∧ b = b' ∧ t = t') (by simp)
+
+-- Representation equality is deliberately stronger than map equivalence:
+-- equal certificates must be substitutable into the actual placement code.
+private instance : DecidableEq (Std.HashMap Nat Sp) := fun a b =>
+  letI := bucketEq
+  decidable_of_iff
+    (a.inner.inner.size = b.inner.inner.size ∧
+      a.inner.inner.buckets = b.inner.inner.buckets) (by
+    cases a with | mk a =>
+      cases b with | mk b =>
+        cases a with | mk a aw =>
+          cases b with | mk b bw =>
+            cases a
+            cases b
+            simp)
+
+deriving instance DecidableEq for ParaJob
+
+/-- Inputs supplied to the initial page builder. Every other field starts
+at its constructor default; `program_initial_exact` checks that fact against
+the production preparation continuation. -/
+private structure InitialInput where
+  geom : Geom
+  ascent : Sp
+  descent : Sp
+  capHeight : Sp
+  xHeight : Sp
+  docBg : Option Ir.Color
+  footins : Sp
+  noteInk : Ir.Color
+  footGap : Sp
+  diags : Array Diag
+  deriving DecidableEq
+
+private def initialInput (b : B) : InitialInput :=
+  ⟨b.geom, b.ascent, b.descent, b.capHeight, b.xHeight,
+    b.docBg, b.footins, b.noteInk, b.footGap, b.diags⟩
+
+private def InitialInput.page (a : InitialInput) : B := {
+  geom := a.geom, ascent := a.ascent, descent := a.descent
+  capHeight := a.capHeight, xHeight := a.xHeight, docBg := a.docBg
+  footins := a.footins, noteInk := a.noteInk, footGap := a.footGap, diags := a.diags }
+
+private theorem program_initial_exact (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
+    (initialInput (program geom fs doc).initial).page =
+      (program geom fs doc).initial := by
+  rfl
+
+/-- Shared inputs, all read before paragraph placement. Equality of this
+value derives equality of the prefix page by applying the same placer. -/
+private structure TailInput where
+  initial : InitialInput
+  first : ParaJob
+  firstBreaks : Array Nat
+  last : ParaJob
+  lastBreaks : Array Nat
+  deriving DecidableEq
+
+private def TailInput.page (a : TailInput) (fs : FontSet) : B :=
+  placePara fs a.initial.page a.first a.firstBreaks
+
+private structure PreparedTail (geom : Geom) (fs : FontSet) (doc : Ir.Doc) where
+  input : TailInput
+  skips : Array Glue
+  reaches : AtTail geom fs doc (input.page fs) input.last input.lastBreaks skips
+
+private def preparedTail? (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
+    Option (PreparedTail geom fs doc) := by
+  let p := program geom fs doc
+  match hops : p.ops.toList with
+  | [.para first firstTask, .skip g, .para last lastTask] =>
+    if hk : first.keepNext ≤ 0 then
+      have heq : p.ops = #[.para first firstTask, .skip g, .para last lastTask] :=
+        Array.toList_inj.mp hops
+      have hi : 0 < p.ops.size := by simp [heq]
+      have hn : p.ops[0] ≠ .floatOpen := by simp [heq]
+      have hkeep : keepAt p.initial fs {} p.ops 0 p.ops[0] =
+          .para first firstTask := by
+        simp [heq, keepAt, Int.not_lt.mpr hk]
+      let st := stepFlow fs {} { placed := { b := p.initial } }
+        (keepAt p.initial fs {} p.ops 0 p.ops[0])
+      let input : TailInput :=
+        ⟨initialInput p.initial, first, firstTask.get, last, lastTask.get⟩
+      refine some ⟨input, #[g], ?_⟩
+      change ∃ (s : FlowSt) (i : Nat) (t : Task (Array Nat)),
+        Prefix fs p s i ∧ s.placed.b = input.page fs ∧ t.get = lastTask.get ∧
+          ParagraphTail p.ops last t i [g]
+      refine ⟨st, 1, lastTask, Prefix.step Prefix.start hi hn, ?_, rfl, ?_⟩
+      · dsimp only [st]
+        rw [hkeep, para_step_b fs _ first firstTask hk]
+        exact congrArg (fun b => placePara fs b first firstTask.get)
+          (program_initial_exact geom fs doc).symm
+      · exact ParagraphTail.skip (by simp [heq]) (by simp [heq])
+          (ParagraphTail.last (by simp [heq]) (by simp [heq]) (by simp [heq]))
+    else exact none
+  | _ => exact none
+
+private def paragraphInputsDecidable (fs : FontSet) (j : ParaJob) :
+    (breaks : List Nat) → (s : B × Nat × Bool) →
+      Decidable (ParagraphInputs fs j breaks s)
+  | [], s => isTrue (.nil s)
+  | brk :: rest, s =>
+    let fits : Decidable (ParaFits fs j s brk) := by
+      unfold ParaFits Ready LineFits
+      infer_instance
+    match fits with
+    | isFalse hn => isFalse fun h => by cases h with | cons hf _ => exact hn hf
+    | isTrue hf =>
+      match paragraphInputsDecidable fs j rest (placeParaLine fs j s brk) with
+      | isTrue hr => isTrue (.cons hf hr)
+      | isFalse hn => isFalse fun h => by cases h with | cons _ hr => exact hn hr
+
+/-- The spacing premises can be checked without opening private staging or
+page-builder fields. This decides the existing input predicate, using the
+real paragraph step at each break; it does not compare output baselines. -/
+instance paragraphSafeDecidable (fs : FontSet) (b : Page) (j : Paragraph)
+    (breaks : Array Nat) (gs : Array Glue) :
+    Decidable (ParagraphSafe fs b j breaks gs) := by
+  letI : Decidable (j.display = none) :=
+    match j.display with
+    | none => isTrue rfl
+    | some _ => isFalse fun h => by contradiction
+  letI := paragraphInputsDecidable fs j breaks.toList
+    (paragraphStart (boundaryStart b gs) j breaks)
+  let last := boundaryEnd fs b j breaks gs
+  letI : Decidable (last.vdist = .top) :=
+    decidable_of_iff (last.vdist.above = 0 ∧ last.vdist.below = 1) (by
+      rcases last.vdist with ⟨above, below⟩
+      simp [VDist.top])
+  change Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ NaturalClose last)
+  unfold NaturalClose
+  infer_instance
+
+/-- A constructible certificate for the common prefix and safe final
+paragraph of two actual documents. Its proofs describe production inputs;
+the output baseline comparison follows from `run_tail_monotone`. -/
+structure TailPair (geom : Geom) (fs : FontSet) (before after : Ir.Doc) where
+  page : Page
+  paragraph : Paragraph
+  breaks : Array Nat
+  beforeSkips : Array Glue
+  afterSkips : Array Glue
+  before_reaches : AtTail geom fs before page paragraph breaks beforeSkips
+  after_reaches : AtTail geom fs after page paragraph breaks afterSkips
+  before_safe : ParagraphSafe fs page paragraph breaks beforeSkips
+  after_safe : ParagraphSafe fs page paragraph breaks afterSkips
+
+/-- Check arbitrary documents whose prepared input is two paragraphs with
+one intervening skip. Shared preparation inputs establish the common page;
+the numeric fit decider establishes both safety premises. Differing text,
+breaks or setup, heading reservation, and failed fit bounds return `none`.
+No output page equality or baseline ordering is tested or assumed. -/
+def twoParagraphPair? (geom : Geom) (fs : FontSet) (before after : Ir.Doc) :
+    Option (TailPair geom fs before after) := do
+  let a ← preparedTail? geom fs before
+  let b ← preparedTail? geom fs after
+  if h : a.input = b.input then
+    if ha : ParagraphSafe fs (a.input.page fs) a.input.last a.input.lastBreaks a.skips then
+      if hb : ParagraphSafe fs (a.input.page fs) a.input.last a.input.lastBreaks b.skips then
+        some ⟨a.input.page fs, a.input.last, a.input.lastBreaks, a.skips, b.skips,
+          a.reaches, h ▸ b.reaches, ha, hb⟩
+      else none
+    else none
+  else none
+
+end LeanTex.Core.Layout.Spacing

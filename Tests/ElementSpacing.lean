@@ -50,6 +50,22 @@ private def paragraphDisplacement (before after : Out) (delta : Sp) : Bool :=
   (Spacing.inkBaselines after).getLast?.getD 0 -
     (Spacing.inkBaselines before).getLast?.getD 0 == delta
 
+/-- A defined block role follows the ordinary source-to-element-spacing
+path. Keeping the declaration on its own line preserves body provenance
+when only the declared gap changes. The text arguments are unrestricted. -/
+private def spacingSource (space first last : String) : String :=
+  dvDoc ("\\define \\entryprobe(a: content){\\a\\par}\n" ++
+    "\\style{entryprobe}{before = " ++ space ++ "}\n")
+    (first ++ "\n\n\\entryprobe{" ++ last ++ "}")
+
+/-- The return value is a proof-bearing certificate over the two elaborated
+documents, not a test of their final baseline ordering. -/
+private def certifies (fs : FontSet) (geom : Geom) (before after : String) : Bool :=
+  let a := elabStr before
+  let b := elabStr after
+  a.2.all (·.severity == .note) && b.2.all (·.severity == .note) &&
+    (Spacing.twoParagraphPair? geom fs a.1 b.1).isSome
+
 /-- Synthetic shipped-page witnesses for the corrected spacing contract.
 Natural fixed glue leaves page-close redistribution out of these checks.
 The two false-premise probes distinguish default replacement and pagination
@@ -110,6 +126,45 @@ def elementSpacingChecks (fs : FontSet) : Array (String × Bool) := Id.run do
     out := out.push (s!"resolved element gap moves every {label} paragraph line",
       paragraphDisplacement (spacingPage fs none none #[] narrow content)
         (spacingPage fs (some (gap 12)) none #[] narrow content) (pt 6))
+  for (label, text, geom) in #[
+      ("plain", "Second", geometry),
+      ("multiline", words, narrow),
+      ("decorated", "\\underline{Second}", geometry)] do
+    let before := spacingSource "6pt" "First" text
+    let after := spacingSource "12pt" "First" text
+    let a := (elabStr before).1
+    let b := (elabStr after).1
+    out := out.push (s!"differing {label} source documents construct both spacing premises",
+      before != after && certifies fs geom before after)
+    out := out.push (s!"{label} source spacing satisfies the whole-run sufficient input check",
+      Spacing.twoParagraphIncreasing geom fs a b)
+    out := out.push (s!"{label} source certificate witnesses a strict resolved input increase",
+      (Spacing.twoParagraphPair? geom fs a b).any fun c =>
+        (c.afterSkips.foldl Glue.add {}).width -
+          (c.beforeSkips.foldl Glue.add {}).width == pt 6)
+    let page := run geom fs none a
+    let page' := run geom fs none b
+    out := out.push (s!"{label} source spacing changes the actual final ink baseline",
+      noDroppedGlyph page && noDroppedGlyph page' &&
+      (Spacing.inkBaselines page').getLast?.getD 0 -
+        (Spacing.inkBaselines page).getLast?.getD 0 == pt 6)
+  let sourceBefore := spacingSource "6pt" "First" "Second"
+  let sourceAfter := spacingSource "12pt" "First" "Second"
+  out := out.push ("spacing certificate rejects a changed preceding paragraph",
+    !certifies fs geometry sourceBefore (spacingSource "12pt" "Other" "Second"))
+  out := out.push ("spacing certificate rejects a changed final paragraph",
+    !certifies fs geometry sourceBefore (spacingSource "12pt" "First" "Other"))
+  out := out.push ("spacing certificate rejects the actual page-break counterexample",
+    !certifies fs short sourceBefore (spacingSource "80pt" "First" "Second"))
+  let smaller := spacingSource "1pt" "First" "Second"
+  out := out.push ("safe differing inputs do not certify a decreasing resolved gap",
+    certifies fs geometry sourceBefore smaller &&
+    !Spacing.twoParagraphIncreasing geometry fs
+      (elabStr sourceBefore).1 (elabStr smaller).1)
+  out := out.push ("the sufficient input check distinguishes the reverse direction",
+    certifies fs geometry sourceAfter sourceBefore &&
+    !Spacing.twoParagraphIncreasing geometry fs
+      (elabStr sourceAfter).1 (elabStr sourceBefore).1)
   return out
 
 end LeanTex.Tests.ElementSpacing
