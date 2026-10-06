@@ -1,6 +1,12 @@
 import LeanTex.Core.Flate.BitWriter
 
-namespace LeanTex.Core.Flate.BitStream
+namespace LeanTex.Core.Flate
+
+/-- A zero-width extra field consumes neither bits nor a writer operation. -/
+def Bw.pushExtra (w : Bw) (value width : Nat) : Bw :=
+  if 0 < width then w.push value width else w
+
+namespace BitStream
 
 /-- Shared array-writing loop. Specialization retains the scalar writer state
 for each concrete emitter; proofs read this loop through its append equation. -/
@@ -21,4 +27,5 @@ theorem write_push_exact {α : Type} (emit : Bw → α → Bw) (entries : Array 
     List.forIn_pure_yield_eq_foldl, List.foldl_append, List.foldl_cons, List.foldl_nil]
   rfl
 
-end LeanTex.Core.Flate.BitStream
+end BitStream
+end LeanTex.Core.Flate

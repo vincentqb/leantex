@@ -18,6 +18,27 @@ theorem push_bits_exact (w : Bw) (data : ByteArray) (v n : Nat)
 theorem Br.bits_zero_id (r : Br) : r.bits 0 = some (0, r) := by
   simp [Br.bits, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
 
+theorem pushExtra_contract (w : Bw) (value width : Nat)
+    (hw : w.Valid) (hn : width ≤ 16) :
+    (w.pushExtra value width).Valid ∧ (w.pushExtra value width).Extends w := by
+  unfold Bw.pushExtra
+  split
+  · exact ⟨push_valid w value width hw hn, push_extends_exact w value width hw hn⟩
+  · exact ⟨hw, Bw.Extends.refl w⟩
+
+theorem pushExtra_bits_exact (w : Bw) (data : ByteArray) (value width : Nat)
+    (hw : w.Valid) (hn : width ≤ 16) (hv : value < 2 ^ width)
+    (hr : (w.pushExtra value width).Realizes data) :
+    ({data, bitPos := w.position} : Br).bits width =
+      some (value, {data, bitPos := (w.pushExtra value width).position}) := by
+  by_cases h : 0 < width
+  · simpa only [Bw.pushExtra, h, ite_true] using
+      push_bits_exact w data value width hw hn hv (by
+        simpa only [Bw.pushExtra, h, ite_true] using hr)
+  · have hn : width = 0 := by omega
+    have hv : value = 0 := by simp only [hn] at hv; omega
+    simp [hn, hv, Bw.pushExtra, Br.bits_zero_id]
+
 namespace BitStream
 
 /-- Array emission preserves every preceding bit and the pending-byte bound. -/

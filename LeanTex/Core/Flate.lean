@@ -1,4 +1,5 @@
-import LeanTex.Core.Flate.BitWriter
+import LeanTex.Core.Flate.TokenBlock
+import LeanTex.Core.Flate.TokenFrequencies
 import LeanTex.Core.Flate.CodeLengthsReader
 import LeanTex.Core.Flate.CodeLengthsWriter
 import LeanTex.Core.Flate.PackageMerge
@@ -19,22 +20,6 @@ error value, never a hang or a crash.
 blocks plus the Adler-32, which any inflater — a PDF viewer's included —
 accepts. Recompression is not this engine's job; correctness is. -/
 
-private def lenBase : Array Nat :=
-  #[3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
-    67, 83, 99, 115, 131, 163, 195, 227, 258]
-
-private def lenExtra : Array Nat :=
-  #[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4,
-    5, 5, 5, 5, 0]
-
-private def distBase : Array Nat :=
-  #[1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513,
-    769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
-
-private def distExtra : Array Nat :=
-  #[0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
-    11, 11, 12, 12, 13, 13]
-
 /-- The fixed litlen table (RFC 1951 §3.2.6). -/
 private def fixedLit : Huff :=
   mkHuff (Array.ofFn (n := 288) fun i =>
@@ -46,45 +31,6 @@ private def fixedDist : Huff :=
 /-- The order code-length code lengths arrive in (RFC 1951 §3.2.7). -/
 private def clOrder : Array Nat :=
   #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
-
-/-- One compressed block's symbol loop: decode litlen symbols into `out`
-until the end-of-block code. Bounded by `maxOut`: a stream that emits more
-than the caller declared is malformed for the caller's purpose. -/
-private def inflateBlock (lit dist : Huff) (r0 : Br) (out0 : ByteArray)
-    (maxOut : Nat) : Except String (ByteArray × Br) := Id.run do
-  let mut r := r0
-  let mut out := out0
-  for _ in [0:maxOut + 2] do
-    let some (sym, r1) := lit.decode r
-      | return .error "deflate: truncated block"
-    r := r1
-    if sym == 256 then
-      return .ok (out, r)
-    else if sym < 256 then
-      if out.size ≥ maxOut then
-        return .error "deflate: output exceeds the declared size"
-      out := out.push (UInt8.ofNat sym)
-    else
-      let i := sym - 257
-      let some base := lenBase[i]? | return .error "deflate: bad length code"
-      let some extra := lenExtra[i]? | return .error "deflate: bad length code"
-      let some (e, r2) := r.bits extra | return .error "deflate: truncated"
-      r := r2
-      let len := base + e
-      let some (dsym, r3) := dist.decode r | return .error "deflate: truncated"
-      r := r3
-      let some dbase := distBase[dsym]? | return .error "deflate: bad distance code"
-      let some dextra := distExtra[dsym]? | return .error "deflate: bad distance code"
-      let some (de, r4) := r.bits dextra | return .error "deflate: truncated"
-      r := r4
-      let d := dbase + de
-      if d == 0 || d > out.size then
-        return .error "deflate: distance before the start of output"
-      if out.size + len > maxOut then
-        return .error "deflate: output exceeds the declared size"
-      for _ in [0:len] do
-        out := out.push (out[out.size - d]?.getD 0)
-  return .error "deflate: block did not end"
 
 /-- Inflate a zlib stream into at most `maxOut` bytes (the caller knows the
 size a PNG's samples must have; anything else is malformed). The Adler-32
@@ -118,7 +64,7 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.ru
       out := out ++ data.extract (byte + 4) (byte + 4 + len)
       r := { r with bitPos := 8 * (byte + 4 + len) }
     else if btype == 1 then
-      match inflateBlock fixedLit fixedDist r out maxOut with
+      match TokenBlock.read fixedLit fixedDist r out maxOut with
       | .error e => return .error e
       | .ok (out', r') =>
         out := out'
@@ -142,7 +88,7 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.ru
       r := r'
       let lit := mkHuff (lengths.extract 0 nlit)
       let dist := mkHuff (lengths.extract nlit (nlit + ndist))
-      match inflateBlock lit dist r out maxOut with
+      match TokenBlock.read lit dist r out maxOut with
       | .error e => return .error e
       | .ok (out', r') =>
         out := out'
@@ -226,87 +172,6 @@ level only records which of its packages are leaves, and the walk back
 from the solution prefix (2n−2 packages) adds one bit to the `leaves`
 rarest symbols per level — no symbol sets, no per-level sort. -/
 private abbrev pmLengths := PackageMerge.lengths
-
-/-- Largest length code whose base is ≤ `len` — code 285 alone covers 258
-(RFC 1951 §3.2.5's table). -/
-private def lenSymOf (len : Nat) : Nat := Id.run do
-  let mut sym := 0
-  for k in [0:lenBase.size] do
-    if lenBase[k]?.getD 999 ≤ len then sym := k
-  return sym
-
-private def distSymOf (d : Nat) : Nat := Id.run do
-  let mut sym := 0
-  for k in [0:distBase.size] do
-    if distBase[k]?.getD 99999 ≤ d then sym := k
-  return sym
-
-/-- `len → length code`, indexed directly by the length (3–258). -/
-private def lenSymTab : Array Nat := (Array.range 259).map lenSymOf
-
-/-- `dist → distance code` for distances ≤ 256. -/
-private def distSymTab1 : Array Nat := (Array.range 257).map distSymOf
-
-/-- Distances past 256 bucket by `(d-1) >>> 7`: every base past 256 is
-≡ 1 (mod 128), so a bucket never straddles two codes. -/
-private def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf (k * 128 + 1)
-
-/-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15`
-and `dist-1` packed beside it. -/
-private def matchToken (len dist : Nat) : UInt32 :=
-  (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
-
-/-- Match payload and tag occupy disjoint bits throughout the RFC range. -/
-theorem matchToken_toNat (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
-    (hd : 1 ≤ dist ∧ dist ≤ 32768) :
-    (matchToken len dist).toNat = 2147483648 + (len - 3) * 32768 + (dist - 1) := by
-  have hlow31 : (len - 3) * 32768 + (dist - 1) < 2 ^ 31 := by omega
-  have hl32 : len - 3 < 2 ^ 32 := by omega
-  have hd32 : dist - 1 < 2 ^ 32 := by omega
-  have hs32 : (len - 3) * 32768 < 2 ^ 32 := by clear hlow31; omega
-  have hd15 : dist - 1 < 2 ^ 15 := by omega
-  simp only [matchToken, UInt32.toNat_or, UInt32.toNat_shiftLeft, Nat.toUInt32,
-    UInt32.toNat_ofNat', UInt32.reduceToNat, Nat.reduceMod,
-    Nat.mod_eq_of_lt hl32, Nat.mod_eq_of_lt hd32, Nat.shiftLeft_eq,
-    Nat.reducePow, Nat.mod_eq_of_lt hs32]
-  rw [Nat.or_assoc]
-  have hlo : ((len - 3) * 32768 ||| (dist - 1)) =
-      (len - 3) * 32768 + (dist - 1) := by
-    simpa only [Nat.shiftLeft_eq, Nat.reducePow] using
-      BitPacking.or_shift_exact (len - 3) (dist - 1) 15 hd15
-  rw [hlo, Nat.or_comm]
-  change _ ||| 2 ^ 31 = _
-  rw [Nat.or_two_pow_eq_add_of_lt hlow31]
-  simp only [Nat.reducePow, Nat.add_assoc, Nat.add_comm]
-
-/-- The actual scalar token reader recovers both fields without truncation. -/
-theorem matchToken_fields_exact (len dist : Nat) (hl : 3 ≤ len ∧ len ≤ 258)
-    (hd : 1 ≤ dist ∧ dist ≤ 32768) :
-    (((matchToken len dist >>> 15) &&& 255).toNat + 3 = len) ∧
-      ((matchToken len dist &&& 32767).toNat + 1 = dist) ∧
-      256 ≤ (matchToken len dist).toNat := by
-  simp only [UInt32.toNat_and, UInt32.toNat_shiftRight, UInt32.reduceToNat,
-    Nat.reduceMod, matchToken_toNat len dist hl hd, Nat.shiftRight_eq_div_pow,
-    Nat.reducePow]
-  have mask8 (x : Nat) : x &&& 255 = x % 256 :=
-    Nat.and_two_pow_sub_one_eq_mod x 8
-  have mask15 (x : Nat) : x &&& 32767 = x % 32768 :=
-    Nat.and_two_pow_sub_one_eq_mod x 15
-  rw [mask8, mask15]
-  omega
-
-
-/-- A match token read back: its length, its distance, and the distance
-code that distance selects — the inverse of `matchToken`'s packing, spelled
-once for the two loops that read every token (frequencies, then bits). The
-bit work stays in `UInt32`: a `Nat` shift is an out-of-line bignum call
-with no scalar fast path, which is `Bw`'s own lesson one loop out. -/
-private def matchOf (t : UInt32) : Nat × Nat × Nat :=
-  let distBits := t &&& 32767
-  let dist := distBits.toNat + 1
-  ((((t >>> 15) &&& 255).toNat + 3, dist,
-    if dist ≤ 256 then distSymTab1[dist]?.getD 0
-    else distSymTab2[(distBits >>> 7).toNat]?.getD 0))
 
 /-- The three-byte rolling hash: Knuth's multiplicative constant over the
 window the next match must open with. `UInt64` arithmetic — the product
@@ -504,7 +369,7 @@ scales with the input — allocating and zeroing 64K entries is the whole
 cost of deflating a 2 KiB content stream — and a smaller ring only ever
 loses candidates, never correctness. `raw.size` is the sentinel: no
 position yet under this hash. -/
-private def tokenize (raw : ByteArray) : Array UInt32 :=
+def tokenize (raw : ByteArray) : Array UInt32 :=
   let n := raw.size
   let mask := if n ≥ 65536 then 32767 else 4095
   tokGo raw mask n 0 (Array.replicate (2 * (mask + 1)) n) #[]
@@ -562,30 +427,12 @@ inflater accepts the result; the engine's own `inflate` inverting it is
 `deflateStored` stays for callers that must never pay compression time. -/
 def deflate (raw : ByteArray) : ByteArray := Id.run do
   let tokens := tokenize raw
-  -- Frequencies; end-of-block is always sent exactly once.
-  let mut litFreq : Array Nat := Array.replicate 286 0
-  let mut distFreq : Array Nat := Array.replicate 30 0
-  for t in tokens do
-    if t < 256 then
-      let lit := t.toNat
-      litFreq := litFreq.set! lit (litFreq[lit]?.getD 0 + 1)
-    else
-      let (len, _, ds) := matchOf t
-      let ls := 257 + (lenSymTab[len]?.getD 0)
-      litFreq := litFreq.set! ls (litFreq[ls]?.getD 0 + 1)
-      distFreq := distFreq.set! ds (distFreq[ds]?.getD 0 + 1)
-  litFreq := litFreq.set! 256 1
+  let (litFreq, distFreq) := TokenBlock.alphabets tokens
   let litLens := pmLengths litFreq 15
   let distLens := pmLengths distFreq 15
-  let litCodes := canonCodes litLens
-  let distCodes := canonCodes distLens
-  let mut nlit := 257
-  for s in [0:litLens.size] do
-    if litLens[s]?.getD 0 > 0 then nlit := max nlit (s + 1)
-  let mut ndist := 1
-  for s in [0:distLens.size] do
-    if distLens[s]?.getD 0 > 0 then ndist := max ndist (s + 1)
-  let rle := CodeLengths.encode (litLens.extract 0 nlit ++ distLens.extract 0 ndist)
+  let nlit := litLens.size
+  let ndist := distLens.size
+  let rle := CodeLengths.encode (litLens ++ distLens)
   let clFreq := CodeLengths.frequencies rle
   let clLens := pmLengths clFreq 7
   let clCodes := canonCodes clLens
@@ -603,22 +450,7 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   for k in [0:nclen] do
     w := w.push (clLens[clOrder[k]?.getD 0]?.getD 0) 3
   w := CodeLengths.write clLens clCodes rle w
-  for t in tokens do
-    if t < 256 then
-      let lit := t.toNat
-      w := w.push (litCodes[lit]?.getD 0) (litLens[lit]?.getD 0)
-    else
-      let (len, dist, di) := matchOf t
-      let li := lenSymTab[len]?.getD 0
-      w := w.push (litCodes[257 + li]?.getD 0) (litLens[257 + li]?.getD 0)
-      let leb := lenExtra[li]?.getD 0
-      if leb > 0 then
-        w := w.push (len - (lenBase[li]?.getD 0)) leb
-      w := w.push (distCodes[di]?.getD 0) (distLens[di]?.getD 0)
-      let deb := distExtra[di]?.getD 0
-      if deb > 0 then
-        w := w.push (dist - (distBase[di]?.getD 0)) deb
-  w := w.push (litCodes[256]?.getD 0) (litLens[256]?.getD 0)
+  w := TokenBlock.writePayload litLens distLens tokens w
   let mut out := w.flush
   return pushBe32 out (adler32 raw)
 
