@@ -5,6 +5,35 @@ namespace LeanTex.Tests.LayoutContracts
 
 open Core Core.Dim Core.Ir Core.Layout Core.Font
 
+/-- The coverage judge reads shipped body glyphs and the input document's
+structure. Empty paragraphs and glyphless spacing owe no source claim;
+running furniture remains outside the body's source census. -/
+def attributionChecks (fs : FontSet) : Array (String × Bool) :=
+  let geom : Geom := {
+    pageW := pt 150, pageH := pt 80
+    hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
+    hyphenate := false, justify := false }
+  let para := Block.para #[.text "", .text "Several ordinary words", .text ""]
+  let doc : Doc := {
+    head := some #[.text "Running head"], foot := some #[.text "Running foot"]
+    body := #[.para #[], .para #[.text " "], para] ++ Array.replicate 12 para }
+  let out := run geom fs none doc
+  let leaves := (Struct.ofDoc (pdfView doc)).leaves.size
+  let covered := out.pages.all fun p => p.lines.all fun l =>
+    l.furniture || l.glyphChars.isEmpty ||
+      (l.leaf.any fun k => k < leaves)
+  let blank := run geom fs none { body := #[.para #[], .para #[.text " "]] }
+  #[
+    ("literal paragraphs retain valid source leaves across physical pages",
+      noDroppedGlyph out && out.pages.size > 1 &&
+      (bodyLines out).any hasGlyphRun && covered),
+    ("running text stays outside the body attribution census",
+      noDroppedGlyph out &&
+      (allLines out).any (fun l => l.furniture && hasGlyphRun l) &&
+      (allLines out).all (fun l => !l.furniture || l.leaf.isNone)),
+    ("empty and spacing-only paragraphs add no unattributed body glyphs",
+      noDroppedGlyph blank && (bodyLines blank).all (·.glyphChars.isEmpty))]
+
 /-- Frame ownership survives an authored running footer: suppressing the
 chrome band changes furniture, not which frame produced a physical page. -/
 def ownershipChecks (fs : FontSet) : Array (String × Bool) :=
@@ -95,11 +124,18 @@ def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
     body := #[.para #[.text "First", .linebreak {}, .text prose]] }
   let declaredWrap := run reflowGeom fs none {
     body := #[.para #[.text prose, .linebreak {}, .text "Last"]] }
+  let fixedSpaceSource := "A\u2009B"
+  let fixedSpace := run geom fs none { body := #[.para #[.text fixedSpaceSource]] }
   return #[
     ("undeclared running bands still ship the plain page number",
       plain.head.isNone && plain.foot.isNone && noDroppedGlyph ordinary &&
       String.join (ordinaryLines.map (lineText · false)).toList == "FirstSecond" &&
       String.join ((allLines ordinary).map (lineText · false)).toList == "FirstSecond1"),
+    ("fixed Unicode spaces contribute advance but no glyph scalar",
+      noDroppedGlyph fixedSpace && !('\u2009').isWhitespace &&
+      fixedSpaceSource.toList.filter (fun c =>
+        !(c.isWhitespace || c == '\u00a0' || c == '\u00ad')) == ['A', '\u2009', 'B'] &&
+      (bodyLines fixedSpace).toList.flatMap (·.glyphChars) == ['A', 'B']),
     ("positive element space can lower a page-local baseline by paginating",
       noDroppedGlyph ordinary && noDroppedGlyph spaced &&
       ordinary.pages.size == 1 && spaced.pages.size == 2 &&

@@ -11043,6 +11043,116 @@ theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut) :
   apply paintLines_selected
   exact fun l r hr => decorationRiders_uncounted fs l r hr
 
+private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
+    (spans : List (Int × Int)) (out : Array Seg)
+    (h : ∀ s ∈ out, s.NoGlyph) :
+    ∀ s ∈ underlinePieces paint hi spans cur out, s.NoGlyph := by
+  induction spans generalizing cur out with
+  | nil =>
+    intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · exact h s hs
+    · trivial
+  | cons span rest ih =>
+    apply ih
+    intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · rcases Array.mem_push.mp hs with hs | rfl
+      · exact h s hs
+      · trivial
+    · trivial
+
+private theorem appendUnderline_noGlyph (fs : FontSet) (size : Sp)
+    (obs : List (Int × Int)) (x : Sp) (seg : Seg) (out : Array Seg)
+    (h : ∀ s ∈ out, s.NoGlyph) :
+    ∀ s ∈ appendUnderline fs size obs x seg out, s.NoGlyph := by
+  unfold appendUnderline
+  split
+  · intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · exact h s hs
+    · trivial
+  · exact underlinePieces_noGlyph _ _ _ _ _ h
+
+private theorem underlineSegs_noGlyph (fs : FontSet) (size : Sp) (segs : Array Seg) :
+    ∀ s ∈ underlineSegs fs size segs, s.NoGlyph := by
+  unfold underlineSegs
+  dsimp only [Id.run, bind, pure, Id]
+  split
+  · apply Loop.forIn_array_inv (fun st : Sp × Array Seg => ∀ s ∈ st.2, s.NoGlyph)
+    · simp
+    · intro seg hseg st hst
+      exact appendUnderline_noGlyph _ _ _ _ _ _ hst
+  · simp
+
+private theorem lineThroughSegs_noGlyph (segs : Array Seg) :
+    ∀ s ∈ lineThroughSegs segs, s.NoGlyph := by
+  unfold lineThroughSegs
+  dsimp only [Id.run, bind, pure, Id]
+  split
+  · apply Loop.forIn_array_inv (fun out : Array Seg => ∀ s ∈ out, s.NoGlyph)
+    · simp
+    · intro seg hseg out hout
+      have push (t : Seg) (ht : t.NoGlyph) : ∀ s ∈ out.push t, s.NoGlyph := by
+        intro s hs
+        rcases Array.mem_push.mp hs with hs | rfl
+        · exact hout s hs
+        · exact ht
+      cases seg with
+      | run fi c link w glyphs sz leading decorations raise ground attr =>
+        cases hp : decorations.lineThrough <;>
+          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+      | decoratedGap w word decorations =>
+        cases hp : decorations.lineThrough <;>
+          simp only [hp, Id.run, ForInStep.value] <;> exact push _ True.intro
+      | gap w word | decoration kind w thickness raise color | rule w thickness raise color
+        | image store w height => exact push _ True.intro
+      | poly pts color => exact hout
+  · simp
+
+private theorem decorationRiders_noGlyph (fs : FontSet) (l : LineOut) :
+    ∀ r ∈ decorationRiders fs l, ∀ s ∈ r.segs, s.NoGlyph := by
+  intro r hr
+  obtain ⟨paint, hp, hr⟩ := Array.mem_filterMap.mp hr
+  have hg : ∀ s ∈ paint, s.NoGlyph := by
+    simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hp
+    rcases hp with rfl | rfl
+    · exact underlineSegs_noGlyph fs l.size l.segs
+    · exact lineThroughSegs_noGlyph l.segs
+  split at hr
+  · simp at hr
+  · cases Option.some.inj hr
+    exact hg
+
+private theorem sourceBound_appendRiders {n : Nat} (fs : FontSet) (l : LineOut)
+    (lines : Array LineOut)
+    (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
+    ∀ r ∈ appendRiders fs l lines, r.furniture = false → r.SourceBound n := by
+  unfold appendRiders
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv
+    (fun out : Array LineOut => ∀ r ∈ out, r.furniture = false → r.SourceBound n)
+  · exact h
+  · intro rider hr out hout r hm hf
+    rcases Array.mem_push.mp hm with hm | rfl
+    · exact hout r hm hf
+    · exact Or.inr (decorationRiders_noGlyph fs l r hr)
+
+private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array LineOut)
+    (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
+    ∀ r ∈ paintLines fs lines, r.furniture = false → r.SourceBound n := by
+  unfold paintLines
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv
+    (fun out : Array LineOut => ∀ r ∈ out, r.furniture = false → r.SourceBound n)
+  · simp
+  · intro l hl out hout
+    apply sourceBound_appendRiders
+    intro r hr hf
+    rcases Array.mem_push.mp hr with hr | rfl
+    · exact hout r hr hf
+    · exact h r hl hf
+
 private def ParaJob.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
   else Layout.lineStart j.items (prev + 1)
@@ -14128,6 +14238,43 @@ private def furnishStep {σ : Type} (fs : FontSet)
   let out := f i page s.2
   (furnishLines fs out.1.1 page.lines out.1.2, s.1 ++ out.2.1, out.2.2)
 
+private theorem sourceBound_furnishLines {n : Nat} (fs : FontSet)
+    (before body after : Array LineOut)
+    (h : ∀ l ∈ body, l.furniture = false → l.SourceBound n) :
+    ∀ l ∈ furnishLines fs before body after,
+      l.furniture = false → l.SourceBound n := by
+  apply sourceBound_paintLines
+  intro l hl hf
+  rcases Array.mem_append.mp hl with hl | hl
+  · rcases Array.mem_append.mp hl with hl | hl
+    · obtain ⟨r, hr, rfl⟩ := Array.mem_map.mp hl
+      simp [furnitureLine] at hf
+    · exact h l hl hf
+  · obtain ⟨r, hr, rfl⟩ := Array.mem_map.mp hl
+    simp [furnitureLine] at hf
+
+private theorem furnishFrom_pagesInv {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (P : PageOut → Prop)
+    (hstep : ∀ i p s, P p → P { p with lines := (f i p s).1 })
+    (pages : Array PageOut) (s : σ) (i : Nat)
+    (hs : ∀ p ∈ pages, P p) :
+    ∀ p ∈ (furnishFrom f pages s i).1, P p := by
+  induction pages, s, i using furnishFrom.induct f with
+  | case1 pages s i h ls s' heq ih =>
+    rw [furnishFrom]
+    simp only [h, reduceDIte, heq]
+    apply ih
+    intro p hp
+    rcases Array.mem_or_eq_of_mem_set hp with hp | rfl
+    · exact hs p hp
+    · have hh := hstep i pages[i] s (hs _ (Array.getElem_mem h))
+      simpa only [heq] using hh
+  | case2 pages s i h =>
+    rw [furnishFrom]
+    simpa only [h, reduceDIte] using hs
+
+
 private abbrev DiagKey :=
   String × String × Option String × Option (String × Nat × Nat ×
     List (Nat × String) × Option String)
@@ -14586,6 +14733,19 @@ theorem runPost_counted_projects (sh : Shipped) :
   apply furnishFrom_preserves
   intro i p s
   exact furnishLines_counted_projects _ _ _ _
+
+private theorem sourceBound_runPost {n : Nat} (sh : Shipped)
+    (h : ∀ p ∈ sh.pages, ∀ l ∈ p.lines, l.SourceBound n) :
+    ∀ p ∈ (runPost sh).pages, ∀ l ∈ p.lines,
+      l.furniture = false → l.SourceBound n := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  apply furnishFrom_pagesInv _
+    (fun p => ∀ l ∈ p.lines, l.furniture = false → l.SourceBound n)
+  · intro i p s hp
+    exact sourceBound_furnishLines _ _ _ _ hp
+  · intro p hp l hl _
+    exact h p hp l hl
 
 /-- The marks step, the one seam after the furniture pass: every shipped
 page takes the derived cut-mark fills, appended after its own fills so
@@ -15324,6 +15484,52 @@ private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
     post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans
 
+private theorem sourceBound_collected {n : Nat} (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (acc0 : Acc)
+    (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
+    (ha : acc0.ops = #[]) (hk : acc0.leafNext = 0)
+    (hn : (Struct.ofDoc doc).leaves.size ≤ n) :
+    (collectDocBody rd doc cover frameSpans acc0).SourceBound n := by
+  apply (collectDocBody_source rd doc cover frameSpans acc0 hp ?_ ?_).1
+  · simp [Acc.SourceBound, ha]
+  · simpa [hk, sourceLeafSum_ofDoc] using hn
+
+private theorem sourceBound_trailing {n : Nat} (acc : Acc) (h : acc.SourceBound n) :
+    (if acc.owed.any (·.fil) then
+      { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
+    else acc).SourceBound n := by
+  split
+  · intro op ho
+    rcases Array.mem_push.mp ho with ho | rfl
+    · exact h op ho
+    · trivial
+  · exact h
+
+private theorem shipCore_source (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span))
+    (hp : ∀ b ∈ (pdfView doc).body, ∃ xs, b = .para xs ∧ PlainInlines xs) :
+    ∀ p ∈ (shipCore geom fs pats doc imgs frameSpans).pages, ∀ l ∈ p.lines,
+      l.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
+  have close : ∀ (c : Prop) [Decidable c] (b : B) (n : Nat), b.SourceBound n →
+      (if c then b.finishPage b.closingOwed else b).SourceBound n := by
+    intro c inst b n hb
+    split
+    · exact sourceBound_finishPage _ _ _ hb
+    · exact hb
+  unfold shipCore withLayoutOps
+  dsimp only [Id.run, bind, pure, Id]
+  apply (close _ _ _ ?_).pages
+  apply sourceBound_placeFrom
+  · intro sop hs
+    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
+    have ho : op.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
+      apply sourceBound_trailing _ ?_ op hop
+      exact sourceBound_collected _ _ _ _ _ hp rfl rfl (Nat.le_refl _)
+    cases op <;> simp only [StagedOp.SourceBound, Op.SourceBound] at ho ⊢
+    all_goals exact ho
+  · exact ⟨by simp, by simp, rfl, rfl, rfl⟩
+
 private def frameOpeningsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) : Array FrameOpening :=
   withLayoutOps geom fs pats doc imgs (fun staged _ _ =>
@@ -15383,6 +15589,119 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let (doc, diags) := resolveDocMath fs doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
+
+private theorem keepFor_plain_body (backend : String) (body : Array Block)
+    (h : ∀ b ∈ body, ∃ xs, b = .para xs ∧ PlainInlines xs) :
+    Ir.keepFor backend body = body := by
+  apply Ir.keepFor_id
+  change Ir.onlyFreeList body.toList = true
+  have each : ∀ b ∈ body.toList, Ir.onlyFreeOne b = true := by
+    intro b hb
+    obtain ⟨xs, rfl, _⟩ := h b (by simpa using hb)
+    rfl
+  generalize body.toList = bs at *
+  induction bs with
+  | nil => rfl
+  | cons b bs ih =>
+    simp only [Ir.onlyFreeList, each b (by simp), Bool.true_and]
+    exact ih (fun b hb => each b (by simp [hb]))
+
+private theorem resolveAlpha_plain_inlines (coverage : Math.MathAlphabetCoverage)
+    (xs : Array Inline) (h : PlainInlines xs) :
+    Ir.mapInlines (Ir.resolveMathAlphaInline coverage) xs = xs := by
+  have aux : ∀ (ys : List Inline) (acc : Array Inline),
+      (∀ y ∈ ys, ∃ s, y = .text s) →
+      Ir.mapInlineList (Ir.resolveMathAlphaInline coverage) acc ys = acc ++ ys.toArray := by
+    intro ys
+    induction ys with
+    | nil => intro acc _; simp [Ir.mapInlineList]
+    | cons y ys ih =>
+      intro acc hp
+      obtain ⟨s, rfl⟩ := hp y (by simp)
+      rw [Ir.mapInlineList, ih _ (fun y hy => hp y (by simp [hy]))]
+      apply Array.toList_inj.mp
+      simp [Ir.mapInline, Ir.resolveMathAlphaInline]
+  simpa [Ir.mapInlines] using aux xs.toList #[] (by simpa [PlainInlines] using h)
+
+private theorem resolveMathAlphas_plain_body (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc)
+    (h : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs) :
+    (Ir.resolveMathAlphas coverage family doc).1.body = doc.body := by
+  have aux : ∀ (bs : List Block) (acc : Array Block),
+      (∀ b ∈ bs, ∃ xs, b = .para xs ∧ PlainInlines xs) →
+      Ir.mapBlockList id (Ir.resolveMathAlphaInline coverage) acc bs = acc ++ bs.toArray := by
+    intro bs
+    induction bs with
+    | nil => intro acc _; simp [Ir.mapBlockList]
+    | cons b bs ih =>
+      intro acc hp
+      obtain ⟨xs, rfl, hx⟩ := hp b (by simp)
+      rw [Ir.mapBlockList, ih _ (fun b hb => hp b (by simp [hb]))]
+      apply Array.toList_inj.mp
+      simp [Ir.mapBlock, resolveAlpha_plain_inlines coverage xs hx]
+  simpa [Ir.resolveMathAlphas, Ir.mapDoc, Ir.mapBlocks, Ir.mapBlocksPic] using
+    aux doc.body.toList #[] (by simpa using h)
+
+/-- Scalars actually carried by glyph runs, in paint order. Spacing and
+nontext geometry contribute no scalars. -/
+def Seg.glyphChars : Seg → List Char
+  | .run _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
+  | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => []
+
+def LineOut.glyphChars (line : LineOut) : List Char :=
+  line.segs.toList.flatMap Seg.glyphChars
+
+/-- The original source class for paragraph attribution: every body block
+is a paragraph whose inlines are literal text. Furniture is unrestricted. -/
+def PlainParagraphs (body : Array Block) : Prop :=
+  ∀ b ∈ body, ∃ xs, b = .para xs ∧ (∀ x ∈ xs, ∃ s, x = .text s)
+
+private theorem noGlyph_glyphChars (line : LineOut)
+    (h : ∀ s ∈ line.segs, s.NoGlyph) : line.glyphChars = [] := by
+  apply List.flatMap_eq_nil_iff.mpr
+  intro s hs
+  have hh := h s (by simpa using hs)
+  cases s <;> simp only [Seg.NoGlyph, Seg.glyphChars] at hh ⊢
+  all_goals first | rfl | simp [hh]
+
+private theorem sourceBound_run (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body) :
+    ∀ p ∈ (run geom fs pats doc imgs frameSpans).pages, ∀ l ∈ p.lines,
+      l.furniture = false → l.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
+  have hm : (resolveDocMath fs doc).1.body = doc.body :=
+    resolveMathAlphas_plain_body _ _ doc hplain
+  have he : (pdfView (resolveDocMath fs doc).1).body = (pdfView doc).body := by
+    simp only [pdfView, hm]
+  have hp : ∀ b ∈ (pdfView (resolveDocMath fs doc).1).body,
+      ∃ xs, b = .para xs ∧ PlainInlines xs := by
+    change ∀ b ∈ Ir.keepFor "pdf" (resolveDocMath fs doc).1.body, _
+    rw [hm, keepFor_plain_body _ _ hplain]
+    exact hplain
+  have ht : Struct.ofDoc (pdfView (resolveDocMath fs doc).1) =
+      Struct.ofDoc (pdfView doc) := by
+    simp only [Struct.ofDoc, he]
+  intro p hpage l hline hf
+  obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hpage
+  have hs := sourceBound_runPost _
+    (shipCore_source geom fs pats (resolveDocMath fs doc).1 imgs frameSpans hp)
+    q hq l hline hf
+  simpa only [ht] using hs
+
+/-- Every non-furniture line containing a glyph run names a valid leaf of
+its actual source document. The proof crosses math/backend normalization,
+collection, asynchronous line breaking, placement, page closure, decoration,
+running furniture and marks; no producer-validity hypothesis is required. -/
+theorem lines_attributed_covers (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body) :
+    ∀ p ∈ (run geom fs pats doc imgs frameSpans).pages, ∀ l ∈ p.lines,
+      l.furniture = false → l.glyphChars ≠ [] →
+      ∃ k, l.leaf = some k ∧ k < (Struct.ofDoc (pdfView doc)).leaves.size := by
+  intro p hp l hl hf hi
+  rcases sourceBound_run geom fs pats doc imgs frameSpans hplain p hp l hl hf with h | h
+  · exact h
+  · exact False.elim (hi (noGlyph_glyphChars l h))
 
 /-- Every code and subject reported by the actual shipment remains named
 after furniture, diagnostic deduplication, math diagnostics and print
