@@ -6106,6 +6106,20 @@ def interlineFor (prevRule : Bool) (prevDepth prevBelow : Sp)
   (if prevRule then prevDepth else if ruleLine then 0 else prevBelow)
     + (if prevRule || ruleLine then box.inkAbove else box.above)
 
+/-- Reserve painted reach below a baseline in both the ink and leaded
+depths. Existing space is kept; paint is not an additional gap. -/
+def reserveBelow (depth below reach : Sp) : Sp × Sp :=
+  (max depth reach, max below reach)
+
+/-- A placement-coordinate fact: neither depth shrinks, and both cover
+the painted reach, including when a font has negative half-leading. -/
+theorem reserveBelow_covers (depth below reach : Sp) :
+    depth ≤ (reserveBelow depth below reach).1 ∧
+    below ≤ (reserveBelow depth below reach).2 ∧
+    reach ≤ (reserveBelow depth below reach).1 ∧
+    reach ≤ (reserveBelow depth below reach).2 :=
+  ⟨Int.le_max_left .., Int.le_max_left .., Int.le_max_right .., Int.le_max_right ..⟩
+
 /-- TeX's baseline distance between two boxes (tex.web §679, where a box
 joins a vertical list): `\baselineskip` whenever that leaves the boxes at
 least `\lineskiplimit` apart, else their extents with `\lineskip` between —
@@ -10868,10 +10882,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- baseline — without this the resumed line's ascent clipped into the
     -- repeated bar.
     let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
+    let (depth, below) := reserveBelow b.prevDepth b.prevBelow (barBottom - b.y)
     b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size
-                  chrome := some (b.cur.lines, b.cur.fills, b.y,
-                    max b.prevDepth (barBottom - b.y),
-                    max b.prevBelow (barBottom - b.y)) }
+                  chrome := some (b.cur.lines, b.cur.fills, b.y, depth, below) }
   | .colOpen pos =>
     -- On a fresh page nothing stands above the columns: their bottom starts
     -- at the body top, never at the last page's last line, which
@@ -10951,8 +10964,13 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := match b.cur.lines.back? with
       | some l =>
         let asc := b.ascent * l.size / b.geom.fontSize
-        b.pushSibling (fills := #[{ x := x, y := l.y - asc - pad, w := w,
-                                    h := asc + b.prevDepth + 2 * pad, color := color }])
+        let bar : Fill := { x := x, y := l.y - asc - pad, w := w,
+                            h := asc + b.prevDepth + 2 * pad, color := color }
+        let (depth, below) := reserveBelow b.prevDepth b.prevBelow (bar.y + bar.h - b.y)
+        -- Following lines and displays clear the painted band, not the
+        -- title's cached glyph depth.
+        { b.pushSibling (fills := #[bar]) with
+            prevDepth := depth, prevBelow := below, lastInk := none }
       | none => b
   | .hrule color th =>
     -- A line whose only seg is the rule: the full line machinery decides
