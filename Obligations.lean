@@ -201,13 +201,6 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
 -- salvage: literals, selected substitutions, elaborated math, or a named
 -- generated floor. Literal punctuation is content, not a forbidden alphabet.
 
-/-- The flow's own lines that carry ink: furniture stands in the margin by
-design and the note apparatus belongs to the page, so neither is a line the
-document's paragraphs declared. -/
-def inkLines (o : Out) : List LineOut :=
-  o.pages.toList.flatMap fun p =>
-    p.lines.toList.filter fun l => !l.furniture && !l.note && lineInk l ≠ []
-
 -- Layout.reflow_named proves that every split before an authored segment
 -- end retains its paragraph-keyed diagnostic through the actual public run.
 -- LayoutContracts.reflowChecks covers floats, columns, repeated paragraphs,
@@ -230,28 +223,13 @@ def inkLines (o : Out) : List LineOut :=
 -- Elab.warnOnce_sites_exact counts one actual reporting call, keyed by code,
 -- output and subject; it does not prove that every source loss reaches one.
 
-/-- The ink baselines the flow ships, in page and line order: the measure a
-vertical-monotonicity statement compares two runs by. -/
-def inkBaselines (o : Out) : List Dim.Sp := (inkLines o).map (·.y)
-
--- owed: elementSpace_monotone
--- owner: LeanTex.Core.Layout
--- source: the paragraph-skip slice (PLAN 2026-09-24, the vertical-skip composition entry): inserting positive vertical glue between two paragraphs narrowed their separation, because the declared glue stood *in place of* the parskip it displaced rather than beside it. `Layout.skip_monotone` closes the half where the glue is a bare declared skip — `\vspace`, `\smallskip`, `Ir.gapBlock` — which is the half the defect was measured on and the half LaTeX's own `\vskip` semantics pin. The other half is still live and measured: an element's own space, the `\addvspace` path, still replaces the peer default, so `\style{itemize}{ before = 1pt }` after a paragraph ships a 13 pt separation where the undeclared peer gap is 18 pt — a positive declaration narrowing a gap by 5 pt. Correcting it is not the same one-line change: the engine's furniture rhythm constants (`Ir.titleBarGap`, the caption gaps, `Ir.headingBeforeDefault` and its parskip-growth arm) were tuned against the replacing behaviour, and `default_rhythm_multiples`/`caption_gaps_rhythm` pin those multiples, so the fix is a re-derivation of the furniture rhythm against a parskip that always adds, not a swap of one composition operator.
--- blocker: The statement is false across pagination: positive glue can move the last line onto a new page, lowering its page-local y coordinate (LayoutContracts.counterexamples). The replacement needs physical-page coordinates or a same-page premise, a fixed preceding layout, and a nonnegative resolved length rather than only its sp component. The actual addvspace composition and body placement still need their corresponding local monotonicity proof.
--- goldens: no
-/-- Staged spacing monotonicity. Page-local baselines can decrease when
-positive glue causes a page break, and a nonnegative `sp` component does
-not constrain the whole resolved length. A local contract needs a fixed
-preceding layout and either physical coordinates or a same-page premise. -/
-theorem elementSpace_monotone
-    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc)
-    (a b : Array Ir.Inline) (g : Ir.Sourced Dim.SymGlue)
-    (hpos : (0 : Int) ≤ g.value.width.sp) :
-    ((inkBaselines (Layout.run geom fs none
-        { doc with body := #[.para a, .para b] })).getLast?.getD 0 : Int)
-      ≤ (inkBaselines (Layout.run geom fs none
-          { doc with body := #[.para a, .spaced g #[.para b]] })).getLast?.getD 0 := by
-  sorry
+-- Layout.Spacing.elementSpace_monotone proves ordering in the actual public
+-- run from common preparation, resolved default compensation and numeric
+-- line-fit conditions. Layout.Spacing.twoParagraphIncreasing_contract
+-- constructs these premises from arbitrary document inputs on its supported
+-- two-paragraph domain; it never assumes the output ordering it proves.
+-- ElementSpacing retains counterexamples to the old unconditional claim:
+-- replacing a larger default, signed relative lengths and page breaks.
 
 /-- How far the glyphs of a label's text reach above their baseline, read
 from the face's own outlines rather than from any declared metric: the
