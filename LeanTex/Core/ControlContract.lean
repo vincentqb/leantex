@@ -293,4 +293,90 @@ theorem run_recovery_named (file input : String) (item : Ir.Recovered)
     (run file input).2.any (·.subject == some item.subject) = true :=
   runRaws_recovery_named file _ _ _ item h
 
+/-- The final document judges can realize colours but conserve the body's
+text census. This is the document returned by the production completion. -/
+theorem completePrepared_body_text (file : String) (p : Prepared)
+    (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
+    (report : PictureReportContext) (st : ESt) :
+    Ir.blocksText (completePrepared file p earlier doc table report st).1.body =
+      Ir.blocksText doc.body := by
+  change Ir.blocksText (Contrast.realizeDoc doc (colorSiteOf st.spans.colors)).1.body = _
+  unfold Contrast.realizeDoc
+  dsimp only
+  split
+  · rfl
+  · exact Ir.recolorRoles_text _ _ _ doc.body
+
+/-- The input condition is checked on the context and body produced by
+the real declaration/class preparation, for each withdrawal environment.
+It assumes neither an elaborated paragraph nor a final text census. -/
+def PreparedRecoveryWord (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
+    (word : String) : Prop :=
+  ∀ withdrawn,
+    let entry := preparedBody file p metric withdrawn
+    RecoveryWordInput entry.1.ctx entry.1.raws word
+
+/-- Unknown-command content reaches the returned document through the
+actual prepared frontend: class preparation, the recursive body interpreter,
+numbering, reference resolution and every final document judge. -/
+theorem runPrepared_recovered_word_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
+    (word : String)
+    (h : RecoveryWordInput (preparedBody file p metric withdrawn).1.ctx
+      (preparedBody file p metric withdrawn).1.raws word) :
+    Ir.blocksText (runPrepared file p earlier metric withdrawn).1.body = word := by
+  rw [runPrepared_body_exact]
+  dsimp only
+  have hb := runDocBody_recovered_word_exact
+    (preparedBody file p metric withdrawn).1 (preparedBody file p metric withdrawn).2 word h
+  cases hx : (runDocBody (preparedBody file p metric withdrawn).1).run
+      (preparedBody file p metric withdrawn).2 with
+  | mk result st =>
+    obtain ⟨doc, table, report⟩ := result
+    simp only [hx] at hb ⊢
+    rw [completePrepared_body_text]
+    exact hb
+
+/-- Withdrawal chooses one complete production run. Source erasure then
+preserves its census, so the final file-free document contains the word. -/
+theorem runPreparedFinal_recovered_word_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
+    (h : PreparedRecoveryWord file p metric word) :
+    Ir.blocksText (runPreparedFinal file p earlier metric).1.body = word := by
+  let first := runPrepared file p earlier metric
+  let chosen := if first.2.2.fallbacks.isEmpty then first
+    else runPrepared file p earlier metric first.2.2.fallbacks
+  change Ir.blocksText (Ir.eraseLocations chosen.1).body = word
+  rw [show Ir.blocksText (Ir.eraseLocations chosen.1).body =
+    Ir.blocksText chosen.1.body from congrArg Prod.fst (Ir.eraseLocations_text chosen.1)]
+  dsimp only [chosen]
+  split
+  · exact runPrepared_recovered_word_exact file p earlier metric #[] word (h #[])
+  · exact runPrepared_recovered_word_exact file p earlier metric first.2.2.fallbacks
+      word (h first.2.2.fallbacks)
+
+/-- The corrected unknown-control half of the control contract: the
+actual final document retains its literal argument, and every recovery in
+that document is named by its own code and subject in the final log.
+Together with the consuming-control continuation equations above,
+this distinguishes consumed controls from content recovery. -/
+theorem runExecuted_recovered_word_contract (file : String) (executed : Compat.Executed)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
+    (h : PreparedRecoveryWord file (prepareExecuted file executed) metric word) :
+    Ir.blocksText (runExecuted file executed earlier metric).1.body = word ∧
+      ∀ item ∈ (runExecuted file executed earlier metric).1.salvage,
+        RecoveryNamed (runExecuted file executed earlier metric).2 item := by
+  exact ⟨runPreparedFinal_recovered_word_exact file _ earlier metric word h,
+    fun item hi => runExecuted_recovery_named file executed earlier metric item hi⟩
+
+/-- The parsed, file-free entrypoint has the same complete contract. -/
+theorem runRaws_recovered_word_contract (file : String) (raws : Array Raw)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
+    (h : PreparedRecoveryWord file (prepare file raws) metric word) :
+    Ir.blocksText (runRaws file raws earlier metric).1.body = word ∧
+      ∀ item ∈ (runRaws file raws earlier metric).1.salvage,
+        RecoveryNamed (runRaws file raws earlier metric).2 item := by
+  exact ⟨runPreparedFinal_recovered_word_exact file _ earlier metric word h,
+    fun item hi => runPreparedFinal_recovery_named file _ earlier metric item hi⟩
+
 end LeanTex.Core.Elab

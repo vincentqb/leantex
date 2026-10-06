@@ -56,6 +56,24 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       unknown.1.salvage.any (·.command == "zzNotAControl") &&
       unknown.1.salvage.all (fun s =>
         unknown.2.any (·.subject == some s.subject)))
+  for preamble in #["", "\\documentclass{article}",
+      "\\documentclass{article}\\title{\\ref{missing}}",
+      "\\documentclass{article}\\theme{daylight}"] do
+    for word in #["kept", "naïve", "sample123"] do
+      let input := preamble ++ "\\begin{document}\\zzRecovered{" ++ word ++ "}\\end{document}"
+      let (tokens, _) := Lex.lex file input
+      let (raws, _) := Parse.parse file tokens
+      let prepared := Elab.prepare file raws
+      let (entry, initial) := Elab.preparedBody file prepared
+      let bodyRun := (Elab.runDocBody entry).run initial
+      let preparedRun := Elab.runPrepared file prepared
+      let final := Elab.run file input
+      t s!"unknown argument survives actual body preparation and finalization: {preamble}/{word}"
+        (Ir.blocksText bodyRun.1.1.body == word &&
+          Ir.blocksText preparedRun.1.body == word &&
+          Ir.blocksText final.1.body == word &&
+          final.1.salvage.all (fun item => final.2.any
+            (fun d => d.kind == item.code && d.subject == some item.subject)))
   let recovered : Ir.Recovered :=
     { code := .W0301, command := "zzUnaccounted", text := "kept" }
   let recoveryDoc : Ir.Doc :=

@@ -8863,6 +8863,16 @@ private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
   ∧ visParsGo c.user c.limit = visParsGo ctx.user ctx.limit
   ∧ visWeightGo c.user c.limit = visWeightGo ctx.user ctx.limit }
 
+/-- Keep the refreshed context beside its unchanged termination fields.
+An equation about the value can then rewrite both together. -/
+private def flowMCtx (ctx : Ctx) (st : ESt) (gen : Nat) : MCtx ctx :=
+  ⟨flowCtx ctx st gen, flowCtx_measure ctx st gen⟩
+
+private theorem flowMCtx_idle (ctx : Ctx) (st : ESt) :
+    flowMCtx ctx st st.flowGen = ⟨ctx, rfl, rfl, rfl, rfl⟩ := by
+  apply Subtype.ext
+  simp [flowMCtx, flowCtx]
+
 /-- `\multicolumn{n}{spec}{text}` read from `raws`, whose element `j` is the
 command: the count when it is a numeral; the one column its spec declares,
 read by the table's own spec reader so `p{…}` keeps its width, with what
@@ -9777,7 +9787,7 @@ The context's termination components are unchanged. -/
 private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
     (raws : Array Raw) (i : Nat) (blocks : Array Block) (cur : Array Raw) :
     EM (MCtx ctx × Array Block × Array Raw) := do
-  let fresh := flowCtx ctx st gen
+  let ⟨fresh, hf⟩ := flowMCtx ctx st gen
   let kinds := blockMacroKinds fresh.macroRoles raws i
   let desired := kinds.filterMap fun (origin, isBlock) => if isBlock then some origin else none
   let done := i ≥ raws.size
@@ -9789,7 +9799,6 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
     (pendingParaInput cur.toList)
   let ctx' := { ready with macroRoles := { ready.macroRoles with
     blocks := active, blockKinds := kinds } }
-  have hf := flowCtx_measure ctx st gen
   return (⟨ctx', hm.1.trans hf.1, hm.2.1.trans hf.2.1,
     hm.2.2.1.trans hf.2.2.1, hm.2.2.2.trans hf.2.2.2⟩, blocks, cur)
 
@@ -12934,6 +12943,391 @@ unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 
+/- The recovery contract follows the production block interpreter. These
+state equations live here because macro-origin frames and the recursive
+termination witnesses are private. The public statement below reads only
+its actual block-entry context and syntax. -/
+private theorem elabInlines_word (ctx : Ctx) (w : String) (p : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
+    elabInlines ctx #[.word w p] =
+      pure (if ctx.literalText then #[sourceInline ctx p (.text w)]
+        else #[sourceInline ctx p (.text w)].map (mapSmartText ctx.literalWhen)) := by
+  rw [elabInlines, elabInlinesFrom]
+  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, Raw.origins?,
+    relativeOrigins, hp, hm, flushText]
+  rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
+  simp [inlineMacroAt, inlineMacroStep, flushText, mergeText, pure_bind, sourceInline,
+    Ctx.sourceSpan]
+
+private theorem elabInlines_recovered_head (ctx : Ctx) (name : String) (raws : Array Raw)
+    (pos : Pos) (h : 0 < raws.size) (hr : raws[0] = .ctrl name pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : pos.origins = []) (hn : recoversInlineName ctx name = true) :
+    elabInlines ctx raws = (do
+      let out ← elabUnknownCtrl ctx raws 0 #[] "" name pos h
+      pure (if ctx.literalText then out else out.map (mapSmartText ctx.literalWhen))) := by
+  have he : ctx.macroRoles.enter = ctx.macroRoles := by rw [hm]; rfl
+  have hr' : raws[0]? = some (.ctrl name pos) := by
+    rw [Array.getElem?_eq_getElem h, hr]
+  have hi : inlineMacroAt ctx.macroRoles raws 0 #[] "" = (ctx.macroRoles, #[], "") := by
+    simp only [inlineMacroAt, hr', inlineMacroStep, Raw.origins?, hp, hm,
+      relativeOrigins, List.map_nil]
+    rfl
+  rw [elabInlines, he, elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn, hi]
+
+private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp wp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) :
+    elabInlines ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
+      warnUnknownCmd ctx name false p
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
+      let inner := if ctx.literalText then #[sourceInline ctx wp (.text w)]
+        else #[sourceInline ctx wp (.text w)].map (mapSmartText ctx.literalWhen)
+      pure (if ctx.literalText then inner
+        else inner.map (mapSmartText ctx.literalWhen))) := by
+  let xs : Array Raw := #[.ctrl name p, .group #[.word w wp] gp]
+  change elabInlines ctx xs = _
+  rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
+  have hs : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
+  have hstar : skipStar xs 1 = 1 := rfl
+  have ho : skipOptionRuns xs 1 p = (1, none) := by
+    rw [skipOptionRuns]
+    have hc : scanBracketArg xs 1 p = .content := by
+      unfold scanBracketArg
+      rw [hs]
+      rfl
+    rw [hc]
+  have ha : elabUnknownArgs ctx xs
+      (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) p).1)
+      0 #[] "" false = (do
+        let inner ← elabInlines ctx #[.word w wp]
+        pure (inner, "", ⟨2, by simp only [hs, hstar, ho]; omega⟩, 1, false)) := by
+    have hi (j : Nat) (hj : j = 1) :
+        elabUnknownArgs ctx xs j 0 #[] "" false = (do
+          let inner ← elabInlines ctx #[.word w wp]
+          pure (inner, "", ⟨2, by omega⟩, 1, false)) := by
+      subst j
+      rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs])]
+      simp [flushText]
+    exact hi _ (by simp only [hs, hstar, ho])
+  rw [elabUnknownCtrl]
+  simp! only [Nat.reduceAdd, hs, hstar, ho, Prod.fst, Prod.snd]
+  rw [ha, elabInlines_word ctx w wp hm hwp]
+  simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
+    ↓reduceIte]
+  rw [elabInlinesFrom_done_exact _ xs 2 _ _ (by simp [xs])]
+  have ms (x : Inline) : mergeText #[x] = #[x] := by cases x <;> rfl
+  simp only [inlineMacroAt, inlineMacroStep, show xs[2]? = none from rfl,
+    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm]
+  cases hl : ctx.literalText <;>
+    simp [ms, flushText, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne, unknownCmdDiag_shape_id]
+
+private theorem mapSmartText_literal (ctx : Ctx) (p : Pos) (w : String)
+    (hs : smartPunct w = w) :
+    mapSmartText ctx.literalWhen (sourceInline ctx p (.text w)) =
+      sourceInline ctx p (.text w) := by
+  simp [sourceInline, mapSmartText, mapSmartTextList, punctuationInline, hs]
+
+private theorem elabInlines_recovered_word (ctx : Ctx) (name w : String) (p gp wp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w) :
+    elabInlines ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
+      warnUnknownCmd ctx name false p
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
+      pure #[sourceInline ctx wp (.text w)]) := by
+  rw [elabInlines_recovered_group ctx name w p gp wp hm hp hwp hn]
+  cases ctx.literalText <;> simp [mapSmartText_literal ctx wp w hs]
+
+private theorem trimParaList_word (ctx : Ctx) (p : Pos) (w : String)
+    (he : w.isEmpty = false)
+    (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
+    (ht : w.trimAscii.isEmpty = false)
+    (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w) :
+    (trimParaList false #[]
+      (trimParaList true #[] [sourceInline ctx p (.text w)]).1.toList).1 =
+        #[sourceInline ctx p (.text w)] := by
+  simp [trimParaList, trimParaOne, sourceInline, he, hl, ht, hr]
+
+private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w)
+    (he : w.isEmpty = false)
+    (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
+    (ht : w.trimAscii.isEmpty = false)
+    (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w) :
+    mkPara ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
+      warnUnknownCmd ctx name false p
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
+      return some (paraUnder (← get).flowLang
+        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
+  rw [mkPara]
+  simp only [ForIn.forIn]
+  rw [Lean.Loop.forIn_eq_of_monadTail]
+  simp only [
+    show (#[Raw.ctrl name p, Raw.group #[Raw.word w wp] gp]).back? =
+      some (Raw.group #[Raw.word w wp] gp) from rfl, pure_bind]
+  simp only [show (#[Raw.ctrl name p, Raw.group #[Raw.word w wp] gp]).isEmpty = false from rfl,
+    Bool.false_eq_true, ↓reduceIte]
+  rw [elabInlines_recovered_word ctx name w p gp wp hm hp hwp hn hs]
+  simp only [bind_assoc, pure_bind]
+  rw [trimParaList_word ctx wp w he hl ht hr]
+  rfl
+
+private theorem blockMacroStep_idle (ctx : Ctx) (st : ESt) (raws : Array Raw)
+    (i : Nat) (blocks : Array Block) (cur : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hi : i < raws.size) (hp : (raws[i]).origins? = some []) :
+    blockMacroStep ctx st st.flowGen raws i blocks cur =
+      pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, cur) := by
+  simp only [blockMacroStep, flowMCtx_idle,
+    blockMacroKinds, Array.getElem?_eq_getElem hi, hp, hm]
+  simp [relativeOrigins, show ¬ i ≥ raws.size by omega,
+    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, hm]
+  cases ctx
+  cases hm
+  rfl
+
+private theorem flushPara_empty (ctx : Ctx) (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) :
+    flushPara ctx blocks #[] = pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks) := by
+  simp [flushPara, hm]
+  cases ctx
+  cases hm
+  rfl
+
+private theorem flushPara_pending (ctx : Ctx) (blocks : Array Block) (cur : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (he : cur.isEmpty = false) :
+    flushPara ctx blocks cur = (do
+      let para ← mkPara ctx cur
+      pure (⟨ctx, rfl, rfl, rfl, rfl⟩,
+        match para with | some b => blocks.push b | none => blocks)) := by
+  cases ctx
+  cases hm
+  simp only [flushPara, he, Bool.false_eq_true, ↓reduceIte, Array.filter_empty,
+    Array.map_empty]
+
+private theorem blockMacroStep_done (ctx : Ctx) (st : ESt) (raws : Array Raw)
+    (i : Nat) (blocks : Array Block) (cur : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hi : raws.size ≤ i) :
+    blockMacroStep ctx st st.flowGen raws i blocks cur = (do
+      let (ready, bs) ← flushPara ctx blocks cur
+      pure (ready, bs, #[])) := by
+  rw [blockMacroStep, flowMCtx_idle]
+  simp only [↓reduceIte, blockMacroKinds,
+    Array.getElem?_eq_none hi, hi]
+  by_cases he : cur.isEmpty = true
+  · have hz : cur = #[] := Array.isEmpty_iff.mp he
+    subst cur
+    rw [flushPara_empty ctx blocks hm]
+    simp [hm, closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns]
+    cases ctx
+    cases hm
+    rfl
+  · have hf : cur.isEmpty = false := Bool.eq_false_iff.mpr he
+    rw [flushPara_pending ctx blocks cur hm hf]
+    simp only [bind_assoc, pure_bind]
+    simp [hm, closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns]
+    cases ctx
+    cases hm
+    rfl
+
+private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (cur : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hi : raws.size ≤ i) :
+    (elabBlocksGo ctx raws i blocks cur st.flowGen).run st =
+      ((do
+        let (_, bs) ← flushPara ctx blocks cur
+        pure bs) : EM (Array Block)).run st := by
+  rw [elabBlocksGo]
+  simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte, pure_bind]
+  change ((do
+    let (⟨next, _⟩, bs, cs) ← blockMacroStep ctx st st.flowGen raws i blocks cur
+    return (← flushPara next bs cs).2) : EM _).run st = _
+  rw [blockMacroStep_done ctx st raws i blocks cur hm hi]
+  simp only [bind_assoc, pure_bind]
+  by_cases he : cur.isEmpty = true
+  · have hz : cur = #[] := Array.isEmpty_iff.mp he
+    subst cur
+    rw [flushPara_empty ctx blocks hm]
+    simp only [pure_bind]
+    rw [flushPara_empty ctx blocks hm]
+    rfl
+  · rw [flushPara_pending ctx blocks cur hm (Bool.eq_false_iff.mpr he)]
+    simp only [bind_assoc, pure_bind]
+    simp only [flushPara_empty ctx _ hm, pure_bind]
+
+private theorem run_get (k : ESt → EM α) (st : ESt) :
+    ((do let x ← get; k x) : EM α).run st = (k st).run st := rfl
+
+private theorem elabBlocksGo_recovered_ctrl (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
+    (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = [])
+    (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
+    (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      0 blocks #[] st.flowGen).run st =
+    (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      1 blocks #[.ctrl name p] st.flowGen).run st := by
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 0 blocks #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
+  simp only [pure_bind]
+  simp [hb]
+
+private theorem elabBlocksGo_recovered_group (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
+    (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : gp.origins = []) :
+    (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      1 blocks #[.ctrl name p] st.flowGen).run st =
+    (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      2 blocks #[.ctrl name p, .group #[.word w wp] gp] st.flowGen).run st := by
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 1 blocks #[.ctrl name p] hm (by simp)
+    (by simpa [Raw.origins?] using hp)]
+  have ha : isArgument #[.ctrl name p] = true := by
+    rw [isArgument]
+    simp only [Std.Legacy.Range.forIn_eq_forIn_range']
+    simp [Std.Legacy.Range.size, List.forIn_cons]
+  simp [ha]
+
+private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
+    (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w)
+    (he : w.isEmpty = false)
+    (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
+    (ht : w.trimAscii.isEmpty = false)
+    (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w)
+    (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
+    (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      0 blocks #[] st.flowGen).run st =
+    ((do
+      warnUnknownCmd ctx name false p
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
+      return blocks.push (paraUnder (← get).flowLang
+        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
+      EM (Array Block)).run st := by
+  rw [elabBlocksGo_recovered_ctrl ctx st name w p gp wp blocks hm hp hb,
+    elabBlocksGo_recovered_group ctx st name w p gp wp blocks hm hgp,
+    elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
+    flushPara_pending ctx blocks _ hm rfl,
+    mkPara_recovered_word ctx name w p gp wp hm hp hwp hn hs he hl ht hr]
+  simp only [bind_assoc, pure_bind]
+
+private theorem elabBlocksGo_recovered_shape (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
+    (blocks : Array Block)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w)
+    (he : w.isEmpty = false)
+    (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
+    (ht : w.trimAscii.isEmpty = false)
+    (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w)
+    (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
+    ∃ lang decls, ((elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
+      0 blocks #[] st.flowGen).run st).1 =
+      blocks.push (paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])) := by
+  rw [elabBlocksGo_recovered_word ctx st name w p gp wp blocks hm hp hgp hwp hn hs he hl ht hr hb]
+  exact ⟨_, _, rfl⟩
+
+private theorem closeBlockScope_value (ctx : Ctx) (st : ESt) (base : Option Nat)
+    (bs : Array Block) :
+    ((closeBlockScope ctx #[] base bs).run st).1 = bs := by
+  rw [closeBlockScope, closeLengthScope]
+  rfl
+
+private theorem elabBlocks_recovered_shape (ctx : Ctx) (st : ESt) (name w : String) (p gp wp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = []) (hwp : wp.origins = [])
+    (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w)
+    (he : w.isEmpty = false)
+    (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
+    (ht : w.trimAscii.isEmpty = false)
+    (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w)
+    (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
+    ∃ lang decls, ((elabBlocks ctx #[.ctrl name p, .group #[.word w wp] gp]).run st).1 =
+      #[paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])] := by
+  let xs : Array Raw := #[.ctrl name p, .group #[.word w wp] gp]
+  have henter : {ctx with macroRoles := ctx.macroRoles.enter} = ctx := by
+    cases ctx
+    cases hm
+    rfl
+  have hopen : openLengthScope ctx xs =
+      (#[], ⟨xs, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩) := by
+    rw [openLengthScope, lengthScopeKeys?]
+    rfl
+  change ∃ lang decls, ((elabBlocks ctx xs).run st).1 = _
+  rw [elabBlocks, elabBlockScope]
+  simp only [henter, openBlockScope, hopen, bind_assoc, pure_bind]
+  let entered : ESt := {st with spans := {st.spans with frames :=
+    {st.spans.frames with base := some 0, nextBase := none}}}
+  change ∃ lang decls, (((do
+    let bs ← elabBlocksGo ctx xs 0 #[] #[] entered.flowGen
+    closeBlockScope ctx #[] st.spans.frames.base bs) : EM (Array Block)).run entered).1 = _
+  change ∃ lang decls, ((closeBlockScope ctx #[] st.spans.frames.base
+    ((elabBlocksGo ctx xs 0 #[] #[] entered.flowGen).run entered).1).run
+      ((elabBlocksGo ctx xs 0 #[] #[] entered.flowGen).run entered).2).1 = _
+  rw [closeBlockScope_value]
+  exact elabBlocksGo_recovered_shape ctx entered name w p gp wp #[] hm hp hgp hwp hn hs he hl ht hr hb
+
+private theorem mapInlines_wrapDecls (f : Inline → Inline) (ds : List Ir.Decl)
+    (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
+    Ir.mapInlines f (Ir.wrapDecls ds xs) = Ir.wrapDecls ds xs := by
+  induction ds with
+  | nil => exact h
+  | cons d ds ih =>
+    cases d with
+    | style st =>
+      change #[Inline.styled st (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
+      rw [ih]
+      rfl
+    | color c name =>
+      change #[Inline.colored c name (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
+      rw [ih]
+      rfl
+
+private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option String)
+    (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
+    Ir.mapBlocks f #[paraUnder lang xs] = #[paraUnder lang xs] := by
+  cases lang with
+  | none => change #[Block.para (Ir.mapInlines f xs)] = _; rw [h]; rfl
+  | some tag => change #[Block.para #[.styled (.lang tag) (Ir.mapInlines f xs)]] = _; rw [h]; rfl
+
+private theorem resolve_recovered_para (ctx : Ctx) (wp : Pos) (w : String)
+    (lang : Option String) (ds : List Ir.Decl) (loc : Locale) (table : Ir.RefTable) :
+    Ir.resolveRefs loc table
+      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] =
+      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] := by
+  rw [Ir.resolveRefs_agree]
+  apply mapBlocks_paraUnder
+  apply mapInlines_wrapDecls
+  rfl
+
+private theorem recovered_para_census (ctx : Ctx) (wp : Pos) (w : String)
+    (lang : Option String) (ds : List Ir.Decl) :
+    Ir.blocksText #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] = w := by
+  have hw : Ir.plainText #[sourceInline ctx wp (.text w)] = w := by
+    simp [sourceInline, Ir.plainText, Ir.plainTextList, Ir.plainTextOne]
+  cases lang with
+  | none =>
+    change "" ++ Ir.plainText (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)]) = w
+    rw [String.empty_append, Ir.wrapDecls_text ds _, hw]
+  | some tag =>
+    change "" ++ Ir.plainText (Ir.langWrap tag
+      (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])) = w
+    rw [String.empty_append, Ir.langWrap_text tag _, Ir.wrapDecls_text ds _, hw]
+
+private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) :
+    Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
+  cases lang <;> rfl
+
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
 private def renderValue : Decl.Value → String
@@ -15734,6 +16128,88 @@ structure DocPreamble where
   body : Array Raw
   trailing : Array Raw
 
+/-- Everything decided after the body has elaborated, apart from the body
+itself. Reference resolution is the only remaining pass that can replace
+its inlines; metadata and diagnostic collection cannot substitute content. -/
+structure BodyCompletion where
+  doc : Doc
+  table : Ir.RefTable
+  pictureReport : PictureReportContext
+  locale : Locale
+  resolve : Bool
+
+/-- Attach the actual numbered body before resolving references in every
+document region. This is the single assembly site used by `runDocBody`. -/
+def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
+  let doc := { completion.doc with body := blocks }
+  if completion.resolve then
+    Ir.mapDoc (Ir.resolveRefInlines completion.locale completion.table)
+      (Ir.resolveRefs completion.locale completion.table) doc
+  else doc
+
+theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
+    (blocks : Array Block) :
+    (completion.attach blocks).body =
+      if completion.resolve then Ir.resolveRefs completion.locale completion.table blocks
+      else blocks := by
+  unfold BodyCompletion.attach
+  split <;> rfl
+
+/-- The real body interpreter's inputs and its metadata continuation.
+Class defaults and preamble declarations have already supplied the context.
+The continuation observes the numbered blocks but does not own their slot. -/
+structure DocBodyPlan where
+  ctx : Ctx
+  raws : Array Raw
+  finish : Array Block → EM BodyCompletion
+
+/-- Run the production block interpreter, number its output, collect
+metadata, and attach that same output to the document. -/
+def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let blocks := Ir.numberFloats (← elabBlocks plan.ctx plan.raws)
+  let completion ← plan.finish blocks
+  return (completion.attach blocks, completion.table, completion.pictureReport)
+
+/-- A nonempty literal word passed to an unhandled control at the actual
+body-entry boundary. No macro-origin run is open; the dispatch classifiers
+select inline recovery, and paragraph trimming and smart punctuation leave
+the word fixed. These are input conditions, independent of any result. -/
+def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Prop :=
+  ∃ name pos groupPos wordPos,
+    raws = #[.ctrl name pos, .group #[.word word wordPos] groupPos] ∧
+    ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧
+    pos.origins = [] ∧ groupPos.origins = [] ∧ wordPos.origins = [] ∧
+    recoversInlineName ctx name = true ∧ smartPunct word = word ∧
+    word.isEmpty = false ∧
+    String.ofList (word.toList.dropWhile (· == ' ')) = word ∧
+    word.trimAscii.isEmpty = false ∧
+    String.ofList ((word.toList.reverse.dropWhile (· == ' ')).reverse) = word ∧
+    isBlockStart ctx name raws 0 #[] = false
+
+/-- An unknown control's literal argument survives the real block
+interpreter, numbering, the metadata continuation and reference resolution.
+The complete body census is the argument, for every state and continuation
+supplied by preamble and class preparation. -/
+theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (word : String)
+    (h : RecoveryWordInput plan.ctx plan.raws word) :
+    Ir.blocksText ((runDocBody plan).run st).1.1.body = word := by
+  obtain ⟨name, pos, groupPos, wordPos, hraw, hm, hp, hgp, hwp, hn, hs,
+    he, hl, ht, hr, hb⟩ := h
+  rw [hraw] at hb
+  have hbs := elabBlocks_recovered_shape plan.ctx st name word pos groupPos wordPos
+    hm hp hgp hwp hn hs he hl ht hr hb
+  rw [← hraw] at hbs
+  obtain ⟨lang, ds, hbs⟩ := hbs
+  change Ir.blocksText ((((plan.finish
+    (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1)).run
+      ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
+        (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1)).body) = _
+  rw [hbs, numbered_recovered_para, BodyCompletion.attach_body_exact]
+  split
+  · rw [resolve_recovered_para]
+    exact recovered_para_census plan.ctx wordPos word lang ds
+  · exact recovered_para_census plan.ctx wordPos word lang ds
+
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
@@ -15797,9 +16273,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
                         sets := picSets.map (·.2) } } }
   return { state := s, decls, body, trailing }
 
-private def elabStyledDoc (file : String) (decls : Array PDecl)
-    (body trailing : Array Raw) (s : PreState) :
-    EM (Doc × Ir.RefTable × PictureReportContext) := do
+private def prepareStyledBody (file : String) (decls : Array PDecl)
+    (body trailing : Array Raw) (s : PreState) : EM DocBodyPlan := do
   -- What refused size redefinitions still declare: the document's ladder.
   let s ← applyRefusedSizeLadder s
   let mut ctx := s.ctx
@@ -15928,241 +16403,246 @@ private def elabStyledDoc (file : String) (decls : Array PDecl)
     match d with
     | .bodyStart m p => some (.ctrl m p)
     | _ => none
-  let blocks := Ir.numberFloats (← elabBlocks ctx (opening ++ body))
-  finishBeamerColors ctx
-  -- **Whatever drew a picture, the keys that drawing did not read are
-  -- named.** A `\tikzset` entry outside the rendered subset has exactly one
-  -- other reader: the real TikZ, and only for a picture that went to the
-  -- boundary (`tikzArm` routes there what the subset draws nothing of, or
-  -- draws with a loss it names). So the loss is real as soon as the engine
-  -- drew one picture itself — whatever `\pictures{ tool = ... }` nominally
-  -- says, and
-  -- a mixed document is the case that matters, since one boundary picture
-  -- buys no silence for the twelve beside it. The gate the refusal used to
-  -- carry claimed the boundary read them whenever a tool was configured;
-  -- native drawing made that premise false and the keys were dropped in
-  -- silence, an arrow-tip default among them.
-  -- Capture the reporting context and sequence position here. Completion
-  -- reads *who drew it* from the returned body, after references and colour
-  -- realization, so its accounting contract names the IR a caller receives.
-  let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
-  -- The label table, complete: the float rows are read off the numbered IR
-  -- just produced (`Ir.floatLabelRows`), so a label under a captioned
-  -- float binds to the number the node carries — one numbering,
-  -- `Ir.refs_agree_with_numbering` the statement. References resolve
-  -- against it once the document is assembled below; W0380 is judged here
-  -- from the recorded sites, because a kindless binding is a fact of the
-  -- table, not of the resolved node.
-  let stRefs ← get
-  let table := if stRefs.labels.isEmpty then stRefs.labels
-    else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
-  let mut warnedRefs : Array String := #[]
-  for (key, form, rpos) in stRefs.refSites do
-    unless warnedRefs.contains key do
-      if let some (_, some b) := table.find? (·.1 == key) then
-        -- The binding is numbered but kindless (a bare \refstepcounter):
-        -- a form that must name what the label names has no name to use,
-        -- so the plain number stands (refText), named here.
-        if b.kind.isNone && refFormNeedsKind form then
-          warnedRefs := warnedRefs.push key
-          diag ctx .W0380
-            s!"'{key}' names a bare counter step, not a heading, equation, or float; the plain number is set"
-            (some rpos)
-            (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
-  -- A citation with no bibliography anywhere: `Bib.apply` never runs
-  -- (`Ir.bibRefs` stays empty — nothing requests a file), the
-  -- missing-file diagnostic has no file to miss, and the mark ships '?'
-  -- unexplained. The loss is W0351's (a citation names no bibliography
-  -- entry); the message and help name this cause. One diagnostic per
-  -- distinct key, at its first `\cite`.
-  if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
-    for (key, span) in stRefs.spans.cites do
-      modify fun st => { st with diags := st.diags.push (Diag.of .W0351
-        s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
-        (some span)
-        (help := "the document declares no bibliography; \\bibliography{file} \
-names the .bib file")
-        (subject := some key)) }
-  -- Body declarations do NOT displace the document state: `doc.palette`
-  -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
-  -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
-  -- setting's effect is confined to the flow after it. The final flow
-  -- state exists only for the shadow judge below, which must see every
-  -- role the document ever declares.
-  let stBody ← get
-  let finalPalette := stBody.flowPalette.current.getD palette
-  -- A definition that shadows a palette role replaces a value that adapts
-  -- with one that cannot: the palette no longer reaches those words (a
-  -- variant or a host page's override dies there), and the contrast judge —
-  -- which sees a role use only because it resolves through the palette —
-  -- goes blind to them. Shadowing a command is LaTeX-normal and stays
-  -- permitted; the warning names what this particular shadow costs. Judged
-  -- against the final palette, so declaration order cannot hide it.
-  let mut shadowSaid : Array String := #[]
-  for cmd in ctx.user do
-    if !shadowSaid.contains cmd.name && (finalPalette.find? cmd.name).isSome then
-      shadowSaid := shadowSaid.push cmd.name
-      modify fun st => { st with diags := st.diags.push (Diag.of .W0342
-        (s!"'\\{cmd.name}' is also a palette role; this definition freezes it, " ++
-          "so the palette and the contrast check no longer reach it")
-        (some cmd.span)
-        (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
-          s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
-  -- The logo may have been declared in either half; a card carries none.
-  let mut logo := (← get).logos.main
-  if !record.runningFurniture && logo.isSome then
-    diag ctx .W0317
-      "a card carries no logo; the declaration is dropped" none
-    logo := none
-  -- The headline band: a headline class (`ClassRecord.headline`) reads
-  -- the `\title` family as furniture, the gemini lineage's headline rule.
-  -- The corner slots ride only with the band: under a class with no band
-  -- they are dropped by name (the card-logo rule), and under a headline
-  -- class with no declared `\title` there is no band for them to stand
-  -- in, so that is said too rather than dropped silently.
-  let stH ← get
-  let nonEmpty (v : Option (Array Inline)) : Option (Array Inline) :=
-    v.bind fun xs => if xs.isEmpty then none else some xs
-  let headline : Option Ir.Headline := if record.headline then
-      (nonEmpty stH.title).map fun t =>
-        { title := t
-          author := (nonEmpty stH.author).getD #[]
-          institute := (nonEmpty stH.institute).getD #[] }
-    else none
-  let mut logoLeft := stH.logos.left
-  let mut logoRight := stH.logos.right
-  if logoLeft.isSome || logoRight.isSome then
-    if !record.headline then
+  return { ctx, raws := opening ++ body, finish := fun blocks => do
+    let mut asserts := asserts
+    let mut output := output
+    let mut info := info
+    finishBeamerColors ctx
+    -- **Whatever drew a picture, the keys that drawing did not read are
+    -- named.** A `\tikzset` entry outside the rendered subset has exactly one
+    -- other reader: the real TikZ, and only for a picture that went to the
+    -- boundary (`tikzArm` routes there what the subset draws nothing of, or
+    -- draws with a loss it names). So the loss is real as soon as the engine
+    -- drew one picture itself — whatever `\pictures{ tool = ... }` nominally
+    -- says, and
+    -- a mixed document is the case that matters, since one boundary picture
+    -- buys no silence for the twelve beside it. The gate the refusal used to
+    -- carry claimed the boundary read them whenever a tool was configured;
+    -- native drawing made that premise false and the keys were dropped in
+    -- silence, an arrow-tip default among them.
+    -- Capture the reporting context and sequence position here. Completion
+    -- reads *who drew it* from the returned body, after references and colour
+    -- realization, so its accounting contract names the IR a caller receives.
+    let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
+    -- The label table, complete: the float rows are read off the numbered IR
+    -- just produced (`Ir.floatLabelRows`), so a label under a captioned
+    -- float binds to the number the node carries — one numbering,
+    -- `Ir.refs_agree_with_numbering` the statement. References resolve
+    -- against it once the document is assembled below; W0380 is judged here
+    -- from the recorded sites, because a kindless binding is a fact of the
+    -- table, not of the resolved node.
+    let stRefs ← get
+    let table := if stRefs.labels.isEmpty then stRefs.labels
+      else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
+    let mut warnedRefs : Array String := #[]
+    for (key, form, rpos) in stRefs.refSites do
+      unless warnedRefs.contains key do
+        if let some (_, some b) := table.find? (·.1 == key) then
+          -- The binding is numbered but kindless (a bare \refstepcounter):
+          -- a form that must name what the label names has no name to use,
+          -- so the plain number stands (refText), named here.
+          if b.kind.isNone && refFormNeedsKind form then
+            warnedRefs := warnedRefs.push key
+            diag ctx .W0380
+              s!"'{key}' names a bare counter step, not a heading, equation, or float; the plain number is set"
+              (some rpos)
+              (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
+    -- A citation with no bibliography anywhere: `Bib.apply` never runs
+    -- (`Ir.bibRefs` stays empty — nothing requests a file), the
+    -- missing-file diagnostic has no file to miss, and the mark ships '?'
+    -- unexplained. The loss is W0351's (a citation names no bibliography
+    -- entry); the message and help name this cause. One diagnostic per
+    -- distinct key, at its first `\cite`.
+    if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
+      for (key, span) in stRefs.spans.cites do
+        modify fun st => { st with diags := st.diags.push (Diag.of .W0351
+          s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
+          (some span)
+          (help := "the document declares no bibliography; \\bibliography{file} \
+  names the .bib file")
+          (subject := some key)) }
+    -- Body declarations do NOT displace the document state: `doc.palette`
+    -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
+    -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
+    -- setting's effect is confined to the flow after it. The final flow
+    -- state exists only for the shadow judge below, which must see every
+    -- role the document ever declares.
+    let stBody ← get
+    let finalPalette := stBody.flowPalette.current.getD palette
+    -- A definition that shadows a palette role replaces a value that adapts
+    -- with one that cannot: the palette no longer reaches those words (a
+    -- variant or a host page's override dies there), and the contrast judge —
+    -- which sees a role use only because it resolves through the palette —
+    -- goes blind to them. Shadowing a command is LaTeX-normal and stays
+    -- permitted; the warning names what this particular shadow costs. Judged
+    -- against the final palette, so declaration order cannot hide it.
+    let mut shadowSaid : Array String := #[]
+    for cmd in ctx.user do
+      if !shadowSaid.contains cmd.name && (finalPalette.find? cmd.name).isSome then
+        shadowSaid := shadowSaid.push cmd.name
+        modify fun st => { st with diags := st.diags.push (Diag.of .W0342
+          (s!"'\\{cmd.name}' is also a palette role; this definition freezes it, " ++
+            "so the palette and the contrast check no longer reach it")
+          (some cmd.span)
+          (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
+            s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
+    -- The logo may have been declared in either half; a card carries none.
+    let mut logo := (← get).logos.main
+    if !record.runningFurniture && logo.isSome then
       diag ctx .W0317
-        s!"the {docClass.name} class draws no headline band; the corner logo declaration is dropped"
-        none
-      logoLeft := none
-      logoRight := none
-    else if headline.isNone then
-      diag ctx .W0309
-        "a corner logo is declared but no '\\title' is; the headline band and its logos do not draw"
-        none (help := "declare \\title{...} (and \\author, \\institute) in the preamble")
-      logoLeft := none
-      logoRight := none
-  -- The class's implied contract, stated as the assertions the engine
-  -- already enforces against the shipped pages (the card's: content fits
-  -- its faces, ink respects the safe margin, the smallest type clears the
-  -- fluent-reading floor; the resume's: the same frame over one page).
-  -- Declaring an assertion of the same form is intent and silences the
-  -- class default; the help beside each value is the record's own.
-  if let some pb := record.pagesBound then
-    unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
-      match pb with
-      | .faces =>
-        let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
-          match b with
-          | .frame _ _ _ _ _ => n + 1
-          | _ => n)
-        asserts := asserts.push {
-          kind := .pages .le faces
-          help := some s!"the {docClass.name} class asserts content fits its {faces} face(s); \
-declare \\assert\{ pages <= N } to take control" }
-      | .lit op n =>
-        asserts := asserts.push { kind := .pages op n, help := some record.pagesHelp }
-  if let some h := record.inkInArea then
-    unless asserts.any (·.kind == .textInArea) do
-      asserts := asserts.push { kind := .textInArea, help := some h }
-  if let some (floor, h) := record.xHeightFloor then
-    unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
-      asserts := asserts.push { kind := .minXHeight floor, help := some h }
-  -- A declared conformance profile is a set element that implies exactly
-  -- one assertion, `pdf.profile = <name>`, judged on the census of the
-  -- built bytes (the class-implied shape); and it folds its
-  -- backend-neutral demands into the output contract — where the document
-  -- declared a contract key itself, the declaration wins, whatever order
-  -- the two were written in (read here, after every `\output`, so the
-  -- fold commutes with the declarations).
-  let seen := (← get).seenScalars
-  let declaredKey (k : String) : Bool :=
-    seen.any fun e => e.1 == "output" && e.2.1 == k
-  for name in output.profiles do
-    asserts := asserts.push {
-      kind := .pdfProfile name
-      help := some s!"declared by \\output\{ profiles = {name} }; the rules named are the file's, judged on its bytes" }
-    let imp := PdfContract.Profile.implies name
-    output := { output with contract := {
-      alternatives := if declaredKey "alternatives" || imp.alternatives == ({} : OutputContract).alternatives
-        then output.contract.alternatives else imp.alternatives
-      color := if declaredKey "color" || imp.color == ({} : OutputContract).color
-        then output.contract.color else imp.color
-      fonts := if declaredKey "fonts" || imp.fonts.isNone
-        then output.contract.fonts else imp.fonts } }
-  if trailing.any (!isSpaceOrPar ·) then
-    diag ctx .W0001 "content after '\\end{document}' is ignored" none
-  -- PDF metadata falls back to the title declarations: a deck that says
-  -- \title deserves an Info dictionary without saying it twice.
-  let st ← get
-  let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
-    match cur with
-    | some s => some s
-    | none =>
-      match src with
-      | some xs =>
-        let t := Ir.plainText xs
-        if t.isEmpty then none else some t
-      | none => none
-  info := { info with
-    title := fallback info.title st.title
-    author := fallback info.author st.author }
-  let doc : Doc := {
-    docClass := docClass
-    classOptions := classOptions
-    page := page
-    fonts := fonts
-    palette := palette
-    tokens := tokens
-    captionPos := s.captionPos
-    head := head
-    foot := foot
-    logo := logo
-    headline := headline
-    logoLeft := logoLeft
-    logoRight := logoRight
-    headFrom := headFrom
-    footFrom := footFrom
-    chrome := chrome
-    chromeDeclared := chromeDeclared
-    styles := styles
-    info := info
-    output := output
-    asserts := asserts
-    allow := allow
-    natbib := (← get).natbib
-    pictureTool := ctx.pic.tool
-    pictureSrcs := (← get).pictures
-    picturePreamble := ctx.pic.preamble
-    -- Request material, so a document that states no request carries none:
-    -- a `\newcommand` is otherwise a change to every document's `Doc`, and
-    -- the definer family's whole point is that it moves no ink by itself.
-    pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
-    salvage := (← get).salvage
-    frameRestart := (← get).frameRestart
-    body := blocks
+        "a card carries no logo; the declaration is dropped" none
+      logo := none
+    -- The headline band: a headline class (`ClassRecord.headline`) reads
+    -- the `\title` family as furniture, the gemini lineage's headline rule.
+    -- The corner slots ride only with the band: under a class with no band
+    -- they are dropped by name (the card-logo rule), and under a headline
+    -- class with no declared `\title` there is no band for them to stand
+    -- in, so that is said too rather than dropped silently.
+    let stH ← get
+    let nonEmpty (v : Option (Array Inline)) : Option (Array Inline) :=
+      v.bind fun xs => if xs.isEmpty then none else some xs
+    let headline : Option Ir.Headline := if record.headline then
+        (nonEmpty stH.title).map fun t =>
+          { title := t
+            author := (nonEmpty stH.author).getD #[]
+            institute := (nonEmpty stH.institute).getD #[] }
+      else none
+    let mut logoLeft := stH.logos.left
+    let mut logoRight := stH.logos.right
+    if logoLeft.isSome || logoRight.isSome then
+      if !record.headline then
+        diag ctx .W0317
+          s!"the {docClass.name} class draws no headline band; the corner logo declaration is dropped"
+          none
+        logoLeft := none
+        logoRight := none
+      else if headline.isNone then
+        diag ctx .W0309
+          "a corner logo is declared but no '\\title' is; the headline band and its logos do not draw"
+          none (help := "declare \\title{...} (and \\author, \\institute) in the preamble")
+        logoLeft := none
+        logoRight := none
+    -- The class's implied contract, stated as the assertions the engine
+    -- already enforces against the shipped pages (the card's: content fits
+    -- its faces, ink respects the safe margin, the smallest type clears the
+    -- fluent-reading floor; the resume's: the same frame over one page).
+    -- Declaring an assertion of the same form is intent and silences the
+    -- class default; the help beside each value is the record's own.
+    if let some pb := record.pagesBound then
+      unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
+        match pb with
+        | .faces =>
+          let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
+            match b with
+            | .frame _ _ _ _ _ => n + 1
+            | _ => n)
+          asserts := asserts.push {
+            kind := .pages .le faces
+            help := some s!"the {docClass.name} class asserts content fits its {faces} face(s); \
+  declare \\assert\{ pages <= N } to take control" }
+        | .lit op n =>
+          asserts := asserts.push { kind := .pages op n, help := some record.pagesHelp }
+    if let some h := record.inkInArea then
+      unless asserts.any (·.kind == .textInArea) do
+        asserts := asserts.push { kind := .textInArea, help := some h }
+    if let some (floor, h) := record.xHeightFloor then
+      unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
+        asserts := asserts.push { kind := .minXHeight floor, help := some h }
+    -- A declared conformance profile is a set element that implies exactly
+    -- one assertion, `pdf.profile = <name>`, judged on the census of the
+    -- built bytes (the class-implied shape); and it folds its
+    -- backend-neutral demands into the output contract — where the document
+    -- declared a contract key itself, the declaration wins, whatever order
+    -- the two were written in (read here, after every `\output`, so the
+    -- fold commutes with the declarations).
+    let seen := (← get).seenScalars
+    let declaredKey (k : String) : Bool :=
+      seen.any fun e => e.1 == "output" && e.2.1 == k
+    for name in output.profiles do
+      asserts := asserts.push {
+        kind := .pdfProfile name
+        help := some s!"declared by \\output\{ profiles = {name} }; the rules named are the file's, judged on its bytes" }
+      let imp := PdfContract.Profile.implies name
+      output := { output with contract := {
+        alternatives := if declaredKey "alternatives" || imp.alternatives == ({} : OutputContract).alternatives
+          then output.contract.alternatives else imp.alternatives
+        color := if declaredKey "color" || imp.color == ({} : OutputContract).color
+          then output.contract.color else imp.color
+        fonts := if declaredKey "fonts" || imp.fonts.isNone
+          then output.contract.fonts else imp.fonts } }
+    if trailing.any (!isSpaceOrPar ·) then
+      diag ctx .W0001 "content after '\\end{document}' is ignored" none
+    -- PDF metadata falls back to the title declarations: a deck that says
+    -- \title deserves an Info dictionary without saying it twice.
+    let st ← get
+    let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
+      match cur with
+      | some s => some s
+      | none =>
+        src.bind fun xs =>
+          let t := Ir.plainText xs
+          if t.isEmpty then none else some t
+    info := { info with
+      title := fallback info.title st.title
+      author := fallback info.author st.author }
+    let doc : Doc := {
+      docClass := docClass
+      classOptions := classOptions
+      page := page
+      fonts := fonts
+      palette := palette
+      tokens := tokens
+      captionPos := s.captionPos
+      head := head
+      foot := foot
+      logo := logo
+      headline := headline
+      logoLeft := logoLeft
+      logoRight := logoRight
+      headFrom := headFrom
+      footFrom := footFrom
+      chrome := chrome
+      chromeDeclared := chromeDeclared
+      styles := styles
+      info := info
+      output := output
+      asserts := asserts
+      allow := allow
+      natbib := (← get).natbib
+      pictureTool := ctx.pic.tool
+      pictureSrcs := (← get).pictures
+      picturePreamble := ctx.pic.preamble
+      -- Request material, so a document that states no request carries none:
+      -- a `\newcommand` is otherwise a change to every document's `Doc`, and
+      -- the definer family's whole point is that it moves no ink by itself.
+      pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
+      salvage := (← get).salvage
+      frameRestart := (← get).frameRestart
+    }
+    -- Cross-references resolve here, once, against the whole document's
+    -- labels — every region a backend reads (`Ir.mapDoc`), so a `\ref` in a
+    -- running head resolves as one in the body does, and `Ir.resolveRefs` is
+    -- a pure pass over the IR: no backend re-scans for labels and a forward
+    -- reference costs nothing. What stays `??` is named by `Ir.refDiags`,
+    -- read off the resolved census (`runRaws`, and the driver after the
+    -- bibliography resolves), never from the sites: a reference cannot be
+    -- judged where it stands, because its label may follow it.
+    return { doc, table, pictureReport, locale := ctx.locale, resolve := !stRefs.refSites.isEmpty }
   }
-  -- Cross-references resolve here, once, against the whole document's
-  -- labels — every region a backend reads (`Ir.mapDoc`), so a `\ref` in a
-  -- running head resolves as one in the body does, and `Ir.resolveRefs` is
-  -- a pure pass over the IR: no backend re-scans for labels and a forward
-  -- reference costs nothing. What stays `??` is named by `Ir.refDiags`,
-  -- read off the resolved census (`runRaws`, and the driver after the
-  -- bibliography resolves), never from the sites: a reference cannot be
-  -- judged where it stands, because its label may follow it.
-  let doc := if stRefs.refSites.isEmpty then doc
-    else Ir.mapDoc (Ir.resolveRefInlines ctx.locale table) (Ir.resolveRefs ctx.locale table) doc
-  return (doc, table, pictureReport)
+
+/-- Resolve declarative title and size bodies and class defaults before
+entering the block interpreter. The returned plan is the one
+`finishPreamble` executes, including class-supplied opening material. -/
+def prepareDocBody (file : String) (preamble : DocPreamble) : EM DocBodyPlan := do
+  let s ← applyRefusedTitleStyle preamble.state
+  prepareStyledBody file preamble.decls preamble.body preamble.trailing s
 
 /-- The production continuation from a completed declaration fold through
 class defaults, body elaboration, numbering, and reference resolution.
 The title body is read once before this continuation consumes its style. -/
 def finishPreamble (file : String) (preamble : DocPreamble) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
-  let s ← applyRefusedTitleStyle preamble.state
-  elabStyledDoc file preamble.decls preamble.body preamble.trailing s
+  runDocBody (← prepareDocBody file preamble)
 
 theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
     (left right : ESt)
@@ -16171,9 +16651,11 @@ theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
     (finishPreamble file preamble).run left = (finishPreamble file preamble).run right := by
   change
     (let (s, st) := (applyRefusedTitleStyle preamble.state).run left
-     (elabStyledDoc file preamble.decls preamble.body preamble.trailing s).run st) =
+     ((do runDocBody (← prepareStyledBody file preamble.decls preamble.body
+       preamble.trailing s)) : EM _).run st) =
     (let (s, st) := (applyRefusedTitleStyle preamble.state).run right
-     (elabStyledDoc file preamble.decls preamble.body preamble.trailing s).run st)
+     ((do runDocBody (← prepareStyledBody file preamble.decls preamble.body
+       preamble.trailing s)) : EM _).run st)
   rw [h]
 
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
@@ -16590,6 +17072,15 @@ def preparedPreamble (file : String) (p : Prepared)
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
     p.listingReplies).run { warnedUnknown := p.warned }
 
+/-- The actual block-entry state, after execution, the declaration fold,
+refused declarative bodies and class defaults. Withdrawal prepares this
+same boundary again with its changed picture environment. -/
+def preparedBody (file : String) (p : Prepared)
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[]) : DocBodyPlan × ESt :=
+  let (preamble, initial) := preparedPreamble file p picMetric picWithdrawn
+  (prepareDocBody file preamble).run initial
+
 /-- Finish a production preamble and run all prepared-document judges.
 This is the continuation used by `runPrepared`, including diagnostic
 attribution, picture accounting, contrast realization and request spans. -/
@@ -16605,6 +17096,16 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (picWithdrawn : Array String := #[]) : Doc × Array Diag × ReqSpans :=
   let (preamble, st) := preparedPreamble file p picMetric picWithdrawn
   runPreamble file p earlier preamble st
+
+attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared in
+/-- The prepared frontend executes its real block-entry plan and hands
+that run's document and state to the shared judges. -/
+theorem runPrepared_body_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
+    runPrepared file p earlier metric withdrawn =
+      let (plan, initial) := preparedBody file p metric withdrawn
+      let ((doc, table, report), st) := (runDocBody plan).run initial
+      completePrepared file p earlier doc table report st := rfl
 
 attribute [local irreducible] preparedPreamble finishPreamble completePrepared in
 /-- The private body interpreter reaches the public document completion
