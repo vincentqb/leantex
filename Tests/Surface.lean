@@ -5229,9 +5229,9 @@ declaration — four sites in one theme of the private reference corpus,
 every font it declares. beamer's font keys are TeX font commands already
 (`size=\large`, `series=\bfseries`, `shape=`, `family=`; beamer's "Fonts"
 part, beamerbasefont.sty), so the value side needs no vocabulary of its
-own: the commands the author wrote become the `font` template, **in the
-order they wrote them** — the engine invents no canonical order, so a
-`\fontsize{..}{..}\selectfont` value composes the way its author meant.
+own. `\usebeamerfont` selects size, shape, series, then family, regardless
+of key order. Commands within each value retain their source order, and a
+repeated key replaces that field.
 
 The claim each check makes is equality with the native spelling the help
 text names: the translation of a beamer font declaration *is* the `\style`
@@ -5251,12 +5251,22 @@ def beamerFontChecks (ref : IO.Ref (List String)) : IO Unit := do
      styleOf "\\style{frametitle}{ font = {\\Large\\itshape} }" "frametitle" &&
      styleOf "\\setbeamerfont{frametitle}{size=\\Large,shape=\\itshape}" "frametitle" !=
      styleOf "" "frametitle")
-  t "the keys translate in the order the author wrote them"
+  t "beamer selects size before series regardless of key order"
     (styleOf "\\setbeamerfont{frametitle}{series=\\bfseries,size=\\large}" "frametitle" ==
-     styleOf "\\style{frametitle}{ font = {\\bfseries\\large} }" "frametitle")
-  t "a shape or family key is the same font command in the template"
+     styleOf "\\style{frametitle}{ font = {\\large\\bfseries} }" "frametitle")
+  t "beamer selects shape before family regardless of key order"
     (styleOf "\\setbeamerfont{standout}{family=\\sffamily,shape=\\itshape}" "standout" ==
-     styleOf "\\style{standout}{ font = {\\sffamily\\itshape} }" "standout")
+     styleOf "\\style{standout}{ font = {\\itshape\\sffamily} }" "standout")
+  t "commands within one beamer font field retain source order"
+    (styleOf "\\setbeamerfont{frametitle}{size={\\small\\large}}" "frametitle" ==
+     styleOf "\\style{frametitle}{font={\\small\\large}}" "frametitle" &&
+     styleOf "\\setbeamerfont{frametitle}{size={\\small\\large}}" "frametitle" !=
+     styleOf "\\setbeamerfont{frametitle}{size={\\large\\small}}" "frametitle")
+  t "a repeated beamer font key selects its last value"
+    (styleOf "\\setbeamerfont{frametitle}{size=\\small,size=\\large}" "frametitle" ==
+     styleOf "\\style{frametitle}{font={\\large}}" "frametitle" &&
+     styleOf "\\setbeamerfont{frametitle}{size=\\small,size=\\large}" "frametitle" !=
+     styleOf "\\setbeamerfont{frametitle}{size=\\large,size=\\small}" "frametitle")
   -- The furniture whose beamer name and engine element differ.
   t "beamer's section title font styles the section page"
     (styleOf "\\setbeamerfont{section title}{size=\\Large}" "sectionpage" ==
