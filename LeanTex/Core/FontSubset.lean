@@ -1,4 +1,6 @@
-import LeanTex.Core.Font
+module
+
+public import LeanTex.Core.Font
 
 namespace LeanTex.Core.FontSubset
 
@@ -142,7 +144,7 @@ when there is nothing to drop. `src` is the face's prepared outline source
 and `decodes g` whether glyph `g`'s outline reads whole under it: the
 face's own (`Font.inkSrc`, `Font.yExtent`), which its layout has mostly
 asked already, so embedding parses and decodes nothing twice. -/
-def cffDrop (b : ByteArray) (t : Table) (keep : Array Bool) (src : Src) (decodes : Nat → Bool) :
+public def cffDrop (b : ByteArray) (t : Table) (keep : Array Bool) (src : Src) (decodes : Nat → Bool) :
     Option ByteArray := do
   guard (fits b t)
   let .cffSrc .. := src | failure
@@ -238,7 +240,7 @@ face's tables minus `droppedTables`, its outlines minus every glyph `used`
 does not reach (`.notdef` always kept). A variable face, a table directory
 this cannot read, or a result the face parser would not read back embeds
 the face's own bytes. -/
-def program (font : Font.Font) (used : Array Nat) : ByteArray × Bool := Id.run do
+public def program (font : Font.Font) (used : Array Nat) : ByteArray × Bool := Id.run do
   let data := font.data
   if data.size < 12 || (findTable data "fvar").isSome || (findTable data "CFF2").isSome then
     return (data, false)

@@ -1,5 +1,7 @@
+module
+
 import LeanTex.Core.Font
-import LeanTex.Core.FontDb
+public import LeanTex.Core.FontDb
 import Std.Data.HashMap
 
 /-! Filesystem boundary for font discovery. Selection consumes the resulting
@@ -24,7 +26,7 @@ namespace LeanTex.Cli.FontDiscovery
 
 open LeanTex.Core LeanTex.Core.FontDb
 
-def searchDirs : List String :=
+public def searchDirs : List String :=
   ["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/texmf-dist/fonts/opentype",
    "/usr/share/texmf-dist/fonts/truetype",
    -- macOS. System faces are mostly .ttc collections, which the scan skips
@@ -35,7 +37,7 @@ def searchDirs : List String :=
 /-- Where else to look, from `LEANTEX_FONT_PATH` and `$HOME`. A TeX Live tree is
 not always at `/usr/share`, and a user's own fonts are never there: without this
 a document naming a font it demonstrably has gets told the font does not exist. -/
-def extraDirs : IO (List String) := do
+public def extraDirs : IO (List String) := do
   let home := (← IO.getEnv "HOME").getD ""
   let userDirs :=
     if home.isEmpty then []
@@ -48,7 +50,7 @@ def extraDirs : IO (List String) := do
 zeros. `none` means no candidate image could be read, not that a font was
 proved invalid. The image is only for metadata readers: omitted tables,
 overlapping entries and short reads do not produce a validated font. -/
-def tableImage (path : String) (want : String → Bool) : IO (Option ByteArray) := do
+public def tableImage (path : String) (want : String → Bool) : IO (Option ByteArray) := do
   try
     let handle ← IO.FS.Handle.mk path .read
     let header ← handle.read 12
@@ -100,7 +102,7 @@ the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
 megabyte each is common) and a scan touches every installed face — `hmtx`
 and `cmap` are what make that expensive, and classification needs neither,
 so `probe` calls `classify` rather than `parse`. -/
-def probe (path : String) : IO (Option Face) := do
+public def probe (path : String) : IO (Option Face) := do
   let some image ← tableImage path
     (fun tag => tag == "name" || tag == "OS/2" || tag == "head" || tag == "post")
     | return none
@@ -137,7 +139,7 @@ each version keeps a file of its own, and the unversioned `fontdb.tsv`
 every earlier classifier wrote is never read. -/
 
 /-- `$XDG_CACHE_HOME/leantex`, or `~/.cache/leantex`; none without a home. -/
-def cacheDir : IO (Option System.FilePath) := do
+public def cacheDir : IO (Option System.FilePath) := do
   let base ← match ← IO.getEnv "XDG_CACHE_HOME" with
     | some d => pure (some (System.FilePath.mk d))
     | none => match ← IO.getEnv "HOME" with
@@ -146,7 +148,7 @@ def cacheDir : IO (Option System.FilePath) := do
   return base.map (· / "leantex")
 
 /-- The probe cache's file name, which carries `Font.classifierVersion`. -/
-def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.tsv"
+public def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.tsv"
 
 /-- One line per file, tab-separated: the key (path, size, mtime joined by
 tabs), then the classification — or nothing after the key for a file `probe`
@@ -176,7 +178,7 @@ private def fileKey (path : String) : IO (Option (String × String)) := do
 /-- A file's probe-cache key as the scan spells it — path, size and mtime,
 tab-joined — so a check can write the row a given classifier would have
 left. `none` for a file that cannot be stat'd. -/
-def probeKey (path : String) : IO (Option String) := do
+public def probeKey (path : String) : IO (Option String) := do
   return (← fileKey path).map fun (size, mtime) => path ++ "\t" ++ size ++ "\t" ++ mtime
 
 /-! ## The listing cache
@@ -262,7 +264,7 @@ private def walkCached (known : Std.HashMap String (String × Array (Bool × Str
       pure (files, seen, dirty)
 
 /-- The built-in locations plus `dirs`, in resolution order. -/
-def systemRoots (dirs : List String := []) : IO (List String) := do
+public def systemRoots (dirs : List String := []) : IO (List String) := do
   return searchDirs ++ (← extraDirs) ++ dirs
 
 /-- The faces within the bounded walk of exactly `roots`, classified, in
@@ -272,7 +274,7 @@ depends on the filesystem and cache premises stated above. Probing opens and
 reads each uncached file, so chunks of files are probed in parallel; joining
 in chunk order keeps the face array in sequential order, which matters
 because resolution prefers earlier faces on ties. -/
-def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
+public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
     IO (Array Face) := do
   -- The walk, through the listing cache: a stat per unchanged directory.
   let dirsFile := cache.map (· / dirsName)
@@ -375,17 +377,17 @@ def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
   return result.filterMap id
 
 /-- `scanRootsIn` through the host's own cache directory (`cacheDir`). -/
-def scanRoots (roots : List String) : IO (Array Face) := do
+public def scanRoots (roots : List String) : IO (Array Face) := do
   scanRootsIn (← cacheDir) roots
 
 /-- Scan the built-in locations plus `dirs`, within the same depth bound. -/
-def scan (dirs : List String := []) : IO (Array Face) := do
+public def scan (dirs : List String := []) : IO (Array Face) := do
   scanRoots (← systemRoots dirs)
 
 /-- The first face with a readable MATH candidate image under `faceLt`.
 This probes metadata only; the caller must parse the selected file and check
 its math data before using it. `none` also covers unreadable candidates. -/
-def firstMathFace (faces : Array Face) : IO (Option Face) := do
+public def firstMathFace (faces : Array Face) : IO (Option Face) := do
   for f in faces.qsort faceLt do
     if (← tableImage f.path (· == "MATH")).isSome then
       return some f
@@ -396,7 +398,7 @@ designed companion when the host has it (with its table row), else the
 first MATH-table candidate, else `none`. A companion match comes solely from
 the supplied family metadata; it is not evidence of a usable MATH table.
 The driver and test harness share this provisional decision. -/
-def pickMathFace (faces : Array Face) (body : String) :
+public def pickMathFace (faces : Array Face) (body : String) :
     IO (Option (Face × Option Pairing)) := do
   match pickCompanion faces body with
   | some (row, face) => return some (face, some row)
@@ -409,7 +411,7 @@ face sorted by family name (normalised), upright before italic, weight
 nearest regular, then subfamily and path — and the first whose cmap holds
 the scalar wins. Only candidate cmaps are read, and only until every scalar
 has a candidate; a scalar with no mapping found is absent from the result. -/
-def fallbackPicks (faces : Array Face) (needed : Array Char) :
+public def fallbackPicks (faces : Array Face) (needed : Array Char) :
     IO (Array (Char × String)) := do
   let sorted := faces.qsort faceLt
   let mut remaining := needed
@@ -438,7 +440,7 @@ documented pick order — the site port's shipped icon faces lost to a TeX
 Live FontAwesome — and "a document that carries its fonts renders the
 same on every host" would be false exactly for fallback-resolved
 scalars. -/
-def fallbackPicksPreferring (preferred : String → Bool) (faces : Array Face)
+public def fallbackPicksPreferring (preferred : String → Bool) (faces : Array Face)
     (needed : Array Char) : IO (Array (Char × String)) := do
   let docFaces := faces.filter (fun f => preferred f.path)
   let first ← fallbackPicks docFaces needed

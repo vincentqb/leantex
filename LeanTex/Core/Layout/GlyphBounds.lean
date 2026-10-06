@@ -1,5 +1,7 @@
-import LeanTex.Core.Dim
-import LeanTex.Core.Font
+module
+
+public import LeanTex.Core.Dim
+public import LeanTex.Core.Font
 
 namespace LeanTex.Core.Layout.GlyphBounds
 
@@ -8,30 +10,30 @@ open Dim
 /-- A layout extent and whether any part lacks outline evidence. Nominal
 font metrics remain useful for best-effort placement, but do not certify
 containment of an outline the font reader could not measure. -/
-structure Measurement where
+public structure Measurement where
   extent : Sp × Sp := (0, 0)
   unresolved : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- Preserve the layout scaler's treatment of a nonpositive size. -/
-private def nominal (font : Font.Font) (size : Sp) (units : Nat) : Sp :=
-  (units * size.toNat) / font.unitsPerEm
-
 /-- Read the actual face's outline result. The fallback keeps the existing
-placement value and carries its missing evidence in the same result. -/
-def glyph (font : Font.Font) (size raise : Sp) (gid : Nat) : Measurement :=
+placement value and carries its missing evidence in the same result.
+The equation is exposed for layout's agreement proof, including its
+nominal branch; the fallback scaler stays local to that branch. -/
+@[expose] public def glyph (font : Font.Font) (size raise : Sp) (gid : Nat) : Measurement :=
   match font.yExtent gid with
   | some (lo, hi) =>
     { extent := (hi * size / (font.unitsPerEm : Int) + raise,
         (-lo) * size / (font.unitsPerEm : Int) - raise) }
   | none =>
-    { extent := (nominal font size font.capHeight.toNat + raise,
-        nominal font size (-font.descent).toNat - raise)
+    -- Preserve the layout scaler's treatment of a nonpositive size.
+    let nominal (units : Nat) : Sp := (units * size.toNat) / font.unitsPerEm
+    { extent := (nominal font.capHeight.toNat + raise,
+        nominal (-font.descent).toNat - raise)
       unresolved := true }
 
 /-- Known outline coordinates are scaled in their own run's face, size and
 raise, with no substitution of the paragraph face or a nominal height. -/
-theorem glyph_known_exact (font : Font.Font) (size raise : Sp)
+public theorem glyph_known_exact (font : Font.Font) (size raise : Sp)
     (gid : Nat) (lo hi : Int) (h : font.yExtent gid = some (lo, hi)) :
     glyph font size raise gid =
       { extent := (hi * size / (font.unitsPerEm : Int) + raise,
@@ -40,13 +42,13 @@ theorem glyph_known_exact (font : Font.Font) (size raise : Sp)
 
 /-- The unresolved flag records exactly the font reader's failure to
 provide an outline extent, even when the nominal fallback is nonzero. -/
-theorem glyph_unresolved_exact (font : Font.Font) (size raise : Sp)
+public theorem glyph_unresolved_exact (font : Font.Font) (size raise : Sp)
     (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none := by
   cases h : font.yExtent gid <;> simp [glyph, h]
 
 /-- Join ink reaches without losing an unresolved constituent. -/
-def Measurement.join (a b : Measurement) : Measurement :=
+public def Measurement.join (a b : Measurement) : Measurement :=
   { extent := (max a.extent.1 b.extent.1, max a.extent.2 b.extent.2)
     unresolved := a.unresolved || b.unresolved }
 
@@ -65,14 +67,14 @@ private theorem join_right (a b : Measurement) : Dominates b (a.join b) :=
 
 /-- An array fold for measured ink and its missing evidence.
 Both fields consume the same constituents in the same pass. -/
-def fold {α : Type} (measure : α → Measurement) (xs : Array α)
+public def fold {α : Type} (measure : α → Measurement) (xs : Array α)
     (initial : Measurement := {}) : Measurement :=
   xs.foldl (fun acc x => acc.join (measure x)) initial
 
 /-- Each constituent is bounded by the actual array fold. This is a value
 invariant indexed by the consumed prefix, so repeated glyphs need no
 uniqueness assumption. -/
-theorem fold_covers {α : Type} (measure : α → Measurement)
+public theorem fold_covers {α : Type} (measure : α → Measurement)
     (xs : Array α) (initial : Measurement) (x : α) (hx : x ∈ xs) :
     (measure x).extent.1 ≤ (fold measure xs initial).extent.1 ∧
       (measure x).extent.2 ≤ (fold measure xs initial).extent.2 := by
@@ -96,7 +98,7 @@ theorem fold_covers {α : Type} (measure : α → Measurement)
 /-- Unknown outlines cannot disappear in a later maximum, including when a
 different glyph has a larger known extent. Conversely, a complete fold has
 not manufactured an unresolved result. -/
-theorem fold_unresolved_exact {α : Type} (measure : α → Measurement)
+public theorem fold_unresolved_exact {α : Type} (measure : α → Measurement)
     (xs : Array α) (initial : Measurement) :
     (fold measure xs initial).unresolved = true ↔
       initial.unresolved = true ∨ ∃ x ∈ xs, (measure x).unresolved = true := by
