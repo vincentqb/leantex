@@ -68,6 +68,7 @@ import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureBoundary
 import Tests.FontDefaults
+import Tests.Batch
 import scripts.LandCore
 
 /-!
@@ -108,7 +109,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks)
-open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
 
 namespace Reports
 
@@ -689,7 +690,17 @@ def reports : List Report := [
       thm% Parse.scopeEnv_source_exact, thm% Layout.reserveBelow_covers]
     accept := ["synthetic artifact guards failed before the list, footer and box translations, including local declarations, optional arguments and helpers declared after use templates",
       "both versions of the reference deck compile to native pages and self-contained browser output"]
-    state := .guarded "6e8c3692" .before .author }
+    state := .guarded "6e8c3692" .before .author },
+  { id := "R88", date := "2026-10-06"
+    what := "independent external pictures compiled sequentially and made documents slow to build"
+    pins := [check% batchChecks,
+      .thm `LeanTex.Cli.Batch.plan_exact _ @LeanTex.Cli.Batch.plan_exact.{0, 0},
+      .thm `LeanTex.Cli.Batch.plan_bounded _ @LeanTex.Cli.Batch.plan_bounded.{0, 0},
+      .thm `LeanTex.Cli.Batch.plan_keys_nodup _ @LeanTex.Cli.Batch.plan_keys_nodup.{0, 0}]
+    accept := ["two process scheduling assertions fail when bounded batches are changed to single requests: independent work no longer overlaps and a failing request prevents its independent peers from starting",
+      "the real picture benchmark checks cold and warm output byte equality and measures sixteen uncached requests at 13048 milliseconds before batching and 3346 milliseconds after",
+      "the existing subprocess checks hold exit, pipe closure, timeouts, capture limits and descendant cleanup"]
+    state := .guarded "4b76ad6d" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

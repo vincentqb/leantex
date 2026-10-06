@@ -135,7 +135,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks)
-open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -540,7 +540,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   smartChecks ref
   boundaryChecks ref
   picCacheChecks ref
-  Tests.batchChecks ref
+  batchChecks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref
