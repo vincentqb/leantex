@@ -1,4 +1,6 @@
+import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
+import LeanTex.Core.Flate
 
 /-! Asking the boundary tool who it is: the effect half of PicCache's
 version policy. The decisions are values there (`PicCache.probed`,
@@ -64,17 +66,29 @@ def probeVersion (tool : String) : IO PicCache.Tool := do
       pure (PicCache.Ran.unstarted (toString e), "")
   return PicCache.probed ran (((said.splitOn "\n").headD "").trimAscii.toString)
 
-/-- The tool's identity, asked at most once per tool binary rather than
-once per build: the memo beside the slots answers when its witness still
-matches (`PicCache.versionStep`), and `probe` runs when it does not. What
-the tool says is written back under the witness it was observed with, so
-the next build reuses it and an upgraded tool — a moved witness — is asked
-again and re-renders every picture. A witness that could not be taken is
-written nowhere: nothing would ever match it. -/
+private def encodeMemo (stamp version : String) : ByteArray :=
+  let payload := PicCache.versionMemo stamp version
+  ("tool-version-v2\n" ++ Flate.contentKey payload.toUTF8 ++ "\n" ++ payload).toUTF8
+
+private def decodeMemo (text : String) : Option (String × String) :=
+  match text.splitOn "\n" with
+  | ["tool-version-v2", checksum, stamp, version] =>
+    let payload := PicCache.versionMemo stamp version
+    if checksum == Flate.contentKey payload.toUTF8 then PicCache.readVersionMemo payload
+    else none
+  | _ => none
+
+/-- The memo reuses the tool's identity while its witness still matches
+(`PicCache.versionStep`), and `probe` runs on a miss. Concurrent misses may
+each probe; each publication replaces the complete checked memo. A moved
+witness forces a new probe, whose version names the next picture slots.
+A witness that could not be taken is written nowhere: nothing would ever
+match it. Legacy raw memos are misses: they may contain a valid-looking
+prefix from an interrupted writer. -/
 def identify (memoPath : System.FilePath) (stamp : String)
     (probe : IO PicCache.Tool) : IO PicCache.Tool := do
   let memo? ← try
-      pure (PicCache.readVersionMemo (← IO.FS.readFile memoPath))
+      pure (decodeMemo (← IO.FS.readFile memoPath))
     catch _ => pure (none : Option (String × String))
   match PicCache.versionStep memo? stamp with
   | .remembered version => return .present version
@@ -82,7 +96,7 @@ def identify (memoPath : System.FilePath) (stamp : String)
     match ← probe with
     | .present version =>
       unless stamp.isEmpty do
-        try IO.FS.writeFile memoPath (PicCache.versionMemo stamp version)
+        try AtomicFile.write memoPath (encodeMemo stamp version)
         catch _ => pure ()
       return .present version
     | .absent why => return .absent why

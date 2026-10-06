@@ -1,3 +1,4 @@
+import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Core.FontDb
@@ -57,16 +58,7 @@ def slotName (source : ByteArray) (recipe identity : String) : String :=
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
 
 def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=
-  IO.FS.withTempDir fun nonce => do
-    let part := (target.parent.getD ".") / ("." ++ nonce.fileName.getD "tmp" ++ ".part")
-    -- createDir is exclusive. Even a stale name collision fails closed.
-    IO.FS.createDir part
-    try
-      let value := part / "value"
-      IO.FS.writeBinFile value bytes
-      IO.FS.rename value target
-    finally
-      IO.FS.removeDirAll part
+  AtomicFile.write target bytes
 
 -- Version queries get a smaller operational budget than conversions.
 def versionBudgetMs : Nat := 2000
