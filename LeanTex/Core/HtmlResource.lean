@@ -1,15 +1,17 @@
-import LeanTex.Core.Html
-import Std.Data.HashSet
+module
+
+public import LeanTex.Core.Html
+public import Std.Data.HashSet
 
 namespace LeanTex.Core.HtmlResource
 
 /-- Only inert binary images, font programs, and externally checked SVGs
 can supply a rendering URL. CSS and executable documents are not opaque data. -/
-inductive Media where
+public inductive Media where
   | png | jpeg | ico | svg | ttf | otf
   deriving BEq, Repr
 
-def Media.mime : Media → String
+@[expose] public def Media.mime : Media → String
   | .png => "image/png"
   | .jpeg => "image/jpeg"
   | .ico => "image/x-icon"
@@ -17,7 +19,7 @@ def Media.mime : Media → String
   | .ttf => "font/ttf"
   | .otf => "font/otf"
 
-def base64 (bytes : ByteArray) : String := Id.run do
+public def base64 (bytes : ByteArray) : String := Id.run do
   let alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toUTF8
   let mut out := ByteArray.emptyWithCapacity ((bytes.size + 2) / 3 * 4)
   for i in [0:(bytes.size + 2) / 3] do
@@ -31,18 +33,18 @@ def base64 (bytes : ByteArray) : String := Id.run do
     out := out.push (if i * 3 + 2 < bytes.size then alphabet[(c &&& 63).toNat]?.getD 61 else 61)
   return String.fromUTF8! out
 
-structure Embedded where
+public structure Embedded where
   media : Media
   bytes : ByteArray
   deriving BEq
 
-def Embedded.uri (r : Embedded) : String :=
+public def Embedded.uri (r : Embedded) : String :=
   "data:" ++ r.media.mime ++ ";base64," ++ base64 r.bytes
 
 /-- SVG approval names the exact bytes passed through the driver's existing
 parsed-XML validator. That validator and binary/browser decoders are external
 trust boundaries; no theorem here claims to implement XML or browser semantics. -/
-def Embedded.ready (svgChecked : Array ByteArray) (r : Embedded) : Bool :=
+public def Embedded.ready (svgChecked : Array ByteArray) (r : Embedded) : Bool :=
   match r.media with
   | .svg => svgChecked.contains r.bytes
   | .png => r.bytes.extract 0 8 == ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩
@@ -51,7 +53,7 @@ def Embedded.ready (svgChecked : Array ByteArray) (r : Embedded) : Bool :=
   | .ttf => r.bytes.extract 0 4 == ⟨#[0, 1, 0, 0]⟩
   | .otf => r.bytes.extract 0 4 == "OTTO".toUTF8
 
-inductive Request where
+public inductive Request where
   | url (value : String)
   | localFragment (value : String)
   | script (value : String)
@@ -144,7 +146,7 @@ private def cssStep (s : CssScan) (c : Char) : CssScan :=
 
 /-- Projection of rendering dependencies from the supported CSS subset.
 Refusals remain requests, so unsupported syntax cannot disappear from the gate. -/
-def cssRequests (css : String) : Array Request :=
+public def cssRequests (css : String) : Array Request :=
   let s := flushWord (css.foldl cssStep {})
   let requests := if s.state == .plain || s.state == .slash then s.requests else
     s.requests.push (.refused "unterminated CSS token")
@@ -189,7 +191,9 @@ private def svgReferenceAttr (tag name : String) : Bool :=
     ["fill", "stroke", "filter", "clip-path", "mask", "marker", "marker-start",
       "marker-mid", "marker-end"].contains name
 
-private def attrRequests (tag : String) (attrs : Array (String × String)) : Array Request :=
+/-- Resource dependencies carried by one element's attributes. This is also
+the attribute projection in the typed-tree dependency contract. -/
+public def attrRequests (tag : String) (attrs : Array (String × String)) : Array Request :=
   attrs.foldl (init := #[]) fun acc (name, value) =>
     if name.isEmpty || !name.toList.all (fun c =>
         c.isAlphanum || c == '-' || c == '_' || c == ':') then
@@ -223,7 +227,7 @@ mutual
   RCDATA, and discarded void children do not have the raw-text semantics this
   projection relies on. The refusal latches through their whole subtree,
   conservatively including foreign-content integration points. -/
-  def nodeRequests (rawTextAllowed : Bool) (acc : Array Request) : Html.Node → Array Request
+  public def nodeRequests (rawTextAllowed : Bool) (acc : Array Request) : Html.Node → Array Request
     | .text _ => acc
     | .style css =>
       if !rawTextAllowed then
@@ -253,7 +257,7 @@ mutual
         !["svg", "foreignobject", "math", "title"].contains tag && !Html.voidTags.contains tag
       listRequests rawTextAllowed acc kids.toList
 
-  def listRequests (rawTextAllowed : Bool) (acc : Array Request) : List Html.Node → Array Request
+  public def listRequests (rawTextAllowed : Bool) (acc : Array Request) : List Html.Node → Array Request
     | [] => acc
     | node :: rest => listRequests rawTextAllowed (nodeRequests rawTextAllowed acc node) rest
 end
@@ -262,17 +266,17 @@ end
 and child dependency. It never resets the refusal of raw style/script
 payloads. Opaque SVG resources still require the external XML validator.
 `pictureMathLabelChecks` exercises passive content and active descendants. -/
-theorem foreignObject_requests_exact (rawTextAllowed : Bool) (acc : Array Request)
+public theorem foreignObject_requests_exact (rawTextAllowed : Bool) (acc : Array Request)
     (attrs : Array (String × String)) (kids : Array Html.Node) :
     nodeRequests rawTextAllowed acc (.elem "foreignObject" attrs kids) =
       listRequests false (acc ++ attrRequests "foreignobject" attrs) kids.toList := by
   simp only [nodeRequests, String.toLower, String.map_eq_internal]
   cases rawTextAllowed <;> rfl
 
-def requests (head body : Array Html.Node) : Array Request :=
+public def requests (head body : Array Html.Node) : Array Request :=
   listRequests true (listRequests true #[] head.toList) body.toList
 
-def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
+public def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) : Request → Bool
   | .url value => resources.any (fun r => r.ready svgChecked && r.uri == value)
   | .localFragment value => value.startsWith "#" && value.length > 1 &&
@@ -283,18 +287,18 @@ def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
 /-- Prepare the admitted URIs once, using the exact captured-byte readiness.
 Return a concrete index: a function-valued result lets compiler eta expansion
 move preparation inside each request's lookup. -/
-def compile (resources : Array Embedded) (svgChecked : Array ByteArray) : Std.HashSet String :=
+public def compile (resources : Array Embedded) (svgChecked : Array ByteArray) : Std.HashSet String :=
   Std.HashSet.ofArray (resources.filterMap fun r =>
     if r.ready svgChecked then some r.uri else none)
 
 /-- Look up URLs in the prepared index; all other requests keep their policy. -/
-def resolvesCompiled (urls : Std.HashSet String) (deckScript : String) : Request → Bool
+public def resolvesCompiled (urls : Std.HashSet String) (deckScript : String) : Request → Bool
   | .url value => urls.contains value
   | request => resolves #[] #[] deckScript request
 
 /-- Artifact-specific: the prepared resolver equals the original policy for
 every resource set, SVG attestation, script and request. -/
-theorem compile_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+public theorem compile_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) : resolvesCompiled (compile resources svgChecked) deckScript =
       resolves resources svgChecked deckScript := by
   funext request
@@ -310,7 +314,7 @@ theorem compile_exact (resources : Array Embedded) (svgChecked : Array ByteArray
 
 /-- A single first-refusal scan admits exactly the original all-requests check,
 for every projection, including empty ones and explicit refusals. -/
-theorem compile_admission_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+public theorem compile_admission_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) (projected : Array Request) :
     (projected.find? fun r => !resolvesCompiled (compile resources svgChecked) deckScript r) = none ↔
       projected.all (resolves resources svgChecked deckScript) = true := by
@@ -319,14 +323,14 @@ theorem compile_admission_exact (resources : Array Embedded) (svgChecked : Array
 
 /-- Artifact-specific: no resource evidence can certify a raw style in a
 context where the dependency projection does not model its parsing. -/
-theorem style_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+public theorem style_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) (acc : Array Request) (css : String) :
     (nodeRequests false acc (.style css)).all (resolves resources svgChecked deckScript) = false := by
   simp [nodeRequests, resolves]
 
 /-- The same context refusal holds for every script payload and MIME type,
 including an otherwise admitted deck script or inert JSON data block. -/
-theorem script_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
+public theorem script_context_refused_exact (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript : String) (acc : Array Request) (attrs : Array (String × String)) (js : String) :
     (nodeRequests false acc (.script attrs js)).all
       (resolves resources svgChecked deckScript) = false := by
@@ -334,7 +338,7 @@ theorem script_context_refused_exact (resources : Array Embedded) (svgChecked : 
 
 /-- Publication owns this checked tree. The constructor owes the computed
 closure check, not a claim about a different tree or a sidecar manifest. -/
-structure ClosedPage (deckScript : String) where
+public structure ClosedPage (deckScript : String) where
   lang : String
   head : Array Html.Node
   body : Array Html.Node
@@ -342,12 +346,12 @@ structure ClosedPage (deckScript : String) where
   svgChecked : Array ByteArray
   closed : (requests head body).all (resolves resources svgChecked deckScript) = true
 
-def ClosedPage.render (page : ClosedPage deckScript) : String :=
+public def ClosedPage.render (page : ClosedPage deckScript) : String :=
   Html.document page.lang page.head page.body
 
 /-- A diagnostic names the reference, never an embedded payload. Long names
 are bounded and quoting keeps control characters out of terminal output. -/
-def referenceLabel (value : String) : String :=
+public def referenceLabel (value : String) : String :=
   let shown := if value.toLower.startsWith "data:" then
       (value.takeWhile (· != ',')).toString ++ ",…"
     else value
@@ -355,7 +359,7 @@ def referenceLabel (value : String) : String :=
 
 /-- The only successful construction path checks every projected request.
 Unknown/remote/data-only claims all fail without matching captured evidence. -/
-def close (resources : Array Embedded) (svgChecked : Array ByteArray)
+public def close (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript lang : String) (head body : Array Html.Node) : Except String (ClosedPage deckScript) :=
   let urls := compile resources svgChecked
   let projected := requests head body
@@ -375,7 +379,7 @@ def close (resources : Array Embedded) (svgChecked : Array ByteArray)
 /-- Artifact-specific: successful checked emission covers the actual tree's
 rendering projection. SVG readiness is exact-byte external-validator evidence;
 this is not a kernel proof of XML parsing, decoding, or browser execution. -/
-theorem close_covers (resources : Array Embedded) (svgChecked : Array ByteArray)
+public theorem close_covers (resources : Array Embedded) (svgChecked : Array ByteArray)
     (deckScript lang : String) (head body : Array Html.Node) {page : ClosedPage deckScript}
     (h : close resources svgChecked deckScript lang head body = .ok page) :
     page.render = Html.document lang head body ∧

@@ -1,3 +1,4 @@
+import Tests.NfcBoundary
 import LeanTex.Cli.FontDiscovery
 import Tests.Support
 import Tests.Artifact
@@ -818,39 +819,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
         (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['\uF09B']).find?
       (·.1 == '\uF09B')).any (fun e => (e.2.splitOn "ExampleIcons").length ≥ 2))
 
-  -- NFC idempotence (UAX #15 §4: "the result of normalizing a string that
-  -- is already normalized is the string itself") over the strings that
-  -- exercise the machinery at all: every decomposition key, alone, doubled,
-  -- and with a combining acute appended so reorder and blocked composition
-  -- run too. The ASCII fast path is the theorem `normalizeChars_ascii_id`;
-  -- this is the rest of the domain, where a reorder or compose bug breaks
-  -- the fixed point.
-  let acute := String.ofList ['\u0301']
-  let notIdempotent := Nfc.tables.get.decomp.fold (init := #[]) fun bad k _ =>
-    let c := String.ofList [Char.ofNat k.toNat]
-    [c, c ++ c, c ++ acute, acute ++ c].foldl (init := bad) fun bad s =>
-      let once := Nfc.normalize s
-      if Nfc.normalize once == once then bad else bad.push s
-  t s!"nfc is idempotent over the decomposition keys ({notIdempotent.size} broke it)"
-    notIdempotent.isEmpty
-
-  -- `Nfc.field` reads a byte past a table's end as zero, so a malformed
-  -- generated table loads quietly; these are what refuse one. A
-  -- decomposition record is variable-width (a 7-digit head, then 6 per
-  -- part), and one cut short at the end still loads with its key and part
-  -- count, so its census is byte accounting rather than an entry count.
-  let tb := Nfc.load ()
-  t "nfc: every fixed-width table is a whole number of entries"
-    (NfcData.ccc.toUTF8.size % 8 == 0 && NfcData.comp.toUTF8.size % 18 == 0 &&
-     NfcData.letters.toUTF8.size % 12 == 0 && NfcData.lower.toUTF8.size % 12 == 0)
-  t "nfc: the loader keeps one entry per fixed-width entry the generator wrote"
-    (tb.ccc.size == NfcData.ccc.toUTF8.size / 8 &&
-     tb.comp.size == NfcData.comp.toUTF8.size / 18 &&
-     tb.letters.size == NfcData.letters.toUTF8.size / 12 &&
-     tb.lower.size == NfcData.lower.toUTF8.size / 12)
-  t "nfc: the decomposition records account for every byte of their table"
-    (tb.decomp.fold (init := 0) (fun n _ parts => n + 7 + 6 * parts.size) ==
-      NfcData.decomp.toUTF8.size)
+  Tests.NfcBoundary.tableChecks t
 
   -- A new language touches four hand-maintained sites (gen-hyphen row,
   -- gen-locale list, the Hyphen thunk, the forTag arm) — the Diag-registry

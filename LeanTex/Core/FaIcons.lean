@@ -1,5 +1,7 @@
+module
+
 import LeanTex.Core.FaData
-import Std.Data.HashMap
+public import Std.Data.HashMap
 
 namespace LeanTex.Core.FaIcons
 
@@ -9,7 +11,7 @@ icon's own name (`\faIcon{name}`), its scalar in the Private Use Area, and
 Font Awesome's accessible name for it — the icon's default text
 alternative (WCAG 2.2 SC 1.1.1 wants one, and PUA scalars carry no meaning
 of their own for assistive technology). -/
-structure Entry where
+public structure Entry where
   macroName : String
   name : String
   scalar : Char
@@ -41,7 +43,7 @@ table there taxed every run whether or not it set an icon — the same trap
 the Hyphen/Nfc tables already close). Generated data (`FaData.table`), so
 a line that does not parse is a generator bug; it is skipped rather than
 trusted. -/
-def entries : Thunk (Array Entry) := Thunk.mk fun _ =>
+private def entries : Thunk (Array Entry) := Thunk.mk fun _ =>
   FaData.table.splitOn "\n" |>.toArray |>.filterMap parseLine
 
 private def index (key : Entry → String) : Std.HashMap String Entry :=
@@ -50,11 +52,11 @@ private def index (key : Entry → String) : Std.HashMap String Entry :=
     if k.isEmpty || m.contains k then m else m.insert k e) {}
 
 /-- `\faGithub` → its entry: lookup by the fontawesome5 command name. -/
-def byMacro : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
+public def byMacro : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
   index (·.macroName)
 
 /-- `\faIcon{github}` → its entry: lookup by the icon's own name. -/
-def byName : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
+public def byName : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
   index (·.name)
 
 end LeanTex.Core.FaIcons

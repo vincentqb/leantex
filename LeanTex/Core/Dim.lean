@@ -1,33 +1,38 @@
+module
+
+import all Init.Data.ToString.Basic
+import all Init.Data.Repr
+
 namespace LeanTex.Core.Dim
 
 /-- Scaled points, TeX's exact fixed point: 1 pt = 2^16 sp. -/
-abbrev Sp := Int
+public abbrev Sp := Int
 
-def spPerPt : Int := 65536
+@[expose] public def spPerPt : Int := 65536
 
-def pt (n : Int) : Sp := n * spPerPt
+@[expose] public def pt (n : Int) : Sp := n * spPerPt
 
-def inch (n : Int) : Sp := n * 72 * spPerPt
+@[expose] public def inch (n : Int) : Sp := n * 72 * spPerPt
 
 /-- Millimetres: 1 mm = 7200⁄2540 pt, rounded to sp. This engine's `pt` is
 the big point, 1⁄72 inch (`inch` and `Decl.unitScale` agree), not TeX's
 1⁄72.27: 25.4 mm is exactly 72 pt here. -/
-def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
+@[expose] public def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
 
 /-- Hundredths of a millimetre, for standards that specify to 0.01 mm —
 ISO/IEC 7810's ID-1 card is 85.60 × 53.98 mm. -/
-def mm100 (n : Int) : Sp := n * 7200 * spPerPt / 254000
+@[expose] public def mm100 (n : Int) : Sp := n * 7200 * spPerPt / 254000
 
-theorem pt_exact (n : Int) : pt n / spPerPt = n := by
+public theorem pt_exact (n : Int) : pt n / spPerPt = n := by
   simp [pt, spPerPt]
 
-theorem inch_eq_72pt (n : Int) : inch n = pt (72 * n) := by
+public theorem inch_eq_72pt (n : Int) : inch n = pt (72 * n) := by
   simp only [inch, pt, spPerPt]
   rw [Int.mul_comm n 72]
 
 /-- The two spellings of one length agree: `mm` is defined against the same
 1⁄72-inch point as `inch`, so 254 mm and 10 in are the same number of sp. -/
-theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
+public theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
   have h : 254 * n * 7200 * spPerPt = 2540 * (10 * n * 72 * spPerPt) := by
     simp only [spPerPt]
     omega
@@ -35,7 +40,7 @@ theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
   exact Int.mul_ediv_cancel_left _ (by decide)
 
 /-- The finer spelling names the same lengths: 100 hundredths are one mm. -/
-theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
+public theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
   have h : 100 * n * 7200 * spPerPt = 100 * (n * 7200 * spPerPt) := by
     simp only [spPerPt]
     omega
@@ -47,13 +52,13 @@ theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
 value rounded to the nearest thousandth, half away from zero. What a
 reader of the spelling gets back — the PDF writer's pen model starts from
 it, so the pen it tracks is the one the file states. -/
-def Sp.toPtMilli (x : Sp) : Int :=
+@[expose] public def Sp.toPtMilli (x : Sp) : Int :=
   let milli : Int := ((x.natAbs * 1000 + 32768) / 65536 : Nat)
   if x < 0 then -milli else milli
 
 /-- Render as decimal points with up to three fractional digits (exact sp
 value rounded to the nearest thousandth, `toPtMilli`). -/
-def Sp.toPtString (x : Sp) : String :=
+public def Sp.toPtString (x : Sp) : String :=
   let m := x.toPtMilli
   let milli := m.natAbs
   let ip := milli / 1000
@@ -73,9 +78,9 @@ def Sp.toPtString (x : Sp) : String :=
 -- `dropEndWhile`) reduce for neither `decide`, `decide +kernel`, nor
 -- `rfl`, so it stays a runtime check in Tests.lean.
 example : mm 254 = inch 10 := by decide
-example : (pt 10).toPtString = "10" := rfl
+example : (pt 10).toPtString = "10" := by rfl
 
-structure Glue where
+public structure Glue where
   width : Sp := 0
   stretch : Sp := 0
   shrink : Sp := 0
@@ -92,30 +97,30 @@ structure Glue where
   word : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def Glue.add (a b : Glue) : Glue :=
+@[expose] public def Glue.add (a b : Glue) : Glue :=
   { width := a.width + b.width
     stretch := a.stretch + b.stretch
     shrink := a.shrink + b.shrink
     fil := a.fil || b.fil }
 
-theorem Glue.add_comm (a b : Glue) : a.add b = b.add a := by
+public theorem Glue.add_comm (a b : Glue) : a.add b = b.add a := by
   simp [add, Int.add_comm, Bool.or_comm]
 
-theorem Glue.add_assoc (a b c : Glue) : (a.add b).add c = a.add (b.add c) := by
+public theorem Glue.add_assoc (a b c : Glue) : (a.add b).add c = a.add (b.add c) := by
   simp [add, Int.add_assoc, Bool.or_assoc]
 
 /-- TeX-style badness: 100·r³ capped at 10000, where r = |delta|/total. -/
-def badness (delta total : Int) : Nat :=
+@[expose] public def badness (delta total : Int) : Nat :=
   if total ≤ 0 then
     10000
   else
     min ((100 * delta.natAbs ^ 3) / total.natAbs ^ 3) 10000
 
-theorem badness_zero_delta (t : Int) (h : 0 < t) : badness 0 t = 0 := by
+public theorem badness_zero_delta (t : Int) (h : 0 < t) : badness 0 t = 0 := by
   simp [badness]
   omega
 
-theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
+public theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
   unfold badness
   split
   · exact Nat.le_refl _
@@ -124,7 +129,7 @@ theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
 /-- A length that may depend on the font: an absolute part plus em and ex
 parts in thousandths. `\tokens` needs this because a token is declared before
 any font is chosen, but `1.5ex` can only be resolved once one is. -/
-structure Length where
+public structure Length where
   sp : Sp := 0
   em : Int := 0
   ex : Int := 0
@@ -132,14 +137,14 @@ structure Length where
 
 namespace Length
 
-def ofSp (v : Sp) : Length := { sp := v }
+@[expose] public def ofSp (v : Sp) : Length := { sp := v }
 
-def add (a b : Length) : Length :=
+@[expose] public def add (a b : Length) : Length :=
   { sp := a.sp + b.sp, em := a.em + b.em, ex := a.ex + b.ex }
 
 /-- Componentwise difference, exact: subtraction in a fixed point is
 integer subtraction, no rounding anywhere. -/
-def sub (a b : Length) : Length :=
+@[expose] public def sub (a b : Length) : Length :=
   { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
 
 /-- Scale by a rational `num/den`, truncating toward zero — TeX's one
@@ -147,7 +152,7 @@ rounding: `\divide` truncates (TeXbook ch. 24), and so does the
 coefficient scaling `⟨factor⟩⟨dimen⟩` (`xn_over_d`, TeX §107). Only
 e-TeX's `\dimexpr` division rounds to nearest instead (e-TeX manual
 §3.5), which is why that spelling is refused, not mapped here. -/
-def scale (l : Length) (num : Int) (den : Nat) : Length :=
+@[expose] public def scale (l : Length) (num : Int) (den : Nat) : Length :=
   { sp := (l.sp * num).tdiv den
     em := (l.em * num).tdiv den
     ex := (l.ex * num).tdiv den }
@@ -157,25 +162,25 @@ wherever the scaled product is nonnegative — truncation toward zero and
 Euclidean division (Lean's `Int./`, floor for a positive divisor) differ
 only on negative dividends, so every nonnegative value scales exactly as
 it always did. -/
-theorem scale_tdiv_eq_of_nonneg (v num : Int) (den : Nat) (h : 0 ≤ v * num) :
+public theorem scale_tdiv_eq_of_nonneg (v num : Int) (den : Nat) (h : 0 ≤ v * num) :
     (v * num).tdiv den = v * num / den :=
   Int.tdiv_eq_ediv_of_nonneg h
 
 /-- Resolve against a font size and x-height, both in sp. -/
-def resolve (l : Length) (fontSize xHeight : Sp) : Sp :=
+@[expose] public def resolve (l : Length) (fontSize xHeight : Sp) : Sp :=
   l.sp + l.em * fontSize / 1000 + l.ex * xHeight / 1000
 
-theorem resolve_ofSp (v fontSize xHeight : Sp) :
+public theorem resolve_ofSp (v fontSize xHeight : Sp) :
     (ofSp v).resolve fontSize xHeight = v := by
   simp [resolve, ofSp]
 
-theorem add_comm (a b : Length) : a.add b = b.add a := by
+public theorem add_comm (a b : Length) : a.add b = b.add a := by
   simp [add, Int.add_comm]
 
 end Length
 
 /-- Glue whose components may be font-relative. -/
-structure SymGlue where
+public structure SymGlue where
   width : Length := {}
   stretch : Length := {}
   shrink : Length := {}
@@ -187,7 +192,7 @@ structure SymGlue where
 
 namespace SymGlue
 
-def add (a b : SymGlue) : SymGlue :=
+@[expose] public def add (a b : SymGlue) : SymGlue :=
   { width := a.width.add b.width
     stretch := a.stretch.add b.stretch
     shrink := a.shrink.add b.shrink
@@ -197,19 +202,19 @@ def add (a b : SymGlue) : SymGlue :=
 `⟨expr⟩` grammar): the rubber components subtract with the widths. An
 infinite stretch survives subtraction — TeX's `1fil - 1fil` is `0fil`,
 still first-order infinite, and a boolean cannot say finer. -/
-def sub (a b : SymGlue) : SymGlue :=
+@[expose] public def sub (a b : SymGlue) : SymGlue :=
   { width := a.width.sub b.width
     stretch := a.stretch.sub b.stretch
     shrink := a.shrink.sub b.shrink
     fil := a.fil || b.fil }
 
-def scale (g : SymGlue) (num : Int) (den : Nat) : SymGlue :=
+@[expose] public def scale (g : SymGlue) (num : Int) (den : Nat) : SymGlue :=
   { width := g.width.scale num den
     stretch := g.stretch.scale num den
     shrink := g.shrink.scale num den
     fil := g.fil }
 
-def resolve (g : SymGlue) (fontSize xHeight : Sp) : Glue :=
+@[expose] public def resolve (g : SymGlue) (fontSize xHeight : Sp) : Glue :=
   { width := g.width.resolve fontSize xHeight
     stretch := g.stretch.resolve fontSize xHeight
     shrink := g.shrink.resolve fontSize xHeight
@@ -220,7 +225,7 @@ end SymGlue
 /-- A local measure a length may read. The names stay distinct until the
 consumer supplies its context: a minipage makes all three horizontal
 measures its own, while other page models may not. -/
-inductive Measure where
+public inductive Measure where
   | textWidth
   | lineWidth
   | columnWidth
@@ -228,7 +233,7 @@ inductive Measure where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The source control word for a local measure. -/
-def Measure.ofName? : String → Option Measure
+public def Measure.ofName? : String → Option Measure
   | "textwidth" => some .textWidth
   | "linewidth" => some .lineWidth
   | "columnwidth" => some .columnWidth
@@ -236,7 +241,7 @@ def Measure.ofName? : String → Option Measure
   | _ => none
 
 /-- A diagnostic label for a typed measure. Source spelling never rides the IR. -/
-def Measure.label : Measure → String
+public def Measure.label : Measure → String
   | .textWidth => "\\textwidth"
   | .lineWidth => "\\linewidth"
   | .columnWidth => "\\columnwidth"
@@ -246,7 +251,7 @@ def Measure.label : Measure → String
 addition, subtraction, and scalar multiplication. Keeping the operations
 rather than flattening coefficients preserves TeX's fixed-point rounding at
 each scalar product. -/
-inductive Affine (α : Type) where
+public inductive Affine (α : Type) where
   | lit (g : SymGlue)
   | ref (name : α)
   | scale (num : Int) (den : Nat) (e : Affine α)
@@ -254,20 +259,20 @@ inductive Affine (α : Type) where
   | sub (a b : Affine α)
   deriving Repr, BEq, DecidableEq
 
-instance [Inhabited α] : Inhabited (Affine α) := ⟨.lit {}⟩
+public instance [Inhabited α] : Inhabited (Affine α) := ⟨.lit {}⟩
 
 namespace Affine
 
 /-- Canonical rational scaling. Equivalent coefficient spellings construct
 the same tree, which makes parser normalization a structural fact. -/
-def scaleQ (num : Int) (den : Nat) (e : Affine α) : Affine α :=
+@[expose] public def scaleQ (num : Int) (den : Nat) (e : Affine α) : Affine α :=
   if den == 0 then .scale num den e
   else
     let g := Nat.gcd num.natAbs den
     .scale (num.tdiv g) (den / g) e
 
 /-- Whether an expression reads a reference satisfying `p`. -/
-def anyRef (p : α → Bool) : Affine α → Bool
+@[expose] public def anyRef (p : α → Bool) : Affine α → Bool
   | .lit _ => false
   | .ref n => p n
   | .scale _ _ e => anyRef p e
@@ -280,14 +285,14 @@ sum, or difference part: a bare `.ref m` is `(m, 1000)`; `scale num den
 scale, a different shape, a zero denominator, or a negative coefficient — is
 `none`, the signal to a share computation that this length does not reduce to
 a clean fraction of a shared measure and must fall back to its affine form. -/
-def refPermille : Affine α → Option (α × Nat)
+@[expose] public def refPermille : Affine α → Option (α × Nat)
   | .ref m => some (m, 1000)
   | .scale num den (.ref m) =>
     if den == 0 || num < 0 then none else some (m, num.toNat * 1000 / den)
   | _ => none
 
 /-- Whether every literal is rigid glue. -/
-def rigid : Affine α → Bool
+@[expose] public def rigid : Affine α → Bool
   | .lit g => !g.fil && g.stretch == {} && g.shrink == {}
   | .ref _ => true
   | .scale _ _ e => rigid e
@@ -295,7 +300,7 @@ def rigid : Affine α → Bool
 
 /-- Whether an expression carries an infinite-stretch literal. References
 are local rigid lengths, so only a literal can contribute one. -/
-def hasFil : Affine α → Bool
+@[expose] public def hasFil : Affine α → Bool
   | .lit g => g.fil
   | .ref _ => false
   | .scale _ _ e => hasFil e
@@ -303,7 +308,7 @@ def hasFil : Affine α → Bool
 
 /-- Remove infinite stretch while preserving the expression's finite width,
 stretch, shrink, references, and fixed-point operation order. -/
-def withoutFil : Affine α → Affine α
+@[expose] public def withoutFil : Affine α → Affine α
   | .lit g => .lit { g with fil := false }
   | .ref n => .ref n
   | .scale num den e => .scale num den (withoutFil e)
@@ -313,7 +318,7 @@ def withoutFil : Affine α → Affine α
 /-- Whether every literal is a rigid absolute length. Local measures are
 rigid by definition; dimension consumers reject rubber and font-relative
 literals before the expression reaches their IR. -/
-def rigidAbsolute : Affine α → Bool
+@[expose] public def rigidAbsolute : Affine α → Bool
   | .lit g => !g.fil && g.stretch == {} && g.shrink == {} &&
       g.width.em == 0 && g.width.ex == 0
   | .ref _ => true
@@ -322,7 +327,7 @@ def rigidAbsolute : Affine α → Bool
 
 /-- Replace every reference with a typed expression. This is the boundary
 between source names and the IR: unresolved spellings cannot cross it. -/
-def bind (f : α → Except ε (Affine β)) : Affine α → Except ε (Affine β)
+@[expose] public def bind (f : α → Except ε (Affine β)) : Affine α → Except ε (Affine β)
   | .lit g => .ok (.lit g)
   | .ref n => f n
   | .scale num den e =>
@@ -342,7 +347,7 @@ def bind (f : α → Except ε (Affine β)) : Affine α → Except ε (Affine β
 
 /-- Evaluate with a total context. Use this only after the source boundary
 has proved every variable is representable there. -/
-def eval (look : α → SymGlue) : Affine α → SymGlue
+@[expose] public def eval (look : α → SymGlue) : Affine α → SymGlue
   | .lit g => g
   | .ref n => look n
   | .scale num den e => (eval look e).scale num den
@@ -350,7 +355,7 @@ def eval (look : α → SymGlue) : Affine α → SymGlue
   | .sub a b => (eval look a).sub (eval look b)
 
 /-- Total evaluation is also independent of ambient state. -/
-theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
+public theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
     (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
   induction e with
   | lit g => rfl
@@ -361,7 +366,7 @@ theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
 
 /-- Resolve an affine expression against one context. An absent variable is
 returned as that typed variable, never as zero and never as source text. -/
-def resolve (look : α → Option SymGlue) : Affine α → Except α SymGlue
+@[expose] public def resolve (look : α → Option SymGlue) : Affine α → Except α SymGlue
   | .lit g => .ok g
   | .ref n =>
     match look n with
@@ -384,7 +389,7 @@ def resolve (look : α → Option SymGlue) : Affine α → Except α SymGlue
 
 /-- Resolution depends only on the supplied values, not on any ambient
 state. -/
-theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affine α)
+public theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affine α)
     (h : ∀ n, l₁ n = l₂ n) : resolve l₁ e = resolve l₂ e := by
   induction e with
   | lit g => rfl
@@ -394,14 +399,14 @@ theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affine α)
   | sub a b iha ihb => simp only [resolve, iha, ihb]
 
 /-- A literal resolves exactly; no context can change it. -/
-theorem resolve_lit_exact (look : α → Option SymGlue) (g : SymGlue) :
-    resolve look (.lit g) = .ok g := rfl
+public theorem resolve_lit_exact (look : α → Option SymGlue) (g : SymGlue) :
+    resolve look (.lit g) = .ok g := by rfl
 
 end Affine
 
 /-- A fully resolved local-measure context, used only after the source
 boundary admitted exactly the variables the consumer supplies. -/
-structure MeasureValues where
+public structure MeasureValues where
   textWidth : Sp
   lineWidth : Sp
   columnWidth : Sp
@@ -409,14 +414,14 @@ structure MeasureValues where
   deriving Repr, BEq
 
 /-- Look up one measure as rigid glue. -/
-def MeasureValues.find (env : MeasureValues) : Measure → SymGlue
+@[expose] public def MeasureValues.find (env : MeasureValues) : Measure → SymGlue
   | .textWidth => { width := .ofSp env.textWidth }
   | .lineWidth => { width := .ofSp env.lineWidth }
   | .columnWidth => { width := .ofSp env.columnWidth }
   | .textHeight => { width := .ofSp env.textHeight }
 
 /-- One value for every horizontal measure, with a separate text height. -/
-def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
+@[expose] public def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
   { textWidth := measure, lineWidth := measure,
     columnWidth := measure, textHeight := textHeight }
 
@@ -424,19 +429,19 @@ def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
 its consuming site. This is the only door from `Affine Measure` to sp: boxes,
 table columns, images, glue, rules, and font-size declarations supply their
 actual local context rather than estimating it during elaboration. -/
-def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
+@[expose] public def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
     (fontSize xHeight : Sp := 0) : Sp :=
   (e.eval env.find).width.resolve fontSize xHeight
 
 /-- A local reference resolves to exactly the value its context supplies. -/
-theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
+public theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
     (fontSize xHeight : Sp) :
     (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.sp := by
   cases m <;> simp [Affine.resolveWidth, Affine.eval, MeasureValues.find,
     Length.resolve, Length.ofSp]
 
 /-- A rigid literal is independent of every local measure. -/
-theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Sp)
+public theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Sp)
     (fontSize xHeight : Sp) :
     (Affine.lit { width := .ofSp v }).resolveWidth env fontSize xHeight = v := by
   simpa [Affine.resolveWidth, Affine.eval] using Length.resolve_ofSp v fontSize xHeight

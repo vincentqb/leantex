@@ -1,3 +1,5 @@
+module
+
 import Std.Data.HashMap
 import LeanTex.Core.NfcData
 
@@ -21,7 +23,7 @@ namespace LeanTex.Core.Nfc
 
 open Std
 
-structure Tables where
+private structure Tables where
   ccc : HashMap UInt32 Nat
   decomp : HashMap UInt32 (Array Char)
   comp : HashMap UInt64 Char
@@ -44,7 +46,7 @@ private def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
     v := v * 16 + nib (bs[start + k]?.getD 0)
   return v
 
-def load (_ : Unit) : Tables := Id.run do
+private def load (_ : Unit) : Tables := Id.run do
   let cb := NfcData.ccc.toUTF8
   let mut ccc : HashMap UInt32 Nat := {}
   for i in [0:cb.size / 8] do
@@ -84,7 +86,7 @@ because a zero-argument definition is a closed term the code generator
 initializes at module load: as one, it cost every process 5 ms — including
 the ASCII documents that never read a table — and the `Thunk` around it
 deferred nothing. -/
-def tables : Thunk Tables := Thunk.mk load
+private def tables : Thunk Tables := Thunk.mk load
 
 -- Hangul syllable composition is arithmetic (Unicode §3.12).
 private def sBase : Nat := 0xAC00
@@ -180,7 +182,7 @@ private def compose (t : Tables) (cs : Array Char) : Array Char := Id.run do
 
 /-- NFC over a character array. Text whose scalars all sit below U+00C0
 has nothing to decompose, reorder, or compose, and passes through whole. -/
-def normalizeChars (cs : Array Char) : Array Char := Id.run do
+public def normalizeChars (cs : Array Char) : Array Char := Id.run do
   if cs.all (·.toNat < 0xC0) then
     return cs
   let t := tables.get
@@ -193,12 +195,12 @@ def normalizeChars (cs : Array Char) : Array Char := Id.run do
 passes through NFC unchanged. Idempotence over the full domain is UAX #15's
 own guarantee and is held by the property test seeded from the
 decomposition keys, not by a theorem. -/
-theorem normalizeChars_ascii_id (cs : Array Char)
+public theorem normalizeChars_ascii_id (cs : Array Char)
     (h : cs.all (·.toNat < 0xC0)) : normalizeChars cs = cs := by
   simp only [normalizeChars, Id.run, h, ite_true]; rfl
 
 /-- NFC over a string. -/
-def normalize (s : String) : String := Id.run do
+public def normalize (s : String) : String := Id.run do
   let cs := s.foldl (fun a c => a.push c) (Array.mkEmpty s.utf8ByteSize)
   let out := normalizeChars cs
   let mut r := ""
@@ -210,7 +212,7 @@ def normalize (s : String) : String := Id.run do
 generated ranges. `Char.isAlpha` is ASCII-only: under it a word boundary
 excludes é, so an accented word neither hyphenates nor stays one box.
 ASCII answers without the search. -/
-def isLetter (c : Char) : Bool := Id.run do
+public def isLetter (c : Char) : Bool := Id.run do
   if c.toNat < 0x80 then
     return c.isAlpha
   let rs := tables.get.letters
@@ -230,7 +232,7 @@ def isLetter (c : Char) : Bool := Id.run do
 /-- Unicode simple lowercase (UnicodeData field 13): what pattern matching
 against lowercase hyphenation patterns needs — `Char.toLower` is
 ASCII-only and leaves É beside é. -/
-def toLower (c : Char) : Char :=
+public def toLower (c : Char) : Char :=
   if c.toNat < 0x80 then c.toLower
   else tables.get.lower.getD c.val c
 

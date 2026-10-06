@@ -12,6 +12,10 @@ import LeanTex.Core.HyphenDataDe
 import LeanTex.Core.FaData
 import LeanTex.Core.NfcData
 import LeanTex.Core.TextSymData
+import LeanTex.Core.Dim
+import LeanTex.Core.Nfc
+import LeanTex.Core.FaIcons
+import LeanTex.Core.HtmlResource
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
@@ -47,6 +51,17 @@ example : Array String :=
   #[HyphenData.patterns, HyphenDataFr.patterns, HyphenDataDe.patterns,
     FaData.table, NfcData.ccc]
 example : List (String × Char) := TextSymData.symbols
+example (n : Int) : Dim.pt n / Dim.spPerPt = n := Dim.pt_exact n
+example (value size height : Dim.Sp) :
+    (Dim.Length.ofSp value).resolve size height = value :=
+  Dim.Length.resolve_ofSp value size height
+example : String → String := Nfc.normalize
+example : Thunk (Std.HashMap String FaIcons.Entry) := FaIcons.byName
+example : HtmlResource.Media.png.mime = "image/png" := by rfl
+example (resources : Array HtmlResource.Embedded) (svgChecked : Array ByteArray)
+    (script lang : String) (head body : Array Html.Node) :
+    Except String (HtmlResource.ClosedPage script) :=
+  HtmlResource.close resources svgChecked script lang head body
 
 example : True := by
   fail_if_success have := Utf8.seq
@@ -59,4 +74,9 @@ example : True := by
   fail_if_success have := Html.rawPayload
   fail_if_success have := Html.escapeCharText
   fail_if_success have := Html.phrasingTags
+  fail_if_success have := Nfc.Tables
+  fail_if_success have := Nfc.load
+  fail_if_success have := Nfc.tables
+  fail_if_success have := FaIcons.entries
+  fail_if_success have := HtmlResource.CssScan
   trivial

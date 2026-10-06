@@ -1,3 +1,4 @@
+import Tests.NfcBoundary
 import LeanTex.Core.Elab
 import LeanTex.Core.MdDesugar
 import LeanTex.Cli.Render
@@ -27,18 +28,6 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       (Render.human false d).startsWith s!"ℹ [N0376] - {location} - {trigger}\n"
   let noTrigger (ds : Array Diag) :=
     ds.size == 1 && ds.all (·.trigger.isNone)
-  -- Backslash separates NFC slices: it survives decomposition, stops mark
-  -- reordering, and cannot participate in a table-driven composition. The
-  -- arithmetic Hangul rules are confined to non-ASCII Jamo/syllable ranges.
-  let nfc := Nfc.tables.get
-  let escape := '\\'
-  let decompositions := nfc.decomp.toList
-  t "image origin: NFC tables preserve the escape-boundary premise"
-    (nfc.ccc.getD escape.val 0 == 0 && !nfc.decomp.contains escape.val &&
-      decompositions.all (fun (_, parts) => !parts.contains escape) &&
-      nfc.comp.toList.all fun (pair, result) =>
-        pair.toNat / 0x100000000 != escape.toNat &&
-        pair.toNat % 0x100000000 != escape.toNat && result != escape)
   let commandEvidence (tokens : Array Lex.Token) := tokens.filterMap fun tok =>
     match tok.tok with
     | .ctrl _ | .verb _ _ => some tok.pos.command
@@ -51,12 +40,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- Token equality ignores command evidence but includes normalized positions.
     ds.isEmpty && normalizedDs.isEmpty && tokens == normalized &&
       commandEvidence tokens == #[some "\\\u212A", some "\\includegraphics"]
-  t "image origin: every decomposition scalar preserves normalized sites and raw triggers"
-    (!decompositions.isEmpty && decompositions.all fun (scalar, _) =>
-      prefixAgrees (String.ofList [Char.ofNat scalar.toNat]))
-  t "image origin: every expanded decomposition preserves normalized sites and raw triggers"
-    (!decompositions.isEmpty && decompositions.all fun (_, parts) =>
-      prefixAgrees (String.ofList parts.toList))
+  NfcBoundary.escapeChecks t prefixAgrees
   t "image origin: reordered marks and arithmetic Hangul preserve escape alignment"
     (["e\u0301\u0327", "\u1100\u1161\u11A8", "\uAC01"].all prefixAgrees)
   let skippedFile := "skipped-escapes.tex"
