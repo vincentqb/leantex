@@ -191,7 +191,122 @@ def reflowChecks (fs : FontSet) : Array (String × Bool) :=
     ("joined columns retain both reflow records and their distinct diagnostics",
       noDroppedGlyph columns &&
       (columns.paragraphBreaks.filter (fun p => !p.reflows.isEmpty)).size == 2 &&
-      (columns.diags.filter (·.kind == .W0386)).size == 2 &&
-      keyedReflows columns && sequentialParagraphs columns)]
+       (columns.diags.filter (·.kind == .W0386)).size == 2 &&
+       keyedReflows columns && sequentialParagraphs columns)]
+
+private def selectedFooters (geom : Geom) (fs : FontSet) (doc : Doc) (out : Out) : Bool :=
+  let openings := frameOpenings geom fs none doc
+  out.pages.all fun p =>
+    (p.frameOrigin.isNone && p.frame.isNone && p.foot.isNone) ||
+      openings.any (fun f =>
+        p.frameOrigin == f.origin && p.frame == f.number && p.foot == f.footer)
+
+private def furnitureHas (p : PageOut) (text : String) : Bool :=
+  p.lines.any fun line => line.furniture && lineText line == text
+
+private def htmlFooters (doc : Doc) : Array (String × String) :=
+  slideFootsList #[] (HtmlDoc.emitTree {} doc).2.1.toList
+
+/-- Footer decisions are read at the actual source opening and survive
+physical placement. These checks also inspect shipped furniture ink and
+the typed HTML footer, including the intentional absence on a standout.
+The older counterexample above remains a guard against restoring the
+false requirement that every numbered frame have a footer. -/
+def footerChecks (fs : FontSet) : Array (String × Bool) :=
+  let geom : Geom := {
+    pageW := pt 220, pageH := pt 120
+    hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
+    hyphenate := false, justify := false }
+  let chrome : Chrome := { footerRight := some .frameNumber, standoutNote := some true }
+  let frame := Block.frame #[.text "Title"] false .top false #[.para #[.text "Body"]]
+  let standout := Block.frame #[.text "Title"] true .center false #[.para #[.text "Body"]]
+  let notedDoc : Doc := {
+    docClass := .slides, chrome, body := #[.framefoot #[.text "Note"], frame] }
+  let noted := run geom fs none notedDoc
+  let plainDoc : Doc := { docClass := .slides, chrome, body := #[standout] }
+  let plain := run geom fs none plainDoc
+  let restoredDoc := { notedDoc with body := #[.framefoot #[.text "Note"], standout] }
+  let restored := run geom fs none restoredDoc
+  let runningDoc := { notedDoc with foot := some #[.text "Running"] }
+  let running := run geom fs none runningDoc
+  let spilledDoc : Doc := {
+    docClass := .slides, chrome, body := #[.framefoot #[.text "Note"],
+      .frame #[.text "Title"] false .top false
+        (Array.replicate 24 (.para #[.text "Body"]))] }
+  let spilled := run geom fs none spilledDoc
+  let steppedDoc : Doc := {
+    docClass := .slides, chrome, frameRestart := some 2,
+    body := #[.framefoot #[.text "Note"],
+      .frame #[.text "Title"] false .top false
+        #[.para #[.text "Body"], .onSteps { first := 2, last := none }
+          #[.para #[.text "Later"]]], frame] }
+  let stepped := run geom fs none steppedDoc
+  let dividedDoc : Doc := {
+    docClass := .slides, chrome := { footerLeft := some .sectionTitle },
+    body := #[.section 1 true none #[.text "Outer"],
+      .frame #[] false .top false
+        #[.para #[.text "Before"], .section 1 true none #[.text "Local"]],
+      .section 1 true none #[.text "Next"], frame] }
+  let divided := run geom fs none dividedDoc
+  let columnsDoc : Doc := {
+    docClass := .slides, chrome, body := #[.framefoot #[.text "Note"],
+      .frame #[] false .top false #[.columns #[
+        (.abs (pt 76), Array.replicate 16 (.para #[.text "Left"])),
+        (.abs (pt 76), Array.replicate 20 (.para #[.text "Right"]))]]] }
+  let columns := run geom fs none columnsDoc
+  let floatDoc : Doc := {
+    docClass := .slides, chrome, body := #[.framefoot #[.text "Note"],
+      .frame #[] false .top false #[
+        .para #[.text "Before"], .float .figure none false
+          (Array.replicate 20 (.para #[.text "Floating"])) #[]]] }
+  let floated := run geom fs none floatDoc
+  #[
+    ("ordinary frame footer is the shared band and ships its note and number",
+      noDroppedGlyph noted && noted.pages.size == 1 && selectedFooters geom fs notedDoc noted &&
+      pdfFoots noted == #[("Note", "1")] && htmlFooters notedDoc == #[("Note", "1")] &&
+      noted.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1")),
+    ("plain standout keeps its frame number and ships no footer ink",
+      noDroppedGlyph plain && plain.pages.size == 1 && selectedFooters geom fs plainDoc plain &&
+      plain.pages.all (fun p => p.frame == some 1 && p.foot.isNone &&
+        !furnitureHas p "1") &&
+      (pdfFoots plain).isEmpty && (htmlFooters plainDoc).isEmpty),
+    ("restored standout footer ships only the authored note in both artifacts",
+      noDroppedGlyph restored && restored.pages.size == 1 &&
+      selectedFooters geom fs restoredDoc restored &&
+      pdfFoots restored == #[("Note", "")] && htmlFooters restoredDoc == #[("Note", "")] &&
+      restored.pages.all (fun p => furnitureHas p "Note" && !furnitureHas p "1")),
+    ("authored running footer suppresses frame chrome without losing source ownership",
+      noDroppedGlyph running && running.pages.size == 1 &&
+      selectedFooters geom fs runningDoc running && (pdfFoots running).isEmpty &&
+      (htmlFooters runningDoc).isEmpty &&
+      running.pages.all (fun p => p.frameOrigin.isSome && furnitureHas p "Running" &&
+        !furnitureHas p "Note")),
+    ("every actual spill carries and paints the one selected frame footer",
+      noDroppedGlyph spilled && spilled.pages.size > 1 &&
+      selectedFooters geom fs spilledDoc spilled &&
+      (pdfFoots spilled).size == spilled.pages.size &&
+      dedupConsecutive (pdfFoots spilled) == htmlFooters spilledDoc &&
+      spilled.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1")),
+    ("overlays and restarted counters keep their actual opening decisions",
+      noDroppedGlyph stepped && stepped.pages.size == 3 &&
+      selectedFooters geom fs steppedDoc stepped &&
+      (pdfFoots stepped).size == 3 &&
+      (pdfFoots stepped).all (· == ("Note", "1")) &&
+      htmlFooters steppedDoc == #[("Note", "1"), ("Note", "1")]),
+    ("section dividers clear frame ownership and following frames select their own section",
+      noDroppedGlyph divided && divided.pages.size == 4 &&
+      selectedFooters geom fs dividedDoc divided &&
+      pdfFoots divided == #[("Outer", ""), ("Next", "")] &&
+      htmlFooters dividedDoc == #[("Outer", ""), ("Next", "")]),
+    ("column page merges preserve selected footer and paint it on every continuation",
+      noDroppedGlyph columns && columns.pages.size > 1 &&
+      selectedFooters geom fs columnsDoc columns &&
+      (pdfFoots columns).size == columns.pages.size &&
+      columns.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1")),
+    ("float retry and continuation preserve the selected footer",
+      noDroppedGlyph floated && floated.pages.size > 1 &&
+      selectedFooters geom fs floatDoc floated &&
+      (pdfFoots floated).size == floated.pages.size &&
+      floated.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1"))]
 
 end LeanTex.Tests.LayoutContracts

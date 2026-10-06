@@ -1104,6 +1104,43 @@ structure FrameOrigin where
   step : Nat
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The inputs in force when the collector opens a frame. The footer is
+computed by the shared IR decision, including plain standout frames and
+an authored running footer. Source ownership and the displayed counter
+travel with that decision through placement. -/
+structure FrameOpening where
+  origin : Option FrameOrigin
+  number : Option Nat
+  chrome : Ir.Chrome
+  note : Option (Array Ir.Inline)
+  sectionTitle : Array Ir.Inline
+  count : Nat
+  standout : Bool
+  allowed : Bool
+  palette : Ir.Palette
+  deriving Repr, Inhabited
+
+def FrameOpening.footer (f : FrameOpening) : Option (Array Ir.BandSlot) :=
+  if f.allowed then
+    f.chrome.frameFootBand f.note f.sectionTitle f.number f.count f.standout
+  else none
+
+def FrameOpening.look (f : FrameOpening) : Ir.TitledLook :=
+  (Ir.Design.ofPalette f.palette).frameFootLook (f.standout && f.footer.isSome)
+
+/-- The joint observation a physical page owes its collected opening.
+A counter restart and a missing footer do not change its source identity. -/
+abbrev FrameStamp :=
+  Option FrameOrigin × Option Nat × Option (Array Ir.BandSlot)
+
+def FrameOpening.stamp (f : FrameOpening) : FrameStamp :=
+  (f.origin, f.number, f.footer)
+
+/-- Unowned flow pages have no frame furniture. Every owned page must
+match a real collected opening, including the footer selected there. -/
+def SelectedFrame (openings : Array FrameOpening) (stamp : FrameStamp) : Prop :=
+  stamp = (none, none, none) ∨ ∃ f ∈ openings, stamp = f.stamp
+
 /-- The break decisions committed by one paragraph placement. Positions
 index its actual item array. The final forced end closes the paragraph;
 the preceding forced ends are the segments the author explicitly ended.
@@ -1180,6 +1217,9 @@ structure PageOut where
   band's corner logos into. -/
   band : Option Sp := none
   deriving Repr, Inhabited
+
+def PageOut.frameStamp (p : PageOut) : FrameStamp :=
+  (p.frameOrigin, p.frame, p.foot)
 
 /-- Resolve a destination from finalized lines, after page fitting,
 column assembly, and vertical distribution. This is an artifact fact:
@@ -5231,7 +5271,7 @@ private structure B where
   pageFils : Nat := 0
   /-- Per placed line, the fil units above it — parallel to `shrinkAbove`. -/
   filsAbove : Array Nat := #[]
-  /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
+  /-- The chrome footer for pages closed from this frame opening. -/
   curFoot : Option (Array Ir.BandSlot) := none
   curFootLook : Option Ir.TitledLook := none
   /-- The bottom edge of the open page's `.titleBar` fill, for
@@ -5244,7 +5284,7 @@ private structure B where
   curFrameOrigin : Option FrameOrigin := none
   /-- The footline band's box — its glyphs' height above and depth below
   the baseline (`segsInk`) — for pages closed from here on, written with
-  `curFoot` from the same `.foot` op: the one value the page's text-area
+  `curFoot` from the same frame opening: the one value the page's text-area
   floor (`B.bottom`) and the band's baseline (`footBaseline`) both read. -/
   footBox : Option (Sp × Sp) := none
   /-- The declared gap between the footline's ink and the text area:
@@ -6880,8 +6920,7 @@ private inductive Op where
   the builder knows which mid-frame page close is a declared continuation
   and which is an overflow to report (`warnSpill_accounts`). Cleared at the
   frame's `.brk`. -/
-  | frameOpen (breakable : Bool) (source : Option Span)
-      (number : Option Nat) (origin : Option FrameOrigin)
+  | frameOpen (breakable : Bool) (source : Option Span) (opening : FrameOpening)
   /-- Close source ownership after the frame's final page boundary. A
   `.brk` inside its body only closes a physical page. -/
   | frameClose
@@ -6908,9 +6947,6 @@ private inductive Op where
   /-- A progress bar under the line just placed: `bg` across `w` from `x`,
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  /-- The selected chrome footer for pages closed from here on. Frame
-  ownership is assigned by `frameOpen`, independently of this band. -/
-  | foot (content : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook)
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
@@ -7431,20 +7467,20 @@ private theorem Acc.setTokens_emits_nothing (a : Acc) (tk : Ir.Tokens) :
       (a.setTokens tk).diags = a.diags :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- The chrome footer a frame's pages carry: the one declared slot band
-(`Ir.Chrome.frameFootBand` — fixed sides, resolved content, declared
-priorities), including an explicitly restored standout note. -/
-private def Acc.chromeFoot (a : Acc) (standout : Bool := false) :
-    Option (Array Ir.BandSlot) :=
-  let chrome : Ir.Chrome :=
-    { footerLeft := a.chromeL, footerRight := a.chromeR, standoutNote := a.standoutNote }
-  chrome.frameFootBand a.frameFoot a.curSection a.frameNum a.frameCount standout
+/-- Capture the frame's actual source and policy inputs together. Later
+palette, section and counter changes cannot rewrite this opening. -/
+private def Acc.frameOpening (a : Acc) (standout : Bool) : FrameOpening :=
+  { origin := a.frameOrigin, number := a.frameNum
+    chrome := { footerLeft := a.chromeL, footerRight := a.chromeR,
+                standoutNote := a.standoutNote }
+    note := a.frameFoot, sectionTitle := a.curSection, count := a.frameCount
+    standout := standout, allowed := a.footAllowed, palette := a.pal }
 
 /-- The one footer decision read by both collection and body measurement.
 An authored running footer suppresses chrome without suppressing ownership. -/
 private def Acc.selectedFoot (a : Acc) (standout : Bool) :
     Option (Array Ir.BandSlot) :=
-  if a.footAllowed then a.chromeFoot standout else none
+  (a.frameOpening standout).footer
 
 /-- Zero-ink targets follow the line carrying their next item. A target
 at the selected break rides the next line; trailing targets stay on the
@@ -8797,7 +8833,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     let a := a.pageBreak
     -- A divider carries no footer; the break above closed the previous
     -- page with its own.
-    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
+    let a := { a with ops := a.ops.push .frameClose }
     -- One page of the deck like any frame, on the palette's own ground.
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
@@ -8840,7 +8876,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   -- keep its page style, distribution and footline (`frameHeadingScopeChecks`).
   let a := if divider then a.pageBreak else a
   let a := if !r.inFrame && a.footAllowed then
-      { a with ops := a.ops.push (.foot none none) } else a
+      { a with ops := a.ops.push .frameClose } else a
   let element := match level with
     | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
   let st := r.style element
@@ -9341,22 +9377,15 @@ The shared band rule keeps that furniture choice separate from counting
 the standout, and selects an explicitly restored standout note. -/
 private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
   let a := a.pageBreak
-  let band := a.selectedFoot standout
-  let foot := Op.foot band
-    (some ((Ir.Design.ofPalette a.pal).frameFootLook (standout && band.isSome)))
-  { a with ops := (a.ops.push
-      (.frameOpen breakable a.frameSource a.frameNum a.frameOrigin)).push foot }
+  { a with ops := a.ops.push (.frameOpen breakable a.frameSource (a.frameOpening standout)) }
 
 /-- The real collector emits ownership even when the shared IR rule
 selects no footer. The boundary can pay pending glue, but cannot change
 either decision. -/
 private theorem collectFrameOpen_frame_exact (a : Acc) (standout breakable : Bool) :
     (collectFrameOpen a standout breakable).ops =
-      ((a.pageBreak.ops.push
-        (.frameOpen breakable a.frameSource a.frameNum a.frameOrigin)).push
-        (.foot (a.selectedFoot standout)
-          (some ((Ir.Design.ofPalette a.pal).frameFootLook
-            (standout && (a.selectedFoot standout).isSome))))) := by
+      a.pageBreak.ops.push
+        (.frameOpen breakable a.frameSource (a.frameOpening standout)) := by
   unfold collectFrameOpen Acc.pageBreak
   split <;> rfl
 
@@ -9988,7 +10017,7 @@ private def collectBlock (r : Rd) (a : Acc)
         -- way, at the top of beamer's text area: its content's `\vbox{}`
         -- stands at the paper's top edge (moloch's headline is empty), with
         -- no title box and so no `\vskip0.25em` (`B.openBody`).
-        if a.footAllowed && a.frameNum.isSome && a.chromeFoot.isSome then
+        if a.frameNum.isSome && (a.selectedFoot false).isSome then
           { a with ops := a.ops.push (.bodyOpen
               { width := if valign matches .top then Dim.mm 2 else 0 }), -- [t]'s .2cm, beamerbaseframe.sty:263
                    wantDefault := false }
@@ -10877,15 +10906,13 @@ private inductive StagedOp where
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | pageGround (bg : Option Ir.Color)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
-  | frameOpen (breakable : Bool) (source : Option Span)
-      (number : Option Nat) (origin : Option FrameOrigin)
+  | frameOpen (breakable : Bool) (source : Option Span) (opening : FrameOpening)
   | frameClose
   | blockBar (color : Ir.Color) (pad x w : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  | foot (content : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook)
   | para (j : ParaJob) (t : Task (Array Nat))
   | linkOpen (target : String)
   | linkClose
@@ -11258,18 +11285,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
                     openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
                     frameBreak := none, frameSource := none, spillWarned := false, opened := false }
-  | .frameOpen br source number origin =>
+  | .frameOpen br source opening =>
     b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
-                  curFrame := number, curFrameOrigin := origin }
+                  curFrame := opening.number, curFrameOrigin := opening.origin
+                  curFoot := opening.footer, curFootLook := some opening.look
+                  footBox := opening.footer.map
+                    (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
   | .frameClose =>
     b := { b with curFrame := none, curFrameOrigin := none,
                   curFoot := none, footBox := none, curFootLook := none }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
-  | .foot c look =>
-    b := { b with curFoot := c, curFootLook := look
-                  footBox := c.map (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
   | .pin =>
     -- The resume depth clears the chrome's ink: the title bar (the last
     -- pinned fill) reaches `pad` below the title's depth, and a spill
@@ -11444,20 +11471,20 @@ private theorem pageOpening_step_projects (fs : FontSet) (imgs : Image.Store)
 without conditioning either on the selected footer. -/
 private theorem frameOpen_step_projects (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (br : Bool) (source : Option Span)
-    (number : Option Nat) (origin : Option FrameOrigin) :
-    let next := (stepStaged fs imgs st (.frameOpen br source number origin)).b
-    next.curFrameOrigin = origin ∧ next.curFrame = number ∧
+    (opening : FrameOpening) :
+    let next := (stepStaged fs imgs st (.frameOpen br source opening)).b
+    next.curFrameOrigin = opening.origin ∧ next.curFrame = opening.number ∧
       next.frameSource = source ∧ next.pages = st.b.pages :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Footer placement sets and measures the selected band, and cannot
-rewrite the source identity or the displayed counter. -/
-private theorem foot_step_projects (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (band : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook) :
-    let next := (stepStaged fs imgs st (.foot band look)).b
-    next.curFoot = band ∧ next.curFrameOrigin = st.b.curFrameOrigin ∧
-      next.curFrame = st.b.curFrame ∧
-      next.footBox = band.map
+/-- The same opening selects and measures the footer, alongside its
+ownership and counter. No independent footer op can detach these choices. -/
+private theorem frameOpen_footer_projects (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (br : Bool) (source : Option Span) (opening : FrameOpening) :
+    let next := (stepStaged fs imgs st (.frameOpen br source opening)).b
+    next.curFoot = opening.footer ∧ next.curFrameOrigin = opening.origin ∧
+      next.curFrame = opening.number ∧
+      next.footBox = opening.footer.map
         (bandBox fs imgs st.b.geom st.b.xHeight (st.b.pages.size + 1)) :=
   ⟨rfl, rfl, rfl, rfl⟩
 
@@ -12526,6 +12553,447 @@ decreasing_by all_goals omega
 private def placeFrom (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
   (placeFlowFrom fs imgs staged { placed := st } si).placed
+
+/-! A page's frame identity, displayed counter and footer travel together.
+Only an actual frame-opening op selects a stamp; closing a frame clears it.
+Ordinary placement retains it, and the shipping door copies it unchanged.
+The invariant also covers saved column cursors, which can revisit pages. -/
+
+private def B.frameStamp (b : B) : FrameStamp :=
+  (b.curFrameOrigin, b.curFrame, b.curFoot)
+
+private def FrameStep (a b : B) : Prop :=
+  b.frameStamp = a.frameStamp ∧
+    ∀ p ∈ b.pages, p ∈ a.pages ∨ p.frameStamp = a.frameStamp
+
+private theorem FrameStep.refl (b : B) : FrameStep b b :=
+  ⟨rfl, fun _ h => Or.inl h⟩
+
+private theorem FrameStep.of_eq {a b : B}
+    (hs : b.frameStamp = a.frameStamp) (hp : b.pages = a.pages) :
+    FrameStep a b :=
+  ⟨hs, fun _ h => Or.inl (hp ▸ h)⟩
+
+private theorem FrameStep.trans {a b c : B}
+    (hab : FrameStep a b) (hbc : FrameStep b c) : FrameStep a c := by
+  refine ⟨hbc.1.trans hab.1, fun p hp => ?_⟩
+  rcases hbc.2 p hp with old | new
+  · exact hab.2 p old
+  · exact Or.inr (new.trans hab.1)
+
+private def FramesFooted (openings : Array FrameOpening) (b : B) : Prop :=
+  SelectedFrame openings b.frameStamp ∧
+    ∀ p ∈ b.pages, SelectedFrame openings p.frameStamp
+
+private theorem FramesFooted.step {openings : Array FrameOpening} {a b : B}
+    (ha : FramesFooted openings a) (h : FrameStep a b) :
+    FramesFooted openings b := by
+  refine ⟨h.1 ▸ ha.1, fun p hp => ?_⟩
+  rcases h.2 p hp with old | new
+  · exact ha.2 p old
+  · exact new ▸ ha.1
+
+private theorem frameStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
+    FrameStep b (b.finishPage owed flush) := by
+  refine ⟨rfl, fun p hp => ?_⟩
+  simp only [B.finishPage, Array.mem_push] at hp
+  rcases hp with hp | rfl
+  · exact Or.inl hp
+  · exact Or.inr rfl
+
+@[simp] private theorem reopenChrome_frameStamp (b : B) :
+    b.reopenChrome.frameStamp = b.frameStamp := by
+  unfold B.reopenChrome
+  split <;> rfl
+
+@[simp] private theorem warnSpill_frameStamp (b : B) (over : Sp) :
+    (b.warnSpill over).frameStamp = b.frameStamp := by
+  unfold B.warnSpill
+  split <;> rfl
+
+private theorem frameStep_spillPage (b : B) (over : Sp) :
+    FrameStep b (b.spillPage over) :=
+  (frameStep_finishPage b 0 b.flushes).trans
+    ((FrameStep.of_eq (reopenChrome_frameStamp ..) (reopenChrome_pages ..)).trans
+      ((FrameStep.of_eq (warnSpill_frameStamp ..) (warnSpill_pages ..)).trans
+        (FrameStep.of_eq rfl rfl)))
+
+@[simp] private theorem attachNotes_frameStamp (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).frameStamp = b.frameStamp := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction
+      (motive := fun _ (acc : B) => acc.frameStamp = b.frameStamp)
+      rfl (fun _ _ h => h)
+
+@[simp] private theorem pushSibling_frameStamp (b : B) (l : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills paths shrink fils).frameStamp = b.frameStamp := by
+  cases l <;> simp only [B.pushSibling] <;> split <;> rfl
+
+@[simp] private theorem pushLabels_frameStamp (b : B) (ls : Array LineOut)
+    (shrink : Sp) (fils : Nat) :
+    (b.pushLabels ls shrink fils).frameStamp = b.frameStamp := by
+  unfold B.pushLabels
+  exact Array.foldl_induction
+    (motive := fun _ (acc : B) => acc.frameStamp = b.frameStamp)
+    rfl (fun _ _ h => by rw [pushSibling_frameStamp]; exact h)
+
+@[simp] private theorem pushSibling_frame_fields (b : B) (l : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills paths shrink fils).curFrameOrigin = b.curFrameOrigin ∧
+    (b.pushSibling l fills paths shrink fils).curFrame = b.curFrame ∧
+    (b.pushSibling l fills paths shrink fils).curFoot = b.curFoot := by
+  have h := pushSibling_frameStamp b l fills paths shrink fils
+  simpa only [B.frameStamp, Prod.mk.injEq] using h
+
+@[simp] private theorem pushLabels_frame_fields (b : B) (ls : Array LineOut)
+    (shrink : Sp) (fils : Nat) :
+    (b.pushLabels ls shrink fils).curFrameOrigin = b.curFrameOrigin ∧
+    (b.pushLabels ls shrink fils).curFrame = b.curFrame ∧
+    (b.pushLabels ls shrink fils).curFoot = b.curFoot := by
+  have h := pushLabels_frameStamp b ls shrink fils
+  simpa only [B.frameStamp, Prod.mk.injEq] using h
+
+private theorem frameStep_attachNotes (b : B) (ns : Array NoteBlock) :
+    FrameStep b (b.attachNotes ns) :=
+  FrameStep.of_eq (attachNotes_frameStamp ..) (attachNotes_pages ..)
+
+private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Sp)
+    (ruleLine consume : Bool) (overflow : Sp) :
+    FrameStep b (b.commit l depth below ruleLine consume overflow) :=
+  FrameStep.of_eq rfl rfl
+
+private theorem frameStep_warnNoteOverrun (b : B) (y depth : Sp) :
+    FrameStep b (b.warnNoteOverrun y depth) := by
+  simp only [B.warnNoteOverrun]
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+    FrameStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) := by
+  simp only [B.fitCommit]
+  split
+  · exact ((frameStep_commit b ..).trans (frameStep_attachNotes ..)).trans
+      (frameStep_warnNoteOverrun ..)
+  · split
+    · exact (frameStep_commit b ..).trans (frameStep_attachNotes ..)
+    · split
+      · exact (frameStep_spillPage b _).trans
+          (((frameStep_commit _ _ depth below rl false 0).trans
+            (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
+      · exact (frameStep_spillPage b _).trans
+          (((frameStep_commit _ _ depth below rl false 0).trans
+            (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
+
+private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) :
+    FrameStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+  simp only [B.placeLine]
+  exact frameStep_fitCommit ..
+
+private theorem frameStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
+    (x : Sp) (segs : Array Seg) :
+    FrameStep b (b.openDisplayAt j first x segs) := by
+  unfold B.openDisplayAt
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
+    (segs : Array Seg) (b : B) : FrameStep b (placeParaTrailer fs j k segs b) := by
+  unfold placeParaTrailer
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_placeParaLine (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) :
+    FrameStep st.1 (placeParaLine fs j st brk).1 := by
+  simp only [placeParaLine]
+  refine FrameStep.trans (FrameStep.trans (FrameStep.trans ?_
+    (frameStep_openDisplayAt ..)) (frameStep_placeLine ..)) (frameStep_placeParaTrailer ..)
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) : FrameStep b (placePara fs b j breaks) := by
+  unfold placePara
+  refine Array.foldl_induction
+    (motive := fun _ (acc : B × Nat × Bool) => FrameStep b acc.1)
+    ?_ (fun _ _ h => h.trans (frameStep_placeParaLine ..))
+  unfold B.warnReflow
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
+    FrameStep b (placePicture fs imgs b x pic leaf) := by
+  simp only [placePicture, Id.run, Id, pure, bind]
+  repeat' split
+  all_goals first
+    | (refine FrameStep.of_eq ?_ ?_ <;> simp [B.frameStamp]
+       done)
+    | (refine (frameStep_spillPage b
+        (b.y + b.prevDepth + b.skip.width + inkClearance +
+          ((pictureBox b.geom fs imgs b.xHeight pic).2.snd -
+            (pictureBox b.geom fs imgs b.xHeight pic).1.snd) - b.bottom -
+          (b.pageShrink + b.skip.shrink))).trans (FrameStep.of_eq ?_ ?_) <;>
+          simp [B.frameStamp]
+       done)
+
+private theorem frameStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
+    FrameStep b (b.keepHeading j n) := by
+  unfold B.keepHeading
+  split
+  · exact frameStep_spillPage b 0
+  · exact FrameStep.refl b
+
+private theorem frameStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+    (spec : SlotSpec) : FrameStep b (b.placeSlot fs save spec) := by
+  obtain ⟨col, l0, f0⟩ := save
+  simp only [B.placeSlot]
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_alignRow (b : B) (save : ColSave) :
+    FrameStep b (b.alignRow save) := by
+  refine FrameStep.of_eq ?_ ?_ <;> simp [B.alignRow, B.frameStamp]
+
+private def StagedOp.frameOpening? : StagedOp → Option FrameOpening
+  | .frameOpen _ _ opening => some opening
+  | _ => none
+
+private theorem keepAt_frameOpening (b : B) (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (si : Nat) (op : StagedOp) :
+    (keepAt b fs imgs staged si op).frameOpening? = op.frameOpening? := by
+  cases op <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
+
+private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (op : StagedOp) (openings : Array FrameOpening)
+    (hb : FramesFooted openings st.b)
+    (ho : ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    FramesFooted openings (stepStaged fs imgs st op).b := by
+  cases op with
+  | frameOpen br source opening =>
+    exact ⟨Or.inr ⟨opening, ho opening rfl, rfl⟩, hb.2⟩
+  | frameClose =>
+    exact ⟨Or.inl rfl, hb.2⟩
+  | hrule color th =>
+    simp only [stepStaged, Id.run, pure]
+    exact hb.step (frameStep_placeLine fs st.b st.b.geom.hmargin 0
+      #[.rule st.b.geom.textWidth th 0 color] st.b.geom.textWidth
+      0 0 #[] false none none none false #[])
+  | tableRule th x w segs =>
+    simp only [stepStaged, Id.run, pure]
+    exact hb.step (frameStep_fitCommit st.b
+      (fun y => { x := x, y := y, size := 0, segs := segs, setWidth := w })
+      (fun b => b.geom.vmargin + th)
+      (fun b => b.y + b.prevDepth + b.skip.width + th)
+      (fun b => b.y + b.prevDepth + th)
+      0 0 true 0 st.b.bottom #[])
+  | para j task =>
+    simp only [stepStaged, Id.run, Id, pure]
+    split <;> exact hb.step ((frameStep_keepHeading ..).trans (frameStep_placePara ..))
+  | picture x pic leaf =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals exact hb.step (frameStep_placePicture ..)
+  | slotClose spec =>
+    simp only [stepStaged, Id.run, Id, pure]
+    split
+    · exact hb.step (frameStep_placeSlot ..)
+    · exact hb
+  | brk =>
+    simp only [stepStaged, Id.run, Id, pure]
+    split
+    · exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans
+        (FrameStep.of_eq rfl rfl))
+    · exact hb.step (FrameStep.of_eq rfl rfl)
+  | colClose =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals first
+      | exact hb.step ((FrameStep.of_eq rfl rfl).trans (frameStep_alignRow ..))
+      | exact hb.step (FrameStep.of_eq rfl rfl)
+  | _ =>
+    simp only [stepStaged, Id.run, Id, pure, B.openBody]
+    repeat' split
+    all_goals refine hb.step (FrameStep.of_eq ?_ ?_) <;> simp [B.frameStamp]
+
+private theorem foldSteps_frames (fs : FontSet) (imgs : Image.Store)
+    (group : Array StagedOp) (st : StepSt) (openings : Array FrameOpening)
+    (hb : FramesFooted openings st.b)
+    (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    FramesFooted openings (group.foldl (stepStaged fs imgs) st).b :=
+  Array.foldl_induction
+    (motive := fun _ (acc : StepSt) => FramesFooted openings acc.b)
+    hb (fun i _ h => stepStaged_frames _ _ _ _ openings h
+      (ho _ (Array.getElem_mem i.2)))
+
+private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (group : Array StagedOp) (openings : Array FrameOpening)
+    (hb : FramesFooted openings st.b)
+    (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    FramesFooted openings (runFloat fs imgs st group).b := by
+  have finish : ∀ (b : B) (c : Prop) [Decidable c] (d : Diag),
+      FramesFooted openings b →
+      FramesFooted openings
+        ({ (if c then { b with diags := b.diags.push d } else b) with
+          noBreak := false } : B) := by
+    intro b c inst d h
+    split <;> exact h.step (FrameStep.of_eq rfl rfl)
+  simp only [LeanTex.Core.Layout.runFloat]
+  split
+  · exact foldSteps_frames fs imgs group st openings hb ho
+  · have hc : FramesFooted openings
+        (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+          then st.b else st.b.finishPage) := by
+      split
+      · exact hb
+      · exact hb.step (frameStep_finishPage ..)
+    have hr := foldSteps_frames fs imgs group
+      { st with b :=
+        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+           else st.b.finishPage) with noBreak := true } } openings
+      (hc.step (FrameStep.of_eq rfl rfl)) ho
+    exact finish _ _ _ hr
+
+private theorem frameStep_restartColumn (start latest : B) :
+    FrameStep start (restartColumn start latest) :=
+  FrameStep.of_eq rfl rfl
+
+private theorem mergeColumnPages_frames (g : Geom) (first : Nat) (a b : Array PageOut)
+    (openings : Array FrameOpening)
+    (ha : ∀ p ∈ a, SelectedFrame openings p.frameStamp)
+    (hb : ∀ p ∈ b, SelectedFrame openings p.frameStamp) :
+    ∀ p ∈ mergeColumnPages g first a b, SelectedFrame openings p.frameStamp := by
+  intro p hp
+  obtain ⟨i, _, hp⟩ := Array.mem_filterMap.mp hp
+  cases ea : a[i]? with
+  | none =>
+    cases eb : b[i]? with
+    | none => simp [ea, eb] at hp
+    | some q =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      exact hb q (Array.mem_of_getElem? eb)
+  | some q =>
+    cases eb : b[i]? with
+    | none =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      exact ha q (Array.mem_of_getElem? ea)
+    | some r =>
+      simp only [ea, eb, Option.some.injEq] at hp
+      subst p
+      split <;> exact ha q (Array.mem_of_getElem? ea)
+
+private theorem joinColumn_frames (first : Nat) (a b : B)
+    (openings : Array FrameOpening) (ha : FramesFooted openings a)
+    (hb : FramesFooted openings b) : FramesFooted openings (joinColumn first a b) := by
+  have hl : FramesFooted openings
+      (if a.pages.size < b.pages.size then a.finishPage else a) := by
+    split
+    · exact ha.step (frameStep_finishPage ..)
+    · exact ha
+  have hr : FramesFooted openings
+      (if b.pages.size < a.pages.size then b.finishPage else b) := by
+    split
+    · exact hb.step (frameStep_finishPage ..)
+    · exact hb
+  refine ⟨?_, mergeColumnPages_frames b.geom first _ _ openings hl.2 hr.2⟩
+  simp only [joinColumn, joinColumnCurrent, B.frameStamp]
+  repeat' split
+  all_goals first | exact ha.1 | exact hb.1
+
+private def ColumnFlow.footed (openings : Array FrameOpening) (save : ColumnFlow) : Prop :=
+  FramesFooted openings save.start ∧ ∀ b ∈ save.completed, FramesFooted openings b
+
+private theorem ColumnFlow.add_frames (save : ColumnFlow) (b : B)
+    (openings : Array FrameOpening) (hs : save.footed openings)
+    (hb : FramesFooted openings b) : FramesFooted openings (save.add b) := by
+  unfold ColumnFlow.add
+  split
+  · exact hb
+  · next previous he =>
+    exact joinColumn_frames _ _ _ openings (hs.2 previous he) hb
+
+private def FlowFooted (openings : Array FrameOpening) (st : FlowSt) : Prop :=
+  FramesFooted openings st.placed.b ∧ ∀ save ∈ st.columns, save.footed openings
+
+private theorem stepFlow_frames (fs : FontSet) (imgs : Image.Store)
+    (st : FlowSt) (op : StagedOp) (openings : Array FrameOpening)
+    (h : FlowFooted openings st) (ho : ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    FlowFooted openings (stepFlow fs imgs st op) := by
+  cases op with
+  | colOpen pos =>
+    have hp := stepStaged_frames fs imgs st.placed (.colOpen pos) openings h.1 ho
+    refine ⟨hp, ?_⟩
+    simp only [stepFlow, List.forall_mem_cons]
+    exact ⟨⟨hp, by simp⟩, h.2⟩
+  | colNext =>
+    cases hc : st.columns with
+    | nil =>
+      simp only [stepFlow, hc, FlowFooted]
+      exact ⟨stepStaged_frames fs imgs st.placed .colNext openings h.1 ho, by simp⟩
+    | cons save rest =>
+      have hs := h.2 save (hc ▸ List.mem_cons_self)
+      have hr : ∀ s ∈ rest, s.footed openings := fun s hm =>
+        h.2 s (hc ▸ List.mem_cons_of_mem _ hm)
+      simp only [stepFlow, hc]
+      split
+      · exact ⟨stepStaged_frames fs imgs st.placed .colNext openings h.1 ho,
+          by simpa only [hc] using h.2⟩
+      · refine ⟨hs.1.step (frameStep_restartColumn ..), ?_⟩
+        simp only [List.forall_mem_cons, ColumnFlow.footed, Option.mem_some]
+        exact ⟨⟨hs.1, fun _ he =>
+          he ▸ save.add_frames st.placed.b openings hs h.1⟩, hr⟩
+  | colClose =>
+    cases hc : st.columns with
+    | nil =>
+      simp only [stepFlow, hc, FlowFooted]
+      exact ⟨stepStaged_frames fs imgs st.placed .colClose openings h.1 ho, by simp⟩
+    | cons save rest =>
+      have hs := h.2 save (hc ▸ List.mem_cons_self)
+      have hb : FramesFooted openings (columnEnd save st.placed).b :=
+        save.add_frames st.placed.b openings hs h.1
+      simp only [stepFlow, hc, FlowFooted]
+      refine ⟨stepStaged_frames fs imgs (columnEnd save st.placed) .colClose openings hb ho, ?_⟩
+      exact fun s hm => h.2 s (hc ▸ List.mem_cons_of_mem _ hm)
+  | _ => exact ⟨stepStaged_frames fs imgs st.placed _ openings h.1 ho, h.2⟩
+
+private theorem placeFlowFrom_frames (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : FlowSt) (si : Nat) (openings : Array FrameOpening)
+    (ho : ∀ op ∈ staged, ∀ f ∈ op.frameOpening?, f ∈ openings)
+    (hs : FlowFooted openings st) :
+    FlowFooted openings (placeFlowFrom fs imgs staged st si) := by
+  rw [placeFlowFrom]
+  split
+  · rename_i hi
+    have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+      matchingClose_ge staged (si + 1) 1
+    split
+    · have hgroup : ∀ op ∈ staged.extract (si + 1) (matchingClose staged (si + 1) 1),
+          ∀ f ∈ op.frameOpening?, f ∈ openings := by
+        intro op hop
+        obtain ⟨k, hk, rfl⟩ := Array.mem_extract_iff_getElem.mp hop
+        exact ho _ (Array.getElem_mem (by omega))
+      exact placeFlowFrom_frames _ _ _ _ _ openings ho
+        ⟨runFloat_frames fs imgs st.placed _ openings hs.1 hgroup, hs.2⟩
+    · apply placeFlowFrom_frames _ _ _ _ _ openings ho
+        (stepFlow_frames fs imgs st _ openings hs ?_)
+      rw [keepAt_frameOpening]
+      exact ho _ (Array.getElem_mem hi)
+  · exact hs
+termination_by staged.size - si
+decreasing_by all_goals omega
+
+private theorem placeFrom_frames (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat) (openings : Array FrameOpening)
+    (ho : ∀ op ∈ staged, ∀ f ∈ op.frameOpening?, f ∈ openings)
+    (hs : FramesFooted openings st.b) :
+    FramesFooted openings (placeFrom fs imgs staged st si).b :=
+  (placeFlowFrom_frames fs imgs staged { placed := st } si openings ho
+    ⟨hs, by simp⟩).1
+
 
 /-! The reflow account crosses the actual placement state. Non-paragraph
 steps retain the recorded breaks and every existing diagnostic. A paragraph
@@ -13829,14 +14297,13 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .pageStyle bg c => .pageStyle bg c
     | .pageGround bg => .pageGround bg
     | .titleBar color pad strut => .titleBar color pad strut
-    | .frameOpen br source number origin => .frameOpen br source number origin
+    | .frameOpen br source opening => .frameOpen br source opening
     | .frameClose => .frameClose
     | .blockBar color pad x w => .blockBar color pad x w
     | .hrule color th => .hrule color th
     | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
-    | .foot c look => .foot c look
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
@@ -13967,6 +14434,11 @@ private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
     post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans
 
+private def frameOpeningsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) : Array FrameOpening :=
+  withLayoutOps geom fs pats doc imgs (fun staged _ _ =>
+    staged.filterMap StagedOp.frameOpening?) frameSpans
+
 /-- The pre-marks pipeline consumes the shipment value directly. -/
 private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
@@ -13993,6 +14465,14 @@ one `shipCore` producer. Source indices have the same meaning as in `run`. -/
 def ship (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Shipped :=
   shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
+
+/-- The frame decisions emitted by the actual collector, before placement.
+This observes the same resolved PDF view and overlay expansion as `run`;
+it does not infer decisions from the pages that happened to survive. -/
+def frameOpenings (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) :
+    Array FrameOpening :=
+  frameOpeningsCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
 /-- Inspect the same resolved document that the public layout entry sets. -/
 def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
@@ -14030,6 +14510,37 @@ theorem shipment_diags_covers (geom : Geom) (fs : FontSet) (pats : Option Hyphen
     (Array.mem_append.mpr (Or.inr he) :
       e ∈ (resolveDocMath fs doc).2 ++
         (runPost (ship geom fs pats doc imgs frameSpans)).diags)
+
+private theorem shipCore_frames (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ∀ p ∈ (shipCore geom fs pats doc imgs frameSpans).pages,
+      SelectedFrame (frameOpeningsCore geom fs pats doc imgs frameSpans) p.frameStamp := by
+  have close : ∀ (c : Prop) [Decidable c] (b : B) (openings : Array FrameOpening),
+      FramesFooted openings b →
+      FramesFooted openings (if c then b.finishPage b.closingOwed else b) := by
+    intro c inst b openings hb
+    split
+    · exact hb.step (frameStep_finishPage ..)
+    · exact hb
+  unfold shipCore frameOpeningsCore withLayoutOps
+  dsimp only [Id.run, bind, pure, Id]
+  apply (close _ _ _ ?_).2
+  apply placeFrom_frames
+  · intro op hop opening hf
+    exact Array.mem_filterMap.mpr ⟨op, hop, hf⟩
+  · exact ⟨Or.inl rfl, by simp⟩
+
+/-- Every physical shipment either has no frame stamp or carries the
+joint identity, counter and footer of an actual collector opening.
+The proof includes spills, accepted and retried floats, saved column
+cursors, column page merges, and the final close. -/
+theorem ship_frames_footed (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ∀ p ∈ (ship geom fs pats doc imgs frameSpans).pages,
+      SelectedFrame (frameOpenings geom fs pats doc imgs frameSpans) p.frameStamp :=
+  shipCore_frames geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
 private theorem shipCore_reflows (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
@@ -14120,6 +14631,42 @@ theorem frame_origins_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphe
   simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
     runPost_frameOrigins_projects
       (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
+
+/-- Every public output page honors one actual collected frame decision,
+or is an unowned flow page. Furniture and print marks preserve the joint
+stamp already proved through collection and physical placement. -/
+theorem run_frames_footed (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) :
+    ∀ p ∈ (run geom fs pats doc imgs frameSpans).pages,
+      SelectedFrame (frameOpenings geom fs pats doc imgs frameSpans) p.frameStamp := by
+  intro p hp
+  have hm : p.frameStamp ∈
+      (run geom fs pats doc imgs frameSpans).pages.map
+        (fun q => (q.frameOrigin, q.frame, q.foot)) :=
+    Array.mem_map.mpr ⟨p, hp, rfl⟩
+  rw [frame_origins_projects] at hm
+  obtain ⟨q, hq, he⟩ := Array.mem_map.mp hm
+  exact he ▸ ship_frames_footed geom fs pats doc imgs frameSpans q hq
+
+/-- The corrected frame-footer contract: each actual physical frame page
+uses the shared IR footer decision in force at its actual source opening.
+A plain standout frame may have a displayed number and no band. Counter
+restarts, overlays and spill pages do not detach a band from its opening. -/
+theorem frame_pages_footed (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (p : PageOut)
+    (hp : p ∈ (run geom fs pats doc imgs frameSpans).pages)
+    (origin : FrameOrigin) (ho : p.frameOrigin = some origin) :
+    ∃ f ∈ frameOpenings geom fs pats doc imgs frameSpans,
+      f.origin = some origin ∧ p.frame = f.number ∧ p.foot = f.footer := by
+  rcases run_frames_footed geom fs pats doc imgs frameSpans p hp with empty | selected
+  · have he := congrArg Prod.fst empty
+    simp only [PageOut.frameStamp, ho] at he
+    contradiction
+  · obtain ⟨f, hf, he⟩ := selected
+    simp only [PageOut.frameStamp, FrameOpening.stamp, Prod.mk.injEq] at he
+    exact ⟨f, hf, he.1.symm.trans ho, he.2.1, he.2.2⟩
 
 /-- Physical page order retains the IR folio and furniture decision recorded
 at shipment, through both postlude passes of the actual public run. -/
