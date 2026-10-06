@@ -1,4 +1,6 @@
-import LeanTex.Core.Diag
+module
+
+public import LeanTex.Core.Diag
 import Std.Data.HashMap
 
 /-! # The markdown surface: source → md AST
@@ -38,7 +40,7 @@ namespace LeanTex.Core.Md
 open LeanTex.Core
 
 /-- An inline node. `pos` is the position in the `.md` source. -/
-inductive Inl where
+public inductive Inl where
   | text (s : String) (pos : Pos)
   | code (s : String) (pos : Pos)
   | emph (body : Array Inl) (pos : Pos)
@@ -49,10 +51,10 @@ inductive Inl where
   | hard (pos : Pos)
   deriving Repr, BEq
 
-instance : Inhabited Inl := ⟨.soft {}⟩
+public instance : Inhabited Inl := ⟨.soft {}⟩
 
 /-- A block node. A list holds one `Array Blk` per item. -/
-inductive Blk where
+public inductive Blk where
   | para (body : Array Inl) (pos : Pos)
   | heading (level : Nat) (body : Array Inl) (pos : Pos)
   | code (info : String) (text : String) (pos : Pos)
@@ -62,7 +64,7 @@ inductive Blk where
       (pos : Pos)
   deriving Repr, BEq
 
-instance : Inhabited Blk := ⟨.rule {}⟩
+public instance : Inhabited Blk := ⟨.rule {}⟩
 
 -- ## Character classes
 
@@ -1396,7 +1398,7 @@ private def startsAnyBlock (cs : Array Char) (i : Nat) : Bool :=
 
 /-- Blocks for one markdown document, and the diagnostics the reader raised.
 The only recursion here is the loop's own index. -/
-def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run do
+public def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run do
   let lines := splitLines input
   let mut frames : Array Frame := #[]
   let mut acc : Array Blk := #[]
