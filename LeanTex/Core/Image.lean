@@ -252,11 +252,11 @@ reconstructs from the two streams the writer emits is a fact of the
 artifact, with no IR value behind it. -/
 
 /-- Source byte of byte `j` of a projected run of pixels. -/
-@[inline] def embPlane (chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
+@[inline] private def embPlane (chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
   j / k * chs + sel (j % k)
 
 /-- Keep `k` samples of every `chs`-sample pixel, chosen by `sel`. -/
-@[specialize] def project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) : ByteArray :=
+@[specialize] private def project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) : ByteArray :=
   Flate.build (px.size / chs * k) fun out => px[embPlane chs k sel out.size]?.getD 0
 
 /-- Split decoded pixels into the colour plane and the alpha plane:
@@ -269,14 +269,14 @@ def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
 /-- Source byte of byte `j` of a projected *predicted* stream: rows of
 `1 + W * k` bytes, each opening with the filter byte its source row (of
 `1 + W * chs` bytes) opens with. -/
-@[inline] def embPred (W chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
+@[inline] private def embPred (W chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
   let r := j / (1 + W * k)
   let t := j % (1 + W * k)
   if t = 0 then r * (1 + W * chs) else r * (1 + W * chs) + 1 + embPlane chs k sel (t - 1)
 
 /-- Project a predicted stream of `pxH` rows, `W` pixels of `chs` samples
 each, onto `k` samples per pixel — one read and one write per output byte. -/
-@[specialize] def projectPred (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
+@[specialize] private def projectPred (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
     ByteArray :=
   Flate.build (pxH * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0
 
@@ -286,12 +286,12 @@ writer deflates and declares Predictor 15 on. -/
 def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
   (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1)
 
-theorem getElem?_project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) (j : Nat)
+private theorem getElem?_project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) (j : Nat)
     (hj : j < px.size / chs * k) :
     (project px chs k sel)[j]? = some (px[embPlane chs k sel j]?.getD 0) := by
   rw [project, Flate.getElem?_build _ _ j hj, Flate.size_build]
 
-theorem projectPred_filter (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+private theorem projectPred_filter (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
     (r : Nat) (hr : r < pxH) :
     (projectPred raw pxH W chs k sel)[r * (1 + W * k)]? =
       some (raw[r * (1 + W * chs)]?.getD 0) := by
@@ -300,7 +300,7 @@ theorem projectPred_filter (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → 
     Flate.size_build, embPred]
   simp [Nat.mul_div_cancel _ hL, Nat.mul_mod_left]
 
-theorem projectPred_sample (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+private theorem projectPred_sample (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
     (r i : Nat) (hr : r < pxH) (hi : i < W * k) :
     (projectPred raw pxH W chs k sel)[r * (1 + W * k) + 1 + i]? =
       some (raw[r * (1 + W * chs) + 1 + embPlane chs k sel i]?.getD 0) := by
@@ -320,7 +320,7 @@ theorem projectPred_sample (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → 
 /-- Projection is an embedding of pixel runs: byte `j` of the projection is
 `j / (W * k)` rows down and `embPlane (j % (W * k))` into the source row —
 and that offset stays inside the row. -/
-theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
+private theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
     (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) (j : Nat) :
     embPlane chs k sel j = j / (W * k) * (W * chs) + embPlane chs k sel (j % (W * k)) ∧
     embPlane chs k sel (j % (W * k)) < W * chs := by
@@ -342,7 +342,7 @@ theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
 
 /-- One projected pixel back is one source pixel back: subtracting `m`
 projected pixels from `j` subtracts `m` source pixels from its source byte. -/
-theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m : Nat)
+private theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m : Nat)
     (h : k * m ≤ j) :
     embPlane chs k sel (j - k * m) = embPlane chs k sel j - m * chs ∧
     m * chs ≤ embPlane chs k sel j := by
@@ -353,7 +353,7 @@ theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m : Nat)
   omega
 
 /-- A projected byte has a left neighbour exactly when its source byte does. -/
-theorem embPlane_ge_iff (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k)
+private theorem embPlane_ge_iff (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k)
     (hsel : ∀ c < k, sel c < chs) (j : Nat) :
     chs ≤ embPlane chs k sel j ↔ k ≤ j := by
   constructor
@@ -373,7 +373,7 @@ strong induction along the plane — each byte's three neighbours are earlier
 bytes whose sources are the source byte's three neighbours (`embPlane_sub`),
 and the residual and filter byte are the same bytes (`projectPred_sample`,
 `projectPred_filter`). -/
-theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+private theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
     (hk : 0 < k) (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) :
     ∀ j, j < pxH * (W * k) →
       Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k
@@ -569,7 +569,7 @@ def trnsEntry (trns : ByteArray) (i : Nat) : Nat := (trns[i]?.getD 0).toNat
 /-- Where a left-to-right scan of an indexed tRNS stands: no transparent
 entry yet, inside the transparent run that opened at `lo`, or past the
 run `[lo, hi]`. -/
-inductive KeyState where
+private inductive KeyState where
   | before
   | inside (lo : Nat)
   | after (lo hi : Nat)
@@ -582,7 +582,7 @@ flatten it"
 
 /-- One entry: opaque keeps or closes the run, transparent opens or
 continues it, and a second run or a fractional value is the refusal. -/
-def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
+private def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
   if a = 255 then
     match st with
     | .before => .ok .before
@@ -596,7 +596,7 @@ def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
   else .error partialAlphaMsg
 
 /-- The scan state after the first `n` entries. -/
-def keyScan (trns : ByteArray) : Nat → Except String KeyState
+private def keyScan (trns : ByteArray) : Nat → Except String KeyState
   | 0 => .ok .before
   | n + 1 =>
     match keyScan trns n with
@@ -604,7 +604,7 @@ def keyScan (trns : ByteArray) : Nat → Except String KeyState
     | .error e => .error e
 
 /-- The mask an indexed scan ends in: nothing, or the one interval. -/
-def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
+private def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
   match keyScan trns trns.size with
   | .ok .before => .ok #[]
   | .ok (.inside lo) => .ok #[lo, trns.size - 1]
@@ -655,13 +655,13 @@ theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
   simp [colorKeyRanges, hsz, Nat.not_le.mpr h0, Nat.not_le.mpr h1, Nat.not_le.mpr h2]
 
 /-- Is entry `i` inside the transparent run a scan state describes? -/
-def KeyState.keyed : KeyState → Nat → Bool
+private def KeyState.keyed : KeyState → Nat → Bool
   | .before, _ => false
   | .inside lo, i => lo ≤ i
   | .after lo hi, i => lo ≤ i && i ≤ hi
 
 /-- The run a state describes lies within the entries read. -/
-def KeyState.wf : KeyState → Nat → Prop
+private def KeyState.wf : KeyState → Nat → Prop
   | .before, _ => True
   | .inside lo, n => lo < n
   | .after lo hi, n => lo ≤ hi ∧ hi < n
@@ -670,7 +670,7 @@ def KeyState.wf : KeyState → Nat → Prop
 and every entry read is 0 exactly inside the run it describes and 255
 everywhere else — so a scan that completes has read only 0 and 255, and
 the run is the whole truth about the zeros. -/
-theorem keyScan_spec (trns : ByteArray) :
+private theorem keyScan_spec (trns : ByteArray) :
     ∀ (n : Nat) (st : KeyState), keyScan trns n = .ok st →
       st.wf n ∧ ∀ i < n, trnsEntry trns i = if st.keyed i then 0 else 255 := by
   intro n
@@ -983,7 +983,7 @@ interpretation and, for the alpha types, the channel count that must
 really decode. The one place the type numbers are spelled — `plan` and
 `Plan.recodes` both read it, which is what ties the cache gate to the
 planner (`recodes_iff`). -/
-def pngSpace : Nat → Option (Space × Option Nat)
+private def pngSpace : Nat → Option (Space × Option Nat)
   | 0 => some (.gray, none)
   | 2 => some (.rgb, none)
   | 3 => some (.indexed, none)
@@ -998,7 +998,7 @@ here (a lying length, a chunk out of order, a colour type the spec has
 no row for); what the spec allows but the engine does not embed
 (interlace, a 16-bit alpha) is a fact on the `Source` for `plan` to
 refuse by name. -/
-def probePng (b : ByteArray) : Except String Source := do
+private def probePng (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 pngSig do
     throw "not a PNG file (bad signature)"
   -- IHDR must be first (ISO/IEC 15948 §5.6).
@@ -1143,7 +1143,7 @@ private def exifOrientation (b : ByteArray) (t end_ : Nat) : Nat := Id.run do
       return if 1 ≤ v && v ≤ 8 then v else 1
   return 1
 
-def probeJpeg (b : ByteArray) : Except String Source := do
+private def probeJpeg (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 [0xFF, 0xD8] do
     throw "not a JPEG file (no SOI marker)"
   let mut i := 2
@@ -1228,7 +1228,7 @@ later HTML-only path can size an `<img>`, and refused for the PDF by name
 /-- WebP (RIFF `WEBP`): a `VP8 ` key frame's 14-bit dimensions, a `VP8L`
 header's packed 14-bit dimensions plus one, or a `VP8X` canvas's 24-bit
 dimensions plus one. -/
-def probeWebp (b : ByteArray) : Except String Source := do
+private def probeWebp (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 [0x52, 0x49, 0x46, 0x46] && sliceEq b 8 [0x57, 0x45, 0x42, 0x50] do
     throw "not a WebP file (no RIFF WEBP header)"
   let dims : Option (Nat × Nat) :=
@@ -1260,7 +1260,7 @@ private def headerScanLimit : Nat := 65536
 
 /-- AVIF (ISOBMFF, `ftyp` brand `avif`/`avis`): dimensions from the `ispe`
 item property — version/flags, then width and height as u32. -/
-def probeAvif (b : ByteArray) : Except String Source := do
+private def probeAvif (b : ByteArray) : Except String Source := do
   unless sliceEq b 4 [0x66, 0x74, 0x79, 0x70] &&
       (sliceEq b 8 [0x61, 0x76, 0x69, 0x66] || sliceEq b 8 [0x61, 0x76, 0x69, 0x73]) do
     throw "not an AVIF file (no ftyp avif brand)"
@@ -1313,7 +1313,7 @@ private def jxlSize (b : ByteArray) (off : Nat) : Option (Nat × Nat) := do
 /-- JPEG XL: a bare codestream (`FF 0A`) or the ISOBMFF container (the
 `JXL ` signature box), whose codestream sits in a `jxlc` box or begins in
 the first `jxlp` box after its 4-byte index. -/
-def probeJxl (b : ByteArray) : Except String Source := do
+private def probeJxl (b : ByteArray) : Except String Source := do
   let codestream : Option Nat :=
     if sliceEq b 0 [0xFF, 0x0A] then some 0
     else if sliceEq b 0 [0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
@@ -1330,7 +1330,7 @@ def probeJxl (b : ByteArray) : Except String Source := do
 /-- JPEG 2000: a JP2 container (signature box, dimensions from `ihdr` —
 height then width) or a raw J2K codestream (`SOC SIZ`, dimensions
 `Xsiz − XOsiz` by `Ysiz − YOsiz`, ISO/IEC 15444-1 Annex A.5.1). -/
-def probeJpx (b : ByteArray) : Except String Source := do
+private def probeJpx (b : ByteArray) : Except String Source := do
   if sliceEq b 0 [0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
     let some i := findTag b [0x69, 0x68, 0x64, 0x72] headerScanLimit
       | throw "truncated JPEG 2000 file: no image header box (ihdr)"
@@ -1467,33 +1467,33 @@ def PlanParams.key (p : PlanParams) : String := Id.run do
 
 /-- The refusal for a format no PDF filter decodes: the format's own name
 opens it (`plan_refuses_named`). -/
-def unembeddableMsg (f : Format) : String :=
+private def unembeddableMsg (f : Format) : String :=
   f.name ++ " images cannot be embedded in a PDF (no PDF filter decodes the format); \
 re-export as PNG or JPEG"
 
-def jpxRefusedMsg : String :=
+private def jpxRefusedMsg : String :=
   Format.jpx.name ++ " images are not passed through yet; re-export as PNG or JPEG"
 
 /-- Is the source's profile dropped by this plan? Yes under the dropping
 policy, and for an indexed image under either (an `/Indexed` base of
 `/ICCBased` is the emission slice's). -/
-def iccDropped (p : PlanParams) (s : Source) (space : Space) : Bool :=
+private def iccDropped (p : PlanParams) (s : Source) (space : Space) : Bool :=
   s.icc.size != 0 && (p.iccPolicy matches .dropWithDiag || space matches .indexed)
 
 /-- The ledger every successful plan carries: each `Source` fact this
 slice's plans do not carry, named once. -/
-def lossesOf (p : PlanParams) (s : Source) (space : Space) : Array PlanLoss :=
+private def lossesOf (p : PlanParams) (s : Source) (space : Space) : Array PlanLoss :=
   (if iccDropped p s space then #[.iccDropped] else #[]) ++
     (if s.orientation != 1 then #[.orientationDropped] else #[])
 
 /-- The profile as `/FlateDecode` bytes: an iCCP payload is zlib already, a
 JPEG's concatenated segments deflate here. -/
-def iccZlib (s : Source) : ByteArray :=
+private def iccZlib (s : Source) : ByteArray :=
   if s.iccIsZlib then s.icc else Flate.deflate s.icc
 
 /-- The colour space a plan declares for `space`, the profile carried only
 when the policy says so and the base is a device space. -/
-def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDecl :=
+private def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDecl :=
   match space, iccDropped p s space || s.icc.size == 0 with
   | .indexed, _ => .indexed s.palette
   | .gray, true => .gray
@@ -1506,7 +1506,7 @@ the alpha split for 4/6, and the named refusals — interlace, a 16-bit
 alpha, a depth over the declared limit, a colour key the readers drop, a
 soft mask the declaration forbids. Spelled as matches, not a `do` block, so
 each theorem is a case split. -/
-def planPng (p : PlanParams) (s : Source) : Except String Plan :=
+private def planPng (p : PlanParams) (s : Source) : Except String Plan :=
   if s.interlace then .error "interlaced (Adam7) PNG is not supported; re-export without interlacing"
   else match pngSpace s.colorType with
   | none => .error s!"corrupt PNG: colour type {s.colorType}"
@@ -1564,7 +1564,7 @@ flatten it onto a background and re-export"
 
 /-- The JPEG arm: the whole file as `/DCTDecode`, one or three components
 at 8 bits; CMYK and other precisions refused by name. -/
-def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=
+private def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=
   if s.bitDepth != 8 then
     .error s!"JPEG sample precision {s.bitDepth} is not supported (8 expected)"
   else match s.colorType with
@@ -1631,7 +1631,7 @@ theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
       exact ⟨rfl, rfl⟩
 
 /-- `.iccDropped` sits in the ledger whenever the policy drops. -/
-theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
+private theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
     (hp : p.iccPolicy = .dropWithDiag) (hi : s.icc.size ≠ 0) :
     PlanLoss.iccDropped ∈ lossesOf p s space := by
   have hd : iccDropped p s space = true := by
@@ -1639,13 +1639,13 @@ theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
   simp [lossesOf, hd]
 
 /-- `.orientationDropped` sits in the ledger whenever the tag is not 1. -/
-theorem mem_lossesOf_orientation (p : PlanParams) (s : Source) (space : Space)
+private theorem mem_lossesOf_orientation (p : PlanParams) (s : Source) (space : Space)
     (ho : s.orientation ≠ 1) :
     PlanLoss.orientationDropped ∈ lossesOf p s space := by
   simp [lossesOf, ho]
 
 /-- Under the dropping policy no plan's colour carries a profile. -/
-theorem colorOf_dropWithDiag (p : PlanParams) (s : Source) (space : Space)
+private theorem colorOf_dropWithDiag (p : PlanParams) (s : Source) (space : Space)
     (hp : p.iccPolicy = .dropWithDiag) (n : Nat) (prof : ByteArray) :
     colorOf p s space ≠ .iccBased n prof := by
   have hd : iccDropped p s space = true ∨ s.icc.size = 0 := by
@@ -2169,7 +2169,7 @@ def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
     (subject := some src)
 
 /-- The diagnostic one ledger entry names, for the plan that carries it. -/
-def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
+private def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
   | .iccDropped => imageIccDropped src
   | .orientationDropped => imageOrientationDropped src pl.orientation
 
@@ -2204,7 +2204,7 @@ def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
   | .unreadable err => ({ toRequest := req }, some (imageUnreadable req.src err))
   | .refused why => ({ toRequest := req }, some { why with subject := some req.src })
 
-def fulfilList (entries : Array Loaded) (diags : Array Diag) :
+private def fulfilList (entries : Array Loaded) (diags : Array Diag) :
     List (Request × Fetch) → Store × Array Diag
   | [] => ({ entries }, diags)
   | (src, f) :: rest =>
