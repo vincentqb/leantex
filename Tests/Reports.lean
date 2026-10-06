@@ -1,7 +1,9 @@
 import Tests.DiagAudit
+import Tests.Surface
 import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
+import Tests.StringConditionals
 import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
@@ -35,6 +37,11 @@ import Tests.CancelReview
 import Tests.MathSym
 import Tests.BeamerHooks
 import Tests.BeamerColors
+import Tests.BeamerTemplates
+import Tests.ListDeclarations
+import Tests.Tcolorbox
+import Tests.TcolorboxColors
+import Tests.BlockBar
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
@@ -59,6 +66,8 @@ import Tests.ImageOrigins
 import Tests.SlideLabels
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
+import Tests.PictureBoundary
+import Tests.FontDefaults
 import scripts.LandCore
 
 /-!
@@ -94,7 +103,12 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
   diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
-  tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks)
+  tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
+  listDeclarationChecks stringConditionalChecks)
+open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
+open TcolorboxColors (tcolorboxColorChecks)
+open PictureBoundary (pictureBoundaryChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks)
 
 namespace Reports
 
@@ -662,7 +676,20 @@ def reports : List Report := [
     pins := [check% htmlContainedPublicationChecks, check% htmlContainedSvgColorChecks]
     accept := ["seventeen existing artifact assertions failed in continuous integration and in a local run with image tools absent from the process search path",
       "the same assertions pass with the declared image tools available before the build and test action"]
-    state := .guarded "7e7ce504" .before .author }
+    state := .guarded "7e7ce504" .before .author },
+  { id := "R87", date := "2026-10-05"
+    what := "a slide deck failed to compile because list declarations, numbered footers and custom content boxes were read as stray content, and picture requests lacked style dependencies"
+    pins := [check% beamerTemplateChecks, check% listDeclarationChecks,
+      check% tcolorboxChecks, check% tcolorboxSourceChecks, check% tcolorboxColorChecks,
+      check% blockBarChecks,
+      check% boundaryChecks, check% pictureBoundaryChecks, check% stringConditionalChecks,
+      check% fontDefaultsChecks, check% fontDefaultsOverrideChecks,
+      thm% Elab.ESt.titleInsert_exact, thm% Elab.withBlockDecls_exact,
+      thm% Tcolorbox.lower_body_covers, thm% Ir.pictureRefs_design_projects,
+      thm% Parse.scopeEnv_source_exact, thm% Layout.reserveBelow_covers]
+    accept := ["synthetic artifact guards failed before the list, footer and box translations, including local declarations, optional arguments and helpers declared after use templates",
+      "both versions of the reference deck compile to native pages and self-contained browser output"]
+    state := .guarded "6e8c3692" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

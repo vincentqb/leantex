@@ -23,10 +23,9 @@ para
 role display-peao
   center
     para
-      formula display "a &= {\\@ink:red \\textcolor {blue}{\\cancelto {7}{z}}} + w^2"
+      formula display "a &= {\\color {red}\\textcolor {blue}{\\cancelto {7}{z}}} + w^2"
         ord:align[(|ord:𝑎|ord:{} rel:= ord:{ink:#FF0000 ord:{ink:#0000FF ord:cancelto{ord:𝑧}to{ord:7}}} bin:+ ord:𝑤^{ord:2})]
 -- diagnostics
 note[N0100] 5:1 '\usepackage{amsmath}' → nothing: the engine does this itself
 note[N0100] 5:1 '\usepackage{xcolor}' → nothing: the engine does this itself
 note[N0100] 6:1 '\usepackage{cancel}' → the cancel marks, drawn from the math font's own rule constants
-note[N0100] 23:9 '\color{red}' → \red

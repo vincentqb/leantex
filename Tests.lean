@@ -9,6 +9,11 @@ import Tests.CancelContext
 import Tests.CancelReview
 import Tests.BeamerHooks
 import Tests.BeamerColors
+import Tests.BeamerTemplates
+import Tests.ListDeclarations
+import Tests.Tcolorbox
+import Tests.TcolorboxColors
+import Tests.BlockBar
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
@@ -62,6 +67,7 @@ import Tests.HtmlTokens
 import Tests.HtmlContained
 import Tests.HtmlA11y
 import Tests.Conditionals
+import Tests.StringConditionals
 import Tests.MacroBinding
 import Tests.MacroArguments
 import Tests.MacroDefaults
@@ -91,6 +97,8 @@ import Tests.Redefine
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
+import Tests.PictureBoundary
+import Tests.FontDefaults
 import Tests.PictureKeys
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
@@ -116,7 +124,11 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
   diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
-  inputUseChecks mathAlphaEntryChecks)
+  inputUseChecks mathAlphaEntryChecks listDeclarationChecks stringConditionalChecks)
+open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
+open TcolorboxColors (tcolorboxColorChecks)
+open PictureBoundary (pictureBoundaryChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -146,6 +158,9 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownInputChecks ref
   inputUseChecks ref
   backendChecks ref
+  pictureBoundaryChecks ref
+  fontDefaultsChecks ref
+  fontDefaultsOverrideChecks ref
   landmarkChecks ref
   pinChecks ref
   mdNameChecks ref
@@ -197,6 +212,13 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   titleSlotShipChecks ref oneFace
   beamerHookChecks ref oneFace
   beamerColorsChecks ref oneFace
+  beamerTemplateChecks ref oneFace
+  listDeclarationChecks ref oneFace
+  tcolorboxChecks ref oneFace
+  tcolorboxSourceChecks ref oneFace
+  tcolorboxColorChecks ref oneFace
+  blockBarChecks ref oneFace
+  stringConditionalChecks ref oneFace
   seedPaletteChecks ref oneFace
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace
