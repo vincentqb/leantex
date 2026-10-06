@@ -1,5 +1,6 @@
 import LeanTex.Core.Flate.BitWriter
-import LeanTex.Core.Flate.CodeLengths
+import LeanTex.Core.Flate.CodeLengthsReader
+import LeanTex.Core.Flate.CodeLengthsWriter
 import LeanTex.Core.Flate.PackageMerge
 
 namespace LeanTex.Core.Flate
@@ -135,32 +136,10 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.ru
         r := r'
         clLengths := clLengths.set! (clOrder[k]?.getD 0) v
       let clHuff := mkHuff clLengths
-      let mut lengths : Array Nat := #[]
-      for _ in [0:nlit + ndist + 1] do
-        if lengths.size ≥ nlit + ndist then
-          break
-        let some (sym, r') := clHuff.decode r | return .error "deflate: truncated"
-        r := r'
-        if sym < 16 then
-          lengths := lengths.push sym
-        else if sym == 16 then
-          let some (e, r2) := r.bits 2 | return .error "deflate: truncated"
-          r := r2
-          let some prev := lengths.back? | return .error "deflate: repeat with no previous length"
-          for _ in [0:e + 3] do
-            lengths := lengths.push prev
-        else if sym == 17 then
-          let some (e, r2) := r.bits 3 | return .error "deflate: truncated"
-          r := r2
-          for _ in [0:e + 3] do
-            lengths := lengths.push 0
-        else
-          let some (e, r2) := r.bits 7 | return .error "deflate: truncated"
-          r := r2
-          for _ in [0:e + 11] do
-            lengths := lengths.push 0
-      if lengths.size != nlit + ndist then
-        return .error "deflate: code lengths overrun their table"
+      let (lengths, r') ← match CodeLengths.read clHuff (nlit + ndist) r with
+        | .error e => return .error e
+        | .ok state => pure state
+      r := r'
       let lit := mkHuff (lengths.extract 0 nlit)
       let dist := mkHuff (lengths.extract nlit (nlit + ndist))
       match inflateBlock lit dist r out maxOut with
@@ -607,9 +586,7 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   for s in [0:distLens.size] do
     if distLens[s]?.getD 0 > 0 then ndist := max ndist (s + 1)
   let rle := CodeLengths.encode (litLens.extract 0 nlit ++ distLens.extract 0 ndist)
-  let mut clFreq : Array Nat := Array.replicate 19 0
-  for (s, _, _) in rle do
-    clFreq := clFreq.set! s (clFreq[s]?.getD 0 + 1)
+  let clFreq := CodeLengths.frequencies rle
   let clLens := pmLengths clFreq 7
   let clCodes := canonCodes clLens
   let mut nclen := 4
@@ -625,10 +602,7 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   w := w.push (nclen - 4) 4
   for k in [0:nclen] do
     w := w.push (clLens[clOrder[k]?.getD 0]?.getD 0) 3
-  for (s, ev, eb) in rle do
-    w := w.push (clCodes[s]?.getD 0) (clLens[s]?.getD 0)
-    if eb > 0 then
-      w := w.push ev eb
+  w := CodeLengths.write clLens clCodes rle w
   for t in tokens do
     if t < 256 then
       let lit := t.toNat
