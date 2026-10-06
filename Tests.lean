@@ -4,6 +4,7 @@ import Tests.Surface
 import Tests.ElabContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
+import Tests.ContrastContracts
 import Tests.FontSize
 import Tests.CancelRegression
 import Tests.CancelHtml
@@ -557,6 +558,7 @@ def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   paletteChecks ref
   mixChecks ref
   contrastChecks ref
+  contrastContractChecks ref
   a11yChecks ref
   themeChecks ref
   designChecks ref
@@ -625,6 +627,8 @@ def main (args : List String) : IO UInt32 := do
   salvageChecks ref
   diagSiteCountChecks ref
   elabWarningContractChecks ref
+  elabTitleBoundaryChecks ref
+  elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref
   siteAccountingChecks ref

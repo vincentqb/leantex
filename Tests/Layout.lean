@@ -2288,10 +2288,8 @@ command — a parameter, not content — so no character of it reaches the
 shipped page, while every `{...}` group survives, and no space the author
 never wrote is fabricated after the kept text. Judged over `Layout.Out`'s
 glyphs, never the IR dump: a bracketed number once shipped in front of a
-URL while the suite was green. `elabInlines` terminates provably now, so
-the elaborator half is stated at last — `elab_inlines_option_run_dropped`,
-staged under Obligations with its proof open on the elaboration budget;
-until that proof lands, this stays its shipped-page witness. -/
+URL. `Elab.elabInlines_option_run_exact` proves option erasure at the actual
+inline dispatch entry; these checks cover its rendered continuation. -/
 def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
