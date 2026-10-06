@@ -1,10 +1,12 @@
-import LeanTex.Core.Lex
+module
+
+public import LeanTex.Core.Lex
 
 namespace LeanTex.Core.Parse
 
 open LeanTex.Core LeanTex.Core.Lex
 
-inductive Raw where
+public inductive Raw where
   | word (s : String) (pos : Pos)
   | space
   | par (pos : Pos)
@@ -18,7 +20,7 @@ inductive Raw where
 
 /-- Macro ancestry is present even when empty on a positioned raw. A space
 has no position and leaves the enclosing consumer's ancestry unchanged. -/
-def Raw.origins? : Raw → Option (List MacroOrigin)
+@[expose] public def Raw.origins? : Raw → Option (List MacroOrigin)
   | .space => none
   | .word _ p | .par p | .ctrl _ p | .sym _ p
   | .group _ p | .math _ _ p | .env _ _ p | .verb _ _ p => some p.origins
@@ -29,7 +31,7 @@ mutual
 This is a raw-tree walk, before IR exists; its list companion accumulates
 without introducing scanner or group boundaries. `markMacro_source_exact`
 holds its source serialization unchanged, including nested bodies. -/
-def markMacro (origin : MacroOrigin) : Raw → Raw
+public def markMacro (origin : MacroOrigin) : Raw → Raw
   | .word s p => .word s { p with origins := origin :: p.origins }
   | .space => .space
   | .par p => .par { p with origins := origin :: p.origins }
@@ -43,19 +45,19 @@ def markMacro (origin : MacroOrigin) : Raw → Raw
     .env n (markMacroList origin #[] body.toList) { p with origins := origin :: p.origins }
   | .verb env s p => .verb env s { p with origins := origin :: p.origins }
 
-def markMacroList (origin : MacroOrigin) (acc : Array Raw) : List Raw → Array Raw
+public def markMacroList (origin : MacroOrigin) (acc : Array Raw) : List Raw → Array Raw
   | [] => acc
   | r :: rest => markMacroList origin (acc.push (markMacro origin r)) rest
 
 end
 
-theorem markMacro_origins_exact (origin : MacroOrigin) (r : Raw) :
+public theorem markMacro_origins_exact (origin : MacroOrigin) (r : Raw) :
     (markMacro origin r).origins? = r.origins?.map (origin :: ·) := by
   cases r <;> rfl
 
 /-- The accumulator prefix is untouched; each input raw occupies exactly
 one output position, in the same order. -/
-theorem markMacroList_toList (origin : MacroOrigin) (acc : Array Raw) (rs : List Raw) :
+public theorem markMacroList_toList (origin : MacroOrigin) (acc : Array Raw) (rs : List Raw) :
     (markMacroList origin acc rs).toList = acc.toList ++ rs.map (markMacro origin) := by
   induction rs generalizing acc with
   | nil => simp [markMacroList]
@@ -89,7 +91,7 @@ private structure Frame where
 `\newenvironment{name}{begin}{end}` defines `\name` and `\endname` as macros
 (ltdefns.dtx), so an environment opened in the first and closed in the
 second is balanced where the environment is used, never inside one body. -/
-def envDefiners : List String :=
+public def envDefiners : List String :=
   ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
 
 /-- A definer body's half of a construct its other body completes — an
@@ -98,13 +100,13 @@ definer to judge. The name holds a space, which no word token holds (`Lex`:
 a word is a run of characters neither special nor white space), and a
 document's environment name is one word (`envName`), so no document can
 spell one. -/
-def splitOpen (name : String) : String := "open " ++ name
-def splitClose (name : String) : String := "close " ++ name
+public def splitOpen (name : String) : String := "open " ++ name
+public def splitClose (name : String) : String := "close " ++ name
 
-def splitOpen? (n : String) : Option String :=
+public def splitOpen? (n : String) : Option String :=
   if n.startsWith "open " then some ((n.drop "open ".length).toString) else none
 
-def splitClose? (n : String) : Option String :=
+public def splitClose? (n : String) : Option String :=
   if n.startsWith "close " then some ((n.drop "close ".length).toString) else none
 
 /-- The name a half of a frame carries: the environment's name, or the
@@ -179,7 +181,7 @@ where scanning the level made it quadratic. -/
 def definerReach : Nat := 128
 
 /-- The items `envBodyNext` reads: the last `definerReach` of the level. -/
-def definerWindow (acc : Array Raw) : Array Raw :=
+public def definerWindow (acc : Array Raw) : Array Raw :=
   acc.extract (acc.size - definerReach) acc.size
 
 /-- Is the group opening after `acc` one of an environment definer's two
@@ -192,7 +194,7 @@ private def envBodyNext (acc : Array Raw) : Bool :=
 
 /-- The window is its own window, so the verdict at a `{` depends on the
 last `definerReach` items of the level and on nothing before them. -/
-theorem definerWindow_fixed_point (acc : Array Raw) :
+public theorem definerWindow_fixed_point (acc : Array Raw) :
     definerWindow (definerWindow acc) = definerWindow acc := by
   unfold definerWindow
   rw [Array.extract_extract]
@@ -222,12 +224,12 @@ private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : D
 
 /-- An open half settled to what a plain parse makes of it: its frame
 closed at the body's brace, with that parse's diagnostic. -/
-def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : Array Raw × Diag :=
+public def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : Array Raw × Diag :=
   let stop := halfStop name
   ((⟨stop, pos, #[], false⟩ : Frame).close body, unclosedAtBrace file stop pos)
 
 /-- The diagnostic a plain parse raises at a close half. -/
-def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
+public def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
   match halfStop name with
   | .env n => unmatchedEnd file n pos
   | s => err file .E0202 s!"unexpected {s.name}" pos
@@ -246,7 +248,7 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
 /-- Parse tokens into a `Raw` forest with one pass and an explicit frame
 stack: no recursion, so totality is immediate. Recovery is unchanged —
 strays are reported and skipped, unclosed delimiters close at end of input. -/
-def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.run do
+public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.run do
   let mut frames : Array Frame := #[]
   let mut acc : Array Raw := #[]
   let mut diags : Array Diag := #[]
@@ -381,7 +383,7 @@ spaces and tabs, then `[...]` with `{}`-nesting respected (listings reads
 its per-environment keys there; a bracket on a later line is content, as
 in listings). Returns the option text and the index past the `]`, `none`
 when no head stands or the bracket never closes. -/
-def listingOptHead (s : String) : Option (String × Nat) := Id.run do
+public def listingOptHead (s : String) : Option (String × Nat) := Id.run do
   let cs := s.toList.toArray
   let mut i := 0
   for _ in [0:cs.size] do
@@ -409,7 +411,7 @@ def listingOptHead (s : String) : Option (String × Nat) := Id.run do
 /-- The mandatory `{language}` head of a `{minted}` body, after any option
 head. Shared by defaults injection and elaboration so both read the same
 lexer name without changing the captured source. -/
-def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
+public def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
   let cs := s.toList.toArray
   let mut i := start
   for _ in [0:cs.size] do
@@ -437,40 +439,40 @@ this string, so it must round-trip what the lexer accepted. -/
 so every stage downstream knows which file a position belongs to. The name
 holds a space, as a split half's does (`splitOpen`), so no document can
 forge one. -/
-def inputEnv (file : String) : String := "input " ++ file
+public def inputEnv (file : String) : String := "input " ++ file
 
-def inputEnvFile? (name : String) : Option String :=
+@[expose] public def inputEnvFile? (name : String) : Option String :=
   if name.startsWith "input " then some ((name.drop "input ".length).toString)
   else none
 
 /-- A generated declaration scope is not an authored argument group.
 The space keeps this wrapper outside the environment names a document can
 spell, as with `inputEnv`. Serializing it restores ordinary TeX braces. -/
-def scopeEnv : String := "scope "
+public def scopeEnv : String := "scope "
 
 /-- The index past the leading run of `.space` raws at `i`: the one spaces
 scan over sibling raws, shared by every consumer of `Raw` — a caller never
 hand-rolls its own. -/
-def skipSpaces (raws : Array Raw) (i : Nat) : Nat :=
+@[expose] public def skipSpaces (raws : Array Raw) (i : Nat) : Nat :=
   if h : i < raws.size then
     if raws[i] matches .space then skipSpaces raws (i + 1) else i
   else i
 termination_by raws.size - i
 
-theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
+public theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
   fun_induction skipSpaces raws i <;> omega
 
 mutual
 
-def rawSrc (raws : Array Raw) : String :=
+@[expose] public def rawSrc (raws : Array Raw) : String :=
   (rawSrcList raws.toList).trimAscii.toString
 
-def rawSrcList (rs : List Raw) : String :=
+@[expose] public def rawSrcList (rs : List Raw) : String :=
   match rs with
   | [] => ""
   | r :: rest => rawSrcOne r ++ rawSrcList rest
 
-def rawSrcOne (r : Raw) : String :=
+@[expose] public def rawSrcOne (r : Raw) : String :=
   match r with
   | .word s _ => s
   | .space => " "
@@ -494,7 +496,7 @@ end
 
 /-- Generated scopes retain the source spelling of ordinary TeX groups;
 their distinct surface node prevents argument readers from consuming them. -/
-theorem scopeEnv_source_exact (body : Array Raw) (p : Pos) :
+public theorem scopeEnv_source_exact (body : Array Raw) (p : Pos) :
     rawSrcOne (.env scopeEnv body p) = rawSrcOne (.group body p) := by
   simp only [rawSrcOne, BEq.rfl, ↓reduceIte]
 
@@ -502,14 +504,14 @@ mutual
 
 /-- Annotating an array preserves the outer source spelling, including the
 serializer's trimming and every nested body's own serialization. -/
-theorem markMacroArray_source_exact (origin : MacroOrigin) (raws : Array Raw) :
+public theorem markMacroArray_source_exact (origin : MacroOrigin) (raws : Array Raw) :
     rawSrc (markMacroList origin #[] raws.toList) = rawSrc raws := by
   simp only [rawSrc, markMacroList_toList, List.nil_append]
   rw [markMacroList_source_exact]
 
 /-- The untrimmed list spelling is preserved too: annotation cannot hide a
 changed separator at either end behind the outer serializer's trimming. -/
-theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw) :
+public theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw) :
     rawSrcList (rs.map (markMacro origin)) = rawSrcList rs := by
   cases rs with
   | nil => rfl
@@ -519,7 +521,7 @@ theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw) :
 
 /-- Provenance changes no source text. The statement covers every raw,
 recursing through groups, both math forms, and environments. -/
-theorem markMacro_source_exact (origin : MacroOrigin) (r : Raw) :
+public theorem markMacro_source_exact (origin : MacroOrigin) (r : Raw) :
     rawSrcOne (markMacro origin r) = rawSrcOne r := by
   cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact]
 
