@@ -3,7 +3,9 @@ import LeanTex.Core.Loop
 import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
 import LeanTex.Core.Flate
+import LeanTex.Core.Flate.BitWriterProof
 import LeanTex.Core.PdfRead
+import LeanTex.Core.PdfReadProof
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
 import LeanTex.Core.Image
@@ -36,6 +38,7 @@ import LeanTex.Core.Locale
 import LeanTex.Core.LocaleData
 import LeanTex.Core.LocaleContract
 import LeanTex.Core.Compat
+import LeanTex.Core.CompatContract
 import LeanTex.Core.Elab
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
@@ -52,6 +55,7 @@ import LeanTex.Core.Check
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct
 import LeanTex.Core.Pdf
+import LeanTex.Core.PdfFontContract
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
 import LeanTex.Cli.DriverDiag
