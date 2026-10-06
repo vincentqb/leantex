@@ -115,4 +115,71 @@ theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
     some (.int p.table.size) from fields.2.2.1]
   rfl
 
+/-- The complete production writer's xref contract on its checked numeric
+domain. The actual reader recovers the catalog root and exactly `/Size - 1`
+live objects. This includes every image, copied resource, outline,
+structure element, and cached input accepted by the writer.
+
+The premises are storage bounds only. Footer parsing, compression,
+checksums, binary row decoding, allocation coverage, and the reader's
+live-object count are proved here through their production functions. -/
+theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
+    (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
+    (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
+    (tree : Struct.Tree) (ops : Array (Array ContentOp))
+    (programs : Array (ByteArray × Bool))
+    (h : (prepare geom fs pages info imgs outline streams tree ops programs).WithinBounds) :
+    ∃ x, readXref (write geom fs pages info imgs outline streams tree ops programs) = .ok x ∧
+      x.root = some 1 ∧
+      (x.trailer.bind (·.get? "Size")).bind Obj.int? = some (x.locs.size + 1) := by
+  let p := prepare geom fs pages info imgs outline streams tree ops programs
+  change p.WithinBounds at h
+  change ∃ x, readXref p.bytes = .ok x ∧ x.root = some 1 ∧
+    (x.trailer.bind (·.get? "Size")).bind Obj.int? = some (x.locs.size + 1)
+  obtain ⟨x, hx, hr, hs, _⟩ := p.checked_readXref_contract p.bytes
+    ((p.checked_exact p.bytes).2 ⟨h, rfl⟩)
+  have he := prepare_entries_contract geom fs pages info imgs outline streams tree ops programs
+  change p.entries.size = p.table.size ∧
+    p.entries[0]?.bind xrefEntryLocation = none ∧
+    (∀ i, 0 < i → i < p.entries.size →
+      (p.entries[i]?.bind xrefEntryLocation).isSome = true) at he
+  let x0 : PdfRead.Xref :=
+    {start := p.measure.body.size, root := some 1,
+     trailer := some (p.measure.xrefDict p.table)}
+  have hv : x =
+      (readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0 x0).1 := by
+    have hp := p.readXref_exact h
+    rw [hx] at hp
+    exact Except.ok.inj hp
+  have hn : x.locs.size = p.table.size - 1 := by
+    rw [hv]
+    exact readXrefSubsection_size_exact p.entries (p.entries_fits h)
+      he.2.1 he.2.2 p.table.size (by omega) x0 rfl
+  have hp : 0 < p.table.size := by
+    have ht := prepare_table_exact geom fs pages info imgs outline streams tree ops programs
+    change p.table = tableOf fs pages imgs outline tree at ht
+    rw [ht]
+    simp only [tableOf, objTable]
+    omega
+  refine ⟨x, hx, hr, ?_⟩
+  rw [hs]
+  have hcount : p.table.size = x.locs.size + 1 := by omega
+  rw [hcount]
+
+/-- Every successful result from the checked producer satisfies the
+complete xref obligation. The publisher needs no separate bounds proof:
+success of the API that supplied its bytes establishes that domain. -/
+theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
+    (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
+    (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
+    (tree : Struct.Tree) (ops : Array (Array ContentOp))
+    (programs : Array (ByteArray × Bool)) (b : ByteArray)
+    (h : writeChecked geom fs pages info imgs outline streams tree ops programs = .ok b) :
+    ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
+      (x.trailer.bind (·.get? "Size")).bind Obj.int? = some (x.locs.size + 1) := by
+  obtain ⟨bounds, hb⟩ := (writeChecked_exact geom fs pages info imgs outline streams
+    tree ops programs b).mp h
+  rw [← hb]
+  exact write_readXref_exact geom fs pages info imgs outline streams tree ops programs bounds
+
 end LeanTex.Core.Pdf

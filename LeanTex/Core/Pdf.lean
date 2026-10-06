@@ -4,6 +4,7 @@ import LeanTex.Core.Font
 import LeanTex.Core.FontSubset
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
+import LeanTex.Core.Loop
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct
 import LeanTex.Core.PdfXref
@@ -2093,5 +2094,396 @@ theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
     write geom fs pages info imgs outline streams tree ops programs =
       (prepare geom fs pages info imgs outline streams tree ops programs).bytes := rfl
+
+private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut) :
+    ∀ k ∈ usedImagesOf imgs pages, ((imgs.get? k).bind (·.info)).isSome = true := by
+  let P := fun out : Array Nat =>
+    ∀ k ∈ out, ((imgs.get? k).bind (·.info)).isSome = true
+  change P (usedImagesOf imgs pages)
+  unfold usedImagesOf
+  simp only [Id.run, bind, pure]
+  apply Loop.forIn_array_inv P
+  · simp [P]
+  · intro p _ out h
+    change P (forIn p.lines out _ : Id (Array Nat))
+    apply Loop.forIn_array_inv P
+    · exact h
+    · intro l _ out h
+      change P (forIn l.segs out _ : Id (Array Nat))
+      apply Loop.forIn_array_inv P
+      · exact h
+      · intro s _ out h
+        dsimp only [Id.run, bind, pure]
+        split
+        · split
+          · rename_i k _ _ _ hk
+            intro j hj
+            rcases Array.mem_push.mp hj with hj | rfl
+            · exact h j hj
+            · exact (Bool.and_eq_true_iff.mp hk).1
+          · exact h
+        · exact h
+
+private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
+    l.zipIdx.map (fun p => f p.2) = (List.range l.length).map f := by
+  have h := congrArg (List.map f) (List.zipIdx_map_snd 0 l)
+  simpa only [List.map_map, List.range_eq_range', Function.comp_def] using h
+/-- The producer uses the public allocation table, for every cache value. -/
+theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
+    (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    (prepare geom fs pages info imgs outline streams tree ops programs).table =
+      tableOf fs pages imgs outline tree := by
+  unfold prepare tableOf
+  simp only [Id.run, pure, bind, keepFaces, fill, Array.size_map]
+
+/-- The exact IDs of the producer's object-stream values. -/
+theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
+    (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    let p := prepare geom fs pages info imgs outline streams tree ops programs
+    let t := p.table
+    p.compressed.map Prod.fst =
+      [1, 2] ++ (List.range t.nf).flatMap (fun k =>
+        [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k]) ++
+      [t.infoId] ++
+      (if t.nOut == 0 then [] else t.outlineRootId ::
+        (List.range t.nOut).map t.outlineItemId) ++
+      (List.range t.np).map t.pageId ++
+      [t.structTreeRoot, t.parentTree, t.namespaceId] ++
+      (List.range t.nElems).map t.structElemId := by
+  dsimp only
+  simp only [prepare, Id.run, pure, bind, List.map_append, List.map_cons,
+    List.map_nil, List.map_flatMap, FontObjects.rows, List.map_map, Function.comp_def,
+    List.append_assoc, fill, Array.size_map]
+  simp only [apply_ite, List.map_nil, List.map_cons, List.map_map, Function.comp_def]
+  simp only [map_zipIdx_snd, Array.length_toList, Array.size_map]
+  rfl
+private theorem forIn_ids {α β : Type} (ids : β → List Nat)
+    (f : α → β → Id (ForInStep β)) (emits : α → List Nat)
+    (xs : List α) (initial : β)
+    (hf : ∀ a ∈ xs, ∀ state, ∃ next,
+      f a state = .yield next ∧ ids next = ids state ++ emits a) :
+    ids (forIn xs initial f : Id β).run = ids initial ++ xs.flatMap emits := by
+  induction xs generalizing initial with
+  | nil => simp
+  | cons a xs ih =>
+    obtain ⟨next, hn, he⟩ := hf a (by simp) initial
+    rw [List.forIn_cons, hn]
+    change ids (forIn xs next f : Id β).run =
+      ids initial ++ (a :: xs).flatMap emits
+    rw [ih next (fun b hb => hf b (by simp [hb])), he]
+    simp only [List.flatMap_cons, List.append_assoc]
+
+private theorem forIn_range_ids {β : Type} (ids : β → List Nat)
+    (f : Nat → β → Id (ForInStep β)) (emits : Nat → List Nat)
+    (hi : Nat) (initial : β)
+    (hf : ∀ i, i < hi → ∀ state, ∃ next,
+      f i state = .yield next ∧ ids next = ids state ++ emits i) :
+    ids (forIn [0:hi] initial f : Id β) =
+      ids initial ++ (List.range hi).flatMap emits := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  simp only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel,
+    Nat.div_one, ← List.range_eq_range']
+  exact forIn_ids ids f emits _ initial (fun i hi => hf i (List.mem_range.mp hi))
+
+private theorem forIn_array_ids {α β : Type} (ids : β → List Nat)
+    (f : α → β → Id (ForInStep β)) (emits : α → List Nat)
+    (xs : Array α) (initial : β)
+    (hf : ∀ a ∈ xs, ∀ state, ∃ next,
+      f a state = .yield next ∧ ids next = ids state ++ emits a) :
+    ids (forIn xs initial f : Id β) = ids initial ++ xs.toList.flatMap emits := by
+  rw [← Array.forIn_toList]
+  exact forIn_ids ids f emits _ initial (fun a ha => hf a (by simpa using ha))
+
+private theorem zRow_id (n : Nat) (d : String) (data z : ByteArray) :
+    (zRow n d data z).id = n := by
+  unfold zRow
+  split <;> rfl
+
+private theorem flateRow_id (n : Nat) (d : String) (data : ByteArray) :
+    (flateRow n d data).id = n := zRow_id ..
+
+private theorem image_slots (keep : Array Nat) (imgs : Image.Store) (used : Array Nat)
+    (np nOut nElems k id n : Nat) (hk : used[n]? = some k)
+    (hi : (objTable keep imgs used np nOut nElems).imgIds[n]? = some id) :
+    let t := objTable keep imgs used np nOut nElems
+    t.formBases[n]?.join =
+      (match imgExtraOf imgs k with | .form _ => some (id + 1) | _ => none) ∧
+    t.smaskIds[n]?.join =
+      (match imgExtraOf imgs k with | .alpha => some (id + 1) | _ => none) := by
+  dsimp only
+  simp only [objTable, Array.getElem?_map, Array.zip, Array.getElem?_zipWith',
+    show (blockStarts (3 + 5 * keep.size)
+      ((used.map (imgExtraOf imgs)).map ImgExtra.span).toList).toArray[n]? = some id
+      from hi, hk, Option.map_some, Option.bind_some, Option.join_some]
+  cases imgExtraOf imgs k <;> exact ⟨rfl, rfl⟩
+
+private theorem zip_flatMap_swap {α β γ : Type} (xs : List α) (ys : List β)
+    (f : α → β → List γ) :
+    (xs.zip ys).flatMap (fun p => f p.1 p.2) =
+      (ys.zip xs).flatMap (fun p => f p.2 p.1) := by
+  induction xs generalizing ys with
+  | nil => simp
+  | cons x xs ih => cases ys <;> simp [ih]
+
+private theorem flatMap_zipIdx_fst {α β : Type} (xs : List α)
+    (f : α → List β) :
+    xs.zipIdx.flatMap (fun p => f p.1) = xs.flatMap f := by
+  simpa only [List.flatMap_map] using
+    congrArg (List.flatMap f) (List.zipIdx_map_fst 0 xs)
+
+private theorem image_transcript (used ids : Array Nat) (imgs : Image.Store) :
+    (used.zip ids).zipIdx.toList.flatMap
+      (fun x => List.range' x.1.2 (imgExtraOf imgs x.1.1).span) =
+    (ids.zip ((used.map (imgExtraOf imgs)).map ImgExtra.span)).toList.flatMap
+      (fun p => List.range' p.1 p.2) := by
+  simp only [Array.toList_zipIdx]
+  rw [flatMap_zipIdx_fst (f := fun p : Nat × Nat =>
+    List.range' p.2 (imgExtraOf imgs p.1).span)]
+  simp only [Array.toList_zip, Array.toList_map, List.zip_map_right, List.flatMap_map]
+  exact zip_flatMap_swap used.toList ids.toList
+    (fun k id => List.range' id (imgExtraOf imgs k).span)
+
+
+/-- The direct-stream loops emit the complete image, page, font, and metadata families.
+This is a progress proof of the production loops. -/
+theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array Layout.OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    let p := prepare geom fs pages info imgs outline streams tree ops programs
+    p.direct.toList.map Row.id =
+      (List.range p.table.np).map p.table.contentId ++
+      ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun p => List.range' p.1 p.2) ++
+      (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
+      [p.table.xmpId] := by
+  let t := tableOf fs pages imgs outline tree
+  dsimp only
+  simp only [prepare, Id.run, bind, pure, fill, Array.size_map]
+  simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, flateRow_id]
+  rw [forIn_range_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
+    (emits := fun k => [ObjTable.toUniId k, t.fileId k])]
+  case hf =>
+    intro k _ rs
+    refine ⟨_, rfl, ?_⟩
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, flateRow_id]
+    split <;> simp only [zRow_id, flateRow_id, List.append_assoc, List.cons_append,
+      List.nil_append]
+    all_goals rfl
+  rw [forIn_array_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
+    (emits := fun x : (Nat × Nat) × Nat => List.range' x.1.2 (imgExtraOf imgs x.1.1).span)]
+  case hf =>
+    rintro ⟨⟨k, imgId⟩, n⟩ hm rs
+    have hs := Array.getElem?_zip_eq_some.mp (Array.mem_zipIdx_iff_getElem?.mp hm)
+    obtain ⟨inf, hinf⟩ := Option.isSome_iff_exists.mp
+      (usedImagesOf_loaded imgs pages k (Array.mem_of_getElem? hs.1))
+    have slots := image_slots _ imgs _ pages.size outline.size (skeleton tree).size
+      k imgId n hs.1 hs.2
+    simp only [hinf]
+    cases hf : inf.form with
+    | some f =>
+      simp only [imgExtraOf, hinf, hf] at slots ⊢
+      rw [slots.1]
+      refine ⟨_, rfl, ?_⟩
+      rw [forIn_array_ids (ids := fun rows : Array Row => rows.toList.map Row.id)
+        (emits := fun p : PdfRead.XObjOut × Nat => [imgId + 1 + p.2])]
+      case hf =>
+        intro p _ rows
+        exact ⟨_, rfl, by simp only [Array.toList_push, List.map_append,
+          List.map_cons, List.map_nil]⟩
+      simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil,
+        ← List.map_eq_flatMap, Array.toList_zipIdx, map_zipIdx_snd, Array.length_toList,
+        ImgExtra.span, ← List.range'_eq_map_range, List.range'_succ, List.append_assoc,
+        List.cons_append, List.nil_append]
+    | none =>
+      simp only [imgExtraOf, hinf, hf] at slots ⊢
+      rw [slots.2]
+      cases inf.alpha <;> refine ⟨_, rfl, ?_⟩ <;>
+        simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil,
+          ImgExtra.span, List.range'_succ, List.range'_zero, List.append_assoc,
+          List.cons_append, List.nil_append]
+  rw [forIn_range_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
+    (emits := fun k => [t.contentId k])]
+  case hf =>
+    intro k _ rows
+    refine ⟨_, rfl, ?_⟩
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
+    split <;> simp only [zRow_id, flateRow_id] <;> rfl
+  rw [image_transcript]
+  simp only [List.map_nil, List.nil_append, ← List.map_eq_flatMap]
+  rfl
+
+private theorem emission_covers (p : WritePlan)
+    (hd : p.direct.toList.map Row.id =
+      (List.range p.table.np).map p.table.contentId ++
+      ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun q => List.range' q.1 q.2) ++
+      (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
+      [p.table.xmpId])
+    (hc : p.compressed.map Prod.fst =
+      [1, 2] ++ (List.range p.table.nf).flatMap (fun k =>
+        [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k]) ++
+      [p.table.infoId] ++
+      (if p.table.nOut == 0 then [] else p.table.outlineRootId ::
+        (List.range p.table.nOut).map p.table.outlineItemId) ++
+      (List.range p.table.np).map p.table.pageId ++
+      [p.table.structTreeRoot, p.table.parentTree, p.table.namespaceId] ++
+      (List.range p.table.nElems).map p.table.structElemId) :
+    ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
+      id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst := by
+  intro id hid
+  simp only [WritePlan.rows, WritePlan.rowsWith, Array.toList_push, List.map_append,
+    List.map_cons, List.map_nil, flateRow_id, hd, hc]
+  simp only [Array.mem_def, ObjTable.ids, Array.toList_append, Array.toList_flatMap,
+    Array.toList_map, Array.toList_range, Array.toList_range'] at hid
+  clear hd hc
+  cases hout : p.table.nOut == 0
+  all_goals
+    simp only [hout, Bool.false_eq_true, ↓reduceIte,
+      Array.toList_append, Array.toList_map,
+      Array.toList_range, List.mem_append, List.mem_flatMap, List.mem_map,
+      List.mem_cons, List.not_mem_nil, or_false,
+      Array.toList_empty] at hid ⊢
+    grind only
+
+/-- Every allocated object is emitted by the production writer: as the
+xref itself, a direct row, or a value in the object stream. This includes
+the resource graphs and soft masks of all loaded images. -/
+theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    let p := prepare geom fs pages info imgs outline streams tree ops programs
+    ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
+      id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst :=
+  emission_covers _
+    (prepare_direct_ids_exact geom fs pages info imgs outline streams tree ops programs)
+    (prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs)
+
+private theorem indexObjectsList_live {α : Type} (rows : List (Nat × α))
+    (out : Array (Option α)) (id : Nat) (hid : id < out.size)
+    (h : ((out[id]?).join).isSome = true ∨ id ∈ rows.map Prod.fst) :
+    (((indexObjectsList out rows)[id]?).join).isSome = true := by
+  induction rows generalizing out with
+  | nil => simpa [indexObjectsList] using h
+  | cons r rest ih =>
+    apply ih (out.setIfInBounds r.1 (some r.2)) (by simpa using hid)
+    by_cases hr : r.1 = id
+    · left
+      simp [hr, hid]
+    · rcases h with h | h
+      · left
+        simpa [hr] using h
+      · right
+        simpa only [List.map_cons, List.mem_cons, Ne.symm hr, false_or] using h
+
+/-- Every recorded, in-range id has a position in the actual dense
+index, including when later records replace its value. -/
+theorem indexObjects_covers {α : Type} (size : Nat) (rows : List (Nat × α))
+    (id : Nat) (hid : id < size) (hm : id ∈ rows.map Prod.fst) :
+    (((indexObjects size rows)[id]?).join).isSome = true :=
+  indexObjectsList_live rows _ id (by simpa using hid) (Or.inr hm)
+
+/-- The compressed index covers every in-range id of its source list. -/
+theorem compressedIndex_covers (size : Nat) (objects : List (Nat × PdfRead.Obj))
+    (id : Nat) (hid : id < size) (hm : id ∈ objects.map Prod.fst) :
+    (((compressedIndex size objects)[id]?).join).isSome = true := by
+  apply indexObjects_covers size _ id hid
+  have h := congrArg (List.map Prod.fst) (List.zipIdx_map_fst 0 objects)
+  simp only [List.map_map, Function.comp_def] at h ⊢
+  rw [h]
+  exact hm
+
+private theorem writerEntry_live (t : ObjTable) (locs : Array (Nat × Nat))
+    (objects : List (Nat × PdfRead.Obj)) (off id : Nat) (hid : id < t.size)
+    (hc : id = t.xrefId ∨ id ∈ locs.toList.map Prod.fst ∨
+      id ∈ objects.map Prod.fst) :
+    (PdfRead.xrefEntryLocation (xrefEntry t
+      (fun n => ((compressedIndex t.size objects)[n]?).join)
+      (fun n => ((indexObjects t.size locs.toList)[n]?).join) off id)).isSome = true := by
+  unfold xrefEntry
+  split
+  · rfl
+  · rename_i hx
+    cases hcomp : ((compressedIndex t.size objects)[id]?).join with
+    | some idx => simp only [hcomp, PdfRead.xrefEntryLocation, Option.isSome_some]
+    | none =>
+      cases hdir : ((indexObjects t.size locs.toList)[id]?).join with
+      | some pos => simp only [hcomp, hdir, PdfRead.xrefEntryLocation, Option.isSome_some]
+      | none =>
+        exfalso
+        rcases hc with hc | hc | hc
+        · exact hx (by simpa using hc)
+        · have := indexObjects_covers t.size locs.toList id hid hc
+          simp [hdir] at this
+        · have := compressedIndex_covers t.size objects id hid hc
+          simp [hcomp] at this
+
+private theorem plan_entries_contract (p : WritePlan)
+    (keep : Array Nat) (imgs : Image.Store) (used : Array Nat) (np no ne : Nat)
+    (ht : p.table = objTable keep imgs used np no ne)
+    (hc : ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
+      id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst) :
+    p.entries.size = p.table.size ∧
+    p.entries[0]?.bind PdfRead.xrefEntryLocation = none ∧
+    ∀ i, 0 < i → i < p.entries.size →
+      (p.entries[i]?.bind PdfRead.xrefEntryLocation).isSome = true := by
+  have hs : p.entries.size = p.table.size := by
+    simpa only [WritePlan.entries, writerXrefEntries, ht] using
+      (xrefEntries_size_exact keep imgs used np no ne
+        (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
+        (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
+        p.serialized.1.size).1
+  have hi (i : Nat) (hib : i < p.table.size) :
+      p.entries[i]? = some (if i = 0 then Xref.Entry.free 0 65535 else
+        xrefEntry p.table
+          (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
+          (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
+          p.serialized.1.size i) := by
+    simpa only [WritePlan.entries, writerXrefEntries, ht] using
+      xrefEntries_index_exact keep imgs used np no ne
+        (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
+        (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
+        p.serialized.1.size i (by simpa only [ht] using hib)
+  have hpos : 0 < p.table.size := by
+    rw [ht]
+    simp only [objTable]
+    omega
+  refine ⟨hs, ?_, ?_⟩
+  · rw [hi 0 hpos]
+    rfl
+  · intro i hip hib
+    rw [hs] at hib
+    rw [hi i hib]
+    simp only [show i ≠ 0 by omega, ↓reduceIte, Option.bind_some]
+    apply writerEntry_live _ _ _ _ i hib
+    have hm : i ∈ p.table.ids := by
+      rw [ht]
+      exact objTable_covers keep imgs used np no ne i (by omega) (by simpa only [ht] using hib)
+    rcases hc i hm with hx | hd | hcomp
+    · exact Or.inl hx
+    · right
+      left
+      simpa only [WritePlan.serialized, serialize_locs_covers] using hd
+    · exact Or.inr (Or.inr hcomp)
+
+/-- The actual producer emits one live xref entry per allocated nonzero
+object. Row zero is free and `/Size` counts it exactly once. The proof
+uses the production emission loops and their recorded byte offsets. -/
+theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    let p := prepare geom fs pages info imgs outline streams tree ops programs
+    p.entries.size = p.table.size ∧
+    p.entries[0]?.bind PdfRead.xrefEntryLocation = none ∧
+    ∀ i, 0 < i → i < p.entries.size →
+      (p.entries[i]?.bind PdfRead.xrefEntryLocation).isSome = true :=
+  plan_entries_contract _ (keepFaces fs pages) imgs (usedImagesOf imgs pages)
+    pages.size outline.size (skeleton tree).size
+    (prepare_table_exact geom fs pages info imgs outline streams tree ops programs)
+    (prepare_emission_covers geom fs pages info imgs outline streams tree ops programs)
 
 end LeanTex.Core.Pdf
