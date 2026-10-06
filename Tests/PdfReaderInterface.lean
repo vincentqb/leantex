@@ -5,13 +5,17 @@ import LeanTex.Core.PdfLexBoundary
 import LeanTex.Core.PdfNameProof
 import LeanTex.Core.PdfStringProof
 import LeanTex.Core.PdfStreamSpelling
+import LeanTex.Core.PdfFooter
+import LeanTex.Core.PdfXref
 
 /-! Ordinary readers share the byte rules and token scanners. Loop state
 and individual scanner steps belong to the implementation and its proofs. -/
 
 open LeanTex.Core.PdfLex
 open LeanTex.Core.PdfRead (Obj parseVal parseVal_render_id parseVal_render_span_exact
-  parseVal_spelling_span_exact)
+  parseVal_spelling_span_exact readStartxref readStartxref_footer_exact)
+
+open LeanTex.Core.Pdf
 
 namespace Tests.PdfReaderInterface
 
@@ -81,11 +85,42 @@ example {b raw : ByteArray} {i p : Nat} (o : Obj) (h : o.Spelling raw)
     (hw : skipWs b p = i) : parseVal b p = .ok (o, i+raw.size) :=
   parseVal_spelling_span_exact o h hs he hw
 
+example : ByteArray → Except String Nat := readStartxref
+example : UInt8 → Nat → Nat → ByteArray := Xref.row
+example : Xref.Entry → ByteArray := Xref.Entry.bytes
+example : Array Xref.Entry → ByteArray := Xref.encode
+
+example (offset gen : Nat) :
+    (Xref.Entry.direct offset gen).fields = (1, offset, gen) := rfl
+
+example (e : Xref.Entry) :
+    e.Fits ↔ e.fields.2.1 < 256^4 ∧ e.fields.2.2 < 256^2 := Iff.rfl
+
+example (kind : UInt8) (first second : Nat)
+    (hf : first < 256^4) (hs : second < 256^2) (pre post : ByteArray) :
+    LeanTex.Core.Binary.readNatBE 4 (pre ++ Xref.row kind first second ++ post)
+      (pre.size+1) = some first :=
+  (Xref.row_fields_exact kind first second hf hs pre post).2.1
+
+example (pre : ByteArray) (offset : Nat) (h : offset < 256^4) :
+    readStartxref (pre ++ (s!"startxref\n{offset}\n%%EOF\n").toUTF8) = .ok offset :=
+  readStartxref_footer_exact pre offset h
+
 private def sameResult (actual expected : Except String (Obj × Nat)) : Bool :=
   match actual, expected with
   | .ok a, .ok e => a == e
   | .error a, .error e => a == e
   | _, _ => false
+
+private def footerIs (source : String) (expected : Nat) : Bool :=
+  match readStartxref source.toUTF8 with
+  | .ok actual => actual == expected
+  | .error _ => false
+
+private def footerRefuses (source message : String) : Bool :=
+  match readStartxref source.toUTF8 with
+  | .error actual => actual == message
+  | .ok _ => false
 
 public def checks : Array (String × Bool) := #[
   ("comment and whitespace boundary", skipWs " % comment\n42".toUTF8 0 == 11),
@@ -117,7 +152,21 @@ public def checks : Array (String × Bool) := #[
   ("object truncated string", sameResult (parseVal "(x".toUTF8 0)
     (.error "truncated PDF: a string never closes")),
   ("object truncated hex string", sameResult (parseVal "<aa".toUTF8 0)
-    (.error "truncated PDF: a hex string never closes"))]
+    (.error "truncated PDF: a hex string never closes")),
+  ("footer decimal offset", footerIs "%PDF-2.0\nstartxref\n257\n%%EOF\n" 257),
+  ("footer last revision", footerIs "startxref\n1\n%%EOF\nstartxref\n23\n%%EOF\n" 23),
+  ("footer missing offset refused", footerRefuses "startxref\n%%EOF\n"
+    "malformed PDF: unreadable startxref offset"),
+  ("footer keyword prefix refused", footerRefuses "startxrefs\n1\n%%EOF\n"
+    "malformed PDF: no startxref"),
+  ("xref direct row spelling", (Xref.Entry.direct 258 3).bytes ==
+    ([1,0,0,1,2,0,3] : List UInt8).toByteArray),
+  ("xref compressed row spelling", (Xref.Entry.compressed 4 5).bytes ==
+    ([2,0,0,0,4,0,5] : List UInt8).toByteArray),
+  ("xref out-of-domain fields retain truncation", Xref.row 1 (256^4+2) (256^2+3) ==
+    ([1,0,0,0,2,0,3] : List UInt8).toByteArray),
+  ("xref row array order", Xref.encode #[.free 0 65535, .direct 12 0] ==
+    ([0,0,0,0,0,255,255,1,0,0,0,12,0,0] : List UInt8).toByteArray)]
 
 example : True := by
   fail_if_success have := UIntState
@@ -147,6 +196,11 @@ example : True := by
   fail_if_success have := Obj.arrayBody
   fail_if_success have := Obj.dictBody
   fail_if_success have := Obj.paddedDict_octets_exact
+  fail_if_success have := LeanTex.Core.PdfRead.scanStep
+  fail_if_success have := LeanTex.Core.PdfRead.findStartxref
+  fail_if_success have := LeanTex.Core.PdfRead.footer_number
+  fail_if_success have := Xref.encodeList
+  fail_if_success have := Xref.encodeList_bytes
   trivial
 
 end Tests.PdfReaderInterface

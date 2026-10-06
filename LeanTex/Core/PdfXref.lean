@@ -1,4 +1,6 @@
-import LeanTex.Core.Binary
+module
+
+public import LeanTex.Core.Binary
 
 namespace LeanTex.Core.Pdf.Xref
 
@@ -8,19 +10,19 @@ numbers fit. These laws are artifact-specific byte bookkeeping. -/
 
 /-- One cross-reference row: type, byte offset or object-stream number,
 generation or index within the object stream. -/
-def row (kind : UInt8) (first second : Nat) : ByteArray :=
+public def row (kind : UInt8) (first second : Nat) : ByteArray :=
   let kindBytes := Binary.natBE 1 kind.toNat
   let firstBytes := Binary.natBE 4 first
   let secondBytes := Binary.natBE 2 second
   kindBytes ++ firstBytes ++ secondBytes
 
-@[simp] theorem row_size_exact (kind : UInt8) (first second : Nat) :
+@[simp] public theorem row_size_exact (kind : UInt8) (first second : Nat) :
     (row kind first second).size = 7 := by
   simp [row]
 
 /-- Every field reads back at its declared offset, inside any surrounding
 file, provided the two integer fields are representable. -/
-theorem row_fields_exact (kind : UInt8) (first second : Nat)
+public theorem row_fields_exact (kind : UInt8) (first second : Nat)
     (hfirst : first < 256 ^ 4) (hsecond : second < 256 ^ 2)
     (pre post : ByteArray) :
     Binary.readNatBE 1 (pre ++ row kind first second ++ post) pre.size =
@@ -45,7 +47,7 @@ theorem row_fields_exact (kind : UInt8) (first second : Nat)
 
 /-- The field factorization preserves the writer's existing seven bytes,
 including truncation outside the representable domain. -/
-theorem row_bytes_exact (kind : UInt8) (first second : Nat) :
+public theorem row_bytes_exact (kind : UInt8) (first second : Nat) :
     row kind first second =
       [kind, UInt8.ofNat (first / 16777216), UInt8.ofNat (first / 65536 % 256),
         UInt8.ofNat (first / 256 % 256), UInt8.ofNat (first % 256),
@@ -58,26 +60,26 @@ theorem row_bytes_exact (kind : UInt8) (first second : Nat) :
 
 /-- The three row types of §7.5.8.3. The second field of a compressed
 entry is an index, not an object number or a byte offset. -/
-inductive Entry where
+public inductive Entry where
   | free (next generation : Nat)
   | direct (offset generation : Nat)
   | compressed (stream index : Nat)
   deriving Repr, BEq
 
-def Entry.fields : Entry → UInt8 × Nat × Nat
+@[expose] public def Entry.fields : Entry → UInt8 × Nat × Nat
   | .free next gen => (0, next, gen)
   | .direct off gen => (1, off, gen)
   | .compressed stm idx => (2, stm, idx)
 
 /-- Precisely the two representability requirements of `/W [1 4 2]`.
 This is a numeric input domain, independent of encoding or decoding. -/
-def Entry.Fits (e : Entry) : Prop :=
+@[expose] public def Entry.Fits (e : Entry) : Prop :=
   e.fields.2.1 < 256 ^ 4 ∧ e.fields.2.2 < 256 ^ 2
 
-def Entry.bytes (e : Entry) : ByteArray :=
+public def Entry.bytes (e : Entry) : ByteArray :=
   row e.fields.1 e.fields.2.1 e.fields.2.2
 
-@[simp] theorem Entry.bytes_size (e : Entry) : e.bytes.size = 7 :=
+@[simp] public theorem Entry.bytes_size (e : Entry) : e.bytes.size = 7 :=
   row_size_exact _ _ _
 
 /-- The actual writer's accumulator for its cross-reference payload. -/
@@ -85,7 +87,7 @@ def encodeList (out : ByteArray) : List Entry → ByteArray
   | [] => out
   | e :: es => encodeList (out ++ e.bytes) es
 
-def encode (es : Array Entry) : ByteArray :=
+public def encode (es : Array Entry) : ByteArray :=
   encodeList ByteArray.empty es.toList
 
 theorem encodeList_bytes (out : ByteArray) (es : List Entry) :
@@ -111,14 +113,14 @@ theorem encodeList_size (out : ByteArray) (es : List Entry) :
     simp only [encodeList, ih, ByteArray.size_append, Entry.bytes_size, List.length_cons]
     omega
 
-@[simp] theorem encode_size_exact (es : Array Entry) :
+@[simp] public theorem encode_size_exact (es : Array Entry) :
     (encode es).size = 7 * es.size := by
   simp [encode, encodeList_size]
 
 /-- All three fields of any row in the writer's payload, at the byte
 position determined by its index. Prefix and suffix bytes are arbitrary.
 Only this row needs to fit; nothing is assumed about the encoder. -/
-theorem encode_entry_fields_exact (before after : Array Entry) (e : Entry)
+public theorem encode_entry_fields_exact (before after : Array Entry) (e : Entry)
     (he : e.Fits) (pre post : ByteArray) :
     let data := pre ++ encode (before ++ #[e] ++ after) ++ post
     let pos := pre.size + 7 * before.size
@@ -137,7 +139,7 @@ theorem encode_entry_fields_exact (before after : Array Entry) (e : Entry)
 
 /-- Any selected encoded row, at the position declared by its array index.
 The surrounding bytes are arbitrary; only the selected row must fit. -/
-theorem encode_index_fields_exact (es : Array Entry) (i : Nat) (e : Entry)
+public theorem encode_index_fields_exact (es : Array Entry) (i : Nat) (e : Entry)
     (hi : es[i]? = some e) (he : e.Fits) (pre post : ByteArray) :
     let data := pre ++ encode es ++ post
     let pos := pre.size + 7 * i
