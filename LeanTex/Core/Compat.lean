@@ -6013,13 +6013,11 @@ private def paracolFactor (p : Nat) : String :=
   let digits := toString (p % 1000)
   "0." ++ "".pushn '0' (3 - digits.length) ++ digits
 
-/-- The later half of `rewriteCtrl`'s dispatch, split out so neither
-half's `match` exhausts the LCNF compiler's heartbeat budget — one
-logical dispatcher, two compilation units. `rewriteCtrl`'s own match
-falls through to here for every name it does not claim. -/
-private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
+/-- Named arms of the later dispatcher. The wrapper handles local style
+option requests first; keeping that guard outside the match exposes the
+actual routing equation without unfolding unrelated command bodies. -/
+private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
-  if let some result ← styOptionsRequest name pos raws start then return some result
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
@@ -7068,6 +7066,13 @@ and \\tokens declare the design directly")
       return some (#[], k)
     | none => return none
 
+/-- The later half of `rewriteCtrl`'s dispatch, with local style option
+requests preceding its named arms, exactly as in the source execution order. -/
+private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
+  if let some result ← styOptionsRequest name pos raws start then return some result
+  rewriteCtrlLaterNamed name pos raws start
+
 /-- The dispatcher's silence guard: an arm answered `some` with no
 replacement tokens — the construct is consumed — so the consumption must
 have been paid for against the entry snapshot `s0`: a diagnostic
@@ -7107,74 +7112,12 @@ formula's marks read (`Ctx.cancel`). A space is in no control word, so no
 document spells the mark. -/
 def cancelOptionsMark : String := "cancel options"
 
-/-- Rewrite the control sequence `name` given what follows it. Returns the
-replacement and how many following elements it consumed, or `none` to leave
-the command alone. An empty replacement passes the silence guard
-(`account`): the arms need not hand-account their no-ops, and a silent
-drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so the
-theorem unfolds it directly. -/
-private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := fun s0 =>
-  match rewriteCtrlAt name pos raws start s0 with
-  | (none, s1) => (none, s1)
-  | (some (repl, k), s1) =>
-    (some (repl, k - start), if repl.isEmpty then (account name pos s0 s1).2 else s1)
-where
-  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-      M (Option (Array Raw × Nat)) := do
-  -- premise: beamerTemplateChecks — flat preamble group pairs restore
-  -- font and footer capture just as the brace-group walk does.
-  if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
-    if let some close := groupPrimitives.lookup name then
-      if beamerScopeClosed raws start close then
-        write fun st => { st with beamerScopes :=
-          (close, st.beamerFonts, st.beamerFootline) :: st.beamerScopes }
-        became s!"\\{name}" "a local font and footer scope" pos
-        return some (#[], start)
-    if let (close, fonts, footline) :: rest := (← get).beamerScopes then
-      if name == close then
-        write fun st => { st with beamerFonts := fonts, beamerFootline := footline,
-                                  beamerScopes := rest }
-        became s!"\\{name}" "the enclosing font and footer scope" pos
-        return some (#[], start)
-  if let some tok := literalReplace.lookup name then
-    return some (#[tok pos], start)
-  -- premise: biblatexChecks — `\cite` under biblatex's authoryear sets bare
-  -- (`Doe 2024`, `see Doe 2024, p. 5`), the line lualatex+biber sets, where
-  -- natbib's own `\cite` is textual
-  if name == "cite" && (← get).bibStyle == some "plainnat" then
-    return some (#[.ctrl "citealp" pos], start)
-  -- premise: numberingChecks — two decks differing by the package alone: the
-  -- appendix numbers from 1 with it and numbers on without it
-  if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
-    return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
-  -- premise: kernelLengthChecks — a skip amount the document set ships, at
-  -- its command, the page a skip of that value ships
-  if let some (_, v) := (← get).lens.find? (·.1 == name ++ "amount") then
-    if (kernelSkip (name ++ "amount")).isSome then
-      let native := s!"\\block[before = {v}]\{}"
-      became s!"\\{name}" native pos
-      return some (← synthAt native pos, start)
-  if let some native := simpleNative.lookup name then
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, start)
-  if (deferredHooks.lookup name).isSome then
-    -- The replay point, reached: every hook the preamble declared was
-    -- collected before this pass began, so a hook standing here is at its
-    -- own moment already — in the body, or inside a body a hook is
-    -- replaying. Deferring again is what would not terminate; the group
-    -- stays in the stream and is read where it stands.
-    sayOnce ("ctrl:" ++ name) .W0340
-      s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
-      (help := "declare the hook before '\\begin{document}'")
-    return some (#[], start)
-  if let some (value, e) := plainAssign? name raws start then
-    return some (← assignLength name value s!"\\{name}" pos, e)
-  if let some settings := listSettings? (← get) name then
-    let mut out : Array Raw := #[]
-    for (n, v) in settings do
-      out := out ++ (← assignLength n v s!"\\setlength\{\\{n}}" pos)
-    return some (out, start)
+/-- Named arms after the dispatcher's state-dependent guards. Registry
+contracts quantify over this actual match: an ordinary body control emits
+no replacement, consumes its declared argument prefix, and leaves the
+continuation at the first unconsumed token. No dispatch order changes. -/
+private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
   | "usepackage" | "RequirePackage" =>
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
@@ -7988,6 +7931,76 @@ declare the furniture directly")
       became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
     return some (#[], k)
   | _ => rewriteCtrlLater name pos raws start
+
+/-- Rewrite the control sequence `name` given what follows it. Returns the
+replacement and how many following elements it consumed, or `none` to leave
+the command alone. An empty replacement passes the silence guard
+(`account`): the arms need not hand-account their no-ops, and a silent
+drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so the
+theorem unfolds it directly. -/
+private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := fun s0 =>
+  match rewriteCtrlAt name pos raws start s0 with
+  | (none, s1) => (none, s1)
+  | (some (repl, k), s1) =>
+    (some (repl, k - start), if repl.isEmpty then (account name pos s0 s1).2 else s1)
+where
+  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+      M (Option (Array Raw × Nat)) := do
+  -- premise: beamerTemplateChecks — flat preamble group pairs restore
+  -- font and footer capture just as the brace-group walk does.
+  if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
+    if let some close := groupPrimitives.lookup name then
+      if beamerScopeClosed raws start close then
+        write fun st => { st with beamerScopes :=
+          (close, st.beamerFonts, st.beamerFootline) :: st.beamerScopes }
+        became s!"\\{name}" "a local font and footer scope" pos
+        return some (#[], start)
+    if let (close, fonts, footline) :: rest := (← get).beamerScopes then
+      if name == close then
+        write fun st => { st with beamerFonts := fonts, beamerFootline := footline,
+                                  beamerScopes := rest }
+        became s!"\\{name}" "the enclosing font and footer scope" pos
+        return some (#[], start)
+  if let some tok := literalReplace.lookup name then
+    return some (#[tok pos], start)
+  -- premise: biblatexChecks — `\cite` under biblatex's authoryear sets bare
+  -- (`Doe 2024`, `see Doe 2024, p. 5`), the line lualatex+biber sets, where
+  -- natbib's own `\cite` is textual
+  if name == "cite" && (← get).bibStyle == some "plainnat" then
+    return some (#[.ctrl "citealp" pos], start)
+  -- premise: numberingChecks — two decks differing by the package alone: the
+  -- appendix numbers from 1 with it and numbers on without it
+  if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
+    return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
+  -- premise: kernelLengthChecks — a skip amount the document set ships, at
+  -- its command, the page a skip of that value ships
+  if let some (_, v) := (← get).lens.find? (·.1 == name ++ "amount") then
+    if (kernelSkip (name ++ "amount")).isSome then
+      let native := s!"\\block[before = {v}]\{}"
+      became s!"\\{name}" native pos
+      return some (← synthAt native pos, start)
+  if let some native := simpleNative.lookup name then
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, start)
+  if (deferredHooks.lookup name).isSome then
+    -- The replay point, reached: every hook the preamble declared was
+    -- collected before this pass began, so a hook standing here is at its
+    -- own moment already — in the body, or inside a body a hook is
+    -- replaying. Deferring again is what would not terminate; the group
+    -- stays in the stream and is read where it stands.
+    sayOnce ("ctrl:" ++ name) .W0340
+      s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
+      (help := "declare the hook before '\\begin{document}'")
+    return some (#[], start)
+  if let some (value, e) := plainAssign? name raws start then
+    return some (← assignLength name value s!"\\{name}" pos, e)
+  if let some settings := listSettings? (← get) name then
+    let mut out : Array Raw := #[]
+    for (n, v) in settings do
+      out := out ++ (← assignLength n v s!"\\setlength\{\\{n}}" pos)
+    return some (out, start)
+  rewriteCtrlNamed name pos raws start
 
 /-- Silence is fidelity, the surface layer: a control word the dispatcher
 consumed with an empty replacement is paid for — the diagnostics grew or a
@@ -9260,6 +9273,292 @@ steps come from its body" p
   | r => pure r
 
 end
+
+private theorem rewriteCtrlAt_named_exact (name : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (s : St)
+    (hd : St.inDoc s = true) (hl : St.inList s = false)
+    (hLit : literalReplace.lookup name = none)
+    (hCite : (name == "cite") = false)
+    (hAppendix : (name == "appendix") = false)
+    (hKernel : kernelSkip (name ++ "amount") = none)
+    (hSimple : simpleNative.lookup name = none)
+    (hHooks : deferredHooks.lookup name = none)
+    (hAssign : plainAssign? name raws start = none) :
+    rewriteCtrl.rewriteCtrlAt name pos raws start s =
+      rewriteCtrlNamed name pos raws start s := by
+  have hSettings : listSettings? s name = none := by
+    simp [listSettings?, hl]
+  simp only [rewriteCtrl.rewriteCtrlAt]
+  simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get,
+    StateT.get, hd, hLit, hCite, hAppendix, hSimple, hHooks, hAssign]
+  cases hLens : (St.lens s).find? (fun x => x.1 == name ++ "amount") with
+  | none =>
+    dsimp only [bind, StateT.bind, StateT.get, pure]
+    simp only [hSettings]
+  | some entry =>
+    cases entry
+    simp only [hKernel, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
+    dsimp only [bind, StateT.bind, StateT.get, pure]
+    simp only [hSettings]
+
+private theorem rewriteCtrl_value_exact (name : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (s : St) :
+    (rewriteCtrl name pos raws start s).1 =
+      (rewriteCtrl.rewriteCtrlAt name pos raws start s).1.map
+        (fun (rs, k) => (rs, k - start)) := by
+  unfold rewriteCtrl
+  cases h : rewriteCtrl.rewriteCtrlAt name pos raws start s with
+  | mk result st =>
+    cases result with
+    | none => rfl
+    | some entry =>
+      cases entry
+      rfl
+
+private theorem meaningFree_routes_exact (name : String) (n : Nat) (note : Option String)
+    (hm : (name, n, note) ∈ meaningFree) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    literalReplace.lookup name = none ∧
+    (name == "cite") = false ∧
+    (name == "appendix") = false ∧
+    kernelSkip (name ++ "amount") = none ∧
+    simpleNative.lookup name = none ∧
+    deferredHooks.lookup name = none ∧
+    plainAssign? name raws start = none ∧
+    rewriteCtrlNamed name pos raws start = rewriteCtrlLater name pos raws start ∧
+    styOptionsRequest name pos raws start = pure none ∧
+    rewriteCtrlLaterNamed name pos raws start = (do
+      let (_, k) := takeGroups raws start n
+      if let some why := note then discard s!"\\{name}" why name pos
+      return some (#[], k)) := by
+  simp only [meaningFree, List.mem_cons, List.not_mem_nil, or_false,
+    Prod.mk.injEq] at hm
+  rcases hm with h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h
+  all_goals
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+private theorem rewriteCtrl_meaningFree_exact (s : St) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (name : String) (n : Nat) (note : Option String)
+    (hm : (name, n, note) ∈ meaningFree)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    (rewriteCtrl name pos raws start s).1 =
+      some (#[], (takeGroups raws start n).2 - start) := by
+  obtain ⟨hLit, hCite, hAppendix, hKernel, hSimple, hHooks, hAssign,
+    hNamed, hOptions, hLater⟩ := meaningFree_routes_exact name n note hm pos raws start
+  rw [rewriteCtrl_value_exact, rewriteCtrlAt_named_exact name pos raws start s hd hl
+    hLit hCite hAppendix hKernel hSimple hHooks hAssign, hNamed]
+  simp only [rewriteCtrlLater, hOptions, bind, StateT.bind, pure]
+  rw [hLater]
+  cases note <;> rfl
+
+private theorem rewriteCtrl_configSkip_exact (s : St) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (name : String) (n : Nat)
+    (msg : String) (help : Option String)
+    (hm : (name, n, msg, help) ∈ configSkip)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    (rewriteCtrl name pos raws start s).1 =
+      some (#[], (takeGroups raws start n).2 - start) := by
+  simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
+    Prod.mk.injEq] at hm
+  obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
+  rw [rewriteCtrl_value_exact, rewriteCtrlAt_named_exact "sloppy" pos raws start s hd hl
+    rfl rfl rfl rfl rfl rfl rfl]
+  rfl
+
+private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
+    (raws : Array Raw) (start : Nat)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    rewriteCtrl "zzNotAControl" pos raws start s = (none, s) := by
+  have hAt : rewriteCtrl.rewriteCtrlAt "zzNotAControl" pos raws start s = (none, s) := by
+    rw [rewriteCtrlAt_named_exact "zzNotAControl" pos raws start s hd hl
+      rfl rfl rfl rfl rfl rfl rfl]
+    rfl
+  unfold rewriteCtrl
+  rw [hAt]
+
+private theorem meaningFree_names_exact (name : String) (n : Nat) (note : Option String)
+    (hm : (name, n, note) ∈ meaningFree) :
+    name ≠ "define" ∧ overlayName name = name := by
+  simp only [meaningFree, List.mem_cons, List.not_mem_nil, or_false,
+    Prod.mk.injEq] at hm
+  rcases hm with h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h |
+    h | h | h
+  all_goals
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨by simp, by simp [overlayName, String.startsWith_string_iff]⟩
+
+private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
+    (taken rest : List Raw) (i : Nat) :
+    rewriteList inBody raws out (taken ++ rest) i taken.length =
+      rewriteList inBody raws out rest (i + taken.length) 0 := by
+  induction taken generalizing i with
+  | nil => simp
+  | cons x taken ih =>
+    simp only [List.cons_append, List.length_cons]
+    rw [rewriteList, ih]
+    congr 1 <;> omega
+
+private theorem rewriteList_control_exact (inBody : Bool) (raws out : Array Raw)
+    (name : String) (pos : Pos) (taken rest : List Raw) (i : Nat) (s s' : St)
+    (hdef : name ≠ "define") (hpic : St.inPicture s = false)
+    (hstep : rewriteCtrl (overlayName name) pos raws (i + 1) s =
+      (some (#[], taken.length), s')) :
+    rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
+      rewriteList inBody raws out rest (i + 1 + taken.length) 0 s' := by
+  rw [rewriteList]
+  case x_3 => exact fun h => hdef h
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure, hpic, Bool.false_eq_true, ↓reduceIte, hstep, Array.append_empty]
+  rw [rewriteList_skip_exact]
+
+private theorem rewriteList_meaningFree_exact (inBody : Bool) (raws out : Array Raw)
+    (name : String) (n : Nat) (note : Option String) (pos : Pos)
+    (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St)
+    (hm : (name, n, note) ∈ meaningFree)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false)
+    (hn : args.length = n)
+    (hg : GroupPrefix raws (i + 1) args (i + 1 + taken.length)) :
+    rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
+      rewriteList inBody raws out rest (i + 1 + taken.length) 0
+        (rewriteCtrl name pos raws (i + 1) s).2 := by
+  have hvalue := rewriteCtrl_meaningFree_exact s pos raws (i + 1) name n note hm hd hl
+  have hread := takeGroups_prefix_exact hg
+  rw [hn] at hread
+  rw [hread] at hvalue
+  simp only [Nat.add_sub_cancel_left] at hvalue
+  obtain ⟨hdef, hoverlay⟩ := meaningFree_names_exact name n note hm
+  apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hdef hp
+  rw [hoverlay]
+  exact Prod.ext hvalue rfl
+
+private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
+    (pos : Pos) (rest : List Raw) (i : Nat) (s : St)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false) :
+    rewriteList inBody raws out (.ctrl "zzNotAControl" pos :: rest) i 0 s =
+      rewriteList inBody raws (out.push (.ctrl "zzNotAControl" pos)) rest (i + 1) 0 s := by
+  rw [rewriteList]
+  case x_3 => simp
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure, hp, Bool.false_eq_true, ↓reduceIte]
+  have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := rfl
+  rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl]
+  rfl
+
+private theorem rewriteList_configSkip_exact (inBody : Bool) (raws out : Array Raw)
+    (name : String) (n : Nat) (msg : String) (help : Option String) (pos : Pos)
+    (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St)
+    (hm : (name, n, msg, help) ∈ configSkip)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false)
+    (hn : args.length = n)
+    (hg : GroupPrefix raws (i + 1) args (i + 1 + taken.length)) :
+    rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
+      rewriteList inBody raws out rest (i + 1 + taken.length) 0
+        (rewriteCtrl name pos raws (i + 1) s).2 := by
+  have hvalue := rewriteCtrl_configSkip_exact s pos raws (i + 1) name n msg help hm hd hl
+  have hread := takeGroups_prefix_exact hg
+  rw [hn] at hread
+  rw [hread] at hvalue
+  simp only [Nat.add_sub_cancel_left] at hvalue
+  have hnames : name ≠ "define" ∧ overlayName name = name := by
+    simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
+      Prod.mk.injEq] at hm
+    obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
+    exact ⟨by simp, rfl⟩
+  apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hnames.1 hp
+  rw [hnames.2]
+  exact Prod.ext hvalue rfl
+
+/-- An ordinary body control consumes exactly its declared argument prefix.
+The source cursor agrees with the array the actual dispatcher reads.
+Arguments and continuation are arbitrary; `GroupPrefix` includes intervening
+spaces. The complete walk equals its continuation with the dispatcher's
+post-state, and that dispatch adds a diagnostic or records a write.
+
+This is a contract of the compatibility stream, before elaboration. The body
+state excludes list-parameter dispatch and picture pass-through. -/
+def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
+  ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
+    (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St),
+    St.inDoc s = true → St.inList s = false → St.inPicture s = false →
+    raws.toList.drop i = .ctrl name pos :: (taken ++ rest) →
+    args.length = arity →
+    GroupPrefix raws (i + 1) args (i + 1 + taken.length) →
+    let dispatched := rewriteCtrl name pos raws (i + 1) s
+    dispatched.1 = some (#[], taken.length) ∧
+    rewriteList inBody raws out (raws.toList.drop i) i 0 s =
+      rewriteList inBody raws out rest (i + 1 + taken.length) 0 dispatched.2 ∧
+    ((St.diags dispatched.2).size > (St.diags s).size ∨
+      St.writes dispatched.2 > St.writes s)
+
+/-- The actual dispatcher leaves a command and every following raw available
+to elaboration. This does not assert what elaboration's recovery emits. -/
+def UnknownControlPreserved (name : String) : Prop :=
+  ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
+    (rest : List Raw) (i : Nat) (s : St),
+    St.inDoc s = true → St.inList s = false → St.inPicture s = false →
+    raws.toList.drop i = .ctrl name pos :: rest →
+    rewriteCtrl name pos raws (i + 1) s = (none, s) ∧
+    rewriteList inBody raws out (raws.toList.drop i) i 0 s =
+      rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0 s
+
+theorem meaningFree_control_contract (row : String × Nat × Option String)
+    (hm : row ∈ meaningFree) : ControlGroupsConsumed row.1 row.2.1 := by
+  rcases row with ⟨name, n, note⟩
+  intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
+  dsimp only
+  have hvalue := rewriteCtrl_meaningFree_exact s pos raws (i + 1) name n note hm hd hl
+  have hread := takeGroups_prefix_exact hg
+  rw [hn] at hread
+  rw [hread] at hvalue
+  simp only [Nat.add_sub_cancel_left] at hvalue
+  refine ⟨hvalue, ?_, ?_⟩
+  · rw [hsource]
+    exact rewriteList_meaningFree_exact inBody raws out name n note pos
+      args taken rest i s hm hd hl hp hn hg
+  · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
+      (Prod.ext hvalue rfl)
+
+theorem configSkip_control_contract (row : String × Nat × String × Option String)
+    (hm : row ∈ configSkip) : ControlGroupsConsumed row.1 row.2.1 := by
+  rcases row with ⟨name, n, msg, help⟩
+  intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
+  dsimp only
+  have hvalue := rewriteCtrl_configSkip_exact s pos raws (i + 1) name n msg help hm hd hl
+  have hread := takeGroups_prefix_exact hg
+  rw [hn] at hread
+  rw [hread] at hvalue
+  simp only [Nat.add_sub_cancel_left] at hvalue
+  refine ⟨hvalue, ?_, ?_⟩
+  · rw [hsource]
+    exact rewriteList_configSkip_exact inBody raws out name n msg help pos
+      args taken rest i s hm hd hl hp hn hg
+  · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
+      (Prod.ext hvalue rfl)
+
+theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
+  intro inBody raws out pos rest i s hd hl hp hsource
+  refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl, ?_⟩
+  rw [hsource]
+  exact rewriteList_unknown_exact inBody raws out pos rest i s hd hl hp
 
 /-- Emit the gathered running content as one declaration each. -/
 private def flushRunning : M (Array Raw) := do

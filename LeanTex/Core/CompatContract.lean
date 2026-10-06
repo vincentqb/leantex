@@ -4,6 +4,26 @@ namespace LeanTex.Core.CompatContract
 
 open LeanTex.Core.Parse
 
+/-- The compatibility-stage control contract, over every registered row.
+At an ordinary body cursor (`inDoc`, outside list-parameter and picture
+dispatch), an exact declared argument prefix contributes no replacement
+tokens. The actual rewrite walk resumes at that prefix's end, preserving
+the accumulator and using the dispatcher's accounted post-state.
+
+Arguments, intervening spaces, source positions, continuation, accumulator,
+and the remaining state are quantified by `ControlGroupsConsumed`. The
+unknown probe from the original obligation instead leaves its entire tail
+for elaboration. No fact about Elab recovery, its diagnostics, or shipped ink
+is assumed or concluded here. -/
+theorem ctrl_groups_consumed_contract :
+    (∀ row ∈ Compat.meaningFree,
+      Compat.ControlGroupsConsumed row.1 row.2.1) ∧
+    (∀ row ∈ Compat.configSkip,
+      Compat.ControlGroupsConsumed row.1 row.2.1) ∧
+    Compat.UnknownControlPreserved "zzNotAControl" := by
+  exact ⟨Compat.meaningFree_control_contract,
+    Compat.configSkip_control_contract, Compat.unknown_control_contract⟩
+
 /-- The operand the style-file scanner reads from an expanded loading call.
 Options and missing arguments follow the production readers exactly. -/
 def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
