@@ -1,0 +1,48 @@
+\ProvidesPackage{deckstyle}
+\RequirePackage{tikz}
+\RequirePackage{etoolbox}
+
+% All words, colours and dimensions in this local theme are invented.
+\definecolor{deckInk}{HTML}{243347}
+\definecolor{deckPaper}{HTML}{FAFCFF}
+\definecolor{deckGold}{HTML}{F4CE84}
+\definecolor{deckBlue}{HTML}{1C5070}
+\definecolor{deckRust}{HTML}{7A321D}
+\setbeamercolor{normal text}{fg=deckInk,bg=deckPaper}
+\setbeamercolor{frametitle}{fg=deckPaper,bg=deckInk}
+\setbeamercolor{standout}{fg=deckPaper,bg=deckInk}
+\setbeamerfont{deck heading}{size=\Large,series=\bfseries}
+\setbeamerfont{deck byline}{size=\large}
+
+\setbeamertemplate{title page}{%
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[deckInk] (current page.north west) rectangle (current page.south east);
+    \node[anchor=west,align=left,text width=0.7\paperwidth,text=deckPaper,font=\usebeamerfont{deck heading}]
+      at ([xshift=1.6cm,yshift=0.3cm]current page.west) {\inserttitle};
+    \node[anchor=south west,align=left,text=deckGold,font=\usebeamerfont{deck byline}]
+      at ([xshift=1.6cm,yshift=1.2cm]current page.south west) {\insertauthor};
+    \node[anchor=north east,align=right,text=deckGold]
+      at ([xshift=-0.8cm,yshift=-0.8cm]current page.north east) {Paper Lab};
+  \end{tikzpicture}%
+}
+
+\setbeamertemplate{footline}{%
+  \begin{beamercolorbox}{footline}
+    \insertshorttitle\hfill
+    \insertframenumber\,/\,\inserttotalframenumber
+  \end{beamercolorbox}%
+}
+
+% An explicit standout note survives, but its frame number stays absent.
+\makeatletter
+\apptocmd{\KV@beamerframe@standout}{%
+  \ifbeamertemplateempty{frame footer}{}{%
+    \setbeamercolor{footline}{use={standout,background canvas},fg=standout.fg,bg=background canvas.bg}
+    \setbeamertemplate{footline}[plain]
+    \ifbeamer@noframenumbering
+      \setbeamertemplate{page number in head/foot}{}
+    \fi
+  }%
+}{}{\PackageError{deckstyle}{Footer patch failed}{Check the local theme}}
+\makeatother
+\endinput

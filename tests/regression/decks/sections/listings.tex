@@ -1,0 +1,20 @@
+\section{Small counting tools}
+\begin{frame}[fragile]{A Lean helper}
+Count at most three pieces before starting a pattern.
+\begin{minted}{lean4}
+def tileCount (xs : List Nat) : Nat := min xs.length 3
+#eval tileCount [2, 4, 6]
+#check "square"
+-- Keep <shapes> & spacing
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{A Python helper}
+The same limit works for a list of shape names.
+\begin{minted}{python}
+def tile_count(shapes):
+    return min(len(shapes), 3)
+print(tile_count(["square", "triangle"]))
+# Keep <shapes> & spacing
+\end{minted}
+\end{frame}
