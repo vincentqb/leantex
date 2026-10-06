@@ -4,6 +4,10 @@ import Tests.DiagInterface
 import Tests.LeafInterfaces
 import Tests.MathInterface
 import Tests.ImageInterface
+import Tests.InkInterface
+import Tests.FontInterface
+import Tests.ParseInterface
+import Tests.PdfReaderInterface
 import Tests.Batch
 import Tests.Compression
 import Tests.BrowserFaceBatch
@@ -689,6 +693,8 @@ def main (args : List String) : IO UInt32 := do
   pdfEncodingChecks ref
   pdfBoundsChecks ref
   pdfFontsProofChecks ref
+  for (name, okay) in Tests.PdfReaderInterface.checks do
+    check ref ("PDF reader interface: " ++ name) okay
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref
