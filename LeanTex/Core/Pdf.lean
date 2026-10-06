@@ -1649,7 +1649,50 @@ theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
   cases hcff : font.isCff <;>
     simp [fontObjects, hcff, PdfRead.Obj.get?]
 
-/-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
+/-- Select the smaller of a stream's original and deflated spellings.
+The cached spelling is supplied by the same codec as `flateRow`. -/
+def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
+  if z.size < data.size then ⟨id, .stream (dict ++ " /Filter /FlateDecode") z⟩
+  else ⟨id, .stream dict data⟩
+
+def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
+  zRow id dict data (Flate.deflate data)
+
+/-- The writer's actual allocation and emissions, before serialization.
+The object stream and xref are derived from these rows and values; their
+offsets are never supplied separately. This is artifact bookkeeping. -/
+structure WritePlan where
+  table : ObjTable
+  head : ByteArray
+  direct : Array Row
+  compressed : List (Nat × PdfRead.Obj)
+
+/-- The one object stream is appended to the direct rows it accompanies. -/
+def WritePlan.rows (p : WritePlan) : Array Row :=
+  let packed := objectStream p.compressed
+  p.direct.push (flateRow p.table.objStmId
+    s!"/Type /ObjStm /N {p.compressed.length} /First {packed.header.utf8ByteSize}"
+    packed.bytes)
+
+def WritePlan.serialized (p : WritePlan) : ByteArray × Array (Nat × Nat) :=
+  serialize p.head p.rows
+
+def WritePlan.entries (p : WritePlan) : Array Xref.Entry :=
+  let (body, locs) := p.serialized
+  writerXrefEntries p.table locs p.compressed body.size
+
+/-- Finish the actual writer plan: the xref describes this serialization,
+and `startxref` names the byte immediately after its body. -/
+def WritePlan.bytes (p : WritePlan) : ByteArray :=
+  let (body, locs) := p.serialized
+  let xrefRows := Xref.encode (writerXrefEntries p.table locs p.compressed body.size)
+  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
+  let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
+  let xrefDict := s!"/Type /XRef /Size {p.table.size} /W [1 4 2] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
+  let (out, _) := serialize body #[flateRow p.table.xrefId xrefDict xrefRows]
+  out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8
+
+/-- Prepare positioned pages for a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (its program
 the subset of the glyphs the pages paint, `FontSubset.program`, with its
 own ToUnicode), image XObjects for every image actually
@@ -1658,12 +1701,12 @@ information the source declared (Info dictionary plus XMP). `streams`,
 `ops` and `programs` are the driver's cache path: the page operators it
 built through `pageOps` (one walk, not two), their rendered and deflated
 bytes, and the face programs it built through `facePrograms`. -/
-def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
-    (programs : Array (ByteArray × Bool) := #[]) : ByteArray := Id.run do
+    (programs : Array (ByteArray × Bool) := #[]) : WritePlan := Id.run do
   let np := pages.size
   let v17 := info.pdfVersion == some "1.7"
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
@@ -1873,11 +1916,6 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
     (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs
 
-  -- object stream payload
-  let packed := objectStream compressed
-  let objStmData := packed.bytes
-  let first := packed.header.utf8ByteSize
-
   -- assemble the file: every object as a row first, then one `serialize`
   -- fold whose offsets are its own (`serialize_locs_covers`). Nothing
   -- records a position beside the writing any more.
@@ -1889,11 +1927,6 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- object and cross-reference streams) rides as a real deflate whenever
   -- that is smaller, filter declared. Image payloads and copied form graphs
   -- carry their own filters and stay uncompressed here.
-  let zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
-    if z.size < data.size then ⟨id, .stream (dict ++ " /Filter /FlateDecode") z⟩
-    else ⟨id, .stream dict data⟩
-  let flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
-    zRow id dict data (Flate.deflate data)
   let mut rows : Array Row := #[]
 
   -- A page's stream, and its deflate when the driver already holds one
@@ -1994,23 +2027,25 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       | none => flateRow (t.fileId k) ffDict prog)
 
   rows := rows.push (flateRow t.xmpId "/Type /Metadata /Subtype /XML" (xmpPacket info).toUTF8)
-  rows := rows.push (flateRow t.objStmId
-    s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData)
+  return ⟨t, fileHead, rows, compressed⟩
 
-  -- One fold: the bytes and the offsets together, the offsets its own
-  -- (`serialize_locs_covers`). The by-id table below is an index into that
-  -- answer, not a second record of it.
-  let (body, locs) := serialize fileHead rows
-  -- Cross-reference stream, W [1 4 2] (ISO 32000-2 §7.5.8.3): row 0 is the
-  -- free-list head, written once; then one row per id the table allocates,
-  -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
-  -- kind the table's answer.
-  let xrefOff := body.size
-  let xrefRows := Xref.encode (writerXrefEntries t locs compressed xrefOff)
-  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
-  let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
-  let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let (out, _) := serialize body #[flateRow t.xrefId xrefDict xrefRows]
-  return out ++ (s!"startxref\n{xrefOff}\n%%EOF\n").toUTF8
+/-- Serialize the prepared emissions. The plan is also the input to the
+numeric representability check in `PdfWriteContract`. -/
+def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta := {}) (imgs : Image.Store := {})
+    (outline : Array OutlineEntry := #[])
+    (streams : Array (ByteArray × Option ByteArray) := #[])
+    (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
+    (programs : Array (ByteArray × Bool) := #[]) : ByteArray :=
+  (prepare geom fs pages info imgs outline streams tree ops programs).bytes
+
+/-- The plan checked by the PDF contracts is exactly the one serialized
+by `write`, for every source and every supplied cache value. -/
+theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    write geom fs pages info imgs outline streams tree ops programs =
+      (prepare geom fs pages info imgs outline streams tree ops programs).bytes := rfl
 
 end LeanTex.Core.Pdf

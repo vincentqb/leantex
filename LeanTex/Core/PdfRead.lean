@@ -1,5 +1,7 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.PdfObj
+import LeanTex.Core.PdfReadProof
+import LeanTex.Core.Binary
 import LeanTex.Core.Flate
 import Std.Data.HashMap
 
@@ -106,6 +108,95 @@ private def parseIndirectAt (b : ByteArray) (off : Nat) :
   let (v, after) ← parseVal b k
   return (num, v, after)
 
+/- The indirect-object invariant is stated on the actual byte span, before
+stream decoding. It consumes the writer's decimal header and the already
+proved value grammar; no reader result is a hypothesis. -/
+private theorem nat_start_skip {b : ByteArray} {i : Nat} (n : Nat)
+    (hs : Span b i (octets (toString n).toUTF8)) : skipWs b i = i := by
+  rw [numeric_octets _ (nat_numeric n)] at hs
+  have hn : (toString n).toList.map Char.toNat ≠ [] := by
+    simp
+  have hp := number_byte (hs.first_number hn (by
+    intro c hc
+    obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
+    exact nat_numeric n d hd))
+  exact skipWs_fixed_point hp.2.1 hp.2.2.1
+
+private theorem parseIndirectAt_render_span_exact {b : ByteArray} {i : Nat}
+    (n : Nat) (o : Obj) (ho : o.Representable)
+    (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++ octets o.render))
+    (he : ObjReader.Stop b (i + (s!"{n} 0 obj\n").toUTF8.size + o.render.size)) :
+    parseIndirectAt b i = .ok (n, o, i + (s!"{n} 0 obj\n").toUTF8.size + o.render.size) := by
+  have hhead : (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 := rfl
+  simp only [hhead, octets_append, List.append_assoc, ByteArray.size_append,
+    show " 0 obj\n".toUTF8.size = 7 from rfl, ← Nat.add_assoc] at hs he ⊢
+  let q := i + (toString n).toUTF8.size
+  have hnum := hs.append_left
+  have hrest : Span b q (32 :: 48 :: 32 :: 111 :: 98 :: 106 :: 10 :: octets o.render) := by
+    simpa only [octets_length, show octets " 0 obj\n".toUTF8 = [32,48,32,111,98,106,10] from rfl,
+      List.cons_append, List.nil_append] using hs.append_right
+  have hb : q + 7 ≤ b.size := by
+    have h := hrest.bound
+    simp only [List.length_cons] at h
+    omega
+  have h32 : at? b q = 32 := hrest.head
+  have h48 : at? b (q+1) = 48 := hrest.tail.head
+  have hsp : at? b (q+2) = 32 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.head
+  have h111 : at? b (q+3) = 111 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.tail.head
+  have hlf : at? b (q+6) = 10 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.tail.tail.tail.tail.head
+  have hobj : Span b (q+3) (octets "obj".toUTF8) := by
+    change Span b (q+3) [111,98,106]
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using
+      hrest.tail.tail.tail.append_left (cs := [111,98,106]) (ds := 10 :: octets o.render)
+  have hov : Span b (q+7) (octets o.render) := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.tail.tail.tail.tail.tail
+  have he' : ObjReader.Stop b (q+7+o.render.size) := he
+  have hstart := ho.reads.start hov he'.boundary he'.marker
+  have hskip0 := nat_start_skip n hnum
+  have hn := parse_nat hnum (Or.inr (Or.inl (by rw [h32]; rfl)))
+  have hskip1 : skipWs b q = q+1 := skipWs_one_exact h32
+    (by rw [h48]; rfl) (by rw [h48]; decide) (by omega)
+  have hz : parseUInt b (q+1) = some (0,q+2) := by
+    have hzspan : Span b (q+1) (octets (toString (0 : Nat)).toUTF8) :=
+      hrest.tail.append_left (cs := [48]) (ds := 32 :: 111 :: 98 :: 106 :: 10 :: octets o.render)
+    have hend : EndByte (at? b ((q+1)+(toString (0 : Nat)).toUTF8.size)) := by
+      change EndByte (at? b (q+1+1))
+      rw [show q+1+1=q+2 by omega, hsp]
+      exact Or.inr (Or.inl rfl)
+    simpa only [show (toString (0 : Nat)).toUTF8.size = 1 from rfl,
+      Nat.add_assoc, Nat.reduceAdd] using parse_nat hzspan hend
+  have hskip2 : skipWs b (q+2) = q+3 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using skipWs_one_exact hsp
+      (by simpa only [Nat.add_assoc, Nat.reduceAdd, h111] using (show isWs 111 = false from rfl))
+      (by simpa only [Nat.add_assoc, Nat.reduceAdd, h111] using (show (111 : Nat) ≠ 37 by decide))
+      (by omega)
+  have hkey : keywordAt b (q+3) "obj" = some (q+6) := by
+    have hend : EndByte (at? b (q+3+"obj".toUTF8.size)) := by
+      change EndByte (at? b (q+3+3))
+      rw [show q+3+3=q+6 by omega, hlf]
+      exact Or.inr (Or.inl rfl)
+    simpa only [show "obj".toUTF8.size = 3 from rfl, Nat.add_assoc, Nat.reduceAdd] using
+      keywordAt_exact hobj hend
+  have hskip3 : skipWs b (q+6) = q+7 := by
+    simpa only [Nat.add_assoc, Nat.reduceAdd] using skipWs_whitespace_exact
+      (by rw [hlf]; rfl)
+      (by simpa only [Nat.add_assoc, Nat.reduceAdd] using hstart.whitespace)
+      (by simpa only [Nat.add_assoc, Nat.reduceAdd] using hstart.comment)
+      (by omega : q+6 < b.size)
+  have hp := parseVal_render_span_exact o ho hov he' hskip3
+  change parseIndirectAt b i = .ok (n,o,q+7+o.render.size)
+  simp only [parseIndirectAt, hskip0, hn]
+  change (do
+    let some (_, j) := parseUInt b (skipWs b q) | throw _
+    let some k := keywordAt b (skipWs b j) "obj" | throw _
+    let (v, after) ← parseVal b k
+    return (n,v,after)) = _
+  simp only [hskip1, hz, hskip2, hkey, hp]
+  rfl
+
 /-- Decode one stream's data by its declared filter: none, or
 `/FlateDecode`, with a PNG predictor honoured when `/DecodeParms` declares
 one (§7.4.4). Any other filter is a refusal naming it. -/
@@ -156,6 +247,27 @@ private def beField (data : ByteArray) (i w : Nat) : Nat := Id.run do
   for k in [0:w] do
     v := v * 256 + (data[i + k]?.getD 0).toNat
   return v
+
+/- The loop is progress-indexed by its field width. The equation below is
+a proof about the forIn loop above, not a replacement implementation. -/
+private theorem beField_succ (data : ByteArray) (i w : Nat) :
+    beField data i (w+1) = beField data i w * 256 + (data[i+w]?.getD 0).toNat := by
+  unfold beField
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
+  simp only [List.forIn_pure_yield_eq_foldl]
+  simp [List.range'_concat, List.foldl_append]
+private theorem beField_read (data : ByteArray) (i w v : Nat)
+    (h : Binary.readNatBE w data i = some v) : beField data i w = v := by
+  induction w generalizing v with
+  | zero => simpa [Binary.readNatBE, beField] using h
+  | succ w ih =>
+    simp only [Binary.readNatBE, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+    obtain ⟨n,hn,b,hb,hv⟩ := h
+    change some (n * 256 + b.toNat) = some v at hv
+    have hv := Option.some.inj hv
+    subst v
+    rw [beField_succ, ih n hn, hb]
+    rfl
 
 /-- The cross-reference as read: where every listed object lives, the
 catalog's number, the newest section's trailer dictionary (a classic
