@@ -709,7 +709,15 @@ def reports : List Report := [
       thm% Layout.frameSpansForPdf_covers,
       .thm `LeanTex.Core.Bib.remapSources_projects _ @LeanTex.Core.Bib.remapSources_projects]
     accept := ["two actual-layout assertions failed when a nonprinting citation paragraph was removed before identical overflowing frames; both frames retain their exact opening through bibliography rewriting and repeated elaboration"]
-    state := .guarded "45f6ec8a" .before .author }
+    state := .guarded "45f6ec8a" .before .author },
+  { id := "R90", date := "2026-10-06"
+    what := "a shell comment on the last source line used plain text ink instead of the colour of earlier comments"
+    pins := [check% shellReplyChecks, check% listingProviderChecks,
+      thm% ListingReply.ofTokens_source_exact]
+    accept := ["sixty-three artifact assertions failed before the lexer boundary supplied a terminal newline, covering shell aliases, both listing styles and both source surfaces",
+      "the repaired path paints final and earlier comments alike in native glyphs, emitted PDF commands and typed HTML; validation preserves all authored whitespace and the original content key",
+      "a reference presentation compiles to both artifacts; its eight comments share computed screen and print colours, and the final comment is present in the native PDF raster"]
+    state := .guarded "f373a48c" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
