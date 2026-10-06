@@ -726,6 +726,10 @@ inductive Item where
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
 
+private def Item.boxChars : Item → List Char
+  | .box _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
+  | .glue _ | .decoratedGlue _ _ | .pen .. | .img .. | .rule .. | .poly .. => []
+
 def forcedCost : Int := -10000
 
 /-- plain TeX's `\hyphenpenalty=50` (TeXbook p.96): the cost of ending a
@@ -770,6 +774,12 @@ inductive Seg where
   width: the runs around it place what it marks. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
+
+/-- Scalars actually carried by glyph runs, in paint order. Spacing and
+nontext geometry contribute no scalars. -/
+def Seg.glyphChars : Seg → List Char
+  | .run _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
+  | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => []
 
 structure LineOut where
   x : Sp
@@ -2093,6 +2103,19 @@ private theorem back?_pop_push {α : Type} (xs : Array α) (a : α)
   rw [Option.some_inj.mp hg] at this
   exact this.symm
 
+private theorem kernApply_sourceChars (box : Array (Nat × Char × Sp)) (ks : Sp) :
+    (kernApply box ks).toList.map (·.2.1) = box.toList.map (·.2.1) := by
+  cases hb : box.back? with
+  | none => simp [kernApply, hb]
+  | some p =>
+    obtain ⟨pg, pc, padv⟩ := p
+    have hbox := back?_pop_push box _ hb
+    have hc : box.toList.map (·.2.1) = box.pop.toList.map (·.2.1) ++ [pc] := by
+      rw [hbox]
+      simp
+    rw [hc]
+    simp [kernApply, hb]
+
 /-- Setting the next glyph after a kern moves the box width by exactly the
 glyph's advance plus the applied pair value, and nothing else — the KP
 breaker's widths stay the exact sum of what the box carries, GPOS
@@ -2153,6 +2176,128 @@ private def glyphOrigin (sites : GlyphOrigins) (code : DiagCode)
     (idx : Nat) (c : Char) : Option Span :=
   (sites.find? fun site => site.1 == code && site.2.1 == idx && site.2.2.1 == c).map (·.2.2.2)
 
+/-- Progress is the appended scalar list: one yielded step accounts for the
+one element it consumed, and induction composes the actual loop. -/
+private theorem scalarLoop_census {α β γ : Type} (read : β → List γ)
+    (emit : α → List γ) (f : α → β → Id (ForInStep β)) :
+    ∀ (xs : List α) (init : β),
+    (∀ x ∈ xs, ∀ b, ∃ next, f x b = .yield next ∧ read next = read b ++ emit x) →
+    read (forIn xs init f : Id β).run = read init ++ xs.flatMap emit := by
+  intro xs
+  induction xs with
+  | nil => intro init _; simp
+  | cons x xs ih =>
+    intro init step
+    obtain ⟨next, hn, hc⟩ := step x (by simp) init
+    rw [List.forIn_cons, hn]
+    change read (forIn xs next f : Id β).run = _
+    rw [ih next (fun x hx => step x (by simp [hx])), hc]
+    simp [List.append_assoc]
+
+private theorem scalarLoop_array_census {α β γ : Type} (read : β → List γ)
+    (emit : α → List γ) (f : α → β → Id (ForInStep β)) (xs : Array α) (init : β)
+    (step : ∀ x ∈ xs, ∀ b, ∃ next, f x b = .yield next ∧ read next = read b ++ emit x) :
+    read (forIn xs init f : Id β).run = read init ++ xs.toList.flatMap emit := by
+  rw [← Array.forIn_toList]
+  exact scalarLoop_census read emit f xs.toList init
+    (fun x hx => step x (by simpa using hx))
+
+private theorem scalarLoop_range_census {β γ : Type} (read : β → List γ)
+    (emit : Nat → List γ) (f : Nat → β → Id (ForInStep β)) (lo hi : Nat) (init : β)
+    (step : ∀ k, lo ≤ k → k < hi → ∀ b,
+      ∃ next, f k b = .yield next ∧ read next = read b ++ emit k) :
+    read (forIn [lo:hi] init f : Id β).run =
+      read init ++ (List.range' lo (hi-lo)).flatMap emit := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  simpa [Std.Legacy.Range.size] using
+    scalarLoop_census read emit f (List.range' lo (hi-lo)) init (by
+      intro k hk b
+      simp only [List.mem_range'] at hk
+      exact step k (by omega) (by omega) b)
+
+/-- Flush the actual shaped buffer, retaining each ownership fragment and its
+original expansion origin. The loop only splits the glyph sequence. -/
+private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
+    Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
+  if box.isEmpty then return (items, offsets, sources)
+  let first := boxOwners[0]?.getD attr
+  if boxOwners.all (· == first) then
+    return (items.push (.box w fontIdx color link box size leading decorations 0 ground first),
+      offsets, sources ++ boxSources.map (·, items.size))
+  let mut items := items
+  let mut offsets := offsets
+  let mut sources := sources
+  let mut offset := 0
+  let mut run := #[]
+  let mut runW := 0
+  let mut owner := first
+  for (g, k) in box.zipIdx do
+    let next := boxOwners[k]?.getD attr
+    if next != owner then
+      if offset != 0 then offsets := offsets.insert items.size offset
+      items := items.push (.box runW fontIdx color link run size leading decorations 0 ground owner)
+      offset := offset + runW
+      run := #[]
+      runW := 0
+      owner := next
+    run := run.push g
+    runW := runW + g.2.2
+    sources := sources.push (boxSources[k]!, items.size)
+  if offset != 0 then offsets := offsets.insert items.size offset
+  return (items.push (.box runW fontIdx color link run size leading decorations 0 ground owner),
+    offsets, sources)
+
+private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
+    (flushWord fontIdx color link size leading decorations ground attr items offsets sources
+      box boxOwners boxSources w).1.toList.flatMap Item.boxChars =
+      items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1) := by
+  unfold flushWord
+  dsimp only
+  split
+  · rename_i h
+    have hb : box = #[] := Array.isEmpty_iff.mp h
+    simp [hb]
+  · split
+    · simp [Item.boxChars]
+    · apply Loop.bind_of_inv
+        (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
+            Sp × Array (Nat × Char × Sp) × Sp × Attribution =>
+          st.1.toList.flatMap Item.boxChars ++ st.2.2.2.2.1.toList.map (·.2.1) =
+            items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1))
+        (Q := fun out : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) =>
+          out.1.toList.flatMap Item.boxChars =
+            items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1))
+      · refine Eq.trans (b := items.toList.flatMap Item.boxChars ++ [] ++
+          box.zipIdx.toList.flatMap (fun x => [x.1.2.1])) ?_ ?_
+        · apply scalarLoop_array_census
+            (fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
+                Sp × Array (Nat × Char × Sp) × Sp × Attribution =>
+              st.1.toList.flatMap Item.boxChars ++ st.2.2.2.2.1.toList.map (·.2.1))
+            (fun x : (Nat × Char × Sp) × Nat => [x.1.2.1])
+          intro x _ st
+          rcases st with ⟨is, os, ss, off, run, rw, owner⟩
+          dsimp only
+          split
+          · split <;> refine ⟨_, rfl, ?_⟩ <;>
+              simp [Item.boxChars, List.append_assoc]
+          · refine ⟨_, rfl, ?_⟩
+            simp [List.append_assoc]
+        · simp only [List.append_nil, Array.toList_zipIdx, ← List.map_eq_flatMap]
+          congr 1
+          simpa only [List.map_map, Function.comp_def] using
+            congrArg (List.map (fun x : Nat × Char × Sp => x.2.1))
+              (List.zipIdx_map_fst 0 box.toList)
+      · intro st hst
+        split <;> simpa [Item.boxChars] using hst
+
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
 A scalar the styled face lacks is set from the precomputed fallback face
@@ -2190,37 +2335,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
   let mut boxOwners : Array Attribution := #[]
   let mut boxSources : Array Nat := #[]
   let mut boxW : Sp := 0
-  let flush (items : Array Item) (offsets : Std.HashMap Nat Sp)
-      (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
-      (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
-      Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
-    if box.isEmpty then return (items, offsets, sources)
-    let first := boxOwners[0]?.getD attr
-    if boxOwners.all (· == first) then
-      return (items.push (.box w fontIdx color link box size leading decorations 0 ground first),
-        offsets, sources ++ boxSources.map (·, items.size))
-    let mut items := items
-    let mut offsets := offsets
-    let mut sources := sources
-    let mut offset := 0
-    let mut run := #[]
-    let mut runW := 0
-    let mut owner := first
-    for (g, k) in box.zipIdx do
-      let next := boxOwners[k]?.getD attr
-      if next != owner then
-        if offset != 0 then offsets := offsets.insert items.size offset
-        items := items.push (.box runW fontIdx color link run size leading decorations 0 ground owner)
-        offset := offset + runW
-        run := #[]
-        runW := 0
-        owner := next
-      run := run.push g
-      runW := runW + g.2.2
-      sources := sources.push (boxSources[k]!, items.size)
-    if offset != 0 then offsets := offsets.insert items.size offset
-    return (items.push (.box runW fontIdx color link run size leading decorations 0 ground owner),
-      offsets, sources)
+  let flush := flushWord fontIdx color link size leading decorations ground attr
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -4431,6 +4546,80 @@ private theorem flatten_plain (mathOk noteOk : Bool) (st : FlattenSt)
   exact flattenList_plain mathOk noteOk sty xs.toList st
     (fun x hx => hp x (by simpa using hx)) ht
 
+private def Tk.sourceChars : Tk → List Char
+  | .word _ cs _ => cs.toList
+  | .space _ => [' ']
+  | .origin _ | .anchor _ | .fill | .hskip _ _ _ | .rule _ _ _ _
+    | .strut _ | .brk _ | .img _ _ | .formula _ _ _ _
+    | .icon _ _ _ | .note _ _ _ _ | .corr _ _ => []
+
+private theorem pushWord_sourceChars (st : FlattenSt) (sty : TextStyle)
+    (cur : Array Char) (attr : Attribution) :
+    (pushWord st sty cur attr).toks.toList.flatMap Tk.sourceChars =
+      st.toks.toList.flatMap Tk.sourceChars ++ cur.toList := by
+  simp [pushWord, Tk.sourceChars]
+
+private theorem pushChars_sourceChars (sty : TextStyle) (attr : Attribution)
+    (cs : List Char) : ∀ (st : FlattenSt) (cur : Array Char),
+    (pushChars sty attr st cur cs).toks.toList.flatMap Tk.sourceChars =
+      st.toks.toList.flatMap Tk.sourceChars ++ cur.toList ++ cs := by
+  induction cs with
+  | nil =>
+    intro st cur
+    simp only [pushChars]
+    split
+    · rename_i h
+      have hc : cur = #[] := Array.isEmpty_iff.mp h
+      simp [hc]
+    · simp [pushWord_sourceChars]
+  | cons c rest ih =>
+    intro st cur
+    simp only [pushChars]
+    split
+    · rename_i h
+      have hc : c = ' ' := beq_iff_eq.mp h
+      subst c
+      rw [ih]
+      simp only [List.append_nil, Array.toList_push,
+        List.flatMap_append, List.flatMap_cons, Tk.sourceChars, List.flatMap_nil,
+        List.append_nil]
+      split
+      · rename_i h
+        have hc : cur = #[] := Array.isEmpty_iff.mp h
+        simp [hc, List.append_assoc]
+      · simp [pushWord_sourceChars, List.append_assoc]
+    · rw [ih]
+      simp [List.append_assoc]
+
+private theorem pushText_sourceChars (st : FlattenSt) (sty : TextStyle)
+    (s : String) :
+    (pushText st sty s).toks.toList.flatMap Tk.sourceChars =
+      st.toks.toList.flatMap Tk.sourceChars ++ s.toList := by
+  simpa [pushText, pushTextAttr] using
+    pushChars_sourceChars sty st.ctr.take.1 s.toList { st with ctr := st.ctr.take.2 } #[]
+
+private theorem flattenList_sourceChars (mathOk noteOk : Bool) (sty : TextStyle)
+    (xs : List Inline) : ∀ st,
+    (∀ x ∈ xs, ∃ s, x = .text s) →
+    (flattenList mathOk noteOk st sty xs).toks.toList.flatMap Tk.sourceChars =
+      st.toks.toList.flatMap Tk.sourceChars ++ (Ir.plainTextList xs).toList := by
+  induction xs with
+  | nil => intro st _; simp [flattenList, Ir.plainTextList]
+  | cons x xs ih =>
+    intro st hp
+    obtain ⟨s, rfl⟩ := hp x (by simp)
+    simp only [flattenList, flattenOne]
+    rw [ih _ (fun x hx => hp x (by simp [hx])), pushText_sourceChars]
+    simp [Ir.plainTextList, Ir.plainTextOne, List.append_assoc]
+
+private theorem flatten_sourceChars (mathOk noteOk : Bool) (st : FlattenSt)
+    (sty : TextStyle) (xs : Array Inline) (hp : PlainInlines xs) :
+    (flatten mathOk noteOk st sty xs).toks.toList.flatMap Tk.sourceChars =
+      st.toks.toList.flatMap Tk.sourceChars ++ (Ir.plainText xs).toList := by
+  simpa only [flatten, Ir.plainText] using
+    flattenList_sourceChars mathOk noteOk sty xs.toList st
+      (fun x hx => hp x (by simpa using hx))
+
 private theorem itemsOfTok_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
@@ -5014,6 +5203,37 @@ private def setWordBox (segs : Array Seg) (f offset w : Sp)
   return segs.push
     (.run fontIdx color link (width - startX) run size leading decorations raise ground attr)
 
+private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
+    (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (attr : Attribution) :
+    (setWordBox segs f offset w fontIdx color link glyphs size leading decorations raise ground attr).toList.flatMap
+      Seg.glyphChars = segs.toList.flatMap Seg.glyphChars ++ glyphs.toList.map (·.2.1) := by
+  unfold setWordBox
+  dsimp only
+  split
+  · simp [Seg.glyphChars]
+  · apply Loop.bind_of_inv
+      (P := fun st : Array Seg × Array (Nat × Char × Sp) × Sp × Sp × Sp =>
+        st.1.toList.flatMap Seg.glyphChars ++ st.2.1.toList.map (·.2.1) =
+          segs.toList.flatMap Seg.glyphChars ++ glyphs.toList.map (·.2.1))
+      (Q := fun out : Array Seg => out.toList.flatMap Seg.glyphChars =
+        segs.toList.flatMap Seg.glyphChars ++ glyphs.toList.map (·.2.1))
+    · simpa only [Array.toList_empty, List.map_nil, List.append_nil,
+        ← List.map_eq_flatMap] using
+        scalarLoop_array_census
+          (fun st : Array Seg × Array (Nat × Char × Sp) × Sp × Sp × Sp =>
+            st.1.toList.flatMap Seg.glyphChars ++ st.2.1.toList.map (·.2.1))
+          (fun g : Nat × Char × Sp => [g.2.1]) _ glyphs (segs, #[], 0, 0, 0)
+          (by
+            intro g _ st
+            rcases st with ⟨ss, run, dx, startDx, startX⟩
+            dsimp only
+            split <;> refine ⟨_, rfl, ?_⟩ <;> simp [Seg.glyphChars, List.append_assoc])
+    · intro st hst
+      simpa [Seg.glyphChars] using hst
+
 /-- Does a paragraph line set to its measure? Justified text does. So does
 any line carrying an author's fill, however the paragraph is set: TeX's
 glue orders give a line's slack to its highest-order stretch, and
@@ -5063,6 +5283,42 @@ private theorem trimLineGaps_mem (segs : Array Seg) (width : Sp) :
     obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp hp
     exact Array.mem_of_getElem (by simpa only [Array.getElem_pop] using he)
   · intro s hs; exact hs
+termination_by segs.size
+decreasing_by
+  all_goals
+    have hn : segs.size ≠ 0 := by
+      intro hz
+      have he : segs = #[] := Array.eq_empty_of_size_eq_zero hz
+      simp [he] at *
+    simp only [Array.size_pop]
+    omega
+
+private theorem trimLineGaps_glyphChars (segs : Array Seg) (width : Sp) :
+    (trimLineGaps segs width).1.toList.flatMap Seg.glyphChars =
+      segs.toList.flatMap Seg.glyphChars := by
+  unfold trimLineGaps
+  simp only [Id.run, bind, pure]
+  dsimp only [ForIn.forIn]
+  rw [Lean.Loop.forIn_eq_of_monadTail]
+  dsimp only
+  split
+  · rename_i w word h
+    have hp := trimLineGaps_glyphChars segs.pop (width - w)
+    have he := back?_pop_push segs (.gap w word) h
+    have hc : segs.toList.flatMap Seg.glyphChars =
+        segs.pop.toList.flatMap Seg.glyphChars := by
+      exact (congrArg (fun ss : Array Seg => ss.toList.flatMap Seg.glyphChars) he).trans
+        (by simp [Seg.glyphChars])
+    exact hp.trans hc.symm
+  · rename_i w word decorations h
+    have hp := trimLineGaps_glyphChars segs.pop (width - w)
+    have he := back?_pop_push segs (.decoratedGap w word decorations) h
+    have hc : segs.toList.flatMap Seg.glyphChars =
+        segs.pop.toList.flatMap Seg.glyphChars := by
+      exact (congrArg (fun ss : Array Seg => ss.toList.flatMap Seg.glyphChars) he).trans
+        (by simp [Seg.glyphChars])
+    exact hp.trans hc.symm
+  · rfl
 termination_by segs.size
 decreasing_by
   all_goals
@@ -5164,6 +5420,47 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   return trimLineGaps segs width
+
+private theorem setLineSegments_glyphChars (items : Array Item) (a j : Nat) (m : Measure)
+    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp) :
+    (setLineSegments items a j m delta f justify fils wordOffsets).1.toList.flatMap Seg.glyphChars =
+      (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars) ++
+      (match items[j]? with
+        | some (.pen _ _ _ _ _ glyphs) => glyphs.toList.map (·.2.1)
+        | _ => []) := by
+  unfold setLineSegments
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : Array Seg × Sp =>
+      st.1.toList.flatMap Seg.glyphChars =
+        (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars))
+    (Q := fun out : Array Seg × Sp => out.1.toList.flatMap Seg.glyphChars =
+      (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars) ++
+      (match items[j]? with
+        | some (.pen _ _ _ _ _ glyphs) => glyphs.toList.map (·.2.1)
+        | _ => []))
+  · simpa only [Array.toList_empty, List.flatMap_nil, List.nil_append] using
+      scalarLoop_range_census
+        (fun st : Array Seg × Sp => st.1.toList.flatMap Seg.glyphChars)
+        (fun k => (items.getD k default).boxChars) _ a j (#[], 0)
+        (by
+          intro k _ _ st
+          rcases st with ⟨ss, w⟩
+          simp only [Array.getElem!_eq_getD]
+          cases hk : items.getD k default <;> dsimp only
+          all_goals refine ⟨_, rfl, ?_⟩
+          all_goals simp [Item.boxChars, setWordBox_glyphChars, Seg.glyphChars])
+  · intro st hst
+    split
+    · rename_i w cost flagged fontIdx color glyphs hpen
+      try simp only [hpen]
+      split
+      · simpa [trimLineGaps_glyphChars, Seg.glyphChars] using
+          congrArg (fun cs => cs ++ glyphs.toList.map (·.2.1)) hst
+      · rename_i h
+        have he : glyphs = #[] := Array.isEmpty_iff.mp (by simpa using h)
+        simp [trimLineGaps_glyphChars, he, hst]
+    · simpa [trimLineGaps_glyphChars] using hst
 
 private def Item.NoGlyph : Item → Prop
   | .box _ _ _ _ glyphs .. | .pen _ _ _ _ _ glyphs => glyphs = #[]
@@ -15907,12 +16204,6 @@ private theorem resolveMathAlphas_plain_body (coverage : Math.MathAlphabetCovera
       simp [Ir.mapBlock, resolveAlpha_plain_inlines coverage xs hx]
   simpa [Ir.resolveMathAlphas, Ir.mapDoc, Ir.mapBlocks, Ir.mapBlocksPic] using
     aux doc.body.toList #[] (by simpa using h)
-
-/-- Scalars actually carried by glyph runs, in paint order. Spacing and
-nontext geometry contribute no scalars. -/
-def Seg.glyphChars : Seg → List Char
-  | .run _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
-  | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => []
 
 def LineOut.glyphChars (line : LineOut) : List Char :=
   line.segs.toList.flatMap Seg.glyphChars
