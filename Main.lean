@@ -588,6 +588,7 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
       Compat.styRead (src.getD file) sty pos elabDiags
   if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
   let t ← IO.monoMsNow
+  let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
   let (doc, bibDiags) ← Input.resolveBibliography file doc reqSpans.bib
   unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
     ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
@@ -815,14 +816,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "settle" (if settled then s!"provisional face holds ({ps.size} labels)"
           else s!"provisional face superseded \
 ({FontFix.disagreements pre metric ps} of {ps.size} labels)") (← since t)
-      let doc ← if settled then pure doc else do
+      let (doc, reqSpans) ← if settled then pure (doc, reqSpans) else do
         let t ← IO.monoMsNow
-        let (doc2, _, _) ←
+        let (doc2, _, spans2) ←
           elaborate ui file front.prepared front.earlier front.spliced metric
             (phases := false) (withdrawn := w.ids)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
-        pure (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1
+        pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused reqSpans.images
       -- The alt judge's picture face, after fulfilment: a picture the
@@ -846,7 +847,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs pats doc imgs
-      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) out.diags)
+        (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
+      let layoutDiags := out.diags.map front.prepared.sourceTriggers.attribute
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- An unaccepted error anywhere before the writers means no output: a
       -- failing document must not produce one (the assertion contract, held

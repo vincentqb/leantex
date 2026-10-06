@@ -1455,6 +1455,61 @@ def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
   Ir.mapDoc (resolveArr p find)
     (fun bs => resolveBlocks p find items #[] bs.toList) doc
 
+/-- Bibliography resolution emits one block per input block except a
+paragraph consisting only of nonprinting citations. Source metadata follows
+this decision, independently of the citation style or external entries. -/
+def keepsBlock : Ir.Block → Bool
+  | .para content => !nociteOnly content
+  | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
+  | .center .. | .ragged .. | .quote .. | .titled .. | .role .. | .link ..
+  | .spaced .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav ..
+  | .note .. | .frame .. | .framefoot .. | .float .. | .table .. | .algorithm ..
+  | .logo .. | .verbatim .. | .setPalette .. | .setTokens .. | .pagebreak
+  | .rule .. | .picture .. => true
+
+private theorem resolveBlock_size_exact (p : CitePunct) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array Ir.Block) (b : Ir.Block) :
+    (resolveBlock p find items out b).size =
+      out.size + if keepsBlock b then 1 else 0 := by
+  cases b <;> simp [resolveBlock, keepsBlock]
+  split <;> simp_all
+
+private theorem resolveBlocks_size_exact (p : CitePunct) (find : Resolver)
+    (items : Array Ir.BibItem) (bs : List Ir.Block) (out : Array Ir.Block) :
+    (resolveBlocks p find items out bs).size =
+      out.size + (bs.filter keepsBlock).length := by
+  induction bs generalizing out with
+  | nil => simp [resolveBlocks]
+  | cons b bs ih =>
+    rw [resolveBlocks, ih, resolveBlock_size_exact]
+    cases hk : keepsBlock b <;> simp [hk] <;> omega
+
+/-- Preserve metadata attached to surviving top-level blocks. Indices refer
+to the input document; values, including expansion origins, pass unchanged.
+Invalid indices and the removed nonprinting paragraphs have no output site. -/
+def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
+    Array (Nat × α) :=
+  sites.filterMap fun (i, source) =>
+    if doc.body[i]?.any keepsBlock then
+      some (((doc.body.toList.take i).filter keepsBlock).length, source)
+    else none
+
+/-- Each surviving source's new offset is the size of its prefix after the
+actual bibliography rewrite, for every style, resolver and reference list. -/
+theorem remapSources_projects {α : Type} (doc : Ir.Doc)
+    (sites : Array (Nat × α)) (i : Nat) (source : α) (b : Ir.Block)
+    (hs : (i, source) ∈ sites) (hb : doc.body[i]? = some b)
+    (hk : keepsBlock b = true)
+    (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem) :
+    ((resolveDoc p find items
+        { doc with body := (doc.body.toList.take i).toArray }).body.size, source) ∈
+      remapSources doc sites := by
+  have hsize := resolveBlocks_size_exact p find items (doc.body.toList.take i) #[]
+  simp only [Array.size_empty, Nat.zero_add] at hsize
+  apply Array.mem_filterMap.mpr
+  refine ⟨(i, source), hs, ?_⟩
+  simp [hb, hk, resolveDoc, Ir.mapDoc, hsize]
+
 /-- natbib's author-year label in a `\bibitem`'s optional argument
 (natbib.sty `\NAT@parse`: `Jones et al.(1990)Jones, Baker, and Williams`):
 the names before the parentheses and the year inside them. -/

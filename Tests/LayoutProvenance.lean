@@ -4,7 +4,7 @@ namespace LeanTex.Tests.LayoutProvenance
 
 open Core Core.Dim Core.Ir Core.Layout Core.Font
 
-private def source (line id : Nat) : Span :=
+private def provenanceSpan (line id : Nat) : Span :=
   { file := "layout-provenance.tex"
     pos := { line, col := 3, origins := [{ id, name := "framefixture" }],
              command := some "\\begin{frame}" } }
@@ -29,8 +29,8 @@ def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
     (.onSteps { first := 2, last := none } #[.para #[.text "Second step"]])
   let frame := Block.frame #[.text "Frame title"] false .top false body
   let doc : Doc := { docClass := .slides, body := #[frame, frame], frameRestart := some 1 }
-  let first := source 7 11
-  let second := source 73 29
+  let first := provenanceSpan 7 11
+  let second := provenanceSpan 73 29
   let out := run geom fs none doc (frameSpans := #[(0, first), (1, second)])
   let spills := out.diags.filter (·.kind == .W0384)
   let htmlOnly := Block.only #["html"] #[.para #[.text "Web-only content"]]
@@ -61,8 +61,8 @@ def overfullSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
     pageW := pt 160, pageH := pt 400
     hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
     hyphenate := false, justify := false }
-  let first := source 17 31
-  let second := source 43 47
+  let first := provenanceSpan 17 31
+  let second := provenanceSpan 43 47
   let word := Inline.text ("".pushn 'W' 96)
   let content := #[.located first #[word], .linebreak {}, .located second #[word]]
   let out := run geom fs none { body := #[.para content] }
@@ -70,7 +70,7 @@ def overfullSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let notes := run geom fs none
     { body := #[.para #[.text "Note", .footnote (some 1) content]] }
   let noteOverfull := notes.diags.filter (·.kind == .W0005)
-  let expansion := source 17 79
+  let expansion := provenanceSpan 17 79
   let expanded := run geom fs none
     { body := #[.para #[.located first #[word]], .para #[.located expansion #[word]]] }
   let expansionOverfull := expanded.diags.filter (·.kind == .W0005)

@@ -1,20 +1,11 @@
-import LeanTex.Core.Layout
+import Tests.Support
 
 namespace LeanTex.Tests.LayoutContracts
 
 open Core Core.Dim Core.Ir Core.Layout Core.Font
 
-private def lineText (l : LineOut) : String :=
-  String.ofList (l.segs.toList.flatMap fun
-    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.toList.map (·.2.1)
-    | _ => [])
-
 private def noDroppedGlyph (out : Out) : Bool :=
   !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
-
-private def bodyLines (out : Out) : Array LineOut :=
-  out.pages.flatMap fun p =>
-    p.lines.filter fun l => !l.furniture && !l.note && !(lineText l).isEmpty
 
 /-- Executable counterexamples to the old universal Layout contracts.
 These exercise legitimate pagination and furniture decisions, not a font
@@ -32,6 +23,8 @@ def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
   let ordinary := run geom fs none plain
   let spaced := run geom fs none { plain with body := #[.para a,
     .spaced (Sourced.bare { width := Length.ofSp (pt 80) }) #[.para b]] }
+  let ordinaryLines := (bodyLines ordinary).filter fun l => !l.note && hasGlyphRun l
+  let spacedLines := (bodyLines spaced).filter fun l => !l.note && hasGlyphRun l
   let chrome : Chrome := { footerRight := some .frameNumber }
   let frameGeom := { geom with pageH := pt 120 }
   let frame := Block.frame #[.text "Title"] false .top false #[.para #[.text "Body"]]
@@ -48,14 +41,14 @@ def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
   return #[
     ("undeclared running bands still ship the plain page number",
       plain.head.isNone && plain.foot.isNone && noDroppedGlyph ordinary &&
-      String.join ((bodyLines ordinary).map lineText).toList == "FirstSecond" &&
-      String.join (ordinary.pages.flatMap (·.lines) |>.map lineText).toList == "FirstSecond1"),
+      String.join (ordinaryLines.map (lineText · false)).toList == "FirstSecond" &&
+      String.join ((allLines ordinary).map (lineText · false)).toList == "FirstSecond1"),
     ("positive element space can lower a page-local baseline by paginating",
       noDroppedGlyph ordinary && noDroppedGlyph spaced &&
       ordinary.pages.size == 1 && spaced.pages.size == 2 &&
-      (bodyLines ordinary).size == 2 && (bodyLines spaced).size == 2 &&
-      ((bodyLines spaced).back?.map (·.y)).getD 0 <
-        ((bodyLines ordinary).back?.map (·.y)).getD 0),
+      ordinaryLines.size == 2 && spacedLines.size == 2 &&
+      ((spacedLines.back?).map (·.y)).getD 0 <
+        ((ordinaryLines.back?).map (·.y)).getD 0),
     ("a countable frame can ship more pages than its overlay count",
       noDroppedGlyph spills && frameSteps spilling == 1 &&
       (spills.pages.filter (·.frame == some 1)).size > frameSteps spilling &&

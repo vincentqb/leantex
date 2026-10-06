@@ -69,6 +69,8 @@ import Tests.PictureHtmlBaseline
 import Tests.PictureBoundary
 import Tests.FontDefaults
 import Tests.Batch
+import Tests.ElabFrameSources
+import Tests.LayoutSources
 import scripts.LandCore
 
 /-!
@@ -700,7 +702,14 @@ def reports : List Report := [
     accept := ["two process scheduling assertions fail when bounded batches are changed to single requests: independent work no longer overlaps and a failing request prevents its independent peers from starting",
       "the real picture benchmark checks cold and warm output byte equality and measures sixteen uncached requests at 13048 milliseconds before batching and 3346 milliseconds after",
       "the existing subprocess checks hold exit, pipe closure, timeouts, capture limits and descendant cleanup"]
-    state := .guarded "4b76ad6d" .revert .author }
+    state := .guarded "4b76ad6d" .revert .author },
+  { id := "R89", date := "2026-10-06"
+    what := "frame overflow and overfull-line diagnostics lacked the source opening or line, and bibliography cleanup shifted later frame locations"
+    pins := [check% elabFrameSourceChecks, check% layoutSourceChecks,
+      thm% Layout.frameSpansForPdf_covers,
+      .thm `LeanTex.Core.Bib.remapSources_projects _ @LeanTex.Core.Bib.remapSources_projects]
+    accept := ["two actual-layout assertions failed when a nonprinting citation paragraph was removed before identical overflowing frames; both frames retain their exact opening through bibliography rewriting and repeated elaboration"]
+    state := .guarded "45f6ec8a" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

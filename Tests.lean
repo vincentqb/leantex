@@ -2,6 +2,8 @@ import Tests.Support
 import Tests.Batch
 import Tests.Surface
 import Tests.ElabContracts
+import Tests.ElabFrameSources
+import Tests.LayoutSources
 import Tests.FontSize
 import Tests.CancelRegression
 import Tests.CancelHtml
@@ -206,6 +208,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
+  layoutSourceChecks ref oneFace
   htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
@@ -622,6 +625,7 @@ def main (args : List String) : IO UInt32 := do
   salvageChecks ref
   diagSiteCountChecks ref
   elabWarningContractChecks ref
+  elabFrameSourceChecks ref
   porcelainCensusChecks ref
   siteAccountingChecks ref
   diagAuditChecks ref
