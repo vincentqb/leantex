@@ -46,6 +46,7 @@ import LeanTex.Core.CompatContract
 import LeanTex.Core.InputContract
 import LeanTex.Core.Elab
 import LeanTex.Core.TitleContract
+import LeanTex.Core.ControlContract
 import LeanTex.Core.PictureContract
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
@@ -59,6 +60,7 @@ import LeanTex.Core.HtmlDoc
 import LeanTex.Core.MarkdownDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.Layout.FramePartition
+import LeanTex.Core.Layout.SpacingContract
 import LeanTex.Core.Check
 import LeanTex.Core.PdfContent
 import LeanTex.Core.PdfStruct

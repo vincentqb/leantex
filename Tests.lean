@@ -11,8 +11,10 @@ import Tests.ElabContracts
 import Tests.FrontendContracts
 import Tests.FrontendInputContracts
 import Tests.FrontendPictureContracts
+import Tests.FrontendControlContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
+import Tests.ElementSpacing
 import Tests.ContrastContracts
 import Tests.FlateInterface
 import Tests.FontSize
@@ -232,6 +234,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"layout footer: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.partitionChecks oneFace do
     check ref s!"layout partition: {name}" ok
+  for (name, ok) in LeanTex.Tests.ElementSpacing.elementSpacingChecks oneFace do
+    check ref s!"element spacing: {name}" ok
   htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
@@ -660,6 +664,7 @@ def main (args : List String) : IO UInt32 := do
   frontendTitleContextChecks ref
   frontendInputRequestChecks ref
   frontendPictureCompositionChecks ref
+  frontendControlContractChecks ref
   elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref
