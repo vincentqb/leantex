@@ -1,9 +1,11 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.PdfObj
 import LeanTex.Core.PdfReadProof
+import LeanTex.Core.PdfXref
 import LeanTex.Core.Binary
 import LeanTex.Core.Flate
 import Std.Data.HashMap
+import Std.Data.HashMap.Lemmas
 
 namespace LeanTex.Core.PdfRead
 
@@ -269,6 +271,54 @@ private theorem beField_read (data : ByteArray) (i w v : Nat)
     rw [beField_succ, ih n hn, hb]
     rfl
 
+/-- The object location represented by a writer entry. Free entries do
+not contribute to the reader's live-object map. This is a semantic
+projection; it does not encode or parse any bytes. -/
+def xrefEntryLocation : Pdf.Xref.Entry → Option Loc
+  | .free _ _ => none
+  | .direct off _ => some (.direct off)
+  | .compressed stm idx => some (.inStm stm idx)
+
+/-- The location carried by one cross-reference-stream row. A free,
+unknown, or truncated row contributes no live object; a zero-width type
+field has the PDF-specified default of one (§7.5.8.3). -/
+def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
+  if base + (w0+w1+w2) ≤ data.size then
+    let f1 := if w0 == 0 then 1 else beField data base w0
+    let f2 := beField data (base+w0) w1
+    let f3 := beField data (base+w0+w1) w2
+    if f1 == 1 then some (.direct f2)
+    else if f1 == 2 then some (.inStm f2 f3)
+    else none
+  else none
+
+/-- The actual reader recovers the location of any encoded writer row,
+inside arbitrary surrounding bytes. The only premise beyond selecting
+the row is its numeric representability; no parsing result is assumed. -/
+theorem readXrefRow_encode_exact (es : Array Pdf.Xref.Entry) (i : Nat)
+    (e : Pdf.Xref.Entry) (hi : es[i]? = some e) (he : e.Fits)
+    (pre post : ByteArray) :
+    readXrefRow (pre ++ Pdf.Xref.encode es ++ post) (pre.size+7*i) 1 4 2 =
+      match (generalizing := false) e with
+      | .free _ _ => none
+      | .direct off _ => some (.direct off)
+      | .compressed stm idx => some (.inStm stm idx) := by
+  have fields := Pdf.Xref.encode_index_fields_exact es i e hi he pre post
+  have a := beField_read _ _ _ _ fields.1
+  have b := beField_read _ _ _ _ fields.2.1
+  have c := beField_read _ _ _ _ fields.2.2
+  have ib := (Array.getElem?_eq_some_iff.mp hi).1
+  have bound : pre.size+7*i+(1+4+2) ≤ (pre ++ Pdf.Xref.encode es ++ post).size := by
+    simp only [ByteArray.size_append, Pdf.Xref.encode_size_exact]
+    omega
+  simp only [readXrefRow, bound, ↓reduceIte, show (1 == 0) = false from rfl,
+    Nat.reduceAdd, Bool.false_eq_true]
+  rw [a,b]
+  have cc : beField (pre ++ Pdf.Xref.encode es ++ post) (pre.size+7*i+1+4) 2 =
+      e.fields.2.2 := by simpa only [Nat.add_assoc, Nat.reduceAdd] using c
+  rw [cc]
+  cases e <;> rfl
+
 /-- The cross-reference as read: where every listed object lives, the
 catalog's number, the newest section's trailer dictionary (a classic
 trailer, or the cross-reference stream's own dictionary — the two carry
@@ -289,6 +339,166 @@ private def Xref.seen (x : Xref) (trailer : Obj) : Xref :=
   if x.root.isNone then
     if let some (.ref r _) := trailer.get? "Root" then { x with root := some r } else x
   else x
+
+/-- Consume one `/Index` subsection of decoded xref rows. The second
+result is the next physical row, distinct from the subsection's starting
+object number. The same loop serves the stream reader and its proofs. -/
+def readXrefSubsection (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
+    (x0 : Xref) : Xref × Nat := Id.run do
+  let mut x := x0
+  let mut row := row0
+  for e in [0:count] do
+    let base := row * (w0+w1+w2)
+    x := match readXrefRow data base w0 w1 w2 with
+      | some loc => x.add (start+e) loc
+      | none => x
+    row := row+1
+  return (x,row)
+
+private theorem readXrefSubsection_succ (data : ByteArray)
+    (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
+    readXrefSubsection data w0 w1 w2 start (count+1) row0 x0 =
+      let (x,row) := readXrefSubsection data w0 w1 w2 start count row0 x0
+      (match readXrefRow data (row*(w0+w1+w2)) w0 w1 w2 with
+        | some loc => x.add (start+count) loc
+        | none => x, row+1) := by
+  unfold readXrefSubsection
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
+  simp only [List.forIn_pure_yield_eq_foldl]
+  simp [List.range'_concat, List.foldl_append]
+
+/-- Progress of the actual subsection loop through physical rows. -/
+theorem readXrefSubsection_row_exact (data : ByteArray)
+    (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
+    (readXrefSubsection data w0 w1 w2 start count row0 x0).2 = row0+count := by
+  induction count with
+  | zero => simp [readXrefSubsection]
+  | succ count ih => simp only [readXrefSubsection_succ, ih, Nat.add_assoc]
+
+/-- Every consumed, representable row is recovered in the actual reader
+map at its object number. Unconsumed rows are absent. The empty initial
+map is the newest xref section's state, and the induction advances the
+physical row and object number together. -/
+theorem readXrefSubsection_locations_exact (es : Array Pdf.Xref.Entry)
+    (hf : ∀ e ∈ es, e.Fits) (count : Nat) (hc : count ≤ es.size)
+    (x0 : Xref) (hx : x0.locs = {}) :
+    ∀ k, (readXrefSubsection (Pdf.Xref.encode es) 1 4 2 0 count 0 x0).1.locs[k]? =
+      if k < count then es[k]?.bind xrefEntryLocation else none := by
+  induction count with
+  | zero => intro k; simp [readXrefSubsection, hx]
+  | succ n ih =>
+    have hn : n < es.size := by omega
+    have old := ih (by omega)
+    have hr := readXrefRow_encode_exact es n es[n] (by simp) (hf _ (Array.getElem_mem hn))
+      ByteArray.empty ByteArray.empty
+    simp only [ByteArray.empty_append, ByteArray.append_empty, ByteArray.size_empty,
+      Nat.zero_add] at hr
+    change readXrefRow (Pdf.Xref.encode es) (7*n) 1 4 2 = xrefEntryLocation es[n] at hr
+    have fresh : (readXrefSubsection (Pdf.Xref.encode es) 1 4 2 0 n 0 x0).1.locs.contains n = false := by
+      rw [Std.HashMap.contains_eq_isSome_getElem?, old]
+      simp
+    intro k
+    rw [readXrefSubsection_succ]
+    simp only [readXrefSubsection_row_exact, Nat.zero_add, Nat.reduceAdd,
+      Nat.mul_comm n 7, hr]
+    have thisN : es[n]? = some es[n] := Array.getElem?_eq_getElem hn
+    cases he : es[n] with
+    | free next gen =>
+      simp only [xrefEntryLocation]
+      rw [old]
+      by_cases hkn : k = n
+      · subst k; simp [thisN, he, xrefEntryLocation]
+      · have hlt : (k < n+1) = (k < n) := propext (by omega)
+        simp only [hlt]
+    | direct off gen =>
+      simp only [xrefEntryLocation, Xref.add, fresh, Bool.false_eq_true, ↓reduceIte,
+        Std.HashMap.getElem?_insert]
+      by_cases hkn : n = k
+      · subst k; simp [thisN, he, xrefEntryLocation]
+      · simp only [beq_iff_eq, hkn, ↓reduceIte, old]
+        have hlt : (k < n+1) = (k < n) := propext (by omega)
+        simp only [hlt]
+    | compressed stm idx =>
+      simp only [xrefEntryLocation, Xref.add, fresh, Bool.false_eq_true, ↓reduceIte,
+        Std.HashMap.getElem?_insert]
+      by_cases hkn : n = k
+      · subst k; simp [thisN, he, xrefEntryLocation]
+      · simp only [beq_iff_eq, hkn, ↓reduceIte, old]
+        have hlt : (k < n+1) = (k < n) := propext (by omega)
+        simp only [hlt]
+
+/-- The actual reader's live-object count for a writer table with object
+zero free and every nonzero object live. These are properties of the
+semantic entries, not assumptions about successful parsing. -/
+theorem readXrefSubsection_size_exact (es : Array Pdf.Xref.Entry)
+    (hf : ∀ e ∈ es, e.Fits)
+    (hzero : es[0]?.bind xrefEntryLocation = none)
+    (hlive : ∀ i, 0 < i → i < es.size → (es[i]?.bind xrefEntryLocation).isSome = true)
+    (count : Nat) (hc : count ≤ es.size) (x0 : Xref) (hx : x0.locs = {}) :
+    (readXrefSubsection (Pdf.Xref.encode es) 1 4 2 0 count 0 x0).1.locs.size = count-1 := by
+  induction count with
+  | zero => simp [readXrefSubsection, hx]
+  | succ n ih =>
+    have hn : n < es.size := by omega
+    have old := readXrefSubsection_locations_exact es hf n (by omega) x0 hx
+    have hr := readXrefRow_encode_exact es n es[n] (by simp) (hf _ (Array.getElem_mem hn))
+      ByteArray.empty ByteArray.empty
+    simp only [ByteArray.empty_append, ByteArray.append_empty, ByteArray.size_empty,
+      Nat.zero_add] at hr
+    change readXrefRow (Pdf.Xref.encode es) (7*n) 1 4 2 = xrefEntryLocation es[n] at hr
+    have fresh : (readXrefSubsection (Pdf.Xref.encode es) 1 4 2 0 n 0 x0).1.locs.contains n = false := by
+      rw [Std.HashMap.contains_eq_isSome_getElem?, old]
+      simp
+    rw [readXrefSubsection_succ]
+    simp only [readXrefSubsection_row_exact, Nat.zero_add, Nat.reduceAdd, Nat.mul_comm n 7, hr]
+    have thisN : es[n]? = some es[n] := Array.getElem?_eq_getElem hn
+    cases he : es[n] with
+    | free next gen =>
+      have hn0 : n = 0 := by
+        by_cases hh : n = 0
+        · exact hh
+        · have := hlive n (by omega) hn
+          simp [thisN, he, xrefEntryLocation] at this
+      simp only [xrefEntryLocation]
+      rw [ih (by omega), hn0]
+    | direct off gen =>
+      have hn0 : 0 < n := by
+        by_cases hh : n = 0
+        · subst n
+          simp [thisN, he, xrefEntryLocation] at hzero
+        · omega
+      simp only [xrefEntryLocation, Xref.add, fresh, Bool.false_eq_true, ↓reduceIte,
+        Std.HashMap.size_insert, ih (by omega)]
+      simp only [Std.HashMap.mem_iff_contains, fresh, Bool.false_eq_true, ↓reduceIte]
+      omega
+    | compressed stm idx =>
+      have hn0 : 0 < n := by
+        by_cases hh : n = 0
+        · subst n
+          simp [thisN, he, xrefEntryLocation] at hzero
+        · omega
+      simp only [xrefEntryLocation, Xref.add, fresh, Bool.false_eq_true, ↓reduceIte,
+        Std.HashMap.size_insert, ih (by omega)]
+      simp only [Std.HashMap.mem_iff_contains, fresh, Bool.false_eq_true, ↓reduceIte]
+      omega
+
+/-- Reading rows preserves the trailer, root, and startxref metadata. -/
+theorem readXrefSubsection_metadata_exact (data : ByteArray)
+    (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
+    let x := (readXrefSubsection data w0 w1 w2 start count row0 x0).1
+    x.root = x0.root ∧ x.trailer = x0.trailer ∧ x.start = x0.start := by
+  induction count with
+  | zero => simp [readXrefSubsection]
+  | succ n ih =>
+    cases hp : readXrefSubsection data w0 w1 w2 start n row0 x0 with
+    | mk x row =>
+      simp only [readXrefSubsection_succ, hp]
+      simp only [hp] at ih
+      cases hr : readXrefRow data (row*(w0+w1+w2)) w0 w1 w2 with
+      | none => exact ih
+      | some loc =>
+        simp only [Xref.add]
+        split <;> exact ih
 
 /-- One classic xref section (§7.5.4) at `off`: subsections of 20-byte
 entries, then the trailer dictionary. Returns the updated table and the
@@ -362,17 +572,9 @@ private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
   for p in [0:index.size / 2] do
     let start := ((index[2 * p]?).getD 0).toNat
     let count := ((index[2 * p + 1]?).getD 0).toNat
-    for e in [0:count] do
-      let base := row * rowW
-      if base + rowW ≤ data.size then
-        let f1 := if w0 == 0 then 1 else beField data base w0
-        let f2 := beField data (base + w0) w1
-        let f3 := beField data (base + w0 + w1) w2
-        if f1 == 1 then
-          x := x.add (start + e) (.direct f2)
-        else if f1 == 2 then
-          x := x.add (start + e) (.inStm f2 f3)
-      row := row + 1
+    let (x',row') := readXrefSubsection data w0 w1 w2 start count row x
+    x := x'
+    row := row'
   let prev := ((dict.get? "Prev").bind Obj.int?).map (·.toNat)
   return (x, prev)
 
