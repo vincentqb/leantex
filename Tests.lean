@@ -9,6 +9,7 @@ import Tests.Surface
 import Tests.ElabContracts
 import Tests.FrontendContracts
 import Tests.FrontendInputContracts
+import Tests.FrontendPictureContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.ContrastContracts
@@ -223,6 +224,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   layoutSourceChecks ref oneFace
   for (name, ok) in LeanTex.Tests.LayoutContracts.ownershipChecks oneFace do
     check ref s!"layout ownership: {name}" ok
+  for (name, ok) in LeanTex.Tests.LayoutContracts.reflowChecks oneFace do
+    check ref s!"layout reflow: {name}" ok
   htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
@@ -650,6 +653,7 @@ def main (args : List String) : IO UInt32 := do
   elabTitleBoundaryChecks ref
   frontendTitleContextChecks ref
   frontendInputRequestChecks ref
+  frontendPictureCompositionChecks ref
   elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref

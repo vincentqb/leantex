@@ -37,5 +37,19 @@ def moduleName (file : System.FilePath) : String :=
 def importName (name : String) : String :=
   String.intercalate "." ((name.splitOn ".").map fun part => "«" ++ part ++ "»")
 
+/-- Executable roots can declare the same global `main`; inspect them in
+separate compiler environments. Every discovered source occurs in one group,
+including libraries outside the current production and test namespaces. -/
+def groups (files : Array System.FilePath) : Array (Array String) := Id.run do
+  let mut library := #[]
+  let mut isolated := #[]
+  for file in files do
+    let name := moduleName file
+    if name.startsWith "LeanTex." || name.startsWith "Tests." || name == "LeanTex" then
+      library := library.push name
+    else
+      isolated := isolated.push #[name]
+  return (if library.isEmpty then #[] else #[library]) ++ isolated
+
 end
 end ProofSources

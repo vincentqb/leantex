@@ -205,6 +205,10 @@
 ✖ [E0606]
   cannot publish self-contained HTML: an image still names 'figures/plot.svg'
   suggestion: use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies
+── E0607 (dropped) the PDF exceeds a supported storage bound; publication is refused
+✖ [E0607]
+  the PDF needs 65537 compressed objects; the supported limit is 65536
+  suggestion: split the document into smaller files and compile each with `leantex <file>.tex`
 ── N0016 (info) no math face declared; the engine picked one and says which
 ℹ [N0016]
   math is set in 'Fira Math', the designed companion of 'Fira Sans'

@@ -508,6 +508,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
+  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537)]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""
@@ -1178,7 +1179,7 @@ def subjectDebt : List String :=
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
    "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
    "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
-   "W0377", "W0378", "W0379", "W0380", "W0381", "W0386", "W0388"]
+   "W0377", "W0378", "W0379", "W0380", "W0381", "W0388"]
 
 /-- **Every counted loss can be counted.** A `degraded` or `pending` code
 says content did not reach the page as declared, and a reader sizing that
@@ -1859,4 +1860,3 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"salvage {n}: no recovered ink spells a diagnostic code"
       (fDoc.salvage.all fun s =>
         DiagCode.all.all fun c => !hasStr s.text c.code)
-

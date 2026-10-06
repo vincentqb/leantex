@@ -1,5 +1,6 @@
 import LeanTex.Core.PdfWriteContract
 import LeanTex.Core.PdfCensus
+import LeanTex.Cli.DriverDiag
 
 open LeanTex.Core
 
@@ -40,6 +41,10 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
     (match large.checked with
       | .error (.objectIndex n) => n == large.compressed.length
       | _ => false)
+  check "PDF bounds: the actual storage refusal reaches the diagnostic registry"
+    (match large.checked with
+      | .error error => (LeanTex.Cli.DriverDiag.pdfWriteRefused error).code == DiagCode.E0607.code
+      | .ok _ => false)
   check "PDF bounds: positioned-page producer refuses the oversized outline"
     (match Pdf.writeChecked {} fs #[] {} {} outline with
       | .error (.objectIndex n) => n == large.compressed.length

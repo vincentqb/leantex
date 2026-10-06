@@ -60,19 +60,6 @@ def checkSource (dir : System.FilePath) (index : Nat) (source : System.FilePath)
     return false
   return true
 
-/-- Scripts and executable roots can declare the same global `main`; audit
-them in separate compiler environments. Library modules share one environment. -/
-def groups (files : Array System.FilePath) : Array (Array String) := Id.run do
-  let mut library := #[]
-  let mut isolated := #[]
-  for file in files do
-    let name := moduleName file
-    if name.startsWith "LeanTex." || name.startsWith "Tests." || name == "LeanTex" then
-      library := library.push name
-    else
-      isolated := isolated.push #[name]
-  return #[library] ++ isolated
-
 def verify : IO UInt32 := do
   let files ← sources "."
   if files.isEmpty then

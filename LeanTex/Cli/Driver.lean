@@ -888,9 +888,15 @@ in the HTML" (← since t)
         let tree := Struct.ofDoc (Layout.pdfView doc)
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
-        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams tree ops programs
-        ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
-        pdfBuilt := some pdf
+        match Pdf.writeChecked geom fs out.pages doc.info imgs out.outline streams tree ops programs with
+        | .error error =>
+          ui.diag (DriverDiag.pdfWriteRefused error)
+          ui.accepted resolved.accepted
+          ui.summary file 1 (← since t0)
+          return 1
+        | .ok pdf =>
+          ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
+          pdfBuilt := some pdf
       -- Phase 3: census, gate, publish. Assertions judge what shipped, so
       -- they read the built bytes and run before anything is written: a
       -- failing document must not produce output. The page walk is

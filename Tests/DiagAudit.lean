@@ -7,6 +7,7 @@ import Tests.Kernel
 import Tests.ListingProvider
 import Tests.PublicationPaths
 import Tests.HtmlContained
+import Tests.PdfBounds
 import scripts.Rung
 
 /-!
@@ -140,6 +141,7 @@ def registry : List AuditRow :=
    -- A refused external classification keeps the source and names its loss.
    ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
+   ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,

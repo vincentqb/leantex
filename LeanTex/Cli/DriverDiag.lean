@@ -1,10 +1,11 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.FontDb
+import LeanTex.Core.PdfWriteContract
 
 /-! The driver's diagnostics, as pure builders: every message the CLI can
 emit for a file, font, or image the host failed to provide is constructed
 here, IO-free, so the registry golden and the message lint in Tests.lean
-reach the same text the user sees. Main.lean supplies the arguments; a
+reach the same text the user sees. Driver.lean supplies the arguments; a
 message written inline in the driver would be invisible to both. -/
 
 namespace LeanTex.Cli.DriverDiag
@@ -30,6 +31,25 @@ def unreadableInput (file err : String) : Diag :=
 def outputPathsConflict (detail : String) : Diag :=
   Diag.of .E0003 s!"cannot publish output: {detail}"
     (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
+
+/-- A whole-artifact storage refusal. No single source command owns an
+aggregate byte or object count, so this diagnostic invents no source span. -/
+def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
+  let message := match error with
+    | .objectIndex count =>
+      s!"the PDF needs {count} compressed objects; the supported limit is {256 ^ 2}"
+    | .byteOffset bytes =>
+      s!"the PDF body needs {bytes} bytes; offsets must be below {256 ^ 4}"
+    | .objectNumber number =>
+      s!"the PDF object number {number} exceeds the supported limit of {256 ^ 4 - 1}"
+    | .tableSize count =>
+      s!"the PDF object table needs {count} entries; the supported limit is {256 ^ 4 - 1}"
+    | .objectStreamSize bytes =>
+      s!"the PDF object stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
+    | .xrefStreamSize bytes =>
+      s!"the PDF cross-reference stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
+  Diag.of .E0607 message
+    (help := "split the document into smaller files and compile each with `leantex <file>.tex`")
 
 /-- E0402: `LEANTEX_FONT` names a file that does not parse as a font. -/
 def envFontUnusable (path err : String) : Diag :=

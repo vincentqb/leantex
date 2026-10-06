@@ -273,6 +273,7 @@ inductive DiagCode where
   | W0435
   | W0393
   | E0606
+  | E0607
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -461,6 +462,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0435 => ("0435", .degraded, "a \\qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display")
   | .W0393 => ("0393", .degraded, "the installed syntax highlighter cannot classify a listing; its source is set as plain text")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
+  | .E0607 => ("0607", .dropped, "the PDF exceeds a supported storage bound; publication is refused")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

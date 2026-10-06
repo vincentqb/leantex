@@ -238,18 +238,9 @@ theorem contrast_judged_complete
         (Contrast.judgedPairs doc).contains pr = true := by
   sorry
 
--- owed: inflate_deflate_id
--- owner: LeanTex.Core.Flate
--- source: the build-cache slice (2026-09-21 survey wave): the engine grew a real compressor, and it owns both halves of the round trip — deflate emits only symbols inflate's tables decode, so the identity is the engine's to prove, not an interop hope. The executable oracle is scripts/flate-fuzz.lean (adversarial and random inputs, the fixtures' decoded planes, every stream cross-checked against a foreign inflater); the in-suite witnesses are the deflate-roundtrip rows in Tests/Backends.
--- blocker: The actual encoder now has code-length RLE coverage (Flate.CodeLengths.encode_contract), package-merge alphabet, bounded-length and Kraft contracts (Flate.PackageMerge.lengths_contract), canonical decoder correspondence, and bit-writer stream-extension decoding (Flate.packageMerge_push_decode_exact). Tokenization and overlapping-copy contracts also hold. The remaining proof composes the real zlib/block headers, dynamic code-length prelude, Huffman table construction, token loop, end marker, final byte flush and checksum; none of those whole-stream facts follows from a successful symbol round trip alone.
--- goldens: no
-/-- The engine's inflate inverts its deflate on every input: the compressed
-streams the PDF writer emits (content, fonts, image planes, metadata, the
-object and cross-reference streams) decode back to exactly the bytes the
-engine meant, by the engine's own decoder. -/
-theorem inflate_deflate_id (b : ByteArray) :
-    Flate.inflate (Flate.deflate b) b.size = .ok b := by
-  sorry
+-- Flate.inflate_deflate_id proves the complete public zlib round trip.
+-- Flate.inflate_deflate_bounded_id permits any sufficient output capacity;
+-- both compose the actual encoder and decoder without external premises.
 
 -- owed: write_fonts_embedded
 -- owner: LeanTex.Core.Pdf
@@ -300,12 +291,6 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
 -- salvage: literals, selected substitutions, elaborated math, or a named
 -- generated floor. Literal punctuation is content, not a forbidden alphabet.
 
-/-- The lines a set of inlines declares: one per `\\`, plus the line the
-last segment ends. The measure the re-flow statement compares the shipped
-count against, over the public inline type. -/
-def declaredBreakLines (xs : Array Ir.Inline) : Nat :=
-  1 + xs.foldl (fun n x => match x with | .linebreak _ => n + 1 | _ => n) 0
-
 /-- The flow's own lines that carry ink: furniture stands in the margin by
 design and the note apparatus belongs to the page, so neither is a line the
 document's paragraphs declared. -/
@@ -313,22 +298,10 @@ def inkLines (o : Out) : List LineOut :=
   o.pages.toList.flatMap fun p =>
     p.lines.toList.filter fun l => !l.furniture && !l.note && lineInk l ≠ []
 
--- owed: reflow_named
--- owner: LeanTex.Core.Layout
--- source: the declared-break slice (PLAN 2026-09-24, the re-flow entry): a deck's title shipped three lines where its author declared two and said nothing, because the engine had no code for "the shape you declared is not the shape shipped". W0386 and its step account (`Layout.warnReflow_accounts`) close the accounting half — the warning is pushed in the same step that reads the two counts — but the step is not the artifact: nothing yet states that the diagnostic survives the placement fold and reaches the `Out` a caller reads, so a future refactor between the two could drop it and leave the account green. The in-suite witness is the "a declared break destroyed by re-flow is named" row of `titleBreakChecks`, which reads `Layout.run`'s own diagnostics off a title whose first declared line does not fit, with three sibling rows pinning the floors (a break that holds is silent, a title declaring no break reports nothing, and W0005 stays silent because no line is overfull).
--- blocker: The statement is false when only the paragraph's final segment wraps: no authored line end was lost, so W0386 correctly stays silent (LayoutContracts.counterexamples). The replacement must identify an authored line end whose segment reflowed. Layout.runPost_diags_covers and Layout.shipment_diags_covers now preserve actual diagnostic code/subject pairs through the postlude; they do not prove the missing placement event or its relation to the declared-break census.
--- goldens: no
-/-- Staged declared-break accounting. Extra lines alone do not imply a
-lost authored line end: the final segment can wrap while every declared
-break holds. The replacement must identify the affected authored segment. -/
-theorem reflow_named
-    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc) (xs : Array Ir.Inline)
-    (hone : doc.body = #[Ir.Block.para xs])
-    (hdecl : 2 ≤ declaredBreakLines xs)
-    (hlast : ∀ e, xs.back? ≠ some (Ir.Inline.linebreak e))
-    (hlost : declaredBreakLines xs < (inkLines (Layout.run geom fs none doc)).length) :
-    (Layout.run geom fs none doc).diags.any (·.kind == .W0386) = true := by
-  sorry
+-- Layout.reflow_named proves that every split before an authored segment
+-- end retains its paragraph-keyed diagnostic through the actual public run.
+-- LayoutContracts.reflowChecks covers floats, columns, repeated paragraphs,
+-- restarted frame counters, and the final-segment counterexample.
 
 -- The former node-border claim used an arbitrary metric and identified a
 -- label's owner by coordinates alone; neither premise is sound. The actual
@@ -337,27 +310,10 @@ theorem reflow_named
 -- Negative padding and authored text dimensions can put ink outside a node
 -- border. PictureContracts.checks preserves those distinctions.
 
--- owed: pictureKeys_named
--- owner: LeanTex.Core.Elab
--- source: the stale picture-key gate (PLAN 2026-09-24, the unread-picture-key entry): the keys a `\tikzset` line leaves outside the rendered subset were named only under the declared refusal, on the premise that the real TikZ read them at the edge whenever a tool was configured. Native drawing killed that premise — the boundary became the fallback — and the diagnostic went silent for every picture the engine drew itself, an arrow-tip default among the keys dropped without a word on a 41-page deck. The gate now reads `Elab.enginePictures`, the count of `.picture` nodes the body walk produced, which is who drew it rather than which tool was configured. The in-suite witness is `pictureKeyGateChecks`, whose decisive row is a pair of builds differing by one `\pictures{ tool = none }` line: byte-identical PDFs, the same keys named on both sides, which is what separates the drawing from the honesty. Its siblings pin the two floors (a document whose every picture went whole to the boundary claims no loss, a document with no picture has no drawing to have lost them) and the mixed case the previous gate got wrong.
--- blocker: Elab.warnOnce_sites_exact now proves accounting for each actual reporting call. The remaining proof must show every unread key reaches such a call and that its diagnostic survives the rest of elabDoc and runRaws. The gate also needs the elaborated picture census and the accumulated style table; a report-call contract does not establish those premises.
--- goldens: no
-/-- The keys a drawing did not read are named, weak public form: for a
-document whose whole `\tikzset` census is one line, if the engine drew a
-picture of its own then every key of that line the rendered subset does not
-read carries a W0334 whose structured subject is the key. The restriction to
-one set line is what keeps the unread set readable without re-running the
-elaborator's style fold; the restriction to the engine's own drawing is the
-statement's content, since a picture that went whole to the boundary is read
-by the real TikZ and has no loss to name. -/
-theorem pictureKeys_named (file : String) (raws : Array Parse.Raw)
-    (pos : Pos) (keys : Array Parse.Raw)
-    (hone : Compat.tikzsetKeys raws = #[(pos, keys)])
-    (hdrew : 0 < Elab.enginePictures (Elab.runRaws file raws).1.body) :
-    ∀ k ∈ Picture.unreadKeys [] (Picture.ofRaws keys),
-      (Elab.runRaws file raws).2.any (fun d =>
-        d.kind == .W0334 && d.subject == some ("picture:set:" ++ k)) = true := by
-  sorry
+-- PictureContract.pictureKeys_named proves complete accounting over the
+-- settings retained by Elab.prepare, including accumulated style definitions.
+-- FrontendPictureContracts retains the counterexample to the raw-source
+-- premise: compatibility preparation can discard a setting before drawing.
 
 -- Body duplication does not double preamble diagnostics. The old source
 -- doubling claim is refuted by elabWarningContractChecks. The proved
