@@ -1,6 +1,7 @@
-import LeanTex.Core.Diag
-import LeanTex.Core.Ink
-import LeanTex.Core.Math
+module
+
+public import LeanTex.Core.Ink
+public import LeanTex.Core.Math
 
 namespace LeanTex.Core.Font
 
@@ -13,7 +14,7 @@ design units: the script scale percentages (sanitized, see
 fraction, radical, limit, and delimiter constants the M6 constructions
 position from. Per the spec, attachment constants are read from the font
 of the base and scale with the base's size. -/
-structure MathConsts where
+public structure MathConsts where
   scales : Math.ScriptScales
   axisHeight : Int
   /-- "Height of the bottom of a math accent above the baseline" — the
@@ -406,19 +407,19 @@ definitions up front (they answer per-pair queries by binary search), the
 value matrix left in the font bytes and indexed on demand — enumerating a
 class-based subtable into explicit pairs costs ~30 ms per Source Serif
 face (178k pairs) at every parse, for pairs mostly never asked for. -/
-private structure KernSub where
-  fmt : Nat
-  off : Nat
+public structure KernSub where
+  private fmt : Nat
+  private off : Nat
   /-- Coverage gids in coverage order (ascending): index = coverage index. -/
-  cov : Array Nat
-  size1 : Nat
-  size2 : Nat
+  private cov : Array Nat
+  private size1 : Nat
+  private size2 : Nat
   /-- Byte offset of XAdvance inside the first value record. -/
-  xAdv : Nat
-  cd1 : Array (Nat × Nat) := #[]
-  cd2 : Array (Nat × Nat) := #[]
-  c1Count : Nat := 0
-  c2Count : Nat := 0
+  private xAdv : Nat
+  private cd1 : Array (Nat × Nat) := #[]
+  private cd2 : Array (Nat × Nat) := #[]
+  private c1Count : Nat := 0
+  private c2Count : Nat := 0
   deriving Inhabited
 
 /-- The PairPos subtables one GPOS `kern` feature carries for
@@ -536,18 +537,18 @@ inductive SpaceKernTree where
 
 /-- The bounded index around a space-kern memo tree. `depth` is also the
 deterministic lookup-work census: a hit visits `depth + 1` nodes. -/
-structure SpaceKernCache where
+public structure SpaceKernCache where
   size : Nat
-  space : Nat
+  private space : Nat
   depth : Nat
-  root : Thunk SpaceKernTree
+  private root : Thunk SpaceKernTree
   deriving Inhabited
 
 /-- Tree depth for `numGlyphs` leaves. An sfnt count is a UInt16, so a
 parsed face needs at most 16 branch levels and a lookup visits at most 17
 nodes. The extra level at an exact power of two is virtual: no branch is
 allocated until a lookup reaches it. -/
-def spaceKernDepth (numGlyphs : Nat) : Nat :=
+public def spaceKernDepth (numGlyphs : Nat) : Nat :=
   if numGlyphs == 0 then 0 else Nat.log2 numGlyphs + 1
 
 private def makeSpaceKernTree (data : ByteArray)
@@ -576,14 +577,14 @@ private def spaceKernLookup : Nat → Thunk SpaceKernTree → Nat → (Int × In
 /-- A cached pair and the number of memo-tree nodes visited, or `none` for
 a gid outside the parsed face. The work count is deterministic and keeps
 the allocation bound executable rather than a timing assertion. -/
-def SpaceKernCache.lookup? (cache : SpaceKernCache) (g : Nat) :
+public def SpaceKernCache.lookup? (cache : SpaceKernCache) (g : Nat) :
     Option ((Int × Int) × Nat) :=
   if g < cache.size then some (spaceKernLookup cache.depth cache.root g) else none
 
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
 driver's job. -/
-structure Font where
+public structure Font where
   data : ByteArray
   isCff : Bool
   unitsPerEm : Nat
@@ -795,7 +796,7 @@ because classifying a font for a family scan needs none of its metrics: a
 scan touches every installed face, and `hmtx` and `cmap` are the two tables
 that make that expensive. `parse` uses the same code so the two can never
 disagree about what a face is called. -/
-structure Class where
+public structure Class where
   psName : String
   family : String
   subfamily : String
@@ -806,7 +807,7 @@ structure Class where
   deriving Repr, Inhabited
 
 /-- Classify a face. Needs only `head`; `name`, `OS/2`, and `post` refine it. -/
-def classify (data : ByteArray) : Except String Class := do
+public def classify (data : ByteArray) : Except String Class := do
   if data.size < 12 then
     throw "not a font file"
   let tag := u32 data 0
@@ -862,7 +863,7 @@ Version 2 reads `post.isFixedPitch` at offset 12; every classifier before it
 read offset 16 and stored its answers under an unversioned name. The suite
 pins the shipped faces' answers to this number, so a change to the answer
 that leaves the number alone fails there. -/
-def classifierVersion : Nat := 2
+public def classifierVersion : Nat := 2
 
 /-- The underline band a face declares, normalized to something drawable:
 `(position, thickness)` in font units, the band spanning
@@ -879,7 +880,7 @@ convention (UnderlinePosition -100, UnderlineThickness 50 in the
 forward). The single normalization shared by ink extraction (`parse`) and
 rule placement (`Layout.underlineSegs`): the two must agree on the band,
 or the rule is cleared against ink it does not overlap. -/
-def underlineBand (upem descent pos thick : Int) : Int × Int :=
+public def underlineBand (upem descent pos thick : Int) : Int × Int :=
   let mag := if descent < 0 then -descent else descent
   let p := if pos < 0 && -(min (upem / 2) mag) ≤ pos then pos else -(upem / 10)
   let t := if 0 < thick && thick ≤ upem / 4 then thick else max 1 (upem / 20)
@@ -893,7 +894,7 @@ baseline, so drawing it can never ask for room (`decoration_no_growth` is
 the placement half). Containment of the band's full thickness is per-face
 (post values are fallback-normalized, so it is not a theorem) and is
 pinned as a test over every shipped fixture face. -/
-theorem underline_in_descent (upem descent pos thick : Int)
+public theorem underline_in_descent (upem descent pos thick : Int)
     (h : upem / 10 ≤ -descent) :
     descent ≤ (underlineBand upem descent pos thick).1 := by
   unfold underlineBand
@@ -905,7 +906,7 @@ theorem underline_in_descent (upem descent pos thick : Int)
 /-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search
 over ranges (containment, not exact key — the one search `bsearch` does
 not subsume). -/
-def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
+public def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
   let x := UInt32.ofNat c.toNat
   let mut lo := 0
   let mut hi := cmap.size
@@ -924,7 +925,7 @@ def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat :=
         return some ((g + (x - s)).toNat % 0x10000)
   return none
 
-def parse (data : ByteArray) : Except String Font := do
+public def parse (data : ByteArray) : Except String Font := do
   if data.size < 12 then
     throw "not a font file"
   let tag := u32 data 0
@@ -1080,17 +1081,17 @@ ascent when the face declares none — the one reading the line builder
 places with (`lineExtent`) and the shipped-page census judges by
 (`Check.Shipped.ofOut`), so a face cannot be placed under one convention
 and judged under another. -/
-def Font.inkAscent (f : Font) : Int :=
+public def Font.inkAscent (f : Font) : Int :=
   if f.capHeight > 0 then f.capHeight else f.ascent
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
-def Font.gid (f : Font) (c : Char) : Option Nat :=
+public def Font.gid (f : Font) (c : Char) : Option Nat :=
   gidIn f.cmap c
 
 /-- The selected math face's alphabet-range coverage. unicode-math installs
 a range only when its first mapped scalar exists; checking those typed
 anchors once preserves isolated holes for the per-character fallback path. -/
-def Font.mathAlphabetCoverage (f : Font)
+public def Font.mathAlphabetCoverage (f : Font)
     (sources : Math.MathAlphabetSources) : Math.MathAlphabetCoverage :=
   { sources
     covered := (Math.allAlphabets.flatMap fun a =>
@@ -1100,7 +1101,7 @@ def Font.mathAlphabetCoverage (f : Font)
 /-- The small-caps form of glyph `g` under this face's `smcp`+`c2sc`
 substitutions, or `g` itself when the face maps it nowhere — a digit or a
 point of punctuation passes through unchanged. -/
-def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
+public def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
   substGid f.smallCaps g
 
 /-- The pair kern between two adjacent glyphs of this face, in font units
@@ -1108,14 +1109,14 @@ def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
 coverage holds `g1` answers (format 1 by pair-set scan, format 2 by class
 matrix), else the legacy pairs, else 0 — including for every pair of a
 face with no kern data at all. -/
-def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int :=
+public def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int :=
   pairAdv f.data f.kernData.get g1 g2
 
 /-- Glyph `g`'s pair kern with the face's space glyph, in font units:
 the pair `(g, space)` when `after` (the space follows `g`), `(space, g)`
 otherwise. In-range pairs come from the path-lazy memo; an out-of-range gid
 keeps `Font.kernAdv`'s total fallback. -/
-def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
+public def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
   match f.spaceKerns.get with
   | none => 0
   | some cache =>
@@ -1128,13 +1129,13 @@ def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only
 "has it the glyph". Empty when the image has no readable cmap. -/
-def cmapRanges (data : ByteArray) : Array (UInt32 × UInt32 × UInt32) :=
+public def cmapRanges (data : ByteArray) : Array (UInt32 × UInt32 × UInt32) :=
   match findTable data "cmap" with
   | some t => if fits data t then sortByKey (parseCmap data t) (·.1.toNat) else #[]
   | none => #[]
 
 /-- Advance width of a scalar in font units (0 when the glyph is missing). -/
-def Font.advance (f : Font) (c : Char) : Nat :=
+public def Font.advance (f : Font) (c : Char) : Nat :=
   match f.gid c with
   | some g => f.widths[g]?.getD 0
   | none => 0
@@ -1148,7 +1149,7 @@ same loader's fallback chain: half the em dash, else half the em (the
 loader's `averagewidth` step between them is a field this engine does not
 read; half the em is its same class of stand-in). Zero — words jammed
 together with no room to justify — is never an answer. -/
-def Font.spaceAdvance (f : Font) : Nat :=
+public def Font.spaceAdvance (f : Font) : Nat :=
   let sp := f.advance ' '
   if sp > 0 then sp
   else
@@ -1158,7 +1159,7 @@ def Font.spaceAdvance (f : Font) : Nat :=
 /-- The x-intervals (font units) where this glyph's ink crosses the underline
 band. Empty means the rule runs unbroken; a gid past the table has no ink.
 Forces the lazy decode; the answer is memoized in the font. -/
-def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
+public def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
   match f.underlineInk.get[g]? with
   | some t => t.get
   | none => #[]
@@ -1166,11 +1167,11 @@ def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
 /-- The rectangular ink hull of glyph `g` in font units, from
 its own outline. `none` for an undecodable outline or a gid past the table;
 the consumer falls back to nominal metrics. Memoized in the font. -/
-def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
+public def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
   (f.inkExtent.get[g]?).bind (·.get)
 
 /-- A vertical consumer reads the same memoized hull as a horizontal one. -/
-def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
+public def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
   (f.bounds g).map fun b => (b.bottom, b.top)
 
 /-- The x-height optical size matching trusts, in font units: the measured
@@ -1178,7 +1179,7 @@ ink top of the face's own 'x' when its outline decodes — OS/2 sxHeight lies
 in some fonts — else the declared `xHeight` (sxHeight, half the em last: the
 engine's existing metric fallback order), clamped into `(0, upem]` so
 `Math.mathSize`'s agreement bounds hold for every font the parser accepts. -/
-def Font.xHeightOptical (f : Font) : Nat :=
+public def Font.xHeightOptical (f : Font) : Nat :=
   let declared := f.xHeight.toNat
   let measured := match f.xInkTop.get with
     | some hi => if 0 < hi then hi.toNat else declared
@@ -1188,7 +1189,7 @@ def Font.xHeightOptical (f : Font) : Nat :=
 /-- The vertical size variants of glyph `g` — `(glyph id, advance height)`
 in increasing size per the MATH spec — or empty when the face grows it no
 further. -/
-def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+public def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
   match f.mathVariants.find? (·.1 == g) with
   | some (_, vs) => vs
   | none => #[]
@@ -1196,7 +1197,7 @@ def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
 /-- The horizontal size variants of glyph `g` — `(glyph id, advance
 width)` in increasing size — or empty when the face stretches it no
 further. -/
-def Font.horizVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+public def Font.horizVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
   match f.mathHorizVariants.find? (·.1 == g) with
   | some (_, vs) => vs
   | none => #[]
@@ -1207,7 +1208,7 @@ coverage carries one, else half the advance — the spec's own default for
 uncovered glyphs. The clamp is what `Math.accentAttach_covers` quantifies
 over: the spec declares no bound on the value, and placement must stay
 within the advance for every font, not only well-behaved ones. -/
-def Font.topAccentX (f : Font) (g : Nat) : Int :=
+public def Font.topAccentX (f : Font) (g : Nat) : Int :=
   let w : Int := f.widths[g]?.getD 0
   match f.mathTopAccent.find? (·.1 == g) with
   | some (_, x) => min (max x 0) w
@@ -1218,7 +1219,7 @@ point — where the accent's own reference lands — lies in `[0, advance]`
 for every glyph of every parsed font. The MATH spec declares no bound on
 the table's value, so the bound is imposed at the read (`topAccentX`
 clamps), the same sanitize-then-prove shape as `ScriptScales.clamp`. -/
-theorem Font.topAccentX_covers (f : Font) (g : Nat) :
+public theorem Font.topAccentX_covers (f : Font) (g : Nat) :
     0 ≤ f.topAccentX g ∧ f.topAccentX g ≤ (f.widths[g]?.getD 0 : Int) := by
   unfold Font.topAccentX
   dsimp only
@@ -1228,20 +1229,20 @@ theorem Font.topAccentX_covers (f : Font) (g : Nat) :
 carry zero advance and attach inside or left of its ink, which the
 base-side clamp would destroy; half the advance where the coverage says
 nothing, the spec's default. -/
-def Font.markAttachX (f : Font) (g : Nat) : Int :=
+public def Font.markAttachX (f : Font) (g : Nat) : Int :=
   match f.mathTopAccent.find? (·.1 == g) with
   | some (_, x) => x
   | none => (f.widths[g]?.getD 0 : Int) / 2
 
 /-- This face's normalized underline band: `(position, thickness)` in font
 units. See `underlineBand`. -/
-def Font.band (f : Font) : Int × Int :=
+public def Font.band (f : Font) : Int × Int :=
   underlineBand (f.unitsPerEm : Int) f.descent f.underlinePosition
     f.underlineThickness
 
 /-- The faces a document typesets with. Index 0 is always the body regular
 face; `Style` resolves to an index at layout time. -/
-structure FontSet where
+public structure FontSet where
   fonts : Array Font
   /-- (family slot, weight, italic) → index into `fonts`. The weight is the
   CSS/OpenType number of an NFSS series (`Ir.Weight.css`; 400 regular,
@@ -1274,12 +1275,12 @@ structure FontSet where
 
 namespace FontSet
 
-def body (fs : FontSet) : Font := fs.fonts[0]!
+public def body (fs : FontSet) : Font := fs.fonts[0]!
 
-def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
+public def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
 
 /-- The math face and its constants, when the document has a usable one. -/
-def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
+public def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
   let i ← fs.math
   let f ← fs.fonts[i]?
   let c ← f.math
@@ -1290,7 +1291,7 @@ the requested series. The driver resolves an index entry for every key the
 document can ask for (its declared faces and the weights its styles use),
 so the exact arm answers; a key it never saw falls to the slot's regular,
 then to face 0 — never a hole. -/
-def lookup (fs : FontSet) (slot : Nat) (weight : Nat) (italic : Bool) : Nat :=
+public def lookup (fs : FontSet) (slot : Nat) (weight : Nat) (italic : Bool) : Nat :=
   match fs.index.find? fun e => e.1 == (slot, weight, italic) with
   | some (_, i) => i
   | none =>
@@ -1304,7 +1305,7 @@ entry in bounds, which `get`'s clamp also defends) the answer always
 names a font of the set. The nearest-weight half of totality lives in
 `FontDb.pickWeighted_total`: the driver's resolution never returns
 empty-handed for a family that has any face at all. -/
-theorem index_total (fs : FontSet) (h0 : 0 < fs.fonts.size)
+public theorem index_total (fs : FontSet) (h0 : 0 < fs.fonts.size)
     (hwf : ∀ e ∈ fs.index, e.2 < fs.fonts.size) (slot weight : Nat)
     (italic : Bool) : fs.lookup slot weight italic < fs.fonts.size := by
   unfold lookup
@@ -1331,19 +1332,19 @@ knows: the driver resolves the index, and whether two slots landed on one face
 is a fact about the resolved set. Emission belongs to the driver, which is the
 one place that holds both the document's `\fonts` declaration and the resolved
 index (effects as data: this is the fact, not the diagnostic). -/
-def slotCollapsed (fs : FontSet) (slot : Nat) : Bool :=
+public def slotCollapsed (fs : FontSet) (slot : Nat) : Bool :=
   slot != 0 && fs.lookup slot 400 false == fs.lookup 0 400 false
 
 /-- Slot 0 is the body face, so asking whether it collapsed onto itself is
 not a question this predicate answers — it is the reference. Keeps a caller
 from reading "the body face collapsed" out of a vacuous truth. -/
-theorem slotCollapsed_body (fs : FontSet) : fs.slotCollapsed 0 = false := by
+public theorem slotCollapsed_body (fs : FontSet) : fs.slotCollapsed 0 = false := by
   simp [slotCollapsed]
 
 /-- **A collapsed slot is exactly a slot that resolves where the body does.**
 The predicate is the equality it looks like, for every slot past the body, so
 a diagnostic resting on it names the real condition rather than a proxy. -/
-theorem slotCollapsed_exact (fs : FontSet) (slot : Nat) (h : slot != 0) :
+public theorem slotCollapsed_exact (fs : FontSet) (slot : Nat) (h : slot != 0) :
     fs.slotCollapsed slot = (fs.lookup slot 400 false == fs.lookup 0 400 false) := by
   simp [slotCollapsed, h]
 
@@ -1358,7 +1359,7 @@ slot 2 reads as collapsed, and a report resting on the index alone tells
 that reader a loss it cannot see. This is the predicate that separates the
 two, and `HtmlDoc.genericFor` already reads the same field for the CSS
 generic — one source for "is this monospace", not two. -/
-def slotIsFixedPitch (fs : FontSet) (slot : Nat) : Bool :=
+public def slotIsFixedPitch (fs : FontSet) (slot : Nat) : Bool :=
   match fs.fonts[fs.lookup slot 400 false]? with
   | some f => f.isFixedPitch
   | none => false
@@ -1367,13 +1368,13 @@ def slotIsFixedPitch (fs : FontSet) (slot : Nat) : Bool :=
 arithmetic between the question and the face: whichever face `lookup` names
 is the one whose `post` flag answers, so a caller cannot read a pitch off
 the wrong face. -/
-theorem slotIsFixedPitch_exact (fs : FontSet) (slot : Nat)
+public theorem slotIsFixedPitch_exact (fs : FontSet) (slot : Nat)
     (h : fs.lookup slot 400 false < fs.fonts.size) :
     fs.slotIsFixedPitch slot = (fs.fonts[fs.lookup slot 400 false]).isFixedPitch := by
   simp [slotIsFixedPitch, Array.getElem?_eq_getElem h]
 
 /-- The font that sets a glyph the styled face lacks, if any face can. -/
-def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=
+public def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=
   (fs.fallback.find? (·.1 == c)).map (·.2)
 
 end FontSet

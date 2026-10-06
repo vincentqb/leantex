@@ -1,3 +1,5 @@
+module
+
 namespace LeanTex.Core.Ink
 
 /-! Glyph ink in the underline band, from the font's own outlines.
@@ -16,31 +18,31 @@ and the caller clears its whole advance. -/
 /-- A bounded byte read. Out of range is 0 rather than a panic: these parsers
 are fed arbitrary files, and a reader that aborts the process on a short
 table is not a parser. -/
-def u8 (b : ByteArray) (i : Nat) : Nat :=
+public def u8 (b : ByteArray) (i : Nat) : Nat :=
   if h : i < b.size then (b[i]).toNat else 0
 
-def u16 (b : ByteArray) (i : Nat) : Nat := u8 b i * 256 + u8 b (i + 1)
+public def u16 (b : ByteArray) (i : Nat) : Nat := u8 b i * 256 + u8 b (i + 1)
 
-def u32 (b : ByteArray) (i : Nat) : Nat :=
+public def u32 (b : ByteArray) (i : Nat) : Nat :=
   ((u8 b i * 256 + u8 b (i + 1)) * 256 + u8 b (i + 2)) * 256 + u8 b (i + 3)
 
 def i8 (b : ByteArray) (i : Nat) : Int :=
   let v := u8 b i
   if v ≥ 0x80 then (v : Int) - 0x100 else v
 
-def i16 (b : ByteArray) (i : Nat) : Int :=
+public def i16 (b : ByteArray) (i : Nat) : Int :=
   let v := u16 b i
   if v ≥ 0x8000 then (v : Int) - 0x10000 else v
 
-def i32 (b : ByteArray) (i : Nat) : Int :=
+public def i32 (b : ByteArray) (i : Nat) : Int :=
   let v := u32 b i
   if v ≥ 0x80000000 then (v : Int) - 0x100000000 else v
 
-structure Table where
+public structure Table where
   offset : Nat
   length : Nat
 
-def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
+public def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
   if b.size < 12 then
     return none
   let n := u16 b 4
@@ -55,11 +57,11 @@ def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
 
 /-- Does a table's declared extent fit inside the file? A table that does not
 is a broken font, and saying so beats reading zeros off the end of it. -/
-def fits (b : ByteArray) (t : Table) : Bool :=
+public def fits (b : ByteArray) (t : Table) : Bool :=
   t.offset + t.length ≤ b.size
 
 /-- One outline command, absolute font-unit coordinates. -/
-inductive Cmd where
+public inductive Cmd where
   | move (x y : Int)
   | line (x y : Int)
   | quad (cx cy x y : Int)
@@ -70,7 +72,7 @@ inductive Cmd where
 control points included, so by the convex-hull property the curve itself
 never goes lower. A glyph whose `minY` clears the band has no ink in it and
 is never flattened. -/
-structure Outline where
+public structure Outline where
   cmds : Array Cmd
   minY : Int
 
@@ -177,7 +179,7 @@ font unit of rounding at each chord vertex and at the clip. The consumer
 dilates every interval by twice the rule thickness, two orders of magnitude
 above the rounding, so only the chord deviation is ever visible and only as
 a slightly loose boundary. -/
-def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
+public def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
   if o.minY ≥ bandHi then
     return #[]
   let edges := edgesOf o.cmds
@@ -444,7 +446,7 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
 
 /-- Entries of a CFF INDEX as absolute (start, end) byte ranges, plus the
 offset just past the INDEX. -/
-def parseIndex (b : ByteArray) (pos : Nat) :
+public def parseIndex (b : ByteArray) (pos : Nat) :
     Option (Array (Nat × Nat) × Nat) := Id.run do
   if pos + 2 > b.size then
     return none
@@ -536,10 +538,12 @@ private def parseDict (b : ByteArray) (s e : Nat) : CffDict := Id.run do
       ops := #[]
   return d
 
-private structure Cff where
-  charStrings : Array (Nat × Nat)
-  gsubrs : Array (Nat × Nat)
-  lsubrs : Array (Nat × Nat)
+/-- Prepared CFF data carried by `Src.cffSrc`. Consumers may inspect the
+source kind; only the outline decoder reads its parsed table state. -/
+public structure Cff where
+  private charStrings : Array (Nat × Nat)
+  private gsubrs : Array (Nat × Nat)
+  private lsubrs : Array (Nat × Nat)
 
 /-- The pieces of a non-CID CFF table the interpreter needs. `none` for a
 CID-keyed font or anything malformed: every glyph then falls back. -/
@@ -849,14 +853,14 @@ read at all — a CFF table that would not parse or is CID-keyed, TrueType
 tables missing, truncated, or too short for the glyph count — so every
 glyph is `none` and the consumer falls back to clearing its whole
 advance. -/
-inductive Src where
+public inductive Src where
   | cffSrc (data : ByteArray) (c : Cff)
   | glyfSrc (data : ByteArray) (glyf loca : Table) (long : Bool) (numGlyphs : Nat)
   | opaque
 
-instance : Inhabited Src := ⟨.opaque⟩
+public instance : Inhabited Src := ⟨.opaque⟩
 
-def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
+public def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
   if isCff then
     match parseCff b with
     | some c => .cffSrc b c
@@ -875,19 +879,19 @@ def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
 /-- An outline's rectangular hull, in font units. Control points contribute
 too: the curve stays inside the answer, which need not be its raster's
 tightest box. Empty outlines have the zero hull. -/
-structure Bounds where
+public structure Bounds where
   left : Int := 0
   bottom : Int := 0
   right : Int := 0
   top : Int := 0
   deriving Repr, BEq, Inhabited
 
-def Bounds.union (a b : Bounds) : Bounds :=
+public def Bounds.union (a b : Bounds) : Bounds :=
   ⟨min a.left b.left, min a.bottom b.bottom, max a.right b.right, max a.top b.top⟩
 
 /-- Both axes come from the same outline decode and the same points.
 An absent accumulator is distinct from an outline passing through zero. -/
-def Outline.bounds (o : Outline) : Bounds := Id.run do
+public def Outline.bounds (o : Outline) : Bounds := Id.run do
   let mut hull : Option Bounds := none
   let add (hull : Option Bounds) (x y : Int) :=
     let p : Bounds := ⟨x, y, x, y⟩
@@ -900,13 +904,13 @@ def Outline.bounds (o : Outline) : Bounds := Id.run do
   return hull.getD {}
 
 /-- Vertical bounds are a projection of the outline's one measured hull. -/
-def Outline.yExtent (o : Outline) : Int × Int :=
+public def Outline.yExtent (o : Outline) : Int × Int :=
   let b := o.bounds
   (b.bottom, b.top)
 
 /-- The ink hull of glyph `g`, or `none` where its outline could not be
 decoded. Total over arbitrary bytes, like `inkAt`. -/
-def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
+public def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
   match s with
   | .opaque => none
   | .cffSrc b c => do
@@ -930,13 +934,13 @@ def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
 /-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units.
 Both axes share `boundsAt`; a consumer asking for height does not choose a
 different outline measurement from one attaching a mark horizontally. -/
-def Src.yExtentAt (s : Src) (g : Nat) : Option (Int × Int) :=
+public def Src.yExtentAt (s : Src) (g : Nat) : Option (Int × Int) :=
   (s.boundsAt g).map fun b => (b.bottom, b.top)
 
 /-- Glyph `g`'s outline commands, or `none` where the decoder cannot read
 it: the glyph a font subset must carry unchanged for every glyph a page
 paints. An empty glyph (a space) is the empty outline. -/
-def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
+public def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
   match s with
   | .opaque => none
   | .cffSrc b c => do
@@ -950,7 +954,7 @@ def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
 /-- Merged ink intervals of glyph `g` inside the underline band, or `none`
 where the outline could not be decoded and the caller must fall back. Total
 over arbitrary bytes. -/
-def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
+public def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
     Option (Array (Int × Int)) :=
   match s with
   | .opaque => none
