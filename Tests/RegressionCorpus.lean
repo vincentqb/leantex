@@ -34,7 +34,7 @@ def regressionDocumentChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!documentEntry "% \\documentclass{article}\nfragment")
   check ref "regression entry ignores a code example"
     (!documentEntry "\\begin{verbatim}\n\\documentclass{article}\n\\end{verbatim}")
-  let root : System.FilePath := "tests/regression"
+  let root : System.FilePath := "testdata/regression"
   let present ← root.pathExists
   check ref "regression corpus directory exists" present
   unless present do return

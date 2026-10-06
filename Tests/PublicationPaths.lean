@@ -7,7 +7,7 @@ collision before any write, including existing-file and directory aliases;
 accepting diagnostics cannot authorize overwriting a different artifact. -/
 def publicationPathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   IO.FS.withTempDir fun dir => do
     let source (formats name : String) :=
       "\\documentclass{article}\n\\output{ formats = " ++ formats ++

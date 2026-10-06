@@ -332,7 +332,7 @@ of installed SVG converters or a TeX engine. -/
 def diagnosticOutputCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let font ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
-  let image ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let image ← IO.FS.readBinFile "testdata/corpus/rects.png"
   IO.FS.withTempDir fun dir => do
     IO.FS.writeBinFile (dir / "animation-probe.png") image
     let file := dir / "scope.tex"

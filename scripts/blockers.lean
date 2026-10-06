@@ -2,7 +2,7 @@
 The blocker ranking: which missing construct holds back the most documents?
 
   lake env lean --run scripts/blockers.lean --rank                  the declared public corpus,
-                                                                   into tests/coverage/blockers.tsv
+                                                                   into testdata/coverage/blockers.tsv
   lake env lean --run scripts/blockers.lean --rank <list> <out>     any list, into <out>, which
                                                                    may not lie in a leantex checkout
   lake env lean --run scripts/blockers.lean --screen <dir> <out>    the lualatex-buildable list, the
@@ -18,8 +18,8 @@ A report, never a gate. `--screen` needs lualatex and a corpus on the host;
 what it reads out of the tree. Each is a function the writer cannot route
 around, and `--selftest` breaks both through the path that ships.
 
-1. *Only the public corpus reaches the tree.* `tests/coverage/blockers.tsv`
-   is ranked from `tests/coverage/public-corpus.txt` alone: paths relative to
+1. *Only the public corpus reaches the tree.* `testdata/coverage/blockers.tsv`
+   is ranked from `testdata/coverage/public-corpus.txt` alone: paths relative to
    the TeX distribution's root, each resolved with symlinks followed and
    refused if it lands outside that root. Any other list goes to an output
    the caller names, and `Dest.of?` refuses one inside a leantex checkout —
@@ -90,11 +90,11 @@ import scripts.Board
 open LeanTex.Core
 open Scoreboard (sha256Hex Entry pinnedEntry parsePins)
 
-def blockersPath : String := "tests/coverage/blockers.tsv"
+def blockersPath : String := "testdata/coverage/blockers.tsv"
 
 /-- The declared public corpus: one `<sha256>  <path>` line per document, the
 path relative to the TeX distribution's root. -/
-def manifestPath : String := "tests/coverage/public-corpus.txt"
+def manifestPath : String := "testdata/coverage/public-corpus.txt"
 
 /-- The unknown-construct codes: the engine met a name nothing answers. -/
 def blockerCodes : List String := ["W0301", "W0302"]
@@ -696,7 +696,7 @@ and nothing may be ranked into the tree")
     let corpus := s!"# corpus-manifest: {manifestPath}, {entries.size} entr(ies), each \
 resolved inside `kpsewhich -var-value TEXMFDIST` asked with only PATH set, and each \
 holding the bytes its sha256 pin names\n"
-    IO.FS.createDirAll "tests/coverage"
+    IO.FS.createDirAll "testdata/coverage"
     IO.FS.writeFile blockersPath (renderTable r corpus (← texLine))
     IO.println s!"blockers: wrote {blockersPath} — {r.rows.size} row(s) over {r.distinct} \
 distinct document(s), {r.blocked} blocked, {r.folded} name(s) folded away"
@@ -735,7 +735,7 @@ held, and the output lands at the link's own name instead. The links are
 made with `ln`, which is how a caller would make them. -/
 def linkedOutputs (expect : String → Bool → IO Unit) (dir : String) (resolve : Resolver)
     (list checkout : String) : IO Unit := do
-  let ck := checkout ++ "/tests/coverage"
+  let ck := checkout ++ "/testdata/coverage"
   let table := ck ++ "/blockers.tsv"
   let manifest := ck ++ "/public-corpus.txt"
   IO.FS.writeFile table "sentinel table\n"
@@ -837,9 +837,9 @@ def hostileShell (expect : String → Bool → IO Unit) (dir : String) : IO Unit
   IO.FS.createDirAll cnf
   IO.FS.writeFile (cnf ++ "/texmf.cnf") s!"TEXMFDIST = {hroot}\n"
   let cwd := dir ++ "/hcwd"
-  IO.FS.createDirAll (cwd ++ "/tests/coverage")
-  let table := cwd ++ "/tests/coverage/blockers.tsv"
-  let manifest := cwd ++ "/tests/coverage/public-corpus.txt"
+  IO.FS.createDirAll (cwd ++ "/testdata/coverage")
+  let table := cwd ++ "/testdata/coverage/blockers.tsv"
+  let manifest := cwd ++ "/testdata/coverage/public-corpus.txt"
   let lean := (← IO.appPath).toString
   let script := ((← IO.currentDir) / "scripts" / "blockers.lean").toString
   let child (env : Array (String × Option String)) : IO UInt32 := do
@@ -887,8 +887,8 @@ row. The reader it replaced skipped what it could not parse and ranked
 nothing, and every gate passed with it restored. -/
 def queueReader (expect : String → Bool → IO Unit) (dir : String) : IO Unit := do
   let cwd := dir ++ "/qcwd"
-  IO.FS.createDirAll (cwd ++ "/tests/coverage")
-  let table := cwd ++ "/tests/coverage/blockers.tsv"
+  IO.FS.createDirAll (cwd ++ "/testdata/coverage")
+  let table := cwd ++ "/testdata/coverage/blockers.tsv"
   let lean := (← IO.appPath).toString
   let script := ((← IO.currentDir) / "scripts" / "scoreboard.lean").toString
   let queue : IO (UInt32 × String) := do
@@ -972,9 +972,9 @@ def plantedCorpus (expect : String → Bool → IO Unit) : IO Unit := do
     -- checkout is a scratch one, so a broken guard writes into scratch and
     -- not into the tree this selftest runs in.
     let fakeCheckout := dir ++ "/checkout"
-    IO.FS.createDirAll (fakeCheckout ++ "/tests/coverage")
+    IO.FS.createDirAll (fakeCheckout ++ "/testdata/coverage")
     IO.FS.writeFile (fakeCheckout ++ "/lakefile.toml") "name = \"leantex\"\n"
-    let inside := fakeCheckout ++ "/tests/coverage/blockers.tsv"
+    let inside := fakeCheckout ++ "/testdata/coverage/blockers.tsv"
     let refused ← rankList resolve (dir ++ "/list.txt") inside
     expect "an output inside a checkout is refused" (refused != 0)
     expect "and nothing was written there" (!(← System.FilePath.pathExists inside))
@@ -1111,7 +1111,7 @@ def selftest : IO UInt32 := do
     (namesLeantex "[x]\nname = \"leantex\"\n" && namesLeantex "name=\"leantex\""
       && !namesLeantex "name = \"other\"" && !namesLeantex "")
   expect "an output inside the working tree is refused"
-    ((← Dest.of? "tests/coverage/zz.tsv") matches .error _)
+    ((← Dest.of? "testdata/coverage/zz.tsv") matches .error _)
   expect "an output under /tmp is not" ((← Dest.of? "/tmp/zz-blockers.tsv") matches .ok _)
   expect "an output that names a directory and no file is refused"
     ((← Dest.of? "/tmp/") matches .error _)

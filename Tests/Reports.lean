@@ -823,7 +823,7 @@ def reportChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "reports: a short or cased sha is not a commit"
     (isSha "17ac92f4" && !isSha "17ac92f" && !isSha "17AC92F4")
   t "reports: a path is not an abstract description"
-    (isAbstract "a picture node's bold text" && !isAbstract "a file under tests/corpus")
+    (isAbstract "a picture node's bold text" && !isAbstract "a file under testdata/corpus")
   t "reports: an owed name is found once it is written, and only then"
     (wordCount "def paramSiteChecks" "paramSiteChecks" == 1 &&
       wordCount "def paramSiteChecksMore" "paramSiteChecks" == 0)

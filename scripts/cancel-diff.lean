@@ -281,7 +281,7 @@ def main (args : List String) : IO UInt32 := do
   let work := root / ".lake" / "cancel-diff"
   if ← work.pathExists then IO.FS.removeDirAll work
   IO.FS.createDirAll work
-  let fontDir := (root / "tests" / "corpus" / "fonts").toString
+  let fontDir := (root / "testdata" / "corpus" / "fonts").toString
   for (cmd, probe) in [("lualatex", #["--version"]), ("pdftotext", #["-v"])] do
     if (← version cmd probe root) == "unavailable" then
       IO.eprintln s!"cancel-diff: {cmd} not available — untested"

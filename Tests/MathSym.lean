@@ -117,7 +117,7 @@ def symbolCalls (src : String) : Array String :=
 
 /-- The symbol table against its sources and the shipped math face.
 
-The index side: `tests/compat-index/<pkg>.txt` carries one row per symbol
+The index side: `testdata/compat-index/<pkg>.txt` carries one row per symbol
 command the package declares (`MathSymData.<pkg>`, read off the package file
 by the generator), and a row is `impl` exactly when the table sets the name
 and `refuse:W0012` exactly when it refuses it — a missing row, a stray one or
@@ -133,7 +133,7 @@ named loss, never as silence. -/
 def mathSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (pkg, documented) in [("amsfonts", MathSymData.amsfonts), ("amssymb", MathSymData.amssymb)] do
-    let rows := symbolRows (← IO.FS.readFile s!"tests/compat-index/{pkg}.txt")
+    let rows := symbolRows (← IO.FS.readFile s!"testdata/compat-index/{pkg}.txt")
     for n in documented do
       let want := if MathSymData.refused.contains n then "refuse:W0012" else "impl"
       match (rows.filter (·.1 == n)).toList with
@@ -201,7 +201,7 @@ and firaGaps does not say so" (firaGaps.contains n)
   -- class maps to. The parity tier holds the PDF of the same sources to
   -- lualatex's scalars, so the two artifacts agree through the one table.
   for fixture in ["amssymb", "mathsym"] do
-    let src ← IO.FS.readFile s!"tests/parity/{fixture}.tex"
+    let src ← IO.FS.readFile s!"testdata/parity/{fixture}.tex"
     let calls := symbolCalls src
     let want := calls.filterMap fun n => (MathParse.ctrlAtom.lookup n).map fun (cls, c) =>
       (MathMl.leafTag cls c, String.ofList [c])

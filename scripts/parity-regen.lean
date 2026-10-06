@@ -24,7 +24,7 @@ reproduce.
 The engine reads the reference source where it stands and writes every
 output into a fresh scratch directory (`-output-directory`), and a result is
 copied into the tree only once it is a verdict. So nothing is written on an
-abort, the engine's side files never touch `tests/parity`, and a source that
+abort, the engine's side files never touch `testdata/parity`, and a source that
 ships no page cannot pass off the PDF a previous run left beside it.
 
 The reference is a function of its inputs and nothing else. Three things
@@ -275,13 +275,13 @@ def refPages (bytes : ByteArray) : Except String Nat :=
   (readArtifact bytes).map (·.size)
 
 /-- Lay out, under `root`, what a reference reads: its source at
-`tests/parity/`, and the shipped fonts at the relative path a reference
+`testdata/parity/`, and the shipped fonts at the relative path a reference
 names them by. Returns the source directory. -/
 def stage (root : System.FilePath) (stem src : String) : IO System.FilePath := do
-  let dir := root / "tests" / "parity"
+  let dir := root / "testdata" / "parity"
   IO.FS.createDirAll dir
   IO.FS.writeFile (dir / (stem ++ ".ref.tex")) src
-  let fonts := root / "tests" / "corpus" / "fonts"
+  let fonts := root / "testdata" / "corpus" / "fonts"
   IO.FS.createDirAll fonts
   for e in ← System.FilePath.readDir testFonts do
     if e.fileName.endsWith ".ttf" || e.fileName.endsWith ".otf" then

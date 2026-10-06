@@ -189,7 +189,7 @@ def main (args : List String) : IO UInt32 := do
   let work := root / ".lake" / "title-placement-diff"
   if ← work.pathExists then IO.FS.removeDirAll work
   IO.FS.createDirAll work
-  let fontDir := (root / "tests" / "corpus" / "fonts").toString
+  let fontDir := (root / "testdata" / "corpus" / "fonts").toString
   let tools := [("lualatex", #["--version"]), ("gs", #["--version"]),
     ("pdftotext", #["-v"]), ("pdftoppm", #["-v"]), ("magick", #["-version"])]
   for (cmd, probe) in tools do

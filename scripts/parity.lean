@@ -23,7 +23,7 @@ scoreboard aggregate runs.
 Nothing here invokes another engine, reads PATH, or touches the network: it
 builds each fixture the way the driver builds it, reads the *committed*
 reference beside it, and holds the level each pair reaches against
-`tests/scoreboard/parity.tsv`.
+`testdata/scoreboard/parity.tsv`.
 
 Two things stop a run before the ratchet sees it, in every mode, and exit 2
 with nothing written:
@@ -218,7 +218,7 @@ def envOf : IO Env := do
   return { pats := Hyphen.english.get, oneFace, mathSet := ← mathSetOf oneFace
            shipped := ← FontDiscovery.scanRoots [testFonts] }
 
-/-- Every pairing is read relative to the working directory — `tests/parity`,
+/-- Every pairing is read relative to the working directory — `testdata/parity`,
 and the pinned inputs beside it — so the selftest drives this over a staged
 copy by changing directory. -/
 def measureWith (env : Env) : IO Measured := do
@@ -442,9 +442,9 @@ def gateLine (board : String) (m : Measured) (args : List String) :
     IO (UInt32 × String × String) := do
   let home ← IO.currentDir
   let root ← IO.FS.createTempDir
-  let path := root / "tests" / "scoreboard" / "parity.tsv"
+  let path := root / "testdata" / "scoreboard" / "parity.tsv"
   try
-    IO.FS.createDirAll (root / "tests" / "scoreboard")
+    IO.FS.createDirAll (root / "testdata" / "scoreboard")
     IO.FS.writeFile path board
     IO.Process.setCurrentDir root
     let (out, code) ← IO.FS.withIsolatedStreams (gate m args)

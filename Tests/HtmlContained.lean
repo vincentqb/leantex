@@ -490,7 +490,7 @@ def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
 These cases wrote unresolved pages before checked publication was installed. -/
 def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   IO.FS.withTempDir fun dir => do
     for (name, preamble, args) in [
         ("missing CSS", "\\output{ formats = html, stylesheet = \"missing.css\" }", #[]),
@@ -532,7 +532,7 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
 This is a syntax coverage guard; missing captures still owe publication checks. -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
   for name in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{name}.tex"
     let (doc, _) ← elabFixture name src
     for mode in [HtmlDoc.CssMode.own, .bulma, .none] do
       let (head, body, _) := HtmlDoc.emitTree { css := mode } doc

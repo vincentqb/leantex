@@ -7,7 +7,7 @@ lualatex, measured, and every failure given a cause.
   lake env lean --run scripts/external.lean --selftest        the arithmetic and the tier's cases
   lake env lean --run scripts/external.lean --report <work> [<list>]
       build every document <list> names (default: the committed corpus,
-      tests/external/flashtex/documents.txt) with the engine — PDF, HTML,
+      testdata/external/flashtex/documents.txt) with the engine — PDF, HTML,
       and PDF with the face pinned to Latin Modern — and with lualatex,
       into <work>, which must lie outside every leantex checkout; print the
       table, and write documents.tsv, census.tsv and worklist.tsv there.
@@ -41,7 +41,7 @@ open LeanTex.Core LeanTex.Cli Scoreboard Lean
 
 namespace External
 
-def corpusDir : String := "tests/external/flashtex"
+def corpusDir : String := "testdata/external/flashtex"
 def documentsPath : String := corpusDir ++ "/documents.txt"
 
 /-- The unknown-construct codes: the engine met a name nothing answers. The
@@ -153,7 +153,7 @@ def measureTier : IO (Array String × Array Row) := do
     if v == 2 then at2 := at2 + 1 else if v == 1 then at1 := at1 + 1
     rows := rows.push { item := d.path, value := v }
   return (#[s!"# corpus: {documentsPath}, {docs.size} documents, each built by lualatex \
-under -halt-on-error when it was imported (tests/external/flashtex/PROVENANCE.txt)",
+under -halt-on-error when it was imported (testdata/external/flashtex/PROVENANCE.txt)",
     "# value: elaboration alone, through the driver's input splice — 2 no error and no \
 unknown construct (W0301/W0302), 1 no error, 0 an error",
     s!"# counts: {at2} at 2, {at1} at 1, {docs.size - at2 - at1} at 0"], rows)
@@ -634,8 +634,8 @@ def rowConstruct (ex : String) : Option String :=
     | _ => none
 
 /-- Where the tree's own indexes place a construct: the kernel's documented
-command list (`tests/coverage/latex2e-index.txt`, with its manual chapter),
-or the package whose compat index names it (`tests/compat-index/<pkg>.txt`,
+command list (`testdata/coverage/latex2e-index.txt`, with its manual chapter),
+or the package whose compat index names it (`testdata/compat-index/<pkg>.txt`,
 its example's first control word or `\begin{…}`). One source of truth for
 what a construct is, read rather than restated; a construct neither names
 is `unindexed`, which is a finding about the denominators as much as about
@@ -658,8 +658,8 @@ def indexOwnersOf (kernel : String) (pkgs : Array (String × String)) :
   return m
 
 def indexOwners : IO (Std.HashMap String String) := do
-  let kernel ← try IO.FS.readFile "tests/coverage/latex2e-index.txt" catch _ => pure ""
-  let dir : System.FilePath := "tests/compat-index"
+  let kernel ← try IO.FS.readFile "testdata/coverage/latex2e-index.txt" catch _ => pure ""
+  let dir : System.FilePath := "testdata/compat-index"
   let mut names : Array String := #[]
   if ← dir.isDir then
     names := (← dir.readDir).map (·.fileName)
@@ -834,7 +834,7 @@ Mono\" }\nx")
   expect "a lakefile naming leantex is a checkout"
     (namesLeantex "name = \"leantex\"\n" && !namesLeantex "name = \"other\"")
   expect "a work directory inside this checkout is refused"
-    ((← outsideCheckouts "tests") matches .error _)
+    ((← outsideCheckouts "testdata") matches .error _)
   expect "one under /tmp is not" ((← outsideCheckouts "/tmp") matches .ok _)
   -- The vendored bytes, each fault once, through a real directory.
   IO.FS.withTempDir fun dir => do

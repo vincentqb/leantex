@@ -1,6 +1,6 @@
 /-
 The scoreboard's core: one committed baseline per goal, each under a
-ratchet. A tier is a file plus its only writer — `tests/scoreboard/<tier>.tsv`
+ratchet. A tier is a file plus its only writer — `testdata/scoreboard/<tier>.tsv`
 and `scripts/<tier>.lean` — and the file is the whole claim: `#` lines for
 provenance (tool versions, the encoding; data, never gated), then
 `item<TAB>integer` rows, higher is better, sorted and unique.
@@ -165,7 +165,9 @@ structure Tsv where
   tierRetired : Option String := none
 deriving Inhabited
 
-def tsvPath (tier : String) : String := s!"tests/scoreboard/{tier}.tsv"
+def baselineDir : String := "testdata/scoreboard"
+
+def tsvPath (tier : String) : String := s!"{baselineDir}/{tier}.tsv"
 
 def scriptPath (tier : String) : String := s!"scripts/{tier}.lean"
 
@@ -836,7 +838,7 @@ def field (line key : String) : Option String :=
     ((t.drop (key.length + 1)).toString))
 
 /-- The tiers the scoreboard expects to exist. A name here missing either
-half — `tests/scoreboard/<name>.tsv` or `scripts/<name>.lean` — is a
+half — `testdata/scoreboard/<name>.tsv` or `scripts/<name>.lean` — is a
 **fault**, not a pass: a tier that vanishes is exactly the failure this
 file guards against, and before this list existed a landed tier could be
 deleted outright and the gate stayed green.
@@ -926,7 +928,7 @@ def printable (s : String) : String := Id.run do
   return out
 
 /-- Every tier, and apart from them every name that is not one: the declared
-names, plus any baseline committed under `tests/scoreboard/` that no one
+names, plus any baseline committed under `testdata/scoreboard/` that no one
 declared (a sibling's tier, landed before its name reached this list). Direct
 children only — a subdirectory holds the selftest fixtures, which are inputs
 and not tiers. A name outside `[a-z0-9-]+` is returned apart rather than
@@ -936,7 +938,7 @@ def discover : IO (Array String × Array String) := do
   let mut names : Array String := #[]
   let mut misnamed : Array String := #[]
   let mut found : Array String := declaredTiers.toArray
-  let dir : System.FilePath := "tests/scoreboard"
+  let dir : System.FilePath := baselineDir
   if ← dir.isDir then
     for e in ← dir.readDir do
       let p := e.fileName
@@ -1378,7 +1380,7 @@ what its `--check` means:
 
 `measure` returns the provenance lines specific to this tier (tool versions,
 counts, whatever sizes the claim) and the rows. The baseline is
-`tests/scoreboard/<tier>.tsv`; `tierMainAt` is the same with the file named,
+`testdata/scoreboard/<tier>.tsv`; `tierMainAt` is the same with the file named,
 which is how the selftest follows the tool's own remedies end to end. -/
 def tierMainAt (path tier : String) (enc : Encoding)
     (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
@@ -1501,7 +1503,7 @@ record it: lake env lean --run scripts/{tier}.lean"
   IO.println (tierLine tier fresh.rows.size d.losses.size d.gains.size result)
   return (if result == "ok" then 0 else 1)
 
-/-- A tier producer's `main`: `tierMainAt` over `tests/scoreboard/<tier>.tsv`. -/
+/-- A tier producer's `main`: `tierMainAt` over `testdata/scoreboard/<tier>.tsv`. -/
 def tierMain (tier : String) (enc : Encoding)
     (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
     (args : List String) : IO UInt32 :=
@@ -1798,7 +1800,7 @@ namespace Scoreboard
 
 /-- Both hermetic keys for the shipped corpus, computed in one traversal. -/
 def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
-  try Hermetic.corpusKeys "tests/corpus"
+  try Hermetic.corpusKeys "testdata/corpus"
   catch e => return .error (toString e)
 
 /-- The HTML freshness key retained as the narrow public projection. -/

@@ -76,9 +76,9 @@ def keyOf (pl : Image.Plan) : Array Nat :=
   | .soft _ _ => #[]
 
 def main : IO Unit := do
-  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
-  let pdf ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
+  let jpg ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
+  let pdf ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"
   let keyedIdx := keyedPng 8 3 [0, 0, 0, 255, 255, 255, 255, 0, 0] [255, 0, 0]
   let keyedRgb := keyedPng 8 2 [] [0, 1, 0, 2, 0, 3]
   let keyed16 := keyedPng 16 2 [] [1, 0, 2, 0, 3, 0]

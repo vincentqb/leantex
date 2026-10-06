@@ -9,7 +9,7 @@
 # so the classes are ASCII).
 # The compiled gate runs when current; a stale or missing binary is rebuilt
 # first (the gate's own build step keeps it current otherwise).
-git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^tests/golden/|^PLAN\.md$' \
+git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^testdata/golden/|^PLAN\.md$' \
   || git diff --cached --no-color --unified=0 | grep -qE '^\+(<{7}|>{7}|\|{7})([[:space:]]|$)' \
   || git diff --cached --name-only --no-renames --diff-filter=A | grep -q . \
   || git diff --cached --no-color --unified=0 | LC_ALL=C grep -E '^\+' \

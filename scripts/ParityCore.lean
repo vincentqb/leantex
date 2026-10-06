@@ -487,7 +487,7 @@ def inputPins (s : String) : List (String × String) :=
     | _ => none
 
 /-- Where the parity corpus lives. -/
-def parityDir : String := "tests/parity"
+def parityDir : String := "testdata/parity"
 
 /-- Every fixture in the parity corpus, found by reading the directory
 rather than by a list in this file: a pair dropped in and never listed

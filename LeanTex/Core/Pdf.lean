@@ -990,7 +990,7 @@ theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat
 
 /-- What a written file asks of a reader, one constructor per thing a
 reader must implement to show the file right: the rows of the reader
-matrix (`tests/oracles/reader-matrix.txt`, spelled by `name`), whose
+matrix (`testdata/oracles/reader-matrix.txt`, spelled by `name`), whose
 cells are what the readers on the `target:` line made of each. Every
 constructor is parameter-free, so `all` is derived from the type and
 `all_complete`/`all_nodup` close the census: a feature the writer starts

@@ -1,7 +1,7 @@
 # source: LaTeX2e unofficial reference manual (June 2026 edition), chapter
 # Environments: one row per environment it documents, in its order. The
 # kernel's commands are the coverage tier's denominator
-# (tests/coverage/latex2e-index.txt); its environments are this index's.
+# (testdata/coverage/latex2e-index.txt); its environments are this index's.
 # Two are not rows: document, which every row's scaffold is, and letter,
 # the letter class's own environment rather than the kernel's. A theorem
 # is the environment \newtheorem declares; the declaration binds and moves

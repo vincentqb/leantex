@@ -14,7 +14,7 @@ document. They were generated on 2026-09-17 by:
 - `rects.jpg` — ImageMagick 7 over the same three rectangles:
   `magick -size 64x40 xc:white -fill '#3366cc' -draw 'rectangle 4,4 29,19'
   -fill '#cc3333' -draw 'rectangle 34,10 59,35' -fill '#229954'
-  -draw 'rectangle 8,24 55,31' -quality 90 tests/corpus/rects.jpg`
+  -draw 'rectangle 8,24 55,31' -quality 90 testdata/corpus/rects.jpg`
   (baseline JFIF, 3-component YCbCr, no declared density).
 - `rects-alpha.png` — the same script shape: 48×32 px, 8-bit RGBA, PNG
   colour type 6, one `#3366cc` rectangle at (4,4)–(43,27) whose alpha fades

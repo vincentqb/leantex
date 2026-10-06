@@ -801,7 +801,7 @@ structure LineOut where
   headings, list items and display math are all galley paragraph lines
   here — display math is numbered like every line, where lineno's default
   linenomath does not (the recorded divergence,
-  tests/compat-index/lineno.txt) — while a float's caption and body (a
+  testdata/compat-index/lineno.txt) — while a float's caption and body (a
   floated box, not galley lines), footnotes (insertions), bare rule ink,
   picture labels and furniture are not counted. -/
   counted : Bool := false

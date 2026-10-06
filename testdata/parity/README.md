@@ -68,7 +68,7 @@ reference.
 
 `parity --check` reads the committed `.ref.pdf` and asks nothing of this
 host. It computes each fixture's level and holds it against
-`tests/scoreboard/parity.tsv` under the ratchet every scoreboard tier
+`testdata/scoreboard/parity.tsv` under the ratchet every scoreboard tier
 shares: a fall fails, a rise fails until it is recorded, and a bare
 `parity` (the regenerate mode) refuses to write a fall no human-written
 `# lowered: <fixture> <old>→<new> — <why>` line authorises. Before the

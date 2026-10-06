@@ -61,9 +61,9 @@ def suiteTable? (env : Environment) (n : Name) : Option Expr := do
   guard (mod.getRoot == `Tests && !ci.type.isForall)
   pure v
 
-/-- Does a row of `tests/compat-index/<pkg>.txt` refuse with `code`? -/
+/-- Does a row of `testdata/compat-index/<pkg>.txt` refuse with `code`? -/
 def indexRefuses (pkg code : String) : IO Bool := do
-  let p : System.FilePath := s!"tests/compat-index/{pkg}.txt"
+  let p : System.FilePath := s!"testdata/compat-index/{pkg}.txt"
   unless ← p.pathExists do return false
   return ((← IO.FS.readFile p).splitOn "\n").any fun l =>
     !l.startsWith "#" && (l.splitOn " ").contains ("refuse:" ++ code)

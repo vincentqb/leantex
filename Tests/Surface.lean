@@ -1918,8 +1918,8 @@ deferred anywhere. The claim is about the call as written: a call naming
 several commands is witnessed as a whole, so a row that wants one
 command's effect attributed to it writes a call with one command. -/
 def compatRowEffect (pkg place call : String) : IO Bool := do
-  let (known, _) ← elabInputSrc "tests/compat-index/probe.tex" (compatRowSrc pkg place call)
-  let (unknown, _) ← elabInputSrc "tests/compat-index/probe.tex"
+  let (known, _) ← elabInputSrc "testdata/compat-index/probe.tex" (compatRowSrc pkg place call)
+  let (unknown, _) ← elabInputSrc "testdata/compat-index/probe.tex"
     (compatRowSrc pkg place (compatUnknown call))
   return known != unknown
 
@@ -2021,7 +2021,7 @@ claim is read off `Layout.Out`, where the face is a fact about the page,
 never off the IR. The face is the document's mono family, so the check needs
 a set where mono is a *different* index from the body: one face maps every
 slot to 0 and could not tell the two apart. Both faces ship in
-`tests/corpus/fonts`. -/
+`testdata/corpus/fonts`. -/
 def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (p : String) : IO Font.Font := do
@@ -2074,7 +2074,7 @@ private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
   let call := row.call
   let line := s!"{place} {ann} {call}"
   let src := compatRowSrc pkg place call
-  let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex" src
+  let (_, ds) ← elabInputSrc "testdata/compat-index/probe.tex" src
   let codes := ds.map (·.code)
   if row.implemented then
     let errors := ds.filter (·.severity == .error)
@@ -2107,7 +2107,7 @@ changes the document — promote it to impl"
     | none => failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
 
 /-- The package-claim index: every package in `Compat.nativePackages` ships
-`tests/compat-index/<pkg>.txt`, its user-facing command surface as
+`testdata/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,
 place `pre` | `body` | `frame` (a presentation frame body, with the package
 loaded in its preamble; a presentation class loads by `\documentclass`),
@@ -2144,7 +2144,7 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
     let file := dir / "fragment.tex"
     let row : IndexRow :=
       { place := "body", verdict := "impl", call := s!"\\input\{{file}}" }
-    let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+    let (_, ds) ← elabInputSrc "testdata/compat-index/probe.tex"
       (compatRowSrc "xcolor" row.place row.call)
     check ref "compat judge: the missing input counterexample reaches the file reader"
       (ds.any (·.code == "E0502") && (← compatRowEffect "xcolor" row.place row.call))
@@ -2156,7 +2156,7 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let invalid : IndexRow :=
     { place := "pre", verdict := "impl"
       call := "\\documentclass{UnregisteredCompatClass}\\title{Probe}" }
-  let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+  let (_, ds) ← elabInputSrc "testdata/compat-index/probe.tex"
     (compatRowSrc "xcolor" invalid.place invalid.call)
   check ref "compat judge: the invalid class counterexample changes the document"
     (ds.any (·.code == "E0309") &&
@@ -2174,7 +2174,7 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (call, code) in [
       ("\\UnregisteredCompatCommand{Text}", "W0301"),
       ("\\(\\UnregisteredCompatSymbol\\)", "W0012")] do
-    let (_, ds) ← elabInputSrc "tests/compat-index/probe.tex"
+    let (_, ds) ← elabInputSrc "testdata/compat-index/probe.tex"
       (compatRowSrc "xcolor" "body" call)
     check ref s!"compat judge: {code} still prevents impl"
       (ds.any (·.code == code) &&
@@ -2185,14 +2185,14 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (pkg, loads) in [("xcolor", true), ("listings", true), ("beamer", false), ("slides", false)] do
     let row : IndexRow := { place := "frame", verdict := "impl", call := "\\emph{Framed text}" }
     let src := compatRowSrc pkg row.place row.call
-    let (doc, ds) ← elabInputSrc "tests/compat-index/probe.tex" src
+    let (doc, ds) ← elabInputSrc "testdata/compat-index/probe.tex" src
     check ref s!"compat scaffold: {pkg} has a valid slide class in a frame probe"
       (doc.docClass == .slides && ds.all (·.severity != .error))
     check ref s!"compat scaffold: {pkg} loads as a package only when it is one"
       (hasStr src s!"\\usepackage\{{pkg}}" == loads)
     check ref s!"compat judge: {pkg} accepts a working frame probe"
       ((← judge pkg row).isEmpty)
-  let dir : System.FilePath := "tests/compat-index"
+  let dir : System.FilePath := "testdata/compat-index"
   for pkg in Compat.nativePackages do
     let found ← (dir / (pkg ++ ".txt")).pathExists
     check ref s!"compat index: '{pkg}' is claimed native but has no index file" found
@@ -4910,7 +4910,7 @@ inside a spliced `.sty`, and an `\input` inside a `.sty` all resolve —
 each degraded to a misleading W0103 "not supported" while the splice was
 one-shot, top-level-only, and ran after `\input` expansion. A `.sty` that
 `\RequirePackage`s itself hits the `\input` nesting bound (E0501), never
-loops. Fixtures live in tests/corpus/sty-parity, synthetic and invented. -/
+loops. Fixtures live in testdata/corpus/sty-parity, synthetic and invented. -/
 def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let run := runStyParity
@@ -4996,7 +4996,7 @@ palette, which is the user-visible payoff and the thing W0304 measures.
 bundle installs first and the local file overrides it per role, so a role
 the file declares is the file's and a role it does not keep the bundle's.
 Neither side is silently dropped — the translation note names the bundle,
-N0020 names the file. Fixtures in tests/corpus/sty-parity, synthetic. -/
+N0020 names the file. Fixtures in testdata/corpus/sty-parity, synthetic. -/
 def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let run := runStyParity
@@ -5104,7 +5104,7 @@ name, which reached the CTAN dispatch and drew W0103 "not supported", so
 the bundle the engine ships was refused under the one spelling a theme
 inheriting it actually uses. Quantified over the registry rather than
 per slot, because all five sat one keystroke apart. Fixtures in
-tests/corpus/sty-parity, synthetic. -/
+testdata/corpus/sty-parity, synthetic. -/
 def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- was: W0103 "package 'beamerthememoloch' is not supported; skipped",
@@ -5155,7 +5155,7 @@ lineage's own elements), not invented here — and two rows already in the
 table spelled them `block alerted title`, which beamer never writes, so they
 had never fired. What the engine has no role for stays a **named** loss
 carrying that element's name, because a blanket "the engine does not have
-this construct" cannot be acted on. Fixtures in tests/corpus/sty-parity,
+this construct" cannot be acted on. Fixtures in testdata/corpus/sty-parity,
 synthetic and invented. -/
 def beamerColorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -5238,7 +5238,7 @@ text names: the translation of a beamer font declaration *is* the `\style`
 declaration, not merely something like it. Element names are beamer's own
 (beamerfontthemedefault.sty's element list, plus the moloch lineage's
 additions from beamerfontthememoloch.sty). Fixtures in
-tests/corpus/sty-parity, synthetic and invented. -/
+testdata/corpus/sty-parity, synthetic and invented. -/
 def beamerFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let styleOf (pre : String) (element : String) : Option Ir.ElementStyle :=
@@ -5793,7 +5793,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- 100/100 …), `anchor` the box point (the translate), each shift em of
   -- the body. And the title's text edge — the shift plus the inner sep —
   -- agrees with the edge the PDF page sets it at.
-  let tgDoc := (← elabFixture "titleground" (← IO.FS.readFile "tests/corpus/titleground.tex")).1
+  let tgDoc := (← elabFixture "titleground" (← IO.FS.readFile "testdata/corpus/titleground.tex")).1
   let (tgHead, tgBody, _) := HtmlDoc.emitTree {} tgDoc
   let tgCss := treeCssList (treeCssList "" tgHead.toList) tgBody.toList
   let em := tgDoc.page.fontSize
@@ -6062,11 +6062,11 @@ def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
 /-- E0502/E0503 name the file and line of the reference that failed. The
 invariant: a missing-file diagnostic points at the file containing the
 reference, never at a directory — `--> .:5:1` sent the reader to a
-directory's line 5. Fixtures in tests/corpus/input-missing, synthetic. -/
+directory's line 5. Fixtures in testdata/corpus/input-missing, synthetic. -/
 def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let run (name : String) : IO (Array Diag) := do
-    let path := s!"tests/corpus/input-missing/{name}.tex"
+    let path := s!"testdata/corpus/input-missing/{name}.tex"
     let src ← IO.FS.readFile path
     let (raws, _) := Parse.parse path (Lex.lex path src).1
     let (_, ds, _) ← Input.expandInputs path raws
@@ -6075,7 +6075,7 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "E0502 renders the including file and line, never its directory"
     (dsM.any fun d => d.code == "E0502" &&
       ((Render.human false d).splitOn
-        " - tests/corpus/input-missing/m.tex:4:1\n").length == 2)
+        " - testdata/corpus/input-missing/m.tex:4:1\n").length == 2)
   let dsN ← run "outer"
   t "a nested input's E0502 names the input file it sits in"
     (dsN.any fun d => d.code == "E0502" &&

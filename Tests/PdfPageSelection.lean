@@ -193,7 +193,7 @@ def pdfPageSelectionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (s!"PDF page selection: {name}" :: ·)
   let .ok font := Font.parse
-      (← IO.FS.readBinFile "tests/corpus/fonts/SourceSerifPro-Regular.otf") |
+      (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf") |
     t "bundled wrapper font parses" false
     return
   let cases : Array (String × PdfRead.PageSelection × Nat) := #[

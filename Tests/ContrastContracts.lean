@@ -45,7 +45,7 @@ that there is no fill behind it. Neither omission licenses a blanket text
 warning over all unplanned pairs. -/
 def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := fun name ok => check ref s!"contrast contracts: {name}" ok
-  let data ← IO.FS.readBinFile "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let data ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let .ok font := Font.parse data |
     throw (IO.userError "contrast contract fixture font failed to parse")
   let fs := oneFaceOf font

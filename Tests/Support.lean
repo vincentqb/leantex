@@ -236,7 +236,7 @@ def deck169Frame (body : String) : String :=
 
 /-- The golden set: every fixture `runGoldens` elaborates and every name
 `censusTable` must carry a row for. Written out rather than globbed so a
-golden run's membership is visible here, and held to `tests/corpus` by
+golden run's membership is visible here, and held to `testdata/corpus` by
 `corpusCoverageChecks` — a fixture on disk is in this list or its own header
 says why not. -/
 def goldenNames : List String :=
@@ -264,7 +264,7 @@ def goldenNames : List String :=
 /-- The fonts the repository ships, beside the fixtures that name them. Every
 font-dependent check runs on these and only these, so `lake test` sees the
 same faces on every host — a Mac with nothing installed included. -/
-def testFonts : String := "tests/corpus/fonts"
+def testFonts : String := "testdata/corpus/fonts"
 
 def findFont : IO (Option ByteArray) := do
   let p := testFonts ++ "/OpenSans-Regular.ttf"
@@ -357,7 +357,7 @@ def elabInputSrc (file src : String) : IO (Ir.Doc × Array Diag) := do
   let (executed, inputDs, _) ← Input.expandInputs file raws
   return Elab.runExecuted file executed (lexDs ++ parseDs ++ inputDs)
 
-/-- A `tests/corpus/sty-parity` fixture run the way the driver runs it: the
+/-- A `testdata/corpus/sty-parity` fixture run the way the driver runs it: the
 input execution (`Input.expandInputs`) first, so a local `.sty` beside the
 fixture is read at its use, then elaboration, then the N0020 records built from the
 splice records exactly as `Main.frontend` builds them — the counts do not
@@ -365,7 +365,7 @@ exist before elaboration. Shared because two blocks drive this directory:
 the `\input`-parity cases and the theme-loading family. -/
 def runStyParity (name : String) :
     IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
-  let path := s!"tests/corpus/sty-parity/{name}.tex"
+  let path := s!"testdata/corpus/sty-parity/{name}.tex"
   let src ← IO.FS.readFile path
   let (raws, _) := Parse.parse path (Lex.lex path src).1
   let (executed, inputDs, spliced) ← Input.expandInputs path raws
@@ -387,7 +387,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let mut dataSources : Array (String × String) := #[]
   for (srcName, _) in Data.fileRefs raws do
     let name := Data.sourceName srcName
-    let path := s!"tests/corpus/{name}"
+    let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
       dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
   let (raws, dataDiags) := Data.expandData file dataSources raws
@@ -397,7 +397,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let mut sources : Array (String × String) := #[]
   for srcName in requested do
     let name := Bib.sourceName srcName
-    let path := s!"tests/corpus/{name}"
+    let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
       sources := sources.push (srcName, ← IO.FS.readFile path)
   let (doc, bibDiags) := Bib.apply sources doc
@@ -415,12 +415,12 @@ def firstDiff (expected actual : String) : String := Id.run do
 
 def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
   if update then
-    IO.FS.createDirAll "tests/golden"
+    IO.FS.createDirAll "testdata/golden"
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, diags) ← elabFixture n src
     let out := Ir.dump doc diags -- ir tier: goldens witness elaboration, not the artifact
-    let path := s!"tests/golden/{n}.txt"
+    let path := s!"testdata/golden/{n}.txt"
     if update then
       IO.FS.writeFile path out
       IO.println s!"updated {path}"

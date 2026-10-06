@@ -18,7 +18,7 @@ The scoreboard: one line per goal, and a queue computed from the deficits.
                             the selftest runs it under two environments
 
 A tier is discovered by convention: its name is the basename of
-`tests/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
+`testdata/scoreboard/<tier>.tsv` and the root of `scripts/<tier>.lean`, and its
 `--check` is `lake env lean --run scripts/<tier>.lean --check`.
 
 What the aggregate reads is `--check`'s **exit status**.
@@ -188,7 +188,7 @@ def aggregate (quiet : Bool) : IO UInt32 := do
   -- path and its porcelain line are the name, and git quotes it.
   let misnamedResults : Array TierResult := misnamed.map fun m =>
     { tier := m, items := 0, regressed := 0, improved := 0, result := "fault"
-      detail := s!"tests/scoreboard/{shownName m}.tsv names no tier: a tier's name is \
+      detail := s!"testdata/scoreboard/{shownName m}.tsv names no tier: a tier's name is \
 [a-z0-9-]+ (the basename of its baseline and the root of its producer), so rename both halves" }
   match ← buildImports with
   | some err =>
@@ -249,12 +249,20 @@ def gitRead (args : Array String) : IO (Except String String) := do
 def git (args : Array String) : IO (Option String) := do
   return (← gitRead args).toOption
 
-/-- A direct child of `tests/scoreboard/` named like a baseline, as git lists it
-at the base: a regular file's blob, or anything else under such a name. -/
+/-- A direct child of a committed baseline directory: a regular file's blob,
+or anything else under such a name. -/
 inductive Listed where
   | baseline (path oid : String)
   | notAFile (path mode kind : String)
 deriving BEq
+
+def Listed.path : Listed → String
+  | .baseline p _ | .notAFile p _ _ => p
+
+/-- Tier identity survives the fixture-directory rename. The old root is read
+only from historical commits; the working tree has one current root. -/
+def currentBaselinePath (p : String) : String :=
+  s!"{baselineDir}/{((System.FilePath.mk p).fileName).getD p}"
 
 /-- Read `git ls-tree -z`: NUL-terminated `<mode> <type> <object>\t<path>`
 entries, the path as committed. `-z` is what stops git quoting a name, and
@@ -295,14 +303,14 @@ def treeCopy (p : String) : IO (Except String (Option String)) := do
 check can read; failing closed — commit the tier's baseline as a file"
   return .ok (some (← IO.FS.readFile p))
 
-/-- The tree's `tests/scoreboard/*.tsv`, direct children, spelled as the base's
+/-- The tree's `testdata/scoreboard/*.tsv`, direct children, spelled as the base's
 listing spells them, sorted. -/
 def treeBaselines : IO (Array String) := do
-  let dir : System.FilePath := "tests/scoreboard"
+  let dir : System.FilePath := baselineDir
   let mut out : Array String := #[]
   if ← dir.isDir then
     for e in ← dir.readDir do
-      if e.fileName.endsWith ".tsv" then out := out.push s!"tests/scoreboard/{e.fileName}"
+      if e.fileName.endsWith ".tsv" then out := out.push s!"{baselineDir}/{e.fileName}"
   return out.qsort (· < ·)
 
 /-- `--check --base <rev>`: every baseline committed at `<rev>` held to the
@@ -322,17 +330,27 @@ held to it; failing closed"
       IO.println s!"scoreboard: base={rev} result=fault"
       return 1
   let short := (sha.take 12).toString
-  let some listing ← git #["ls-tree", "-z", sha, "tests/scoreboard/"]
-    | IO.eprintln s!"scoreboard: cannot list tests/scoreboard at {short}; failing closed"
+  let some listing ← git #["ls-tree", "-z", sha, s!"{baselineDir}/", "tests/scoreboard/"]
+    | IO.eprintln s!"scoreboard: cannot list committed baselines at {short}; failing closed"
       IO.println s!"scoreboard: base={short} result=fault"
       return 1
   let some entries := readListing listing
-    | IO.eprintln s!"scoreboard: git's listing of tests/scoreboard at {short} does not read; \
+    | IO.eprintln s!"scoreboard: git's listing of committed baselines at {short} does not read; \
 failing closed"
       IO.println s!"scoreboard: base={short} result=fault"
       return 1
   let mut bad := 0
+  let mut known : Array String := #[]
   for e in entries do
+    let current := currentBaselinePath e.path
+    if known.contains current then
+      let tier := shownName (((System.FilePath.mk current).fileStem).getD current)
+      IO.println s!"scoreboard: base={short} tier={tier} result=fault"
+      printReason s!"{tier} occurs in both committed baseline directories at {short}; \
+one tier must have one floor"
+      bad := bad + 1
+      continue
+    known := known.push current
     match e with
     | .notAFile p mode kind =>
       let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
@@ -354,7 +372,7 @@ floor can be held to it; failing closed — fetch the base's objects, or run the
 full clone"
         bad := bad + 1
       | .ok baseText =>
-        match ← treeCopy p with
+        match ← treeCopy current with
         | .error why =>
           IO.println s!"scoreboard: base={short} tier={tier} result=fault"
           printReason why
@@ -372,9 +390,6 @@ full clone"
   -- Every tier file the base does not carry, judged alone: it has no floor at
   -- the base, but it is the tree's committed file all the same. Reading the
   -- base's listing alone let a new tier land holding a request.
-  let known := entries.map fun
-    | .baseline p _ => p
-    | .notAFile p _ _ => p
   for p in ← treeBaselines do
     if known.contains p then continue
     let tier := shownName (((System.FilePath.mk p).fileStem).getD p)
@@ -434,9 +449,9 @@ blocked-by-open=0 unblocks={unblocks o} blocker={short}"
   -- The blocker ranking a sibling commits: constructs nothing in the engine
   -- answers, ranked by the documents they alone hold back. Read when
   -- present, because the ranking data belongs to whoever measured it.
-  let blockers ← readFileOr "tests/coverage/blockers.tsv"
+  let blockers ← readFileOr "testdata/coverage/blockers.tsv"
   if blockers.isEmpty then
-    lines := lines.push "queue: group 2 of 3 — no tests/coverage/blockers.tsv, so no \
+    lines := lines.push "queue: group 2 of 3 — no testdata/coverage/blockers.tsv, so no \
 construct ranking (the coverage tier writes it)"
   else
     -- The format is `scripts/blockers.lean`'s: `#` provenance, one header
@@ -465,7 +480,7 @@ construct ranking (the coverage tier writes it)"
         | _, _, _ => faults := faults.push s!"line {lineNo}: sole, share and docs must be integers"
       | fs => faults := faults.push s!"line {lineNo}: {fs.length} tab-separated field(s), want 6"
     if !faults.isEmpty then
-      for f in faults do IO.eprintln s!"queue: tests/coverage/blockers.tsv {f}"
+      for f in faults do IO.eprintln s!"queue: testdata/coverage/blockers.tsv {f}"
       IO.eprintln "queue: the blocker table is malformed, so no queue is printed from it"
       return 2
     let named := rows.filter (·.1 != "aggregate")
@@ -479,7 +494,7 @@ share={share} docs={docs}"
 units; not comparable across tiers"
   let (tiers, misnamed) ← discover
   for m in misnamed do
-    lines := lines.push s!"queue: tests/scoreboard/{shownName m}.tsv not ranked: its name is \
+    lines := lines.push s!"queue: testdata/scoreboard/{shownName m}.tsv not ranked: its name is \
 not a tier name ([a-z0-9-]+), which --check faults"
   for t in tiers do
     let text ← readFileOr (tsvPath t)
@@ -521,7 +536,7 @@ def benchReport : IO UInt32 := do
 
 -- ## Selftest
 
-def fixture (name : String) : String := s!"tests/scoreboard/selftest/{name}.tsv"
+def fixture (name : String) : String := s!"testdata/scoreboard/selftest/{name}.tsv"
 
 /-- Hand-written committed baselines, one per malformation `validate` must
 name. The fixture *is* the failing input: each case names the fault it must
@@ -627,6 +642,9 @@ its output must hold (given the base's 12-digit sha). -/
 structure CliCase where
   label : String
   extra : List (String × String)
+  /-- Commit the baselines here, then move them to the current root before
+  editing. This exercises repository layout migrations through real git trees. -/
+  baseRoot : String := baselineDir
   edit : System.FilePath → String → IO Unit
   exit : UInt32
   says : String → List String
@@ -687,6 +705,20 @@ def cliCases : List CliCase :=
   let record := "# lowered (applied): alpha 5→4 — an old reason\n"
   [{ label := "nothing moved", extra := [], edit := fun _ _ => pure (), exit := 0
      says := says "ok", absent := ["credited:", "moved:"] },
+   { label := "baseline directory moved", extra := [], baseRoot := "tests/scoreboard"
+     edit := fun _ _ => pure (), exit := 0, says := says "ok"
+     absent := ["new since the base:"] },
+   { label := "directory move cannot reset a floor", extra := [], baseRoot := "tests/scoreboard"
+     edit := fun d _ => fall d, exit := 1, says := says "laundered" },
+   { label := "directory move cannot hide a deleted tier", extra := []
+     baseRoot := "tests/scoreboard"
+     edit := fun d _ => do
+       IO.FS.removeFile (d / probe)
+       IO.FS.removeFile (d / scriptPath probeTier)
+     exit := 1, says := says "fault" },
+   { label := "two committed roots cannot define one tier"
+     extra := [("tests/scoreboard/zz-probe.tsv", probeText)]
+     edit := fun _ _ => pure (), exit := 1, says := says "fault" },
    { label := "a fall edited by hand", extra := [], edit := fun d _ => fall d, exit := 1
      says := says "laundered" },
    { label := "a vanish edited by hand", extra := []
@@ -791,8 +823,8 @@ the base carries)"] },
      exit := 1, says := fun _ => ["scoreboard: tier=zz%C3%A9 items=0 regressed=0 improved=0 result=fault"] },
    -- A directory named like a baseline at the base holds no floor to read.
    { label := "a directory named like a baseline at the base"
-     extra := [("tests/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
-     edit := fun d _ => IO.FS.removeDirAll (d / "tests/scoreboard/zz-dir.tsv")
+     extra := [("testdata/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
+     edit := fun d _ => IO.FS.removeDirAll (d / "testdata/scoreboard/zz-dir.tsv")
      exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
    -- A replace ref makes git answer with another object's bytes, for a blob,
    -- a tree or a commit, and `refs/replace/` is shared by every worktree of a
@@ -811,10 +843,10 @@ the base carries)"] },
    { label := "a replace ref swaps the base's tree for one without a deleted baseline"
      extra := [(tsvPath "zz-del", "# encoding: raw\nalpha\t3\n"), (scriptPath "zz-del", trivial)]
      edit := fun d sha => do
-       let old ← harnessGit d #["rev-parse", s!"{sha}:tests/scoreboard"]
+       let old ← harnessGit d #["rev-parse", s!"{sha}:testdata/scoreboard"]
        let _ ← harnessGit d #["rm", "--cached", "-q", tsvPath "zz-del"]
-       let new ← harnessGit d #["write-tree", "--prefix=tests/scoreboard/"]
-       replaceIn d old new #["ls-tree", "--name-only", sha, "tests/scoreboard/"]
+       let new ← harnessGit d #["write-tree", "--prefix=testdata/scoreboard/"]
+       replaceIn d old new #["ls-tree", "--name-only", sha, "testdata/scoreboard/"]
          (!containsSub · "zz-del")
        IO.FS.removeFile (d / tsvPath "zz-del")
        IO.FS.removeFile (d / scriptPath "zz-del")
@@ -904,7 +936,7 @@ aggregate passes without spawning their producers. -/
 def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
   let dir ← IO.FS.createTempDir
   try
-    IO.FS.createDirAll (dir / "tests" / "scoreboard")
+    IO.FS.createDirAll (dir / baselineDir)
     IO.FS.createDirAll (dir / "scripts")
     IO.FS.writeFile (dir / "lean-toolchain") toolchain
     for t in declaredTiers do
@@ -914,10 +946,15 @@ def runCliCase (bin toolchain : String) (c : CliCase) : IO (Option String) := do
     for (p, text) in c.extra do
       if let some parent := (dir / p).parent then IO.FS.createDirAll parent
       IO.FS.writeFile (dir / p) text
+    if c.baseRoot != baselineDir then
+      if let some parent := (dir / c.baseRoot).parent then IO.FS.createDirAll parent
+      IO.FS.rename (dir / baselineDir) (dir / c.baseRoot)
     let _ ← harnessGit dir #["init", "-q", "."]
     let _ ← harnessGit dir #["add", "-A"]
     let tree ← harnessGit dir #["write-tree"]
     let sha ← harnessGit dir #["commit-tree", tree, "-m", s!"harness base: {c.label}"]
+    if c.baseRoot != baselineDir then
+      IO.FS.rename (dir / c.baseRoot) (dir / baselineDir)
     c.edit dir sha
     let o ← IO.Process.output
       { cmd := bin, args := #["--check", "--base", sha], cwd := some dir, env := harnessEnv }
@@ -978,7 +1015,7 @@ def keyUnderHosts (dir : System.FilePath) : IO (Except String (String × String)
   let host ← IO.FS.createTempDir
   try
     let other := host / "elsewhere.otf"
-    IO.FS.writeBinFile other (← IO.FS.readBinFile "tests/corpus/fonts/SourceSerifPro-Regular.otf")
+    IO.FS.writeBinFile other (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf")
     let keyUnder (env : Array (String × Option String)) : IO String := do
       let o ← IO.Process.output { cmd := bin, args := #["--key", dir.toString], env }
       return if o.exitCode == 0 then o.stdout.trimAscii.toString
@@ -1327,7 +1364,7 @@ the request the base carries)"])
   try
     IO.FS.createDirAll (dir / "fonts")
     IO.FS.writeBinFile (dir / "fonts" / "OpenSans-Regular.ttf")
-      (← IO.FS.readBinFile "tests/corpus/fonts/OpenSans-Regular.ttf")
+      (← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf")
     let src := "\\documentclass{article}\n\\begin{document}\nAn invented sentence.\n\\end{document}\n"
     IO.FS.writeFile (dir / "probe.tex") src
     let k1 ← Hermetic.corpusKey dir
@@ -1398,7 +1435,7 @@ Board's theorems by name where the prose relies on them" (!containsSub citesSrc 
   -- stops the pending list going stale.
   let (tiers, misnamed) ← discover
   for m in misnamed do
-    no s!"discovery: tests/scoreboard/{shownName m}.tsv is not a tier name ([a-z0-9-]+), \
+    no s!"discovery: testdata/scoreboard/{shownName m}.tsv is not a tier name ([a-z0-9-]+), \
 which --check faults" false
   for t in tiers do
     let hasTsv ← System.FilePath.pathExists (tsvPath t)
@@ -1428,17 +1465,17 @@ faults" false
     (shownName "zzé" == "zz%C3%A9" && shownName "a b" == "a%20b" && shownName "compat" == "compat")
   let nul := (Char.ofNat 0).toString
   let listing := String.intercalate nul
-    ["100644 blob 1111\ttests/scoreboard/compat.tsv", "040000 tree 2222\ttests/scoreboard/selftest",
-     "100644 blob 3333\ttests/scoreboard/zzé.tsv", "120000 blob 4444\ttests/scoreboard/zz-link.tsv",
-     "040000 tree 5555\ttests/scoreboard/zz-dir.tsv", "100644 blob 6666\ttests/scoreboard/notes.md", ""]
+    ["100644 blob 1111\ttestdata/scoreboard/compat.tsv", "040000 tree 2222\ttestdata/scoreboard/selftest",
+     "100644 blob 3333\ttestdata/scoreboard/zzé.tsv", "120000 blob 4444\ttestdata/scoreboard/zz-link.tsv",
+     "040000 tree 5555\ttestdata/scoreboard/zz-dir.tsv", "100644 blob 6666\ttestdata/scoreboard/notes.md", ""]
   no s!"listing: -z entries read as committed, and only a regular file is a baseline"
-    (readListing listing == some #[.baseline "tests/scoreboard/compat.tsv" "1111",
-      .baseline "tests/scoreboard/zzé.tsv" "3333",
-      .notAFile "tests/scoreboard/zz-link.tsv" "120000" "blob",
-      .notAFile "tests/scoreboard/zz-dir.tsv" "040000" "tree"])
+    (readListing listing == some #[.baseline "testdata/scoreboard/compat.tsv" "1111",
+      .baseline "testdata/scoreboard/zzé.tsv" "3333",
+      .notAFile "testdata/scoreboard/zz-link.tsv" "120000" "blob",
+      .notAFile "testdata/scoreboard/zz-dir.tsv" "040000" "tree"])
   no "listing: an entry that does not read fails the whole listing"
-    ((readListing s!"100644 blob\ttests/scoreboard/compat.tsv{nul}").isNone &&
-      (readListing s!"tests/scoreboard/compat.tsv{nul}").isNone)
+    ((readListing s!"100644 blob\ttestdata/scoreboard/compat.tsv{nul}").isNone &&
+      (readListing s!"testdata/scoreboard/compat.tsv{nul}").isNone)
 
   let failed := (← fails.get).reverse
   if !failed.isEmpty then

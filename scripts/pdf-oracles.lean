@@ -12,7 +12,7 @@ the readers on this host what they make of the bytes — Poppler (`pdfinfo`,
 Ghostscript, pypdf, PDFium through the host Chrome's own viewer, pdf.js
 lifted out of the host Firefox's `omni.ja` and run under the same Chrome —
 and the validator (veraPDF, PDF/A-4 and PDF/UA-2 on the four reference
-fixtures), and writes what they said as data: `tests/oracles/reader-
+fixtures), and writes what they said as data: `testdata/oracles/reader-
 matrix.txt`, whose `[feature]` rows are the writer's typed census
 (`Pdf.features`, computed here from the same inputs `write` reads, one row
 per `Feature.all`), whose cells are (feature, reader) verdicts, and whose
@@ -169,7 +169,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
     match (Array.range fonts.size).find? (fun k => ((fonts[k]!).gid c).isSome) with
     | some k => fallback := fallback.push (c, k)
     | none => uncovered := uncovered.push c
-  for (c, path) in ← FontDiscovery.fallbackPicksPreferring (·.startsWith "tests/corpus") faces uncovered do
+  for (c, path) in ← FontDiscovery.fallbackPicksPreferring (·.startsWith "testdata/corpus") faces uncovered do
     match paths.findIdx? (· == path) with
     | some k => fallback := fallback.push (c, k)
     | none =>
@@ -644,12 +644,12 @@ def main : IO Unit := do
     s!"chrome {chromeV.getD "absent"}", s!"pdfjs {pdfjsV.getD "absent"}"]
   IO.println s!"pdf-oracles: {toolsLine veraV}"
   IO.println s!"pdf-oracles: node {nodeV.getD "absent"}  magick {magickV.getD "absent"}  browsers {if browsers then "on" else "off"}"
-  let faces ← FontDiscovery.scanRoots (["tests/corpus/fonts"] ++ (← FontDiscovery.systemRoots []))
+  let faces ← FontDiscovery.scanRoots (["testdata/corpus/fonts"] ++ (← FontDiscovery.systemRoots []))
   let pats := Hyphen.english.get
   -- The fixtures: every corpus document that declares a PDF output or
   -- declares none, built by the shipped binary.
   let mut names : Array String := #[]
-  for f in ← System.FilePath.readDir "tests/corpus" do
+  for f in ← System.FilePath.readDir "testdata/corpus" do
     if f.fileName.endsWith ".tex" then
       names := names.push ((f.fileName.dropEnd 4).toString)
   names := names.qsort (· < ·)
@@ -658,13 +658,13 @@ def main : IO Unit := do
   let mut record : Array String := #[]
   let mut censusDisagree : Array String := #[]
   for n in names do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let formats := doc.output.formats
     unless formats.isEmpty || formats.contains "pdf" do continue
     let pdfPath := dir / s!"{n}.pdf"
     let built ← IO.Process.output { cmd := bin, args :=
-      #[s!"tests/corpus/{n}.tex", "-o", pdfPath.toString, "--porcelain", "-q"] }
+      #[s!"testdata/corpus/{n}.tex", "-o", pdfPath.toString, "--porcelain", "-q"] }
     if built.exitCode != 0 then
       notBuilt := notBuilt.push s!"{n} (exit {built.exitCode})"
       continue
@@ -938,9 +938,9 @@ for p in r.pages:\n    p.extract_text()\nr.metadata\nprint(len(r.pages))", pdfPa
   for (p, n, cell) in profiles do
     lines := lines.push (pad p 10 ++ pad n 11 ++ cell)
   let text := String.intercalate "\n" lines.toList ++ "\n"
-  let matrixPath := "tests/oracles/reader-matrix.txt"
+  let matrixPath := "testdata/oracles/reader-matrix.txt"
   let previous ← try IO.FS.readFile matrixPath catch _ => pure ""
-  IO.FS.createDirAll "tests/oracles"
+  IO.FS.createDirAll "testdata/oracles"
   IO.FS.writeFile matrixPath text
   -- The file reads back through the gate's own parser, and the gate judges
   -- it over every feature some built fixture reaches.

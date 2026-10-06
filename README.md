@@ -13,7 +13,7 @@ git clone https://github.com/vincentqb/leantex.git
 cd leantex
 lake build
 export PATH="$PWD/.lake/build/bin:$PATH"
-leantex tests/corpus/resume.tex
+leantex testdata/corpus/resume.tex
 ```
 
 elan downloads the Lean version pinned by the repository.
@@ -50,8 +50,8 @@ code. Include a Markdown fragment in TeX with:
 \markdownInput{notes.md}
 ```
 
-See the [example documents](tests/corpus) and
-[package compatibility index](tests/compat-index) for supported syntax.
+See the [example documents](testdata/corpus) and
+[package compatibility index](testdata/compat-index) for supported syntax.
 
 ## Fonts and themes
 

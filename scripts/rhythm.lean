@@ -3,17 +3,17 @@ The vertical rhythm, measured at every declared boundary and held to a
 reference. Run from the repository root:
 
   lake env lean --run scripts/rhythm.lean               regenerate the tier baseline
-  lake env lean --run scripts/rhythm.lean --check       gate against tests/scoreboard/rhythm.tsv
+  lake env lean --run scripts/rhythm.lean --check       gate against testdata/scoreboard/rhythm.tsv
   lake env lean --run scripts/rhythm.lean --selftest    break each predicate once
   lake env lean --run scripts/rhythm.lean --table       every boundary: engine, reference, delta
   lake env lean --run scripts/rhythm.lean --lines <f>   a fixture's engine lines, leaves and marks
-  lake env lean --run scripts/rhythm.lean --reference [fixture…]   needs lualatex; writes tests/rhythm/<f>.ref
+  lake env lean --run scripts/rhythm.lean --reference [fixture…]   needs lualatex; writes testdata/rhythm/<f>.ref
   lake env lean --run scripts/rhythm.lean --verify-reference [fixture…]   needs lualatex; rebuilds
                                                         each reference and holds it to the file
   lake env lean --run scripts/rhythm.lean --html <dir>  needs node and Playwright's Chromium: every
                                                         fixture's page, measured in a browser; a report
 
-A fixture is `tests/rhythm/<name>.tex`. Its header declares what it probes
+A fixture is `testdata/rhythm/<name>.tex`. Its header declares what it probes
 (`% rhythm:`) and its boundaries, one per line:
 
   % boundary: <class> <marker> <kind>
@@ -36,7 +36,7 @@ fixture itself, which is the user's case — a LaTeX document built by both engi
 
 The reference is lualatex's output, measured by `--reference` with the
 engine's own PDF reader (`Tests.Artifact.readArtifact`, the reader the parity
-ladder uses) and committed as numbers only: `tests/rhythm/<name>.ref`, one
+ladder uses) and committed as numbers only: `testdata/rhythm/<name>.ref`, one
 row per boundary with its unit and what it measures from, plus the content
 keys of both sources, so a fixture edited without regenerating is a named
 fault and never a silent comparison against another document.
@@ -80,7 +80,7 @@ open LeanTex.Core LeanTex.Cli Scoreboard
 namespace Rhythm
 
 /-- Where the fixtures and their references live. -/
-def rhythmDir : String := "tests/rhythm"
+def rhythmDir : String := "testdata/rhythm"
 
 /-- The tolerance a shipped gap is judged within, in thousandths of a bp:
 half a bp. One pixel of the 110 dpi review raster is 0.65 bp, so a gap
@@ -543,7 +543,7 @@ def RefFile.parse (text : String) : Except String RefFile := do
 
 /-! ## Building each side -/
 
-def fontsDir : System.FilePath := "tests/corpus/fonts"
+def fontsDir : System.FilePath := "testdata/corpus/fonts"
 
 /-- The engine's pages for a fixture, built as the driver builds one —
 lex, parse, `\input` and `\data` beside the file, one preparation, the

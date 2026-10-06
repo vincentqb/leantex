@@ -84,7 +84,7 @@ def Rung.word : Rung → String
 def Rung.all : List Rung :=
   [.unprobed, .unknown, .fails, .skipped, .degraded, .rewritten, .native, .verified]
 
-/-- One row of `tests/compat-index/<pkg>.txt`: `<place> <verdict> <call>`,
+/-- One row of `testdata/compat-index/<pkg>.txt`: `<place> <verdict> <call>`,
 one documented command of a package with the verdict the engine owes it.
 The format is `lake test`'s (`compatIndexChecks` probes every row); this is
 the one reader the tiers count with. -/
@@ -120,7 +120,7 @@ def IndexRow.refusalCode? (r : IndexRow) : Option String :=
 
 def IndexRow.refused (r : IndexRow) : Bool := r.refusalCode?.isSome
 
-def compatIndexDir : System.FilePath := "tests/compat-index"
+def compatIndexDir : System.FilePath := "testdata/compat-index"
 
 /-- Every package index under `dir`, in file-name order. Missing input,
 no index files, or no rows across all files is a measurement fault, not an

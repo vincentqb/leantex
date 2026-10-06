@@ -233,7 +233,7 @@ def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) : IO Unit := do
     unless ok do ref.modify (s!"PDF object forms: {name}" :: ·)
   let .ok font := Font.parse
-      (← IO.FS.readBinFile "tests/corpus/fonts/SourceSerifPro-Regular.otf") |
+      (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf") |
     t "bundled wrapper font parses" false
     return
   -- These pages contain only drawing operators. Reuse the empty glyph

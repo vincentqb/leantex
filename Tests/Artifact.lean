@@ -1168,7 +1168,7 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut contentPaths := 0
   let mut subsets := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, diags) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
@@ -1242,7 +1242,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let build (n : String) :
       IO (Font.FontSet × Layout.Geom × Ir.Doc × Layout.Out × Image.Store) := do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
@@ -1658,7 +1658,7 @@ def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut declaredSeen := 0
   let mut carriedSeen := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
@@ -1805,7 +1805,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut declaredSeen := 0
   let mut carriedSeen := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
@@ -2068,7 +2068,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let mut judged := 0
   let mut declared := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     unless doc.docClass == .slides do continue
     let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -2197,7 +2197,7 @@ def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
   for e in ← (System.FilePath.mk testFonts).readDir do
     if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
       IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
-  IO.FS.writeFile (dir / "fonts.tex") (← IO.FS.readFile "tests/corpus/fonts.tex")
+  IO.FS.writeFile (dir / "fonts.tex") (← IO.FS.readFile "testdata/corpus/fonts.tex")
   let page (body : String) : String :=
     "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"" ++ body ++ "\" }\n" ++
     "\\output{ formats = html }\n\\begin{document}\nPlain words.\n\\end{document}\n"

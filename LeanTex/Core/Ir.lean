@@ -195,7 +195,7 @@ structure PageSpec where
   flag, never a default: no class turns it on. Only the paged artifact
   draws the numbers — a line is a paged-media fact, and the HTML twin has
   no fixed lines to number, so it emits nothing (the recorded divergence;
-  tests/compat-index/lineno.txt carries it too). -/
+  testdata/compat-index/lineno.txt carries it too). -/
   linenumbers : Option Bool := none
   /-- Print only line numbers divisible by this modulus, still counting
   every line — lineno's `\modulolinenumbers[n]`, whose counter initialises

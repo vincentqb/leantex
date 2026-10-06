@@ -172,9 +172,9 @@ private def run (root : System.FilePath) : IO UInt32 := do
   let face := dir ++ "/Face.otf"
   IO.FS.createDirAll dir
   -- The faces the repository ships, so the oracle runs on any host.
-  let serif ← IO.FS.readBinFile "tests/corpus/fonts/SourceSerifPro-Regular.otf"
-  let sans ← IO.FS.readBinFile "tests/corpus/fonts/OpenSans-Regular.ttf"
-  let code ← IO.FS.readBinFile "tests/corpus/fonts/SourceCodePro-Regular.otf"
+  let serif ← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf"
+  let sans ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let code ← IO.FS.readBinFile "testdata/corpus/fonts/SourceCodePro-Regular.otf"
   IO.FS.writeBinFile face serif
   let beforeKey ← FontDiscovery.probeKey face
   let first ← familyAt cache dir face

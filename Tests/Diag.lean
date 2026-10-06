@@ -29,7 +29,7 @@ def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
       (emitted.contains c)
 
 /- Every registered diagnostic renders into one golden a person can read
-whole: tests/golden/diagnostics.txt. The witness table below holds one
+whole: testdata/golden/diagnostics.txt. The witness table below holds one
 firing input per code — an exhaustive match, so a new `DiagCode`
 constructor does not build until it names the input that fires it, and the
 coverage check holds each witness to actually firing its code. -/
@@ -754,7 +754,7 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The whole corpus as well as the probes: a collision a probe never
   -- reproduced is still one site named twice.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     sources := sources.push (s!"fixture {n}", (← elabFixture n src).2)
   for (what, ds) in sources do
     for pair in siteCollisions ds do
@@ -866,7 +866,7 @@ span calling it an unknown command, which is false. With one diagnostic at
 the span there is nothing left to make a false claim, and the claim is
 structural — the code's registered meaning is the claim, so this is read off
 `Diag.kind` and never off the message text. The wording is the golden's to
-witness (`tests/golden/diagnostics.txt`).
+witness (`testdata/golden/diagnostics.txt`).
 
 Invented command names and placeholder content throughout. -/
 def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1270,7 +1270,7 @@ def nameRefusalRegistryChecks (ref : IO.Ref (List String))
     (uDs.all fun d => d.code != "W0301" || d.refused.isNone)
 
 /-- The voice golden and its coverage: every registered code fires from its
-witness, and every fired form renders into tests/golden/diagnostics.txt —
+witness, and every fired form renders into testdata/golden/diagnostics.txt —
 the one place the whole voice is reviewable in a diff. The driver probes run
 first, before the font gate can skip anything: each has to fire its own code
 from the driver's own return, which is what makes a probed code's witness
@@ -1337,7 +1337,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     blocks := blocks.push (c.code, block)
   let sorted := blocks.qsort (fun a b => a.1 < b.1)
   let out := sorted.foldl (fun acc b => acc ++ b.2) ""
-  let path := "tests/golden/diagnostics.txt"
+  let path := "testdata/golden/diagnostics.txt"
   if update then
     IO.FS.writeFile path out
     IO.println s!"updated {path}"
@@ -1844,7 +1844,7 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Over the whole corpus, not only the probes: every recovery any fixture
   -- makes is accounted for.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (fDoc, fDs) ← elabFixture n src
     t s!"salvage_named {n}: every recovery is paid for by a diagnostic naming it"
       (named fDs fDoc.salvage)

@@ -1,4 +1,4 @@
-"""Build tests/corpus/fonts/ExampleIcons-Regular.ttf: an invented icon face
+"""Build testdata/corpus/fonts/ExampleIcons-Regular.ttf: an invented icon face
 for the leantex test corpus. Five simple geometric glyphs (invented shapes,
 drawn here, no outlines copied from any icon font) at the Font Awesome 5
 Free codepoints the fixtures reference:
@@ -89,8 +89,8 @@ def main():
     fb.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=900,
                 usWinDescent=200)
     fb.setupPost()
-    fb.save("tests/corpus/fonts/ExampleIcons-Regular.ttf")
-    print("wrote tests/corpus/fonts/ExampleIcons-Regular.ttf")
+    fb.save("testdata/corpus/fonts/ExampleIcons-Regular.ttf")
+    print("wrote testdata/corpus/fonts/ExampleIcons-Regular.ttf")
 
 if __name__ == "__main__":
     main()

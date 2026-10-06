@@ -6,7 +6,7 @@ with captions, natbib citations resolved from the .bib beside it, and an
 appendix — the constructs of an academic paper, with invented content
 (the private paper it is shaped after never enters this repo; compare
 construct counts locally when recalibrating). Targets roughly 10 pages.
-Fonts and images come from tests/corpus, so the run is hermetic. Run with:
+Fonts and images come from testdata/corpus, so the run is hermetic. Run with:
 
   lake env lean --run scripts/gen-paper.lean
 -/
@@ -61,7 +61,7 @@ x_\{{i}} = \\frac\{a_\{{i}}}\{b_\{{i}}} + \\sqrt\{c_\{{i}}}
 
 def figure (i : Nat) : String :=
   s!"\\begin\{figure}
-\\includegraphics[width=0.4\\textwidth]\{../tests/corpus/rects.png}
+\\includegraphics[width=0.4\\textwidth]\{../testdata/corpus/rects.png}
 \\caption\{An invented measurement, run {i}.}
 \\end\{figure}"
 
@@ -82,7 +82,7 @@ def gen : String := Id.run do
     "\\usepackage{booktabs}",
     "\\usepackage{graphicx}",
     "\\usepackage{amsmath}",
-    "\\fonts{ dir = \"../tests/corpus/fonts\", body = \"Source Serif Pro\", math = \"Fira Math\" }",
+    "\\fonts{ dir = \"../testdata/corpus/fonts\", body = \"Source Serif Pro\", math = \"Fira Math\" }",
     "\\title{A Synthetic Paper-Shaped Benchmark}",
     "\\author{Placeholder Name (placeholder@example.org)}",
     "\\begin{document}",

@@ -7,6 +7,8 @@ import Tests.PictureAssets
 import Tests.ToolMemo
 import Tests.Surface
 import Tests.ElabContracts
+import Tests.FrontendContracts
+import Tests.FrontendInputContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.ContrastContracts
@@ -53,6 +55,7 @@ import Tests.PdfPageSelection
 import Tests.PdfReadObjects
 import Tests.PdfReadRoundtrip
 import Tests.PdfReadRepresentability
+import Tests.PdfBounds
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
@@ -218,6 +221,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
   layoutSourceChecks ref oneFace
+  for (name, ok) in LeanTex.Tests.LayoutContracts.ownershipChecks oneFace do
+    check ref s!"layout ownership: {name}" ok
   htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
@@ -643,6 +648,8 @@ def main (args : List String) : IO UInt32 := do
   diagSiteCountChecks ref
   elabWarningContractChecks ref
   elabTitleBoundaryChecks ref
+  frontendTitleContextChecks ref
+  frontendInputRequestChecks ref
   elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref
@@ -656,6 +663,7 @@ def main (args : List String) : IO UInt32 := do
   pdfStructCoherenceChecks ref
   pdfReadRoundtripChecks ref
   pdfReadRepresentabilityChecks ref
+  pdfBoundsChecks ref
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref

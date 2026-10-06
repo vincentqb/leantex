@@ -22,7 +22,7 @@ pass a saved integration executable. -/
 def diagnosticFontScopeChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let binary ← IO.FS.realPath executable
-  let corpus ← IO.FS.realPath "tests/corpus/fonts"
+  let corpus ← IO.FS.realPath "testdata/corpus/fonts"
   IO.FS.withTempDir fun dir => do
     let fonts := dir / "fonts"
     IO.FS.createDirAll fonts

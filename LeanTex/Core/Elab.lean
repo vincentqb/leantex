@@ -6268,7 +6268,7 @@ unknown, and the call's argument shape does not enter: a leading `[...]` run
 earns no code of its own. The message and help *do* depend on the shape — the
 run's fate is a clause of them — so this states the code and nothing more.
 The wording is the golden's to witness
-(`tests/golden/diagnostics.txt`), and that the wording on the counted line is
+(`testdata/golden/diagnostics.txt`), and that the wording on the counted line is
 true of every site it counts is `runShape_fold_exact` plus
 `optionRunAccountingChecks`' mixed-shape rows in both orders.
 

@@ -6,10 +6,10 @@ from the repository root after `lake build`:
   lake env lean --run scripts/html-oracle.lean --check [path]    check the checked-in matrix (or another file) only
   lake env lean --run scripts/html-oracle.lean --selftest        the checker against hand-written matrices
 
-Builds every `tests/corpus/*.tex` to HTML in a scratch copy of the corpus
+Builds every `testdata/corpus/*.tex` to HTML in a scratch copy of the corpus
 (so a page sits beside the files it names, as `leantex doc.tex` leaves it),
 drives the host's cached Playwright Chromium over each page, and writes
-`tests/oracles/html-reader-matrix.txt`: target readers, host-tool versions and
+`testdata/oracles/html-reader-matrix.txt`: target readers, host-tool versions and
 a date, one row per feature × reader and fixture × reader, plus a separate
 browser-face source key and exact converted href/content captures. A converter
 failure is a failed capture even when removing the `<img>` would otherwise
@@ -33,7 +33,7 @@ import scripts.Board
 
 open LeanTex.Core
 
-def matrixPath : String := "tests/oracles/html-reader-matrix.txt"
+def matrixPath : String := "testdata/oracles/html-reader-matrix.txt"
 def leantexBin : String := ".lake/build/bin/leantex"
 
 /-- The readers the matrix declares as targets — the strength of the claim,
@@ -1037,7 +1037,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
   let chromium ← if haveNode then findChromium "node" else pure none
   let work ← IO.FS.createTempDir
   try
-    copyTree "tests/corpus" (work / "corpus")
+    copyTree "testdata/corpus" (work / "corpus")
     let mut fixtures : Array String := #[]
     let mut unbuilt : Array String := #[]
     let mut faceFailures : Array Scoreboard.BrowserFace := #[]
@@ -1083,7 +1083,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     tools := tools ++ s!"  {← toolVersion "rsvg-convert" #["--version"]}"
     tools := tools ++ s!"  {← toolVersion "pdftocairo" #["-v"]}"
     tools := tools ++ s!"  {← pdftotextVersion}"
-    IO.FS.createDirAll "tests/oracles"
+    IO.FS.createDirAll "testdata/oracles"
     IO.FS.writeFile matrixPath
       (renderMatrix probe fixtures unbuilt tools date keys.html keys.browserFaceSource browserFaces)
     IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"

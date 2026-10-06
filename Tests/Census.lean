@@ -1117,12 +1117,12 @@ def declaresExcluded (text : String) : Bool :=
   hasStr (" ".intercalate header) corpusExcludeMarker
 
 /-- The corpus entries a golden run could draw from: the top-level `.tex` and
-`.md` files under `tests/corpus`. The subdirectories hold `\input` targets,
+`.md` files under `testdata/corpus`. The subdirectories hold `\input` targets,
 `.sty` files and the shipped fonts — never fixtures — so the scan does not
 descend. `.md` is in scope because markdown is a shipped surface: a markdown
 fixture dropped here must face the same question a `.tex` one does. -/
 def corpusDocs : IO (Array String) := do
-  let dir : System.FilePath := "tests/corpus"
+  let dir : System.FilePath := "testdata/corpus"
   let mut out := #[]
   for entry in (← dir.readDir).map (·.fileName) |>.qsort (· < ·) do
     unless entry.endsWith ".tex" || entry.endsWith ".md" do continue
@@ -1133,7 +1133,7 @@ def corpusDocs : IO (Array String) := do
 /-- The coverage loop's missing half: `goldenNames` against the corpus
 directory. `censusChecks` holds the golden set and `censusTable` to each
 other, which says nothing about what is on disk — so a fixture added to
-`tests/corpus` and forgotten from the list owed no golden and no census row,
+`testdata/corpus` and forgotten from the list owed no golden and no census row,
 and nothing noticed; two files sat in that state. The directory is the
 authority for what exists, and whether a file is a fixture is a decision, so
 the decision is written where it applies (`corpusExcludeMarker`) and both
@@ -1141,7 +1141,7 @@ directions are loud. A declared exclusion may not rot either: a `.tex` that
 excuses itself must still refuse to elaborate, or the sketch's commands have
 landed and it belongs in the golden set. -/
 def corpusCoverageChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let dir : System.FilePath := "tests/corpus"
+  let dir : System.FilePath := "testdata/corpus"
   for entry in ← corpusDocs do
     let some stem := (System.FilePath.mk entry).fileStem | continue
     let listed := goldenNames.contains stem
@@ -1159,7 +1159,7 @@ elaborates without complaint — promote it"
         (diags.any fun d =>
           d.severity == .error || d.code == "W0301" || d.code == "W0302")
   for n in goldenNames do
-    check ref s!"golden {n}: in the golden set but no tests/corpus/{n}.tex"
+    check ref s!"golden {n}: in the golden set but no testdata/corpus/{n}.tex"
       (← (dir / s!"{n}.tex").pathExists)
 
 /-- The characters the ink watch bans, narrower than `Ir.markupChars` on
@@ -1216,7 +1216,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- the census exercises the same decision a build runs.
   let shipped ← FontDiscovery.scanRoots [testFonts]
   for (n, facts) in censusTable do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
@@ -1256,7 +1256,7 @@ def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .float kind num _ fbody fcaption => out.push (kind, num, fbody, fcaption)
       | _ => out) (fun out _ => out) #[] body
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let refs := Ir.foldBlocks (fun out _ => out)
       (fun out x => match x with

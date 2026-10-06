@@ -25,7 +25,7 @@ Accepted companions publish byte-for-byte; an unsafe or absent companion
 keeps the converted PDF poster. Lowercase retains precedence when both exist. -/
 def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let moving := svgDocument
     "<rect width=\"20\" height=\"20\" fill=\"red\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\" repeatCount=\"indefinite\"/></rect>"
   let lower := svgDocument
@@ -142,7 +142,7 @@ load its DTD. Adding it must retain the drawn figure in both artifacts.
 The actual driver and installed converters witness this boundary. -/
 def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let drawing := String.fromUTF8! <| svgDocument
     "<rect width=\"20\" height=\"20\" fill=\"red\"/>"
   IO.FS.withTempDir fun dir => do

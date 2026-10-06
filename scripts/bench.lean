@@ -103,8 +103,8 @@ def benchBib (n : Nat) (entries : Nat) : IO Nat := do
 while checking HTML resource closure. Both sizes use the same captured assets. -/
 def benchImageDeck (n frames : Nat) : IO Unit := do
   let leantex ← compiler
-  let fonts ← IO.FS.realPath "tests/corpus/fonts"
-  let image ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
+  let image ← IO.FS.readBinFile "testdata/corpus/rects.png"
   IO.FS.withTempDir fun dir => do
     IO.FS.writeBinFile (dir / "figure.png") image
     let mut source := "\\documentclass{beamer}\n\\usetheme{moloch}\n" ++
@@ -125,7 +125,7 @@ content cache makes each cold run comparable; the following warm run must
 ship identical bytes and every requested picture must have a cached PDF. -/
 def benchPictures (n requests : Nat) : IO Unit := do
   let leantex ← IO.FS.realPath (← compiler)
-  let fonts ← IO.FS.realPath "tests/corpus/fonts"
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
   IO.FS.withTempDir fun dir => do
     let head := "\\documentclass{article}\n\\usepackage{tikz}\n" ++
       "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Open Sans\" }\n" ++
@@ -241,7 +241,7 @@ workers. Source PDFs are generated before timing; no TeX installation or
 private document is involved. -/
 def benchConcurrent (n requests : Nat) (images : Bool) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
-  let fonts ← IO.FS.realPath "tests/corpus/fonts"
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
   IO.FS.withTempDir fun dir => do
     let head := "\\documentclass{beamer}\n" ++
       "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Open Sans\" }\n" ++
@@ -296,7 +296,7 @@ def main (args : List String) : IO UInt32 := do
   if genPaper.exitCode != 0 then
     die s!"gen-paper failed:\n{genPaper.stderr}"
   let haveLualatex ← hasCmd "lualatex"
-  for doc in ["tests/corpus/paragraphs.tex", "bench/lorem.tex", "bench/underline.tex"] do
+  for doc in ["testdata/corpus/paragraphs.tex", "bench/lorem.tex", "bench/underline.tex"] do
     let base := (doc.splitOn "/").getLastD doc
     bench n s!"leantex  {base}" leantex #["-q", "build", doc]
     if haveLualatex then
@@ -310,9 +310,9 @@ def main (args : List String) : IO UInt32 := do
   -- (lualatex does not build the native theme declarations).
   let outDir ← IO.FS.createTempDir
   bench n "leantex  themed.tex" leantex
-    #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.pdf").toString]
+    #["-q", "build", "testdata/corpus/themed.tex", "-o", (outDir / "themed.pdf").toString]
   bench n "leantex  themed.tex -o html" leantex
-    #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.html").toString]
+    #["-q", "build", "testdata/corpus/themed.tex", "-o", (outDir / "themed.html").toString]
   -- The paper-shaped fixture: sections, numbered equations with \eqref,
   -- floats with captions, natbib citations resolved from refs.bib in the
   -- same run — the one-run resolution that is the engine's headline claim.

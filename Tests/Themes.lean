@@ -3014,7 +3014,7 @@ def deckOverprintChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- either a document that meant it or an engine that lost something, and the
   -- engine cannot tell after the fact — so the decidable shape is the gate.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (cdoc, _) := Elab.run s!"{n}.tex" src
     t s!"corpus {n}: every alternation reaches both of its groups"
       (Ir.altUnreachable cdoc == 0)

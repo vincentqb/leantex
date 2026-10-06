@@ -160,7 +160,7 @@ this engine has that channel in its own diagnostics; `frenchspacing`/`nonfrenchs
 toggle inter-sentence space
 the engine sets uniformly either way; lineno's `linenomath`
 pair wraps displays that are numbered like every galley line already
-(the recorded divergence in tests/compat-index/lineno.txt);
+(the recorded divergence in testdata/compat-index/lineno.txt);
 `selectfont` commits NFSS declarations that apply where they stand here;
 `noindent` suppresses a first-line indent no paragraph here carries —
 paragraphs are set space-separated, with no indent in any class

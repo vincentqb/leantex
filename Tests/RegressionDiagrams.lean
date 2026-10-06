@@ -349,7 +349,7 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
 end Tests.RegressionDiagrams
 
 def Tests.RegressionDiagrams.cases : Array Tests.Regression.Case := #[
-  { path := "tests/regression/diagrams/route-note.tex"
+  { path := "testdata/regression/diagrams/route-note.tex"
     check := Tests.RegressionDiagrams.routeNoteChecks },
-  { path := "tests/regression/diagrams/field-sheet.tex"
+  { path := "testdata/regression/diagrams/field-sheet.tex"
     warnings := #[.W0103, .W0110], check := Tests.RegressionDiagrams.fieldSheetChecks }]

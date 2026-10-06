@@ -8,7 +8,7 @@ repository root:
 
 Every golden fixture is elaborated and emitted to its typed HTML tree
 in-process (`a11yCorpusPage`: the document's own stylesheet mode, its images
-from `tests/corpus`), and `HtmlDoc.a11yFacts` — the judge `htmlA11yChecks`
+from `testdata/corpus`), and `HtmlDoc.a11yFacts` — the judge `htmlA11yChecks`
 reads in the suite — counts six deficits per page (`a11yDeficits`):
 contrast pairings failed over both colour schemes, a page without exactly
 one `<h1>`, tab stops hidden from assistive technology, images with no text

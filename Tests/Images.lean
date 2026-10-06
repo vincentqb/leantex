@@ -235,9 +235,9 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "decode rejects empty" ((Image.decode (bytes [])).isOk == false)
 
   -- The shipped fixtures: what `lake test` sees on every host.
-  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
-  let alphaData ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let pngData ← IO.FS.readBinFile "testdata/corpus/rects.png"
+  let jpgData ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
+  let alphaData ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   let pngInfo := Image.decode pngData
   let jpgInfo := Image.decode jpgData
   let alphaInfo := Image.decode alphaData
@@ -855,9 +855,9 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
      | .ok _ => false)
   -- Red 4: the gate agrees with the planner on the shipped fixtures and a
   -- synthetic colour type 6; the recoded flag is exactly the alpha arm's.
-  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
-  let alphaData ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let pngData ← IO.FS.readBinFile "testdata/corpus/rects.png"
+  let jpgData ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
+  let alphaData ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
   let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
     chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
@@ -977,7 +977,7 @@ frame of the same shape: every image box with its left edge (the line's
 origin plus what the line set before it). -/
 def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let pngInfo := Image.decode (← IO.FS.readBinFile "tests/corpus/rects.png")
+  let pngInfo := Image.decode (← IO.FS.readBinFile "testdata/corpus/rects.png")
   let store : Image.Store := { entries := #[{ src := "rects.png", info := pngInfo.toOption }] }
   let boxes (out : Layout.Out) : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
     let mut acc : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]

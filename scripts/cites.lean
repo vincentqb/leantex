@@ -41,7 +41,7 @@ theorem name here is built from (`html_fonts_cover_pdf`,
 `footBand_projects`). The tree's other backticked things are each a
 different shape, and none of them matches: a camelCase def or field
 (`foldInlines`), a dotted or spaced type (`Ir.dump`, `Array Block`), a flag
-(`--wfail`), a path (`tests/compat-index`), a SCREAMING_SNAKE environment or
+(`--wfail`), a path (`testdata/compat-index`), a SCREAMING_SNAKE environment or
 format key (`LEANTEX_FONT`, `ICC_PROFILE`), prose. -/
 def citeBare (tk : String) : Bool :=
   let cs := tk.toList
@@ -509,7 +509,7 @@ def selftest : IO UInt32 := do
     ("Array Block", false),
     ("Conserves", false),
     ("--wfail", false),
-    ("tests/compat-index", false),
+    ("testdata/compat-index", false),
     ("LEANTEX_FONT", false),
     ("ICC_PROFILE", false),
     ("White_Space", false),

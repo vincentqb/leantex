@@ -14,7 +14,7 @@ an id the cross-reference does not list, or one at or past the trailer's
 `/Size`, is refused by name. The determinism row is the one checker behind
 "the artifact is a function of the document": the same inputs write the
 same bytes, and no date or absolute path is among them. The matrix gate
-reads `tests/oracles/reader-matrix.txt` the way a golden is read: the
+reads `testdata/oracles/reader-matrix.txt` the way a golden is read: the
 file's own `target:` line names the readers a feature must `pass` on, and
 `untested` or `fail:*` in a target column fails; a column off the target
 line gates nothing, and what this host has installed is never asked. The
@@ -231,7 +231,7 @@ def Verdict.render : Verdict → String
   | .untested => "untested"
   | .fail r => s!"fail:{r}"
 
-/-- `tests/oracles/reader-matrix.txt`, parsed: the target readers, the
+/-- `testdata/oracles/reader-matrix.txt`, parsed: the target readers, the
 reader columns of the `[feature]` section, its rows, and the `[profile]`
 rows keyed by (profile, fixture). `tools:` and `date:` are not read. -/
 structure Matrix where
@@ -486,7 +486,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let t := check ref
   let cwd ← IO.currentDir
   -- The matrix, read once; its gate over every writer feature.
-  let matrixText ← try IO.FS.readFile "tests/oracles/reader-matrix.txt" catch _ => pure ""
+  let matrixText ← try IO.FS.readFile "testdata/oracles/reader-matrix.txt" catch _ => pure ""
   t "reader matrix present (run: lake env lean --run scripts/pdf-oracles.lean)"
     (!matrixText.isEmpty)
   let matrix? := readMatrix matrixText
@@ -562,7 +562,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for v in volatileSpellings do
       t s!"pdf deterministic {n}: no {v}" (!bytesContain text v)
     t s!"pdf deterministic {n}: no absolute source path"
-      (!bytesContain text (cwd / "tests/corpus" / s!"{n}.tex").toString)
+      (!bytesContain text (cwd / "testdata/corpus" / s!"{n}.tex").toString)
   -- The gate over every feature the golden set reaches, as one statement.
   if let .ok m := matrix? then
     let gaps := featureGate m reached.toList
@@ -571,7 +571,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image"
     (["marked-content", "smask", "copied-graph", "dct"].all reached.contains)
   -- The mutants, through the walk: one corpus document with images.
-  let src ← IO.FS.readFile "tests/corpus/images.tex"
+  let src ← IO.FS.readFile "testdata/corpus/images.tex"
   let (doc, _) ← elabFixture "images" src
   let geom := Layout.Geom.ofPage doc.page
   let store ← corpusStore doc

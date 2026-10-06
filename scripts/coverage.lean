@@ -6,7 +6,7 @@ Documented-command coverage: how much of LaTeX does this engine answer?
   lake env lean --run scripts/coverage.lean --selftest       the rung rule, the guards, and the corpus control
   lake env lean --run scripts/coverage.lean --report         the per-item detail and the drift audit
   lake env lean --run scripts/coverage.lean --denominator <latex2e.texi>
-                                                             rebuild tests/coverage/latex2e-index.txt
+                                                             rebuild testdata/coverage/latex2e-index.txt
 
 Each mode imports compiled script modules, which `scoreboard` builds before
 fan-out; run standalone, build them first (`lake build ScriptsModules`).
@@ -52,7 +52,7 @@ control; the shipped one passes it.
 
 The denominator has two halves, and neither is chosen here.
 
-*Kernel.* `tests/coverage/latex2e-index.txt`: the command names indexed by
+*Kernel.* `testdata/coverage/latex2e-index.txt`: the command names indexed by
 the LaTeX2e unofficial reference manual (`@findex`, `@ftable` items, and
 `@node` headings that name a command), each confirmed by lualatex to be a
 control sequence LaTeX actually defines, and each classified by the meaning
@@ -64,7 +64,7 @@ stamp, which catch an accidental edit; what stops a deliberate prune is the
 scoreboard, whose `<item>.rows` values may not fall without a human-written
 `# lowered:` line.
 
-*Packages.* `tests/compat-index/<pkg>.txt`, unchanged: each file is already
+*Packages.* `testdata/compat-index/<pkg>.txt`, unchanged: each file is already
 one package's documented command list sourced to a manual section, one row
 per command with its verdict. Every row is in the denominator, including a
 `divergence:<code>` row; only `impl` and `inert:` enter the numerator. The
@@ -97,7 +97,7 @@ Exclusions, all stated and all derived:
     this extraction keeps `\name` tokens only, so `itemize` never enters the
     command denominator. An environment surface is the compat-index's job.
 
-The scoreboard is `tests/scoreboard/coverage.tsv`, written and checked by
+The scoreboard is `testdata/scoreboard/coverage.tsv`, written and checked by
 `Scoreboard.tierMain` like every other tier, under the `pairs counted/rows`
 encoding: per kernel item (a manual chapter, or the register file),
 `<item>.counted` is the count of names at `rewritten` or above and
@@ -113,8 +113,8 @@ import scripts.Rung
 
 open LeanTex.Core
 
-def denomPath : String := "tests/coverage/latex2e-index.txt"
-def corpusDir : System.FilePath := "tests/corpus"
+def denomPath : String := "testdata/coverage/latex2e-index.txt"
+def corpusDir : System.FilePath := "testdata/corpus"
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -851,7 +851,7 @@ verified) of <item>.rows names in {denomPath}.",
     s!"# kernel excluded: {mathN} math-mode symbol commands (math_given), {notBaseN} \
 commands latex.ltx defines only as an error (not_base).",
     s!"# package half, gated here as packages.counted/packages.rows and per package by \
-the compat tier: {t.pImpl} implemented of {t.pDoc} documented (tests/compat-index; `impl` \
+the compat tier: {t.pImpl} implemented of {t.pDoc} documented (testdata/compat-index; `impl` \
 or `inert:`).",
     s!"# total: {t.num}/{t.den} = {pct t.num t.den}"]
 
@@ -1165,7 +1165,7 @@ def denominator (texi : String) : IO UInt32 := do
     s!"# candidates: {cands.size}\n" ++
     s!"# rows: {sorted.size}\n" ++
     s!"# body: {bodyStamp body}\n"
-  IO.FS.createDirAll "tests/coverage"
+  IO.FS.createDirAll "testdata/coverage"
   IO.FS.writeFile denomPath (head ++ body)
   let _ ← IO.Process.output { cmd := "rm", args := #["-rf", dir] }
   IO.println s!"coverage: wrote {denomPath} with {sorted.size} confirmed names \

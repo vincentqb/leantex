@@ -84,7 +84,7 @@ def parseSource : List String → Except String Source
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
-    || f == "lean-toolchain" || f.startsWith "tests/golden/"
+    || f == "lean-toolchain" || f.startsWith "testdata/golden/"
 
 /-- The owed-theorem staging area (see scripts/owed.lean): the one path
 where a stated obligation may hold its proof open. -/
@@ -175,20 +175,23 @@ def addedPathFaults (numstat : String) : Array (String × String) := Id.run do
     | _ => pure ()
   return out
 
-/-- Pairs of tracked paths that differ only by letter case. A checkout on a
-case-insensitive filesystem keeps one of the two, and for a Lean module the
-compiled `.olean` names collide as well — `scripts/Land.lean` beside
-`scripts/land.lean` was found that way. Compared by the whole path folded
-down, so a directory's case counts too; grouped through a sort rather than
-the obvious double loop, which is quadratic over the whole tracked tree. -/
+/-- Case collisions among tracked files and their directories. Distinct
+children do not make `Tests/` and `tests/` portable: the directory names
+already collide. Include every prefix, then group by folded spelling. -/
 def caseCollisions (paths : Array String) : Array (String × String) := Id.run do
-  let keyed := (paths.map fun p => (p.toLower, p)).qsort fun a b =>
+  let prefixes := paths.flatMap fun path =>
+    ((path.splitOn "/").foldl (fun (state : String × Array String) part =>
+      let pathPrefix := if state.1.isEmpty then part else state.1 ++ "/" ++ part
+      (pathPrefix, state.2.push pathPrefix)) ("", #[])).2
+  let keyed := (prefixes.map fun p => (p.toLower, p)).qsort fun a b =>
     a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
   let mut out : Array (String × String) := #[]
-  for i in [1:keyed.size] do
-    let (k, p) := keyed[i]!
-    let (k', p') := keyed[i - 1]!
-    if k == k' && p != p' then out := out.push (p', p)
+  let mut previous := none
+  for current in keyed do
+    if let some prior := previous then
+      if current.1 == prior.1 && current.2 != prior.2 then
+        out := out.push (prior.2, current.2)
+    previous := some current
   return out
 
 /-- The three spellings a home directory takes, composed so this file's own
@@ -1125,7 +1128,7 @@ def gates : List Gate := [
     help := "  Tests scan only the shipped corpus fonts — FontDiscovery.scanRoots [testFonts]
   (AGENTS.md, Conventions); a host scan makes the suite depend on what
   this machine has installed.
-  Fix: ship the font in tests/corpus/fonts/ and scan through testFonts." },
+  Fix: ship the font in testdata/corpus/fonts/ and scan through testFonts." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := irDumpUnmarked
     what := fun f => s!"Ir.dump in {f} without its stated tier"
@@ -1704,21 +1707,21 @@ def selftest : IO UInt32 := do
 
   expect "plainPath" plainPath [
     -- the tree's own spellings
-    ("tests/corpus/a-b_c.tex", true),
+    ("testdata/corpus/a-b_c.tex", true),
     ("scripts/hooks/pre-commit", true),
     ("LeanTex/Core/Oklab.lean", true),
     -- the debris alphabet: a space, the escape itself (quote, comma, plus),
     -- an `=`, non-ASCII, a newline, the empty name
-    ("tests/corpus/a b.tex", false),
+    ("testdata/corpus/a b.tex", false),
     ("arnings name the native spelling\",+12p", false),
     ("notes=draft.md", false),
-    ("tests/corpus/r\u00e9sum\u00e9.tex", false),
+    ("testdata/corpus/r\u00e9sum\u00e9.tex", false),
     ("a\nb.tex", false),
     ("", false)]
   -- the numstat walker: an empty file fires, a mangled name fires, a
   -- content-bearing plain path and a binary pass
-  let ns := "0\t0\tempty.txt\x00" ++ "12\t0\ttests/corpus/a-b_c.tex\x00"
-    ++ "0\t0\ta b\x00" ++ "-\t-\ttests/corpus/pic.png\x00"
+  let ns := "0\t0\tempty.txt\x00" ++ "12\t0\ttestdata/corpus/a-b_c.tex\x00"
+    ++ "0\t0\ta b\x00" ++ "-\t-\ttestdata/corpus/pic.png\x00"
   if addedPathFaults ns != #[("empty.txt", "empty file"),
       ("a b", "characters outside [A-Za-z0-9._/-]"), ("a b", "empty file")] then
     fails.modify ("addedPathFaults: wrong hits on the empty/mangled/plain/binary case" :: ·)
@@ -1727,8 +1730,11 @@ def selftest : IO UInt32 := do
   if caseCollisions #["scripts/land.lean", "scripts/Gate.lean", "scripts/Land.lean"]
       != #[("scripts/Land.lean", "scripts/land.lean")] then
     fails.modify ("caseCollisions: missed the module-name collision" :: ·)
-  if caseCollisions #["a/b.lean", "A/b.lean"] != #[("A/b.lean", "a/b.lean")] then
+  if caseCollisions #["a/b.lean", "A/b.lean"] != #[("A", "a"), ("A/b.lean", "a/b.lean")] then
     fails.modify ("caseCollisions: a directory's case does not count" :: ·)
+  if caseCollisions #["Tests/Parser.lean", "tests/corpus/probe.tex"]
+      != #[("Tests", "tests")] then
+    fails.modify ("caseCollisions: different children conceal a directory collision" :: ·)
   if !(caseCollisions #["scripts/land.lean", "scripts/LandCore.lean", "scripts/lands.lean"]).isEmpty then
     fails.modify ("caseCollisions: fired on distinct names" :: ·)
 
@@ -1748,7 +1754,7 @@ def selftest : IO UInt32 := do
     ("https://example.org" ++ dirHome ++ "index.html", false),
     ("see https://example.org/docs" ++ dirUsers ++ "guide", false),
     (dirHome ++ "<user>/x and " ++ dirHome ++ "$USER/x", false),
-    ("a path relative to the repository: tests/corpus/fonts", false)]
+    ("a path relative to the repository: testdata/corpus/fonts", false)]
   if homePaths (dirLocalHome ++ "alice/x " ++ dirHome ++ "linuxbrew " ++ dirUsers ++ "bob")
       != #[dirLocalHome ++ "alice", dirUsers ++ "bob"] then
     fails.modify ("homePaths: wrong hits on a mixed line" :: ·)
@@ -2299,7 +2305,7 @@ def main (args : List String) : IO UInt32 := do
   Toolchain bumps are deliberate and go in their own commit (AGENTS.md, Don't touch).
   Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
 
-  if staged.any (·.startsWith "tests/golden/") then
+  if staged.any (·.startsWith "testdata/golden/") then
     -- A golden may not be hand-edited, which is why it must travel with the
     -- change that moved it. On a branch that already carries such a change,
     -- a later regeneration is legitimate on its own: two slices landing in
@@ -2313,9 +2319,9 @@ def main (args : List String) : IO UInt32 := do
           (!·.isEmpty)).toArray
       | none => pure #[]
     let isSource (f : String) : Bool :=
-      f.endsWith ".lean" || (f.startsWith "tests/corpus/" && f.endsWith ".tex")
+      f.endsWith ".lean" || (f.startsWith "testdata/corpus/" && f.endsWith ".tex")
     if !staged.any isSource && !branchTouched.any isSource then
-      say "pre-commit: tests/golden/** changed without a .lean or tests/corpus/*.tex change.
+      say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex change.
   Goldens are regenerated through the harness, never hand-edited (AGENTS.md, Don't touch).
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
 
@@ -2378,19 +2384,19 @@ def main (args : List String) : IO UInt32 := do
   so two constructs of one name cannot silence each other, and this check can see it."
 
   -- The claim and its evidence arrive together: a nativePackages entry
-  -- without its tests/compat-index file used to surface an hour later at
+  -- without its testdata/compat-index file used to surface an hour later at
   -- lake test (the paper-bib escape); the hook refuses it at commit time.
   -- Whole tree, like the conservation gate: the entry and the file may
   -- land in different hunks.
   if (← System.FilePath.pathExists "LeanTex/Core/Compat.lean") then
     let compatSrc ← IO.FS.readFile "LeanTex/Core/Compat.lean"
     for pkg in nativePackagesOf compatSrc do
-      unless (← System.FilePath.pathExists s!"tests/compat-index/{pkg}.txt") do
-        say s!"pre-commit: '{pkg}' is in nativePackages with no tests/compat-index/{pkg}.txt.
+      unless (← System.FilePath.pathExists s!"testdata/compat-index/{pkg}.txt") do
+        say s!"pre-commit: '{pkg}' is in nativePackages with no testdata/compat-index/{pkg}.txt.
   A nativePackages entry arrives with its index file: the package's
   documented command list, one row per command, the manual section named
   in its header (AGENTS.md, obligation table); lake test probes every row.
-  Fix: write tests/compat-index/{pkg}.txt before adding the entry."
+  Fix: write testdata/compat-index/{pkg}.txt before adding the entry."
 
   -- The conservation gate — the obligation table's walk row, mechanical:
   -- every public IR-to-IR walk in core (a def taking and returning

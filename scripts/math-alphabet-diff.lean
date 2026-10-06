@@ -515,7 +515,7 @@ def main (args : List String) : IO UInt32 := do
     | IO.eprintln "math-alphabet-diff: lualatex unavailable — untested"; return 2
   let some gsVersion ← version "gs" #["--version"] root
     | IO.eprintln "math-alphabet-diff: ghostscript unavailable — untested"; return 2
-  let fira ← IO.FS.realPath (root / "tests" / "corpus" / "fonts" / "FiraMath-Regular.otf")
+  let fira ← IO.FS.realPath (root / "testdata" / "corpus" / "fonts" / "FiraMath-Regular.otf")
   let required : List (String × String) :=
     [("Latin Modern Math", "latinmodern-math.otf"),
      ("TeX Gyre Pagella Math", "texgyrepagella-math.otf"),
@@ -534,7 +534,7 @@ def main (args : List String) : IO UInt32 := do
     (if pointUnits then "math-alphabet-point-units" else "math-alphabet-diff")
   if ← work.pathExists then IO.FS.removeDirAll work
   IO.FS.createDirAll work
-  let bodyFontDir := (root / "tests" / "corpus" / "fonts").toString
+  let bodyFontDir := (root / "testdata" / "corpus" / "fonts").toString
   IO.println "math-alphabet-diff: LuaLaTeX/leantex alphabet matrix"
   IO.println s!"  lualatex: {luaVersion}"
   IO.println s!"  ghostscript: {gsVersion}"

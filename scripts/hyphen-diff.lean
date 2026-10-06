@@ -35,7 +35,7 @@ sorted and deduplicated — the same list the shell pipeline built with
 tr/grep/sort -u. -/
 def defaultWords : IO (Array String) := do
   let mut text := ""
-  for entry in (← System.FilePath.readDir "tests/corpus").qsort (·.fileName < ·.fileName) do
+  for entry in (← System.FilePath.readDir "testdata/corpus").qsort (·.fileName < ·.fileName) do
     if entry.fileName.endsWith ".tex" then
       text := text ++ (← IO.FS.readFile entry.path) ++ "\n"
   for doc in ["README.md", "AGENTS.md"] do

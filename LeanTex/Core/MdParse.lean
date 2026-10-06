@@ -23,7 +23,7 @@ as its subject:
   container's own marker.
 
 Each refusal carries a fix-it in its message, and each is a *data*
-decision: the verdict rows in `tests/commonmark/verdicts.tsv` say which
+decision: the verdict rows in `testdata/commonmark/verdicts.tsv` say which
 spec cases the class touches, so flipping one is a table change plus a
 reader arm, never a redesign.
 

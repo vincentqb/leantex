@@ -328,7 +328,7 @@ argument belonged to, where recognising the command changed the document
 (so `compatRowEffect` held) and the change was its own spelling set as
 text. -/
 def amsIndexInkChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
-  let content ← IO.FS.readFile "tests/compat-index/amsmath.txt"
+  let content ← IO.FS.readFile "testdata/compat-index/amsmath.txt"
   for line in content.splitOn "\n" do
     let line := line.trimAscii.toString
     if line.isEmpty || line.startsWith "#" then continue

@@ -5,7 +5,7 @@ Documented-command coverage, per package. Run from the repository root:
   lake env lean --run scripts/compat.lean --check      gate against the committed one
   lake env lean --run scripts/compat.lean --selftest   the row reader
 
-`tests/compat-index/<pkg>.txt` carries one row per documented command of a
+`testdata/compat-index/<pkg>.txt` carries one row per documented command of a
 package, each with the verdict the engine owes it. `lake test` probes every
 row; this tier commits the shape of the index, so a row cannot quietly
 leave it.
@@ -88,7 +88,7 @@ body inert:binds \\zzfour\n\
   no s!"refuse: 1 expected, got {p.refuse}" (p.refuse == 1)
   no "header prose is not a row" ((readIndex "zz" "# only prose\n").rows == 0)
   let missing ← (readCompatIndexAt (System.FilePath.mk
-    "tests/compat-index-does-not-exist")).toBaseIO
+    "testdata/compat-index-does-not-exist")).toBaseIO
   no "a missing compat-index input fails closed"
     (match missing with | .error _ => true | .ok _ => false)
   let empty ← (readCompatIndexAt (System.FilePath.mk "LeanTex/Cli")).toBaseIO

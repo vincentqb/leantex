@@ -595,7 +595,7 @@ private def report (o : Options) (root : System.FilePath) : IO UInt32 := do
   IO.FS.createDirAll (root / "fonts")
   for font in #["FiraSans-Regular.otf", "FiraMath-Regular.otf"] do
     IO.FS.writeBinFile (root / "fonts" / font)
-      (← IO.FS.readBinFile (System.FilePath.mk "tests/corpus/fonts" / font))
+      (← IO.FS.readBinFile (System.FilePath.mk "testdata/corpus/fonts" / font))
   let env := #[("TEXMFCACHE", some cache.toString), ("TEXMFVAR", some cache.toString),
     ("XDG_CACHE_HOME", some cache.toString), ("LEANTEX_FONT", none),
     ("max_print_line", some "1000")]

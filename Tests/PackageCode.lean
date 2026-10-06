@@ -11,7 +11,7 @@ because a style file's `\AtBeginDocument` hook tested whether another
 package was loaded, the test was an unknown command, and the
 unknown-command recovery set its arguments as body text. A style file also
 typesets on purpose, through commands whose groups LaTeX sets, and those
-keep them. Fixtures in tests/corpus/sty-parity, synthetic and invented. -/
+keep them. Fixtures in testdata/corpus/sty-parity, synthetic and invented. -/
 
 /-- The body text a `sty-parity` fixture ships, read off the laid-out pages,
 with its diagnostics. -/

@@ -1,7 +1,7 @@
 # One row per CommonMark 0.31.2 spec example: id, section, verdict, note.
 # verdicts: match | rejected | divergence | owed.
 # `rejected` is a strict refusal (E0390) corroborated from outside the reader:
-# the expected HTML for raw HTML, tests/commonmark/strict-reviewed.tsv otherwise;
+# the expected HTML for raw HTML, testdata/commonmark/strict-reviewed.tsv otherwise;
 # `divergence` needs a row in `divergences` in scripts/commonmark.lean;
 # `owed` is not implemented yet and the ratchet lets it only fall.
 # This file is written only by scripts/commonmark.lean.

@@ -91,7 +91,7 @@ def main : IO Unit := do
   check dir "text-like" (String.join (List.replicate 2000
     "the quick brown fox jumps over the lazy dog — pack my box. ")).toUTF8
   -- The shipped alpha fixture's planes: the exact bytes the PDF writer embeds.
-  let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   match Image.decode alpha with
   | .ok { data, alpha := .soft smask _, .. } =>
     match Flate.inflate data (32 * (1 + 48 * 3)), Flate.inflate smask (32 * (1 + 48)) with

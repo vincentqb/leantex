@@ -148,7 +148,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "extensionless image lookup includes SVG"
     ((Image.sourceCandidates "diagram").contains "diagram.svg")
-  let data ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let data ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"
   let info := (Image.decode data).toOption
   t "SVG asset probe has a vector print face" (info.any (·.form.isSome))
   let drawing := "<svg/>".toUTF8

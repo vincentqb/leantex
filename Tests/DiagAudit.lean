@@ -171,7 +171,7 @@ def Pin.resolves (suite : String) : Pin → IO Bool
   | .thm .. => pure true
   | .check n _ => pure (wordCount suite n.toString ≥ 2)
   | .tier t item => do
-    let path : System.FilePath := s!"tests/scoreboard/{t}.tsv"
+    let path : System.FilePath := s!"testdata/scoreboard/{t}.tsv"
     if !(← path.pathExists) then return false
     return ((← IO.FS.readFile path).splitOn "\n").any (·.startsWith (item ++ "\t"))
 

@@ -46,7 +46,7 @@ def imageOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   imageLoaderOriginChecks ref
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let path := (← IO.getEnv "PATH").getD ""
   IO.FS.withTempDir fun dir => do
     let tools := dir / "bin"

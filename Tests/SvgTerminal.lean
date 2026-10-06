@@ -35,7 +35,7 @@ while the browser receives the unchanged animation. The other source is an
 extensionless static include. -/
 def svgTerminalDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
-  let font ← IO.FS.realPath "tests/corpus/fonts/OpenSans-Regular.ttf"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let moving := (svgDocument (width := 32) (height := 16))
     "<rect width=\"16\" height=\"16\" fill=\"red\" opacity=\"0\">\
     <animate attributeName=\"opacity\" values=\"0;1\" keyTimes=\"0;1\" \

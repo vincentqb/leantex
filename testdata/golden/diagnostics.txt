@@ -313,7 +313,7 @@
   suggestion: LaTeX errors here ('Too deeply nested'); flatten the nesting
 ── W0011 (degraded) declared math face has no OpenType MATH table
 ⚠ [W0011]
-  'Open Sans' (tests/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
+  'Open Sans' (testdata/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
   suggestion: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as its text content
 ⚠ [W0012]

@@ -210,7 +210,7 @@ def main (args : List String) : IO UInt32 := do
   let dir ← IO.FS.createTempDir
   let mut verdicts : Array Verdict := #[]
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, diags) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc

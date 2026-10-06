@@ -17,11 +17,11 @@ def a11yCssOf (doc : Ir.Doc) : HtmlDoc.CssMode :=
 
 /-- One corpus fixture's page as its typed tree, built in-process the way
 the driver builds it: the document's own stylesheet mode and its images from
-`tests/corpus` (`corpusStore`). No boundary tool runs here, so a boundary
+`testdata/corpus` (`corpusStore`). No boundary tool runs here, so a boundary
 picture is its placeholder — what a host with no tool ships. -/
 def a11yCorpusPage (n : String) :
     IO (Ir.Doc × Image.Store × Array Html.Node × Array Html.Node × Array Diag) := do
-  let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+  let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
   let (doc, _) ← elabFixture n src
   let store ← corpusStore doc
   let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
@@ -112,7 +112,7 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
     let href := HtmlDoc.imageRequestHref "assets" store en.toRequest
     let sameSource := uses.filter (·.1 == href)
     if sameSource.isEmpty then continue
-    let bytes ← IO.FS.readBinFile s!"tests/corpus/{HtmlDoc.resolvedSrc en}"
+    let bytes ← IO.FS.readBinFile s!"testdata/corpus/{HtmlDoc.resolvedSrc en}"
     if (sniffBrowserImage bytes).isNone then
       for (_, index) in sameSource do
         t s!"html a11y {name}: '{href}' carries its emitted request index"
@@ -131,7 +131,7 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
         (named.size == 1 && named.all marked.contains)
       for k in named do
         let href := HtmlDoc.resolvedSrc store.entries[k]!
-        let bytes ← IO.FS.readBinFile s!"tests/corpus/{href}"
+        let bytes ← IO.FS.readBinFile s!"testdata/corpus/{href}"
         let decodes := (sniffBrowserImage bytes).isSome
         t s!"html a11y {name}: '{href}' is named undecodable only when it is" (!decodes)
   return undecodableSeen
@@ -175,7 +175,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
   t s!"html a11y: the corpus ships an image no browser decodes ({undecodableSeen})"
     (0 < undecodableSeen)
-  let imageBytes ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let imageBytes ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"
   let selected : Image.Store := { entries := #[
     { src := "figures/box.pdf", info := (Image.decode imageBytes).toOption },
     { src := "figures/box.pdf", page := .number 2,
@@ -211,7 +211,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- browser draws 76 × 38; the page used to declare 56 × 28.
   t "html a11y: 56.693pt × 28.346pt reads 76 × 38 CSS px"
     (HtmlDoc.cssPxOfSp 3715432 == 76 && HtmlDoc.cssPxOfSp 1857684 == 38)
-  match Image.decode (← IO.FS.readBinFile "tests/corpus/figures/box.pdf") with
+  match Image.decode (← IO.FS.readBinFile "testdata/corpus/figures/box.pdf") with
   | .error e => t s!"html a11y: the PDF-page probe decodes: {e}" false
   | .ok plan =>
     let box := elabStr (dvDoc "" "\\includegraphics[alt=a card]{box.pdf}")

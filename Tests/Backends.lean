@@ -553,7 +553,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => false
   let mut shadows : Array String := #[]
   for n in goldenNames do
-    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"tests/corpus/{n}.tex")
+    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
     for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
       if !sel.startsWith ":where(" && setsMargin decls &&
           (selParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
@@ -803,7 +803,7 @@ def printLiftChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut missing : Array String := #[]
   let mut wraps := true
   for n in goldenNames do
-    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"tests/corpus/{n}.tex")
+    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
     let blocks := cssBlocksIn (HtmlDoc.baseCss {} doc)
     for (ctx, sel, decls) in blocks do
       if print ctx || ctx.any (·.startsWith "@media screen") then continue
@@ -1941,7 +1941,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let namingCodes := ["W0007", "W0331", "W0332"]
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, docDs) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom (some pats)
@@ -2151,7 +2151,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray ++
       #[((2, 400, false), 1), ((2, 700, false), 1),
         ((2, 400, true), 1), ((2, 700, true), 1)] }
-  let src ← IO.FS.readFile "tests/corpus/deck.tex"
+  let src ← IO.FS.readFile "testdata/corpus/deck.tex"
   let (doc, _) ← elabFixture "deck" src
   let cfg : HtmlDoc.Config := { fonts := some fs, fontsDir := "deck.fonts" }
   let (html, _) := HtmlDoc.emit cfg doc
@@ -2244,13 +2244,13 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The PDF-figure path (PLAN's asset half of the graphics boundary):
 `\includegraphics{x.pdf}` embeds page 1 as a form XObject. The fixture is
-the engine's own output (`tests/corpus/figures/box.tex` is its committed
+the engine's own output (`testdata/corpus/figures/box.tex` is its committed
 generator), so the reader is exercised against the writer — xref stream,
 object stream, embedded font program and all — and the roundtrip below
 reads back the file this test writes. -/
 def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let pdfData ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let pdfData ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"
   let inf? := Image.decode pdfData
   t "shipped pdf decodes as a form"
     (match inf? with
@@ -2655,7 +2655,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (tableGroupsOne #[] empty == #[#["colgroup"]])
   -- The fixture's census: the first table heads one row of three, the
   -- second (cmidrule) none; every declared cell ships once.
-  let src ← IO.FS.readFile "tests/corpus/tables.tex"
+  let src ← IO.FS.readFile "testdata/corpus/tables.tex"
   let (fixture, _) ← elabFixture "tables" src
   let (_, body, _) := HtmlDoc.emitTree {} fixture
   let cells := cellFactsList "" #[] body.toList
@@ -2767,7 +2767,7 @@ def flipByte (hay : ByteArray) (i : Nat) : ByteArray :=
   | some v => hay.set! i (v ^^^ 0xFF)
   | none => hay
 
-/-- The corpus fixture's images, read from `tests/corpus/` the way the
+/-- The corpus fixture's images, read from `testdata/corpus/` the way the
 driver reads them beside the document (boundary pictures stay unfulfilled:
 their placeholder boxes are what an unconverted build ships). -/
 def corpusStore (doc : Ir.Doc) : IO Image.Store := do
@@ -2776,7 +2776,7 @@ def corpusStore (doc : Ir.Doc) : IO Image.Store := do
     let src := req.src
     let mut f : Image.Fetch := .missing src
     for cand in Image.sourceCandidates src do
-      let p := System.FilePath.mk "tests/corpus" / cand
+      let p := System.FilePath.mk "testdata/corpus" / cand
       if ← p.pathExists then
         let bytes ← IO.FS.readBinFile p
         let decoded := Image.decodeRequest .default bytes req
@@ -2813,7 +2813,7 @@ structure GoldenArt where
 def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
   let mut arts : Array GoldenArt := Array.emptyWithCapacity goldenNames.length
   for name in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{name}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{name}.tex"
     let (doc, _) ← elabFixture name src
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
@@ -3014,7 +3014,7 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   for (n, _) in pdfCensusTable do
     t s!"pdf census row {n} names a golden fixture" (goldenNames.contains n)
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
@@ -3250,7 +3250,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let twoFace : Font.FontSet := { fonts := #[font, font] }
-  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let store : Image.Store := { entries := #[
     { src := "a.png", info := (Image.decode png).toOption }, { src := "b.png" }] }
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
@@ -3438,7 +3438,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- Images: a plain raster is one id; an alpha raster brings its SMask; a
   -- copied page brings its resource graph, one id per object; a placeholder
   -- (no info) brings nothing beyond its own slot.
-  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
   let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
   let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
     pngChunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ pngChunk "IEND" [])
@@ -3474,7 +3474,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- Every corpus PDF, read back: the objects the file carries are the
   -- table's ids, in order, and the trailer's /Size is the table's.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
@@ -3524,8 +3524,8 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     ((!(HtmlDoc.kernCssFor kernOn).isEmpty) != Layout.kernEnabled kernOff &&
       (!(HtmlDoc.kernCssFor kernOff).isEmpty) != Layout.kernEnabled kernOn)
   -- One page placing one image; the store decides the row.
-  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let png ← IO.FS.readBinFile "testdata/corpus/rects.png"
+  let jpg ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
   let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
   let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
     pngChunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ pngChunk "IEND" [])
@@ -3568,7 +3568,7 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- The census over the corpus: the four unemitted features never, the
   -- bookkeeping five always, and the census is in registry order.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
@@ -3766,7 +3766,7 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut marks := 0
   let mut furniture := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom (some pats)
@@ -4303,8 +4303,8 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, ds) := elabStr (dvDoc "" body)
     t s!"html assets: fixture elaborates clean: {body}" ds.isEmpty
     return doc
-  let rects ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let rects ← IO.FS.readBinFile "testdata/corpus/rects.png"
+  let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   let rectsUri ← htmlDataOracle "image/png" rects
   let alphaUri ← htmlDataOracle "image/png" alpha
   -- A loaded raster embeds its captured bytes, independent of source naming.
@@ -4338,7 +4338,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A PDF source is a form XObject in the PDF and no browser image either
   -- way: it keeps today's src and ships no copy (named-next for html-oracle).
   let pdfDoc ← docOf "\\includegraphics[alt={A page}]{box.pdf}"
-  let pdfPlan := (Image.decode (← IO.FS.readBinFile "tests/corpus/figures/box.pdf")).toOption
+  let pdfPlan := (Image.decode (← IO.FS.readBinFile "testdata/corpus/figures/box.pdf")).toOption
   let pdfStore : Image.Store :=
     { entries := #[{ src := "box.pdf", info := pdfPlan }] }
   t "html assets: a PDF source keeps its spelling and ships no copy"
@@ -4366,7 +4366,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     IO.FS.createDirAll (dir / "fonts")
     IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
       (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    let rects ← IO.FS.readBinFile "tests/corpus/rects.png"
+    let rects ← IO.FS.readBinFile "testdata/corpus/rects.png"
     IO.FS.writeBinFile (dir / "rects.png") rects
     let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
 \\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\\output{ formats = html }\n"
@@ -4391,7 +4391,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let r ← buildPage
     t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
     let (_, url) ← readImage "first build" rects
-    let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+    let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
     t "driver: the replacement raster has different source bytes" (alpha != rects)
     IO.FS.writeBinFile (dir / "rects.png") alpha
     let changed ← buildPage

@@ -7,7 +7,7 @@ root:
   lake env lean --run scripts/htmlreader.lean --selftest   the cell reader
 
 `scripts/html-oracle.lean` drives the browser and is
-`tests/oracles/html-reader-matrix.txt`'s only writer; it demands `pass` in
+`testdata/oracles/html-reader-matrix.txt`'s only writer; it demands `pass` in
 every target column, so it answers "is anything failing". This tier answers
 "how much passes, and is it more than last time" — which is the question a
 ratchet can carry, and which survives a matrix that legitimately holds a
@@ -39,7 +39,7 @@ import Lean.Data.Json
 
 open Scoreboard
 
-def matrixPath : String := "tests/oracles/html-reader-matrix.txt"
+def matrixPath : String := "testdata/oracles/html-reader-matrix.txt"
 
 structure Cells where
   section_ : String

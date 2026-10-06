@@ -10,7 +10,7 @@
 # "Blocked" means "has at least one unknown construct", which is narrower
 # than the parity ladder's P0: a document that elaborates with errors and no
 # unknown name is unblocked here and still fails P0.
-# corpus-manifest: tests/coverage/public-corpus.txt, 45 entr(ies), each resolved inside `kpsewhich -var-value TEXMFDIST` asked with only PATH set, and each holding the bytes its sha256 pin names
+# corpus-manifest: testdata/coverage/public-corpus.txt, 45 entr(ies), each resolved inside `kpsewhich -var-value TEXMFDIST` asked with only PATH set, and each holding the bytes its sha256 pin names
 # corpus: 45 distinct document(s) (by content; 0 duplicate path(s) and 0 unreadable skipped), 11 with at least one blocker, key 958:00000000271DBDF7
 # errored but unblocked: 33 document(s) — the P0 gap this table does not rank
 # names folded into aggregate rows: 36

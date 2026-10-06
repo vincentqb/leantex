@@ -1,7 +1,7 @@
 .lake/
 
-tests/corpus/*.pdf
-tests/corpus/*.html
+testdata/corpus/*.pdf
+testdata/corpus/*.html
 
 bench/lorem.tex
 bench/underline.tex

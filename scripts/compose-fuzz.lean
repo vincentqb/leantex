@@ -218,7 +218,7 @@ def main : IO UInt32 := do
   bad := bad + (← checkSource "synthetic-samehead.tex" syntheticSameHead)
   bad := bad + (← checkSource "synthetic-urlstyle.tex" syntheticUrl)
   bad := bad + (← checkSource "synthetic-urlstyle-title.tex" syntheticUrlTitle)
-  let dir : System.FilePath := "tests/corpus"
+  let dir : System.FilePath := "testdata/corpus"
   let entries ← dir.readDir
   let texs := (entries.map (·.path)).filter (·.extension == some "tex")
   for p in texs.qsort (fun a b => a.toString < b.toString) do

@@ -8,7 +8,7 @@ OpenType math. Run from the repository root with:
 Sources, located with kpsewhich and never vendored:
 - fontmath.ltx (the LaTeX kernel's math font setup) for its declared symbol
   names and classes, supplemented by the names the manual's "Math formulas"
-  chapter records in `tests/coverage/latex2e-index.txt`;
+  chapter records in `testdata/coverage/latex2e-index.txt`;
 - amsfonts.sty and amssymb.sty (AMS, LPPL-compatible notice in each file):
   a `\DeclareMathSymbol{\name}{\mathclass}{font}{"slot}` is the package's
   own statement of what the command is — its TeX atom class, and its glyph
@@ -281,7 +281,7 @@ def provides (text : String) : String :=
   | [] => "?"
 
 /-- The kernel's documented math symbols: the names the LaTeX2e manual's
-"Math formulas" chapter indexes, as `tests/coverage/latex2e-index.txt`
+"Math formulas" chapter indexes, as `testdata/coverage/latex2e-index.txt`
 records them, that lualatex confirmed as a math symbol or a command. The
 rows it confirmed only as an error stub are the packages' to declare. -/
 def kernelNames (index : String) : Array String := Id.run do
@@ -322,8 +322,8 @@ def main : IO UInt32 := do
   let fontmath ← IO.FS.readFile (← locate "fontmath.ltx")
   stamps := stamps.push (provides fontmath)
   let fmDecls := declsOf fontmath
-  let index ← IO.FS.readFile "tests/coverage/latex2e-index.txt"
-  stamps := stamps.push ("additional kernel names: tests/coverage/latex2e-index.txt, " ++
+  let index ← IO.FS.readFile "testdata/coverage/latex2e-index.txt"
+  stamps := stamps.push ("additional kernel names: testdata/coverage/latex2e-index.txt, " ++
     "chapter Math formulas")
   -- An index is not the declaration list: long double arrows are declared
   -- by the kernel even where the manual has no individual index entries.

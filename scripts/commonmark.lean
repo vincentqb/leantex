@@ -20,7 +20,7 @@ unclassified deviation fails. Four verdicts:
   something other than the reader says the refused construct is there: a
   raw-HTML refusal's text passes through the spec's own expected HTML
   verbatim, and an indented-code or lazy refusal is on the reviewed list
-  (`tests/commonmark/strict-reviewed.tsv`), which fails in both directions.
+  (`testdata/commonmark/strict-reviewed.tsv`), which fails in both directions.
   The reader under test raised the refusal, so it cannot also be the
   evidence for it.
 * `divergence` — a deliberate difference, listed in `divergences` with its
@@ -32,7 +32,7 @@ unclassified deviation fails. Four verdicts:
   number, a title, a language, a fourth-level heading) that the engine's
   page drops must be named by the run, or every mode fails (`silentGaps`).
 
-The ratchet is the tier file `tests/scoreboard/commonmark.tsv`, in the one
+The ratchet is the tier file `testdata/scoreboard/commonmark.tsv`, in the one
 scoreboard format and under the one ratchet every tier obeys
 (`Scoreboard.tierMain`, `Scoreboard.ratchet`): per spec section a
 `<section>.match` and a `<section>.cases` row, encoded `pairs match/cases`
@@ -52,9 +52,9 @@ import scripts.Board
 
 open LeanTex.Core
 
-def specPath : String := "tests/commonmark/spec-0.31.2.txt"
-def verdictPath : String := "tests/commonmark/verdicts.tsv"
-def tierPath : String := "tests/scoreboard/commonmark.tsv"
+def specPath : String := "testdata/commonmark/spec-0.31.2.txt"
+def verdictPath : String := "testdata/commonmark/verdicts.tsv"
+def tierPath : String := "testdata/scoreboard/commonmark.tsv"
 
 /-- The sha256 the provenance file records. Provenance, not the gate: it is
 what a human verifies against upstream, and `PROVENANCE.txt` carries it. -/
@@ -759,11 +759,11 @@ def refusedPrefix (md : String) (line col : Nat) : String := Id.run do
   return out
 
 /-- The reviewed list: the cases whose indented-code or lazy-continuation
-refusal a human checked against the spec text (`tests/commonmark/
+refusal a human checked against the spec text (`testdata/commonmark/
 strict-reviewed.tsv`). A raw-HTML refusal needs no list — the spec's own
 expected HTML corroborates it — but these two classes leave nothing in the
 expected output a check could read. -/
-def reviewedPath : String := "tests/commonmark/strict-reviewed.tsv"
+def reviewedPath : String := "testdata/commonmark/strict-reviewed.tsv"
 
 def parseReviewed (text : String) : Except String (Array (Nat × String)) := do
   let mut out : Array (Nat × String) := #[]
@@ -946,7 +946,7 @@ def verdictText (rows : Array Row) : String := Id.run do
   let mut s := "# One row per CommonMark 0.31.2 spec example: id, section, verdict, note.\n"
   s := s ++ "# verdicts: match | rejected | divergence | owed.\n"
   s := s ++ "# `rejected` is a strict refusal (E0390) corroborated from outside the reader:\n"
-  s := s ++ "# the expected HTML for raw HTML, tests/commonmark/strict-reviewed.tsv otherwise;\n"
+  s := s ++ "# the expected HTML for raw HTML, testdata/commonmark/strict-reviewed.tsv otherwise;\n"
   s := s ++ "# `divergence` needs a row in `divergences` in scripts/commonmark.lean;\n"
   s := s ++ "# `owed` is not implemented yet and the ratchet lets it only fall.\n"
   s := s ++ "# This file is written only by scripts/commonmark.lean.\n"

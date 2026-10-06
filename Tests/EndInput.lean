@@ -6,7 +6,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 TeX reads the rest of the terminator's line and no more of the file, so
 what a style file parks after it — alternate definitions, settings the
-author switched off — never takes. Fixtures in tests/corpus/sty-parity,
+author switched off — never takes. Fixtures in testdata/corpus/sty-parity,
 synthetic and invented; lualatex ships exactly the pages asserted here. -/
 
 /-- The body text a `sty-parity` fixture ships, read off the laid-out

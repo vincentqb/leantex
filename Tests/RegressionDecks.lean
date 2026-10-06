@@ -261,6 +261,6 @@ end Tests.RegressionDecks
 /-- Standalone TeX entries; local style and section files are dependencies.
 The common harness owns publication validity and diagnostics. -/
 def Tests.RegressionDecks.cases : Array Tests.Regression.Case := #[
-  { path := "tests/regression/decks/workshop.tex", check := Tests.RegressionDecks.workshop },
-  { path := "tests/regression/decks/overlays.tex", check := Tests.RegressionDecks.overlays },
-  { path := "tests/regression/decks/listings.tex", check := Tests.RegressionDecks.deckListings }]
+  { path := "testdata/regression/decks/workshop.tex", check := Tests.RegressionDecks.workshop },
+  { path := "testdata/regression/decks/overlays.tex", check := Tests.RegressionDecks.overlays },
+  { path := "testdata/regression/decks/listings.tex", check := Tests.RegressionDecks.deckListings }]
