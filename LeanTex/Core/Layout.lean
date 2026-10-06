@@ -12360,15 +12360,15 @@ theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       repeat' split
       all_goals simp_all
 
-/-- What placement ships, with everything the postlude (furniture,
-diagnostic dedup, the outline) still needs: the seam that lets a page
-fact proved over the builder cross into `Out` without a proof ever
-opening the driver — `runPost_pages` is the crossing. -/
-private structure Shipped where
-  b : B
+/-- The actual placement result before running furniture, with the context
+that pass still reads. `ship` obtains these pages from `placeFrom` and the
+final page close; no builder state or duplicate placement walk is exposed.
+The public projections of `runPost` carry page invariants across this seam. -/
+structure Shipped where
+  pages : Array PageOut
+  footGap : Sp
   /-- The diagnostics as of shipping — the builder's own plus the
-  measure-band check's, carried beside `b` so the builder the page
-  facts range over is the bare final close. -/
+  measure-band check's. -/
   diags : Array Diag
   doc : Doc
   geom : Geom
@@ -12401,44 +12401,15 @@ private def furnishFrom {σ : Type}
 termination_by pages.size - i
 decreasing_by simp only [Array.size_set]; omega
 
-/-- What the furniture pass cannot do: change anything on a page but its
-lines. Every page of the result carries the fills, paths, foot band, and
-frame attribution of a page of the input, so a page fact about any of
-those proved over the builder's shipped pages survives to `Out`. -/
-private theorem furnishFrom_keeps {σ : Type}
+/-- The furniture pass preserves any observation independent of a page's
+lines, page for page and in physical order. This is an equation over the
+actual index recursion, rather than a separate fold of its inputs. -/
+private theorem furnishFrom_projects {σ α : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
+    (read : PageOut → α)
+    (hread : ∀ p ls, read { p with lines := ls } = read p)
     (pages : Array PageOut) (s : σ) (i : Nat) :
-    ∀ p ∈ (furnishFrom f pages s i).1, ∃ q ∈ pages,
-      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
-        p.frame = q.frame := by
-  induction pages, s, i using furnishFrom.induct f with
-  | case1 pages s i h ls s' heq ih =>
-    intro p hp
-    rw [furnishFrom] at hp
-    simp only [h, reduceDIte, heq] at hp
-    obtain ⟨q, hq, hf⟩ := ih p hp
-    obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hq
-    have hj' : j < pages.size := by simpa using hj
-    by_cases hij : i = j
-    · subst hij
-      exact ⟨pages[i], Array.getElem_mem hj', by
-        simp only [Array.getElem_set_self] at hf
-        exact hf⟩
-    · exact ⟨pages[j], Array.getElem_mem hj', by
-        simp only [Array.getElem_set, hij, reduceIte] at hf
-        exact hf⟩
-  | case2 pages s i h =>
-    intro p hp
-    rw [furnishFrom] at hp
-    simp only [h, reduceDIte] at hp
-    exact ⟨p, hp, rfl, rfl, rfl, rfl, rfl⟩
-
-/-- Adding running lines preserves the logical folio and empty-style
-decision recorded at shipment, page for page and in physical order. -/
-private theorem furnishFrom_lifecycle_projects {σ : Type}
-    (f : Nat → PageOut → σ → Array LineOut × σ)
-    (pages : Array PageOut) (s : σ) (i : Nat) :
-    (furnishFrom f pages s i).1.map (·.pageState) = pages.map (·.pageState) := by
+    (furnishFrom f pages s i).1.map read = pages.map read := by
   induction pages, s, i using furnishFrom.induct f with
   | case1 pages s i h ls s' heq ih =>
     rw [furnishFrom]
@@ -12453,6 +12424,20 @@ private theorem furnishFrom_lifecycle_projects {σ : Type}
     rw [furnishFrom]
     simp only [h, reduceDIte]
 
+/-- Every output page retains the non-line data of its input page. -/
+private theorem furnishFrom_keeps {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (pages : Array PageOut) (s : σ) (i : Nat) :
+    ∀ p ∈ (furnishFrom f pages s i).1, ∃ q ∈ pages,
+      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+        p.frame = q.frame := by
+  intro p hp
+  let read := fun p : PageOut => (p.fills, p.links, p.paths, p.foot, p.frame)
+  have h := furnishFrom_projects f read (fun _ _ => rfl) pages s i
+  have hm : read p ∈ pages.map read := h ▸ Array.mem_map_of_mem hp
+  obtain ⟨q, hq, heq⟩ := Array.mem_map.mp hm
+  exact ⟨q, hq, by simpa only [read, Prod.mk.injEq] using heq.symm⟩
+
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
 and the resolved outline. Everything it reads arrives in `Shipped`; the
@@ -12460,7 +12445,7 @@ pages of its result are the builder's pages with furniture lines added
 and nothing else touched (`runPost_pages`). Every run this pass sets is
 `.unattributed`: furniture is a page artifact the tree has no node for,
 and the lines it lands on are flagged `furniture`. -/
-private def runPost (sh : Shipped) : Out := Id.run do
+def runPost (sh : Shipped) : Out := Id.run do
   let doc := sh.doc
   let geom := sh.geom
   let xHeight := sh.xHeight
@@ -12473,8 +12458,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
   let headY := sh.headY
   let footY := sh.footY
   let mutedC := sh.muted
-  let b := sh.b
-  let pages := b.pages
+  let pages := sh.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
   let total := pages.size
@@ -12718,7 +12702,7 @@ slot yields in place: shorten the content or drop a slot"))
         unless content.isEmpty do
           -- Sized by the page's `\textheight`: beamer's on a footline page.
           let textH := page.footBox.elim geom.textHeight fun (h, d) =>
-            footFloor geom.pageH b.footGap h d
+            footFloor geom.pageH sh.footGap h d
           let (l?, ds, c) := mkLogoLine content textH cache
           diags := diags ++ ds
           cache := c
@@ -12774,8 +12758,8 @@ slot yields in place: shorten the content or drop a slot"))
 output carries the fills, paths, foot band, and frame attribution of a
 page the builder shipped — `furnishFrom_keeps` lifted over the whole
 postlude, the seam a builder invariant crosses into `Out` through. -/
-private theorem runPost_pages (sh : Shipped) :
-    ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.b.pages,
+theorem runPost_pages (sh : Shipped) :
+    ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.pages,
       p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
         p.frame = q.frame := by
   intro p hp
@@ -12785,11 +12769,21 @@ private theorem runPost_pages (sh : Shipped) :
 
 /-- The logical page lifecycle carried at shipment reaches `Out` unchanged
 through the running-furniture projection. -/
-private theorem runPost_lifecycle_projects (sh : Shipped) :
-    (runPost sh).pages.map (·.pageState) = sh.b.pages.map (·.pageState) := by
+theorem runPost_lifecycle_projects (sh : Shipped) :
+    (runPost sh).pages.map (·.pageState) = sh.pages.map (·.pageState) := by
   unfold runPost
   dsimp only [Id.run, bind, pure, Id]
-  exact furnishFrom_lifecycle_projects _ _ _ _
+  exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
+
+/-- The frame number and its selected footer survive together, in page
+order. A spill may add pages and a standout may select no footer; neither
+decision is changed or reconstructed by running furniture. -/
+theorem runPost_frames_projects (sh : Shipped) :
+    (runPost sh).pages.map (fun p => (p.frame, p.foot)) =
+      sh.pages.map (fun p => (p.frame, p.foot)) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
 
 /-- The marks step, the one seam after the furniture pass: every shipped
 page takes the derived cut-mark fills, appended after its own fills so
@@ -12900,7 +12894,7 @@ lets the background contract inspect the exact ops placement consumes, without
 re-running another IR walk or adding background state to the runtime builder. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
-    (k : Array StagedOp → B → (StepSt → Out) → α)
+    (k : Array StagedOp → B → (StepSt → Shipped) → α)
     (frameSpans : Array (Nat × Span) := #[]) : α := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
@@ -13172,8 +13166,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
           else b.diags
         else b.diags
       else b.diags
-    runPost {
-      b := b
+    return {
+      pages := b.pages
+      footGap := b.footGap
       diags := shipDiags
       doc := doc
       geom := geom
@@ -13193,12 +13188,16 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       muted := design.muted }
   return k staged b0 post
 
-/-- The pre-marks pipeline: the staged ops, placement, final close, and
-furniture pass. -/
-private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
+/-- The one shipment producer: staging, actual placement, and final close. -/
+private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Shipped :=
   withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
     post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans
+
+/-- The pre-marks pipeline consumes the shipment value directly. -/
+private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
+  runPost (shipCore geom fs pats doc imgs frameSpans)
 
 /-- The precondition for an all-pages background claim: no collected palette
 epoch removes `bg`. This observes the same staging seam as `run`, including
@@ -13213,6 +13212,14 @@ private def pageGroundsDeclaredCore (geom : Geom) (fs : FontSet) (pats : Option 
 private def resolveDocMath (fs : FontSet) (doc : Doc) : Doc × Array Diag :=
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   Ir.resolveMathAlphas fs.mathAlphabets family doc
+
+/-- The pages actually shipped by placement, before the running furniture
+and print marks that `run` adds. This reads the same math-resolved PDF view,
+overlay expansion, float placement and final close as `run`, through its
+one `shipCore` producer. Source indices have the same meaning as in `run`. -/
+def ship (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Shipped :=
+  shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
 
 /-- Inspect the same resolved document that the public layout entry sets. -/
 def pageGroundsDeclared (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
@@ -13233,6 +13240,25 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let (doc, diags) := resolveDocMath fs doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
+
+/-- The public run preserves the placement's frame/footer partition exactly,
+including repeated frame numbers, overlays, spills and intentionally absent
+standout footers. Neither furniture nor print marks change this partition. -/
+theorem frame_pages_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) =
+      (ship geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) := by
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+    runPost_frames_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
+
+/-- Physical page order retains the IR folio and furniture decision recorded
+at shipment, through both postlude passes of the actual public run. -/
+theorem page_lifecycle_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).pages.map (·.pageState) =
+      (ship geom fs pats doc imgs frameSpans).pages.map (·.pageState) := by
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+    runPost_lifecycle_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Page equality is the projection of the shared IR normalization fixed point. -/
 theorem run_resolve_pages_agree (geom : Geom) (fs : FontSet)
@@ -13266,7 +13292,7 @@ private theorem runCore_bg
       simp at h
     · exact h
   intro p hp
-  unfold runCore withLayoutOps at hp
+  unfold runCore shipCore withLayoutOps at hp
   unfold pageGroundsDeclaredCore withLayoutOps at hepoch
   dsimp only [Id.run, bind, pure, Id] at hp hepoch
   obtain ⟨q, hq, hfills, -, -, -, -⟩ := runPost_pages _ p hp
