@@ -1,4 +1,5 @@
 import LeanTex.Core.Flate.BitWriter
+import LeanTex.Core.Flate.CodeLengths
 import LeanTex.Core.Flate.PackageMerge
 
 namespace LeanTex.Core.Flate
@@ -575,47 +576,6 @@ theorem tokenize_covers (raw : ByteArray) : TokensFor raw 0 (tokenize raw) raw.s
   exact tokGo_tokens raw _ raw.size 0 0 _ #[] (Nat.zero_le _) (by omega)
     (.empty 0 (Nat.zero_le _))
 
-/-- The code-length sequence's run-length form (RFC 1951 §3.2.7): symbols
-0–18 with each one's extra-bits payload. -/
-private def clRle (seq : Array Nat) : Array (Nat × Nat × Nat) := Id.run do
-  let mut rle : Array (Nat × Nat × Nat) := #[]
-  let mut p := 0
-  for _ in [0:seq.size] do
-    if p ≥ seq.size then break
-    let v := seq[p]?.getD 0
-    let mut r := 1
-    for _ in [0:seq.size] do
-      if p + r < seq.size && seq[p + r]?.getD 99 == v then r := r + 1 else break
-    if v == 0 then
-      if r < 3 then
-        for _ in [0:r] do
-          rle := rle.push (0, 0, 0)
-        p := p + r
-      else if r ≤ 10 then
-        rle := rle.push (17, r - 3, 3)
-        p := p + r
-      else
-        let take := min r 138
-        rle := rle.push (18, take - 11, 7)
-        p := p + take
-    else
-      rle := rle.push (v, 0, 0)
-      p := p + 1
-      let mut left := r - 1
-      for _ in [0:seq.size] do
-        if left ≥ 3 then
-          let take := min left 6
-          rle := rle.push (16, take - 3, 2)
-          left := left - take
-          p := p + take
-        else break
-      for _ in [0:2] do
-        if left > 0 then
-          rle := rle.push (v, 0, 0)
-          p := p + 1
-          left := left - 1
-  return rle
-
 /-- Compress to a zlib stream (RFC 1950 wrapping RFC 1951): LZ77 tokens in
 one dynamic-Huffman block, both code sets optimal for this data. Any
 inflater accepts the result; the engine's own `inflate` inverting it is
@@ -646,7 +606,7 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   let mut ndist := 1
   for s in [0:distLens.size] do
     if distLens[s]?.getD 0 > 0 then ndist := max ndist (s + 1)
-  let rle := clRle (litLens.extract 0 nlit ++ distLens.extract 0 ndist)
+  let rle := CodeLengths.encode (litLens.extract 0 nlit ++ distLens.extract 0 ndist)
   let mut clFreq : Array Nat := Array.replicate 19 0
   for (s, _, _) in rle do
     clFreq := clFreq.set! s (clFreq[s]?.getD 0 + 1)
