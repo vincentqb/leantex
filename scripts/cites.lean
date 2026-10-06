@@ -1,7 +1,7 @@
 /-
 Does every theorem name a docstring cites resolve to a declaration?
 
-  lake build leantex Tests Obligations precommit owed cites
+  lake build LeanTex TestsModules Obligations ScriptsModules leantex Tests cites
   .lake/build/bin/cites --check
 
 AGENTS.md asks that a guarantee stated in prose name the theorem holding it.
@@ -25,14 +25,16 @@ claims. `foo_exact` may resolve to a theorem about something else entirely,
 and the docstring would still read as a guarantee held. Judging a statement
 against the sentence citing it stays review's job.
 
---selftest exercises the predicates and the resolver against this tree;
+--selftest compiles synthetic modules and exercises inventory and resolution;
 --census prints the numbers; --check is the quiet gate mode.
 -/
 
 import Lean
 import scripts.Gate
+import scripts.ProofSources
+import scripts.CiteEnv
 
-open Lean
+open Lean CiteEnv
 
 /-- A backticked token that reads as a theorem name in this tree: it opens
 with a lowercase ASCII letter, is spelled only in ASCII letters, digits and
@@ -72,10 +74,6 @@ def citeQualified (tk : String) : Bool :=
 
 /-- Either spelling. -/
 def citeCandidate (tk : String) : Bool := citeBare tk || citeQualified tk
-
-/-- The name a citation is indexed under: its last component, which is what
-`shortIndex` keys on. -/
-def citeShort (tk : String) : String := (tk.splitOn ".").getLast!
 
 /-- The closed backticked spans of a line, in order. An unclosed span -- a
 citation wrapped across two lines -- is dropped rather than guessed at. -/
@@ -162,10 +160,8 @@ in both directions, as `subjectDebt` and `siteAccounting` do. A second
 citation of a parked name is a new phantom, since a parked name is not a
 licence to cite it again, and a row whose citation was fixed is dead and
 fails `--check` until it is deleted, so the list cannot hold a name after
-its debt is paid. The site is the file and the declaration whose docstring
-carries the citation, `the module docstring` for a module's own, and `a
-docstring` for a script the build does not compile, where no finer anchor
-survives an edit. Line numbers are not keys, because every line number the
+its debt is paid. The site is the file and the compiled declaration whose docstring
+carries the citation, or `the module docstring` for a module's own. Line numbers are not keys, because every line number the
 first sweep recorded had moved by the second.
 
 The list stays when it empties. `citeCandidate` recognises a citation by its
@@ -230,206 +226,82 @@ attached to, as `Site.subject` spells it without the backticks. -/
 def anchorOf (subject : String) : String :=
   (subject.replace "`" "").trimAscii.toString
 
-/-- The modules this tree compiles, each with the lake target that builds
-it. The gate imports all of them: a citation may be written anywhere, and a
-name may be declared anywhere -- `Obligations` included, since a docstring
-citing an owed statement names one that lives only there. A missing olean is
-an error rather than a skip, so the gate's coverage never depends on which
-targets happen to be warm.
-
-Six import roots, not one: `Main`, `Tests`, and each gate script are
-executables, and each declares `main`, so no single environment can hold two
-of them. A name resolves when it resolves in any of the six, and a module's
-docstrings are read from the first root that carries it. -/
-def treeRoots : List (List (Name × String)) :=
-  [[(`LeanTex, "leantex"), (`Obligations, "Obligations")],
-   [(`Main, "leantex")],
-   [(`Tests, "Tests")],
-   [(`scripts.precommit, "precommit")],
-   [(`scripts.owed, "owed")],
-   [(`scripts.cites, "cites")]]
-
-/-- The staging namespace every owed statement is declared in. A docstring
-cites an owed theorem by its bare name, which is what the convention asks
-for (the statement is staged away from the module that will own it), so the
-scope a citation resolves in includes this namespace. -/
-def stagingNamespace : Name := `Obligations
-
-/-- The resolver's live witness, and the reason it is spelled across two
-lines: its name does not sit on its keyword's line, which is the shape a
-declaration scanner cannot see. A citation of `cite_continuation_witness`
-read as a phantom under the predecessor and resolves here, and the selftest
-asserts exactly that. Not an engine property, so the theorem-shape registry
-does not reach it -- it is a fixture whose content is its layout. -/
+/-- The continuation-line declaration is a regression witness for compiled
+lookup: a source scanner looking beside the keyword missed it. -/
 theorem
     cite_continuation_witness : True := trivial
 
-def ourModule (m : Name) : Bool :=
-  [`LeanTex, `Main, `Tests, `Obligations, `scripts].contains m.getRoot
+def readCiteJson [FromJson α] (path : System.FilePath) : IO α := do
+  match Json.parse (← IO.FS.readFile path) >>= fromJson? with
+  | .ok value => return value
+  | .error why => throw <| IO.userError s!"cites: invalid worker data in {path}: {why}"
 
-/-- The source file a module name came from. -/
-def moduleFile (m : Name) : String :=
-  String.intercalate "/" (m.components.map toString) ++ ".lean"
+def runBatch (modules : Array String) (collect : Bool)
+    (queries : Array Query := #[]) : IO Response :=
+  IO.FS.withTempDir fun dir => do
+    let request := dir / "request.json"
+    let response := dir / "response.json"
+    let paths := (← searchPathRef.get).toArray.map (·.toString)
+    IO.FS.writeFile request (toJson ({ modules, paths, collect, queries } : Request)).compress
+    let bin ← IO.appPath
+    let workerArgs ← if bin.fileName == some "lean" then do
+      pure #["--run", (← IO.FS.realPath "scripts/cites.lean").toString]
+      else pure #[]
+    let out ← IO.Process.output {
+      cmd := bin.toString
+      args := workerArgs ++ #["--batch", request.toString, response.toString] }
+    unless out.exitCode == 0 do
+      throw <| IO.userError s!"cites: compiled batch {modules} failed ({out.exitCode}):\n\
+        {out.stdout}{out.stderr}"
+    let result : Response ← readCiteJson response
+    unless result.modules == modules && result.verdicts.size == queries.size do
+      throw <| IO.userError s!"cites: incomplete worker response for {modules}"
+    return result
 
-/-- The module name a source path would carry. -/
-def fileModule (f : String) : Name :=
-  let base := (f.splitOn ".lean").headD f
-  (base.splitOn "/").foldl (fun n s => Name.mkStr n s) Name.anonymous
+structure CompiledTree where
+  batches : Array (Array String)
+  sites : Array Site
 
-/-- Where a citation is written: the file and line for the report, the
-namespace and open declarations that form its scope, and what the docstring
-is attached to. -/
-structure Site where
-  file : String
-  line : Nat
-  ns : Name
-  opens : List OpenDecl
-  subject : String
-  text : String
+/-- Use the proof gate's complete inventory and executable grouping. Every source
+must have a compiled module; source text never substitutes for compiler metadata.
+Workers run sequentially because dropping an Environment does not release its
+imported memory regions. -/
+def loadTree (root : System.FilePath := ".") : IO CompiledTree := do
+  let files ← ProofSources.sources root
+  if files.isEmpty then throw <| IO.userError "cites: no maintained source modules found"
+  requireCompiled (files.map ProofSources.moduleName)
+  let batches := ProofSources.groups files
+  let mut docs := #[]
+  for modules in batches do
+    docs := docs ++ (← runBatch modules true).sites
+  return ⟨batches, docs⟩
 
-def mkSite (file : String) (line : Nat) (ns : Name) (opens : List OpenDecl)
-    (subject text : String) : Site :=
-  { file, line, ns, opens, subject, text }
+def bestVerdict : Verdict → Verdict → Verdict
+  | .scope, _ | _, .scope => .scope
+  | .tree, _ | _, .tree => .tree
+  | .phantom, .phantom => .phantom
 
-/-- `open X` as the line spells it, for a file the build does not compile:
-a script's scope is what its own open lines declare, and nothing persists
-them into an environment. Only the `open A B` form is read -- `open X in`
-and renaming forms are scoped to one declaration, and a script's file-level
-opens are the ones a docstring is written under. -/
-def openedIn (lines : Array String) : List OpenDecl := Id.run do
-  let mut out : List OpenDecl := []
-  for l in lines do
-    let t := (stripLineComment l).trimAscii.toString
-    if t.startsWith "open " && !containsSub t " in" && !containsSub t "(" then
-      for w in ((t.drop 5).toString.split (· == ' ')) do
-        let w := w.trimAscii.toString
-        unless w.isEmpty do out := .simple w.toName [] :: out
-  return out
+/-- Scope resolution uses the citing module and namespace, plus Obligations.
+The tree tier permits the existing house style of citing another namespace's
+short name. Both tiers require Lean to resolve a complete compiled declaration. -/
+def resolveTree (tree : CompiledTree) (queries : Array Query) : IO (Array Verdict) := do
+  let mut answers := Array.replicate queries.size Verdict.phantom
+  for modules in tree.batches do
+    let result ← runBatch modules false queries
+    answers := answers.zipWith bestVerdict result.verdicts
+  return answers
 
-/-- The docstring regions of a file, as text. Used only for a file the build
-does not compile into a module -- a `lake env lean --run` script. A line
-comment or a PLAN entry may legitimately name a theorem that was deleted, so
-only a doc-comment opener starts a region. -/
-def docRegions (lines : Array String) : Array (Nat × String) := Id.run do
-  let mut out : Array (Nat × String) := #[]
-  let mut inDoc := false
-  for i in [0:lines.size] do
-    let l := lines[i]?.getD ""
-    if containsSub l "/--" || containsSub l "/-!" then inDoc := true
-    if inDoc then
-      out := out.push (i + 1, l)
-      if containsSub l "-/" then inDoc := false
-  return out
-
-/-- Does `tok` resolve in `ns` under `opens`, the way the elaborator would
-resolve an identifier written there? `resolveGlobalName` is the elaborator's
-own primitive: it climbs the enclosing namespaces, honours aliases, private
-and protected names, and the open declarations it is given. Any environment
-answering yes is an answer: the roots partition one tree. -/
-def resolvesIn (envs : Array Environment) (ns : Name) (opens : List OpenDecl)
-    (tok : String) : Bool :=
-  envs.any fun env =>
-    !(ResolveName.resolveGlobalName env {} ns opens tok.toName).isEmpty
-
-/-- The modules of this tree an environment carries, with their index in it. -/
-def ourModules (env : Environment) : Array (Nat × Name) := Id.run do
-  let mut out : Array (Nat × Name) := #[]
-  for i in [0:env.header.moduleNames.size] do
-    let m := (env.header.moduleNames[i]?).getD .anonymous
-    if ourModule m then out := out.push (i, m)
-  return out
-
-/-- The namespaces a short name could resolve in, keyed by the name: for
-every declaration this tree compiled, its last component maps to the
-namespace holding it. The second resolution tier reads this to know which
-namespaces are worth asking about -- the resolver still decides, this only
-spares it the thousand that cannot answer. Complete for this tree because
-this tree declares no aliases (no `export`, no `alias`); a tree that did
-would want their names here too. -/
-def shortIndex (envs : Array Environment) : Std.HashMap String (Array Name) := Id.run do
-  let mut out : Std.HashMap String (Array Name) := {}
-  for env in envs do
-    for (i, _) in ourModules env do
-      for n in (env.header.moduleData[i]?.map (·.constNames)).getD #[] do
-        if let .str p s := n then
-          out := out.insert s (((out[s]?).getD #[]).push p)
-  return out
-
-/-- The citation's resolution verdict.
-
-`scope` is strict: the token resolves in the namespace the docstring is
-written in, climbing the enclosing namespaces, plus the staging namespace.
-That is what an identifier written at that point would mean.
-
-`tree` is the looseness this tree's own house style needs: a docstring cites
-a short name across namespaces (`footBand_projects` from a file where
-`Chrome` is a sibling namespace), and AGENTS.md cites them that way too. So
-a token also resolves when it resolves in SOME namespace this tree
-declares. It is the real resolver either way -- aliases and private names
-included -- and the tier is reported separately so the cost of the looseness
-stays visible. -/
-inductive Verdict where
-  | scope
-  | tree
-  | phantom
-  deriving BEq, Inhabited
-
-def verdict (envs : Array Environment) (idx : Std.HashMap String (Array Name))
-    (s : Site) (tok : String) : Verdict :=
-  if resolvesIn envs s.ns (.simple stagingNamespace [] :: s.opens) tok then .scope
-  else if ((idx[citeShort tok]?).getD #[]).any (fun ns => resolvesIn envs ns [] tok) then .tree
-  else .phantom
-
-def loadTree : IO (Array Environment) := do
-  initSearchPath (← findSysroot) [".lake/build/lib/lean"]
-  let mut out : Array Environment := #[]
-  for root in treeRoots do
-    for (m, target) in root do
-      try
-        let _ ← findOLean m
-      catch _ =>
-        throw (IO.userError s!"cites: no compiled {moduleFile m}. \
-          Fix: lake build {target}")
-    out := out.push (← importModules (root.toArray.map fun (m, _) =>
-      { module := m }) {})
-  return out
-
-/-- Every docstring in the tree, with its scope. A compiled module's
-docstrings come from the environment, which is what makes a continuation-line
-declaration visible and gives each citation the namespace it was written in.
-A file the build does not compile -- a `lake env lean --run` script -- has no
-environment entry, so its docstrings are read as text and resolved under the
-opens the file declares. -/
-def sites (envs : Array Environment) : IO (Array Site) := do
-  let mut out : Array Site := #[]
-  let mut known : Std.HashSet Name := {}
-  for env in envs do
-    for (i, m) in ourModules env do
-      if known.contains m then continue
-      known := known.insert m
-      let file := moduleFile m
-      for d in (getModuleDoc? env m).getD #[] do
-        let ln := d.declarationRange.pos.line
-        out := out.push (mkSite file ln .anonymous [] "the module docstring" d.doc)
-      for n in (env.header.moduleData[i]?.map (·.constNames)).getD #[] do
-        if let some doc ← findDocString? env n then
-          let rng := declRangeExt.find? (level := .exported) env n
-            <|> declRangeExt.find? (level := .server) env n
-          let ln := (rng.map (·.range.pos.line)).getD 0
-          out := out.push (mkSite file ln n.getPrefix [] s!"`{n}`" doc)
-  let mut files : Array String := #[]
-  for root in ["LeanTex", "Tests", "scripts", "Obligations"] do
-    if ← System.FilePath.pathExists root then
-      for f in ← System.FilePath.walkDir root do
-        if f.toString.endsWith ".lean" then files := files.push f.toString
-  for e in ← System.FilePath.readDir "." do
-    if e.fileName.endsWith ".lean" then files := files.push e.fileName
-  for f in files do
-    if known.contains (fileModule f) then continue
-    let lines := ((← IO.FS.readFile f).splitOn "\n").toArray
-    let opens := openedIn lines
-    for (i, l) in docRegions lines do
-      out := out.push (mkSite f i .anonymous opens "a docstring" l)
+def citationQueries (sites : Array Site) : Array Query := Id.run do
+  let mut seen : Std.HashSet Query := {}
+  let mut out := #[]
+  for site in sites do
+    for line in site.text.splitOn "\n" do
+      for token in backtickSpans line do
+        if citeCandidate token && !citeForeign.contains token then
+          let q : Query := ⟨site.moduleName, site.ns, token⟩
+          unless seen.contains q do
+            seen := seen.insert q
+            out := out.push q
   return out
 
 structure Census where
@@ -446,13 +318,14 @@ structure Census where
 
 /-- Every phantom citation no row parks, the rows no citation met, and the
 census of what was judged. -/
-def scan (envs : Array Environment) :
+def scan (tree : CompiledTree) (rows : List PhantomRow := citePhantomKnown) :
     IO (Array (String × String × Nat × String) × List PhantomRow × Census) := do
-  let ss ← sites envs
-  let idx := shortIndex envs
+  let queries := citationQueries tree.sites
+  let answers ← resolveTree tree queries
+  let verdicts : Std.HashMap Query Verdict := .ofArray (queries.zip answers)
   let mut bad : Array (String × String × Nat × String) := #[]
-  let mut c : Census := { sites := ss.size }
-  for s in ss do
+  let mut c : Census := { sites := tree.sites.size }
+  for s in tree.sites do
     for l in s.text.splitOn "\n" do
       for tk in backtickSpans l do
         unless citeCandidate tk do continue
@@ -461,17 +334,122 @@ def scan (envs : Array Environment) :
         if citeForeign.contains tk then
           c := { c with foreign := c.foreign + 1 }
           c := { c with foreignSeen := c.foreignSeen.insert tk }
-        else match verdict envs idx s tk with
+        else match verdicts[(⟨s.moduleName, s.ns, tk⟩ : Query)]?.getD Verdict.phantom with
           | .scope => c := { c with scope := c.scope + 1 }
           | .tree => c := { c with tree := c.tree + 1 }
           | .phantom =>
             let hit : PhantomRow := ⟨tk, s.file, anchorOf s.subject⟩
             c := { c with phantoms := c.phantoms.push hit }
-            if citePhantomKnown.contains hit then
+            if rows.contains hit then
               c := { c with frozen := c.frozen + 1 }
             else bad := bad.push (tk, s.file, s.line, s.subject)
-  let (_, dead) := judgePhantoms citePhantomKnown c.phantoms
+  let (_, dead) := judgePhantoms rows c.phantoms
   return (bad, dead, c)
+
+/-- Compile an isolated tree whose extra library, unused private declarations,
+aliases and independent executable roots all owe the same citation check. -/
+def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
+  let failures ← IO.mkRef ([] : List String)
+  let expect (label : String) (ok : Bool) : IO Unit :=
+    unless ok do failures.modify (label :: ·)
+  let before ← searchPathRef.get
+  let paths := dir :: before
+  let sysroot ← findSysroot
+  try
+    searchPathRef.set paths
+    let fixtures : Array (String × String) := #[
+      ("Extra.Origin", "module\nnamespace Extra.Origin\n\
+        public theorem alias_invariant : True := trivial\n\
+        end Extra.Origin\n"),
+      ("Extra.Unimported", "module\npublic import Extra.Origin\n\
+        /-! The module claim `missing_module_invariant` must fail. -/\n\
+        namespace Extra\n\
+        /-- The private claim `private_invariant` is checked. -/\n\
+        private theorem private_invariant (n : Nat) : n = n := rfl\n\
+        /-- The private claim `missing_private_invariant` must fail. -/\n\
+        private def hiddenAnchor : Nat := 0\n\
+        /-- The public claim `missing_public_invariant` must fail. -/\n\
+        public def anchor : Nat := 0\n\
+        export Origin (alias_invariant)\n\
+        /-- The exported claim `Extra.alias_invariant` is checked. -/\n\
+        public def aliasAnchor : Nat := 1\n\
+        public structure Box where\n  value : Nat\n\
+        public def label := \"label_only_invariant\"\n\
+        public theorem split_invariant_left : True := trivial\n\
+        public theorem split_invariant_right : True := trivial\n\
+        end Extra\n\
+        public theorem\n  fixture_continuation_witness : True := trivial\n"),
+      ("LeanTex.CiteProbe", "module\nnamespace Local\n\
+        /-- The private contract `Local.local_invariant` is checked. -/\n\
+        private theorem local_invariant (n : Nat) : n = n := rfl\n\
+        end Local\n"),
+      ("Obligations", "module\nnamespace Obligations\n\
+        public theorem staged_invariant : True := trivial\nend Obligations\n"),
+      ("Tools.One", "/-- The executable claim `missing_one_invariant` must fail. -/\n\
+        def main : IO Unit := pure ()\n"),
+      ("Tools.Two", "/-- The other executable claim `missing_two_invariant` must fail. -/\n\
+        def main : IO Unit := pure ()\n")]
+    for (name, body) in fixtures do
+      let file := dir / moduleFile name
+      IO.FS.createDirAll file.parent.get!
+      IO.FS.writeFile file body
+      let out ← IO.Process.output {
+        cmd := (sysroot / "bin" / "lean").toString
+        args := #["-E", "hasSorry", "-R", dir.toString,
+          "-o", (file.withExtension "olean").toString, file.toString]
+        env := #[("LEAN_PATH", some (System.SearchPath.toString paths))] }
+      unless out.exitCode == 0 do
+        throw <| IO.userError s!"cites selftest: cannot compile {name}:\n{out.stdout}{out.stderr}"
+    let tree ← loadTree dir
+    expect "inventory omitted an unimported library or executable"
+      ((tree.batches.flatMap id).size == fixtures.size)
+    for subject in ["`Extra.hiddenAnchor`", "`Extra.anchor`", "`Local.local_invariant`"] do
+      expect s!"compiled private/public docstring absent or mangled: {subject}"
+        (tree.sites.any fun site => site.subject == subject && site.line > 0)
+    expect "modern module docstring absent"
+      (tree.sites.any fun site =>
+        site.file == "Extra/Unimported.lean" && site.subject == "the module docstring")
+    let q (token : String) (ns : Name := .anonymous)
+        (moduleName : String := "Extra.Unimported") : Query := ⟨moduleName, ns, token⟩
+    let cases : Array (String × Query × Verdict) := #[
+      ("absent name", q "no_such_theorem_anywhere", .phantom),
+      ("check-label string", q "label_only_invariant" `Extra, .phantom),
+      ("shared prefix", q "split_invariant" `Extra, .phantom),
+      ("continuation-line declaration", q "fixture_continuation_witness" `Extra, .scope),
+      ("staging namespace", q "staged_invariant" `Extra, .scope),
+      ("private bare name", q "private_invariant" `Extra, .scope),
+      ("private qualified name", q "Extra.private_invariant", .scope),
+      ("modern private doc namespace", q "Local.local_invariant" `Local "LeanTex.CiteProbe", .scope),
+      ("exported alias", q "Extra.alias_invariant", .scope),
+      ("short exported alias", q "alias_invariant" `Extra, .scope),
+      ("alias across namespaces", q "alias_invariant" `Elsewhere "Tools.One", .tree),
+      ("private across namespaces", q "local_invariant" `Elsewhere "Tools.One", .tree),
+      ("invented field projection", q "Extra.Box.missing_invariant", .phantom)]
+    let verdicts ← resolveTree tree (cases.map fun (_, query, _) => query)
+    for ((label, _, want), got) in cases.zip verdicts do
+      expect s!"{label}: got {repr got}, want {repr want}" (got == want)
+    let (bad, dead, census) ← scan tree []
+    let names := bad.map fun (name, _, _, _) => name
+    let missing := #["missing_module_invariant", "missing_private_invariant",
+      "missing_public_invariant", "missing_one_invariant", "missing_two_invariant"]
+    expect "full compiled scan missed a phantom or rejected a valid private/alias citation"
+      (names.size == missing.size && missing.all names.contains && dead.isEmpty)
+    expect "private phantom lost its actionable source location"
+      (census.phantoms.contains ⟨"missing_private_invariant",
+        "Extra/Unimported.lean", "Extra.hiddenAnchor"⟩ &&
+        bad.any fun (name, _, line, _) => name == "missing_private_invariant" && line > 0)
+    IO.FS.writeFile (dir / "Unbuilt.lean")
+      "/-- The uncompiled claim `missing_unbuilt_invariant` cannot be read as compiled. -/\ndef x := 0\n"
+    let missingRejected ← try
+      let _ ← loadTree dir
+      pure false
+    catch e =>
+      pure (containsSub e.toString "no compiled Unbuilt.lean" &&
+        containsSub e.toString "lake build")
+    expect "missing compiled source did not fail with a build instruction" missingRejected
+    return (← failures.get).reverse
+  finally
+    searchPathRef.set before
 
 /-- Every case the gate must catch and every legal spelling it must pass.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -555,52 +533,8 @@ def selftest : IO UInt32 := do
   unless anchorOf "`LeanTex.Core.Ir.frameSteps`" == "LeanTex.Core.Ir.frameSteps" do
     fails.modify ("anchorOf: the backticked subject did not read as its declaration" :: ·)
 
-  let docCases : List (Array String × Array (Nat × String)) := [
-    (#["/-- a `foo_bar` claim -/", "def x := 1"], #[(1, "/-- a `foo_bar` claim -/")]),
-    (#["-- a `foo_bar` comment", "def x := 1"], #[]),
-    (#["/-! module `foo_bar`", "continues -/", "def x := 1"],
-      #[(1, "/-! module `foo_bar`"), (2, "continues -/")])]
-  for (ls, want) in docCases do
-    if docRegions ls != want then
-      fails.modify (s!"docRegions: got {docRegions ls}" :: ·)
-
-  unless (openedIn #["open LeanTex.Core Lean"]).length == 2 do
-    fails.modify ("openedIn: open A B is two opens" :: ·)
-  unless (openedIn #["open X in"]).isEmpty do
-    fails.modify ("openedIn: a scoped open is not a file-level one" :: ·)
-
-  -- The resolver, against this tree. Every case below is a failure mode the
-  -- text-scanning predecessor got wrong, or a legal spelling it got right
-  -- and this one must keep.
-  let envs ← loadTree
-  let idx := shortIndex envs
-  let root : Site := mkSite "x.lean" 0 .anonymous [] "a docstring" ""
-  let at_ (ns : Name) : Site := { root with ns }
-  let vcases : List (String × Site × Verdict × String) := [
-    -- a name declared nowhere is a phantom, which is the whole point
-    ("no_such_theorem_anywhere", root, .phantom, "an absent name"),
-    -- the three shapes the text-scanning predecessor got wrong. The first
-    -- two are its false accepts, both live in this tree: a name only a
-    -- test's check-label string holds, and a name two declarations merely
-    -- share a prefix with. The third is its false reject: a declaration
-    -- whose name does not sit on its keyword's line.
-    ("frames_sections", root, .phantom, "a name only a check label holds"),
-    ("sty_is_defaults", at_ `LeanTex.Core.Elab, .phantom, "a shared prefix"),
-    ("cite_continuation_witness", at_ `LeanTex.Core.Ir, .scope,
-      "a continuation-line name"),
-    -- an owed statement lives in the staging namespace and is cited bare
-    ("inflate_deflate_id", at_ `LeanTex.Core.Flate, .scope, "an owed statement"),
-    -- a theorem resolves in its own namespace, and across namespaces by the
-    -- tree tier -- which is the site Diag.lean actually writes: the
-    -- docstring sits in `LeanTex.Core` and the theorem in a namespace below
-    ("all_complete", at_ `LeanTex.Core.DiagCode, .scope, "a theorem in scope"),
-    ("all_complete", at_ `LeanTex.Core, .tree, "a theorem cited across namespaces")]
-  for (tok, s, want, what) in vcases do
-    let got := verdict envs idx s tok
-    if got != want then
-      let show_ := fun (v : Verdict) => match v with
-        | .scope => "scope" | .tree => "tree" | .phantom => "phantom"
-      fails.modify (s!"verdict {tok} ({what}): got {show_ got}, want {show_ want}" :: ·)
+  for failure in ← compiledSelftest do
+    fails.modify (failure :: ·)
 
   let failed := (← fails.get).reverse
   if failed.isEmpty then
@@ -611,6 +545,11 @@ def selftest : IO UInt32 := do
   return 1
 
 def main (args : List String) : IO UInt32 := do
+  if let ["--batch", request, response] := args then
+    let result ← CiteEnv.run (← readCiteJson request)
+    IO.FS.writeFile response (toJson result).compress
+    return 0
+  initSearchPath (← findSysroot) [".lake/build/lib/lean"]
   if args.contains "--selftest" then
     return (← selftest)
   let envs ← loadTree
