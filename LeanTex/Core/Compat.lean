@@ -7,6 +7,7 @@ import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
 import LeanTex.Core.Tcolorbox
+import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.Compat
 
@@ -1397,8 +1398,35 @@ private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
     j := j'
   return (any, j)
 
-/-- Up to `n` brace groups. A bare control word or single word counts as a
-group too, as in TeX: `\newcommand\x` and `\textbf x` are legal. -/
+/-- Consecutive arguments in the raw source, with whitespace skipped only
+before an argument. Contents are arbitrary and never inspected. This is a
+progress contract: each constructor consumes one argument, and its endpoint
+is the next raw index, not a count of loop iterations. -/
+inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → Nat → Prop
+  | nil {i} : GroupPrefix raws i [] i
+  | group {i body p args stop} :
+      raws[skipSpaces raws i]? = some (.group body p) →
+      GroupPrefix raws (skipSpaces raws i + 1) args stop →
+      GroupPrefix raws i (body :: args) stop
+  | ctrl {i name p args stop} :
+      raws[skipSpaces raws i]? = some (.ctrl name p) →
+      GroupPrefix raws (skipSpaces raws i + 1) args stop →
+      GroupPrefix raws i (#[.ctrl name p] :: args) stop
+
+/-- The argument loop's step, exposed for its progress proof. The equation
+`takeGroups_loop_exact` checks that this reads the actual loop, including its
+early exit; the implementation is not restated as a fold. -/
+private def takeGroupsStep (raws : Array Raw) (s : Array (Array Raw) × Nat) :
+    Id (ForInStep (Array (Array Raw) × Nat)) :=
+  let k := skipSpaces raws s.2
+  match raws[k]? with
+  | some (.group body _) => pure (.yield (s.1.push body, k + 1))
+  | some (r@(.ctrl _ _)) => pure (.yield (s.1.push #[r], k + 1))
+  | _ => pure (.done s)
+
+/-- Up to `n` brace groups or bare control words (`\newcommand\x`).
+Other raws stop the reader without consuming them or their leading spaces.
+Character-token arguments use `takeRawArgs` instead. -/
 def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
   let mut out : Array (Array Raw) := #[]
   let mut j := i
@@ -1409,6 +1437,71 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | some (r@(.ctrl _ _)) => out := out.push #[r]; j := k + 1
     | _ => break
   return (out, j)
+
+private theorem takeGroups_loop_exact (raws : Array Raw) (i n : Nat) :
+    takeGroups raws i n = (forIn [0:n] (#[], i) (fun _ => takeGroupsStep raws)).run := rfl
+
+private theorem GroupPrefix.yields {raws : Array Raw} {i args stop}
+    (h : GroupPrefix raws i args stop) (out : Array (Array Raw)) :
+    Loop.Yields (takeGroupsStep raws) (out, i) args.length (out ++ args.toArray, stop) := by
+  induction h generalizing out with
+  | nil => simpa using (Loop.Yields.nil (a := (out, _)) (step := takeGroupsStep raws))
+  | @group i body p args stop h _ ih =>
+    apply Loop.Yields.cons (b := (out.push body, skipSpaces raws i + 1))
+    · simp [takeGroupsStep, h]
+    · simpa using ih (out.push body)
+  | @ctrl i name p args stop h _ ih =>
+    apply Loop.Yields.cons (b := (out.push #[.ctrl name p], skipSpaces raws i + 1))
+    · simp [takeGroupsStep, h]
+    · simpa using ih (out.push #[.ctrl name p])
+
+/-- Exhaustion, as opposed to early stopping: every iteration is consumed.
+This is the progress-indexed counterpart needed for an arity contract. -/
+private theorem yields_loop_exact {α β : Type} {step : α → Id (ForInStep α)}
+    {a b : α} {n : Nat} (h : Loop.Yields step a n b) :
+    ∀ xs : List β, xs.length = n →
+      (forIn xs a (fun _ => step) : Id α).run = b := by
+  induction h with
+  | nil =>
+    intro xs hn
+    have hx : xs = [] := List.length_eq_zero_iff.mp hn
+    subst xs
+    rfl
+  | cons hs _ ih =>
+    intro xs hn
+    cases xs with
+    | nil => simp at hn
+    | cons x xs =>
+      simp only [Id.run] at hs
+      simp only [List.forIn_cons, bind, Id.run, hs]
+      exact ih xs (by simpa using hn)
+
+/-- The actual loop consumes exactly the declared number of consecutive
+arguments, for arbitrary source contents, starting index and suffix. The
+premise describes source raws, not the result of the reader under proof. -/
+theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
+    (h : GroupPrefix raws i args stop) :
+    takeGroups raws i args.length = (args.toArray, stop) := by
+  rw [takeGroups_loop_exact, Std.Legacy.Range.forIn_eq_forIn_range']
+  simpa using yields_loop_exact (h.yields #[])
+    (List.range' 0 args.length) (by simp)
+
+/-- When a non-argument follows a shorter prefix, breaking leaves the
+cursor before that boundary's whitespace and preserves every remaining raw.
+This covers arbitrary budgets, including malformed and truncated input. -/
+theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
+    (h : GroupPrefix raws i args stop) (hn : args.length < n)
+    (hstop : ∀ body p, raws[skipSpaces raws stop]? ≠ some (.group body p))
+    (hctrl : ∀ name p, raws[skipSpaces raws stop]? ≠ some (.ctrl name p)) :
+    takeGroups raws i n = (args.toArray, stop) := by
+  have hs : (takeGroupsStep raws (args.toArray, stop)).run =
+      .done (args.toArray, stop) := by
+    simp [takeGroupsStep]
+  have hy := h.yields #[]
+  simp only [Array.empty_append] at hy
+  have hd := hy.stops (Loop.Stops.done hs)
+  rw [takeGroups_loop_exact]
+  exact Loop.forIn_range_stops_exact hd n (by omega)
 
 /-- Undelimited TeX arguments: a group or one token each. A lexer word
 can hold several character arguments. The index owns that whole word and
