@@ -150,48 +150,11 @@ theorem emission_conservation_paras
     outInk (Layout.run geom fs none doc) = docInk doc := by
   sorry
 
-/-- A deck whose top level is only countable frames in audit-numbering's
-sense: non-standout, not the golden-valign title page, visibly titled.
-What the numbering statements range over. -/
-def framedDeck (doc : Ir.Doc) : Prop :=
-  doc.body ≠ #[] ∧ ∀ b ∈ doc.body, ∃ title valign br body,
-    b = Ir.Block.frame title false valign br body ∧ valign ≠ Ir.VAlign.golden ∧
-      Ir.plainText title ≠ ""
-
--- owed: pages_partition_frames
--- owner: LeanTex.Core.Layout
--- source: audit-numbering's model, restated as a partition over `PageOut.frame` when refactor 1 (the frame id on `PageOut`, written at `finishPage`) landed — supersedes pages_count_frame_steps, whose count is this statement summed over the frames; arch-provable I4's page side
--- blocker: The statement is false as written: a frame can spill beyond its overlay count, and frameRestart can give distinct source frames the same displayed number (LayoutContracts.counterexamples). Partition by source identity and actual spill count, then relate the driver and placement loops to that measure. Displayed numbering is not a source identifier.
--- goldens: no
-/-- Staged frame-partition claim. Overlay count excludes spill pages, and
-displayed frame numbers can restart. A correct partition needs source
-frame identity and the actual number of pages it ships. -/
-theorem pages_partition_frames
-    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) (hclass : doc.docClass = .slides)
-    (hframes : framedDeck doc)
-    (hclean : dropped (Layout.run geom fs pats doc) = false) :
-    (∀ p ∈ (Layout.run geom fs pats doc).pages, p.frame.isSome = true) ∧
-    (∀ i, (h : i < doc.body.size) →
-      ((Layout.run geom fs pats doc).pages.filter
-          (fun p => p.frame == some (i + 1))).size
-        = frameSteps doc.body[i]) := by
-  sorry
-
--- owed: frame_pages_footed
--- owner: LeanTex.Core.Layout
--- source: audit-numbering T2's page face; the chrome-footer slice (PLAN 2026-09-17); restated as a per-page fold over `PageOut.frame` when refactor 1 landed
--- blocker: The statement is false for numbered standout pages, which deliberately select no chrome footer (LayoutContracts.counterexamples). The replacement premise must use the shared footer decision, not frame.isSome. Placement now preserves the selected page metadata; connecting every collected frame opening to that selection remains owed.
--- goldens: no
-/-- Staged footer claim. Numbered standout pages deliberately omit chrome;
-the premise must use the shared footer selection, not numbering alone. -/
-theorem frame_pages_footed
-    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) (hclass : doc.docClass = .slides)
-    (hfoot : doc.foot = none) (hchrome : doc.chrome.hasFooter = true) :
-    ∀ p ∈ (Layout.run geom fs pats doc).pages,
-      p.frame.isSome = true → p.foot.isSome = true := by
-  sorry
+-- Layout.pages_partition_frames partitions actual shipped pages by source
+-- identity, including overlays and spill pages across counter restarts.
+-- Layout.frame_pages_footed connects every frame page to its actual opening
+-- and selected footer; a numbered standout may correctly select none.
+-- LayoutContracts retains the counterexamples to the former statements.
 
 -- The source-plan completeness claim was false for computed overlay ink
 -- and picture labels; contrastContractChecks retains those counterexamples.
@@ -219,24 +182,10 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
       = .ok true := by
   sorry
 
--- owed: write_readXref_exact
--- owner: LeanTex.Core.Pdf
--- source: the pdf-conformance-gate slice (modern output, wave 1 S3; pdf-validation F/gap 1–2, S3 red 1–2): the engine's own reader accepts every file the engine writes — today the executable witness is the reference walk over every corpus PDF in Tests/PdfConformance (`walkPdf`) and the six mutants it refuses by name.
--- blocker: `Pdf.serialize_row_exact` now locates every emitted row's bytes, and `Pdf.Xref.row_fields_exact` proves all declared [1,4,2] fields read back under their width bounds. `PdfRead.parseVal_render_id` now proves full-consumption object inversion under `Obj.Representable`. These components do not yet prove `PdfRead.readXref`: the writer's trailer must satisfy that domain, and startxref discovery, stream decompression with Adler verification, and the xref row loop still need composition, including `inflate_deflate_id` and the reader's decoded-size limits. The current conclusion checks root/count only; it does not certify the locations or object-stream indices, which can overflow while that conclusion still holds.
--- goldens: no
-/-- The writer and the engine's reader agree on the cross-reference
-(`_exact`, artifact-specific: a fact of the file's own bookkeeping, with
-no IR statement behind it): `readXref` follows `startxref` in every file
-`Pdf.write` emits, finds the catalog at object 1, and the trailer's
-`/Size` is exactly the listed objects plus the free object 0 — the count
-`write` computed for its `/Index [0 size]`, read back from the bytes. -/
-theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
-    (pages : Array PageOut) (info : Ir.Meta) (imgs : Image.Store)
-    (outline : Array OutlineEntry) (streams : Array (ByteArray × Option ByteArray)) :
-    ∃ x, PdfRead.readXref (Pdf.write geom fs pages info imgs outline streams) = .ok x ∧
-      x.root = some 1 ∧
-      (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
-  sorry
+-- Pdf.write_readXref_exact proves readback of the actual producer bytes on
+-- its representable-size domain. Pdf.writeChecked_readXref_exact discharges
+-- those bounds for every successful checked write. The proof includes
+-- startxref discovery, compression, checksum verification and row decoding.
 
 -- PdfRead.parseVal_render_id proves full-consumption inversion over
 -- recursively representable objects. The rejected primitive, descendant

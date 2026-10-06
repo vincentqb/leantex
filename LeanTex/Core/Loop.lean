@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-!
 # Loops, statable
 

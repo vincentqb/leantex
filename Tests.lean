@@ -13,6 +13,7 @@ import Tests.FrontendPictureContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.ContrastContracts
+import Tests.FlateInterface
 import Tests.FontSize
 import Tests.FontSelection
 import Tests.CancelRegression
@@ -226,6 +227,10 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"layout ownership: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.reflowChecks oneFace do
     check ref s!"layout reflow: {name}" ok
+  for (name, ok) in LeanTex.Tests.LayoutContracts.footerChecks oneFace do
+    check ref s!"layout footer: {name}" ok
+  for (name, ok) in LeanTex.Tests.LayoutContracts.partitionChecks oneFace do
+    check ref s!"layout partition: {name}" ok
   htmlContainedChecks ref oneFace
   let geom : Layout.Geom := {}
   let arts ← goldenArts oneFace
