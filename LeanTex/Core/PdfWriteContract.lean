@@ -1,10 +1,11 @@
 import LeanTex.Core.Pdf
+import LeanTex.Core.PdfEncoding
 
 namespace LeanTex.Core.Pdf
 
-/-! Numeric domains for the PDF bytes this writer actually emits.
-These bounds concern artifact storage, not the document IR or a viewer's
-interpretation of font programs. No predicate below calls a PDF parser. -/
+/-! Checked storage and source-spelling domains for the actual writer.
+These bounds concern artifact bytes, not a viewer's interpretation of
+font programs. No predicate below calls a PDF parser. -/
 
 /-- The fixed `/W [1 4 2]` fields and this reader's decompression limit.
 An object-stream index is zero-based, so 65536 compressed objects fit;
@@ -26,7 +27,35 @@ def WritePlan.WithinBounds (p : WritePlan) : Prop :=
 instance (p : WritePlan) : Decidable p.WithinBounds :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ _))
 
-/-- Typed numeric refusals, carrying the observed count or byte size.
+/-- Every compressed source object uses the encoder's supported grammar.
+This finite check inspects names, numbers, strings, and nested containers
+before serialization; it never asks the reader for an answer. -/
+def WritePlan.Encodable (p : WritePlan) : Prop :=
+  p.compressed.all (fun e => e.2.encodable) = true
+
+instance (p : WritePlan) : Decidable p.Encodable :=
+  inferInstanceAs (Decidable (_ = _))
+
+/-- The complete checked source domain: storage widths and decoded sizes,
+plus the grammar of every object placed in the object stream. Native
+direct-stream dictionaries have their own unconditional spelling proofs;
+imported resource graphs retain their separate acceptance requirements. -/
+def WritePlan.WithinDomain (p : WritePlan) : Prop :=
+  p.WithinBounds ∧ p.Encodable
+
+instance (p : WritePlan) : Decidable p.WithinDomain :=
+  inferInstanceAs (Decidable (_ ∧ _))
+
+theorem WritePlan.encodable_contract (p : WritePlan) (h : p.Encodable) :
+    ∀ e ∈ p.compressed, e.2.Representable := by
+  intro e he
+  exact e.2.encodable_contract ((List.all_eq_true.mp h) e he)
+
+private theorem WritePlan.find_unencodable_none (p : WritePlan) :
+    p.compressed.find? (fun e => !e.2.encodable) = none ↔ p.Encodable := by
+  simp [Encodable, List.find?_eq_none]
+
+/-- Typed refusals, carrying the observed count, byte size, or object id.
 The CLI translates these values to its diagnostic registry. Core does
 not format diagnostics or decide publication policy. -/
 inductive WriteError where
@@ -36,52 +65,66 @@ inductive WriteError where
   | tableSize (count : Nat)
   | objectStreamSize (bytes : Nat)
   | xrefStreamSize (bytes : Nat)
+  | objectSpelling (id : Nat)
   deriving BEq, Repr
 
-/-- Check cheap allocation bounds first, then measure once. The body and
-xref payload used by the remaining checks are retained for emission.
+/-- Check allocation bounds and source spellings first, then measure once.
+The body and xref payload used by the remaining checks are retained for emission.
 Calling this function does not repeat serialization or compression to
-evaluate `WithinBounds`; the theorem relates those independent spellings.
+evaluate `WithinDomain`; the theorem relates those independent spellings.
 Accepted artifacts are held to this boundary when their publisher uses
 only this function's successful result. -/
 def WritePlan.checked (p : WritePlan) : Except WriteError ByteArray :=
   if p.compressed.length ≤ 256 ^ 2 then
     if p.table.objStmId < 256 ^ 4 then
       if p.table.size < 256 ^ 4 then
-        let m := p.measure
-        if m.body.size < 256 ^ 4 then
-          if m.objectPayloadSize ≤ PdfRead.maxDecoded then
-            if m.xrefPayload.size ≤ PdfRead.maxDecoded then
-              .ok (m.bytes p.table)
-            else .error (.xrefStreamSize m.xrefPayload.size)
-          else .error (.objectStreamSize m.objectPayloadSize)
-        else .error (.byteOffset m.body.size)
+        match p.compressed.find? (fun e => !e.2.encodable) with
+        | some e => .error (.objectSpelling e.1)
+        | none =>
+          let m := p.measure
+          if m.body.size < 256 ^ 4 then
+            if m.objectPayloadSize ≤ PdfRead.maxDecoded then
+              if m.xrefPayload.size ≤ PdfRead.maxDecoded then
+                .ok (m.bytes p.table)
+              else .error (.xrefStreamSize m.xrefPayload.size)
+            else .error (.objectStreamSize m.objectPayloadSize)
+          else .error (.byteOffset m.body.size)
       else .error (.tableSize p.table.size)
     else .error (.objectNumber p.table.objStmId)
   else .error (.objectIndex p.compressed.length)
 
 theorem WritePlan.checked_exact (p : WritePlan) (b : ByteArray) :
-    p.checked = .ok b ↔ p.WithinBounds ∧ p.bytes = b := by
+    p.checked = .ok b ↔ p.WithinDomain ∧ p.bytes = b := by
   unfold checked
   split <;> rename_i hc
   · split <;> rename_i ho
     · split <;> rename_i hs
-      · dsimp only
-        split <;> rename_i hb
-        · split <;> rename_i hp
-          · split <;> rename_i hx
-            · simp_all [WithinBounds, measure_body_exact, measure_xref_exact,
-                measure_object_size_exact, WritePlan.bytes]
-            · simp_all [WithinBounds, measure_xref_exact]; omega
-          · simp_all [WithinBounds, measure_object_size_exact]; omega
-        · simp_all [WithinBounds, measure_body_exact]; omega
-      · simp_all [WithinBounds]; omega
-    · simp_all [WithinBounds]; omega
-  · simp_all [WithinBounds]; omega
+      · cases he : p.compressed.find? (fun e => !e.2.encodable) with
+        | some e =>
+          have hn : ¬ p.Encodable := by
+            intro h
+            have hh := p.find_unencodable_none.mpr h
+            rw [he] at hh
+            contradiction
+          simp [WithinDomain, hn]
+        | none =>
+          have hspell := p.find_unencodable_none.mp he
+          dsimp only
+          split <;> rename_i hb
+          · split <;> rename_i hp
+            · split <;> rename_i hx
+              · simp_all [WithinDomain, WithinBounds, measure_body_exact, measure_xref_exact,
+                  measure_object_size_exact, WritePlan.bytes]
+              · simp_all [WithinDomain, WithinBounds, measure_xref_exact]; omega
+            · simp_all [WithinDomain, WithinBounds, measure_object_size_exact]; omega
+          · simp_all [WithinDomain, WithinBounds, measure_body_exact]; omega
+      · simp_all [WithinDomain, WithinBounds]; omega
+    · simp_all [WithinDomain, WithinBounds]; omega
+  · simp_all [WithinDomain, WithinBounds]; omega
 
-/-- Every refusal falsifies a numeric premise of the writer contract. -/
+/-- Every refusal falsifies a storage or source-grammar premise. -/
 theorem WritePlan.checked_error_gated (p : WritePlan) (e : WriteError)
-    (h : p.checked = .error e) : ¬ p.WithinBounds := by
+    (h : p.checked = .error e) : ¬ p.WithinDomain := by
   intro hb
   have he := (p.checked_exact p.bytes).2 ⟨hb, rfl⟩
   rw [h] at he
@@ -98,7 +141,7 @@ def writeChecked (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.
     (programs : Array (ByteArray × Bool) := #[]) : Except WriteError ByteArray :=
   (prepare geom fs pages info imgs outline streams tree ops programs).checked
 
-/-- Success checks the numeric domain and returns exactly the actual
+/-- Success checks the source domain and returns exactly the actual
 writer's bytes for every input and cache argument. It does not assume
 successful parsing, decompression, or font validity. -/
 theorem writeChecked_exact (geom : Layout.Geom) (fs : Font.FontSet)
@@ -107,7 +150,7 @@ theorem writeChecked_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (tree : Struct.Tree) (ops : Array (Array ContentOp))
     (programs : Array (ByteArray × Bool)) (b : ByteArray) :
     writeChecked geom fs pages info imgs outline streams tree ops programs = .ok b ↔
-      (prepare geom fs pages info imgs outline streams tree ops programs).WithinBounds ∧
+      (prepare geom fs pages info imgs outline streams tree ops programs).WithinDomain ∧
       write geom fs pages info imgs outline streams tree ops programs = b := by
   exact WritePlan.checked_exact _ b
 
@@ -121,7 +164,7 @@ theorem WritePlan.entries_fits (p : WritePlan) (h : p.WithinBounds) :
 ratio or successful parsing of some wrapped entries. -/
 theorem WritePlan.compressed_limit_gated (p : WritePlan) (b : ByteArray)
     (h : p.checked = .ok b) : p.compressed.length ≤ 65536 := by
-  exact ((p.checked_exact b).mp h).1.1
+  exact ((p.checked_exact b).mp h).1.1.1
 
 /-- Each selected xref row retains all its fields at its actual byte
 position. This theorem composes the numeric check with the real encoder;

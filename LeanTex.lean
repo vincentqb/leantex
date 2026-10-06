@@ -72,8 +72,7 @@ import LeanTex.Core.PdfObjectStreamProof
 import LeanTex.Core.PdfObjectHeaderProof
 import LeanTex.Core.PdfFontContract
 import LeanTex.Core.PdfProducerProof
-import LeanTex.Core.PdfPlanRecovery
-import LeanTex.Core.PdfPrepareFonts
+import LeanTex.Core.PdfFontsProof
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
 import LeanTex.Cli.DriverDiag

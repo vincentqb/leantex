@@ -512,7 +512,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395
   | .W0396 => Tests.LayoutInkContracts.boundaryWitness one .W0396
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
-  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537)]
+  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537),
+      DriverDiag.pdfWriteRefused (.objectSpelling 4)]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""

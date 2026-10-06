@@ -86,15 +86,13 @@ theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
          trailer := some (p.measure.xrefDict p.table)}).1) := by
   exact p.measure.readXref_exact p.table h.2.1 h.2.2.2.2.2
 
-/-- Successful checked production yields a readable xref whose root and
+/-- A numerically bounded plan yields a readable xref whose root and
 declared size are exactly the allocation's. Relating that declared size
 to the number of live locations additionally needs emission coverage. -/
-theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
-    (h : p.checked = .ok b) :
-    ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
+theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBounds) :
+    ∃ x, readXref p.bytes = .ok x ∧ x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind Obj.int? = some p.table.size ∧
       x.start = p.measure.body.size := by
-  obtain ⟨bounds, rfl⟩ := (p.checked_exact b).mp h
   let x0 : PdfRead.Xref :=
     {start := p.measure.body.size, root := some 1,
      trailer := some (p.measure.xrefDict p.table)}
@@ -114,6 +112,17 @@ theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
   rw [show (p.measure.xrefDict p.table).get? "Size" =
     some (.int p.table.size) from fields.2.2.1]
   rfl
+
+/-- Checked production supplies the storage bounds for the actual xref.
+The source-grammar check further restricts successful production without
+weakening the xref theorem on numerically bounded raw plans. -/
+theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
+    (h : p.checked = .ok b) :
+    ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
+      (x.trailer.bind (·.get? "Size")).bind Obj.int? = some p.table.size ∧
+      x.start = p.measure.body.size := by
+  obtain ⟨domain, rfl⟩ := (p.checked_exact b).mp h
+  exact p.readXref_contract domain.1
 
 /-- The complete production writer's xref contract on its checked numeric
 domain. The actual reader recovers the catalog root and exactly `/Size - 1`
@@ -136,8 +145,7 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
   change p.WithinBounds at h
   change ∃ x, readXref p.bytes = .ok x ∧ x.root = some 1 ∧
     (x.trailer.bind (·.get? "Size")).bind Obj.int? = some (x.locs.size + 1)
-  obtain ⟨x, hx, hr, hs, _⟩ := p.checked_readXref_contract p.bytes
-    ((p.checked_exact p.bytes).2 ⟨h, rfl⟩)
+  obtain ⟨x, hx, hr, hs, _⟩ := p.readXref_contract h
   have he := prepare_entries_contract geom fs pages info imgs outline streams tree ops programs
   change p.entries.size = p.table.size ∧
     p.entries[0]?.bind xrefEntryLocation = none ∧
@@ -180,6 +188,6 @@ theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
   obtain ⟨bounds, hb⟩ := (writeChecked_exact geom fs pages info imgs outline streams
     tree ops programs b).mp h
   rw [← hb]
-  exact write_readXref_exact geom fs pages info imgs outline streams tree ops programs bounds
+  exact write_readXref_exact geom fs pages info imgs outline streams tree ops programs bounds.1
 
 end LeanTex.Core.Pdf

@@ -151,21 +151,13 @@ theorem emission_conservation_paras
 -- Flate.inflate_deflate_bounded_id permits any sufficient output capacity;
 -- both compose the actual encoder and decoder without external premises.
 
--- owed: write_fonts_embedded
--- owner: LeanTex.Core.Pdf
--- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
--- blocker: the unrestricted statement is false: 65,536 synthetic outline entries overflow a compressed object's 16-bit index; the writer's root/count still read, but object recovery fails and the font census returns an error. The representable domain must bound direct offsets and object-stream ids to 32 bits, compressed indices to 16 bits, and decoded structural streams to `PdfRead.maxDecoded`. `Pdf.fontObjects_links_exact` proves the actual writer's dictionary references for both font formats; `Pdf.fontObjects_census_contract` proves the census from recovered font dictionaries and descriptors. `PdfRead.parseVal_render_id` now proves full-consumption inversion under the independent recursive `Obj.Representable` domain. Reader recovery still needs the writer's dictionaries in that domain, `inflate_deflate_id`, Adler verification and object-stream lookup composition. Those internal facts are obligations, not external hypotheses that construction proves.
--- goldens: no
-/-- Staged writer/census contract for image-free output. Its unrestricted
-input domain is too wide: a compressed object index can exceed the field
-the file declares. A representable-size domain and proof of reader
-recovery are still owed. The component font-reference laws do not close
-this claim about the bytes. -/
-theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
-    (pages : Array PageOut) (info : Ir.Meta) (outline : Array OutlineEntry) :
-    (PdfCensus.census (Pdf.write geom fs pages info {} outline)).map (·.fontsEmbedded)
-      = .ok true := by
-  sorry
+-- Pdf.write_fonts_embedded_exact proves the actual font census over the
+-- serialized bytes on an independently checked storage and spelling domain.
+-- Pdf.writeChecked_fonts_embedded_exact establishes it for every successful
+-- image-free checked write, including arbitrary selected program bytes.
+-- Font-program validity and viewer behaviour are separate external facts.
+-- PdfBounds and PdfFontsProof retain the numeric and spelling counterexamples
+-- to the original unrestricted statement; the publisher refuses both.
 
 -- Pdf.write_readXref_exact proves readback of the actual producer bytes on
 -- its representable-size domain. Pdf.writeChecked_readXref_exact discharges

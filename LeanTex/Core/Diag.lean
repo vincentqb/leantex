@@ -468,7 +468,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0395 => ("0395", .dropped, "picture label produced no line")
   | .W0396 => ("0396", .degraded, "picture label extends beyond its reserved glyph box")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
-  | .E0607 => ("0607", .dropped, "the PDF exceeds a supported storage bound; publication is refused")
+  | .E0607 => ("0607", .dropped, "the PDF cannot be represented within supported spelling or storage limits; publication is refused")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

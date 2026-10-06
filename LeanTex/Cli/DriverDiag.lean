@@ -32,8 +32,8 @@ def outputPathsConflict (detail : String) : Diag :=
   Diag.of .E0003 s!"cannot publish output: {detail}"
     (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
 
-/-- A whole-artifact storage refusal. No single source command owns an
-aggregate byte or object count, so this diagnostic invents no source span. -/
+/-- A whole-artifact representation refusal. Aggregate storage limits and
+font metadata do not identify a source command, so no span is invented. -/
 def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
   let message := match error with
     | .objectIndex count =>
@@ -48,8 +48,14 @@ def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
       s!"the PDF object stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
     | .xrefStreamSize bytes =>
       s!"the PDF cross-reference stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
+    | .objectSpelling id =>
+      s!"the PDF object {id} contains a spelling the writer cannot represent"
+  let help := match error with
+    | .objectSpelling _ =>
+      "use nonempty Latin-1 font and PDF resource names, such as 'ExampleFont'"
+    | _ => "split the document into smaller files and compile each with `leantex <file>.tex`"
   Diag.of .E0607 message
-    (help := "split the document into smaller files and compile each with `leantex <file>.tex`")
+    (help := help)
 
 /-- E0402: `LEANTEX_FONT` names a file that does not parse as a font. -/
 def envFontUnusable (path err : String) : Diag :=

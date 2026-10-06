@@ -66,6 +66,7 @@ import Tests.PdfReadRoundtrip
 import Tests.PdfReadRepresentability
 import Tests.PdfEncoding
 import Tests.PdfBounds
+import Tests.PdfFontsProof
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
@@ -687,6 +688,7 @@ def main (args : List String) : IO UInt32 := do
   pdfReadRepresentabilityChecks ref
   pdfEncodingChecks ref
   pdfBoundsChecks ref
+  pdfFontsProofChecks ref
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref
