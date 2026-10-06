@@ -379,9 +379,11 @@ module that did not rebuild. The flag is written out per gate rather than
 inherited from another gate's internals: `land`'s own theorem and the gate
 scripts are built under it, and `Obligations` — the staging area for open
 proofs, which warns once per staged statement by design — is a separate build
-without it, as the pre-commit hook already does. -/
+without it, as the pre-commit hook already does. The first build requests all
+gate executables together so Lake can schedule their independent jobs;
+`lake test` then runs its already-built driver in the same environment. -/
 def defaultGates : List String := [
-  "build=lake build --wfail leantex precommit owed cites land",
+  "build=lake build --wfail leantex Tests precommit owed cites land scoreboard",
   "obligations-build=lake build Obligations",
   "test=lake test",
   "land-selftest=.lake/build/bin/land --selftest",
@@ -391,7 +393,6 @@ def defaultGates : List String := [
   "cites-selftest=.lake/build/bin/cites --selftest",
   "cites-check=.lake/build/bin/cites --check",
   "owed=lake env lean --run scripts/owed.lean",
-  "scoreboard-build=lake build --wfail scoreboard",
   "scoreboard-check=.lake/build/bin/scoreboard --check",
   "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}",
   "scoreboard-selftest=.lake/build/bin/scoreboard --selftest"]
@@ -1639,6 +1640,24 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
       ("why", e.why)]
+  -- Give Lake all executable roots before waiting for any of them. Keep
+  -- staged proofs out of --wfail and run the test driver after both builds.
+  let grouped := match gateList.toList with
+    | build :: obligations :: test :: _ =>
+      build.cmd == "lake" && build.args[0]? == some "build"
+        && build.args.contains "--wfail"
+        && #["leantex", "Tests", "precommit", "owed", "cites", "land", "scoreboard"].all
+          (build.args.contains ·)
+        && !build.args.contains "Obligations"
+        && obligations.cmd == "lake" && obligations.args == #["build", "Obligations"]
+        && test.cmd == "lake" && test.args == #["test"]
+    | _ => false
+  if grouped then
+    say "selftest" "ok" [("case", "gate executables share a build; proofs and test execution follow")]
+  else
+    bad := bad + 1
+    say "selftest" "fail"
+      [("case", "gate executables share a build; proofs and test execution follow")]
   -- Porcelain quoting: a value with a space must come back as one value.
   if pv "a b" != "\"a b\"" || pv "ab" != "ab" || pv "" != "\"\"" then
     bad := bad + 1
