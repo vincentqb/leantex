@@ -157,12 +157,16 @@ theorem Start.numeric {b : ByteArray} {i : Nat} {s : String}
 theorem Stop.of_start {b i} (h : Start b i) (he : EndByte (at? b i)) : Stop b i :=
   ⟨he, by simpa only [h.skip] using h.marker, h.reference⟩
 
-theorem Stop.space {b i} (h : at? b i = 32) (hi : i < b.size)
+theorem Stop.whitespace {b i} (h : isWs (at? b i) = true) (hi : i < b.size)
     (hn : Start b (i+1)) : Stop b i := by
-  have hs := skipWs_one_exact h hn.whitespace hn.comment hi
-  refine ⟨Or.inr (Or.inl (by rw [h]; rfl)), ?_, ?_⟩
+  have hs := skipWs_whitespace_exact h hn.whitespace hn.comment hi
+  refine ⟨Or.inr (Or.inl h), ?_, ?_⟩
   · simpa only [hs] using hn.marker
   · simpa only [tryRef, hs, hn.skip] using hn.reference
+
+theorem Stop.space {b i} (h : at? b i = 32) (hi : i < b.size)
+    (hn : Start b (i+1)) : Stop b i :=
+  Stop.whitespace (by rw [h]; rfl) hi hn
 
 theorem Start.close_array {b i} (h : at? b i = 93) : Start b i :=
   Start.non_numeric (by rw [h]; rfl) (by rw [h]; decide) (by rw [h]; decide)

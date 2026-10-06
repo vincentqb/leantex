@@ -172,15 +172,20 @@ theorem skipWs_fixed_point {b : ByteArray} {i : Nat}
     simp [skipStep, hw, hc]
   · omega
 
-theorem skipWs_one_exact {b : ByteArray} {i : Nat}
-    (h : at? b i = 32) (hw : isWs (at? b (i+1)) = false)
+theorem skipWs_whitespace_exact {b : ByteArray} {i : Nat}
+    (h : isWs (at? b i) = true) (hw : isWs (at? b (i+1)) = false)
     (hc : at? b (i+1) ≠ 37) (hi : i < b.size) : skipWs b i = i+1 := by
   apply Loop.forIn_range_stops_exact (n := 2) (budget := b.size+1)
   · apply Loop.Stops.yield (b := i+1)
-    · simp [skipStep, h, isWs]
+    · simp [skipStep, h]
     · apply Loop.Stops.done
       simp [skipStep, hw, hc]
   · omega
+
+theorem skipWs_one_exact {b : ByteArray} {i : Nat}
+    (h : at? b i = 32) (hw : isWs (at? b (i+1)) = false)
+    (hc : at? b (i+1) ≠ 37) (hi : i < b.size) : skipWs b i = i+1 :=
+  skipWs_whitespace_exact (by rw [h]; rfl) hw hc hi
 
 theorem uintStep_stops {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i (cs.map Char.toNat))
