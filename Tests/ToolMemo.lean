@@ -9,6 +9,26 @@ namespace Tests
 must leave existing readers and older writers on their original file. -/
 def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
+    -- Publishing beside a writable destination must not depend on the
+    -- system temporary directory. Only the child's environment changes.
+    let some lean ← ToolProbe.onPath "lean" |
+      throw <| IO.userError "atomic publication checks require the Lean interpreter"
+    let driver := dir / "publication.lean"
+    IO.FS.writeFile driver <|
+      "import LeanTex.Cli.AtomicFile\n" ++
+      "def main (args : List String) : IO Unit := do\n" ++
+      "  let [target] := args | throw (IO.userError \"expected one destination\")\n" ++
+      "  LeanTex.Cli.AtomicFile.write target \"complete answer\".toUTF8\n"
+    let target := dir / "independent.answer"
+    let unavailable := (dir / "missing-temporary-directory").toString
+    let result ← IO.Process.output {
+      cmd := lean.toString, args := #["--run", driver.toString, target.toString],
+      env := #[("TMPDIR", some unavailable), ("TMP", some unavailable),
+        ("TEMP", some unavailable)] }
+    check ref "atomic file: publication needs only the destination directory"
+      (result.exitCode == 0 &&
+        (← (IO.FS.readFile target).toBaseIO).toOption == some "complete answer")
+
     let memo := dir / "tool.ver"
     let stampA := "synthetic-tool\t101\t1\t0"
     let stampB := "synthetic-tool\t102\t2\t0"
@@ -79,7 +99,7 @@ def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
           return .present versionA
         check ref "tool memo: failed publication preserves the probe answer" (got == .present versionA)
       check ref "tool memo: failed publication is retried" ((← calls.get) == 2)
-    check ref "tool memo: successful and failed publications clean their staging directories"
+    check ref "tool memo: successful and failed publications clean their staging files"
       ((← dir.readDir).all fun entry => !entry.fileName.endsWith ".part")
 
     -- ConvCache's public publisher retains the same byte-for-byte replacement
@@ -101,7 +121,7 @@ def toolMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "atomic file: failed rename preserves the destination"
       ((match failed with | .error _ => true | .ok _ => false) &&
         (← IO.FS.readFile (blocked / "sentinel")) == "keep")
-    check ref "atomic file: no temporary directories survive either outcome"
+    check ref "atomic file: no staging files survive either outcome"
       ((← dir.readDir).all fun entry => !entry.fileName.endsWith ".part")
 
 end Tests
