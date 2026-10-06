@@ -32,3 +32,36 @@ def elabWarningContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let keyed (ds : Array Diag) := ds.filter (·.subject == some "ctrl:zzpreamble")
   t "warning contract: duplicating a body does not duplicate preamble diagnostics"
     ((keyed one).size == 1 && (keyed two).size == 1)
+
+/-- Alias equivalence belongs to the refused title body's declarative
+read-out. A conditional operand still names the command the source wrote:
+normalizing it globally would change which declarations execute. -/
+def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let style (out : Ir.Doc × Array Diag) : Option Ir.ElementStyle :=
+    out.1.styles.find? "titlepage"
+  let align (out : Ir.Doc × Array Diag) : Option String :=
+    (style out).bind (·.align)
+  let refusalSites (out : Ir.Doc × Array Diag) :
+      Array (Option Span × Option String × Option String × Option String) :=
+    (out.2.filter (·.kind == .W0361)).map
+      (fun d => (d.span, d.subject, d.refused, d.trigger))
+  let conditional (name : String) :=
+    "\\newcommand{\\inserttitle}{}\n\\ifdefined\\" ++ name ++
+      "\n\\style{titlepage}{align=left}\n\\else\n\\style{titlepage}{align=right}\n\\fi\n" ++
+      "\\begin{document}Text.\\end{document}"
+  let beamer ← pure (Elab.run "probe.tex" (conditional "inserttitle"))
+  let internal ← pure (Elab.run "probe.tex" (conditional "@title"))
+  t "title alias boundary: a conditional reads the actual source spelling"
+    (align beamer == some "left" && align internal == some "right")
+  let template (name : String) :=
+    "\\documentclass{article}\n\\title{Title}\\author{Author}\\date{Date}\n" ++
+      "\\renewcommand{\\maketitle}{\\centering\\bfseries\\large\\hrule\\@title\\" ++
+      name ++ "\\hrule\\vskip 2pt}\n\\begin{document}\\maketitle\\end{document}"
+  for (b, l) in Elab.beamerInsertAlias do
+    let left ← pure (Elab.run "probe.tex" (template b))
+    let right ← pure (Elab.run "probe.tex" (template l))
+    t s!"title alias boundary: {b} keeps the whole elaborated style"
+      (style left == style right && (style left).isSome)
+    t s!"title alias boundary: {b} keeps the refusal site and provenance"
+      (!(refusalSites left).isEmpty && refusalSites left == refusalSites right)
