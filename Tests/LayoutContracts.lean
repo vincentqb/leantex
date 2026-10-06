@@ -1,4 +1,5 @@
 import Tests.Support
+import LeanTex.Core.Layout.FramePartition
 
 namespace LeanTex.Tests.LayoutContracts
 
@@ -308,5 +309,78 @@ def footerChecks (fs : FontSet) : Array (String × Bool) :=
       selectedFooters geom fs floatDoc floated &&
       (pdfFoots floated).size == floated.pages.size &&
       floated.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1"))]
+
+/-- The partition is over physical output. Two overlays with an authored
+page break contribute four pages per source, even when the next source
+restarts the displayed counter. Natural overflow, flow pages, column
+merges and float replay exercise the same accounting boundary. -/
+def partitionChecks (fs : FontSet) : Array (String × Bool) :=
+  let geom : Geom := {
+    pageW := pt 220, pageH := pt 160
+    hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
+    hyphenate := false, justify := false }
+  let frame := Block.frame #[.text "Title"] false .top false
+    #[.para #[.text "Before"], .pagebreak, .para #[.text "After"],
+      .onSteps { first := 2, last := none } #[.para #[.text "Later"]]]
+  let doc : Doc := {
+    docClass := .slides, frameRestart := some 1, body := #[frame, frame] }
+  let out := run geom fs none doc
+  let openings := frameOpenings geom fs none doc
+  let actual := FramePartition.origins openings
+  let count := fun origin => (FramePartition.pages out (some origin)).size
+  let flowDoc : Doc := { docClass := .slides, body := #[
+    .para #[.text "Outside"], frame, .para #[.text "Following"]] }
+  let flow := run geom fs none flowDoc
+  let small := { geom with pageH := pt 100 }
+  let spilling := run small fs none {
+    docClass := .slides, body := #[.frame #[.text "Title"] false .top false
+      (Array.replicate 24 (.para #[.text "Body"]))] }
+  let standout := run geom fs none {
+    docClass := .slides, body := #[.frame #[.text "Title"] true .center false
+      #[.para #[.text "Body"]]] }
+  let columnDoc : Doc := {
+    docClass := .slides, body := #[.frame #[] false .top false #[.columns #[
+      (.abs (pt 76), Array.replicate 16 (.para #[.text "Left"])),
+      (.abs (pt 76), Array.replicate 20 (.para #[.text "Right"]))]]] }
+  let columns := run small fs none columnDoc
+  let floated := run small fs none {
+    docClass := .slides, body := #[.frame #[] false .top false #[
+      .para #[.text "Before"], .float .figure none false
+        (Array.replicate 20 (.para #[.text "Floating"])) #[]]] }
+  #[
+    ("collector keys distinguish sources and overlays despite restarted counters",
+      actual == [⟨0, 1⟩, ⟨0, 2⟩, ⟨1, 1⟩, ⟨1, 2⟩] &&
+      noDroppedGlyph out && out.pages.all (·.frame == some 1)),
+    ("authored breaks count physical pages instead of predicting overlay counts",
+      out.pages.size == 8 && actual.all (fun origin => count origin == 2) &&
+      (FramePartition.pages out none).isEmpty &&
+      (actual.map count).sum == out.pages.size),
+    ("each source total includes all of its actual overlay pages",
+      (FramePartition.sourcePages out 0).size == 4 &&
+      (FramePartition.sourcePages out 1).size == 4 &&
+      (FramePartition.sourcePages out 2).isEmpty &&
+      FramePartition.steps openings 0 == [⟨0, 1⟩, ⟨0, 2⟩] &&
+      FramePartition.steps openings 1 == [⟨1, 1⟩, ⟨1, 2⟩]),
+    ("flow before and after a frame belongs only to the unowned bucket",
+      noDroppedGlyph flow && flow.pages.size == 6 &&
+      (FramePartition.pages flow none).size == 2 &&
+      (FramePartition.sourcePages flow 1).size == 4 &&
+      (FramePartition.sourcePages flow 0).isEmpty),
+    ("natural spills all contribute to the actual source and step count",
+      noDroppedGlyph spilling && spilling.pages.size > 1 &&
+      (FramePartition.pages spilling (some ⟨0, 1⟩)).size == spilling.pages.size &&
+      (FramePartition.sourcePages spilling 0).size == spilling.pages.size),
+    ("a missing standout footer does not remove physical frame ownership",
+      noDroppedGlyph standout && standout.pages.size == 1 &&
+      standout.pages.all (·.foot.isNone) &&
+      (FramePartition.pages standout (some ⟨0, 1⟩)).size == 1),
+    ("column merges count every continuation once under the actual frame",
+      noDroppedGlyph columns && columns.pages.size > 1 &&
+      (FramePartition.pages columns (some ⟨0, 1⟩)).size == columns.pages.size &&
+      (FramePartition.pages columns none).isEmpty),
+    ("float replay counts every continuation once under the actual frame",
+      noDroppedGlyph floated && floated.pages.size > 1 &&
+      (FramePartition.pages floated (some ⟨0, 1⟩)).size == floated.pages.size &&
+      (FramePartition.pages floated none).isEmpty)]
 
 end LeanTex.Tests.LayoutContracts
