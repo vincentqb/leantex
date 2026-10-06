@@ -125,6 +125,7 @@ import Tests.VerbatimAmbient
 import Tests.OwnBib
 import Tests.BigDelim
 import Tests.Regress
+import Tests.RegressionCorpus
 import Tests.Reports
 import Tests.Natbib
 import Tests.LinkColor
@@ -624,6 +625,7 @@ def main (args : List String) : IO UInt32 := do
   -- goldens
   corpusCoverageChecks ref
   runGoldens update (failures ref)
+  Tests.regressionDocumentChecks ref
   floatRefAgreementChecks ref
 
   dimChecks ref

@@ -22,19 +22,44 @@ structure Case where
   warnings : Array DiagCode := #[]
   check : IO.Ref (List String) → Artifact → IO Unit
 
-/-- Compile local inputs through the same expansion used by document tests,
-then emit each backend once. Fonts come from the checked-in fixture set. -/
+/-- The fixture environment keeps text variants, mathematical coverage,
+and a real fixed-pitch code face independent of host font discovery. -/
+def fontSet : IO (Option Font.FontSet) := do
+  let some fs ← serifFacesSet | return none
+  let path := testFonts ++ "/SourceCodePro-Regular.otf"
+  unless ← System.FilePath.pathExists path do return none
+  let .ok mono := Font.parse (← IO.FS.readBinFile path) | return none
+  return some { fs with
+    fonts := fs.fonts.push mono
+    index := (fs.index.filter (fun e => e.1.1 != 2)).push
+      ((2, 400, false), fs.fonts.size) }
+
+private def htmlConfig (fonts : Font.FontSet) (geom : Layout.Geom) : HtmlDoc.Config := {
+  fonts := some fonts
+  labelMetric := Layout.labelMetric geom fonts
+  cancelMetric := fun measures ss st spec body value =>
+    Layout.cancelMetric geom fonts ss st spec body value (some measures)
+  mathEm := fun measures ss st => Layout.mathEm geom fonts ss st (some measures)
+  mathTextEm := fun measures ss st => Layout.mathTextEm geom fonts ss st (some measures) }
+
+/-- Expand local inputs once, then elaborate with measured labels and emit
+both backends using the driver's font callbacks. Fonts are bundled, so the
+test cannot silently substitute a host-dependent or unmeasured layout. -/
 def compile (fonts : Font.FontSet) (path : String) : IO Artifact := do
-  let (doc, ds) ← elabInputSrc path (← IO.FS.readFile path)
-  let geom := Layout.Geom.ofPage doc.page
+  let (tokens, lexDs) := Lex.lex path (← IO.FS.readFile path)
+  let (raws, parseDs) := Parse.parse path tokens
+  let (executed, inputDs, _) ← LeanTex.Cli.Input.expandInputs path raws
+  let earlier := lexDs ++ parseDs ++ inputDs
+  let prepared := Elab.prepareExecuted path executed
+  let geom := Layout.Geom.ofPage (Elab.runPrepared path prepared earlier).1.page
+  let (doc, ds, _) := Elab.runPrepared path prepared earlier (Layout.labelMetric geom fonts)
+  let (doc, alphabetDs) := Ir.resolveMathAlphas fonts.mathAlphabets "math face" doc
   let out := layoutOf fonts doc geom
-  let cfg : HtmlDoc.Config :=
-    { fonts := some fonts, labelMetric := Layout.labelMetric geom fonts }
-  let (head, body, htmlDs) := HtmlDoc.emitTree cfg doc
+  let (head, body, htmlDs) := HtmlDoc.emitTree (htmlConfig fonts geom) doc
   return {
     doc, fonts, geom, out, head, body
     pdf := driverPdf fonts geom doc out
-    diags := ds ++ out.diags ++ htmlDs }
+    diags := ds ++ alphabetDs ++ out.diags ++ htmlDs }
 
 /-- Check publication validity before the document-specific visible facts.
 Resource closure is checked over the actual tree, including embedded fonts. -/
@@ -53,9 +78,7 @@ def runCase (ref : IO.Ref (List String)) (fonts : Font.FontSet) (c : Case) : IO 
   | .error e => check ref s!"{c.path}: PDF reader: {e}" false
   | .ok pages =>
     check ref s!"{c.path}: emitted PDF page census" (pages.size == a.out.pages.size)
-  let cfg : HtmlDoc.Config :=
-    { fonts := some fonts, labelMetric := Layout.labelMetric a.geom fonts }
-  match HtmlResource.close (HtmlDoc.resources cfg) #[] HtmlDoc.deckScript
+  match HtmlResource.close (HtmlDoc.resources (htmlConfig fonts a.geom)) #[] HtmlDoc.deckScript
       (a.doc.info.language.getD "en") a.head a.body with
   | .error e => check ref s!"{c.path}: HTML is self-contained: {e}" false
   | .ok _ => pure ()
