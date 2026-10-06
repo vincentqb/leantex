@@ -150,4 +150,13 @@ theorem WritePlan.xref_locations_exact (p : WritePlan) (h : p.WithinBounds)
   · rename_i hk
     simp [show p.entries.size ≤ k by omega]
 
+/-- The complete emitted file's footer recovers the exact byte position
+where the writer put its xref object. This includes the actual backward
+scan and decimal parsing, before xref stream traversal. -/
+theorem WritePlan.startxref_exact (p : WritePlan) (h : p.WithinBounds) :
+    PdfRead.readStartxref p.bytes = .ok p.measure.body.size := by
+  unfold WritePlan.bytes WriteMeasurement.bytes
+  apply PdfRead.readStartxref_footer_exact
+  simpa only [p.measure_body_exact] using h.2.1
+
 end LeanTex.Core.Pdf

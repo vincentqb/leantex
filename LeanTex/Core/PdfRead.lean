@@ -1,6 +1,7 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.PdfObj
 import LeanTex.Core.PdfReadProof
+import LeanTex.Core.PdfFooter
 import LeanTex.Core.PdfXref
 import LeanTex.Core.Binary
 import LeanTex.Core.Flate
@@ -581,19 +582,7 @@ private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
 /-- Follow `startxref` and the `/Prev` chain over every cross-reference
 section, classic or stream (a hybrid file's `/XRefStm` too). Newest
 section first: an entry already seen is never overridden. -/
-def readXref (b : ByteArray) : Except String Xref := Id.run do
-  -- Find the last 'startxref' in the tail of the file (§7.5.5).
-  let lo := b.size - min b.size 2048
-  let mut sx : Option Nat := none
-  for k in [lo:b.size] do
-    let i := lo + (b.size - 1 - k)  -- scan backwards
-    if (keywordAt b i "startxref").isSome then
-      sx := some i
-      break
-  let some sxPos := sx
-    | return .error "malformed PDF: no startxref"
-  let some (off0, _) := parseUInt b (skipWs b (sxPos + 9))
-    | return .error "malformed PDF: unreadable startxref offset"
+private def readXrefFrom (b : ByteArray) (off0 : Nat) : Except String Xref := Id.run do
   let mut work : Array Nat := #[off0]
   let mut seen : Array Nat := #[]
   let mut x : Xref := { start := off0 }
@@ -619,6 +608,10 @@ def readXref (b : ByteArray) : Except String Xref := Id.run do
   if !work.isEmpty then
     return .error "malformed PDF: the cross-reference chain is longer than 64 sections"
   return .ok x
+
+/-- Read the footer, then traverse the sections it names. -/
+def readXref (b : ByteArray) : Except String Xref := do
+  readXrefFrom b (← readStartxref b)
 
 -- ## Fetching objects
 
