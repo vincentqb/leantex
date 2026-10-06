@@ -30,6 +30,27 @@ theorem Yields.stops {α : Type} {step : α → Id (ForInStep α)}
   | nil => simpa using g
   | cons hs _ ih => simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using Stops.yield hs (ih g)
 
+/-- An exhausted loop executes exactly its yielding trace. Unlike a
+safety invariant, the trace records that every iteration was consumed. -/
+theorem forIn_yields_exact {α β : Type} {step : α → Id (ForInStep α)}
+    {a b : α} {n : Nat} (h : Yields step a n b) :
+    ∀ xs : List β, xs.length = n →
+      (forIn xs a (fun _ => step) : Id α).run = b := by
+  induction h with
+  | nil =>
+    intro xs hn
+    have hx : xs = [] := List.length_eq_zero_iff.mp hn
+    subst xs
+    rfl
+  | cons hs _ ih =>
+    intro xs hn
+    cases xs with
+    | nil => simp at hn
+    | cons x xs =>
+      simp only [Id.run] at hs
+      simp only [List.forIn_cons, bind, Id.run, hs]
+      exact ih xs (by simpa using hn)
+
 /-- A sufficient iteration budget executes the entire trace, independently
 of unused iterations after its `break`. -/
 theorem forIn_stops_exact {α β : Type} {step : α → Id (ForInStep α)}

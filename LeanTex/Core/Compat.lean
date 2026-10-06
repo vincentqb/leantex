@@ -1455,27 +1455,6 @@ private theorem GroupPrefix.yields {raws : Array Raw} {i args stop}
     · simp [takeGroupsStep, h]
     · simpa using ih (out.push #[.ctrl name p])
 
-/-- Exhaustion, as opposed to early stopping: every iteration is consumed.
-This is the progress-indexed counterpart needed for an arity contract. -/
-private theorem yields_loop_exact {α β : Type} {step : α → Id (ForInStep α)}
-    {a b : α} {n : Nat} (h : Loop.Yields step a n b) :
-    ∀ xs : List β, xs.length = n →
-      (forIn xs a (fun _ => step) : Id α).run = b := by
-  induction h with
-  | nil =>
-    intro xs hn
-    have hx : xs = [] := List.length_eq_zero_iff.mp hn
-    subst xs
-    rfl
-  | cons hs _ ih =>
-    intro xs hn
-    cases xs with
-    | nil => simp at hn
-    | cons x xs =>
-      simp only [Id.run] at hs
-      simp only [List.forIn_cons, bind, Id.run, hs]
-      exact ih xs (by simpa using hn)
-
 /-- The actual loop consumes exactly the declared number of consecutive
 arguments, for arbitrary source contents, starting index and suffix. The
 premise describes source raws, not the result of the reader under proof. -/
@@ -1483,7 +1462,7 @@ theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
     (h : GroupPrefix raws i args stop) :
     takeGroups raws i args.length = (args.toArray, stop) := by
   rw [takeGroups_loop_exact, Std.Legacy.Range.forIn_eq_forIn_range']
-  simpa using yields_loop_exact (h.yields #[])
+  simpa using Loop.forIn_yields_exact (h.yields #[])
     (List.range' 0 args.length) (by simp)
 
 /-- When a non-argument follows a shorter prefix, breaking leaves the
