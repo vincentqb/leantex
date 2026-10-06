@@ -193,50 +193,11 @@ theorem frame_pages_footed
       p.frame.isSome = true → p.foot.isSome = true := by
   sorry
 
-/-- The document the engine itself elaborates from a minimal deck that
-installs the named theme: the real pipeline (lex → parse → compat → elab),
-so every statement over it ranges over what `\theme` actually installs —
-never a transcription. -/
-def themedDoc (name : String) : Ir.Doc :=
-  (Elab.run "owed.tex"
-    ("\\documentclass{beamer}\n\\theme{" ++ name ++ "}\n" ++
-     "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}\n")).1
-
-/-- Every (colour, ground) pair a page's glyph runs ship, the ground the
-one the resolving site declared onto the run (`Seg.run`'s `ground`,
-refactor 2: the palette epoch's `bg`, the frame-title bar, the standout
-inversion) — field equality where this stood as geometric recovery (a
-`groundUnder` scan of the fills below each baseline midpoint, deleted
-with the refactor). `none` is the undeclared page, read as the judge's
-effective surface — the convention `Contrast.effectivePair` applies. -/
-def runPairs (defaultBg : Ir.Color) (p : PageOut) :
-    Array (Ir.Color × Ir.Color) := Id.run do
-  let mut out : Array (Ir.Color × Ir.Color) := #[]
-  for l in p.lines do
-    for s in l.segs do
-      match s with
-      | .run _ color _ _ glyphs _ _ _ _ ground _ =>
-        unless glyphs.isEmpty do
-          out := out.push (color, ground.getD defaultBg)
-      | _ => pure ()
-  return out
-
--- owed: contrast_judged_complete
--- owner: LeanTex.Core.Contrast
--- source: the a11y-contract slice (the user's ask: weak accessibility in any document is proven, never suspected) — the completeness half of the W0315/W0345 judge, whose per-bundle contracts are already theorems; restated over the declared ground when refactor 2 (`ground` on `Seg.run`, written at the resolving sites) landed
--- blocker: The document plan omits computed covered colours and picture paint, so this statement is false (contrastContractChecks). Contrast.shippedPaints_exact and Contrast.layoutAudit_covers now enumerate every actual nonempty glyph run with its address, preserving repeated paint. A complete accessibility judge still needs effective local grounds and covered/decorative provenance; a missing recorded ground does not mean no fill is behind the run.
--- goldens: no
-/-- Staged completeness claim for the document contrast plan. Computed
-covered colours and picture paint falsify it. The placed-run audit now
-covers those runs, but effective local grounds and policy still need a
-complete contract. -/
-theorem contrast_judged_complete
-    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) :
-    ∀ p ∈ (Layout.run geom fs pats doc).pages,
-      ∀ pr ∈ runPairs (Contrast.effectivePair doc).bg p,
-        (Contrast.judgedPairs doc).contains pr = true := by
-  sorry
+-- The source-plan completeness claim was false for computed overlay ink
+-- and picture labels; contrastContractChecks retains those counterexamples.
+-- Contrast.contrast_judged_complete covers every actual placed run.
+-- Check.pdfA11ySummary_clear_contract connects the PDF assertion to actual
+-- size, weight and supported ground; unresolved grounds fail explicitly.
 
 -- Flate.inflate_deflate_id proves the complete public zlib round trip.
 -- Flate.inflate_deflate_bounded_id permits any sufficient output capacity;

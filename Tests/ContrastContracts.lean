@@ -127,6 +127,94 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "ordinary text has no arithmetic failure"
     ((Contrast.shippedFailures (Contrast.effectivePair ordinary).bg
       Contrast.aaText ordinaryOut).isEmpty)
+  let en : Ir.Doc := { ordinary with info := { language := some "en" } }
+  let pdfSummary := Check.pdfA11ySummary en #[] (Layout.Geom.ofPage en.page) fs
+  let pdfAssert := fun (out : Layout.Out) =>
+    Check.all { pages := out.pages.size, fontsEmbedded := true, a11y := pdfSummary out }
+      #[{ kind := .accessibilityAA }]
+  t "a PDF assertion accepts ordinary high-contrast text"
+    (pdfAssert ordinaryOut).isEmpty
+  t "a filled picture cannot borrow the document plan's clean contrast result"
+    (!(pdfAssert pictureOut).isEmpty)
+  t "covered runs keep an explicit unverified result without an exemption witness"
+    (!(pdfAssert pendingOut).isEmpty)
+  let lowInk : Ir.Color := { r := 136, g := 136, b := 136 }
+  let small : Ir.Doc := { body := #[.para #[.styled (.fontSize
+      (.lit { width := { sp := Dim.pt 12 } }) (.lit { width := { sp := Dim.pt 14 } }))
+      #[.colored lowInk none #[.text "Small"]]]] }
+  t "a low-contrast shipped run cannot pass using absent diagnostic evidence"
+    (!(pdfAssert (render small)).isEmpty)
+  let tinyFill : Layout.Fill :=
+    { x := 0, y := 0, w := Dim.pt 1, h := Dim.pt 1, color := Ir.Color.black }
+  let partialGround := { ordinaryOut with
+    pages := ordinaryOut.pages.map fun page => { page with fills := page.fills.push tinyFill } }
+  t "a nonuniform page ground is explicitly unverified"
+    (!(pdfAssert partialGround).isEmpty)
+  let boldData ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Bold.ttf"
+  let .ok boldFont := Font.parse boldData |
+    throw (IO.userError "contrast contract bold fixture failed to parse")
+  let geom := Layout.Geom.ofPage ordinary.page
+  let atSize := fun size (face : Font.Font) =>
+    Layout.run geom (oneFaceOf face) none
+      { ordinary with body := #[.para #[.styled
+        (.fontSize (.lit { width := { sp := size } })
+          (.lit { width := { sp := size * 6 / 5 } }))
+        #[.colored lowInk none #[.text "Size"]]]] }
+  for (name, size, face, expected) in #[
+      ("regular below large", Dim.pt 17, font, false),
+      ("regular large", Dim.pt 18, font, true),
+      ("bold below large", Dim.pt 13, boldFont, false),
+      ("bold large", Dim.pt 14, boldFont, true)] do
+    let out := atSize size face
+    let judgments := Contrast.shippedJudgments geom (oneFaceOf face) out
+    let body := judgments.filter fun judgment =>
+      (do
+        let page ← out.pages[judgment.paint.page]?
+        let line ← page.lines[judgment.paint.line]?
+        pure (!line.furniture)).getD false
+    let furniture := judgments.filter fun judgment =>
+      (do
+        let page ← out.pages[judgment.paint.page]?
+        let line ← page.lines[judgment.paint.line]?
+        pure line.furniture).getD false
+    t s!"{name}: threshold reads the placed size and parsed font weight"
+      (!body.isEmpty && body.all fun judgment =>
+        match judgment.verdict with
+        | .measured _ actualSize actualWeight pair =>
+          actualSize == size && actualWeight == face.weight && pair.passes == expected
+        | .unverified _ => false)
+    t s!"{name}: generated furniture retains its own measured type size"
+      (!furniture.isEmpty && furniture.all fun judgment =>
+        match judgment.verdict with
+        | .measured _ actualSize actualWeight pair =>
+          actualSize == Dim.pt 10 && actualWeight == face.weight && pair.passes
+        | .unverified _ => false)
+  t "missing font metrics cannot certify a placed run"
+    ((Contrast.shippedJudgments geom { fonts := #[] } ordinaryOut).all fun judgment =>
+      judgment.verdict == .unverified .metrics)
+  let withoutPositiveSize := { ordinaryOut with
+    pages := ordinaryOut.pages.map fun page =>
+      { page with
+        lines := page.lines.map fun line =>
+          { line with
+            size := 0
+            segs := line.segs.map fun
+              | .run f c link w glyphs _ leading decoration raise ground attr =>
+                .run f c link w glyphs 0 leading decoration raise ground attr
+              | seg => seg } } }
+  t "a nonpositive placed size is unverified"
+    ((Contrast.shippedJudgments geom fs withoutPositiveSize).all fun judgment =>
+      judgment.verdict == .unverified .nonpositiveSize)
+  let mediumFill : Layout.Fill :=
+    { x := -geom.bleed, y := -geom.bleed,
+      w := geom.pageW + 2 * geom.bleed, h := geom.pageH + 2 * geom.bleed,
+      color := Ir.Color.black }
+  for page in ordinaryOut.pages do
+    t "a complete later ground owns the background"
+      (Contrast.uniformTextGround? geom { page with fills := #[mediumFill] } ==
+        some Ir.Color.black)
+    t "absence of page paint uses the PDF paper ground"
+      (Contrast.uniformTextGround? geom { page with fills := #[] } == some Ir.Color.white)
 
 end ContrastContracts
 

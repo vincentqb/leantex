@@ -60,4 +60,12 @@ def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information: 3:1. -/
 def aaNonText : Nat := 3000
 
+/-- WCAG 2.2's large-scale text boundary, in the same point units as layout.
+The document planner and placed-glyph judge share this decision. -/
+def largeText (size : Dim.Sp) (bold : Bool) : Bool :=
+  size ≥ Dim.pt 18 || (bold && size ≥ Dim.pt 14)
+
+def textRequired (size : Dim.Sp) (bold : Bool) : Nat :=
+  if largeText size bold then aaLargeText else aaText
+
 end LeanTex.Core.Contrast

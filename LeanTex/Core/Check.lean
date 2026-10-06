@@ -1,6 +1,7 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Ir
 import LeanTex.Core.Layout
+import LeanTex.Core.ContrastPaint
 
 namespace LeanTex.Core.Check
 
@@ -23,11 +24,9 @@ structure Shipped where
   areaActual : String := ""
   /-- The smallest x-height set anywhere, from each run's font at its size. -/
   minXHeight : Option Sp := none
-  /-- The document's failing WCAG 2.2 AA rows, one line each — filled by
-  the driver from `a11ySummary` over the document and its elaborated
-  diagnostics, because the accessibility judges (contrast, alt, outline)
-  speak before layout runs and their facts are not recoverable from the
-  page tree alone. Empty when nothing failed. -/
+  /-- Failing or unverified accessibility rows. Source diagnostics retain
+  language, alternatives and outline facts; PDF assertions also inspect
+  the actual placed text through `pdfA11ySummary`. -/
   a11y : Array String := #[]
   /-- The rules of the declared profile set's contract the built PDF's
   census breaks, rendered one per entry — filled by the driver from the
@@ -156,6 +155,34 @@ def a11ySummary (doc : Doc) (diags : Array Diag) : Array String := Id.run do
     out := out.push ("no declared language (WCAG 2.2 SC 3.1.1): declare " ++
       "\\pdfmeta{ language = ... } or babel's language option")
   return out
+
+/-- Accessibility observations for a PDF, including every placed text
+run. A background or exemption that has not been established cannot turn
+an assertion green merely because no earlier warning fired. -/
+def pdfA11ySummary (doc : Doc) (diags : Array Diag) (geom : Geom)
+    (fs : Font.FontSet) (out : Out) : Array String :=
+  a11ySummary doc diags ++ (Contrast.shippedContrastIssues geom fs out).map fun j =>
+    let site := s!"page {j.paint.page + 1}, line {j.paint.line + 1}, run {j.paint.segment + 1}"
+    let issue := match j.verdict with
+      | .unverified .metrics => "text contrast unverified: font metrics are missing"
+      | .unverified .nonpositiveSize => "text contrast unverified: font size is not positive"
+      | .unverified .ground => "text contrast unverified: a uniform background has not been established"
+      | .measured _ _ _ pair =>
+        s!"text contrast {pair.ratio}/1000 is below {pair.required}/1000; no exemption was established"
+    s!"{site}: {issue}"
+
+/-- The summary consumed by the PDF assertion is clear only when its
+source observations are clear and every actual text occurrence satisfies
+the placed-paint judge. An unresolved occurrence contributes a message
+just as a measured failure does. -/
+theorem pdfA11ySummary_clear_contract (doc : Doc) (diags : Array Diag)
+    (geom : Geom) (fs : Font.FontSet) (out : Out) :
+    pdfA11ySummary doc diags geom fs out = #[] ↔
+      a11ySummary doc diags = #[] ∧
+      ∀ paint, Contrast.PaintOccurs out paint →
+        Contrast.TextVerified (Contrast.shippedGrounds geom out) fs out paint := by
+  simp only [pdfA11ySummary, Array.append_eq_empty_iff, Array.map_eq_empty_iff,
+    Contrast.shippedContrast_clear_contract]
 
 /-- Check one assertion, returning a diagnostic when it does not hold. -/
 def one (shipped : Shipped) (a : Assertion) : Option Diag :=

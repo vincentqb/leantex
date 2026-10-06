@@ -594,7 +594,7 @@ private def UseCx.atEpoch (cx : UseCx) (epoch : Nat) : UseCx :=
   else cx
 
 private def UseCx.large (cx : UseCx) : Bool :=
-  cx.size ≥ Dim.pt 18 || (cx.bold && cx.size ≥ Dim.pt 14)
+  largeText cx.size cx.bold
 
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }

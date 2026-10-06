@@ -936,12 +936,13 @@ in the HTML" (← since t)
           { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
         else Check.Shipped.ofOut geom fs out (fontsEmbedded := fontsEmbedded)
       let shipped := { shipped with pdfViolations }
-      -- The AA rows read the document and its judged diagnostics — the
-      -- picture face speaks after fulfilment, so the driver reads the
-      -- pre-\allow stream through that batch: accepting a warning quiets
-      -- the report, never the fact.
+      -- Accepting a warning quiets the report, never the fact. A PDF also
+      -- judges placed paint; a source-only plan cannot see every run.
       let shipped := if doc.asserts.any (·.kind == .accessibilityAA) then
-          { shipped with a11y := Check.a11ySummary doc (diags ++ imgDiags) }
+          let a11y := if pdfBuilt.isSome then
+              Check.pdfA11ySummary doc (diags ++ imgDiags) geom fs out
+            else Check.a11ySummary doc (diags ++ imgDiags)
+          { shipped with a11y }
         else shipped
       let failures := Check.all shipped doc.asserts
       -- An assertion whose subject is bytes is judged on the bytes this run

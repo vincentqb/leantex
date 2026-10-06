@@ -7,11 +7,11 @@ cannot enumerate all such paint: overlays compute colours, and pictures
 and furniture can introduce ink after that walk.
 
 The arithmetic contract is over `Ir.Color`. Its placed-page projection
-reads actual `Layout.Out` data, preserves every occurrence and its address,
-and makes no inference about covered/decorative status. A recorded ground
-is not a proof about overlapping fills or paths. The caller supplies both
-the fallback ground and the threshold; failures here are observations,
-not a request to emit a diagnostic for intentionally covered text.
+reads actual `Layout.Out` data and preserves every occurrence and address.
+The raw audit retains observations under caller-selected thresholds.
+The PDF assertion instead reads actual font metrics and a conservative
+background decision; unsupported evidence remains explicitly unverified.
+A recorded run ground or a colour resembling covered text is no exemption.
 -/
 namespace LeanTex.Core.Contrast
 
@@ -181,5 +181,167 @@ theorem shippedFailures_clear_contract (defaultGround : Color) (required : Nat)
   · intro h a ha
     rcases (shippedFailures_exact ..).mp ha with ⟨paint, hp, _, hlt⟩
     exact Nat.not_lt_of_ge (h paint hp) hlt
+
+/-- Paint outside the text census may overlap a glyph. Until a local
+occlusion proof is available, such a page cannot borrow a recorded run
+ground as evidence of its visible background. -/
+private def textOnly : Seg → Bool
+  | .run _ _ _ _ _ _ _ decorations _ _ _ =>
+    !decorations.underline && decorations.lineThrough.isNone
+  | .gap .. => true
+  | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => false
+
+/-- A sufficient, deliberately conservative background decision over the
+actual PDF paint list. Every rectangle covers the medium, no path paints,
+and no later non-text segment can obscure the text. The last rectangle
+wins; an unpainted PDF page uses white paper. This certifies the uniform
+substrate only, not absence of overlapping text or full WCAG conformance.
+PDF painting order is `fills`, `paths`, text, then inline graphics. -/
+def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
+  if page.paths.any (fun path => path.fill.isSome || path.stroke.isSome) ||
+      !(page.lines.all fun line => line.segs.all textOnly) ||
+      !(page.fills.all fun fill =>
+        fill.x ≤ -geom.bleed && fill.y ≤ -geom.bleed &&
+        geom.pageW + geom.bleed ≤ fill.x + fill.w &&
+        geom.pageH + geom.bleed ≤ fill.y + fill.h) then none
+  else some ((page.fills.back?).map (·.color) |>.getD Color.white)
+
+/-- Cache each page's background decision once; assessing many runs must
+not rescan every page's paint for each glyph run. -/
+def shippedGrounds (geom : Geom) (out : Out) : Array (Option Color) :=
+  out.pages.map (uniformTextGround? geom)
+
+theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page : PageOut}
+    (h : out.pages[p]? = some page) :
+    (shippedGrounds geom out)[p]? = some (uniformTextGround? geom page) := by
+  simp [shippedGrounds, Array.getElem?_map, h]
+
+/-- Actual point size and OpenType weight, including the PDF writer's
+fallback to the body face. An absent font is unresolved, never bold by
+assumption. No source colour spelling is used as an exemption. -/
+def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
+    Option (Dim.Sp × Nat) := do
+  let page ← out.pages[paint.page]?
+  let line ← page.lines[paint.line]?
+  let .run idx _ _ _ _ size _ _ _ _ _ ← line.segs[paint.segment]? | none
+  let font ← fs.fonts[idx]?.orElse fun _ => fs.fonts[0]?
+  return (if size == 0 then line.size else size, font.weight)
+
+inductive ContrastUnknown where
+  | metrics
+  | nonpositiveSize
+  | ground
+  deriving Repr, BEq
+
+/-- An arithmetic verdict or the precise evidence the judge lacks.
+Below-threshold paint is retained even when it might be deliberately
+covered: declaring an exemption requires provenance, not colour equality. -/
+inductive TextVerdict where
+  | measured (ground : Color) (size : Dim.Sp) (weight : Nat) (pair : PairAssessment)
+  | unverified (reason : ContrastUnknown)
+  deriving Repr, BEq
+
+def TextVerdict.passes : TextVerdict → Bool
+  | .measured _ _ _ pair => pair.passes
+  | .unverified _ => false
+
+structure JudgedPaint where
+  paint : RunPaint
+  verdict : TextVerdict
+  deriving Repr, BEq
+
+def judgePaint (grounds : Array (Option Color)) (fs : Font.FontSet)
+    (out : Out) (paint : RunPaint) : JudgedPaint :=
+  { paint, verdict :=
+    match runMetrics? fs out paint with
+    | none => .unverified .metrics
+    | some (size, weight) =>
+      if size ≤ 0 then .unverified .nonpositiveSize
+      else match grounds[paint.page]?.join with
+        | none => .unverified .ground
+        | some ground => .measured ground size weight
+          (assessPair (textRequired size (weight ≥ 700)) paint.ink ground) }
+
+/-- Independent acceptance condition: actual font metrics, a positive
+size, a supported background and the implemented integer contrast bound.
+There is no premise assuming that an earlier diagnostic judge was complete. -/
+def TextVerified (grounds : Array (Option Color)) (fs : Font.FontSet)
+    (out : Out) (paint : RunPaint) : Prop :=
+  ∃ size weight ground,
+    runMetrics? fs out paint = some (size, weight) ∧
+    0 < size ∧ grounds[paint.page]?.join = some ground ∧
+    textRequired size (weight ≥ 700) ≤ contrastMilli paint.ink ground
+
+theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.FontSet)
+    (out : Out) (paint : RunPaint) :
+    (judgePaint grounds fs out paint).verdict.passes = true ↔
+      TextVerified grounds fs out paint := by
+  cases hm : runMetrics? fs out paint with
+  | none => simp [judgePaint, hm, TextVerdict.passes, TextVerified]
+  | some metrics =>
+    rcases metrics with ⟨size, weight⟩
+    by_cases hs : size ≤ 0
+    · simp [judgePaint, hm, hs, TextVerdict.passes, TextVerified, Int.not_lt.mpr hs]
+    · cases hg : grounds[paint.page]?.join with
+      | none => simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified]
+      | some ground =>
+        simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified,
+          and_assoc, Int.lt_of_not_ge hs, assessPair, PairAssessment.passes]
+
+/-- One result for every actual nonempty run, with background scans shared.
+Unknown grounds and missing metrics remain in the same census as measured
+ink. This runs only when a PDF accessibility assertion requests it. -/
+def shippedJudgments (geom : Geom) (fs : Font.FontSet) (out : Out) :
+    Array JudgedPaint :=
+  let grounds := shippedGrounds geom out
+  (shippedPaints out).map (judgePaint grounds fs out)
+
+/-- Completeness over the placed artifact, replacing the false claim that
+the source colour plan enumerates all paint. Every occurrence has its own
+verdict, including unresolved cases; repeated colours do not merge sites. -/
+theorem contrast_judged_complete (geom : Geom) (fs : Font.FontSet)
+    (out : Out) (paint : RunPaint) (h : PaintOccurs out paint) :
+    judgePaint (shippedGrounds geom out) fs out paint ∈ shippedJudgments geom fs out := by
+  exact Array.mem_map.mpr ⟨paint, (shippedPaints_exact ..).mpr h, rfl⟩
+
+def shippedContrastIssues (geom : Geom) (fs : Font.FontSet) (out : Out) :
+    Array JudgedPaint :=
+  (shippedJudgments geom fs out).filter fun j => !j.verdict.passes
+
+theorem shippedContrastIssues_exact (geom : Geom) (fs : Font.FontSet)
+    (out : Out) (j : JudgedPaint) :
+    j ∈ shippedContrastIssues geom fs out ↔
+      ∃ paint, PaintOccurs out paint ∧
+        judgePaint (shippedGrounds geom out) fs out paint = j ∧
+        ¬ TextVerified (shippedGrounds geom out) fs out paint := by
+  simp only [shippedContrastIssues, Array.mem_filter, shippedJudgments,
+    Array.mem_map, shippedPaints_exact]
+  constructor
+  · rintro ⟨⟨paint, hp, rfl⟩, hj⟩
+    exact ⟨paint, hp, rfl, fun hv =>
+      by simp [(judgePaint_exact ..).mpr hv] at hj⟩
+  · rintro ⟨paint, hp, rfl, hv⟩
+    refine ⟨⟨paint, hp, rfl⟩, ?_⟩
+    rw [Bool.not_eq_true']
+    exact Bool.of_not_eq_true (fun h => hv ((judgePaint_exact ..).mp h))
+
+/-- An empty issue list means every placed glyph run has verified metrics,
+a supported background and sufficient integer contrast. An unresolved
+case cannot silently pass. This is the implemented PDF text-contrast
+contract, not a certification of all WCAG criteria or browser paint. -/
+theorem shippedContrast_clear_contract (geom : Geom) (fs : Font.FontSet)
+    (out : Out) :
+    shippedContrastIssues geom fs out = #[] ↔
+      ∀ paint, PaintOccurs out paint →
+        TextVerified (shippedGrounds geom out) fs out paint := by
+  rw [Array.eq_empty_iff_forall_not_mem]
+  constructor
+  · intro h paint hp
+    apply Classical.byContradiction
+    intro hv
+    exact h _ ((shippedContrastIssues_exact ..).mpr ⟨paint, hp, rfl, hv⟩)
+  · intro h j hj
+    rcases (shippedContrastIssues_exact ..).mp hj with ⟨paint, hp, _, hv⟩
+    exact hv (h paint hp)
 
 end LeanTex.Core.Contrast
