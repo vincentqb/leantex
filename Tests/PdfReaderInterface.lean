@@ -4,11 +4,14 @@ import LeanTex.Core.PdfLex
 import LeanTex.Core.PdfLexBoundary
 import LeanTex.Core.PdfNameProof
 import LeanTex.Core.PdfStringProof
+import LeanTex.Core.PdfStreamSpelling
 
 /-! Ordinary readers share the byte rules and token scanners. Loop state
 and individual scanner steps belong to the implementation and its proofs. -/
 
 open LeanTex.Core.PdfLex
+open LeanTex.Core.PdfRead (Obj parseVal parseVal_render_id parseVal_render_span_exact
+  parseVal_spelling_span_exact)
 
 namespace Tests.PdfReaderInterface
 
@@ -49,6 +52,41 @@ example {b : ByteArray} {i : Nat}
     (hi : i+1 < b.size) : skipWs b i = i+2 :=
   skipWs_two_exact h h' hw hc hi
 
+example : ByteArray → Nat → Except String (Obj × Nat) := parseVal
+example : Obj → ByteArray := Obj.render
+example : ByteArray → Obj → ByteArray := Obj.renderInto
+example : ByteArray → List Obj → ByteArray := Obj.renderList
+example : ByteArray → List (String × Obj) → ByteArray := Obj.renderEntries
+example : Array (String × Obj) → ByteArray := Obj.paddedDict
+
+example (n : Int) : (Obj.int n).int? = some n := rfl
+example : (Obj.null).get? "absent" = none := rfl
+
+example (pre : ByteArray) (o : Obj) : o.renderInto pre = pre ++ o.render :=
+  Obj.renderInto_exact pre o
+
+example (o : Obj) (h : o.Representable) :
+    parseVal o.render 0 = .ok (o, o.render.size) :=
+  parseVal_render_id o h
+
+example {b : ByteArray} {i : Nat} (o : Obj) (h : o.Representable)
+    (hs : Span b i (octets o.render))
+    (he : LeanTex.Core.PdfRead.ObjReader.Stop b (i+o.render.size)) :
+    parseVal b i = .ok (o, i+o.render.size) :=
+  parseVal_render_span_exact o h hs he (h.start hs he.boundary he.marker).skip
+
+example {b raw : ByteArray} {i p : Nat} (o : Obj) (h : o.Spelling raw)
+    (hs : Span b i (octets raw))
+    (he : LeanTex.Core.PdfRead.ObjReader.Stop b (i+raw.size))
+    (hw : skipWs b p = i) : parseVal b p = .ok (o, i+raw.size) :=
+  parseVal_spelling_span_exact o h hs he hw
+
+private def sameResult (actual expected : Except String (Obj × Nat)) : Bool :=
+  match actual, expected with
+  | .ok a, .ok e => a == e
+  | .error a, .error e => a == e
+  | _, _ => false
+
 public def checks : Array (String × Bool) := #[
   ("comment and whitespace boundary", skipWs " % comment\n42".toUTF8 0 == 11),
   ("unsigned token boundary", parseUInt "42 rest".toUTF8 0 == some (42, 2)),
@@ -62,7 +100,24 @@ public def checks : Array (String × Bool) := #[
   ("raw real spelling", scanNumber "-.25 x".toUTF8 0 == ("-.25", 4)),
   ("reference before delimiter", tryRef " 7 R/Name".toUTF8 0 == some (7, 4)),
   ("reference marker prefix refused", tryRef " 7 Reader".toUTF8 0 == none),
-  ("name escape spelling", escapeName "A B" == "A#20B")]
+  ("name escape spelling", escapeName "A B" == "A#20B"),
+  ("object null boundary", sameResult (parseVal "null/Next".toUTF8 0) (.ok (.null, 4))),
+  ("object raw real spelling", sameResult (parseVal "1.x".toUTF8 0) (.ok (.real "1.", 2))),
+  ("object reference boundary", sameResult (parseVal "17 2 R/Next".toUTF8 0) (.ok (.ref 17 2, 6))),
+  ("object duplicate dictionary keys", Id.run do
+    let b := "<< /A [1 (x) /N] /A 2 >>".toUTF8
+    return sameResult (parseVal b 0) (.ok (.dict #[
+      ("A", .arr #[.int 1, .str "(x)".toUTF8, .name "N"]), ("A", .int 2)], b.size))),
+  ("object missing dictionary value", sameResult (parseVal "<< /A >>".toUTF8 0)
+    (.error "malformed PDF: dictionary key /A has no value")),
+  ("object non-name dictionary key", sameResult (parseVal "<< 1 2 >>".toUTF8 0)
+    (.error "malformed PDF: a dictionary key is not a name")),
+  ("object unmatched array close", sameResult (parseVal "]".toUTF8 0)
+    (.error "malformed PDF: unbalanced ']'")),
+  ("object truncated string", sameResult (parseVal "(x".toUTF8 0)
+    (.error "truncated PDF: a string never closes")),
+  ("object truncated hex string", sameResult (parseVal "<aa".toUTF8 0)
+    (.error "truncated PDF: a hex string never closes"))]
 
 example : True := by
   fail_if_success have := UIntState
@@ -80,6 +135,18 @@ example : True := by
   fail_if_success have := uintStep_stops
   fail_if_success have := uint_numeric_stops
   fail_if_success have := literalBody_yields
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.Frame
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.Token
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.State
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.readToken
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.accept
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.step
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.Runs
+  fail_if_success have := LeanTex.Core.PdfRead.ObjReader.Reads
+  fail_if_success have := Obj.Representable.reads
+  fail_if_success have := Obj.arrayBody
+  fail_if_success have := Obj.dictBody
+  fail_if_success have := Obj.paddedDict_octets_exact
   trivial
 
 end Tests.PdfReaderInterface

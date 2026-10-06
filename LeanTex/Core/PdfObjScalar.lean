@@ -1,4 +1,12 @@
-import LeanTex.Core.PdfObjSpelling
+module
+
+public import LeanTex.Core.PdfObjSpelling
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfObjSpelling
+import all LeanTex.Core.PdfObjLex
+import all LeanTex.Core.PdfObjMachine
+import all LeanTex.Core.PdfLex
+import LeanTex.Core.PdfNumber
 
 namespace LeanTex.Core.PdfRead.ObjReader
 
@@ -28,7 +36,7 @@ theorem Reads.atom {o : Obj} (hn : 0 < o.render.size)
   refine ⟨1,hn,.last ?_⟩
   simp only [step,hw,ht h he]
 
-theorem numeric_first {b : ByteArray} {i : Nat} {s : String}
+public theorem numeric_first {b : ByteArray} {i : Nat} {s : String}
     (h : Span b i (octets s.toUTF8)) (hn : s.toList ≠ [])
     (hc : ∀ c ∈ s.toList, numByte c.toNat = true) : numByte (at? b i) = true := by
   rw [numeric_octets s hc] at h
@@ -43,8 +51,11 @@ theorem numeric_size_pos (s : String) (hn : s.toList ≠ [])
   exact List.length_pos_iff.mpr hn
 
 theorem Reads.null : Reads .null := by
-  apply Reads.atom (by decide)
+  have hr : Obj.null.render = "null".toByteArray := by
+    simp only [Obj.render,Obj.renderInto,ByteArray.empty_append,String.toUTF8_eq_toByteArray]
+  apply Reads.atom (by rw [hr]; decide)
   · intro b i h _ _
+    rw [hr] at h
     change Span b i [110,117,108,108] at h
     apply Start.non_numeric <;> rw [h.head]
     · rfl
@@ -52,13 +63,18 @@ theorem Reads.null : Reads .null := by
     · decide
     · omega
   · intro b i h he
+    rw [hr] at h he ⊢
     exact readToken_null h he.boundary
 
 theorem Reads.bool (v : Bool) : Reads (.bool v) := by
   cases v with
   | false =>
-    apply Reads.atom (by decide)
+    have hr : (Obj.bool false).render = "false".toByteArray := by
+      simp only [Obj.render,Obj.renderInto,
+        ByteArray.empty_append,String.toUTF8_eq_toByteArray]
+    apply Reads.atom (by rw [hr]; decide)
     · intro b i h _ _
+      rw [hr] at h
       change Span b i [102,97,108,115,101] at h
       apply Start.non_numeric <;> rw [h.head]
       · rfl
@@ -66,10 +82,15 @@ theorem Reads.bool (v : Bool) : Reads (.bool v) := by
       · decide
       · omega
     · intro b i h he
+      rw [hr] at h he ⊢
       exact readToken_false h he.boundary
   | true =>
-    apply Reads.atom (by decide)
+    have hr : (Obj.bool true).render = "true".toByteArray := by
+      simp only [Obj.render,Obj.renderInto,
+        ByteArray.empty_append,String.toUTF8_eq_toByteArray]
+    apply Reads.atom (by rw [hr]; decide)
     · intro b i h _ _
+      rw [hr] at h
       change Span b i [116,114,117,101] at h
       apply Start.non_numeric <;> rw [h.head]
       · rfl
@@ -77,6 +98,7 @@ theorem Reads.bool (v : Bool) : Reads (.bool v) := by
       · decide
       · omega
     · intro b i h he
+      rw [hr] at h he ⊢
       exact readToken_true h he.boundary
 
 theorem Reads.int (n : Int) : Reads (.int n) := by

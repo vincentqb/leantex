@@ -38,7 +38,7 @@ private theorem payload_start (xs : List (Nat × Obj))
     have hc := ih hx' ht he'
     have stop : Stop b (i+e.2.render.size) :=
       Stop.whitespace (by rw [hn.head]; rfl) (by have := hn.bound; simp at this; omega) hc
-    exact (hx e (List.mem_cons_self)).reads.start hv stop.boundary stop.marker
+    exact (hx e (List.mem_cons_self)).start hv stop.boundary stop.marker
 
 
 private theorem payload_append (before after : List (Nat × Obj)) :
@@ -100,8 +100,7 @@ theorem objectStream_parse_entry_exact (before after : List (Nat × Obj))
     Stop.whitespace (by rw [hnSpan.head]; rfl)
       (by have := hnSpan.bound; simp at this; omega) hstart
   have result := parseVal_render_span_exact v hv hvSpan hstop
-    (hv.reads.start hvSpan hstop.boundary hstop.marker).skip
+    (hv.start hvSpan hstop.boundary hstop.marker).skip
   simpa only [pre, ByteArray.size_append] using result
 
 end LeanTex.Core.Pdf
-

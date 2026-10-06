@@ -1,4 +1,12 @@
-import LeanTex.Core.PdfObjContainers
+module
+
+public import LeanTex.Core.PdfObjSpelling
+public import LeanTex.Core.PdfObjScalar
+public import LeanTex.Core.PdfObjContainers
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfObjMachine
+import all LeanTex.Core.PdfObjScalar
+import all LeanTex.Core.PdfObjContainers
 
 namespace LeanTex.Core.PdfRead
 
@@ -19,10 +27,19 @@ theorem Obj.Representable.reads {o : Obj} (h : o.Representable) : Reads o := by
   | dict hk _ ih => exact Reads.dict hk ih
   | ref num gen => exact Reads.ref num gen
 
+/-- A syntactically representable object's rendered bytes start a token
+in a separated source span. Consumers need only this lexical fact, not
+the parser's private execution trace. -/
+public theorem Obj.Representable.start {o : Obj} (h : o.Representable)
+    {b : ByteArray} {i : Nat} (hs : Span b i (octets o.render))
+    (he : EndByte (at? b (i+o.render.size)))
+    (hr : at? b (skipWs b (i+o.render.size)) ≠ 82) : Start b i :=
+  h.reads.start hs he hr
+
 /-- Recover a rendered object in its enclosing file. The premises describe
 source bytes, lexical separation, and the starting whitespace; none
 assumes a parser result. The execution bound comes from the source span. -/
-theorem parseVal_render_span_exact {b : ByteArray} {i p : Nat}
+public theorem parseVal_render_span_exact {b : ByteArray} {i p : Nat}
     (o : Obj) (h : o.Representable) (hs : Span b i (octets o.render))
     (he : Stop b (i+o.render.size)) (hw : skipWs b p = i) :
     parseVal b p = .ok (o,i+o.render.size) := by
@@ -39,7 +56,7 @@ strings must carry exactly one complete string spelling; names and keys
 are nonempty byte strings; real spellings are numeric tokens containing a
 decimal point. No depth, object-count or integer-width bound is needed:
 the proof bounds execution by the finite rendered byte array. -/
-theorem parseVal_render_id (o : Obj) (h : o.Representable) :
+public theorem parseVal_render_id (o : Obj) (h : o.Representable) :
     parseVal o.render 0 = .ok (o,o.render.size) := by
   have hs : Span o.render 0 (octets o.render) := by
     simpa only [octets,ByteArray.empty_append,ByteArray.append_empty,ByteArray.size_empty]
@@ -51,7 +68,7 @@ theorem parseVal_render_id (o : Obj) (h : o.Representable) :
 
 /-- A nonnumeric token following the writer's line feed blocks integer
 reference lookahead, independently of every later byte. -/
-theorem parseVal_render_delimited_exact (pre post : ByteArray)
+public theorem parseVal_render_delimited_exact (pre post : ByteArray)
     (o : Obj) (h : o.Representable) (c : UInt8)
     (hw : isWs c.toNat = false) (hc : c.toNat ≠ 37) (hr : c.toNat ≠ 82)
     (hd : ¬ (48 ≤ c.toNat ∧ c.toNat ≤ 57)) :

@@ -1,4 +1,9 @@
-import LeanTex.Core.PdfObjScalar
+module
+
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfObjSpelling
+import all LeanTex.Core.PdfObjScalar
+import all LeanTex.Core.PdfObjMachine
 
 namespace LeanTex.Core.PdfRead.ObjReader
 
@@ -29,7 +34,7 @@ theorem step_dict_close {b : ByteArray} {p i : Nat} (stack : Array Frame)
   have ht : readToken b i = .ok (.dictClose,i+2) := by simp [readToken,hc,hc']; rfl
   simp only [step,hw,ht,Array.back?_push,Array.pop_push]
 
-theorem push_append_toArray {α : Type} (acc : Array α) (x : α) (xs : List α) :
+public theorem push_append_toArray {α : Type} (acc : Array α) (x : α) (xs : List α) :
     acc.push x ++ xs.toArray = acc ++ (x::xs).toArray := by
   rw [List.toArray_cons,Array.append_singleton_assoc]
 

@@ -1,4 +1,12 @@
-import LeanTex.Core.PdfReadProof
+module
+
+public import LeanTex.Core.PdfReadProof
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfObjSpelling
+import all LeanTex.Core.PdfObjMachine
+import all LeanTex.Core.PdfObjScalar
+import all LeanTex.Core.PdfObjContainers
+import all LeanTex.Core.PdfReadProof
 
 namespace LeanTex.Core.PdfRead
 
@@ -6,14 +14,14 @@ open PdfLex ObjReader
 
 /-- The native stream writer leaves a second space when its dictionary
 prefix is empty. This spelling preserves those emitted bytes. -/
-def Obj.paddedDict (es : Array (String × Obj)) : ByteArray :=
+public def Obj.paddedDict (es : Array (String × Obj)) : ByteArray :=
   Obj.renderEntries "<<  ".toUTF8 es.toList ++ ">>".toUTF8
 
 theorem Obj.paddedDict_octets_exact (es : Array (String × Obj)) :
     octets (Obj.paddedDict es) = 60 :: 60 :: 32 :: 32 :: Obj.dictBody es.toList := by
   unfold Obj.paddedDict
   rw [Obj.renderEntries_exact]
-  simp only [octets_append, Obj.dictBody]
+  simp only [octets_append, Obj.dictBody, String.toUTF8_eq_toByteArray]
   rfl
 
 private theorem paddedDict_start {es : Array (String × Obj)} {b : ByteArray} {i : Nat}
@@ -61,12 +69,12 @@ private theorem parseVal_paddedDict_span_exact {b : ByteArray} {i p : Nat}
 
 /-- Concrete encoder spellings accepted by the stream composition proof.
 The constructors describe source syntax, never a parser result. -/
-inductive Obj.Spelling : Obj → ByteArray → Prop where
+public inductive Obj.Spelling : Obj → ByteArray → Prop where
   | render {o : Obj} (h : o.Representable) : Spelling o o.render
   | paddedDict {es : Array (String × Obj)} (h : (Obj.dict es).Representable) :
       Spelling (.dict es) (Obj.paddedDict es)
 
-theorem Obj.Spelling.start {o : Obj} {raw b : ByteArray} {i : Nat}
+public theorem Obj.Spelling.start {o : Obj} {raw b : ByteArray} {i : Nat}
     (h : o.Spelling raw) (hs : Span b i (octets raw))
     (he : Stop b (i+raw.size)) : Start b i := by
   cases h with
@@ -75,7 +83,7 @@ theorem Obj.Spelling.start {o : Obj} {raw b : ByteArray} {i : Nat}
 
 /-- Both concrete stream-dictionary spellings execute through the actual
 object reader, with their own byte lengths and lexical context. -/
-theorem parseVal_spelling_span_exact {b raw : ByteArray} {i p : Nat}
+public theorem parseVal_spelling_span_exact {b raw : ByteArray} {i p : Nat}
     (o : Obj) (h : o.Spelling raw) (hs : Span b i (octets raw))
     (he : Stop b (i+raw.size)) (hw : skipWs b p = i) :
     parseVal b p = .ok (o, i+raw.size) := by

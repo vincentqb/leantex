@@ -1,6 +1,9 @@
-import LeanTex.Core.PdfObj
-import LeanTex.Core.PdfNameProof
-import LeanTex.Core.PdfStringProof
+module
+
+public import LeanTex.Core.PdfObj
+public import LeanTex.Core.PdfStringProof
+public import LeanTex.Core.PdfNameProof
+import all LeanTex.Core.PdfObj
 
 namespace LeanTex.Core.PdfRead
 
@@ -9,19 +12,19 @@ open PdfLex
 /-- Names are byte strings in the reader. The writer substitutes a name
 for the empty string; neither that substitution nor truncating a Unicode
 scalar to a byte is reversible. -/
-def Obj.NameSpelling (s : String) : Prop :=
+@[expose] public def Obj.NameSpelling (s : String) : Prop :=
   s ≠ "" ∧ ∀ c ∈ s.toList, c.toNat < 256
 
 /-- The reader retains a numeric token containing a decimal point
 verbatim. This is its spelling domain, not a claim of numeric validity:
 the scanner also accepts repeated signs and decimal points. -/
-def Obj.RealSpelling (s : String) : Prop :=
+@[expose] public def Obj.RealSpelling (s : String) : Prop :=
   '.' ∈ s.toList ∧ ∀ c ∈ s.toList, numByte c.toNat = true
 
 /-- Exact string delimiters and a balanced literal body, or a hex body
 which cannot contain a delimiter. The source bytes, including escapes
 and whitespace, remain the object's value. -/
-inductive Obj.StringSpelling : List Nat → Prop
+public inductive Obj.StringSpelling : List Nat → Prop
   | literal {cs} : LiteralBody cs → StringSpelling (40 :: cs ++ [41])
   | hex {cs} :
       (∀ c ∈ cs, hexVal c ≠ none ∨ isWs c = true) →
@@ -30,7 +33,7 @@ inductive Obj.StringSpelling : List Nat → Prop
 /-- A recursive, syntactic representability domain. In particular,
 dictionary keys obey the same byte-name condition as name objects.
 Nothing in this predicate calls the parser or assumes its result. -/
-inductive Obj.Representable : Obj → Prop
+public inductive Obj.Representable : Obj → Prop
   | null : Representable .null
   | bool (v) : Representable (.bool v)
   | int (n) : Representable (.int n)
@@ -52,7 +55,7 @@ mutual
 /-- Buffer accumulation preserves the complete prefix, for every object,
 including raw strings outside UTF-8. This is the renderer's composition
 law used to place its spelling inside a larger input. -/
-theorem Obj.renderInto_append (a b : ByteArray) (o : Obj) :
+public theorem Obj.renderInto_append (a b : ByteArray) (o : Obj) :
     o.renderInto (a ++ b) = a ++ o.renderInto b := by
   cases o with
   | null | int _ | real _ | str _ | name _ | ref _ _ =>
@@ -63,7 +66,7 @@ theorem Obj.renderInto_append (a b : ByteArray) (o : Obj) :
   | dict es =>
     simp only [Obj.renderInto, ByteArray.append_assoc, Obj.renderEntries_append]
 
-theorem Obj.renderList_append (a b : ByteArray) (xs : List Obj) :
+public theorem Obj.renderList_append (a b : ByteArray) (xs : List Obj) :
     Obj.renderList (a ++ b) xs = a ++ Obj.renderList b xs := by
   cases xs with
   | nil => rfl
@@ -74,7 +77,7 @@ theorem Obj.renderList_append (a b : ByteArray) (xs : List Obj) :
       simp only [Obj.renderList, Obj.renderInto_append, bytes_append_push,
         Obj.renderList_append]
 
-theorem Obj.renderEntries_append (a b : ByteArray) (es : List (String × Obj)) :
+public theorem Obj.renderEntries_append (a b : ByteArray) (es : List (String × Obj)) :
     Obj.renderEntries (a ++ b) es = a ++ Obj.renderEntries b es := by
   cases es with
   | nil => rfl
@@ -85,19 +88,19 @@ theorem Obj.renderEntries_append (a b : ByteArray) (es : List (String × Obj)) :
 
 end
 
-theorem Obj.renderInto_exact (a : ByteArray) (o : Obj) :
+public theorem Obj.renderInto_exact (a : ByteArray) (o : Obj) :
     o.renderInto a = a ++ o.render := by
   simpa [Obj.render] using Obj.renderInto_append a ByteArray.empty o
 
-theorem Obj.renderList_exact (a : ByteArray) (xs : List Obj) :
+public theorem Obj.renderList_exact (a : ByteArray) (xs : List Obj) :
     Obj.renderList a xs = a ++ Obj.renderList ByteArray.empty xs := by
   simpa using Obj.renderList_append a ByteArray.empty xs
 
-theorem Obj.renderEntries_exact (a : ByteArray) (es : List (String × Obj)) :
+public theorem Obj.renderEntries_exact (a : ByteArray) (es : List (String × Obj)) :
     Obj.renderEntries a es = a ++ Obj.renderEntries ByteArray.empty es := by
   simpa using Obj.renderEntries_append a ByteArray.empty es
 
-theorem Obj.name_octets (s : String) (hn : s ≠ "") :
+public theorem Obj.name_octets (s : String) (hn : s ≠ "") :
     octets ("/" ++ escapeName s).toUTF8 =
       47 :: (s.toList.flatMap nameChars).map Char.toNat := by
   simp only [escapeName, PdfLex.escapeName_exact s hn]
@@ -111,7 +114,7 @@ theorem Obj.name_octets (s : String) (hn : s ≠ "") :
   simpa only [String.ofList_cons, show String.singleton '/' = "/" from rfl,
     List.map_cons, show '/'.toNat = 47 from rfl] using hh
 
-theorem Obj.name_size (s : String) (hn : s ≠ "") :
+public theorem Obj.name_size (s : String) (hn : s ≠ "") :
     ("/" ++ escapeName s).toUTF8.size = 1+(s.toList.flatMap nameChars).length := by
   have hh := congrArg List.length (Obj.name_octets s hn)
   simpa [Nat.add_comm] using hh

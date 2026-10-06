@@ -1,4 +1,6 @@
-import LeanTex.Core.PdfObj
+module
+
+import all LeanTex.Core.PdfObj
 import LeanTex.Core.LoopProgress
 import Init.Data.Array.Lemmas
 

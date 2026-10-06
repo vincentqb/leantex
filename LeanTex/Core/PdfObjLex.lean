@@ -1,6 +1,11 @@
+module
+
+import all LeanTex.Core.PdfObj
 import LeanTex.Core.PdfObjProof
-import LeanTex.Core.PdfObjMachine
+import LeanTex.Core.PdfNameProof
 import LeanTex.Core.PdfLexBoundary
+import LeanTex.Core.PdfNumber
+import Init.Data.Int.ToString
 
 namespace LeanTex.Core.PdfRead.ObjReader
 
@@ -94,7 +99,8 @@ theorem readToken_ref {b : ByteArray} {i j k num gen : Nat}
     (hr : tryRef b j = some (gen,k)) :
     readToken b i = .ok (.value (.ref num gen), k) := by
   obtain ⟨h0,h1,h2,h3,h4,h5,h6⟩ := num_head hc
-  have ht : toString (Int.ofNat num) = toString num := rfl
+  have ht : toString (Int.ofNat num) = toString num := by
+    simp [Int.toString_eq_repr, Int.repr_eq_ite]
   have hd := Number.int_noDot (Int.ofNat num)
   have hi := Number.int_toString_id (Int.ofNat num)
   rw [ht] at hd hi
@@ -106,27 +112,36 @@ theorem readToken_ref {b : ByteArray} {i j k num gen : Nat}
 theorem readToken_true {b : ByteArray} {i : Nat}
     (h : Span b i [116,114,117,101]) (he : EndByte (at? b (i+4))) :
     readToken b i = .ok (.value (.bool true),i+4) := by
-  have hk := keywordAt_exact (kw := "true") h he
+  have hk := keywordAt_exact (b := b) (i := i) (kw := "true")
+    (by rw [String.toUTF8_eq_toByteArray]; exact h)
+    (by rw [String.toUTF8_eq_toByteArray]; exact he)
   simp [readToken,h.head,numByte,hk]
   rfl
 
 theorem readToken_false {b : ByteArray} {i : Nat}
     (h : Span b i [102,97,108,115,101]) (he : EndByte (at? b (i+5))) :
     readToken b i = .ok (.value (.bool false),i+5) := by
-  have ht := keywordAt_ne (b := b) (i := i) (kw := "true") (by decide)
-    (by change at? b i ≠ 116; rw [h.head]; decide)
-  have hk := keywordAt_exact (kw := "false") h he
+  have ht := keywordAt_ne (b := b) (i := i) (kw := "true")
+    (by simp only [String.toUTF8_eq_toByteArray]; decide)
+    (by simp only [String.toUTF8_eq_toByteArray]; rw [h.head]; decide)
+  have hk := keywordAt_exact (b := b) (i := i) (kw := "false")
+    (by rw [String.toUTF8_eq_toByteArray]; exact h)
+    (by rw [String.toUTF8_eq_toByteArray]; exact he)
   simp [readToken,h.head,numByte,ht,hk]
   rfl
 
 theorem readToken_null {b : ByteArray} {i : Nat}
     (h : Span b i [110,117,108,108]) (he : EndByte (at? b (i+4))) :
     readToken b i = .ok (.value .null,i+4) := by
-  have ht := keywordAt_ne (b := b) (i := i) (kw := "true") (by decide)
-    (by change at? b i ≠ 116; rw [h.head]; decide)
-  have hf := keywordAt_ne (b := b) (i := i) (kw := "false") (by decide)
-    (by change at? b i ≠ 102; rw [h.head]; decide)
-  have hk := keywordAt_exact (kw := "null") h he
+  have ht := keywordAt_ne (b := b) (i := i) (kw := "true")
+    (by simp only [String.toUTF8_eq_toByteArray]; decide)
+    (by simp only [String.toUTF8_eq_toByteArray]; rw [h.head]; decide)
+  have hf := keywordAt_ne (b := b) (i := i) (kw := "false")
+    (by simp only [String.toUTF8_eq_toByteArray]; decide)
+    (by simp only [String.toUTF8_eq_toByteArray]; rw [h.head]; decide)
+  have hk := keywordAt_exact (b := b) (i := i) (kw := "null")
+    (by rw [String.toUTF8_eq_toByteArray]; exact h)
+    (by rw [String.toUTF8_eq_toByteArray]; exact he)
   simp [readToken,h.head,numByte,ht,hf,hk]
   rfl
 

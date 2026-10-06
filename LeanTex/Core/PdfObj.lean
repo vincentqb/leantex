@@ -1,4 +1,6 @@
-import LeanTex.Core.PdfLex
+module
+
+public import LeanTex.Core.PdfLex
 
 namespace LeanTex.Core.PdfRead
 
@@ -6,7 +8,7 @@ namespace LeanTex.Core.PdfRead
 included, so copying one back out cannot change it; reals keep their raw
 spelling for the same reason, read numerically only where a box needs a
 value. -/
-inductive Obj where
+public inductive Obj where
   | null
   | bool (v : Bool)
   | int (n : Int)
@@ -20,19 +22,19 @@ inductive Obj where
   | ref (num : Nat) (gen : Nat)
   deriving Inhabited, BEq
 
-def Obj.get? (o : Obj) (k : String) : Option Obj :=
+@[expose] public def Obj.get? (o : Obj) (k : String) : Option Obj :=
   match o with
   | .dict es => (es.find? (·.1 == k)).map (·.2)
   | _ => none
 
-def Obj.int? (o : Obj) : Option Int :=
+@[expose] public def Obj.int? (o : Obj) : Option Int :=
   match o with
   | .int n => some n
   | _ => none
 
 -- ## Rendering an object back to bytes (§7.3)
 
-abbrev escapeName := PdfLex.escapeName
+public abbrev escapeName := PdfLex.escapeName
 
 /-! ### `render`, the writer's one spelling
 
@@ -46,7 +48,7 @@ copy of the bytes already written. -/
 
 mutual
 
-def Obj.renderInto (acc : ByteArray) : Obj → ByteArray
+public def Obj.renderInto (acc : ByteArray) : Obj → ByteArray
   | .null => acc ++ "null".toUTF8
   | .bool true => acc ++ "true".toUTF8
   | .bool false => acc ++ "false".toUTF8
@@ -59,14 +61,14 @@ def Obj.renderInto (acc : ByteArray) : Obj → ByteArray
   | .ref num gen => acc ++ (s!"{num} {gen} R").toUTF8
 
 /-- The `List` companion for an array's elements, one space between. -/
-def Obj.renderList (acc : ByteArray) : List Obj → ByteArray
+public def Obj.renderList (acc : ByteArray) : List Obj → ByteArray
   | [] => acc
   | [x] => Obj.renderInto acc x
   | x :: rest => Obj.renderList ((Obj.renderInto acc x).push 32) rest
 
 /-- The `List` companion for a dictionary's entries: `/Key value`, each
 followed by a space. -/
-def Obj.renderEntries (acc : ByteArray) : List (String × Obj) → ByteArray
+public def Obj.renderEntries (acc : ByteArray) : List (String × Obj) → ByteArray
   | [] => acc
   | (k, v) :: rest =>
     Obj.renderEntries ((Obj.renderInto (acc ++ ("/" ++ escapeName k ++ " ").toUTF8) v).push 32) rest
@@ -76,12 +78,12 @@ end
 /-- The bytes one object is written as — the writer's single spelling, so
 what a dictionary *is* and how it reads are one value and one function
 (`parseVal_render_id`). -/
-def Obj.render (o : Obj) : ByteArray := Obj.renderInto ByteArray.empty o
+public def Obj.render (o : Obj) : ByteArray := Obj.renderInto ByteArray.empty o
 
 /-- An object shows as the bytes it is written as: the one spelling, so a
 diagnostic and a file never disagree. A payload outside UTF-8 (a hex
 string's raw bytes) shows its size instead. -/
-instance : Repr Obj where
+public instance : Repr Obj where
   reprPrec o _ :=
     match String.fromUTF8? (Obj.render o) with
     | some s => Std.Format.text s
@@ -183,7 +185,7 @@ end ObjReader
 
 /-- Parse one object at `i0` (§7.3). The frame stack avoids recursive calls
 on input bytes, and the file's byte count bounds the transition loop. -/
-def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) :=
+public def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) :=
   let state := (forIn [0:b.size+2] (ObjReader.State.scan #[] i0)
     (fun _ s => pure (ObjReader.step b s)) : Id ObjReader.State).run
   match state with
