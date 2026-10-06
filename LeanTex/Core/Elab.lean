@@ -377,6 +377,48 @@ structure AlgSt where
   numbered : Bool := false
   deriving Repr, BEq
 
+/-- Source metadata for the block accumulator currently being elaborated.
+`base = some n` means its blocks will be spliced into the document at `n`;
+`none` means a retained wrapper owns them. The sites name actual frame
+emissions, including empty frames, rather than searching their content. -/
+structure FrameSources where
+  base : Option Nat := none
+  sites : Array (Nat × Span) := #[]
+  /-- The next fresh accumulator's absolute offset. A splice sets it;
+  entering any accumulator consumes it, so ordinary wrappers stay local. -/
+  nextBase : Option Nat := none
+  deriving Repr, BEq
+
+def FrameSources.offset (s : FrameSources) (n : Nat) : Option Nat :=
+  s.base.map (· + n)
+
+def FrameSources.record (s : FrameSources) (n : Nat) (source : Span) : FrameSources :=
+  match s.offset n with
+  | some i => { s with sites := s.sites.push (i, source) }
+  | none => s
+
+/-- A suffix that becomes one retained wrapper no longer contributes
+top-level frames. Its earlier prefix keeps the same indices and spans. -/
+def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :=
+  match s.offset n with
+  | some i => { s with sites := s.sites.filter (·.1 < i) }
+  | none => s
+
+theorem FrameSources.record_spliced_exact (sites : Array (Nat × Span))
+    (base n : Nat) (source : Span) :
+    (FrameSources.record { base := some base, sites } n source).sites =
+      sites.push (base + n, source) := rfl
+
+theorem FrameSources.record_wrapped_exact (sites : Array (Nat × Span))
+    (n : Nat) (source : Span) :
+    FrameSources.record { sites } n source = { sites } := rfl
+
+theorem FrameSources.keepPrefix_exact (sites : Array (Nat × Span))
+    (base n i : Nat) (source : Span) :
+    (i, source) ∈ (FrameSources.keepPrefix { base := some base, sites } n).sites ↔
+      (i, source) ∈ sites ∧ i < base + n := by
+  simp [FrameSources.keepPrefix, FrameSources.offset]
+
 /-- The spans the reporting layer reads back out of elaboration — the
 `AlgSt` shape: one field on `ESt`, so the elaboration knot's state stays
 narrow. `bib` is where each `\bibliography` marker stands (E0503's `-->`);
@@ -397,6 +439,8 @@ structure SpanRecords where
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
+  /-- Top-level frame openings, maintained with the block accumulator. -/
+  frames : FrameSources := {}
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -717,6 +761,26 @@ private def listingVal (v : String) : String :=
   else v
 
 abbrev EM := StateM ESt
+
+private def setFrameSourceBase (base : Option Nat) : EM Unit :=
+  modify fun st => { st with spans := { st.spans with
+    frames := { st.spans.frames with base } } }
+
+/-- Schedule a child accumulator's source offset at the same site that
+splices its result. The recursive block API keeps its existing parameters. -/
+@[noinline] private def splicedFrameScope (offset : Option Nat)
+    (scope : EM (Array Block)) : EM (Array Block) := do
+  modify fun st => { st with spans := { st.spans with frames :=
+    { st.spans.frames with nextBase := offset.bind st.spans.frames.offset } } }
+  scope
+
+private def recordFrameSource (ctx : Ctx) (pos : Pos) (offset : Nat) : EM Unit :=
+  modify fun st => { st with spans := { st.spans with
+    frames := st.spans.frames.record offset (ctx.sourceSpan pos) } }
+
+private def keepFrameSourcePrefix (size : Nat) : EM Unit :=
+  modify fun st => { st with spans := { st.spans with
+    frames := st.spans.frames.keepPrefix size } }
 
 /-- Build the diagnostic `diag` pushes, as a value: the one constructor
 both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
@@ -9138,6 +9202,7 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     -- A slotted title page aligns per slot (`titleBlocks`), never as one.
     let content := if tps.align == some "left" || !tps.slots.isEmpty then inner
       else #[.center inner]
+    recordFrameSource ctx pos blocks.size
     blocks := blocks.push (.frame #[] false .golden false content)
   else
     -- The flow classes centre the title block, as `\@maketitle`
@@ -9278,10 +9343,20 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
 /-- A declaration or open overlay consumes the rest of the same source
 stream, not a nested content argument. Close the caller's completed roles
 before that continuation; its tokens reopen only the owners they carry. -/
+private def closeBlockFrameSources (active : Array MacroRun)
+    (desired : List MacroOrigin) (size : Nat) : EM Unit := do
+  let keep := commonOrigins (active.toList.map (·.origin)) desired
+  -- All closed roles own suffixes. The earliest nonempty one is exactly
+  -- where top-level nodes stop surviving; a one-node suffix still wraps.
+  let retained := (active.toList.drop keep).foldl (init := size) fun retained run =>
+    if run.pendingPara then retained else min retained run.start
+  if retained < size then keepFrameSourcePrefix retained
+
 private def closeBlockMacros (ctx : Ctx) (blocks : Array Block) :
-    MCtx ctx × Array Block :=
+    EM (MCtx ctx × Array Block) := do
+  closeBlockFrameSources ctx.macroRoles.blocks [] blocks.size
   let (_, blocks) := moveMacroRuns Block.role ctx.macroRoles.blocks [] blocks
-  (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := #[] } },
+  return (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := #[] } },
     rfl, rfl, rfl, rfl⟩, blocks)
 
 /-- The open overlay arm consumes the whole tail exactly when its spec
@@ -9300,9 +9375,9 @@ private def openBlockOverlay (ctx : Ctx) (n : String) (raws : Array Raw) (i : Na
 /-- Grouped controls open a content scope; an open overlay consumes the
 current stream's tail. Only that latter arm closes completed ownership. -/
 private def blockControlContext (ctx : Ctx) (n : String) (raws : Array Raw)
-    (i : Nat) (blocks : Array Block) : MCtx ctx × Array Block :=
+    (i : Nat) (blocks : Array Block) : EM (MCtx ctx × Array Block) :=
   if openBlockOverlay ctx n raws i then closeBlockMacros ctx blocks
-  else (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks)
+  else pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks)
 
 /-- Classify each newly entered expansion once, using the same block
 predicate as native commands. The span is observed, never extracted into a
@@ -9338,6 +9413,7 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
   let (⟨ready, hm⟩, blocks) ← if done then flushPara fresh blocks cur
     else pure (⟨fresh, rfl, rfl, rfl, rfl⟩, blocks)
   let cur := if done then #[] else cur
+  closeBlockFrameSources ready.macroRoles.blocks desired blocks.size
   let (active, blocks) := moveMacroRuns Block.role ready.macroRoles.blocks desired blocks
     (pendingParaInput cur.toList)
   let ctx' := { ready with macroRoles := { ready.macroRoles with
@@ -9462,6 +9538,8 @@ seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhi
 seal takeArgs mkPara flushPara stripMathMeta
 seal blockMacroStep
 seal closeBlockMacros blockControlContext
+seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
+seal declAlignOf
 seal flowStyleCtrl flowStyleArm
 seal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
 seal titleBlocks Picture.elabPicture MathParse.parseMath
@@ -10741,7 +10819,25 @@ private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
   modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
   return blocks.push (.setTokens tk)
 
-seal lengthScopeKeys? openLengthScope closeLengthScope
+/-- Enter a fresh accumulator, consuming its scheduled splice offset.
+Length snapshots and the flow epoch are captured before its first token. -/
+private def openBlockScope (ctx : Ctx) (raws : Array Raw) :
+    EM ((Option Nat × Nat) × Array (String × SymGlue) × { body : Array Raw //
+      rawWeightList body.toList ≤ rawWeightList raws.toList ∧
+      rawParsList body.toList ≤ rawParsList raws.toList ∧
+      nestedParsList body.toList ≤ nestedParsList raws.toList }) := do
+  let st ← get
+  set { st with spans := { st.spans with frames :=
+    { st.spans.frames with base := st.spans.frames.nextBase, nextBase := none } } }
+  return ((st.spans.frames.base, st.flowGen), openLengthScope ctx raws)
+
+private def closeBlockScope (ctx : Ctx) (savedLengths : Array (String × SymGlue))
+    (savedBase : Option Nat) (blocks : Array Block) : EM (Array Block) := do
+  let blocks ← closeLengthScope ctx savedLengths blocks
+  setFrameSourceBase savedBase
+  return blocks
+
+seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 
 mutual
 
@@ -11054,7 +11150,7 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
               = rawWeightList strayRaws.toList := sliceWeight_zero _
           have hs1 : slicePars strayRaws 0
               = nestedParsList strayRaws.toList := slicePars_zero _
-          let sb ← elabBlockScope ctx strayRaws
+          let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
           pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
         else pure (cols, blocks)
       -- beamer's `\begin{column}[pos]{width}`: its own point on the row's
@@ -11108,7 +11204,7 @@ the column shares the leftover" cpos
         sliceWeight_zero _
       have hs1 : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
         slicePars_zero _
-      let sb ← elabBlockScope ctx strayRaws
+      let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
       return blocks ++ sb
     else
       return blocks
@@ -11131,13 +11227,13 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   have hb2 := nestedParsList_le body.toList
   let mut blocks := blocks
   if n == Parse.scopeEnv then
-    blocks := blocks ++ (← elabBlockScope ctx body)
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if let some f := Parse.inputEnvFile? n then
     -- An \input file's blocks, elaborated under its own name so a
     -- diagnostic points at the file that holds the construct.
     let ⟨fileCtx, hm⟩ : MCtx ctx ←
       pure ⟨{ ctx with file := f, callSite := none }, rfl, rfl, rfl, rfl⟩
-    blocks := blocks ++ (← elabBlockScope fileCtx body)
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
   else if let some numbered := displayMathEnvs.lookup n then
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
@@ -11203,6 +11299,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- the only producer of a titleless inner frame is the title arm, whose
     -- `.golden` distribution is the one to keep — as in beamer, where the
     -- title-page template's glue sits inside the frame the author opened.
+    recordFrameSource ctx pos blocks.size
     blocks := blocks.push (flattenFrame title standout valign breakable inner)
   else if n == "itemize" || n == "enumerate" || n == "description" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
@@ -11348,7 +11445,8 @@ the text width; the box takes the whole measure" pos
     -- scope — appendix.sty's `\appendix` scoped to the body, counters
     -- restored at `\end` (see `enterAppendicesIf`).
     let saved ← enterAppendicesIf (n == "appendices")
-    let inner ← elabBlockScope ctx body
+    let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
+      (elabBlockScope ctx body)
     leaveAppendices saved
     blocks := wrapScopedEnv n blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
@@ -11468,7 +11566,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     | _ =>
       diag ctx .E0304 "'\\begin{ifbackend}' needs a {backends} group" pos
         (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
-      blocks := blocks ++ (← elabBlockScope ctx body)
+      blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if n == "nav" then
     -- `{nav}`: the navigation landmark — a group of links, content
     -- rather than a widget; the links inside are ordinary `\href`s.
@@ -11509,7 +11607,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     let ⟨envCtx, hke⟩ : { c : Ctx // c.envLimit = ke.1 } ←
       pure ⟨{ ctx with
         limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
-    blocks := blocks ++ (← elabBlockScope envCtx env.beginBody)
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.beginBody))
     have hxw : rawWeightList (body.extract j body.size).toList
         ≤ rawWeightList body.toList := extract_weight_le ..
     have hxp : nestedParsList (body.extract j body.size).toList
@@ -11518,8 +11616,9 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
         = rawWeightList (body.extract j body.size).toList := sliceWeight_zero _
     have hx1 : slicePars (body.extract j body.size) 0
         = nestedParsList (body.extract j body.size).toList := slicePars_zero _
-    blocks := blocks ++ (← elabBlockScope ctx (body.extract j body.size))
-    blocks := blocks ++ (← elabBlockScope envCtx env.endBody)
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size)
+      (elabBlockScope ctx (body.extract j body.size)))
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.endBody))
   else if n == "tikzpicture" then
     blocks ← tikzArm ctx body pos blocks
   else if reservedEnv.contains n then
@@ -11541,7 +11640,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     warnDroppedArgs ctx n dropped pos
     have hx0 : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
     have hx1 : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
-    blocks := blocks ++ (← elabBlockScope ctx kept)
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx kept))
   closeLengthScope ctx savedLengths blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + rawParsList scope.toList,
@@ -11616,7 +11715,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         slicePars_le raws (by omega)
       have hb0 : sliceWeight body 0 = rawWeightList body.toList := sliceWeight_zero _
       have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
-      let inner ← elabBlockScope ctx body
+      let inner ← splicedFrameScope (some (blocks.size + if n == "hypertarget" then 1 else 0))
+        (elabBlockScope ctx body)
       let target := argText ctx targetRaw
       let wrapped ←
         if n == "hypertarget" then pure (#[Block.para #[.label target]] ++ inner)
@@ -11643,6 +11743,10 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let (firstPage, otherPage) := spec.pageOrder wrapped #[]
           #[Block.altSteps spec firstPage otherPage]
         | none => wrapped
+      -- The nested-anchor recovery and hypertarget splice their bodies.
+      -- Every other link/selector keeps a wrapper around the child frames.
+      if spec.isSome || (n != "hypertarget" && !Ir.hasBlockAnchor inner) then
+        keepFrameSourcePrefix blocks.size
       return (blocks ++ selected, ⟨j2 + 1, by omega⟩)
     | _, _ =>
       diag ctx .E0304 s!"'\\{n}' needs a \{target}\{content}" pos
@@ -11672,7 +11776,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have := sliceWeight_here raws h
       have := rawWeight_pos raws[i]
       omega
-    let expanded ← elabBlockScope callCtx cmd.body
+    let expanded ← splicedFrameScope (if cmd.params.isEmpty then some blocks.size else none)
+      (elabBlockScope callCtx cmd.body)
     if cmd.params.isEmpty then
       blocks := blocks ++ expanded
     else
@@ -11749,7 +11854,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- it. W0105 accounts for the group that is not inked; it is the
           -- one already fired for the spec when there was one to read.
           warnAltSpec ctx pos
-          blocks := blocks ++ (← elabBlockScope ctx ga)
+          blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx ga))
           return (blocks, ⟨j3 + 1, by omega⟩)
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
@@ -11785,7 +11890,7 @@ when it is empty — '{}'")
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
         | none =>
-          blocks := blocks ++ (← elabBlockScope ctx gbody)
+          blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx gbody))
           return (blocks, ⟨jg + 1, by omega⟩)
       | _ =>
         -- The open form: the rest of this scope steps. Bare
@@ -11923,7 +12028,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A restoring scope stays whole so its snapshot predates every
         -- assignment. Its opening text still joins the pending paragraph:
         -- only a boundary inside the body may flush that paragraph.
-        let inner ← elabBlockScope ctx' body cur
+        let inner ← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur)
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         -- A scope group carrying a `\centering` declaration, or holding
@@ -11934,7 +12039,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- group is the command's, as in the par splice above; its own
         -- block sequence, so the declaration stops at the closing brace.
         let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
-        let inner ← elabBlockScope ctx' body
+        let inner ← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body)
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
@@ -12066,9 +12171,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
-        let (⟨ctx', hrole⟩, blocks) := closeBlockMacros ctx' blocks
+        let (⟨ctx', hrole⟩, blocks) ← closeBlockMacros ctx' blocks
         let saved ← enterBlockDecl ctx' n raws i cur cpos
-        let inner ← elabBlockScope ctx' (raws.extract (i + 1) raws.size)
+        let inner ← splicedFrameScope (if (declAlignOf n).isNone then some blocks.size else none)
+          (elabBlockScope ctx' (raws.extract (i + 1) raws.size))
         leaveBlockDecl saved
         let blocks := blocks ++ declScopeWrap n inner
         have hend : sliceWeight raws raws.size = 0 :=
@@ -12093,7 +12199,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
-        let (⟨ctx', hrole⟩, blocks) := closeBlockMacros ctx' blocks
+        let (⟨ctx', hrole⟩, blocks) ← closeBlockMacros ctx' blocks
         let ⟨stepCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
         let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
@@ -12360,7 +12466,7 @@ a side channel, never slide content" cpos
           diag ctx' .E0304 "'\\block' needs a {body}" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
-        let (⟨ctx', hrole⟩, blocks) := blockControlContext ctx' n raws i blocks
+        let (⟨ctx', hrole⟩, blocks) ← blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
         have ht1 : sliceWeight raws j < sliceWeight raws i :=
           sliceWeight_lt raws h hij
@@ -12385,15 +12491,15 @@ A restoring paragraph scope also carries its caller's pending text, so
 capturing the opening lengths introduces no paragraph boundary. -/
 private def elabBlockScope (ctx : Ctx) (raws : Array Raw) (cur : Array Raw := #[]) :
     EM (Array Block) := do
-  let (savedLengths, ⟨body, _hsw, _hsp, _hsn⟩) := openLengthScope ctx raws
+  let ((savedBase, gen), savedLengths, ⟨body, _hsw, _hsp, _hsn⟩) ← openBlockScope ctx raws
   have _hw := sliceWeight_zero body
   have _hp := slicePars_zero body
   have _hw0 := sliceWeight_zero raws
   have _hp0 := slicePars_zero raws
   let ⟨innerCtx, _hm⟩ : MCtx ctx ←
     pure ⟨{ ctx with macroRoles := ctx.macroRoles.enter }, rfl, rfl, rfl, rfl⟩
-  let blocks ← elabBlocksGo innerCtx body 0 #[] cur (← get).flowGen
-  closeLengthScope ctx savedLengths blocks
+  let blocks ← elabBlocksGo innerCtx body 0 #[] cur gen
+  closeBlockScope ctx savedLengths savedBase blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws 0,
   visWeightGo ctx.user ctx.limit + sliceWeight raws 0, 3, 0)
@@ -12403,6 +12509,8 @@ end
 
 /-- Elaborate raw items as a block sequence. -/
 def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+  modify fun st => { st with spans := { st.spans with frames :=
+    { st.spans.frames with nextBase := some 0 } } }
   elabBlockScope ctx raws
 
 /-- Elaboration terminates — not a sentence in a plan: `takeArgs`,
@@ -12424,8 +12532,10 @@ theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
 
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal blockMacroStep
-unseal lengthScopeKeys? openLengthScope closeLengthScope
+unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
+unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
+unseal declAlignOf
 unseal flowStyleCtrl flowStyleArm
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
@@ -15626,6 +15736,12 @@ structure ReqSpans where
   /-- Each image source's first span — file images and boundary pictures
   alike: where the driver's per-picture N0376 and E0382 point. -/
   images : Array (String × Span) := #[]
+  /-- Openings of top-level frames, keyed by their block index in this
+  elaboration's final `Doc.body`, before backend filtering or overlays.
+  Recomputed on every prepared run, including a withdrawal or measurement
+  pass. A title frame names its call; a flattened title frame names the
+  outer frame. Retained wrappers do not contribute top-level sites. -/
+  frames : Array (Nat × Span) := #[]
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: a request here that no tool draws is withdrawn, and the picture is
   drawn natively instead (`Cli.Boundary.withdraw`, and `runRaws` for a
@@ -15878,6 +15994,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
       contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
+      frames := st.spans.frames.sites
       fallbacks := st.spans.fallbacks
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
         fun (out, seen) (key, _, pos) =>
