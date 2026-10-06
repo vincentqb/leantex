@@ -1,3 +1,5 @@
+module
+
 import Init.Data.ByteArray.Basic
 
 namespace LeanTex.Core.PdfLex
@@ -5,14 +7,14 @@ namespace LeanTex.Core.PdfLex
 /-! Byte-level PDF token rules shared by the object reader and its
 round-trip contracts. Strings retain their original bytes. -/
 
-def isWs (c : Nat) : Bool :=
+@[expose] public def isWs (c : Nat) : Bool :=
   c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
 
-def isDelim (c : Nat) : Bool :=
+@[expose] public def isDelim (c : Nat) : Bool :=
   c == 40 || c == 41 || c == 60 || c == 62 || c == 91 || c == 93 ||
   c == 123 || c == 125 || c == 47 || c == 37
 
-def at? (b : ByteArray) (i : Nat) : Nat :=
+@[expose] public def at? (b : ByteArray) (i : Nat) : Nat :=
   (b[i]?.map (·.toNat)).getD 256
 
 def skipStep (b : ByteArray) (i : Nat) : ForInStep Nat := Id.run do
@@ -28,7 +30,7 @@ def skipStep (b : ByteArray) (i : Nat) : ForInStep Nat := Id.run do
   return .done i
 
 /-- Skip whitespace and `%` comments (§7.2.3–4). -/
-def skipWs (b : ByteArray) (i0 : Nat) : Nat :=
+public def skipWs (b : ByteArray) (i0 : Nat) : Nat :=
   (forIn [0:b.size + 1] i0 (fun _ i => pure (skipStep b i)) : Id Nat).run
 
 structure UIntState where
@@ -43,7 +45,7 @@ def uintStep (b : ByteArray) (s : UIntState) : ForInStep UIntState :=
   else .done s
 
 /-- A run of digits as a `Nat`, or `none` when none stand at `i`. -/
-def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) :=
+public def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) :=
   let s := (forIn [0:b.size + 1] (UIntState.mk i0 0 false)
     (fun _ s => pure (uintStep b s)) : Id UIntState).run
   if s.seen then some (s.value, s.pos) else none
@@ -55,7 +57,7 @@ def keywordStep (b : ByteArray) (i : Nat) (bytes : ByteArray) (k : Nat)
 
 /-- Does the keyword stand at `i`, ended by whitespace, a delimiter, or the
 file's end? Returns the position after it. -/
-def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
+public def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
   let bytes := kw.toUTF8
   let matched := (forIn [0:bytes.size] true
     (fun k s => pure (keywordStep b i bytes k s)) : Id Bool).run
@@ -64,7 +66,7 @@ def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat :=
     some (i+bytes.size)
   else none
 
-def hexVal (c : Nat) : Option Nat :=
+@[expose] public def hexVal (c : Nat) : Option Nat :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)
   else if 65 ≤ c && c ≤ 70 then some (c - 55)
   else if 97 ≤ c && c ≤ 102 then some (c - 87)
@@ -89,14 +91,14 @@ def literalStep (b : ByteArray) (s : LiteralState) : ForInStep LiteralState :=
 /-- Scan a literal string `(…)` (§7.3.4.2): parentheses balance, and a
 backslash escapes the next byte. Returns the position after the closing
 parenthesis. -/
-def scanLitString (b : ByteArray) (i0 : Nat) : Option Nat :=
+public def scanLitString (b : ByteArray) (i0 : Nat) : Option Nat :=
   ((forIn [0:b.size + 1] (LiteralState.mk (i0+1) 1 none)
     (fun _ s => pure (literalStep b s)) : Id LiteralState).run).result
 
 def hexStep (b : ByteArray) (i : Nat) : ForInStep Nat :=
   if at? b i == 62 || at? b i == 256 then .done i else .yield (i+1)
 
-def scanHexEnd (b : ByteArray) (i : Nat) : Nat :=
+public def scanHexEnd (b : ByteArray) (i : Nat) : Nat :=
   (forIn [0:b.size + 1] i (fun _ j => pure (hexStep b j)) : Id Nat).run
 
 structure TextState where
@@ -113,13 +115,13 @@ def nameStep (b : ByteArray) (s : TextState) : ForInStep TextState :=
   else .yield ⟨s.pos + 1, s.text.push (Char.ofNat c)⟩
 
 /-- A name after its solidus (§7.3.5), `#`-escapes decoded. -/
-def parseName (b : ByteArray) (i0 : Nat) : String × Nat :=
+public def parseName (b : ByteArray) (i0 : Nat) : String × Nat :=
   let s := (forIn [0:b.size + 1] (TextState.mk (i0 + 1) "")
     (fun _ s => pure (nameStep b s)) : Id TextState).run
   (s.text, s.pos)
 
 /-- The characters a number token is made of. -/
-def numByte (c : Nat) : Bool :=
+@[expose] public def numByte (c : Nat) : Bool :=
   (48 ≤ c && c ≤ 57) || c == 43 || c == 45 || c == 46
 
 def numberStep (b : ByteArray) (s : TextState) : ForInStep TextState :=
@@ -127,14 +129,14 @@ def numberStep (b : ByteArray) (s : TextState) : ForInStep TextState :=
   if numByte c then .yield ⟨s.pos + 1, s.text.push (Char.ofNat c)⟩
   else .done s
 
-def scanNumber (b : ByteArray) (i0 : Nat) : String × Nat :=
+public def scanNumber (b : ByteArray) (i0 : Nat) : String × Nat :=
   let s := (forIn [0:b.size + 1] (TextState.mk i0 "")
     (fun _ s => pure (numberStep b s)) : Id TextState).run
   (s.text, s.pos)
 
 /-- After a non-negative integer, does ` gen R` follow (§7.3.10)? The
 two-token lookahead an indirect reference needs. -/
-def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
+public def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
   let (gen, j) ← parseUInt b (skipWs b i0)
   let k := skipWs b j
   if at? b k == 82 then  -- 'R'
@@ -153,7 +155,7 @@ def hexChar (n : Nat) : Char :=
 `Embedded` for an empty name and keeps only the low byte of escaped
 characters. Its inverse contract therefore requires a nonempty name with
 character values below 256. -/
-def escapeName (s : String) : String := Id.run do
+public def escapeName (s : String) : String := Id.run do
   let mut out := ""
   for c in s.toList do
     if c.isAlphanum || c == '-' || c == '.' then

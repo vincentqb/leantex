@@ -1,10 +1,14 @@
-import LeanTex.Core.PdfLexProof
+module
+
+public import LeanTex.Core.PdfLexProof
+import all LeanTex.Core.PdfLex
+import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
 /-- Balanced literal-string bytes (§7.3.4.2). An escape consumes its next
 byte; unescaped parentheses delimit a nested body. -/
-inductive LiteralBody : List Nat → Prop
+public inductive LiteralBody : List Nat → Prop
   | nil : LiteralBody []
   | byte {c cs} : c < 256 → c ≠ 40 → c ≠ 41 → c ≠ 92 →
       LiteralBody cs → LiteralBody (c::cs)
@@ -12,7 +16,7 @@ inductive LiteralBody : List Nat → Prop
   | nest {cs ds} : LiteralBody cs → LiteralBody ds →
       LiteralBody (40 :: cs ++ 41 :: ds)
 
-theorem LiteralBody.bytes {cs} (h : LiteralBody cs) : ∀ c ∈ cs, c < 256 := by
+public theorem LiteralBody.bytes {cs} (h : LiteralBody cs) : ∀ c ∈ cs, c < 256 := by
   induction h with
   | nil => simp
   | byte hc _ _ _ _ ih => simpa using And.intro hc ih
@@ -60,7 +64,7 @@ private theorem literalBody_yields {cs : List Nat} (hc : LiteralBody cs)
 
 /-- A balanced body followed by its closing parenthesis is consumed
 exactly, including nested bodies and escaped bytes. -/
-theorem scanLitString_exact {b : ByteArray} {i : Nat} {cs : List Nat}
+public theorem scanLitString_exact {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b (i+1) (cs ++ [41])) (hc : LiteralBody cs) :
     scanLitString b i = some (i+cs.length+2) := by
   obtain ⟨n, hn, ht⟩ := literalBody_yields hc h.append_left 0
@@ -77,7 +81,7 @@ theorem scanLitString_exact {b : ByteArray} {i : Nat} {cs : List Nat}
 
 /-- The hex-string scanner stops at the first closing delimiter.
 This is a delimiter contract; it does not claim to validate hex digits. -/
-theorem scanHexEnd_exact {b : ByteArray} {i : Nat} {cs : List Nat}
+public theorem scanHexEnd_exact {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i (cs ++ [62])) (hc : ∀ c ∈ cs, c ≠ 62 ∧ c ≠ 256) :
     scanHexEnd b i = i+cs.length := by
   have hs : Loop.Stops (fun j => pure (hexStep b j)) i (cs.length+1) (i+cs.length) := by

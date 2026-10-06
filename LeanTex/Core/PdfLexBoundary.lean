@@ -1,28 +1,32 @@
-import LeanTex.Core.PdfLexProof
+module
+
+public import LeanTex.Core.PdfLexProof
+import all LeanTex.Core.PdfLex
+import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
 /-- The terminating byte required by PDF names, numbers and keywords. -/
-def EndByte (c : Nat) : Prop := c = 256 ∨ isWs c = true ∨ isDelim c = true
+@[expose] public def EndByte (c : Nat) : Prop := c = 256 ∨ isWs c = true ∨ isDelim c = true
 
-theorem EndByte.not_number {c : Nat} (h : EndByte c) : numByte c = false := by
+public theorem EndByte.not_number {c : Nat} (h : EndByte c) : numByte c = false := by
   simp only [EndByte, isWs, isDelim, Bool.or_eq_true, beq_iff_eq] at h
   simp only [numByte, Bool.or_eq_false_iff, Bool.and_eq_false_iff,
     decide_eq_false_iff_not, beq_eq_false_iff_ne]
   omega
 
-theorem not_number_not_digit {c : Nat} (h : numByte c = false) : ¬ (48 ≤ c ∧ c ≤ 57) := by
+public theorem not_number_not_digit {c : Nat} (h : numByte c = false) : ¬ (48 ≤ c ∧ c ≤ 57) := by
   simp only [numByte, Bool.or_eq_false_iff, Bool.and_eq_false_iff,
     decide_eq_false_iff_not, beq_eq_false_iff_ne] at h
   omega
 
-theorem number_byte {c : Nat} (h : numByte c = true) :
+public theorem number_byte {c : Nat} (h : numByte c = true) :
     c < 128 ∧ isWs c = false ∧ c ≠ 37 ∧ c ≠ 82 ∧ c ≠ 256 := by
   simp only [numByte, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
   simp only [isWs, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
   omega
 
-theorem Span.first_number {b i cs} (h : Span b i cs)
+public theorem Span.first_number {b i cs} (h : Span b i cs)
     (hn : cs ≠ []) (hc : ∀ c ∈ cs, numByte c = true) : numByte (at? b i) = true := by
   cases cs with
   | nil => contradiction
@@ -64,7 +68,7 @@ theorem uint_numeric_stops {b : ByteArray} {i : Nat} {cs : List Nat}
       · simp [uintStep, h.head, hd]
       · simpa [hw, h.head] using hp.2.2.2.1
 
-theorem tryRef_numeric_none {b : ByteArray} {i : Nat} {cs : List Nat}
+public theorem tryRef_numeric_none {b : ByteArray} {i : Nat} {cs : List Nat}
     (h : Span b i cs) (hn : cs ≠ []) (hc : ∀ c ∈ cs, numByte c = true)
     (he : EndByte (at? b (i+cs.length)))
     (hr : at? b (skipWs b (i+cs.length)) ≠ 82) : tryRef b i = none := by

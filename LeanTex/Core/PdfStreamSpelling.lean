@@ -25,19 +25,6 @@ private theorem paddedDict_start {es : Array (String × Obj)} {b : ByteArray} {i
   · decide
   · omega
 
-private theorem skip_two_spaces {b : ByteArray} {i : Nat}
-    (h : at? b i = 32) (h' : at? b (i+1) = 32)
-    (hw : isWs (at? b (i+2)) = false) (hc : at? b (i+2) ≠ 37)
-    (hi : i+1 < b.size) : skipWs b i = i+2 := by
-  apply Loop.forIn_range_stops_exact (n := 3) (budget := b.size+1)
-  · apply Loop.Stops.yield (b := i+1)
-    · simp [skipStep, h, isWs]
-    · apply Loop.Stops.yield (b := i+2)
-      · simp [skipStep, h', isWs, Nat.add_assoc]
-      · apply Loop.Stops.done
-        simp [skipStep, hw, hc]
-  · omega
-
 private theorem parseVal_paddedDict_span_exact {b : ByteArray} {i p : Nat}
     (es : Array (String × Obj)) (hk : ∀ e ∈ es, Obj.NameSpelling e.1)
     (hv : ∀ e ∈ es, e.2.Representable)
@@ -57,7 +44,7 @@ private theorem parseVal_paddedDict_span_exact {b : ByteArray} {i p : Nat}
     omega
   have hskip : skipWs b (i+2) = i+4 := by
     simpa only [Nat.add_assoc, Nat.reduceAdd] using
-      skip_two_spaces hs.tail.tail.head hs.tail.tail.tail.head
+      skipWs_two_exact hs.tail.tail.head hs.tail.tail.tail.head
         (by simpa only [Nat.add_assoc, Nat.reduceAdd] using htStart.whitespace)
         (by simpa only [Nat.add_assoc, Nat.reduceAdd] using htStart.comment) hi
   obtain ⟨n, hn, htRun⟩ := htRun #[] #[] (i+2)

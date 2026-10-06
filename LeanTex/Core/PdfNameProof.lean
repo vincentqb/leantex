@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfLexProof
+module
+
+public import LeanTex.Core.PdfLexProof
+import all LeanTex.Core.PdfLex
+import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
@@ -40,15 +44,15 @@ private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.')
 
 /-- ISO 32000-2 §7.3.5 byte escaping. The byte bound is imposed on the
 original name by the round-trip contract, not by the writer. -/
-def nameChars (c : Char) : List Char :=
+public def nameChars (c : Char) : List Char :=
   if c.isAlphanum || c == '-' || c == '.' then [c]
   else ['#', hexChar (c.toNat / 16), hexChar c.toNat]
 
-theorem nameChars_nonempty (c : Char) : (nameChars c).length > 0 := by
+public theorem nameChars_nonempty (c : Char) : (nameChars c).length > 0 := by
   unfold nameChars
   split <;> simp
 
-theorem nameChars_ascii (c : Char) : ∀ d ∈ nameChars c, d.toNat < 128 := by
+public theorem nameChars_ascii (c : Char) : ∀ d ∈ nameChars c, d.toNat < 128 := by
   unfold nameChars
   split
   · intro d hd; simp only [List.mem_singleton] at hd; subst d
@@ -77,7 +81,7 @@ private theorem escapeLoop (cs : List Char) (out : String) :
       String.append_empty, String.append_assoc]
     all_goals rfl
 
-theorem escapeName_exact (s : String) (hne : s ≠ "") :
+public theorem escapeName_exact (s : String) (hne : s ≠ "") :
     escapeName s = String.ofList (s.toList.flatMap nameChars) := by
   have hcs : s.toList ≠ [] := by simpa using hne
   have hc : s.toList.flatMap nameChars ≠ [] := by
@@ -141,7 +145,7 @@ private theorem nameSteps_stops {b : ByteArray} {i : Nat} {cs : List Char}
     simpa only [List.flatMap_cons, List.length_cons, List.length_append, Nat.add_assoc, String.push_eq_append,
       String.ofList_cons, String.append_assoc] using hh
 
-theorem parseName_exact {b : ByteArray} {i : Nat} {s : String}
+public theorem parseName_exact {b : ByteArray} {i : Nat} {s : String}
     (h : Span b (i+1) ((s.toList.flatMap nameChars).map Char.toNat))
     (hc : ∀ c ∈ s.toList, c.toNat < 256)
     (he : at? b (i+1+(s.toList.flatMap nameChars).length) = 256 ∨
@@ -164,7 +168,7 @@ theorem parseName_exact {b : ByteArray} {i : Nat} {s : String}
 
 /-- The actual name writer and decoder are inverses on nonempty byte-valued
 names. Unicode scalars above 255 are outside this byte codec. -/
-theorem parseName_escapeName_id (s : String) (hne : s ≠ "")
+public theorem parseName_escapeName_id (s : String) (hne : s ≠ "")
     (hc : ∀ c ∈ s.toList, c.toNat < 256) :
     parseName ("/" ++ escapeName s).toUTF8 0 =
       (s, ("/" ++ escapeName s).toUTF8.size) := by

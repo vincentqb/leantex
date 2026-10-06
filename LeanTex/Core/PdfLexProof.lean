@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfLex
+module
+
+public import LeanTex.Core.PdfLex
+import all LeanTex.Core.PdfLex
+import LeanTex.Core.Loop
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.PdfNumber
 import Init.Data.ByteArray.Lemmas
@@ -8,31 +12,31 @@ namespace LeanTex.Core.PdfLex
 
 /-- Byte lists are used only to state source spans; the scanner and writer
 continue to operate on `ByteArray`. -/
-def octets (b : ByteArray) : List Nat := b.data.toList.map UInt8.toNat
+@[expose] public def octets (b : ByteArray) : List Nat := b.data.toList.map UInt8.toNat
 
-@[simp] theorem octets_length (b : ByteArray) : (octets b).length = b.size := by
+@[simp] public theorem octets_length (b : ByteArray) : (octets b).length = b.size := by
   simp [octets]
 
-@[simp] theorem octets_append (a b : ByteArray) : octets (a++b) = octets a ++ octets b := by
+@[simp] public theorem octets_append (a b : ByteArray) : octets (a++b) = octets a ++ octets b := by
   simp [octets, ByteArray.data_append]
 
-@[simp] theorem octets_push (a : ByteArray) (c : UInt8) :
+@[simp] public theorem octets_push (a : ByteArray) (c : UInt8) :
     octets (a.push c) = octets a ++ [c.toNat] := by
   simp [octets, ByteArray.data_push]
 
-@[simp] theorem octets_empty : octets ByteArray.empty = [] := rfl
+@[simp] public theorem octets_empty : octets ByteArray.empty = [] := (rfl)
 
-theorem at?_lt (b : ByteArray) (i : Nat) (h : i < b.size) :
+public theorem at?_lt (b : ByteArray) (i : Nat) (h : i < b.size) :
     at? b i = b[i].toNat := by simp [at?, getElem?_pos b i h]
 
-theorem at?_ge (b : ByteArray) (i : Nat) (h : b.size ≤ i) :
+public theorem at?_ge (b : ByteArray) (i : Nat) (h : b.size ≤ i) :
     at? b i = 256 := by simp [at?, getElem?_neg b i (by omega : ¬i < b.size)]
 
-theorem at?_append_left (a b : ByteArray) (i : Nat) (h : i < a.size) :
+public theorem at?_append_left (a b : ByteArray) (i : Nat) (h : i < a.size) :
     at? (a ++ b) i = at? a i := by
   rw [at?_lt _ _ (by simp; omega), at?_lt _ _ h, ByteArray.getElem_append_left h]
 
-theorem at?_append_right (a b : ByteArray) (i : Nat) :
+public theorem at?_append_right (a b : ByteArray) (i : Nat) :
     at? (a ++ b) (a.size + i) = at? b i := by
   by_cases h : i < b.size
   · rw [at?_lt _ _ (by simp; omega), at?_lt _ _ h,
@@ -40,7 +44,7 @@ theorem at?_append_right (a b : ByteArray) (i : Nat) :
     simp
   · rw [at?_ge _ _ (by simp; omega), at?_ge _ _ (by omega)]
 
-theorem ascii_utf8 (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
+public theorem ascii_utf8 (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
     (String.ofList cs).toUTF8 = (cs.map Char.toUInt8).toByteArray := by
   simp only [String.toUTF8_eq_toByteArray, String.toByteArray_ofList]
   induction cs with
@@ -54,7 +58,7 @@ theorem ascii_utf8 (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
     rw [← List.toByteArray_append]
     rfl
 
-theorem octets_ascii (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
+public theorem octets_ascii (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
     octets (String.ofList cs).toUTF8 = cs.map Char.toNat := by
   rw [ascii_utf8 cs h]
   simp only [octets, List.data_toByteArray, List.toList_toArray, List.map_map]
@@ -65,38 +69,38 @@ theorem octets_ascii (cs : List Char) (h : ∀ c ∈ cs, c.toNat < 128) :
 
 /-- A source span describes its bytes and bounds, independently of any
 scanner or parsed result. -/
-structure Span (b : ByteArray) (i : Nat) (cs : List Nat) : Prop where
+public structure Span (b : ByteArray) (i : Nat) (cs : List Nat) : Prop where
   bound : i + cs.length ≤ b.size
   byte : ∀ j, (h : j < cs.length) → at? b (i + j) = cs[j]
 
-theorem Span.nil (b : ByteArray) (i : Nat) (hi : i ≤ b.size) : Span b i [] :=
+public theorem Span.nil (b : ByteArray) (i : Nat) (hi : i ≤ b.size) : Span b i [] :=
   ⟨by simpa using hi, by simp⟩
 
-theorem Span.head {b i c cs} (h : Span b i (c :: cs)) : at? b i = c := by
+public theorem Span.head {b i c cs} (h : Span b i (c :: cs)) : at? b i = c := by
   exact h.byte 0 (by simp)
 
-theorem Span.tail {b i c cs} (h : Span b i (c :: cs)) : Span b (i+1) cs := by
+public theorem Span.tail {b i c cs} (h : Span b i (c :: cs)) : Span b (i+1) cs := by
   refine ⟨by have := h.bound; simp only [List.length_cons] at this; omega, ?_⟩
   intro j hj
   have he := h.byte (j+1) (by simp; omega)
   change at? b (i + (j+1)) = cs[j] at he
   simpa only [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using he
 
-theorem Span.append_left {b i cs ds} (h : Span b i (cs ++ ds)) : Span b i cs := by
+public theorem Span.append_left {b i cs ds} (h : Span b i (cs ++ ds)) : Span b i cs := by
   refine ⟨by have := h.bound; simp at this; omega, ?_⟩
   intro j hj
   have he := h.byte j (by simp; omega)
   rw [List.getElem_append_left hj] at he
   exact he
 
-theorem Span.append_right {b i cs ds} (h : Span b i (cs ++ ds)) : Span b (i+cs.length) ds := by
+public theorem Span.append_right {b i cs ds} (h : Span b i (cs ++ ds)) : Span b (i+cs.length) ds := by
   refine ⟨by simpa [Nat.add_assoc] using h.bound, ?_⟩
   intro j hj
   have he := h.byte (cs.length+j) (by simp; omega)
   rw [List.getElem_append_right (by omega)] at he
   simpa only [Nat.add_assoc, Nat.add_sub_cancel_left] using he
 
-theorem Span.of_bytes (pre raw post : ByteArray) :
+public theorem Span.of_bytes (pre raw post : ByteArray) :
     Span (pre ++ raw ++ post) pre.size (raw.data.toList.map UInt8.toNat) := by
   refine ⟨by simp only [ByteArray.size_append, List.length_map, Array.length_toList, ByteArray.size_data]; omega, ?_⟩
   intro j hj
@@ -105,7 +109,7 @@ theorem Span.of_bytes (pre raw post : ByteArray) :
   simp [ByteArray.getElem_eq_getElem_data]
 
 /-- Extracting a bounded span preserves every source byte. -/
-theorem Span.extract_exact {b raw : ByteArray} {i : Nat}
+public theorem Span.extract_exact {b raw : ByteArray} {i : Nat}
     (h : Span b i (raw.data.toList.map UInt8.toNat)) :
     b.extract i (i+raw.size) = raw := by
   have hb : i+raw.size ≤ b.size := by simpa using h.bound
@@ -117,7 +121,7 @@ theorem Span.extract_exact {b raw : ByteArray} {i : Nat}
   rw [at?_lt _ _ (by omega)] at he
   simpa [ByteArray.getElem_eq_getElem_data] using he
 
-theorem Span.of_ascii (pre post : ByteArray) (cs : List Char)
+public theorem Span.of_ascii (pre post : ByteArray) (cs : List Char)
     (h : ∀ c ∈ cs, c.toNat < 128) :
     Span (pre ++ (String.ofList cs).toUTF8 ++ post) pre.size (cs.map Char.toNat) := by
   rw [ascii_utf8 cs h]
@@ -154,7 +158,7 @@ theorem numberStep_stops {b : ByteArray} {i : Nat} {cs : List Char}
     simpa only [List.length_cons, String.ofList_cons, String.push_eq_append,
       String.append_assoc, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hh
 
-theorem scanNumber_exact {b : ByteArray} {i : Nat} {cs : List Char}
+public theorem scanNumber_exact {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i (cs.map Char.toNat))
     (hc : ∀ c ∈ cs, numByte c.toNat = true)
     (he : numByte (at? b (i+cs.length)) = false) :
@@ -165,14 +169,14 @@ theorem scanNumber_exact {b : ByteArray} {i : Nat} {cs : List Char}
   rw [hs]
   simp
 
-theorem skipWs_fixed_point {b : ByteArray} {i : Nat}
+public theorem skipWs_fixed_point {b : ByteArray} {i : Nat}
     (hw : isWs (at? b i) = false) (hc : at? b i ≠ 37) : skipWs b i = i := by
   apply Loop.forIn_range_stops_exact (n := 1) (budget := b.size+1)
   · apply Loop.Stops.done
     simp [skipStep, hw, hc]
   · omega
 
-theorem skipWs_whitespace_exact {b : ByteArray} {i : Nat}
+public theorem skipWs_whitespace_exact {b : ByteArray} {i : Nat}
     (h : isWs (at? b i) = true) (hw : isWs (at? b (i+1)) = false)
     (hc : at? b (i+1) ≠ 37) (hi : i < b.size) : skipWs b i = i+1 := by
   apply Loop.forIn_range_stops_exact (n := 2) (budget := b.size+1)
@@ -182,10 +186,25 @@ theorem skipWs_whitespace_exact {b : ByteArray} {i : Nat}
       simp [skipStep, hw, hc]
   · omega
 
-theorem skipWs_one_exact {b : ByteArray} {i : Nat}
+public theorem skipWs_one_exact {b : ByteArray} {i : Nat}
     (h : at? b i = 32) (hw : isWs (at? b (i+1)) = false)
     (hc : at? b (i+1) ≠ 37) (hi : i < b.size) : skipWs b i = i+1 :=
   skipWs_whitespace_exact (by rw [h]; rfl) hw hc hi
+
+/-- The stream writer's two-space dictionary prefix is consumed exactly.
+Its caller supplies byte facts, without access to the scanner's step. -/
+public theorem skipWs_two_exact {b : ByteArray} {i : Nat}
+    (h : at? b i = 32) (h' : at? b (i+1) = 32)
+    (hw : isWs (at? b (i+2)) = false) (hc : at? b (i+2) ≠ 37)
+    (hi : i+1 < b.size) : skipWs b i = i+2 := by
+  apply Loop.forIn_range_stops_exact (n := 3) (budget := b.size+1)
+  · apply Loop.Stops.yield (b := i+1)
+    · simp [skipStep, h, isWs]
+    · apply Loop.Stops.yield (b := i+2)
+      · simp [skipStep, h', isWs, Nat.add_assoc]
+      · apply Loop.Stops.done
+        simp [skipStep, hw, hc]
+  · omega
 
 theorem uintStep_stops {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i (cs.map Char.toNat))
@@ -213,7 +232,7 @@ theorem uintStep_stops {b : ByteArray} {i : Nat} {cs : List Char}
       Bool.false_eq_true, ↓reduceIte, ite_self,
       Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hh
 
-theorem parseUInt_exact {b : ByteArray} {i : Nat} {cs : List Char}
+public theorem parseUInt_exact {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i (cs.map Char.toNat))
     (hc : ∀ c ∈ cs, c.isDigit = true) (hne : cs ≠ [])
     (he : ¬ (48 ≤ at? b (i+cs.length) ∧ at? b (i+cs.length) ≤ 57)) :
@@ -224,7 +243,7 @@ theorem parseUInt_exact {b : ByteArray} {i : Nat} {cs : List Char}
   rw [hs]
   simp [hne]
 
-theorem parseUInt_none {b : ByteArray} {i : Nat}
+public theorem parseUInt_none {b : ByteArray} {i : Nat}
     (he : ¬ (48 ≤ at? b i ∧ at? b i ≤ 57)) : parseUInt b i = none := by
   have hs : Loop.Stops (fun s => pure (uintStep b s)) (UIntState.mk i 0 false) 1
       (UIntState.mk i 0 false) := .done (by simp [uintStep, he])
@@ -234,7 +253,7 @@ theorem parseUInt_none {b : ByteArray} {i : Nat}
 
 /-- Every step compares the stated byte. With an exact source span the
 loop cannot take its mismatch exit, and its Boolean remains true. -/
-theorem keywordAt_exact {b : ByteArray} {i : Nat} {kw : String}
+public theorem keywordAt_exact {b : ByteArray} {i : Nat} {kw : String}
     (h : Span b i (octets kw.toUTF8))
     (he : at? b (i+kw.toUTF8.size) = 256 ∨
       isWs (at? b (i+kw.toUTF8.size)) = true ∨
@@ -256,7 +275,7 @@ theorem keywordAt_exact {b : ByteArray} {i : Nat} {kw : String}
     simpa only [Bool.or_eq_true, beq_iff_eq, or_assoc] using he
   simp only [keywordAt, hm, hb, Bool.true_and, ↓reduceIte]
 
-theorem keywordAt_ne {b : ByteArray} {i : Nat} {kw : String}
+public theorem keywordAt_ne {b : ByteArray} {i : Nat} {kw : String}
     (hn : 0 < kw.toUTF8.size)
     (h : at? b i ≠ (kw.toUTF8[0]?.getD 0).toNat) : keywordAt b i kw = none := by
   have hm : (forIn [0:kw.toUTF8.size] true
