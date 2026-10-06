@@ -1,4 +1,5 @@
 import LeanTex.Core.Flate.Huffman
+import LeanTex.Core.Flate.PackageMerge
 
 namespace LeanTex.Core.Flate
 
@@ -395,56 +396,7 @@ leaves inside any package-list prefix are the rarest symbols, so each
 level only records which of its packages are leaves, and the walk back
 from the solution prefix (2n−2 packages) adds one bit to the `leaves`
 rarest symbols per level — no symbol sets, no per-level sort. -/
-private def pmLengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
-  let syms := (Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0
-  let n := syms.size
-  if n == 0 then
-    return Array.replicate freqs.size 0
-  if n == 1 then
-    return (Array.replicate freqs.size 0).set! (syms[0]?.getD 0) 1
-  let sorted := syms.qsort fun a b => (freqs[a]?.getD 0) < (freqs[b]?.getD 0)
-  let itemW := sorted.map fun s => freqs[s]?.getD 0
-  let mut weights : Array Nat := itemW
-  let mut leafFlags : Array Bool := Array.replicate n true
-  let mut levels : Array (Array Bool) := #[]
-  for _ in [1:limit] do
-    levels := levels.push leafFlags
-    let mut mw : Array Nat := #[]
-    let mut k := 0
-    for _ in [0:weights.size / 2] do
-      mw := mw.push ((weights[k]?.getD 0) + (weights[k + 1]?.getD 0))
-      k := k + 2
-    -- Merge the (sorted) items back in, leaf first on ties.
-    let mut w2 : Array Nat := Array.mkEmpty (n + mw.size)
-    let mut f2 : Array Bool := Array.mkEmpty (n + mw.size)
-    let mut a := 0
-    let mut b := 0
-    for _ in [0:n + mw.size] do
-      if a < n && (b ≥ mw.size || itemW[a]?.getD 0 ≤ mw[b]?.getD 0) then
-        w2 := w2.push (itemW[a]?.getD 0)
-        f2 := f2.push true
-        a := a + 1
-      else if b < mw.size then
-        w2 := w2.push (mw[b]?.getD 0)
-        f2 := f2.push false
-        b := b + 1
-    weights := w2
-    leafFlags := f2
-  levels := levels.push leafFlags
-  let mut lens := Array.replicate freqs.size 0
-  let mut take := 2 * n - 2
-  for li in [0:levels.size] do
-    let flags := levels[levels.size - 1 - li]?.getD #[]
-    let mut leaves := 0
-    let mut merged := 0
-    for j in [0:take] do
-      if flags[j]?.getD true then leaves := leaves + 1 else merged := merged + 1
-    for j in [0:leaves] do
-      let s := sorted[j]?.getD 0
-      lens := lens.set! s (lens[s]?.getD 0 + 1)
-    take := 2 * merged
-    if take == 0 then break
-  return lens
+private abbrev pmLengths := PackageMerge.lengths
 
 /-- Largest length code whose base is ≤ `len` — code 285 alone covers 258
 (RFC 1951 §3.2.5's table). -/
