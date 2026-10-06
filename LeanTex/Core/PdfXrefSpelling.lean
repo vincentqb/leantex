@@ -1,5 +1,10 @@
-import LeanTex.Core.PdfReadProof
-import LeanTex.Core.Flate
+module
+
+public import LeanTex.Core.PdfReadProof
+public import LeanTex.Core.Flate
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfLex
+import all LeanTex.Core.Flate
 import LeanTex.Core.Loop
 
 namespace LeanTex.Core.Pdf
@@ -39,7 +44,7 @@ private theorem hex16_chars (x : UInt64) : HexChars (Flate.hex16 x) := by
   · intro s hs
     exact hs
 
-theorem hex16_string_exact (x : UInt64) :
+public theorem hex16_string_exact (x : UInt64) :
     (Obj.str (("<" ++ Flate.hex16 x ++ ">").toUTF8)).Representable := by
   apply Obj.Representable.str
   have hx := hex16_chars x
@@ -48,7 +53,10 @@ theorem hex16_string_exact (x : UInt64) :
     simpa only [String.ofList_toList] using
       octets_ascii (Flate.hex16 x).toList (fun c hc => (hx c hc).2)
   change Obj.StringSpelling (octets ("<" ++ Flate.hex16 x ++ ">").toUTF8)
-  simp only [utf8_append, octets_append, hb]
+  simp only [utf8_append, octets_append, hb,
+    show octets "<".toUTF8 = [60] from by rw [String.toUTF8_eq_toByteArray]; rfl,
+    show octets ">".toUTF8 = [62] from by rw [String.toUTF8_eq_toByteArray]; rfl,
+    List.singleton_append]
   apply Obj.StringSpelling.hex
   intro c hc
   obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
@@ -56,7 +64,7 @@ theorem hex16_string_exact (x : UInt64) :
 
 /-- The typed value of the xref dictionary the writer spells. The hashes
 are the same 64-bit values used for the two file identifiers. -/
-def xrefStreamDict (count info : Nat) (idA idB : UInt64) (filtered : Bool)
+public def xrefStreamDict (count info : Nat) (idA idB : UInt64) (filtered : Bool)
     (len : Nat) : Obj :=
   .dict (#[ ("Type", .name "XRef"), ("Size", .int count),
     ("W", .arr #[.int 1, .int 4, .int 2]),
@@ -67,7 +75,7 @@ def xrefStreamDict (count info : Nat) (idA idB : UInt64) (filtered : Bool)
     (if filtered then #[("Filter", .name "FlateDecode")] else #[]) ++
     #[("Length", .int len)])
 
-theorem xrefStreamDict_fields_exact (count info : Nat) (idA idB : UInt64)
+public theorem xrefStreamDict_fields_exact (count info : Nat) (idA idB : UInt64)
     (filtered : Bool) (len : Nat) :
     let d := xrefStreamDict count info idA idB filtered len
     d.get? "Length" = some (.int len) ∧
@@ -79,7 +87,7 @@ theorem xrefStreamDict_fields_exact (count info : Nat) (idA idB : UInt64)
     d.get? "DL" = none ∧ d.get? "DecodeParms" = none := by
   cases filtered <;> simp [xrefStreamDict, Obj.get?]
 
-theorem xrefStreamDict_representable_exact (count info : Nat) (idA idB : UInt64)
+public theorem xrefStreamDict_representable_exact (count info : Nat) (idA idB : UInt64)
     (filtered : Bool) (len : Nat) :
     (xrefStreamDict count info idA idB filtered len).Representable := by
   cases filtered <;> unfold xrefStreamDict <;>
@@ -110,7 +118,7 @@ private theorem push_append (b : ByteArray) (c : UInt8) :
   exact Array.push_eq_append
 
 set_option maxRecDepth 4096 in
-theorem xrefStreamDict_render_exact (count info : Nat) (idA idB : UInt64)
+public theorem xrefStreamDict_render_exact (count info : Nat) (idA idB : UInt64)
     (filtered : Bool) (len : Nat) :
     (xrefStreamDict count info idA idB filtered len).render =
       (s!"<< /Type /XRef /Size {count} /W [1 4 2] /Index [0 {count}] /Root 1 0 R /Info {info} 0 R /ID [<{Flate.hex16 idA}> <{Flate.hex16 idB}>]" ++
@@ -125,6 +133,18 @@ theorem xrefStreamDict_render_exact (count info : Nat) (idA idB : UInt64)
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp
   all_goals simp only [ByteArray.data_append, Array.toList_append]
+  all_goals simp only [String.toUTF8_eq_toByteArray, Int.toString_eq_repr,
+    Int.repr_eq_ite, Int.natCast_nonneg, ↓reduceIte, Int.toNat_natCast]
+  all_goals simp only [show (0 : Int) ≤ 0 from by omega, show (0 : Int) ≤ 1 from by omega,
+    show (0 : Int) ≤ 2 from by omega, show (0 : Int) ≤ 4 from by omega, ↓reduceIte,
+    show (0 : Int).toNat = 0 from by omega, show (1 : Int).toNat = 1 from by omega,
+    show (2 : Int).toNat = 2 from by omega, show (4 : Int).toNat = 4 from by omega]
+  all_goals simp only [Nat.toString_eq_repr, Nat.repr_of_lt (n := 0) (by omega),
+    Nat.repr_of_lt (n := 1) (by omega), Nat.repr_of_lt (n := 2) (by omega),
+    Nat.repr_of_lt (n := 4) (by omega),
+    Nat.digitChar_eq_zero.mpr rfl, Nat.digitChar_eq_one.mpr rfl,
+    Nat.digitChar_eq_two.mpr rfl, Nat.digitChar_eq_four.mpr rfl,
+    String.singleton_eq_ofList]
   all_goals rfl
 
 end LeanTex.Core.Pdf

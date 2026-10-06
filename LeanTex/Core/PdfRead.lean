@@ -1,11 +1,13 @@
-import LeanTex.Core.Dim
-import LeanTex.Core.PdfObj
-import LeanTex.Core.PdfStreamSpelling
+module
+
+public import LeanTex.Core.Dim
+public import LeanTex.Core.PdfReadProof
+public import LeanTex.Core.PdfStreamSpelling
+public import LeanTex.Core.PdfXref
+public import Std.Data.HashMap
 import LeanTex.Core.PdfFooter
-import LeanTex.Core.PdfXref
 import LeanTex.Core.Binary
 import LeanTex.Core.Flate
-import Std.Data.HashMap
 import Std.Data.HashMap.Lemmas
 
 namespace LeanTex.Core.PdfRead
@@ -37,12 +39,12 @@ Structure and section references are ISO 32000-2. -/
 1000× expansion, and a reader that honours it is a memory bomb. 64 MiB
 holds any figure this engine should meet; past it the file is refused by
 name. -/
-def maxDecoded : Nat := 1 <<< 26
+@[expose] public def maxDecoded : Nat := 1 <<< 26
 
 -- ## Objects (§7.3)
 
 /-- A numeric object in sp: `72` or `595.276`, exact to the sp. -/
-def Obj.sp? (o : Obj) : Option Sp :=
+public def Obj.sp? (o : Obj) : Option Sp :=
   match o with
   | .int n => some (n * spPerPt)
   | .real raw => Id.run do
@@ -92,7 +94,7 @@ def Obj.sp? (o : Obj) : Option Sp :=
 -- ## The cross-reference (§7.5)
 
 /-- Where an object lives: at a byte offset, or inside an object stream. -/
-inductive Loc where
+public inductive Loc where
   | direct (off : Nat)
   | inStm (stm : Nat) (idx : Nat)
   deriving Inhabited
@@ -130,13 +132,14 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
     (hs : Span b i (octets (s!"{n} 0 obj\n").toUTF8 ++ octets spelling))
     (he : ObjReader.Stop b (i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size)) :
     parseIndirectAt b i = .ok (n, o, i + (s!"{n} 0 obj\n").toUTF8.size + spelling.size) := by
-  have hhead : (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 := rfl
+  have hhead : (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 := by
+    simp only [utf8_append, toString]
   simp only [hhead, octets_append, List.append_assoc, ByteArray.size_append,
-    show " 0 obj\n".toUTF8.size = 7 from rfl, ← Nat.add_assoc] at hs he ⊢
+    show " 0 obj\n".toUTF8.size = 7 from by rw [String.toUTF8_eq_toByteArray]; rfl, ← Nat.add_assoc] at hs he ⊢
   let q := i + (toString n).toUTF8.size
   have hnum := hs.append_left
   have hrest : Span b q (32 :: 48 :: 32 :: 111 :: 98 :: 106 :: 10 :: octets spelling) := by
-    simpa only [octets_length, show octets " 0 obj\n".toUTF8 = [32,48,32,111,98,106,10] from rfl,
+    simpa only [octets_length, show octets " 0 obj\n".toUTF8 = [32,48,32,111,98,106,10] from by rw [String.toUTF8_eq_toByteArray]; rfl,
       List.cons_append, List.nil_append] using hs.append_right
   have hb : q + 7 ≤ b.size := by
     have h := hrest.bound
@@ -151,6 +154,7 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
   have hlf : at? b (q+6) = 10 := by
     simpa only [Nat.add_assoc, Nat.reduceAdd] using hrest.tail.tail.tail.tail.tail.tail.head
   have hobj : Span b (q+3) (octets "obj".toUTF8) := by
+    rw [String.toUTF8_eq_toByteArray]
     change Span b (q+3) [111,98,106]
     simpa only [Nat.add_assoc, Nat.reduceAdd] using
       hrest.tail.tail.tail.append_left (cs := [111,98,106]) (ds := 10 :: octets spelling)
@@ -163,13 +167,19 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
   have hskip1 : skipWs b q = q+1 := skipWs_one_exact h32
     (by rw [h48]; rfl) (by rw [h48]; decide) (by omega)
   have hz : parseUInt b (q+1) = some (0,q+2) := by
-    have hzspan : Span b (q+1) (octets (toString (0 : Nat)).toUTF8) :=
-      hrest.tail.append_left (cs := [48]) (ds := 32 :: 111 :: 98 :: 106 :: 10 :: octets spelling)
+    have hzero : (toString (0 : Nat)).toUTF8 = "0".toByteArray := by
+      rw [Nat.toString_eq_repr, Nat.repr_of_lt (by decide),
+        Nat.digitChar_eq_zero.mpr rfl, String.singleton_eq_ofList,
+        String.toUTF8_eq_toByteArray]
+    have hzspan : Span b (q+1) (octets (toString (0 : Nat)).toUTF8) := by
+      rw [hzero]
+      exact hrest.tail.append_left (cs := [48]) (ds := 32 :: 111 :: 98 :: 106 :: 10 :: octets spelling)
     have hend : EndByte (at? b ((q+1)+(toString (0 : Nat)).toUTF8.size)) := by
+      rw [hzero]
       change EndByte (at? b (q+1+1))
       rw [show q+1+1=q+2 by omega, hsp]
       exact Or.inr (Or.inl rfl)
-    simpa only [show (toString (0 : Nat)).toUTF8.size = 1 from rfl,
+    simpa only [show (toString (0 : Nat)).toUTF8.size = 1 from by rw [hzero]; rfl,
       Nat.add_assoc, Nat.reduceAdd] using parse_nat hzspan hend
   have hskip2 : skipWs b (q+2) = q+3 := by
     simpa only [Nat.add_assoc, Nat.reduceAdd] using skipWs_one_exact hsp
@@ -178,10 +188,11 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
       (by omega)
   have hkey : keywordAt b (q+3) "obj" = some (q+6) := by
     have hend : EndByte (at? b (q+3+"obj".toUTF8.size)) := by
+      rw [String.toUTF8_eq_toByteArray]
       change EndByte (at? b (q+3+3))
       rw [show q+3+3=q+6 by omega, hlf]
       exact Or.inr (Or.inl rfl)
-    simpa only [show "obj".toUTF8.size = 3 from rfl, Nat.add_assoc, Nat.reduceAdd] using
+    simpa only [show "obj".toUTF8.size = 3 from by rw [String.toUTF8_eq_toByteArray]; rfl, Nat.add_assoc, Nat.reduceAdd] using
       keywordAt_exact hobj hend
   have hskip3 : skipWs b (q+6) = q+7 := by
     simpa only [Nat.add_assoc, Nat.reduceAdd] using skipWs_whitespace_exact
@@ -203,7 +214,7 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
 /-- Decode one stream's data by its declared filter: none, or
 `/FlateDecode`, with a PNG predictor honoured when `/DecodeParms` declares
 one (§7.4.4). Any other filter is a refusal naming it. -/
-def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray := do
+public def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray := do
   let filter := dict.get? "Filter"
   let parms := (dict.get? "DecodeParms").bind fun d =>
     match d with
@@ -275,7 +286,7 @@ private theorem beField_read (data : ByteArray) (i w v : Nat)
 /-- The object location represented by a writer entry. Free entries do
 not contribute to the reader's live-object map. This is a semantic
 projection; it does not encode or parse any bytes. -/
-def xrefEntryLocation : Pdf.Xref.Entry → Option Loc
+@[expose] public def xrefEntryLocation : Pdf.Xref.Entry → Option Loc
   | .free _ _ => none
   | .direct off _ => some (.direct off)
   | .compressed stm idx => some (.inStm stm idx)
@@ -283,7 +294,7 @@ def xrefEntryLocation : Pdf.Xref.Entry → Option Loc
 /-- The location carried by one cross-reference-stream row. A free,
 unknown, or truncated row contributes no live object; a zero-width type
 field has the PDF-specified default of one (§7.5.8.3). -/
-def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
+public def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
   if base + (w0+w1+w2) ≤ data.size then
     let f1 := if w0 == 0 then 1 else beField data base w0
     let f2 := beField data (base+w0) w1
@@ -296,7 +307,7 @@ def readXrefRow (data : ByteArray) (base w0 w1 w2 : Nat) : Option Loc :=
 /-- The actual reader recovers the location of any encoded writer row,
 inside arbitrary surrounding bytes. The only premise beyond selecting
 the row is its numeric representability; no parsing result is assumed. -/
-theorem readXrefRow_encode_exact (es : Array Pdf.Xref.Entry) (i : Nat)
+public theorem readXrefRow_encode_exact (es : Array Pdf.Xref.Entry) (i : Nat)
     (e : Pdf.Xref.Entry) (hi : es[i]? = some e) (he : e.Fits)
     (pre post : ByteArray) :
     readXrefRow (pre ++ Pdf.Xref.encode es ++ post) (pre.size+7*i) 1 4 2 =
@@ -324,7 +335,7 @@ theorem readXrefRow_encode_exact (es : Array Pdf.Xref.Entry) (i : Nat)
 catalog's number, the newest section's trailer dictionary (a classic
 trailer, or the cross-reference stream's own dictionary — the two carry
 the same keys, §7.5.8.2), and the offset `startxref` named. -/
-structure Xref where
+public structure Xref where
   locs : Std.HashMap Nat Loc := {}
   root : Option Nat := none
   trailer : Option Obj := none
@@ -344,7 +355,7 @@ private def Xref.seen (x : Xref) (trailer : Obj) : Xref :=
 /-- Consume one `/Index` subsection of decoded xref rows. The second
 result is the next physical row, distinct from the subsection's starting
 object number. The same loop serves the stream reader and its proofs. -/
-def readXrefSubsection (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
+public def readXrefSubsection (data : ByteArray) (w0 w1 w2 start count row0 : Nat)
     (x0 : Xref) : Xref × Nat := Id.run do
   let mut x := x0
   let mut row := row0
@@ -369,7 +380,7 @@ private theorem readXrefSubsection_succ (data : ByteArray)
   simp [List.range'_concat, List.foldl_append]
 
 /-- Progress of the actual subsection loop through physical rows. -/
-theorem readXrefSubsection_row_exact (data : ByteArray)
+public theorem readXrefSubsection_row_exact (data : ByteArray)
     (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
     (readXrefSubsection data w0 w1 w2 start count row0 x0).2 = row0+count := by
   induction count with
@@ -380,7 +391,7 @@ theorem readXrefSubsection_row_exact (data : ByteArray)
 map at its object number. Unconsumed rows are absent. The empty initial
 map is the newest xref section's state, and the induction advances the
 physical row and object number together. -/
-theorem readXrefSubsection_locations_exact (es : Array Pdf.Xref.Entry)
+public theorem readXrefSubsection_locations_exact (es : Array Pdf.Xref.Entry)
     (hf : ∀ e ∈ es, e.Fits) (count : Nat) (hc : count ≤ es.size)
     (x0 : Xref) (hx : x0.locs = {}) :
     ∀ k, (readXrefSubsection (Pdf.Xref.encode es) 1 4 2 0 count 0 x0).1.locs[k]? =
@@ -431,7 +442,7 @@ theorem readXrefSubsection_locations_exact (es : Array Pdf.Xref.Entry)
 /-- The actual reader's live-object count for a writer table with object
 zero free and every nonzero object live. These are properties of the
 semantic entries, not assumptions about successful parsing. -/
-theorem readXrefSubsection_size_exact (es : Array Pdf.Xref.Entry)
+public theorem readXrefSubsection_size_exact (es : Array Pdf.Xref.Entry)
     (hf : ∀ e ∈ es, e.Fits)
     (hzero : es[0]?.bind xrefEntryLocation = none)
     (hlive : ∀ i, 0 < i → i < es.size → (es[i]?.bind xrefEntryLocation).isSome = true)
@@ -484,7 +495,7 @@ theorem readXrefSubsection_size_exact (es : Array Pdf.Xref.Entry)
       omega
 
 /-- Reading rows preserves the trailer, root, and startxref metadata. -/
-theorem readXrefSubsection_metadata_exact (data : ByteArray)
+public theorem readXrefSubsection_metadata_exact (data : ByteArray)
     (w0 w1 w2 start count row0 : Nat) (x0 : Xref) :
     let x := (readXrefSubsection data w0 w1 w2 start count row0 x0).1
     x.root = x0.root ∧ x.trailer = x0.trailer ∧ x.start = x0.start := by
@@ -610,7 +621,7 @@ private def readXrefFrom (b : ByteArray) (off0 : Nat) : Except String Xref := Id
   return .ok x
 
 /-- Read the footer, then traverse the sections it names. -/
-def readXref (b : ByteArray) : Except String Xref := do
+public def readXref (b : ByteArray) : Except String Xref := do
   readXrefFrom b (← readStartxref b)
 
 private theorem indirect_stream_span {b : ByteArray} {i : Nat}
@@ -629,7 +640,7 @@ private theorem indirect_stream_span {b : ByteArray} {i : Nat}
     simpa only [List.append_assoc] using hs
   have ht : Span b j ([10,115,116,114,101,97,109,10] ++ octets raw) := by
     simpa only [List.length_append, octets_length, ← Nat.add_assoc,
-      show octets "\nstream\n".toUTF8 = [10,115,116,114,101,97,109,10] from rfl]
+      show octets "\nstream\n".toUTF8 = [10,115,116,114,101,97,109,10] from by rw [String.toUTF8_eq_toByteArray]; rfl]
       using hs'.append_right
   have hlf : at? b j = 10 := ht.head
   have hs0 : at? b (j+1) = 115 := ht.tail.head
@@ -646,13 +657,15 @@ private theorem indirect_stream_span {b : ByteArray} {i : Nat}
   have hk0 : skipWs b j = j+1 := skipWs_whitespace_exact (by rw [hlf]; rfl)
     (by rw [hs0]; rfl) (by rw [hs0]; decide) (by omega)
   have hk : keywordAt b (j+1) "stream" = some (j+7) := by
-    have hs' : Span b (j+1) (octets "stream".toUTF8) :=
-      ht.tail.append_left (cs := [115,116,114,101,97,109]) (ds := 10 :: octets raw)
+    have hs' : Span b (j+1) (octets "stream".toUTF8) := by
+      rw [String.toUTF8_eq_toByteArray]
+      exact ht.tail.append_left (cs := [115,116,114,101,97,109]) (ds := 10 :: octets raw)
     have hEnd : EndByte (at? b (j+1+"stream".toUTF8.size)) := by
+      rw [String.toUTF8_eq_toByteArray]
       change EndByte (at? b (j+1+6))
       rw [show j+1+6=j+7 by omega, hs7]
       exact Or.inr (Or.inl rfl)
-    simpa only [show "stream".toUTF8.size = 6 from rfl, Nat.add_assoc, Nat.reduceAdd]
+    simpa only [show "stream".toUTF8.size = 6 from by rw [String.toUTF8_eq_toByteArray]; rfl, Nat.add_assoc, Nat.reduceAdd]
       using keywordAt_exact hs' hEnd
   have hr : Span b (j+8) (octets raw) := by
     have hraw := ht.tail.tail.tail.tail.tail.tail.tail.tail
@@ -716,12 +729,14 @@ private theorem readXref_span_exact {b : ByteArray} {i : Nat}
       {start := i, root := some root, trailer := some dict}).1) := by
   have hn : Span b i (octets (toString n).toUTF8) := by
     have hs' := hs
-    rw [show (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 from rfl,
+    rw [show (s!"{n} 0 obj\n").toUTF8 = (toString n).toUTF8 ++ " 0 obj\n".toUTF8 from by
+      simp only [utf8_append, toString],
       octets_append] at hs'
     simpa only [List.append_assoc] using hs'.append_left.append_left.append_left.append_left
   have hk : keywordAt b (skipWs b i) "xref" = none := by
     rw [nat_start_skip n hn]
-    apply keywordAt_ne (by decide)
+    apply keywordAt_ne (by rw [String.toUTF8_eq_toByteArray]; decide)
+    rw [show "xref".toUTF8 = "xref".toByteArray from String.toUTF8_eq_toByteArray]
     change at? b i ≠ 120
     rw [numeric_octets _ (nat_numeric n)] at hn
     have hh := hn.first_number (by simp) (by
@@ -743,7 +758,7 @@ private theorem readXref_span_exact {b : ByteArray} {i : Nat}
 subsection loop, and section traversal recover a single emitted xref
 stream. The codec premise is local to its payload and is discharged by
 the writer's compression contract when this lemma is composed. -/
-theorem readXref_stream_exact (pre : ByteArray) (n : Nat)
+public theorem readXref_stream_exact (pre : ByteArray) (n : Nat)
     (dict : Obj) (hd : dict.Representable) (raw data : ByteArray)
     (count root : Nat) (hi : pre.size < 256^4)
     (hl : dict.get? "Length" = some (.int raw.size))
@@ -822,7 +837,7 @@ private def Reader.streamAfterWith (r : Reader) (intAt : Nat → Option Int)
 /-- The ordered decimal pairs at the start of an object stream (§7.5.7).
 The progress invariant is the unread header suffix together with the
 pairs already consumed. -/
-def readObjectStreamHeader (data : ByteArray) (count : Nat) :
+public def readObjectStreamHeader (data : ByteArray) (count : Nat) :
     Except String (Array (Nat × Nat)) := do
   let mut i := 0
   let mut pairs : Array (Nat × Nat) := #[]
@@ -954,7 +969,7 @@ or its object stream's header pair — its value, and its raw (still
 encoded) stream bytes when it carries one. `header` is data the reader
 keeps rather than a check it made, so `wf` below can restate the check as
 a property the type carries. -/
-structure Entry where
+public structure Entry where
   num : Nat
   loc : Loc
   header : Nat
@@ -963,9 +978,9 @@ structure Entry where
   deriving Inhabited
 
 /-- The file spells the object under the number the table lists it by. -/
-def Entry.wf (e : Entry) : Bool := e.header == e.num
+@[expose] public def Entry.wf (e : Entry) : Bool := e.header == e.num
 
-def entriesWf (es : Array Entry) : Bool := es.all Entry.wf
+@[expose] public def entriesWf (es : Array Entry) : Bool := es.all Entry.wf
 
 /-- **`objects_num_covers`** (the `_covers` statement, artifact-specific:
 a fact of the file's own bookkeeping, with no IR statement behind it):
@@ -974,7 +989,7 @@ the cross-reference lists it by — at its offset, or in its object stream's
 header. A cross-reference row pointing at the wrong object, or an object
 stream whose header pairs were permuted, is refused by name before this
 value exists; the subtype carries the property, as `readForm`'s does. -/
-theorem objects_num_covers (es : { es : Array Entry // entriesWf es }) :
+public theorem objects_num_covers (es : { es : Array Entry // entriesWf es }) :
     ∀ e ∈ es.val, e.header = e.num := by
   intro e he
   have h := es.property
@@ -982,7 +997,7 @@ theorem objects_num_covers (es : { es : Array Entry // entriesWf es }) :
   exact h e he
 
 /-- Decode an entry's stream through its declared filter. -/
-def Entry.decoded (e : Entry) : Except String (Option ByteArray) :=
+public def Entry.decoded (e : Entry) : Except String (Option ByteArray) :=
   match e.stream with
   | none => pure none
   | some raw => (decodeStream e.val raw).map some
@@ -1029,7 +1044,7 @@ private def Reader.collect (r : Reader) (size? : Option Nat) (num : Nat)
 name the parsed value's end and its raw stream; compressed entries name
 the decoded object stream, header slot, and payload value. These are
 intermediate parsing contracts, not assumptions of a producer theorem. -/
-def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
+public def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (e : Entry) (after : Option Nat) : Prop :=
   e.header = e.num ∧ locs.get? e.num = some e.loc ∧
   match e.loc, after with
@@ -1056,9 +1071,9 @@ private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Opti
   have ht : Span r.b (j+8+raw.size)
       [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] := by
     simpa only [j, List.length_append, octets_length,
-      show "\nstream\n".toUTF8.size = 8 from rfl, ← Nat.add_assoc,
+      show "\nstream\n".toUTF8.size = 8 from by rw [String.toUTF8_eq_toByteArray]; rfl, ← Nat.add_assoc,
       show octets "\nendstream\nendobj\n".toUTF8 =
-        [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] from rfl]
+        [10,101,110,100,115,116,114,101,97,109,10,101,110,100,111,98,106,10] from by rw [String.toUTF8_eq_toByteArray]; rfl]
       using hs.append_right
   have hlf : at? r.b (j+8+raw.size) = 10 := ht.head
   have hen : at? r.b (j+8+raw.size+1) = 101 := ht.tail.head
@@ -1071,14 +1086,16 @@ private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Opti
         List.length_nil] at this; omega)
   have hkey : keywordAt r.b (j+8+raw.size+1) "endstream" =
       some (j+8+raw.size+10) := by
-    have hword : Span r.b (j+8+raw.size+1) (octets "endstream".toUTF8) :=
-      ht.tail.append_left (cs := [101,110,100,115,116,114,101,97,109])
+    have hword : Span r.b (j+8+raw.size+1) (octets "endstream".toUTF8) := by
+      rw [String.toUTF8_eq_toByteArray]
+      exact ht.tail.append_left (cs := [101,110,100,115,116,114,101,97,109])
         (ds := [10,101,110,100,111,98,106,10])
     have he : EndByte (at? r.b (j+8+raw.size+1+"endstream".toUTF8.size)) := by
+      rw [String.toUTF8_eq_toByteArray]
       change EndByte (at? r.b (j+8+raw.size+1+9))
       rw [show j+8+raw.size+1+9=j+8+raw.size+10 by omega, hend]
       exact Or.inr (Or.inl rfl)
-    simpa only [show "endstream".toUTF8.size = 9 from rfl,
+    simpa only [show "endstream".toUTF8.size = 9 from by rw [String.toUTF8_eq_toByteArray]; rfl,
       Nat.add_assoc, Nat.reduceAdd] using keywordAt_exact hword he
   have hbound' : ¬ (j+7+1+raw.size > r.b.size) := by dsimp only [j]; omega
   have he' : r.b.extract (j+7+1) (j+7+1+raw.size) = raw := by
@@ -1096,7 +1113,7 @@ private theorem Reader.streamAfter_span_exact (r : Reader) (intAt : Nat → Opti
 /-- A complete emitted direct stream supplies its actual local reading.
 The byte-span premise includes the closing marker, so a guessed length
 or merely parseable dictionary cannot establish this contract. -/
-theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+public theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num off : Nat) (dict : Obj) (spelling : ByteArray) (hd : dict.Spelling spelling) (raw : ByteArray)
     (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
       octets spelling ++ octets "\nstream\n".toUTF8 ++ octets raw ++
@@ -1110,7 +1127,7 @@ theorem Entry.reads_stream_spelling_exact (b : ByteArray) (locs : Std.HashMap Na
   exact Reader.streamAfter_span_exact {b, locs} intAt num off dict spelling hd raw hs hl
 
 /-- Canonical dictionary rendering is one of the concrete stream spellings. -/
-theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+public theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
     (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
       octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw ++
@@ -1124,7 +1141,7 @@ theorem Entry.reads_stream_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
 /-- A compressed object's local reading follows from the actual reading of
 its containing stream, payload decoding, header slot, and value parse.
 This exposes the bootstrap composition without exporting the private reader. -/
-theorem Entry.reads_compressed_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
+public theorem Entry.reads_compressed_exact (b : ByteArray) (locs : Std.HashMap Nat Loc)
     (num stm idx off j count first objoff next : Nat)
     (dict val : Obj) (raw data : ByteArray) (pairs : Array (Nat × Nat))
     (hstm : ({num := stm, header := stm, loc := .direct off, val := dict, stream := some raw} : Entry).Reads b locs (some j))
@@ -1358,7 +1375,7 @@ tolerant reader skips whitespace, and would pass an offset off by one),
 every number lies below the trailer's `/Size`, every object stream's
 header agrees with the table, every stream's `/Length` reaches its
 `endstream`. Object streams are decoded once each. -/
-def objectsOf (b : ByteArray) (x : Xref) :
+public def objectsOf (b : ByteArray) (x : Xref) :
     Except String { es : Array Entry // entriesWf es } := do
   let s := x.start
   if isWs (at? b s) || at? b s == 256 ||
@@ -1383,7 +1400,7 @@ object-stream cache, deferred stream extraction, and final number check.
 The returned array is exactly the supplied entry model in object-number
 order. A producer contract must establish `Entry.Reads` from its emitted
 spans; this theorem does not itself establish those spelling facts. -/
-theorem objectsOf_reads_exact (b : ByteArray) (x : Xref)
+public theorem objectsOf_reads_exact (b : ByteArray) (x : Xref)
     (model : Nat → Entry × Option Nat)
     (hstart : (isWs (at? b x.start) || at? b x.start == 256 ||
       (x.start > 0 && !(isWs (at? b (x.start - 1)) ||
@@ -1422,20 +1439,20 @@ theorem objectsOf_reads_exact (b : ByteArray) (x : Xref)
   simp only [bind, Except.bind, pure, Except.pure, hf, ← List.map_toArray,
     Array.toArray_toList, hw, ↓reduceDIte]
 
-def objects (b : ByteArray) : Except String { es : Array Entry // entriesWf es } := do
+public def objects (b : ByteArray) : Except String { es : Array Entry // entriesWf es } := do
   unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
     throw "not a PDF file (no %PDF header)"
   objectsOf b (← readXref b)
 
 /-- The newest trailer dictionary (§7.5.5): `/Root`, `/Info`, `/Size`. -/
-def trailer (b : ByteArray) : Except String Obj := do
+public def trailer (b : ByteArray) : Except String Obj := do
   let x ← readXref b
   return x.trailer.getD (.dict #[])
 
 -- ## Page selection (§7.7.3)
 
 /-- A page selected by its physical, one-based position in `/Kids` order. -/
-inductive PageSelection where
+public inductive PageSelection where
   | first
   | last
   | number (oneBased : Nat)
@@ -1517,7 +1534,7 @@ private def readPage (b : ByteArray) (page : PageSelection) :
 /-- Resolve a selection to its one-based physical page number, using the
 same `/Kids` traversal and selection checks as `readForm`. Contents and
 resource streams need not be decoded to resolve an ordinal. -/
-def pageNumber (b : ByteArray) (page : PageSelection := .first) : Except String Nat := do
+public def pageNumber (b : ByteArray) (page : PageSelection := .first) : Except String Nat := do
   let (_, selected) ← readPage b page
   return selected.1
 
@@ -1527,7 +1544,7 @@ def pageNumber (b : ByteArray) (page : PageSelection := .first) : Except String 
 object by its local index — the writer fills each hole with its own object
 number. Holes are only ever created beside an enqueued target, and `wf`
 below re-checks the closure so the guarantee is carried by the type. -/
-inductive Chunk where
+public inductive Chunk where
   | bytes (b : ByteArray)
   | ref (l : Nat)
   deriving Inhabited
@@ -1535,7 +1552,7 @@ inductive Chunk where
 /-- One copied object: its serialized value, and its verbatim (still
 encoded) stream payload when it has one — a font program is bytes in,
 bytes out, never re-parsed. -/
-structure XObjOut where
+public structure XObjOut where
   chunks : Array Chunk
   stream : Option ByteArray := none
   deriving Inhabited
@@ -1608,7 +1625,7 @@ end
 /-- A selected page of a read PDF, ready to embed: the page box in sp, the
 decoded content, and the `/Resources` graph renumbered into `objects`'
 local space. The engine claims the box; the copied streams stay opaque. -/
-structure Form where
+public structure Form where
   x0 : Sp
   y0 : Sp
   x1 : Sp
@@ -1618,9 +1635,9 @@ structure Form where
   objects : Array XObjOut
   deriving Inhabited
 
-def Form.w (f : Form) : Sp := f.x1 - f.x0
+@[expose] public def Form.w (f : Form) : Sp := f.x1 - f.x0
 
-def Form.h (f : Form) : Sp := f.y1 - f.y0
+@[expose] public def Form.h (f : Form) : Sp := f.y1 - f.y0
 
 private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
   cs.all fun c => match c with
@@ -1629,7 +1646,7 @@ private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
 
 /-- Every hole in the copied graph points into `objects`: the writer can
 renumber the whole graph without meeting a dangling reference. -/
-def Form.wf (f : Form) : Bool :=
+public def Form.wf (f : Form) : Bool :=
   chunksWf f.objects.size f.resources &&
   f.objects.all (fun o => chunksWf f.objects.size o.chunks)
 
@@ -1640,7 +1657,7 @@ makes "vector stays vector" true in a viewer: a form whose `/Resources`
 named a font object the file did not carry would render blank or error.
 The reader returns the subtype, so the property is carried by the type:
 `readForm`'s one success path checks `wf` and refuses otherwise. -/
-theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
+public theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
   f.property
 
 /-- The composite placement map on one axis, as an exact rational
@@ -1649,7 +1666,7 @@ theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
 into the space the `Do` executes in) and the image path's
 `cm len 0 0 len' dst dst'` (§8.3.4) maps that to `[dst, dst + len]`.
 `placeX lo hi dst len p = ((p - lo) * len + dst * (hi - lo), hi - lo)`. -/
-def placeX (lo hi dst len p : Int) : Int × Int :=
+@[expose] public def placeX (lo hi dst len p : Int) : Int × Int :=
   ((p - lo) * len + dst * (hi - lo), hi - lo)
 
 /-- **`form_bbox_exact`**: the placed box is the page box scaled to the
@@ -1659,7 +1676,7 @@ high edge on `dst + len` — `value * den = num` is the fraction read
 without dividing. The decimal rendering rounds each matrix entry once, at
 the ninth digit (`ratString` in the writer), the same one-unit story as
 every `Sp.toPtString`. -/
-theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
+public theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
     (placeX lo hi dst len lo).1 = dst * (placeX lo hi dst len lo).2 ∧
     (placeX lo hi dst len hi).1 = (dst + len) * (placeX lo hi dst len hi).2 ∧
     0 < (placeX lo hi dst len lo).2 := by
@@ -1673,7 +1690,7 @@ page 1: the box (CropBox when declared, else MediaBox — pdfTeX's rule for
 PDF inclusion), the decoded content streams concatenated, and the resources
 graph copied and renumbered. Total over arbitrary bytes; anything the
 reader cannot follow is a named error. -/
-def readForm (b : ByteArray) (page : PageSelection := .first) :
+public def readForm (b : ByteArray) (page : PageSelection := .first) :
     Except String { f : Form // f.wf } := do
   let (r, selected) ← readPage b page
   let page := selected.2

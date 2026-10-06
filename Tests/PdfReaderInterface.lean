@@ -7,6 +7,8 @@ import LeanTex.Core.PdfStringProof
 import LeanTex.Core.PdfStreamSpelling
 import LeanTex.Core.PdfFooter
 import LeanTex.Core.PdfXref
+import LeanTex.Core.PdfXrefSpelling
+import LeanTex.Core.PdfRead
 
 /-! Ordinary readers share the byte rules and token scanners. Loop state
 and individual scanner steps belong to the implementation and its proofs. -/
@@ -16,6 +18,8 @@ open LeanTex.Core.PdfRead (Obj parseVal parseVal_render_id parseVal_render_span_
   parseVal_spelling_span_exact readStartxref readStartxref_footer_exact)
 
 open LeanTex.Core.Pdf
+
+open LeanTex.Core
 
 namespace Tests.PdfReaderInterface
 
@@ -106,6 +110,60 @@ example (pre : ByteArray) (offset : Nat) (h : offset < 256^4) :
     readStartxref (pre ++ (s!"startxref\n{offset}\n%%EOF\n").toUTF8) = .ok offset :=
   readStartxref_footer_exact pre offset h
 
+example (count info : Nat) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info idA idB filtered len).Representable :=
+  xrefStreamDict_representable_exact count info idA idB filtered len
+
+example (count info : Nat) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info idA idB filtered len).get? "Length" = some (.int len) :=
+  (xrefStreamDict_fields_exact count info idA idB filtered len).1
+
+example : Obj → Option LeanTex.Core.Dim.Sp := PdfRead.Obj.sp?
+example : Obj → ByteArray → Except String ByteArray := PdfRead.decodeStream
+example : ByteArray → Except String PdfRead.Xref := PdfRead.readXref
+example : ByteArray → Nat → Except String (Array (Nat × Nat)) :=
+  PdfRead.readObjectStreamHeader
+example : ByteArray → PdfRead.Xref →
+    Except String { es : Array PdfRead.Entry // PdfRead.entriesWf es } := PdfRead.objectsOf
+example : ByteArray → Except String { es : Array PdfRead.Entry // PdfRead.entriesWf es } :=
+  PdfRead.objects
+example : ByteArray → Except String Obj := PdfRead.trailer
+example : ByteArray → PdfRead.PageSelection → Except String Nat :=
+  fun b page => PdfRead.pageNumber b page
+example : ByteArray → PdfRead.PageSelection → Except String { f : PdfRead.Form // f.wf } :=
+  fun b page => PdfRead.readForm b page
+
+example (f : PdfRead.Form) : f.w = f.x1 - f.x0 := rfl
+example (f : PdfRead.Form) : f.h = f.y1 - f.y0 := rfl
+example (e : PdfRead.Entry) : e.wf = (e.header == e.num) := rfl
+
+example (es : { es : Array PdfRead.Entry // PdfRead.entriesWf es }) :
+    ∀ e ∈ es.val, e.header = e.num := PdfRead.objects_num_covers es
+
+example (f : { f : PdfRead.Form // f.wf }) : f.val.wf = true :=
+  PdfRead.resources_closed f
+
+example (es : Array Xref.Entry) (i : Nat) (e : Xref.Entry)
+    (hi : es[i]? = some e) (he : e.Fits) (pre post : ByteArray) :
+    PdfRead.readXrefRow (pre ++ Xref.encode es ++ post) (pre.size + 7*i) 1 4 2 =
+      PdfRead.xrefEntryLocation e :=
+  PdfRead.readXrefRow_encode_exact es i e hi he pre post
+
+example (data : ByteArray) (w0 w1 w2 start count row0 : Nat) (x : PdfRead.Xref) :
+    (PdfRead.readXrefSubsection data w0 w1 w2 start count row0 x).2 = row0 + count :=
+  PdfRead.readXrefSubsection_row_exact data w0 w1 w2 start count row0 x
+
+example (b : ByteArray) (locs : Std.HashMap Nat PdfRead.Loc)
+    (num off : Nat) (dict : Obj) (hd : dict.Representable) (raw : ByteArray)
+    (hs : Span b off (octets (s!"{num} 0 obj\n").toUTF8 ++
+      octets dict.render ++ octets "\nstream\n".toUTF8 ++ octets raw ++
+      octets "\nendstream\nendobj\n".toUTF8))
+    (hl : dict.get? "Length" = some (.int raw.size))
+    (hn : locs.get? num = some (.direct off)) :
+    ({num, header := num, loc := .direct off, val := dict, stream := some raw} : PdfRead.Entry).Reads b locs
+      (some (off + (s!"{num} 0 obj\n").toUTF8.size + dict.render.size)) :=
+  PdfRead.Entry.reads_stream_exact b locs num off dict hd raw hs hl hn
+
 private def sameResult (actual expected : Except String (Obj × Nat)) : Bool :=
   match actual, expected with
   | .ok a, .ok e => a == e
@@ -166,7 +224,31 @@ public def checks : Array (String × Bool) := #[
   ("xref out-of-domain fields retain truncation", Xref.row 1 (256^4+2) (256^2+3) ==
     ([1,0,0,0,2,0,3] : List UInt8).toByteArray),
   ("xref row array order", Xref.encode #[.free 0 65535, .direct 12 0] ==
-    ([0,0,0,0,0,255,255,1,0,0,0,12,0,0] : List UInt8).toByteArray)]
+    ([0,0,0,0,0,255,255,1,0,0,0,12,0,0] : List UInt8).toByteArray),
+  ("reader unfiltered stream retained", match PdfRead.decodeStream (.dict #[]) "raw".toUTF8 with
+    | .ok actual => actual == "raw".toUTF8
+    | .error _ => false),
+  ("reader unsupported filter names refusal", match PdfRead.decodeStream
+      (.dict #[("Filter", .name "Unknown")]) ByteArray.empty with
+    | .error message => message == "PDF stream filter /Unknown is not supported"
+    | .ok _ => false),
+  ("reader object stream header order", match PdfRead.readObjectStreamHeader "7 0 3 5 rest".toUTF8 2 with
+    | .ok actual => actual == #[(7,0),(3,5)]
+    | .error _ => false),
+  ("reader truncated object stream header refused", match PdfRead.readObjectStreamHeader "7".toUTF8 1 with
+    | .error message => message == "malformed PDF: unreadable object stream header"
+    | .ok _ => false),
+  ("reader encoded direct row", match PdfRead.readXrefRow (Xref.Entry.direct 258 3).bytes 0 1 4 2 with
+    | some (.direct off) => off == 258
+    | _ => false),
+  ("reader encoded compressed row", match PdfRead.readXrefRow (Xref.Entry.compressed 4 5).bytes 0 1 4 2 with
+    | some (.inStm stm idx) => stm == 4 && idx == 5
+    | _ => false),
+  ("reader free row has no location", (PdfRead.readXrefRow (Xref.Entry.free 0 65535).bytes 0 1 4 2).isNone),
+  ("reader truncated row has no location", (PdfRead.readXrefRow ByteArray.empty 0 1 4 2).isNone),
+  ("reader malformed header refused", match PdfRead.objects ByteArray.empty with
+    | .error message => message == "not a PDF file (no %PDF header)"
+    | .ok _ => false)]
 
 example : True := by
   fail_if_success have := UIntState
@@ -201,6 +283,22 @@ example : True := by
   fail_if_success have := LeanTex.Core.PdfRead.footer_number
   fail_if_success have := Xref.encodeList
   fail_if_success have := Xref.encodeList_bytes
+  fail_if_success have := LeanTex.Core.Pdf.HexChars
+  fail_if_success have := LeanTex.Core.Pdf.hex16_chars
+  fail_if_success have := PdfRead.Reader
+  fail_if_success have := PdfRead.parseIndirectAt
+  fail_if_success have := PdfRead.beField
+  fail_if_success have := PdfRead.Xref.add
+  fail_if_success have := PdfRead.Xref.seen
+  fail_if_success have := PdfRead.readClassicSection
+  fail_if_success have := PdfRead.readStreamSection
+  fail_if_success have := PdfRead.readXrefFrom
+  fail_if_success have := PdfRead.ObjectScan
+  fail_if_success have := PdfRead.Page
+  fail_if_success have := PdfRead.selectPage
+  fail_if_success have := PdfRead.SerSt
+  fail_if_success have := PdfRead.serObj
+  fail_if_success have := PdfRead.chunksWf
   trivial
 
 end Tests.PdfReaderInterface
