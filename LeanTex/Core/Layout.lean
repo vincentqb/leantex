@@ -13475,6 +13475,671 @@ private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
   · intro i st h
     exact sourceBound_placeParaLine fs j st breaks[i] hj h
 
+/-- Plain text can introduce discretionary spacing penalties, but no
+authored break or hyphen glyph. The final forced penalty is added separately. -/
+private def Item.Prose : Item → Prop
+  | .pen _ cost flagged _ _ glyphs =>
+    forcedCost < cost ∧ flagged = false ∧ glyphs = #[]
+  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+
+private def ItemsProse (items : Array Item) : Prop :=
+  ∀ it ∈ items, it.Prose
+
+@[simp] private theorem itemsProse_empty : ItemsProse #[] := by
+  simp [ItemsProse]
+
+@[simp] private theorem itemsProse_push (items : Array Item) (it : Item) :
+    ItemsProse (items.push it) ↔ ItemsProse items ∧ it.Prose := by
+  simp only [ItemsProse, Array.mem_push, or_imp, forall_and, forall_eq]
+
+@[simp] private theorem itemsProse_append (xs ys : Array Item) :
+    ItemsProse (xs ++ ys) ↔ ItemsProse xs ∧ ItemsProse ys := by
+  simp [ItemsProse, or_imp, forall_and]
+
+private theorem flushWord_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp)
+    (hi : ItemsProse items) :
+    ItemsProse (flushWord fontIdx color link size leading decorations ground attr items offsets
+      sources box boxOwners boxSources w).1 := by
+  unfold flushWord
+  dsimp only
+  split
+  · exact hi
+  · split
+    · exact (itemsProse_push _ _).mpr ⟨hi, trivial⟩
+    · apply Loop.bind_of_inv
+        (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
+          Sp × Array (Nat × Char × Sp) × Sp × Attribution => ItemsProse st.1)
+        (Q := fun out : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) =>
+          ItemsProse out.1)
+      · apply Loop.forIn_array_inv
+          (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
+            Sp × Array (Nat × Char × Sp) × Sp × Attribution => ItemsProse st.1)
+        · exact hi
+        · rintro x _ ⟨is, os, ss, off, run, rw, owner⟩ hs
+          dsimp only
+          split
+          · split <;> exact (itemsProse_push _ _).mpr ⟨hs, trivial⟩
+          · exact hs
+      · intro st hs
+        split <;> exact (itemsProse_push _ _).mpr ⟨hs, trivial⟩
+
+private theorem WordAcc.flush_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc)
+    (hs : ItemsProse (WordAcc.items st)) :
+    ItemsProse (WordAcc.items (st.flush fontIdx color link size leading decorations ground attr)) :=
+  flushWord_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hs
+
+private theorem WordAcc.glyph_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
+    (owner : Attribution) (origin : Option Span) (st : WordAcc)
+    (hs : ItemsProse (WordAcc.items st)) :
+    ItemsProse (WordAcc.items (st.glyph fontIdx color link size leading decorations ground attr smallcaps
+      fs font c sourceId owner origin)) := by
+  unfold WordAcc.glyph
+  split
+  · exact hs
+  · split
+    · dsimp only
+      split <;> exact (itemsProse_push _ _).mpr
+        ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ st hs, trivial⟩
+    · split <;> exact hs
+
+private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
+    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Sp) (st : WordAcc)
+    (hs : ItemsProse (WordAcc.items st)) :
+    ItemsProse (WordAcc.items (st.letters fontIdx color link size leading decorations ground attr smallcaps
+      fs font run start owners origins #[] hyphW)) := by
+  unfold WordAcc.letters
+  simp only [Array.contains_empty, Bool.false_eq_true, ↓reduceIte, Id.run]
+  apply Loop.forIn_array_inv (P := fun st : WordAcc => ItemsProse (WordAcc.items st))
+  · exact hs
+  · intro x _ st hs
+    exact WordAcc.glyph_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ st hs
+
+private theorem wordItems_none_prose (langKey : String)
+    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
+    (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
+    (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
+    (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
+    (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
+    (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
+    ItemsProse (wordItems none langKey size leading fontIdx color ground link decorations
+      smallcaps attr fs font chars missing substs cache owners origins sites).1 := by
+  unfold wordItems
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat => ItemsProse (WordAcc.items st.1))
+    (Q := fun out : Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins =>
+      ItemsProse out.1)
+  · apply Loop.forIn_range_inv
+      (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat =>
+        ItemsProse (WordAcc.items st.1))
+    · exact itemsProse_empty
+    · rintro k _ _ ⟨st, cache, i⟩ hs
+      dsimp only
+      split
+      · split
+        · exact WordAcc.letters_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ st hs
+        · split
+          · exact (itemsProse_push _ _).mpr ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ st hs, trivial⟩
+          · split
+            · exact (itemsProse_push _ _).mpr ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ st hs, trivial⟩
+            · have hg := WordAcc.glyph_prose fontIdx color link size leading decorations ground
+                attr smallcaps fs font chars[i] i (owners[i]?.getD attr)
+                (origins[i]?.getD none) st hs
+              split
+              · exact (itemsProse_push _ _).mpr
+                  ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ _ hg, by
+                    simp [Item.Prose, forcedCost, hyphenPenalty]⟩
+              · exact hg
+      · exact hs
+  · intro st hs
+    exact WordAcc.flush_prose _ _ _ _ _ _ _ _ st.1 hs
+
+private theorem widenLast_prose (items : Array Item) (w : Sp)
+    (hi : ItemsProse items) : ItemsProse (widenLast items w) := by
+  unfold widenLast
+  split
+  · exact hi
+  · split
+    next g h =>
+      obtain ⟨xs, rfl⟩ := Array.back?_eq_some_iff.mp h
+      simpa [Array.setIfInBounds, Array.set_push, Item.Prose] using hi
+    next g r h =>
+      obtain ⟨xs, rfl⟩ := Array.back?_eq_some_iff.mp h
+      simpa [Array.setIfInBounds, Array.set_push, Item.Prose] using hi
+    next => exact hi
+
+private theorem decoratedGlue_prose (g : Glue) (d : Decorations)
+    (font : Font) (size : Sp) (color : Ir.Color) :
+    (Item.ofDecoratedGlue g d font size color).Prose := by
+  unfold Item.ofDecoratedGlue
+  split <;> trivial
+
+private theorem itemsOfTok_none_prose (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
+    (anchors : Array (String × Nat)) (origins : Array (Option Span))
+    (source : Option Span) (ht : Tk.TextSource tk)
+    (hi : ItemsProse (ItemsAcc.items acc)) :
+    ItemsProse (ItemsAcc.items
+      (itemsOfTok none size xHeight fs imgs textW textH
+        acc tk owners anchors origins source)) := by
+  cases tk <;> simp only [Tk.TextSource] at ht
+  all_goals first | contradiction | skip
+  case word sty cs attr =>
+    simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
+      patsOf_off]
+    exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
+      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
+  case space sty =>
+    exact (itemsProse_push _ _).mpr ⟨hi, decoratedGlue_prose _ _ _ _ _⟩
+
+private theorem itemsOfToks_none_prose (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (toks : Array Tk) (ht : ∀ tk ∈ toks, Tk.TextSource tk)
+    (hi : ItemsProse (ItemsAcc.items acc)) :
+    ItemsProse (ItemsAcc.items
+      (itemsOfToks none size xHeight fs imgs textW textH acc toks)) := by
+  unfold itemsOfToks
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : TokenState =>
+      pendingTextSource st.2.1 ∧ ItemsProse (ItemsAcc.items st.1))
+    (Q := fun out : ItemsAcc => ItemsProse (ItemsAcc.items out))
+  · apply Loop.forIn_array_inv
+      (P := fun st : TokenState =>
+        pendingTextSource st.2.1 ∧ ItemsProse (ItemsAcc.items st.1))
+    · exact ⟨trivial, hi⟩
+    · intro tk htk state hs
+      have hp := ht tk htk
+      rcases state with ⟨a, pending, owners, origins, scope, anchors⟩
+      rcases hs with ⟨hpending, ha⟩
+      cases tk <;> simp only [Tk.TextSource] at hp
+      all_goals first | contradiction | skip
+      case word sty chars attr =>
+        cases pending with
+        | none => exact ⟨hp, ha⟩
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          dsimp only
+          split
+          · exact ⟨hpending, ha⟩
+          · exact ⟨hp, itemsOfTok_none_prose _ _ _ _ _ _ _ _ _ _ _ _ hpending ha⟩
+      case space sty =>
+        cases pending with
+        | none =>
+          cases scope.head? <;>
+            exact ⟨trivial, itemsOfTok_none_prose _ _ _ _ _ _ _ _ _ _ _ _ trivial ha⟩
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          have hw := itemsOfTok_none_prose size xHeight fs imgs textW textH a
+            (Tk.word prev word first) owners anchors origins none hpending ha
+          cases scope.head? <;>
+            exact ⟨trivial, itemsOfTok_none_prose _ _ _ _ _ _ _ _ _ _ _ _ trivial hw⟩
+  · rintro ⟨a, pending, owners, origins, scope, anchors⟩ ⟨hp, ha⟩
+    cases pending with
+    | none => exact ha
+    | some prev =>
+      rcases prev with ⟨sty, word, attr⟩
+      exact itemsOfTok_none_prose size xHeight fs imgs textW textH a
+        (Tk.word sty word attr) owners anchors origins none hp ha
+
+private def paraItems (items : Array Item) : Array Item :=
+  items.push (.glue { fil := true, parfill := true }) |>.push
+    (.pen 0 forcedCost false 0 Ir.Color.black #[])
+
+private theorem itemsOfInlines_none_prose (size xHeight : Sp)
+    (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
+    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp)))
+    (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
+    ∃ items, ItemsProse items ∧
+      (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs textW textH
+        noteOk ladder step roleMetrics).1 = paraItems items := by
+  let st := flatten fs.mathFont?.isSome noteOk
+    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step) baseStyle xs
+  let acc := itemsOfToks none size xHeight fs imgs textW textH
+    (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0) (FlattenSt.toks st)
+  have ht := flatten_textSource fs.mathFont?.isSome noteOk
+    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step)
+    baseStyle xs hp hs (by simp)
+  have ha : ItemsProse (ItemsAcc.items acc) :=
+    itemsOfToks_none_prose _ _ _ _ _ _ _ _ ht itemsProse_empty
+  refine ⟨ItemsAcc.items acc, ha, ?_⟩
+  simp only [itemsOfInlines, bind, pure, Id.run]
+  split
+  next w cost flagged font color glyphs he =>
+    have hh := ha _ (Array.mem_of_back? (show (ItemsAcc.items acc).back? =
+      some (.pen w cost flagged font color glyphs) from he))
+    simp only [Item.Prose] at hh
+    have hc : ¬ cost ≤ forcedCost := by omega
+    simp only [hc, decide_false, Bool.not_false, ↓reduceIte]
+    rfl
+  next =>
+    simp only [Bool.not_false, ↓reduceIte]
+    rfl
+
+private theorem paraItems_size (items : Array Item) :
+    (paraItems items).size = items.size + 2 := by simp [paraItems, Nat.add_assoc]
+
+private theorem paraItems_end (items : Array Item) :
+    canBreakAt (paraItems items) ((paraItems items).size-1) = true := by
+  rw [paraItems_size]
+  have he : items.size + 2 - 1 =
+      (items.push (.glue { fil := true, parfill := true })).size := by simp
+  rw [he]
+  simp only [paraItems, canBreakAt, Array.getElem?_push_size]
+  rfl
+
+private theorem itemsProse_isForced (items : Array Item) (hp : ItemsProse items) (k : Nat) :
+    isForced items k = false := by
+  unfold isForced
+  split
+  next w cost flagged font color glyphs he =>
+    have hi := hp _ (Array.mem_of_getElem? he)
+    simp only [Item.Prose] at hi
+    simp [show ¬ cost ≤ forcedCost by omega]
+  next => rfl
+
+private theorem paraItems_noEarlierForced (items : Array Item) (hp : ItemsProse items)
+    (k : Nat) (hk : k+1 < (paraItems items).size) :
+    isForced (paraItems items) k = false := by
+  have hk' : k < items.size+1 := by rw [paraItems_size] at hk; omega
+  unfold isForced paraItems
+  rw [Array.getElem?_push_lt (by simpa using hk')]
+  by_cases h : k < items.size
+  · rw [Array.getElem_push_lt h]
+    simpa only [isForced, Array.getElem?_eq_getElem h] using itemsProse_isForced items hp k
+  · have he : k = items.size := by omega
+    subst k
+    simp
+
+private def Item.UnflaggedEmpty : Item → Prop
+  | .pen _ _ flagged _ _ glyphs => flagged = false ∧ glyphs = #[]
+  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+
+private theorem itemsProse_unflagged (items : Array Item) (hp : ItemsProse items) :
+    ∀ it ∈ paraItems items, it.UnflaggedEmpty := by
+  intro it hi
+  simp only [paraItems, Array.mem_push] at hi
+  rcases hi with (hi | rfl) | rfl
+  · have hh := hp it hi
+    cases it <;> simp_all [Item.Prose, Item.UnflaggedEmpty]
+  · trivial
+  · exact ⟨rfl, rfl⟩
+
+private theorem raggedItems_prose (items : Array Item) (hp : ItemsProse items) :
+    ItemsProse (raggedItems items) := by
+  intro it hi
+  obtain ⟨src, hs, rfl⟩ := Array.mem_map.mp hi
+  have hh := hp src hs
+  cases src <;> dsimp only
+  all_goals first | exact hh | (split <;> trivial)
+
+private theorem raggedItems_paraItems (items : Array Item) :
+    raggedItems (paraItems items) = paraItems (raggedItems items) := by
+  simp [raggedItems, paraItems]
+
+private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
+    kpTwoPass items target protrude expand = kp items target protrude expand := by
+  unfold kpTwoPass
+  dsimp only
+  split
+  · rfl
+  · rename_i hn
+    exfalso
+    apply hn
+    simp only [Bool.not_eq_true', Array.any_eq_false']
+    intro it hi
+    have hh := hp it hi
+    cases it <;> simp_all [Item.UnflaggedEmpty]
+
+private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
+    (protrude expand : Bool) (hp : ItemsProse items) :
+    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand).toList).1 =
+      (paraItems items).toList.flatMap Item.boxChars := by
+  rw [kpTwoPass_unflagged _ _ _ _ (itemsProse_unflagged items hp)]
+  exact kp_boxChars _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
+    (paraItems_noEarlierForced items hp)
+
+private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target : Sp)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp)
+    (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
+    (setLine items a j target justify protrude expand wordOffsets).1.toList.flatMap Seg.glyphChars =
+      itemSpan items a j := by
+  have hh := setLineSegments_glyphChars items a j
+    (LineSetting.measured (lineSetting items a j target justify protrude expand wordOffsets))
+    (LineSetting.delta (lineSetting items a j target justify protrude expand wordOffsets))
+    (LineSetting.factor (lineSetting items a j target justify protrude expand wordOffsets))
+    justify (LineSetting.fils (lineSetting items a j target justify protrude expand wordOffsets)) wordOffsets
+  change (setLineSegments items a j _ _ _ justify _ wordOffsets).1.toList.flatMap Seg.glyphChars = _
+  rw [hh]
+  split
+  next w cost flagged font color glyphs he =>
+    have hg : glyphs = #[] := (hp _ (Array.mem_of_getElem? he)).2
+    simp [hg, itemSpan]
+  next => simp [itemSpan]
+
+/-- The same placement invariant serves paragraph ownership and the body
+census. Furniture is selected only when the caller explicitly asks for it. -/
+private def lineCensus (pick : Option Nat → Bool → Bool) (l : LineOut) : List Char :=
+  if pick l.leaf l.counted then l.segs.toList.flatMap Seg.glyphChars else []
+
+private def pageCensus (pick : Option Nat → Bool → Bool) (p : PageOut) : List Char :=
+  p.lines.toList.flatMap (lineCensus pick)
+
+private def B.census (pick : Option Nat → Bool → Bool) (b : B) : List Char :=
+  (B.pages b).toList.flatMap (pageCensus pick) ++ pageCensus pick (B.cur b)
+
+private theorem census_of_eq (pick : Option Nat → Bool → Bool) (b b' : B)
+    (hc : (B.cur b').lines = (B.cur b).lines) (hp : B.pages b' = B.pages b) :
+    B.census pick b' = B.census pick b := by
+  simp only [B.census, pageCensus, hc, hp]
+
+private theorem map_lineCensus_mapIdx (pick : Option Nat → Bool → Bool)
+    (xs : Array LineOut) (f : Nat → LineOut → LineOut)
+    (hf : ∀ i l, lineCensus pick (f i l) = lineCensus pick l) :
+    (xs.mapIdx f).map (lineCensus pick) = xs.map (lineCensus pick) := by
+  apply Array.ext
+  · simp
+  · intro i h1 h2
+    simp [hf]
+
+private theorem map_lineCensus_zip (pick : Option Nat → Bool → Bool)
+    (xs : Array LineOut) (sh : Array Sp) (hsz : sh.size = xs.size)
+    (f : LineOut × Sp → LineOut)
+    (hf : ∀ p, lineCensus pick (f p) = lineCensus pick p.1) :
+    ((xs.zip sh).map f).map (lineCensus pick) = xs.map (lineCensus pick) := by
+  apply Array.ext
+  · simp [hsz]
+  · intro i h1 h2
+    simp [hf]
+
+private theorem finishPage_lineCensus (pick : Option Nat → Bool → Bool)
+    (b : B) (owed : Sp) (flush : Bool)
+    (hs : (B.shrinkAbove b).size = (B.cur b).lines.size) :
+    ((B.pages (B.finishPage b owed flush)).back?.map
+      fun p => p.lines.map (lineCensus pick)) =
+      some ((B.cur b).lines.map (lineCensus pick) ++
+        (B.noteLines b).map (lineCensus pick)) := by
+  simp only [B.finishPage, Array.back?_push, Option.map_some, Option.some.injEq,
+    Array.map_append]
+  congr 1
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | (exact map_lineCensus_zip pick _ _ hs _ (fun p => rfl))
+    | (refine map_lineCensus_mapIdx pick _ _ ?_
+       intro i l
+       split <;> rfl)
+    | (refine (map_lineCensus_mapIdx pick _ _ ?_).trans
+        (map_lineCensus_zip pick _ _ hs _ (fun p => rfl))
+       intro i l
+       split <;> rfl)
+
+private theorem census_finishPage {n : Nat} (pick : Option Nat → Bool → Bool)
+    (b : B) (owed : Sp) (flush : Bool) (hb : B.SourceBound n b) :
+    B.census pick (B.finishPage b owed flush) = B.census pick b := by
+  have he := finishPage_lineCensus pick b owed flush (B.SourceBound.ledger hb)
+  change ((B.pages b).push _).back?.map _ = _ at he
+  simp only [Array.back?_push, Option.map_some, Option.some.injEq] at he
+  have hn : B.noteLines b = #[] := by
+    simp [B.noteLines, B.SourceBound.notes hb]
+  simp only [hn, Array.map_empty, Array.append_empty] at he
+  have ht := congrArg (fun ls : Array (List Char) => ls.toList.flatten) he
+  simp only [Array.toList_map, ← List.flatMap_def] at ht
+  change ((B.pages b).push _).toList.flatMap (pageCensus pick) ++ [] = _
+  simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
+    List.flatMap_nil, List.append_nil]
+  change _ ++ _ = _ ++ _
+  simpa only [pageCensus, Array.toList_append, hn, Array.toList_empty,
+    List.flatMap_append, List.flatMap_nil, List.append_nil] using
+    congrArg ((B.pages b).toList.flatMap (pageCensus pick) ++ ·) ht
+
+private theorem census_warnSpill (pick : Option Nat → Bool → Bool) (b : B) (over : Sp) :
+    B.census pick (B.warnSpill b over) = B.census pick b := by
+  unfold B.warnSpill
+  split <;> exact census_of_eq pick b _ rfl rfl
+
+private theorem census_spillPage {n : Nat} (pick : Option Nat → Bool → Bool)
+    (b : B) (over : Sp) (hb : B.SourceBound n b) :
+    B.census pick (B.spillPage b over) = B.census pick b := by
+  have hc : B.chrome (B.finishPage b 0 (B.flushes b)) = none := by
+    simpa only [B.finishPage] using B.SourceBound.chrome hb
+  change B.census pick (B.warnSpill (B.reopenChrome (B.finishPage b 0 (B.flushes b))) over) = _
+  rw [census_warnSpill]
+  simpa only [B.reopenChrome, hc] using census_finishPage pick b 0 (B.flushes b) hb
+
+private theorem census_commit (pick : Option Nat → Bool → Bool) (b : B) (l : LineOut)
+    (depth below : Sp) (rl consume : Bool) (over : Sp) :
+    B.census pick (B.commit b l depth below rl consume over) =
+      B.census pick b ++ lineCensus pick l := by
+  simp [B.census, pageCensus, B.commit, lineCensus, List.append_assoc]
+
+private theorem census_warnNoteOverrun (pick : Option Nat → Bool → Bool)
+    (b : B) (y d : Sp) :
+    B.census pick (B.warnNoteOverrun b y d) = B.census pick b := by
+  unfold B.warnNoteOverrun
+  dsimp only
+  split <;> exact census_of_eq pick b _ rfl rfl
+
+private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
+    (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
+    (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
+    (cs : List Char) (hb : B.SourceBound n b) (hm : ∀ y, lineCensus pick (mk y) = cs) :
+    B.census pick (B.fitCommit b mk firstY stepY retryY depth below rl inkBelow bottom #[]) =
+      B.census pick b ++ cs := by
+  simp only [B.fitCommit, B.attachNotes, Array.isEmpty_empty, ite_true]
+  split
+  · rw [census_warnNoteOverrun, census_commit, hm]
+  · split
+    · rw [census_commit, hm]
+    · split <;> rw [census_warnNoteOverrun, census_commit, hm,
+        census_spillPage pick b _ hb]
+
+private theorem filter_zeroRule_chars (segs : Array Seg) :
+    (segs.filter fun s => match s with | .rule w _ _ _ => w != 0 | _ => true).toList.flatMap
+      Seg.glyphChars = segs.toList.flatMap Seg.glyphChars := by
+  rw [Array.toList_filter]
+  induction segs.toList with
+  | nil => rfl
+  | cons s ss ih =>
+    cases s <;> simp_all [List.filter_cons, Seg.glyphChars]
+    split <;> simp_all [Seg.glyphChars]
+
+private theorem census_keepInk (pick : Option Nat → Bool → Bool) (b : B) (ink : Sp) :
+    B.census pick (B.keepInk b ink) = B.census pick b := rfl
+
+private theorem census_displayState (pick : Option Nat → Bool → Bool)
+    (b : B) (tex : Bool) (e : Option Sp) :
+    B.census pick (B.displayState b tex e) = B.census pick b := rfl
+
+private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
+    (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
+    (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
+    (hb : B.SourceBound n b) :
+    B.census pick (B.placeLine fs b x size segs w hang ex #[] counted leaf
+      firstBaseline display opens anchors) =
+      B.census pick b ++ (if pick leaf counted then segs.toList.flatMap Seg.glyphChars else []) := by
+  simp only [B.placeLine]
+  rw [census_displayState, census_keepInk]
+  apply census_fitCommit
+  · exact hb
+  · intro y
+    simp only [lineCensus]
+    split
+    · exact filter_zeroRule_chars segs
+    · rfl
+
+private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : List Nat}
+    (h : KpChain items last breaks) : ∀ k ∈ breaks, k < items.size := by
+  induction h with
+  | first hj _ _ => simpa using hj
+  | next chain _ hj _ _ ih =>
+    intro k hk
+    rcases List.mem_append.mp hk with hk | hk
+    · exact ih k hk
+    · rcases List.mem_singleton.mp hk with rfl
+      exact hj
+
+private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand, k < items.size := by
+  let sums := kpSums items
+  let slack : Sp := if protrude then maxProtrudeRight items else 0
+  let st := kpForward items sums target slack protrude expand items.size
+  have ht := (kpForward_valid items sums target slack protrude expand items.size
+    (Nat.le_refl _)).1
+  unfold kp
+  change ∀ k ∈ (match (KpState.best st).getD (items.size-1) none with
+    | none => #[] | some _ => kpBack items.size (KpState.best st) (items.size-1)), k < items.size
+  cases he : (KpState.best st).getD (items.size-1) none with
+  | none => simp
+  | some e =>
+    have hc := kpBack_chain items (KpState.best st) ht (items.size-1) (by omega)
+      (by rw [he]; rfl)
+    simpa only [Array.mem_toList_iff] using hc.members_lt
+
+private theorem paraLineGeom_chars {n : Nat} (fs : FontSet) (j : ParaJob)
+    (b : B) (first : Bool) (prev brk : Nat) (hj : j.SourceBound n)
+    (hp : ∀ it ∈ (ParaJob.items j), it.UnflaggedEmpty) :
+    (paraLineGeom fs j b first prev brk).1.toList.flatMap Seg.glyphChars =
+      itemSpan (ParaJob.items j) (j.lineStart first prev) brk := by
+  cases first <;>
+    simpa only [paraLineGeom, Bool.false_eq_true, ite_false, ite_true, (ParaJob.SourceBound.marker hj), (ParaJob.SourceBound.rule hj)] using
+      setLine_unflagged_chars (ParaJob.items j) (j.lineStart _ prev) brk _ _ (ParaJob.protrude j) (ParaJob.expand j)
+        (ParaJob.wordOffsets j) hp
+
+private theorem census_warnOverfull (pick : Option Nat → Bool → Bool) (b : B)
+    (source : Option Span) : B.census pick (B.warnOverfull b source) = B.census pick b := rfl
+
+private theorem census_openDisplayAt (pick : Option Nat → Bool → Bool) (b : B) (j : ParaJob)
+    (first : Bool) (x : Sp) (segs : Array Seg) :
+    B.census pick (B.openDisplayAt b j first x segs) = B.census pick b := by
+  unfold B.openDisplayAt
+  split <;> rfl
+
+private theorem census_placeParaTrailer (pick : Option Nat → Bool → Bool) (fs : FontSet)
+    (j : ParaJob) (brk : Nat) (segs : Array Seg) (b : B) :
+    B.census pick (placeParaTrailer fs j brk segs b) = B.census pick b := by
+  unfold placeParaTrailer
+  split <;> rfl
+
+private theorem census_placeParaLine {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool) (brk : Nat)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n)
+    (hp : ∀ it ∈ (ParaJob.items j), it.UnflaggedEmpty) :
+    B.census pick (placeParaLine fs j st brk).1 = B.census pick st.1 ++
+      (if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then itemSpan (ParaJob.items j) (j.lineStart st.2.2 st.2.1) brk
+       else []) := by
+  simp only [placeParaLine, (ParaJob.SourceBound.notes hj), Array.isEmpty_empty, ite_true]
+  rw [census_placeParaTrailer, census_placeLine]
+  · rw [census_openDisplayAt]
+    split <;> simp only [census_warnOverfull, paraLineGeom_chars fs j st.1 _ _ _ hj hp]
+  · apply sourceBound_openDisplayAt
+    split
+    · exact hb.of_eq rfl rfl rfl rfl rfl
+    · exact hb
+
+private theorem paraStart_cursor (j : ParaJob) (first : Bool) (prev : Nat)
+    (hh : (ParaJob.hangIndent j) = 0) (hp : first = true ∨ prev < (ParaJob.items j).size) :
+    j.lineStart first prev = kpStart (ParaJob.items j) (if first then (ParaJob.items j).size else prev) := by
+  cases first
+  · simp only [Bool.false_eq_true, false_or] at hp
+    simp [ParaJob.lineStart, kpStart, Nat.ne_of_lt hp]
+  · simp [ParaJob.lineStart, kpStart, hh]
+
+private theorem spanFold_prefix (items : Array Item) (breaks : List Nat) (cs : List Char) (prev : Nat) :
+    breaks.foldl (fun st j => (st.1 ++ itemSpan items (kpStart items st.2) j, j)) (cs, prev) =
+      let out := breaks.foldl (fun st j => (st.1 ++ itemSpan items (kpStart items st.2) j, j))
+        ([], prev)
+      (cs ++ out.1, out.2) := by
+  induction breaks generalizing cs prev with
+  | nil => simp
+  | cons brk breaks ih =>
+    simp only [List.foldl_cons, List.nil_append]
+    rw [ih (cs ++ _) brk, ih (itemSpan items (kpStart items prev) brk) brk]
+    simp only [List.append_assoc]
+
+private theorem census_paraFold {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (j : ParaJob) (breaks : List Nat) (st : B × Nat × Bool)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n) (hh : (ParaJob.hangIndent j) = 0)
+    (hp : ∀ it ∈ (ParaJob.items j), it.UnflaggedEmpty)
+    (hk : ∀ k ∈ breaks, k < (ParaJob.items j).size)
+    (hc : st.2.2 = true ∨ st.2.1 < (ParaJob.items j).size) :
+    B.census pick (breaks.foldl (placeParaLine fs j) st).1 = B.census pick st.1 ++
+      (if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then
+        (breaks.foldl (fun acc brk =>
+          (acc.1 ++ itemSpan (ParaJob.items j) (kpStart (ParaJob.items j) acc.2) brk, brk))
+            ([], if st.2.2 then (ParaJob.items j).size else st.2.1)).1 else []) := by
+  induction breaks generalizing st with
+  | nil => simp
+  | cons brk breaks ih =>
+    simp only [List.foldl_cons, List.nil_append]
+    rw [ih (placeParaLine fs j st brk) (sourceBound_placeParaLine fs j st brk hj hb)
+      (fun k hm => hk k (List.mem_cons_of_mem _ hm))
+      (Or.inr (hk brk (List.mem_cons_self))) ]
+    rw [census_placeParaLine pick fs j st brk hj hb hp, paraStart_cursor j _ _ hh hc]
+    rw [spanFold_prefix (ParaJob.items j) breaks (itemSpan (ParaJob.items j) _ brk) brk]
+    change _ = _ ++ if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then _ else []
+    dsimp only [placeParaLine]
+    split <;> simp only [Bool.false_eq_true, ite_false, List.append_assoc, List.append_nil]
+
+private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat)
+    (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : ParaJob.hangIndent j = 0)
+    (hp : ∀ it ∈ ParaJob.items j, it.UnflaggedEmpty)
+    (hk : ∀ k ∈ breaks, k < (ParaJob.items j).size) :
+    B.census pick (placePara fs b j breaks) = B.census pick b ++
+      (if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then
+        (breakSpans (ParaJob.items j) breaks.toList).1 else []) := by
+  unfold placePara
+  dsimp only
+  rw [← Array.foldl_toList]
+  rw [census_paraFold pick fs j breaks.toList _ hj]
+  · simp only [breakSpans, ite_true, B.warnReflow]
+    split <;> rfl
+  · unfold B.warnReflow
+    split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+  · exact hh
+  · exact hp
+  · simpa only [Array.mem_toList_iff] using hk
+  · exact Or.inl rfl
+
+/-- Actual KP breaks, the paragraph cursor, line setting, and page spills
+compose without losing or adding glyphs. Collection establishes the job's
+plain-item shape; no alternate paragraph interpreter is used. -/
+private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand : Bool)
+    (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : ParaJob.hangIndent j = 0)
+    (hp : ItemsProse items) (he : ParaJob.items j = paraItems items) :
+    B.census pick (placePara fs b j
+      (kpTwoPass (ParaJob.items j) (ParaJob.target j) protrude expand)) =
+      B.census pick b ++ (if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then
+        (ParaJob.items j).toList.flatMap Item.boxChars else []) := by
+  rw [census_placePara pick fs b j _ hj hb hh]
+  · rw [he, kpTwoPass_paraItems_chars _ _ _ _ hp]
+  · rw [he]
+    exact itemsProse_unflagged items hp
+  · rw [he, kpTwoPass_unflagged _ _ _ _ (itemsProse_unflagged items hp)]
+    exact kp_members_lt _ _ _ _ (by simp [paraItems_size])
+
+
 /-- Content with no physical placeholder survives the physical pass whole:
 the substitution half of "the two sequences stay distinct" —
 `Ir.frame_sequence_carries_no_physical` is the rendering half. One
