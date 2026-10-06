@@ -352,7 +352,7 @@ def Color.black : Color := { r := 0, g := 0, b := 0 }
 
 /-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
 then the package's TeX-scaled conversion to an HTML byte. -/
-def Color.cmykPreviewByte (v k : Decl.ColorComponent) : UInt8 :=
+private def Color.cmykPreviewByte (v k : Decl.ColorComponent) : UInt8 :=
   let scale := v.scale * k.scale
   let used := min scale (v.num * k.scale + k.num * v.scale)
   ({ num := scale - used, scale := scale } : Decl.ColorComponent).unitByte
@@ -1929,7 +1929,7 @@ theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
 
 /-- The mixing fold never leaves the model it started in: every step is a
 `mix` whose first operand is the accumulator (`mix_model_exact`). -/
-theorem Palette.resolve_go_model_exact (p : Palette) :
+private theorem Palette.resolve_go_model_exact (p : Palette) :
     ∀ (parts : List String) (c c' : Color), Palette.resolve.go p c parts = some c' →
       c'.model = c.model
   | [], c, c', h => by
@@ -7212,7 +7212,7 @@ mutual
 body-carrying wrapper may hold the template's hole, and a leaf carries no
 body to fill. A new constructor must answer here or the build breaks —
 never add a wildcard arm (AGENTS.md, the obligation table). -/
-def fillOne (content : Array Inline) : Inline → Inline
+private def fillOne (content : Array Inline) : Inline → Inline
   | .styled st body =>
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .colored c n body =>
@@ -7253,7 +7253,7 @@ def fillOne (content : Array Inline) : Inline → Inline
   -- a footnote's body is the note's own text, never a template hole
   | .footnote n body => .footnote n body
 
-def fillList (content : Array Inline) : List Inline → List Inline
+private def fillList (content : Array Inline) : List Inline → List Inline
   | [] => []
   | x :: rest => fillOne content x :: fillList content rest
 
@@ -7779,7 +7779,7 @@ def dumpGlue (g : SymGlue) : String :=
 /-- A sourced glue as the golden shows it: the declared value, and the
 token name it was resolved from when it had one. The name is what the
 HTML defers to, so an elaboration that dropped it is visible here. -/
-def dumpSourcedGlue (g : Sourced SymGlue) : String :=
+private def dumpSourcedGlue (g : Sourced SymGlue) : String :=
   match g.token with
   | some n => s!"{dumpGlue g.value} from {n}"
   | none => dumpGlue g.value
@@ -9660,20 +9660,20 @@ def navLinks (body : Array Block) : Array (String × String) :=
 
 /-- A step's range as the surface spells it: `step 2`, `step 2-3`, and
 `step 2-2` for `<2->`, `<2-3>`, and `<2>`. -/
-def dumpStepRange (n : Nat) (last : Option Nat) : String :=
+private def dumpStepRange (n : Nat) (last : Option Nat) : String :=
   match last with
   | some u => s!"step {n}-{u}"
   | none => s!"step {n}"
 
 /-- An alternation's range, spelled as a step's is. -/
-def dumpAltRange (n : Nat) (last : Option Nat) : String :=
+private def dumpAltRange (n : Nat) (last : Option Nat) : String :=
   match last with
   | some u => s!"alt {n}-{u}"
   | none => s!"alt {n}"
 
 /-- Preserve the existing singleton dump; a union retains every declared
 interval rather than printing their enclosing range. -/
-def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
+private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
   kind ++ " " ++ String.intercalate "," (spec.ranges.map fun (n, last) =>
     match last with
     | some u => s!"{n}-{u}"
@@ -9685,7 +9685,7 @@ mutual
 scalar, and scripts, so a golden pins exactly what elaboration decided.
 `ord:𝑥^{ord:2} bin:+ ord:𝑦` reads as it sets. The accumulator threads
 through the walk, as every structural printer here does. -/
-def dumpMathItem (acc : String) (x : Math.MItem) : String :=
+private def dumpMathItem (acc : String) (x : Math.MItem) : String :=
   match x with
   | .atom cls nuc sup sub lim =>
     let acc := acc ++ s!"{cls.label}:" ++ (if lim then "lim:" else "")
@@ -9694,7 +9694,7 @@ def dumpMathItem (acc : String) (x : Math.MItem) : String :=
   | .ink c n => acc ++ s!"ink:#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
       ++ (match n with | some n => s!"({n})" | none => "")
 
-def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
+private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   match n with
   | .sym c => acc.push c
   | .styled sty c => ((acc ++ s!"styled:{sty.mathvariant}\{").push c).push '}'
@@ -9763,34 +9763,34 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
     | .nil => acc
     | _ => (dumpMathList (acc ++ "to{") value).push '}'
 
-def dumpMathRows (acc : String) (rs : Math.MRows) : String :=
+private def dumpMathRows (acc : String) (rs : Math.MRows) : String :=
   match rs with
   | .nil => acc
   | .cons r rest =>
     dumpMathRows (dumpMathRow (acc ++ "(") r ++ ")") rest
 
-def dumpMathRow (acc : String) (r : Math.MRow) : String :=
+private def dumpMathRow (acc : String) (r : Math.MRow) : String :=
   match r with
   | .nil => acc
   | .cons cell rest =>
     dumpMathRow (dumpMathList (acc ++ "|") cell) rest
 
-def dumpMathSup (acc : String) (l : Math.MList) : String :=
+private def dumpMathSup (acc : String) (l : Math.MList) : String :=
   match l with
   | .nil => acc
   | .cons x rest => (dumpMathRest (dumpMathItem (acc ++ "^{") x) rest).push '}'
 
-def dumpMathSub (acc : String) (l : Math.MList) : String :=
+private def dumpMathSub (acc : String) (l : Math.MList) : String :=
   match l with
   | .nil => acc
   | .cons x rest => (dumpMathRest (dumpMathItem (acc ++ "_{") x) rest).push '}'
 
-def dumpMathList (acc : String) (l : Math.MList) : String :=
+private def dumpMathList (acc : String) (l : Math.MList) : String :=
   match l with
   | .nil => acc
   | .cons x rest => dumpMathRest (dumpMathItem acc x) rest
 
-def dumpMathRest (acc : String) (l : Math.MList) : String :=
+private def dumpMathRest (acc : String) (l : Math.MList) : String :=
   match l with
   | .nil => acc
   | .cons x rest => dumpMathRest (dumpMathItem (acc ++ " ") x) rest
@@ -9799,15 +9799,15 @@ end
 
 mutual
 
-def dumpInlines (ind : String) (xs : Array Inline) : String :=
+private def dumpInlines (ind : String) (xs : Array Inline) : String :=
   dumpInlineList ind xs.toList
 
-def dumpInlineList (ind : String) (xs : List Inline) : String :=
+private def dumpInlineList (ind : String) (xs : List Inline) : String :=
   match xs with
   | [] => ""
   | x :: rest => dumpInline ind x ++ dumpInlineList ind rest
 
-def dumpInline (ind : String) (x : Inline) : String :=
+private def dumpInline (ind : String) (x : Inline) : String :=
   match x with
   | .text s => s!"{ind}text {s.quote}\n"
   | .math d src =>
@@ -9900,7 +9900,7 @@ end
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
 natural column. -/
-def dumpColSpec (c : ColSpec) : String :=
+private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
@@ -9916,7 +9916,7 @@ def dumpColSpec (c : ColSpec) : String :=
     s!"{al}:{width}"
   | .flex target => s!"{al}:flex:{target.css}"
 
-def dumpTableRule (r : TableRule) : String :=
+private def dumpTableRule (r : TableRule) : String :=
   match r with
   | .top => "top"
   | .mid => "mid"
@@ -9926,13 +9926,13 @@ def dumpTableRule (r : TableRule) : String :=
     s!"cmid {a}-{b}{if trim.isEmpty then "" else s!"({trim})"}"
   | .gap g => s!"gap {dumpGlue g}"
 
-def dumpTableCells (ind : String) (acc : String) : List (Array Inline) -> String
+private def dumpTableCells (ind : String) (acc : String) : List (Array Inline) -> String
   | [] => acc
   | cell :: rest =>
     let inner := dumpInlines (ind ++ "  ") cell
     dumpTableCells ind (acc ++ s!"{ind}cell\n" ++ inner) rest
 
-def dumpTableRows (ind : String) (acc : String) : List (Array (Array Inline)) -> String
+private def dumpTableRows (ind : String) (acc : String) : List (Array (Array Inline)) -> String
   | [] => acc
   | row :: rest =>
     dumpTableRows ind (dumpTableCells (ind ++ "  ") (acc ++ s!"{ind}row\n") row.toList) rest
@@ -9942,18 +9942,18 @@ mutual
 def dumpBlocks (ind : String) (xs : Array Block) : String :=
   dumpBlockList ind xs.toList
 
-def dumpBlockList (ind : String) (xs : List Block) : String :=
+private def dumpBlockList (ind : String) (xs : List Block) : String :=
   match xs with
   | [] => ""
   | b :: rest => dumpBlock ind b ++ dumpBlockList ind rest
 
-def dumpItems (ind : String) (items : List (Array Block)) : String :=
+private def dumpItems (ind : String) (items : List (Array Block)) : String :=
   match items with
   | [] => ""
   | item :: rest =>
     s!"{ind}item\n" ++ dumpBlocks (ind ++ "  ") item ++ dumpItems ind rest
 
-def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String :=
+private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String :=
   match cols with
   | [] => ""
   | (w, body) :: rest =>
@@ -9972,7 +9972,7 @@ def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) : String 
     let tail := dumpColumns ind rest
     self ++ tail
 
-def dumpBlock (ind : String) (b : Block) : String :=
+private def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
   | .equation number content =>
@@ -17029,7 +17029,7 @@ theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs : Array
   rw [resolveOneRef_scan]
   rw [h]
 
-def dumpDiag (d : Diag) : String :=
+private def dumpDiag (d : Diag) : String :=
   let where' := match d.span with
     | some sp => s!"{sp.pos.line}:{sp.pos.col}"
     | none => "-"
