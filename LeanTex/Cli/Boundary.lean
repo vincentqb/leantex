@@ -1,5 +1,6 @@
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.PicCache
+import LeanTex.Cli.PictureAssets
 import LeanTex.Core.Ir
 
 /-! The boundary's host-free decisions. Whether a tool is runnable is a fact
@@ -18,23 +19,13 @@ namespace LeanTex.Cli.Boundary
 
 open LeanTex.Core
 
-/-- A picture no boundary tool looked at. Any earlier render of the same
-request serves — the content hash is the request's meaning, and the tool
-version in a slot's name only forces a re-render on upgrade, so a warm
-cache needs no tool installed. Where the cache holds none, W0379 names the
-loss and the placeholder box ships in its place: one per picture, at its
-span, so the census gate can match each to what it lost. A remembered
-*refusal* is deliberately not read here — with no tool there is no version
-to match it against, and "no tool, no render" is the honest answer. -/
+/-- With no tool, a complete checked drawing of the same request can serve.
+Otherwise W0379 names the missing drawing at its source span. Refusals are
+not replayed here: without the tool, its identity cannot be established. -/
 def coldPicture (picDir : System.FilePath) (tool key : String)
-    (span : Option Span := none) : IO (Except Diag System.FilePath) := do
-  let entries ← picDir.readDir
-  let any? := entries.findSome? fun e =>
-    if e.fileName.startsWith (key ++ "-") && e.fileName.endsWith ".pdf" then
-      some e.path
-    else none
-  match any? with
-  | some cached => return .ok cached
+    (span : Option Span := none) : IO (Except Diag ByteArray) := do
+  match ← PictureAssets.previous picDir key with
+  | some bytes => return .ok bytes
   | none => return .error (DriverDiag.boundaryToolUnavailable tool span)
 
 /-- What the boundary's refusals leave standing, once the rendered subset

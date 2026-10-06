@@ -1,5 +1,10 @@
 import Tests.Support
 import Tests.Batch
+import Tests.Compression
+import Tests.BrowserFaceBatch
+import Tests.CacheIO
+import Tests.PictureAssets
+import Tests.ToolMemo
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.ElabFrameSources
@@ -546,6 +551,11 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   boundaryChecks ref
   picCacheChecks ref
   batchChecks ref
+  Tests.compressionChecks ref
+  Tests.browserFaceBatchChecks ref
+  Tests.cacheIdentityChecks ref
+  Tests.pictureAssetsChecks ref
+  Tests.toolMemoChecks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref

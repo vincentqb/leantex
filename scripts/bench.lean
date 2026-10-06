@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import LeanTex.Cli.ConvCache
 
 /-
 Benchmark leantex against lualatex on the bench corpus. Run from the
@@ -157,7 +158,19 @@ def benchPictures (n requests : Nat) : IO Unit := do
       if ← pictures.pathExists then IO.FS.removeDirAll pictures
       cold := cold.push (← run input)
       let cached ← pictures.readDir
-      unless (cached.filter (·.path.extension == some "pdf")).size == requests do
+      let mut drawings := 0
+      for entry in cached do
+        -- Saved older compilers publish raw PDFs; current compilers publish
+        -- checked answers, including refusals which must not count as drawings.
+        let bytes ← IO.FS.readBinFile entry.path
+        let pdf? := if entry.path.extension == some "answer" then
+            match LeanTex.Cli.ConvCache.decode bytes with
+            | some (.ok pdf) => some pdf
+            | _ => none
+          else if entry.path.extension == some "pdf" then some bytes else none
+        if let some pdf := pdf? then
+          if pdf.extract 0 5 == "%PDF-".toUTF8 then drawings := drawings + 1
+      unless drawings == requests do
         die "picture benchmark did not render every external request"
       let bytes ← IO.FS.readBinFile output
       warm := warm.push (← run input)

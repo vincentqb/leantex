@@ -32,8 +32,9 @@ import LeanTex.Cli.FontFix
 import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.Batch
+import LeanTex.Cli.Compression
+import LeanTex.Cli.PictureAssets
 import LeanTex.Cli.PicCache
-import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
@@ -168,38 +169,6 @@ def texFontDirs : IO (List String) := do
     catch _ => pure ()
   return roots
 
-/-- Deflate through the content-hash cache: the compressed stream the PDF
-embeds for these bytes, computed once per content and engine version. A
-font file's deflate costs ~300 ms/MB and its bytes never change between
-builds, so every build after the first reads a file instead. The cached
-value is `Flate.deflate`'s own output byte for byte — a hit equals a
-recomputation — and a file that does not open with the zlib header the
-compressor writes is a miss, never a corrupt embed. -/
-def deflateCached (bytes : ByteArray) : IO ByteArray := do
-  let some root ← FontDb.cacheDir | return Flate.deflate bytes
-  let path := root / "flate" / s!"{Flate.contentKey bytes}-{LeanTex.version}.z"
-  if let .ok z ← IO.FS.readBinFile path |>.toBaseIO then
-    if z[0]? == some 0x78 && z[1]? == some 0x9C then
-      return z
-  let z := Flate.deflate bytes
-  try
-    if let some parent := path.parent then IO.FS.createDirAll parent
-    IO.FS.writeBinFile path z
-  catch _ => pure ()
-  return z
-
-/-- The per-face deflated programs `Pdf.write` embeds (`Pdf.facePrograms`,
-in `Pdf.keepFaces` order), through the cache — for the faces it will embed
-and no other: hashing a face the file never carries is the whole cost of a
-one-page build. -/
-def fontZdata (fs : Font.FontSet) (keep : Array Nat) (programs : Array (ByteArray × Bool)) :
-    IO (Array (Option ByteArray)) := do
-  let mut zdata : Array (Option ByteArray) := Array.replicate fs.fonts.size none
-  for (k, prog, _) in keep.zip programs do
-    if k < fs.fonts.size then
-      zdata := zdata.set! k (some (← deflateCached prog))
-  return zdata
-
 /-- Which directories to look in, and what is there. The document's own
 `\fonts{ dir = ... }` outranks the host; both are preamble facts, so this
 answer serves the provisional assembly and the final one alike — and the
@@ -231,13 +200,11 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
   | none => base
 
 
-/-- One fulfilled boundary picture: its image-source spelling, the drawn
-PDF's captured bytes, and where the boundary cache holds it. Both artifacts
-read the captured bytes. -/
+/-- One fulfilled boundary picture. Both artifacts read these captured
+bytes, independently of subsequent cache writes or scratch cleanup. -/
 structure PicResult where
   src : String
   bytes : ByteArray
-  cached : System.FilePath
 
 private structure PicAttempt where
   result : Option PicResult := none
@@ -245,54 +212,12 @@ private structure PicAttempt where
   detail : String
   elapsed : Nat
 
-/-- The last words of a batchmode log: the `!` error lines, else the last
-line — what E0382's help shows so the failure is diagnosable without
-opening the temp directory. -/
-def logTail (log : String) : String :=
-  let lines := (log.splitOn "\n").filter (!·.trimAscii.toString.isEmpty)
-  let bangs := lines.filter (·.startsWith "!")
-  let picked := if bangs.isEmpty then lines.reverse.take 1 else bangs.take 3
-  String.intercalate " · " (picked.map (·.trimAscii.toString))
-
-/-- The boundary requests an elaborated document states (`Ir.pictureRefs`),
-fulfilled: each wrapped standalone runs under the pinned tool — or the
-default, the boundary being open by default (`boundary_request_env_free`:
-only fulfilment reads the environment) — in a scratch directory, and the
-drawn PDF lands in the cache beside the font cache, keyed by the request's
-content hash *and the tool's version string* — an upgraded TeX re-renders,
-an unchanged request never re-runs, and a warm cache needs no TeX
-installed: with no tool at all, any earlier render of the same request
-serves. The version string stays the key; what is memoized is the *asking*,
-against a stat-only witness of the tool binary (`ToolProbe.identify`,
-`PicCache.versionStep`), so a build whose pictures all replay starts no
-process at all. A request nothing can fulfil is W0379, per picture; each
-such
-picture then ships as the placeholder box the diagnostic names — unless the
-rendered subset draws it in part, when `Boundary.withdraw` withdraws the
-request and the subset's drawing ships instead (N0419). A tool that
-is not installed lands there and not on E0382: only a clean exit names a
-version (`PicCache.probed_present_exact`), so a picture no tool ever looked
-at is never reported as one the tool drew nothing for. Failures of
-a tool that ran are E0382 with the tool's own last words — and are
-remembered in the same slot the drawn PDF would take, so the tool is asked
-about one request at most once per version (`PicCache.step_cold_exact`) and
-a replay carries the words the tool gave (`PicCache.replay_says_exact`),
-never a stand-in.
-An attempt the tool did not finish — a budget kill, a spawn that raised, or
-a nonzero exit that left no log at all — is not an answer: it is not
-remembered (`PicCache.remembers_verdict_exact`,
-`PicCache.unlogged_retried_exact`) and not withdrawn to the rendered
-subset's drawing (`Boundary.withdrawStep_unfinished_exact`), so neither a
-busy machine nor one without the tool installed can make a picture that
-renders look like one that cannot, or change the artifact while the run
-reads as clean. Refusals are returned keyed
-by the picture's image source, for `Image.fulfil` to name (the subject is
-set there, so the gate's match cannot depend on the words chosen here).
-The inventory (`-v` and the porcelain phases) says per picture what came
-through the boundary: tool, version, the picture's id and its request
-key, size. Independent requests run in bounded batches; a repeated content
-key starts only after the previous owner has finished (`Batch.plan_keys_nodup`).
-Results and reporting retain request order (`Batch.plan_exact`). -/
+/-- Fulfil elaborated requests through `PictureAssets`, keeping captured
+results and diagnostics in source order (`Batch.plan_exact`). The scheduler
+excludes repeated keys within a batch (`Batch.plan_keys_nodup`); owned
+scratch and atomic cache publication also protect independent compiler runs.
+Unfinished attempts remain distinct from refusals, so machine failures
+cannot silently select the native subset's drawing. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
@@ -302,15 +227,13 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
   let t0 ← IO.monoMsNow
-  let cacheRoot ← FontDb.cacheDir
-  let picDir := (cacheRoot.getD "/tmp") / "pics"
-  IO.FS.createDirAll picDir
-  -- The tool's identity: first line of `--version`, part of the cache key —
-  -- asked once per tool binary, not once per build, and only its exit code
-  -- decides whether it answered at all.
+  let picDir ← PictureAssets.cacheDir
   let stamp ← ToolProbe.witness tool
-  let found ← ToolProbe.identify (picDir / PicCache.versionName (Ir.picHash tool))
-    stamp (ToolProbe.probeVersion tool)
+  let found ← match picDir with
+    | some dir =>
+      ToolProbe.identify (dir / PicCache.versionName (Ir.picHash tool))
+        stamp (ToolProbe.probeVersion tool)
+    | none => ToolProbe.probeVersion tool
   let fulfil (request : String × String) : IO PicAttempt := do
     let (id, wrapped) := request
     let src := Ir.picSrcPrefix ++ id
@@ -318,17 +241,19 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
     -- reads — so a palette or font edit a picture mentions re-renders it
     -- and one it does not mention leaves it warm
     -- (`Ir.paletteDecls_local_exact`); the id stays the author's bytes.
-    let key := Ir.picHash wrapped
+    let key := PictureAssets.key wrapped
     match found with
     | .absent why =>
       -- No tool: the cold decision is `Boundary.coldPicture`'s — an earlier
       -- render of this request serves, and where none exists W0379 names
       -- the loss it returns.
-      match ← Boundary.coldPicture picDir tool key (spanFor id) with
-      | .ok cached =>
-        let bytes ← IO.FS.readBinFile cached
+      let earlier ← match picDir with
+        | some dir => Boundary.coldPicture dir tool key (spanFor id)
+        | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id)))
+      match earlier with
+      | .ok bytes =>
         return {
-          result := some { src, bytes, cached }
+          result := some { src, bytes }
           detail := s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
           elapsed := ← since t0 }
       | .error d =>
@@ -337,67 +262,25 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           detail := s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
           elapsed := ← since t0 }
     | .present version =>
-      -- One slot per request and tool version, holding whichever way the
-      -- tool answered: the drawn PDF, or its own refusal in the tool's own
-      -- words. Either is an answer, so neither is asked for twice.
-      let cached := picDir / PicCache.pdfName key (Ir.picHash version)
-      let slot := picDir / PicCache.failName key (Ir.picHash version)
-      let drawn ← cached.pathExists
-      let remembered? ← if drawn then pure (none : Option String)
-        else if ← slot.pathExists then pure (some (← IO.FS.readFile slot))
-        else pure (none : Option String)
-      match PicCache.step drawn remembered? with
-      | .serve =>
-        let bytes ← IO.FS.readBinFile cached
-        return {
-          result := some { src, bytes, cached }
-          detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
-          elapsed := ← since t0 }
-      | .replay says =>
-        -- The tool already answered no for exactly these bytes under
-        -- exactly this version: its own words, the same code, the same
-        -- dropped loss — one attempt per request, not one per build.
-        return {
-          undrawn := (Boundary.undrawnOf tool (.refused says) (spanFor id)).map (src, ·)
-          detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
-          elapsed := ← since t0 }
-      | .run =>
-        let work := picDir / s!"work-{key}"
-        IO.FS.createDirAll work
-        IO.FS.writeFile (work / "pic.tex") wrapped
-        let ended ← RunBounded.runBounded tool
-          #["-interaction=batchmode", "-halt-on-error", "pic.tex"] work 120000
-        let produced := work / "pic.pdf"
-        let drew ← produced.pathExists
-        let logPath := work / "pic.log"
-        let log ← if ← logPath.pathExists then
-            pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
-          else pure PicCache.Log.absent
-        let outcome := PicCache.outcome ended.ran drew log
-        let (result, detail) : Option PicResult × String ← match outcome with
-        | .drawn =>
-          let bytes ← IO.FS.readBinFile produced
-          IO.FS.writeBinFile cached bytes
-          pure (some { src, bytes, cached },
-            s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes")
-        | .refused words =>
-          IO.FS.writeFile slot words
-          pure (none, s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing")
-        | .inconclusive words =>
-          -- Nothing the machine did is written: the next build retries.
-          pure (none,
-            s!"{tool} ({version}), {id.take 16} as {key.take 16}, did not finish ({words})")
-        -- The scratch directory is per-content and spent either way.
-        try IO.FS.removeDirAll work catch _ => pure ()
-        let elapsed ← since t0
-        return {
-          result
-          detail
-          elapsed
-          undrawn := (Boundary.undrawnOf tool outcome (spanFor id)).map (src, ·) }
+      let answer ← PictureAssets.fulfil picDir tool stamp version wrapped
+      let outcome := answer.result.outcome
+      let bytes := answer.result.bytes
+      let result := match outcome with
+        | .drawn => some { src, bytes : PicResult }
+        | .refused _ | .inconclusive _ => none
+      let status := match outcome with
+        | .drawn => s!"{bytes.size} bytes"
+        | .refused _ => "drew nothing"
+        | .inconclusive words => s!"did not finish ({words})"
+      return {
+        result
+        detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, {status}" ++
+          (if answer.cached then " (cached)" else "")
+        elapsed := ← since t0
+        undrawn := (Boundary.undrawnOf tool outcome (spanFor id)).map (src, ·) }
   -- Four TeX processes bound peak memory on a laptop; this changes
   -- scheduling alone, never the request or its cache key.
-  let attempts ← Batch.map 4 (fun (_, wrapped) => Ir.picHash wrapped) fulfil refs
+  let attempts ← Batch.map 4 (fun (_, wrapped) => PictureAssets.key wrapped) fulfil refs
   let mut results := #[]
   let mut undrawn := #[]
   for attempt in attempts do
@@ -542,7 +425,7 @@ its SMIL stays intact in an image context, while print and reduced motion
 select the static poster. An absent or unusable companion leaves the PDF
 poster as the browser face. No generated script or inline XML is needed. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
-  return { entries := ← imgs.entries.mapM BrowserFaces.prepare }
+  return { entries := ← BrowserFaces.prepareAll imgs.entries }
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
@@ -995,15 +878,13 @@ in the HTML" (← since t)
         let used := Pdf.usedAll fs out.pages
         let keep := Pdf.keepOf used
         let programs := Pdf.facePrograms fs used
-        let fs := { fs with zdata := ← fontZdata fs keep programs }
+        let cache ← FontDb.cacheDir
+        let fs := { fs with zdata := ← Compression.fontZdata cache fs.fonts.size keep programs }
         -- The structure tree the pages' `leaf` indices name: the one the
         -- layout attributed against (`Layout.pdfView`), projected once.
         let tree := Struct.ofDoc (Layout.pdfView doc)
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
-        let mut streams : Array (ByteArray × Option ByteArray) := #[]
-        for o in ops do
-          let data := (Pdf.render o).toUTF8
-          streams := streams.push (data, some (← deflateCached data))
+        let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
         let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams tree ops programs
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
         pdfBuilt := some pdf

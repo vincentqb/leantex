@@ -1,11 +1,8 @@
 import LeanTex.Core.Diag
 
-/-! The boundary cache's vocabulary, as values: how one picture request's
-attempt ended, whether that ending is the tool's own verdict, and what the
-next run does about it — IO-free, so the one-attempt-per-request invariant
-is checked without a tool installed. Main.lean reads and writes the files
-named here and supplies the process results; the policy is all here, where
-it can be stated. -/
+/-! Pure boundary outcomes and tool-version memo policy. `PictureAssets`
+captures process results; `ConvCache` stores complete drawings or refusals.
+Unfinished attempts are retried. -/
 
 namespace LeanTex.Cli.PicCache
 
@@ -131,19 +128,11 @@ inductive VersionStep where
   | probe
   deriving BEq, Repr
 
-/-- **The property the memo keeps: the version string is still the cache
-key, and a tool that changed is asked again.** Asking costs a full tool
-startup, which a build where every picture replays from cache would
-otherwise pay for nothing. So the answer is remembered beside the slots
-against a stat-only witness of the binary PATH reaches — its resolved path,
-size and modification time, the same three facts the font cache keys a face
-on. A witness that still matches means the same binary, so its remembered
-version names the same slots; any change to it, and any memo that cannot be
-read, sends the run back to the tool. The witness is never the key: the
-slot's name still carries the version the tool gave, so what an upgrade
-invalidates is unchanged — the memo only decides whether the version has to
-be re-asked, and a witness that moved for no reason costs one probe, not a
-wrong answer. -/
+/-- Reuse a version only for its recorded, nonempty executable witness.
+The witness comprises resolved path, size and modification time; this
+assumes replacements change those observations. Result caches include both
+the witness and version, so different executables reporting the same version
+do not share answers. -/
 def versionStep (memo : Option (String × String)) (witness : String) : VersionStep :=
   match memo with
   | some (w, v) =>

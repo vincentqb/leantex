@@ -26,6 +26,7 @@ fi\n\
 [ \"$2\" = -halt-on-error ] && [ \"$3\" = pic.tex ] || exit 91\n\
 /usr/bin/cmp pic.tex \"$root/wrapped.tex\" || exit 92\n\
 printf '%s\\n' render >> \"$root/$label.calls\"\n\
+printf '%s\\n' \"$0\" >> \"$root/$label.argv0\"\n\
 mode=$(/bin/cat \"$root/mode\")\n\
 case \"$mode\" in\n\
   inconclusive) exit 17;;\n\
@@ -204,6 +205,18 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     let got ← PictureAssets.fulfil none tool stamp version pictureAssetWrapped
     t "picture assets: rendering with no cache still returns the exact captured bytes"
       (pictureAssetDrawn got expected false)
+
+    -- TeX engines select their format from the invoked name. Resolving a
+    -- symlink for identity must not replace that name when executing it.
+    let aliasPath := root / "renderer-format"
+    let linked ← IO.Process.output {
+      cmd := "ln", args := #["-s", tool, aliasPath.toString] }
+    t "picture assets: the synthetic format alias is a working symlink"
+      (linked.exitCode == 0 && (← IO.FS.realPath aliasPath).toString == tool)
+    let aliased ← PictureAssets.fulfil none aliasPath.toString "" "" pictureAssetWrapped
+    t "picture assets: an executable alias keeps its invocation name in owned scratch"
+      (pictureAssetDrawn aliased expected false &&
+        (← pictureAssetLines (root / "renderer-a.argv0")).getLast? == some aliasPath.toString)
 
     let history := root / "previous"
     IO.FS.createDir history
