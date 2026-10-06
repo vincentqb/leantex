@@ -40,4 +40,17 @@ theorem inflate_deflate_id (raw : ByteArray) :
     .ok raw at hr
   simpa [inflate, hh.1, hh.2] using hr
 
+/-- A caller may reserve more output space than the source requires. The
+decoder still returns exactly the compressed input, with its ordinary output
+checks and token-loop budget both justified by the declared capacity. -/
+theorem inflate_deflate_bounded_id (raw : ByteArray) (maxOut : Nat)
+    (hmax : raw.size ≤ maxOut) :
+    inflate (deflate raw) maxOut = .ok raw := by
+  have hh := deflate_header_exact raw
+  have hr := BlockStream.read_write_bounded_exact raw maxOut hmax (tokenize raw)
+    (tokenize_covers raw) zlibWriter (deflate raw) zlibWriter_valid (deflate_realizes_exact raw)
+  change BlockStream.read {data := deflate raw, bitPos := 16} ByteArray.empty maxOut =
+    .ok raw at hr
+  simpa [inflate, hh.1, hh.2] using hr
+
 end LeanTex.Core.Flate

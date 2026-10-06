@@ -234,7 +234,8 @@ theorem readStep_end_exact (lit dist : Huff) (out : ByteArray) (r r' : Br)
 
 /-- Every actual packed token advances the reader and extends the verified
 byte prefix. The trace counts tokens, while the prefix counts output bytes. -/
-theorem write_steps_exact {raw out : ByteArray} {start finish : Nat} {tokens : Array UInt32}
+theorem write_steps_bounded_exact {raw out : ByteArray} {start finish : Nat}
+    {tokens : Array UInt32} (maxOut : Nat) (hmax : raw.size ≤ maxOut)
     (litFreq distFreq : Array Nat) (w : Bw) (data : ByteArray)
     (hlf : litFreq.size ≤ 2 ^ 15) (hdf : distFreq.size ≤ 2 ^ 15)
     (hw : w.Valid) (hp : BytePrefix raw start out) (ht : TokensFor raw start tokens finish)
@@ -245,7 +246,7 @@ theorem write_steps_exact {raw out : ByteArray} {start finish : Nat} {tokens : A
       (canonCodes (PackageMerge.lengths distFreq 15)) tokens w).Realizes data) :
     ∃ out', DecodeLoop.Steps
       (readStep (mkHuff (PackageMerge.lengths litFreq 15))
-        (mkHuff (PackageMerge.lengths distFreq 15)) raw.size)
+        (mkHuff (PackageMerge.lengths distFreq 15)) maxOut)
       (out, {data, bitPos := w.position}) tokens.size
       (out', {data, bitPos := (write (PackageMerge.lengths litFreq 15)
         (canonCodes (PackageMerge.lengths litFreq 15)) (PackageMerge.lengths distFreq 15)
@@ -289,8 +290,8 @@ theorem write_steps_exact {raw out : ByteArray} {start finish : Nat} {tokens : A
       at hread
     refine ⟨before.push byte, ?_, hprefix.push hi ?_⟩
     · rw [Array.size_push, hwr]
-      exact .snoc hsteps (readStep_literal_exact _ _ _ _ _ byte raw.size hread
-        (by rw [hprefix.1]; exact hi))
+      exact .snoc hsteps (readStep_literal_exact _ _ _ _ _ byte maxOut hread
+        (by rw [hprefix.1]; exact Nat.lt_of_lt_of_le hi hmax))
     · simp only [byte, getElem?_pos raw i hi, Option.getD_some]
   | @backref i len dist tokens prior hlen href ih =>
     let beforeWriter := write litLens litCodes distLens distCodes tokens w
@@ -318,12 +319,32 @@ theorem write_steps_exact {raw out : ByteArray} {start finish : Nat} {tokens : A
     have hlast := hs (matchToken len dist) (by simp)
     rw [symbols_match_exact len dist hlen hdist] at hlast
     have hread := writeMatch_read_exact litFreq distFreq beforeWriter data before len dist
-      raw.size hv.1 hlf hdf hlen hdist hlast.1 (hlast.2 _ rfl)
+      maxOut hv.1 hlf hdf hlen hdist hlast.1 (hlast.2 _ rfl)
       (by rw [hprefix.1]; exact hpos.2.1)
-      (by rw [hprefix.1]; exact hpos.2.2.1) hreal
+      (by rw [hprefix.1]; exact Nat.le_trans hpos.2.2.1 hmax) hreal
     refine ⟨copy before len dist, ?_, backref_copy_exact raw before i len dist hprefix href⟩
     rw [Array.size_push, hwr]
     exact .snoc hsteps hread
+
+theorem write_steps_exact {raw out : ByteArray} {start finish : Nat} {tokens : Array UInt32}
+    (litFreq distFreq : Array Nat) (w : Bw) (data : ByteArray)
+    (hlf : litFreq.size ≤ 2 ^ 15) (hdf : distFreq.size ≤ 2 ^ 15)
+    (hw : w.Valid) (hp : BytePrefix raw start out) (ht : TokensFor raw start tokens finish)
+    (hs : ∀ t ∈ tokens.toList, 0 < litFreq[(symbols t).1]?.getD 0 ∧
+      ∀ s, (symbols t).2 = some s → 0 < distFreq[s]?.getD 0)
+    (hr : (write (PackageMerge.lengths litFreq 15)
+      (canonCodes (PackageMerge.lengths litFreq 15)) (PackageMerge.lengths distFreq 15)
+      (canonCodes (PackageMerge.lengths distFreq 15)) tokens w).Realizes data) :
+    ∃ out', DecodeLoop.Steps
+      (readStep (mkHuff (PackageMerge.lengths litFreq 15))
+        (mkHuff (PackageMerge.lengths distFreq 15)) raw.size)
+      (out, {data, bitPos := w.position}) tokens.size
+      (out', {data, bitPos := (write (PackageMerge.lengths litFreq 15)
+        (canonCodes (PackageMerge.lengths litFreq 15)) (PackageMerge.lengths distFreq 15)
+        (canonCodes (PackageMerge.lengths distFreq 15)) tokens w).position}) ∧
+      BytePrefix raw finish out' :=
+  write_steps_bounded_exact raw.size (Nat.le_refl _) litFreq distFreq w data
+    hlf hdf hw hp ht hs hr
 
 theorem writePayload_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UInt32}
     (litLens distLens : Array Nat) (w : Bw)
@@ -340,13 +361,14 @@ theorem writePayload_contract {raw : ByteArray} {start finish : Nat} {tokens : A
 /-- A complete compressed payload, with its actual frequency counts, generated
 Huffman tables and end marker, reads back to the input. Final-byte realization
 allows later fields and the zlib trailer to follow the payload. -/
-theorem read_write_exact (raw : ByteArray) (tokens : Array UInt32)
+theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
+    (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
     (hr : (writePayload (PackageMerge.lengths (alphabets tokens).1 15)
       (PackageMerge.lengths (alphabets tokens).2 15) tokens w).Realizes data) :
     read (mkHuff (PackageMerge.lengths (alphabets tokens).1 15))
         (mkHuff (PackageMerge.lengths (alphabets tokens).2 15))
-        {data, bitPos := w.position} ByteArray.empty raw.size =
+        {data, bitPos := w.position} ByteArray.empty maxOut =
       .ok (raw, {data, bitPos :=
         (writePayload (PackageMerge.lengths (alphabets tokens).1 15)
           (PackageMerge.lengths (alphabets tokens).2 15) tokens w).position}) := by
@@ -369,18 +391,30 @@ theorem read_write_exact (raw : ByteArray) (tokens : Array UInt32)
       w hw hl hd ht).1
   have hx := push_extends_exact beforeEnd ((canonCodes litLens)[256]?.getD 0)
     (litLens[256]?.getD 0) hv (hl 256)
-  obtain ⟨out, hsteps, hp⟩ := write_steps_exact (raw := raw) (out := ByteArray.empty)
-    litFreq distFreq w data hlf hdf hw ⟨rfl, Nat.zero_le _, by simp⟩ ht
+  obtain ⟨out, hsteps, hp⟩ := write_steps_bounded_exact (raw := raw) (out := ByteArray.empty)
+    maxOut hmax litFreq distFreq w data hlf hdf hw ⟨rfl, Nat.zero_le _, by simp⟩ ht
     (alphabets_live ht) (hr.prefix hx)
   have hread := packageMerge_push_decode_exact litFreq 15 beforeEnd data 256 hv
     (by decide) hlf hf.2.2.1 hr
   rw [← push_position_exact beforeEnd ((canonCodes litLens)[256]?.getD 0) _ hv (hl 256)]
     at hread
   have hfinish := hsteps.finish
-    (.done (readStep_end_exact _ _ out _ _ raw.size hread))
-  have h := DecodeLoop.run_exact _ _ _ _ (raw.size + 2) "deflate: block did not end"
+    (.done (readStep_end_exact _ _ out _ _ maxOut hread))
+  have h := DecodeLoop.run_exact _ _ _ _ (maxOut + 2) "deflate: block did not end"
     hfinish (by have := ht.progress; omega)
   simpa only [read, writePayload, hp.complete] using h
+
+theorem read_write_exact (raw : ByteArray) (tokens : Array UInt32)
+    (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
+    (hr : (writePayload (PackageMerge.lengths (alphabets tokens).1 15)
+      (PackageMerge.lengths (alphabets tokens).2 15) tokens w).Realizes data) :
+    read (mkHuff (PackageMerge.lengths (alphabets tokens).1 15))
+        (mkHuff (PackageMerge.lengths (alphabets tokens).2 15))
+        {data, bitPos := w.position} ByteArray.empty raw.size =
+      .ok (raw, {data, bitPos :=
+        (writePayload (PackageMerge.lengths (alphabets tokens).1 15)
+          (PackageMerge.lengths (alphabets tokens).2 15) tokens w).position}) :=
+  read_write_bounded_exact raw raw.size (Nat.le_refl _) tokens ht w data hw hr
 
 end TokenBlock
 end LeanTex.Core.Flate

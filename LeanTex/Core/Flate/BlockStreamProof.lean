@@ -42,10 +42,11 @@ theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UI
 
 /-- The final dynamic block is read by the actual outer decoder as a complete
 stream, after reading its transmitted tables and every payload symbol. -/
-theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)
+theorem readStep_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
+    (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
     (hr : (write tokens w).Realizes data) :
-    readStep raw.size (ByteArray.empty, {data, bitPos := w.position}) =
+    readStep maxOut (ByteArray.empty, {data, bitPos := w.position}) =
       .ok (.inl raw) := by
   let litLens := (lengths tokens).1
   let distLens := (lengths tokens).2
@@ -65,22 +66,37 @@ theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)
   have b2 := push_bits_exact w1 data 2 2 h1 (by decide) (by decide) r2
   have bh := DynamicHeader.read_write_exact litLens distLens w2 data h2
     hc.1 hc.2.1 hc.2.2.1 hc.2.2.2 rh
-  have bp := TokenBlock.read_write_exact raw tokens ht wh data hh.1 hr
+  have bp := TokenBlock.read_write_bounded_exact raw maxOut hmax tokens ht wh data hh.1 hr
   dsimp only [w1, w2, wh, litLens, distLens, lengths] at b2 bh bp
   simp only [readStep, b1, b2, readBody, show (2 == 0) = false by decide,
     show (2 == 1) = false by decide, show (2 == 2) = true by decide,
     Bool.false_eq_true, ↓reduceIte, bh, bp, bind, Except.bind, pure, Except.pure]
   rfl
 
+theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)
+    (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
+    (hr : (write tokens w).Realizes data) :
+    readStep raw.size (ByteArray.empty, {data, bitPos := w.position}) =
+      .ok (.inl raw) :=
+  readStep_write_bounded_exact raw raw.size (Nat.le_refl _) tokens ht w data hw hr
+
 /-- A complete production dynamic block decodes to its input through the
 bounded outer loop. Realization allows subsequent padding and zlib trailer. -/
+theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
+    (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
+    (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
+    (hr : (write tokens w).Realizes data) :
+    read {data, bitPos := w.position} ByteArray.empty maxOut = .ok raw := by
+  exact DecodeLoop.run_exact (readStep maxOut)
+    (ByteArray.empty, {data, bitPos := w.position}) raw 1 (8 * data.size / 3 + 2)
+    "deflate: no final block"
+    (.done (readStep_write_bounded_exact raw maxOut hmax tokens ht w data hw hr))
+    (by omega)
+
 theorem read_write_exact (raw : ByteArray) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
     (hr : (write tokens w).Realizes data) :
-    read {data, bitPos := w.position} ByteArray.empty raw.size = .ok raw := by
-  exact DecodeLoop.run_exact (readStep raw.size)
-    (ByteArray.empty, {data, bitPos := w.position}) raw 1 (8 * data.size / 3 + 2)
-    "deflate: no final block" (.done (readStep_write_exact raw tokens ht w data hw hr))
-    (by omega)
+    read {data, bitPos := w.position} ByteArray.empty raw.size = .ok raw :=
+  read_write_bounded_exact raw raw.size (Nat.le_refl _) tokens ht w data hw hr
 
 end LeanTex.Core.Flate.BlockStream
