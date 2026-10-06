@@ -20,6 +20,7 @@ import LeanTex.Core.HtmlResource
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Bib
 import LeanTex.Core.Binary
+import LeanTex.Core.Lex
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
@@ -71,6 +72,10 @@ example : Bib.Entry → String → Option String := Bib.Entry.field?
 example : String → Bib.Parsed := Bib.parse
 example : String → Bib.Name := Bib.parseName
 example : Bib.Name → String := Bib.Name.full
+example : String → String → Array Lex.Token × Array Diag := Lex.lex
+example (lineEnds : Nat) :
+    (Lex.wsTokens false (lineEnds + 1)).tail = Lex.wsTokens true lineEnds :=
+  Lex.blank_line_par_agree lineEnds
 example (read : Binary.Reader α) (value : α) (encoded : ByteArray)
     (h : Binary.Reads read value encoded) : read.run encoded = some value :=
   Binary.Reads.run_id read value encoded h
@@ -112,6 +117,9 @@ example : True := by
   fail_if_success have := Bib.readWhile
   fail_if_success have := Binary.Reader.arrayLoop
   fail_if_success have := Binary.array_acc
+  fail_if_success have := Lex.scanWhile
+  fail_if_success have := Lex.writtenControls
+  fail_if_success have := Lex.verbEnvs
   fail_if_success have := Decl.parseScaled
   fail_if_success have := Decl.ETok
   fail_if_success have := Decl.exprToks

@@ -1,11 +1,14 @@
-import LeanTex.Core.Diag
+module
+
+import Std.Data.HashMap
+public import LeanTex.Core.Diag
 import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.Lex
 
 open LeanTex.Core
 
-inductive Tok where
+public inductive Tok where
   | word (s : String)
   | space
   | par
@@ -17,7 +20,7 @@ inductive Tok where
   | verb (env : String) (s : String)
   deriving Repr, BEq
 
-structure Token where
+public structure Token where
   tok : Tok
   pos : Pos
   deriving Repr, BEq
@@ -25,7 +28,7 @@ structure Token where
 /-- Text symbols. The table lives in the lexer because it also decides the
 space-swallowing rule above: these names take no argument, so the space after
 them is content. The elaborator reads the same table for replacement text. -/
-def textSymbols : List (String × String) :=
+@[expose] public def textSymbols : List (String × String) :=
   [("middot", "·"), ("bullet", "•"), ("endash", "–"),
    ("emdash", "—"), ("ldots", "…"), ("dots", "…"),
    ("times", "×"), ("copyright", "©"), ("degree", "°"),
@@ -41,15 +44,15 @@ permissive half: `\vqb@bp` is one name wherever it stands. The alternative
 `\vqb` then `@bp`, which is exactly the mis-lex the mode exists to cause,
 and no known document wants: a document using `@`-names writes
 `\makeatletter` first, and one that never uses them never notices. -/
-def nameChar (c : Char) : Bool :=
+@[expose] public def nameChar (c : Char) : Bool :=
   c.isAlpha || c == '@'
 
 /-- The special characters are fixed forever: no catcode reprogramming. -/
-def special (c : Char) : Bool :=
+@[expose] public def special (c : Char) : Bool :=
   c == '\\' || c == '{' || c == '}' || c == '$' || c == '%' ||
   c == '[' || c == ']' || c == '&' || c == '#' || c == '^' || c == '_' || c == '~'
 
-def isWs (c : Char) : Bool :=
+@[expose] public def isWs (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
 private def scanWhile (cs : Array Char) (start : Nat) (p : Char → Bool) : Nat := Id.run do
@@ -78,13 +81,13 @@ private def newlines (cs : Array Char) (a b : Nat) : Nat := Id.run do
 paragraph token for each blank line. At line start, indentation is skipped
 and every end-of-line is a paragraph. Keeping the whole token run matters
 inside definitions, where `\ifx` distinguishes spaces and repeated `\par`. -/
-def wsTokens (lineStart : Bool) (n : Nat) : List Tok :=
+public def wsTokens (lineStart : Bool) (n : Nat) : List Tok :=
   if lineStart then List.replicate n .par
   else .space :: List.replicate (n - 1) .par
 
 /-- A comment removes its own end-of-line, including the space mid-line
 text would have supplied, but preserves every subsequent paragraph token. -/
-theorem blank_line_par_agree (n : Nat) :
+public theorem blank_line_par_agree (n : Nat) :
     (wsTokens false (n + 1)).tail = wsTokens true n := by
   simp [wsTokens]
 
@@ -97,17 +100,17 @@ same-line spacing and blank-line paragraph behaviour untouched. The brace
 carries no glyph, so any adjacency the drop leaves is intentional under the
 shorthand and earns no diagnostic: `{` at end of line and `{%` are identical
 after lexing. -/
-def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
+public def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
   if n = 1 ∧ (prevLbrace = true ∨ nextRbrace = true) then []
   else wsTokens false n
 
 /-- A same-line run is always a space, whatever sits beside it. -/
-theorem midlineWs_same_line (p q : Bool) : midlineWs p q 0 = [.space] := by
+public theorem midlineWs_same_line (p q : Bool) : midlineWs p q 0 = [.space] := by
   simp [midlineWs, wsTokens]
 
 /-- A blank line keeps main's whole mid-line run, brace-adjacency
 notwithstanding. -/
-theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
+public theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
     midlineWs p q n = wsTokens false n := by
   have : ¬ n = 1 := by omega
   simp [midlineWs, this]
@@ -116,7 +119,7 @@ theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
 contract is narrow, not a global whitespace trim. (`wsTokens false n` is
 always non-empty — it heads with a space — so an empty run can only be the
 suppressed case.) -/
-theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
+public theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
     midlineWs p q n = [] ↔ (n = 1 ∧ (p = true ∨ q = true)) := by
   unfold midlineWs
   split
@@ -127,7 +130,7 @@ theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
 
 /-- Away from braces the rule is byte-for-byte the old `wsTokens false`: the
 change is confined to brace-adjacency. -/
-theorem midlineWs_conservative (p q : Bool) (n : Nat) (hp : p = false) (hq : q = false) :
+public theorem midlineWs_conservative (p q : Bool) (n : Nat) (hp : p = false) (hq : q = false) :
     midlineWs p q n = wsTokens false n := by
   simp [midlineWs, hp, hq]
 
@@ -191,7 +194,7 @@ private def verbEnvs : List (String × Array Char × Array Char) :=
   ["verbatim", "lstlisting", "minted"].map fun n =>
     (n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
 
-def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
+public def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
   -- Folded straight into an array: `toList.toArray` builds and drops a cons
   -- cell per character of the document. Normalized to NFC here, once, so
   -- every downstream consumer — hyphenation, slugs, font cmap lookups,
