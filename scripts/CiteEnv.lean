@@ -6,9 +6,7 @@ namespace CiteEnv
 
 open Lean
 
-public section
-
-structure Site where
+public structure Site where
   moduleName : String
   file : String
   line : Nat
@@ -17,32 +15,32 @@ structure Site where
   text : String
   deriving FromJson, ToJson
 
-structure Query where
+public structure Query where
   moduleName : String
   ns : Name
   token : String
   deriving BEq, Hashable, FromJson, ToJson
 
-inductive Verdict where
+public inductive Verdict where
   | scope
   | tree
   | phantom
   deriving BEq, Inhabited, FromJson, ToJson, Repr
 
-structure Request where
+public structure Request where
   modules : Array String
   paths : Array String
   collect : Bool := false
   queries : Array Query := #[]
   deriving FromJson, ToJson
 
-structure Response where
+public structure Response where
   modules : Array String
   sites : Array Site := #[]
   verdicts : Array Verdict := #[]
   deriving FromJson, ToJson
 
-def moduleFile (name : String) : String := name.replace "." "/" ++ ".lean"
+public def moduleFile (name : String) : String := name.replace "." "/" ++ ".lean"
 
 /-- Inventory paths contain raw module components, including dashed script
 names. Construct those components directly; String.toName parses identifiers
@@ -50,7 +48,7 @@ and rejects these names unless each component is quoted. -/
 def toModuleName (name : String) : Name :=
   (name.splitOn ".").foldl Name.str .anonymous
 
-def requireCompiled (modules : Array String) : IO Unit := do
+public def requireCompiled (modules : Array String) : IO Unit := do
   for name in modules do
     let compiled ← try
       (← findOLean (toModuleName name)).pathExists
@@ -138,7 +136,7 @@ def verdict (env : Environment) (idx : NameIndex) (q : Query) : Verdict :=
 
 /-- Each worker owns one imported environment. Its process exits before the next
 batch starts, releasing Lean's imported memory regions as well as the values. -/
-def run (request : Request) : IO Response := do
+public def run (request : Request) : IO Response := do
   searchPathRef.set (request.paths.toList.map System.FilePath.mk)
   let env ← load request.modules
   let docs ← if request.collect then sites env request.modules else pure #[]
@@ -147,5 +145,4 @@ def run (request : Request) : IO Response := do
     modules := request.modules, sites := docs
     verdicts := request.queries.map (verdict env idx) }
 
-end
 end CiteEnv
