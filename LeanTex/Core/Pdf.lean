@@ -946,6 +946,30 @@ theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
     omega
   exact ⟨hsize, by rw [Xref.encode_size_exact, hsize]⟩
 
+/-- The row index is the object id, including the free-list head at zero.
+This derives from the actual allocation's tiling, without an ordering
+premise on the table. -/
+theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
+    (usedImgs : Array Nat) (np nOut nElems : Nat)
+    (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
+    (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
+    let t := objTable keep imgs usedImgs np nOut nElems
+    (xrefEntries t compressedIdx offset xrefOff)[id]? =
+      some (if id = 0 then .free 0 65535 else xrefEntry t compressedIdx offset xrefOff id) := by
+  dsimp only
+  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
+  have hta : (objTable keep imgs usedImgs np nOut nElems).ids =
+      (List.range' 1 ((objTable keep imgs usedImgs np nOut nElems).size - 1)).toArray := by
+    rw [← ht, Array.toArray_toList]
+  cases id with
+  | zero => simp [xrefEntries, Array.getElem?_append]
+  | succ id =>
+    simp only [xrefEntries, hta, Array.getElem?_append, Array.size_singleton,
+      Nat.succ_lt_succ_iff, Nat.not_lt_zero, ↓reduceIte, Nat.add_one_sub_one,
+      Array.getElem?_map, List.getElem?_toArray]
+    simp [show id < (objTable keep imgs usedImgs np nOut nElems).size - 1 by omega,
+      Nat.add_comm]
+
 /-- Numeric field bounds suffice for every emitted xref entry. This
 assumes no property of our writer, parser, or compressor. -/
 theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
@@ -1433,6 +1457,36 @@ theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array R
       have hm := indexObjects_mem t.size (serialize head rows).2.toList n i hi
       exact Nat.lt_of_le_of_lt (serialize_offsets_between head rows n i (by simpa using hm)) hbody
 
+/-- Every field in the actual xref payload reads back at seven times the
+object id. The table is constructed from source counts; the only premises
+are the three numeric limits imposed by its declared field widths.
+Decompression and the reader's row walk remain separate contracts. -/
+theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
+    (usedImgs : Array Nat) (np nOut nElems : Nat) (head : ByteArray) (rows : Array Row)
+    (objects : List (Nat × PdfRead.Obj))
+    (hbody : (serialize head rows).1.size < 256 ^ 4)
+    (hstream : (objTable keep imgs usedImgs np nOut nElems).objStmId < 256 ^ 4)
+    (hobjects : objects.length ≤ 256 ^ 2) (id : Nat)
+    (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
+    let t := objTable keep imgs usedImgs np nOut nElems
+    let out := serialize head rows
+    let e := if id = 0 then Xref.Entry.free 0 65535 else
+      xrefEntry t (fun n => ((compressedIndex t.size objects)[n]?).join)
+        (fun n => ((indexObjects t.size out.2.toList)[n]?).join) out.1.size id
+    let data := Xref.encode (writerXrefEntries t out.2 objects out.1.size)
+    Binary.readNatBE 1 data (7 * id) = some e.fields.1.toNat ∧
+      Binary.readNatBE 4 data (7 * id + 1) = some e.fields.2.1 ∧
+      Binary.readNatBE 2 data (7 * id + 5) = some e.fields.2.2 := by
+  dsimp only
+  have hi := xrefEntries_index_exact keep imgs usedImgs np nOut nElems
+    (fun n => ((compressedIndex (objTable keep imgs usedImgs np nOut nElems).size objects)[n]?).join)
+    (fun n => ((indexObjects (objTable keep imgs usedImgs np nOut nElems).size
+      (serialize head rows).2.toList)[n]?).join) (serialize head rows).1.size id hid
+  have he := writerXrefEntries_fits (objTable keep imgs usedImgs np nOut nElems)
+    head rows objects hbody hstream hobjects _ (Array.mem_of_getElem? hi)
+  simpa only [writerXrefEntries, ByteArray.empty_append, ByteArray.append_empty,
+    ByteArray.size_empty, Nat.zero_add] using
+    Xref.encode_index_fields_exact _ id _ hi he ByteArray.empty ByteArray.empty
 
 /-- The two buffers of an object stream (§7.5.7). Header offsets are
 relative to `payload`, whose bytes are appended by the same step. -/

@@ -135,4 +135,22 @@ theorem encode_entry_fields_exact (before after : Array Entry) (e : Entry)
     row_fields_exact e.fields.1 e.fields.2.1 e.fields.2.2 he.1 he.2
       (pre ++ encode before) (encode after ++ post)
 
+/-- Any selected encoded row, at the position declared by its array index.
+The surrounding bytes are arbitrary; only the selected row must fit. -/
+theorem encode_index_fields_exact (es : Array Entry) (i : Nat) (e : Entry)
+    (hi : es[i]? = some e) (he : e.Fits) (pre post : ByteArray) :
+    let data := pre ++ encode es ++ post
+    let pos := pre.size + 7 * i
+    Binary.readNatBE 1 data pos = some e.fields.1.toNat ∧
+    Binary.readNatBE 4 data (pos + 1) = some e.fields.2.1 ∧
+    Binary.readNatBE 2 data (pos + 5) = some e.fields.2.2 := by
+  obtain ⟨hlt, heq⟩ := Array.getElem?_eq_some_iff.mp hi
+  have hsplit : es.extract 0 i ++ #[e] ++ es.extract (i + 1) es.size = es := by
+    rw [← heq, ← Array.push_eq_append, Array.push_extract_getElem hlt]
+    simp [Nat.max_eq_right (by omega : i + 1 ≤ es.size)]
+  have h := encode_entry_fields_exact (es.extract 0 i) (es.extract (i + 1) es.size)
+    e he pre post
+  simpa only [hsplit, Array.size_extract, Nat.min_eq_left (by omega : i ≤ es.size),
+    Nat.sub_zero] using h
+
 end LeanTex.Core.Pdf.Xref
