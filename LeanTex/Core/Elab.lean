@@ -5817,42 +5817,53 @@ a side channel, never slide content" pos
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws j3 acc sb
   else
-    -- Best effort: the {...} arguments are content, and content is
-    -- never dropped for want of a command. Only the formatting is lost.
-    -- (The one named exception, `warnUnknownCmd`: the \footnotemark pair
-    -- is pending, W0370, never "unknown".)
-    let j0 := skipSpaces raws (i + 1)
-    have hj0 := skipSpaces_ge raws (i + 1)
-    -- A starred form's `*` belongs to the command, not to the text.
-    let j1 := skipStar raws j0
-    have hj1 := skipStar_ge raws j0
-    -- A leading [...] run is how the author addressed the command,
-    -- never their content: kept, it is ink nobody wrote ('[16]'
-    -- printed in front of a URL). It goes with the command, and the
-    -- command's own diagnostic says so — the run is part of this
-    -- construct's recovery, so it is one accounting and not two.
-    let jr := skipOptionRuns raws j1 pos
-    have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
-    warnUnknownCmd ctx name (jr.1 > j1) pos
-    if let some bpos := jr.2 then
-      warnUnclosed ctx s!"'\\{name}'" bpos
-    let j2 := skipSpaces raws jr.1
-    have hj2 := skipSpaces_ge raws jr.1
-    have hcall : sliceWeight raws j2 < sliceWeight raws i :=
-      sliceWeight_lt raws h (by omega)
-    let (acc2, sb2, ⟨j3, hj3⟩, kept, sp) ← elabUnknownArgs ctx raws j2 0 acc sb false
-    -- What the floor kept, recorded as salvage: this ink is the engine's
-    -- recovery, not the author's prose, and nothing downstream could tell
-    -- the two apart from the bytes alone.
-    noteSalvage .W0301 name (Parse.rawSrc (raws.extract j2 j3))
-    -- The control word swallowed a space after it; give back only one
-    -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
-    -- gains no ink the author never wrote.
-    let sbF := if kept > 0 && sp && j3 < raws.size then " " else sb2
-    have hadv : sliceWeight raws j3 < sliceWeight raws i :=
-      sliceWeight_lt raws h (by omega)
-    elabInlinesFrom ctx raws j3 acc2 sbF
+    elabUnknownCtrl ctx raws i acc sb name pos h
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 1)
+decreasing_by all_goals knot_dec
+
+/-- The dispatched unknown-command recovery. Keeping this arm separate
+exposes its actual consumption and content contract without repeating the
+control-word registry in proofs. The caller has already ruled out native
+commands, definitions, symbols, colours and package-code recovery. -/
+def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
+    (h : i < raws.size) : EM (Array Inline) := do
+  -- Best effort: the {...} arguments are content, and content is
+  -- never dropped for want of a command. Only the formatting is lost.
+  -- (The one named exception, `warnUnknownCmd`: the \footnotemark pair
+  -- is pending, W0370, never "unknown".)
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  -- A starred form's `*` belongs to the command, not to the text.
+  let j1 := skipStar raws j0
+  have hj1 := skipStar_ge raws j0
+  -- A leading [...] run is how the author addressed the command,
+  -- never their content: kept, it is ink nobody wrote ('[16]'
+  -- printed in front of a URL). It goes with the command, and the
+  -- command's own diagnostic says so — the run is part of this
+  -- construct's recovery, so it is one accounting and not two.
+  let jr := skipOptionRuns raws j1 pos
+  have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
+  warnUnknownCmd ctx name (jr.1 > j1) pos
+  if let some bpos := jr.2 then
+    warnUnclosed ctx s!"'\\{name}'" bpos
+  let j2 := skipSpaces raws jr.1
+  have hj2 := skipSpaces_ge raws jr.1
+  have hcall : sliceWeight raws j2 < sliceWeight raws i :=
+    sliceWeight_lt raws h (by omega)
+  let (acc2, sb2, ⟨j3, hj3⟩, kept, sp) ← elabUnknownArgs ctx raws j2 0 acc sb false
+  -- What the floor kept, recorded as salvage: this ink is the engine's
+  -- recovery, not the author's prose, and nothing downstream could tell
+  -- the two apart from the bytes alone.
+  noteSalvage .W0301 name (Parse.rawSrc (raws.extract j2 j3))
+  -- The control word swallowed a space after it; give back only one
+  -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
+  -- gains no ink the author never wrote.
+  let sbF := if kept > 0 && sp && j3 < raws.size then " " else sb2
+  have hadv : sliceWeight raws j3 < sliceWeight raws i :=
+    sliceWeight_lt raws h (by omega)
+  elabInlinesFrom ctx raws j3 acc2 sbF
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 0)
 decreasing_by all_goals knot_dec
 
 
