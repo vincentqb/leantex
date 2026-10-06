@@ -10,6 +10,22 @@ def index (count : Nat → Nat) : Nat → Nat
   | 0 => 0
   | k + 1 => index count k + count (k + 1)
 
+def start (count : Nat → Nat) : Nat → Nat
+  | 0 => 0
+  | k + 1 => (start count k + count k) * 2
+
+theorem start_first_exact (count : Nat → Nat) (hzero : count 0 = 0)
+    (width : Nat) (hw : 0 < width) :
+    start count width = first count (width - 1) := by
+  cases width with
+  | zero => omega
+  | succ k =>
+    induction k with
+    | zero => simp [start, first, hzero]
+    | succ k ih =>
+      simpa only [start, Nat.add_sub_cancel_right, first] using
+        congrArg (fun v => (v + count (k + 1)) * 2) (ih (by omega))
+
 theorem first_later_between (count : Nat → Nat) (k d : Nat) :
     (first count k + count (k + 1)) * 2 ^ (d + 1) ≤ first count (k + 1 + d) := by
   induction d with
