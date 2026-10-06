@@ -96,11 +96,13 @@ private def identify (dir : System.FilePath) (tool : String) : IO (Option String
   | .present version => return some (tool ++ "\n" ++ stamp ++ "\n" ++ version)
 
 private def identity (dir : System.FilePath) (tools : Array String) : IO (Option String) := do
-  let mut ids := #[]
-  for tool in tools do
-    let some id ← identify dir tool | return none
-    ids := ids.push id
-  return some (String.intercalate "\u0000" ids.toList)
+  try
+    let mut ids := #[]
+    for tool in tools do
+      let some id ← identify dir tool | return none
+      ids := ids.push id
+    return some (String.intercalate "\u0000" ids.toList)
+  catch _ => return none
 
 private def cacheDir : IO (Option System.FilePath) := do
   try

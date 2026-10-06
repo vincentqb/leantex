@@ -36,20 +36,20 @@ exit 1", "tool-probe"] ++ candidates) (← IO.currentDir) 1000 100
 (a distribution that versions its install directory changes it), the size
 and the modification time (a distribution that replaces the binary in place
 changes those) — the three facts the font cache already keys a face on.
-Empty when PATH reaches nothing, which is a witness no memo matches, so a
-machine with no tool asks again on every build and installing the tool
-takes effect at once. -/
+Empty when PATH reaches nothing or its cwd/filesystem lookup fails, which
+is a witness no memo matches, so a machine with no tool asks again on every
+build and installing the tool takes effect at once. -/
 def witness (tool : String) : IO String := do
-  match ← onPath tool with
-  | none => return ""
-  | some p =>
-    try
+  try
+    match ← onPath tool with
+    | none => return ""
+    | some p =>
       let real ← IO.FS.realPath p
       let md ← p.metadata
       return String.intercalate "\t"
         [real.toString, toString md.byteSize, toString md.modified.sec,
           toString md.modified.nsec]
-    catch _ => return ""
+  catch _ => return ""
 
 /-- Ask the tool. Only the exit code decides whether there is an answer to
 read: a spawn that reaches `exec` and fails there returns nonzero with
