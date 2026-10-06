@@ -285,7 +285,7 @@ theorem inflate_deflate_id (b : ByteArray) :
 -- owed: write_fonts_embedded
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
--- blocker: the unrestricted statement is false: 65,536 synthetic outline entries overflow a compressed object's 16-bit index; the writer's root/count still read, but object recovery fails and the font census returns an error. The representable domain must bound direct offsets and object-stream ids to 32 bits, compressed indices to 16 bits, and decoded structural streams to `PdfRead.maxDecoded`. `Pdf.fontObjects_links_exact` proves the actual writer's dictionary references for both font formats; `Pdf.fontObjects_census_contract` proves the census from recovered font dictionaries and descriptors, without assuming the census result. Reader recovery still needs `inflate_deflate_id`, a corrected `parseVal_render_id`, Adler verification and object-stream lookup composition. Those internal facts are obligations, not external hypotheses that construction proves.
+-- blocker: the unrestricted statement is false: 65,536 synthetic outline entries overflow a compressed object's 16-bit index; the writer's root/count still read, but object recovery fails and the font census returns an error. The representable domain must bound direct offsets and object-stream ids to 32 bits, compressed indices to 16 bits, and decoded structural streams to `PdfRead.maxDecoded`. `Pdf.fontObjects_links_exact` proves the actual writer's dictionary references for both font formats; `Pdf.fontObjects_census_contract` proves the census from recovered font dictionaries and descriptors. `PdfRead.parseVal_render_id` now proves full-consumption inversion under the independent recursive `Obj.Representable` domain. Reader recovery still needs the writer's dictionaries in that domain, `inflate_deflate_id`, Adler verification and object-stream lookup composition. Those internal facts are obligations, not external hypotheses that construction proves.
 -- goldens: no
 /-- Staged writer/census contract for image-free output. Its unrestricted
 input domain is too wide: a compressed object index can exceed the field
@@ -301,7 +301,7 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
 -- owed: write_readXref_exact
 -- owner: LeanTex.Core.Pdf
 -- source: the pdf-conformance-gate slice (modern output, wave 1 S3; pdf-validation F/gap 1–2, S3 red 1–2): the engine's own reader accepts every file the engine writes — today the executable witness is the reference walk over every corpus PDF in Tests/PdfConformance (`walkPdf`) and the six mutants it refuses by name.
--- blocker: `Pdf.serialize_row_exact` now locates every emitted row's bytes, and `Pdf.Xref.row_fields_exact` proves all declared [1,4,2] fields read back under their width bounds. These strengthen the writer-side offset/count contracts but do not prove `PdfRead.readXref`: startxref discovery, trailer parsing, stream decompression with Adler verification, and the xref row loop still need composition. This includes `inflate_deflate_id` and a corrected `parseVal_render_id`, together with the reader's decoded-size limits. The current conclusion checks root/count only; it does not certify the locations or object-stream indices, which can overflow while that conclusion still holds.
+-- blocker: `Pdf.serialize_row_exact` now locates every emitted row's bytes, and `Pdf.Xref.row_fields_exact` proves all declared [1,4,2] fields read back under their width bounds. `PdfRead.parseVal_render_id` now proves full-consumption object inversion under `Obj.Representable`. These components do not yet prove `PdfRead.readXref`: the writer's trailer must satisfy that domain, and startxref discovery, stream decompression with Adler verification, and the xref row loop still need composition, including `inflate_deflate_id` and the reader's decoded-size limits. The current conclusion checks root/count only; it does not certify the locations or object-stream indices, which can overflow while that conclusion still holds.
 -- goldens: no
 /-- The writer and the engine's reader agree on the cross-reference
 (`_exact`, artifact-specific: a fact of the file's own bookkeeping, with
@@ -317,51 +317,9 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
       (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
   sorry
 
-/-! Historical candidate domain for object round trips, retained with its
-open statement. It is insufficient: a decimal point is not a number
-grammar, an opening delimiter does not ensure a complete string, and a
-nonempty name need not belong to the byte alphabet. The executable
-counterexamples in `pdfReadRoundtripChecks` exercise all three defects.
-A corrected domain must apply the same constraints recursively, including
-dictionary keys; this predicate does not certify writer/parser agreement. -/
-mutual
-
-def renderableB : PdfRead.Obj → Bool
-  | .null => true
-  | .bool _ => true
-  | .int _ => true
-  | .ref _ _ => true
-  | .real raw => raw.contains '.'
-  | .str raw => 2 ≤ raw.size && (raw[0]? == some 40 || raw[0]? == some 60)
-  | .name n => n != ""
-  | .arr xs => renderableList xs.toList
-  | .dict es => renderableEntries es.toList
-
-def renderableList : List PdfRead.Obj → Bool
-  | [] => true
-  | x :: rest => renderableB x && renderableList rest
-
-def renderableEntries : List (String × PdfRead.Obj) → Bool
-  | [] => true
-  | (k, v) :: rest => k != "" && renderableB v && renderableEntries rest
-
-end
-
-def renderable (o : PdfRead.Obj) : Prop := renderableB o = true
-
--- owed: parseVal_render_id
--- owner: LeanTex.Core.PdfRead
--- source: the pdfobj factorization (2026-09-24), the keystone `write_fonts_embedded` and `write_readXref_exact` both name: `Obj.render` now exists, so every dictionary the writer emits is a typed value and the census over `write`'s bytes can become the census over the values `write` built — once the round trip is a theorem. The executable witnesses are the reference walk over every corpus PDF in Tests/PdfConformance and the written-census rows in Tests/Backends, which read back exactly these values.
--- blocker: the current premise is false as a sufficient domain: `pdfReadRoundtripChecks` holds seven counterexamples accepted by `renderableB`, covering malformed/trailing real and string bytes and a non-byte name. The domain must require the real grammar, one complete literal/hex spelling, and byte-valued names and dictionary keys. `PdfRead.Number.int_toString_id`, `PdfLex.parseName_escapeName_id`, `PdfLex.scanNumber_exact`, `PdfLex.parseUInt_exact`, `PdfLex.scanLitString_exact` and `PdfLex.scanHexEnd_exact` now prove the lexical components on independent source domains; the hex-end law locates its delimiter, not hex-digit validity. `Loop.forIn_range_stops_exact` proves finite scanner traces under sufficient budgets. The remaining proof must compose keywords, reference lookahead, array/dictionary stack transitions and lexical consumption through the actual `parseVal` driver, under a corrected recursive domain; the component laws do not establish that composition.
--- goldens: no
-/-- Staged object round-trip contract (`_id`). The candidate `renderable`
-premise is insufficient, as the registered counterexamples show. The
-intended replacement must describe complete reversible spellings and
-prove the writer's constructors satisfy that domain before composing the
-reader's lexical laws with its object stack. -/
-theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
-    PdfRead.parseVal (PdfRead.Obj.render o) 0 = .ok (o, (PdfRead.Obj.render o).size) := by
-  sorry
+-- PdfRead.parseVal_render_id proves full-consumption inversion over
+-- recursively representable objects. The rejected primitive, descendant
+-- and dictionary-key spellings remain checked in the runtime suite.
 
 -- The former arbitrary-statement order claim was false: two writes to the
 -- same node name resolve differently when reversed (PictureContracts.checks).

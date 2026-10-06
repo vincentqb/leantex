@@ -126,7 +126,7 @@ private def nestedRejected : List Rejected :=
   [⟨.dict #[("λ",.null)],rejected_key (by unfold Obj.NameSpelling; decide)⟩,
    ⟨.dict #[("",.null)],rejected_key (by unfold Obj.NameSpelling; decide)⟩]
 
-def checks (ref : IO.Ref (List String)) : IO Unit := do
+def runRepresentabilityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := fun (name : String) (ok : Bool) =>
     unless ok do ref.modify (s!"PDF representability: {name}" :: ·)
   let roundtrip := fun (o : Obj) =>
@@ -151,4 +151,4 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
 
 end PdfReadRepresentability
 
-def pdfReadRepresentabilityChecks := PdfReadRepresentability.checks
+def pdfReadRepresentabilityChecks := PdfReadRepresentability.runRepresentabilityChecks

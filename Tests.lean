@@ -43,6 +43,7 @@ import Tests.AnimatedFaces
 import Tests.PdfPageSelection
 import Tests.PdfReadObjects
 import Tests.PdfReadRoundtrip
+import Tests.PdfReadRepresentability
 import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagnosticFormat
@@ -631,6 +632,7 @@ def main (args : List String) : IO UInt32 := do
   structChecks ref
   pdfStructCoherenceChecks ref
   pdfReadRoundtripChecks ref
+  pdfReadRepresentabilityChecks ref
   ctxFoldChecks ref
   pictureAltChecks ref
   pictureElabChecks ref
