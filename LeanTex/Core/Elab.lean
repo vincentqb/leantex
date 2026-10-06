@@ -9,6 +9,7 @@ import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
 import LeanTex.Core.Picture
+import LeanTex.Core.PictureCensus
 import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
 import LeanTex.Core.PdfContract
@@ -15654,25 +15655,67 @@ def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
       if last[n]? == some i && !differ.contains n then out := out.push (n, l)
   return out
 
-/-- The pictures the engine drew *itself*: the `.picture` nodes the body walk
-produced, at any depth. Those nodes have exactly two sources — the shapes the
-rendered subset evaluated, and the placeholder that marks a picture the
-subset refused whole — so a positive count says the engine, not the boundary
-tool, put the diagram on the page. The gate on the `\tikzset` key diagnostic
-reads it, and `pictureKeys_named` states over it. -/
-def enginePictures (blocks : Array Block) : Nat :=
-  Ir.foldBlocks (fun n b => match b with | .picture _ => n + 1 | _ => n)
-    (fun n _ => n) 0 blocks
+/-- The style table before the next picture setting. This is the same
+one-pass interpretation used by the drawing's `Picture.documentStyles`. -/
+def pictureSettingStyles (styles : List (String × Array Picture.Tok))
+    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) :=
+  (Picture.readStyleList styles (Picture.ofRaws setting.2)).1
+
+/-- Account for a key at the setting that declares it. -/
+def pictureKeyState (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) : ESt :=
+  warnOnceState ctx ("picture:set:" ++ key) .W0334
+    s!"picture key {key} is outside the rendered picture subset; the key is dropped"
+    pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
+
+/-- One real reporting loop, over the keys this setting leaves unread.
+The style table is advanced only after the setting has been interpreted. -/
+def pictureSettingState (ctx : Ctx)
+    (acc : List (String × Array Picture.Tok) × ESt)
+    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
+  let mut st := acc.2
+  for key in Picture.unreadKeys acc.1 (Picture.ofRaws setting.2) do
+    st := pictureKeyState ctx setting.1 st key
+  return (pictureSettingStyles acc.1 setting, st)
+
+/-- Interpret and report every prepared picture setting, in declaration
+order, carrying the earlier style definitions into each later setting. -/
+def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+  Id.run do
+    let mut acc := (([] : List (String × Array Picture.Tok)), st)
+    for setting in sets do
+      acc := pictureSettingState ctx acc setting
+    return acc.2
+
+/-- Where picture losses belong in the document's diagnostic sequence.
+The body determines whether there is a loss; the context determines its
+source span, independently of the later document judges. -/
+structure PictureReportContext where
+  ctx : Ctx
+  offset : Nat
+
+/-- Name settings against the body actually returned by the frontend.
+Later document judges keep their diagnostic order: picture losses are
+inserted at the position captured immediately after body elaboration. -/
+def finishPictureKeys (report : PictureReportContext) (doc : Doc)
+    (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+  -- premise: pictureKeyGateChecks — only an engine-rendered picture loses
+  -- these keys; a configured boundary alone cannot silence that loss.
+  if 0 < enginePictures doc.body then
+    let named := reportPictureKeys report.ctx sets { st with diags := #[] }
+    { named with diags := st.diags.extract 0 report.offset ++ named.diags ++
+        st.diags.extract report.offset st.diags.size }
+  else st
 
 /-- Elaborate the whole document: split preamble and body around the
-`document` environment, process declarations, then the body. -/
-def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
+`document` environment, process declarations, then the body. Picture-key
+accounting is finalized by the public callers against their returned IR. -/
+private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
     (listingReplies : Array ListingReply.Answer := #[]) :
-    EM (Doc × Ir.RefTable) := do
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -15875,19 +15918,10 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
   -- carry claimed the boundary read them whenever a tool was configured;
   -- native drawing made that premise false and the keys were dropped in
   -- silence, an arrow-tip default among them.
-  -- Read here rather than in the preamble fold because *who drew it* is a
-  -- fact of the elaborated body — the `.picture` nodes this walk produced —
-  -- never of a configuration, and never of how layout will resolve them.
-  if enginePictures blocks > 0 then
-    let mut styles : List (String × Array Picture.Tok) := []
-    for (pos, keys) in picSets do
-      let toks := Picture.ofRaws keys
-      for key in Picture.unreadKeys styles toks do
-        warnOnce ctx ("picture:set:" ++ key) .W0334
-          s!"picture key {key} is outside the rendered picture subset; \
-the key is dropped" pos
-          (help := "the rendered subset reads 'name/.style={...}' definitions")
-      styles := (Picture.readStyleList styles toks).1
+  -- Capture the reporting context and sequence position here. Completion
+  -- reads *who drew it* from the returned body, after references and colour
+  -- realization, so its accounting contract names the IR a caller receives.
+  let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
   -- The label table, complete: the float rows are read off the numbered IR
   -- just produced (`Ir.floatLabelRows`), so a label under a captioned
   -- float binds to the number the node carries — one numbering,
@@ -16096,7 +16130,20 @@ declare \\assert\{ pages <= N } to take control" }
   -- judged where it stands, because its label may follow it.
   let doc := if stRefs.refSites.isEmpty then doc
     else Ir.mapDoc (Ir.resolveRefInlines ctx.locale table) (Ir.resolveRefs ctx.locale table) doc
-  return (doc, table)
+  return (doc, table, pictureReport)
+
+/-- Elaborate a document and account for every unread setting of its
+engine pictures. The output gate is read from the completed body. -/
+def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
+    (picSets : Array (Pos × Array Raw) := #[])
+    (picMacros : Array (String × String) := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[])
+    (listingReplies : Array ListingReply.Answer := #[]) :
+    EM (Doc × Ir.RefTable) := fun initial =>
+  let ((doc, table, report), st) :=
+    (elabDocCore file raws picPre picSets picMacros picMetric picWithdrawn listingReplies).run initial
+  ((doc, table), finishPictureKeys report doc picSets st)
 
 /-- Where the requests a document states were declared — reporting metadata
 the driver reads to place its missing-file diagnostics. Delivered beside
@@ -16336,27 +16383,17 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 
-/-- Elaborate prepared input against a measurement, with the boundary
-requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
-def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (picWithdrawn : Array String := #[]) :
+/-- The actual prepared-frontend tail, factored so its contract can name
+the returned document and log without unfolding the body elaborator. -/
+def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
+    (doc : Doc) (table : Ir.RefTable) (report : PictureReportContext) (st : ESt) :
     Doc × Array Diag × ReqSpans :=
-  let raws := p.raws
-  let compatDiags := p.compatDiags
-  let warned := p.warned
-  -- One warn-once key set for the document, not one per pass: the rewrite
-  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
-  -- starts from what the document has already been told, not from empty.
-  let ((doc, table), st) :=
-    (elabDoc file raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-      p.listingReplies).run
-      { warnedUnknown := warned }
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry
   -- N0022 where a pair realized, the pairing warnings where none could.
   let (doc, contrast) := Contrast.realizeDoc doc (colorSiteOf st.spans.colors)
+  let st := finishPictureKeys report doc p.picSets st
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
   -- after fulfilment (`Ir.picAltDiags`), where E0382's outcome is known.
@@ -16364,7 +16401,7 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   (doc, Diag.tallySites
-    (earlier ++ compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
+    (earlier ++ p.compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
       contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences),
     { bib := st.spans.bib
       images := st.spans.images
@@ -16375,6 +16412,34 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
           if seen.contains key then (out, seen)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
+
+/-- Elaborate prepared input against a measurement, with the boundary
+requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
+def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[]) :
+    Doc × Array Diag × ReqSpans :=
+  -- One warn-once key set for the document, not one per pass: the rewrite
+  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
+  -- starts from what the document has already been told, not from empty.
+  let ((doc, table, report), st) :=
+    (elabDocCore file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
+      p.listingReplies).run { warnedUnknown := p.warned }
+  completePrepared file p earlier doc table report st
+
+/-- The private body interpreter reaches the public document completion
+boundary. Proofs about that boundary need no unfolding of its recursive
+state machine. -/
+theorem runPrepared_complete_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
+    ∃ doc table report st,
+      runPrepared file p earlier metric withdrawn =
+        completePrepared file p earlier doc table report st := by
+  unfold runPrepared
+  generalize (elabDocCore file p.raws p.picPre p.picSets p.picMacros metric withdrawn
+    p.listingReplies).run { warnedUnknown := p.warned } = result
+  rcases result with ⟨⟨doc, table, report⟩, st⟩
+  exact ⟨doc, table, report, st, rfl⟩
 
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
 written for another engine compiles as written. Returns the request spans
@@ -16404,7 +16469,7 @@ again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
 ships, the subset's drawing with its refusals named. The first pass — the
 requests, stated from the document alone — is `runRawsSpanned`'s. -/
-private def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
+def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
     (picMetric : Ir.Pic.LabelMetric) :
     Doc × Array Diag :=
   let first := runPrepared file p earlier picMetric
