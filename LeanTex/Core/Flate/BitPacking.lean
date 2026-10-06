@@ -1,10 +1,12 @@
+module
+
 namespace LeanTex.Core.Flate.BitPacking
 
-theorem or_shift_exact (hi lo n : Nat) (hlo : lo < 2 ^ n) :
+public theorem or_shift_exact (hi lo n : Nat) (hlo : lo < 2 ^ n) :
     (hi <<< n) ||| lo = hi * 2 ^ n + lo := by
   rw [Nat.shiftLeft_eq, Nat.mul_comm hi, ← Nat.two_pow_add_eq_or_of_lt hlo]
 
-theorem packBits_exact (hi lo n : Nat) (hn : n < 64)
+public theorem packBits_exact (hi lo n : Nat) (hn : n < 64)
     (hlo : lo < 2 ^ n) (hhi : hi < 2 ^ (64 - n)) :
     ((hi.toUInt64 <<< n.toUInt64) ||| lo.toUInt64).toNat = hi * 2 ^ n + lo := by
   have hpow : 2 ^ (64 - n) * 2 ^ n = 2 ^ 64 := by
@@ -41,11 +43,11 @@ theorem maskBits_exact (n : Nat) (hn : n < 64) :
   · simpa [UInt64.le_iff_toNat_le, shiftOne_exact n hn] using
       Nat.succ_le_of_lt (Nat.two_pow_pos n)
 
-theorem takeBits_exact (v : UInt64) (n : Nat) (hn : n < 64) :
+public theorem takeBits_exact (v : UInt64) (n : Nat) (hn : n < 64) :
     (v &&& (((1 : UInt64) <<< n.toUInt64) - 1)).toNat = v.toNat % 2 ^ n := by
   simp only [UInt64.toNat_and, maskBits_exact n hn, Nat.and_two_pow_sub_one_eq_mod]
 
-theorem unpackBits_exact (hi lo n : Nat) (hn : n < 64)
+public theorem unpackBits_exact (hi lo n : Nat) (hn : n < 64)
     (hlo : lo < 2 ^ n) (hhi : hi < 2 ^ (64 - n)) :
     let packed := (hi.toUInt64 <<< n.toUInt64) ||| lo.toUInt64
     (packed >>> n.toUInt64).toNat = hi ∧
@@ -67,7 +69,7 @@ theorem lowBits_succ (v k : Nat) :
   rw [Nat.shiftRight_eq_div_pow, mask1, Nat.pow_succ, Nat.mod_mul]
   rw [Nat.mul_comm]
 
-theorem appendBit_exact (v : Nat) (k : Nat) (hk : k < 64) :
+public theorem appendBit_exact (v : Nat) (k : Nat) (hk : k < 64) :
     ((v % 2 ^ k).toUInt64 ||| (((v >>> k) &&& 1).toUInt64 <<< k.toUInt64)).toNat =
       v % 2 ^ (k + 1) := by
   have hlo : v % 2 ^ k < 2 ^ k := Nat.mod_lt _ (Nat.two_pow_pos k)
@@ -81,7 +83,7 @@ theorem appendBit_exact (v : Nat) (k : Nat) (hk : k < 64) :
   rw [UInt64.or_comm, packBits_exact _ _ _ hk hlo hhi, Nat.add_comm]
   exact lowBits_succ v k
 
-theorem packField_bits_exact (lo hi n width i : Nat)
+public theorem packField_bits_exact (lo hi n width i : Nat)
     (hlo : lo < 2 ^ n) (hiidx : i < n + width) :
     (lo + hi % 2 ^ width * 2 ^ n).testBit i =
       if i < n then lo.testBit i else hi.testBit (i - n) := by

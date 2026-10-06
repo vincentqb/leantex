@@ -1,3 +1,5 @@
+module
+
 namespace LeanTex.Core.Flate.Progress
 
 /-- A loop's partial-state invariant records its consumed index. An early
@@ -29,7 +31,7 @@ theorem forIn_range'_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Pro
           (by simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using hp))
 
 /-- Progress and early-return postconditions for the actual range loop. -/
-theorem forIn_range_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Prop)
+public theorem forIn_range_exact {σ : Type} (P : Nat → σ → Prop) (Q : σ → Prop)
     (f : Nat → σ → Id (ForInStep σ)) (lo hi : Nat) (init : σ)
     (hle : lo ≤ hi) (h0 : P lo init)
     (hstep : ∀ i, lo ≤ i → i < hi → ∀ s, P i s →
@@ -84,7 +86,7 @@ theorem forIn_list_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ �
         simpa only [List.append_assoc, List.singleton_append] using hs
 
 /-- The consumed-prefix invariant applies to the actual array loop. -/
-theorem forIn_array_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ → Prop)
+public theorem forIn_array_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ → Prop)
     (f : α → σ → Id (ForInStep σ)) (xs : Array α) (init : σ)
     (h0 : P [] init)
     (hstep : ∀ before x after, xs.toList = before ++ x :: after → ∀ s,
@@ -96,7 +98,10 @@ theorem forIn_array_exact {α σ : Type} (P : List α → σ → Prop) (Q : σ �
     Q (forIn xs init f : Id σ).run := by
   rw [← Array.forIn_toList]
   exact forIn_list_exact P Q f xs.toList [] init h0
-    (by simpa only [List.nil_append] using hstep)
+    (by
+      intro before x after hxs s hs
+      have h := hstep before x after hxs s (by simpa only [List.nil_append] using hs)
+      cases hrun : (f x s).run <;> simpa only [hrun, List.nil_append] using h)
     (by simpa only [List.nil_append] using hfinish)
 
 end LeanTex.Core.Flate.Progress
