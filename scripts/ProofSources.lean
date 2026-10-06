@@ -9,8 +9,7 @@ public section
 /-- Hidden build metadata and fixture bytes are not maintained Lean modules.
 Every other source directory is discovered, including newly added libraries. -/
 def sourcePath (parts : List String) : Bool :=
-  parts.all (!·.startsWith ".") &&
-    parts.head? != some "tests" && parts.head? != some "testdata"
+  parts.all (!·.startsWith ".") && parts.head? != some "testdata"
 
 /-- Sorted paths relative to the canonical source root, independent of umbrella
 imports and Lake target registration. Links are not maintained source files;

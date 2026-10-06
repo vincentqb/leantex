@@ -1,4 +1,5 @@
 import scripts.ProofSources
+import LeanTex.Cli.Batch
 
 namespace ProofCheck
 
@@ -42,23 +43,23 @@ def compile (file : System.FilePath) (extra : Array String := #[])
     cmd := "lake", args := #["env", "lean", "-E", "hasSorry"] ++ extra ++ #[file.toString], env }
 
 def checkGroup (dir : System.FilePath) (index : Nat)
-    (names manifest : Array String) : IO Bool := do
+    (names manifest : Array String) : IO IO.Process.Output := do
   let file := dir / s!"Audit{index}.lean"
   IO.FS.writeFile file (wrapper (← IO.currentDir) names manifest)
-  let out ← compile file
-  if out.exitCode != 0 then
-    IO.eprint (out.stdout ++ out.stderr)
-    return false
-  return true
+  compile file
 
-def checkSource (dir : System.FilePath) (index : Nat) (source : System.FilePath) : IO Bool := do
+def checkSource (dir : System.FilePath) (index : Nat)
+    (source : System.FilePath) : IO IO.Process.Output := do
   let file := dir / s!"Source{index}.lean"
   IO.FS.writeFile file (← sourceWrapper source)
-  let out ← compile file
-  if out.exitCode != 0 then
-    IO.eprint (out.stdout ++ out.stderr)
-    return false
-  return true
+  compile file
+
+/-- Compiler audits read already-built dependencies and own distinct temporary
+wrappers. Keep at most two compilers resident: source elaboration can be large.
+The shared executor joins every started process and retains source order. -/
+def auditBatch (jobs : Array α) (run : Nat → α → IO IO.Process.Output) :
+    IO (Array IO.Process.Output) :=
+  LeanTex.Cli.Batch.map 2 Prod.snd (fun (job, index) => run index job) jobs.zipIdx
 
 def verify : IO UInt32 := do
   let files ← sources "."
@@ -70,11 +71,16 @@ def verify : IO UInt32 := do
     IO.eprint (built.stdout ++ built.stderr)
     return built.exitCode
   IO.FS.withTempDir fun dir => do
+    let manifest := files.map moduleName
+    let compiled ← auditBatch (groups files) fun index names =>
+      checkGroup dir index names manifest
+    let elaborated ← auditBatch files (checkSource dir)
     let mut passed := true
-    for batch in (groups files).zipIdx do
-      if !(← checkGroup dir batch.2 batch.1 (files.map moduleName)) then passed := false
-    for (source, index) in files.zipIdx do
-      if !(← checkSource dir index source) then passed := false
+    for results in #[compiled, elaborated] do
+      for out in results do
+        if out.exitCode != 0 then
+          IO.eprint (out.stdout ++ out.stderr)
+          passed := false
     if passed then
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
     return if passed then 0 else 1
@@ -156,6 +162,18 @@ public theorem dependentBoundary : False := exportedBoundary
     let out ← compile file #["-R", dir.toString] (some dir)
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
+  -- A failed compiler is an audit result, not an exception that skips the
+  -- remaining sources. Exercise real compiler jobs through the same executor.
+  let batchCases := #[("Valid", true), ("Hidden", false), ("Foundation", true)]
+  let batched ← auditBatch batchCases fun index (name, _) => do
+    let file := dir / s!"BatchAudit{index}.lean"
+    IO.FS.writeFile file (wrapper dir #[name] allFixtures)
+    compile file #["-R", dir.toString] (some dir)
+  (_, failures) ← (expect "parallel audits lost, reordered, or skipped compiler results"
+    (batched.map (·.exitCode == 0) == batchCases.map Prod.snd)).run failures
+  (_, failures) ← (expect "parallel audit hid an unused private unfinished proof"
+    (batched.any fun out => out.exitCode != 0 &&
+      (out.stdout ++ out.stderr).contains "sorryAx")).run failures
   let modernAudit := dir / "ModernAudit.lean"
   IO.FS.writeFile modernAudit ("module\n" ++ wrapper dir #["Hidden"] allFixtures)
   let modernOut ← compile modernAudit #["-R", dir.toString] (some dir)
@@ -167,13 +185,13 @@ public theorem dependentBoundary : False := exportedBoundary
     IO.FS.createDirAll (sourceRoot / name)
   for name in ["LeanTex.lean", "LeanTex/Unimported.lean", "Tests/Private.lean",
       "scripts/tool.lean", "Obligations.lean", "NewLibrary/Unregistered.lean",
-      "tests/fixture.lean", "testdata/fixture.lean", ".lake/Generated.lean"] do
+      "tests/Unimported.lean", "testdata/fixture.lean", ".lake/Generated.lean"] do
     IO.FS.writeFile (sourceRoot / name) ""
   let discovered ← sources sourceRoot
   (_, failures) ← (expect "source discovery omitted an unimported module"
     ((discovered.map moduleName) ==
       #["LeanTex", "LeanTex.Unimported", "NewLibrary.Unregistered",
-        "Obligations", "Tests.Private", "scripts.tool"])).run failures
+        "Obligations", "Tests.Private", "scripts.tool", "tests.Unimported"])).run failures
   let regrouped := (groups discovered).foldl (· ++ ·) #[]
   (_, failures) ← (expect "audit grouping lost or duplicated a source"
     (regrouped.size == discovered.size &&

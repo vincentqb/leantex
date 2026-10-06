@@ -7,6 +7,8 @@ import Tests.ImageInterface
 import Tests.InkInterface
 import Tests.FontInterface
 import Tests.ParseInterface
+import Tests.DataInterface
+import Tests.TcolorboxInterface
 import Tests.PdfReaderInterface
 import Tests.Batch
 import Tests.Compression
