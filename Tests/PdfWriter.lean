@@ -37,6 +37,15 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
     (Pdf.xrefEntry table (fun _ => none) (fun _ => none) 177 1 == .free 0 0)
   t "PDF xref: allocation count includes the free-list head"
     ((Pdf.xrefEntries table (fun _ => none) (fun _ => some 99) 177).size == table.size)
+  t "PDF index: the last in-range source row wins"
+    (Pdf.indexObjects 4 [(1, 3), (2, 7), (1, 9), (4, 13)] ==
+      #[none, some 9, some 7, none])
+  t "PDF index: absent and out-of-range ids have no answer"
+    (((Pdf.indexObjects 4 [(1, 3), (4, 13)])[0]?).join == none &&
+      ((Pdf.indexObjects 4 [(1, 3), (4, 13)])[4]?).join == none)
+  t "PDF index: compressed positions retain the actual packed-list index"
+    (Pdf.compressedIndex 4 [(1, .int 3), (3, .int 7), (1, .int 9), (9, .int 13)] ==
+      #[none, some 2, none, some 1])
   let objects : List (Nat × PdfRead.Obj) :=
     [(11, .int 7), (31, .str "(A\\(B\\))".toUTF8),
       (43, .dict #[("Type", .name "Example"), ("N", .int 99)])]

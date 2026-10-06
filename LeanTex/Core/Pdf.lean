@@ -1273,6 +1273,167 @@ theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
   simpa [serialize, serializeList] using (serialize_row_exact head #[] rest r).1
 
+/-- A dense lookup of the positions recorded by the writer. Out-of-range
+ids are ignored; when an id repeats, the last source row wins. -/
+def indexObjectsList {α : Type} (out : Array (Option α)) :
+    List (Nat × α) → Array (Option α)
+  | [] => out
+  | (id, value) :: rest => indexObjectsList (out.setIfInBounds id (some value)) rest
+
+def indexObjects {α : Type} (size : Nat) (rows : List (Nat × α)) : Array (Option α) :=
+  indexObjectsList (Array.replicate size none) rows
+
+@[simp] theorem indexObjectsList_size {α : Type} (rows : List (Nat × α))
+    (out : Array (Option α)) :
+    (indexObjectsList out rows).size = out.size := by
+  induction rows generalizing out with
+  | nil => rfl
+  | cons r rest ih => simp [indexObjectsList, ih]
+
+theorem indexObjectsList_append {α : Type} (before after : List (Nat × α))
+    (out : Array (Option α)) :
+    indexObjectsList out (before ++ after) =
+      indexObjectsList (indexObjectsList out before) after := by
+  induction before generalizing out with
+  | nil => rfl
+  | cons r rest ih => exact ih _
+
+theorem indexObjectsList_absent {α : Type} (rows : List (Nat × α))
+    (out : Array (Option α)) (id : Nat)
+    (habsent : ∀ r ∈ rows, r.1 ≠ id) :
+    (indexObjectsList out rows)[id]? = out[id]? := by
+  induction rows generalizing out with
+  | nil => rfl
+  | cons r rest ih =>
+    simp only [indexObjectsList]
+    rw [ih _ (fun s hs => habsent s (List.mem_cons_of_mem _ hs))]
+    simp [habsent r (List.mem_cons_self)]
+
+theorem indexObjectsList_source {α : Type} (rows : List (Nat × α))
+    (out : Array (Option α)) (id : Nat) (value : α)
+    (h : ((indexObjectsList out rows)[id]?).join = some value) :
+    (out[id]?).join = some value ∨ (id, value) ∈ rows := by
+  induction rows generalizing out with
+  | nil => exact Or.inl h
+  | cons r rest ih =>
+    obtain h | h := ih _ h
+    · by_cases hi : r.1 = id
+      · simp only [hi, Array.getElem?_setIfInBounds_self] at h
+        split at h
+        · have hv : r.2 = value := by simpa using h
+          exact Or.inr (List.mem_cons.mpr (Or.inl (Prod.ext hi.symm hv.symm)))
+        · simp at h
+      · exact Or.inl (by simpa [hi] using h)
+    · exact Or.inr (List.mem_cons_of_mem _ h)
+
+/-- Every answer is one of the writer's recorded positions. -/
+theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α))
+    (id : Nat) (value : α)
+    (h : ((indexObjects size rows)[id]?).join = some value) :
+    (id, value) ∈ rows := by
+  obtain h | h := indexObjectsList_source rows _ id value h
+  · simp only [Array.getElem?_replicate] at h
+    split at h <;> simp_all
+  · exact h
+
+/-- A recorded position is recovered exactly when its id fits and no
+later row replaces it. Neither a unique-id assumption nor an initial
+table is needed for the preceding rows. -/
+theorem indexObjects_entry_exact {α : Type} (size : Nat)
+    (before after : List (Nat × α)) (id : Nat) (value : α)
+    (hid : id < size) (hlast : ∀ r ∈ after, r.1 ≠ id) :
+    ((indexObjects size (before ++ (id, value) :: after))[id]?).join =
+      some value := by
+  simp only [indexObjects, indexObjectsList_append, indexObjectsList]
+  rw [indexObjectsList_absent _ _ id hlast]
+  rw [Array.getElem?_setIfInBounds_self_of_lt]
+  · rfl
+  · simpa using hid
+
+/-- The object-stream index uses the same position list that is packed
+into the object stream. -/
+def compressedIndex (size : Nat) (objects : List (Nat × PdfRead.Obj)) :
+    Array (Option Nat) :=
+  indexObjects size (objects.zipIdx.map (fun (row, i) => (row.1, i)))
+
+/-- Each compressed lookup selects a source object with that same id. -/
+theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.Obj))
+    (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
+    ∃ value, objects[i]? = some (id, value) := by
+  have hm := indexObjects_mem size _ id i h
+  obtain ⟨⟨row, j⟩, hj, heq⟩ := List.mem_map.mp hm
+  have hr : row.1 = id := congrArg Prod.fst heq
+  have hi : j = i := congrArg Prod.snd heq
+  refine ⟨row.2, ?_⟩
+  have := List.mem_zipIdx_iff_getElem?.mp hj
+  simpa [hi, ← hr] using this
+
+/-- Even when source ids repeat, every returned index points inside the
+actual packed list. -/
+theorem compressedIndex_between (size : Nat) (objects : List (Nat × PdfRead.Obj))
+    (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
+    i < objects.length := by
+  have hm := indexObjects_mem size _ id i h
+  obtain ⟨⟨row, j⟩, hj, heq⟩ := List.mem_map.mp hm
+  have hi : j = i := congrArg Prod.snd heq
+  have := List.snd_lt_of_mem_zipIdx hj
+  simpa [hi] using this
+
+theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
+    (locs : Array (Nat × Nat)) (h : ∀ r ∈ locs, r.2 ≤ out.size) :
+    ∀ r ∈ (serializeList out locs rows).2,
+      r.2 ≤ (serializeList out locs rows).1.size := by
+  induction rows generalizing out locs with
+  | nil => exact h
+  | cons row rest ih =>
+    apply ih
+    have hsize : out.size ≤ (rowInto out row.id row.body).size := by
+      rw [rowInto_bytes, ByteArray.size_append]
+      omega
+    intro r hr
+    obtain hr | hr := Array.mem_push.mp hr
+    · exact Nat.le_trans (h r hr) hsize
+    · simpa [hr] using hsize
+
+/-- Recorded offsets cannot exceed the actual serialized body size. -/
+theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
+    (id off : Nat) (h : (id, off) ∈ (serialize head rows).2) :
+    off ≤ (serialize head rows).1.size :=
+  serializeList_offsetBound rows.toList head #[] (by simp) (id, off) h
+
+/-- The xref payload is formed from the actual serializer's locations and
+the actual object-stream position list. -/
+def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
+    (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) : Array Xref.Entry :=
+  let offsets := indexObjects t.size locs.toList
+  let compressed := compressedIndex t.size objects
+  xrefEntries t (fun id => (compressed[id]?).join)
+    (fun id => (offsets[id]?).join) xrefOff
+
+/-- Scalar representability bounds suffice for the actual xref payload:
+the serialized body and object-stream id fit four bytes, and at most
+65536 compressed objects fit the two-byte positional index. -/
+theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array Row)
+    (objects : List (Nat × PdfRead.Obj))
+    (hbody : (serialize head rows).1.size < 256 ^ 4)
+    (hstream : t.objStmId < 256 ^ 4) (hobjects : objects.length ≤ 256 ^ 2) :
+    ∀ e ∈ writerXrefEntries t (serialize head rows).2 objects (serialize head rows).1.size,
+      e.Fits := by
+  intro e he
+  simp only [writerXrefEntries, xrefEntries, Array.mem_append, Array.mem_singleton,
+    Array.mem_map] at he
+  obtain he | ⟨id, _, he⟩ := he
+  · subst e
+    exact ⟨by decide, by decide⟩
+  · subst e
+    apply xrefEntry_fits _ _ _ _ _ hbody hstream
+    · intro n i hi
+      exact Nat.lt_of_lt_of_le (compressedIndex_between _ _ n i hi) hobjects
+    · intro n i hi
+      have hm := indexObjects_mem t.size (serialize head rows).2.toList n i hi
+      exact Nat.lt_of_le_of_lt (serialize_offsets_between head rows n i (by simpa using hm)) hbody
+
+
 /-- The two buffers of an object stream (§7.5.7). Header offsets are
 relative to `payload`, whose bytes are appended by the same step. -/
 structure ObjectStream where
@@ -1786,23 +1947,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- (`serialize_locs_covers`). The by-id table below is an index into that
   -- answer, not a second record of it.
   let (body, locs) := serialize fileHead rows
-  let mut offs : Array (Option Nat) := Array.replicate t.size none
-  for (id, off) in locs do
-    if id < offs.size then
-      offs := offs.set! id (some off)
-  -- Where the object stream holds each compressed object, by id.
-  let mut stmIdx : Array (Option Nat) := Array.replicate t.size none
-  for ((id, _), idx) in compressed.zipIdx do
-    stmIdx := stmIdx.set! id (some idx)
-  let compressedIdx (id : Nat) : Option Nat := (stmIdx[id]?).join
-
   -- Cross-reference stream, W [1 4 2] (ISO 32000-2 §7.5.8.3): row 0 is the
   -- free-list head, written once; then one row per id the table allocates,
   -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
   -- kind the table's answer.
   let xrefOff := body.size
-  let xrefRows := Xref.encode
-    (xrefEntries t compressedIdx (fun id => (offs[id]?).join) xrefOff)
+  let xrefRows := Xref.encode (writerXrefEntries t locs compressed xrefOff)
   let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
   let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
