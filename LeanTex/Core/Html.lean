@@ -1,4 +1,4 @@
-import LeanTex.Core.Diag
+module
 
 namespace LeanTex.Core.Html
 
@@ -20,7 +20,7 @@ def escapeCharText (c : Char) : List Char :=
   else [c]
 
 /-- Escape element content. `&` first, or the other replacements get mangled. -/
-def escapeText (s : String) : String :=
+public def escapeText (s : String) : String :=
   String.ofList (go s.toList)
 where
   go : List Char → List Char
@@ -36,7 +36,7 @@ def escapeCharAttr (c : Char) : List Char :=
   else [c]
 
 /-- Escape an attribute value; quotes matter here and not in content. -/
-def escapeAttr (s : String) : String :=
+public def escapeAttr (s : String) : String :=
   String.ofList (go s.toList)
 where
   go : List Char → List Char
@@ -73,7 +73,7 @@ theorem escapeCharAttr_no_quote (c : Char) : '"' ∉ escapeCharAttr c := by
 
 /-- The injection-safety property, in miniature: escaped content carries no
 `<`, so no text node can open a tag. -/
-theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
+public theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
   simp only [escapeText, String.toList_ofList]
   suffices h : ∀ l : List Char, '<' ∉ escapeText.go l by exact h s.toList
   intro l
@@ -83,7 +83,7 @@ theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
     simp only [escapeText.go, List.mem_append, not_or]
     exact ⟨escapeCharText_no_lt c, ih⟩
 
-theorem escapeAttr_no_quote (s : String) : '"' ∉ (escapeAttr s).toList := by
+public theorem escapeAttr_no_quote (s : String) : '"' ∉ (escapeAttr s).toList := by
   simp only [escapeAttr, String.toList_ofList]
   suffices h : ∀ l : List Char, '"' ∉ escapeAttr.go l by exact h s.toList
   intro l
@@ -115,7 +115,7 @@ def escapeCharJson (c : Char) : List Char :=
 
 /-- Escape a JSON string value for embedding in a script data block. The
 accumulator threads through the walk (the `#[x] ++ rest` trap). -/
-def escapeJson (s : String) : String :=
+public def escapeJson (s : String) : String :=
   String.ofList (go #[] s.toList).toList
 where
   go (acc : Array Char) : List Char → Array Char
@@ -162,18 +162,18 @@ private theorem escapeJson_go_safe (l : List Char) (acc : Array Char)
 /-- The JSON injection claim, in miniature: escaped content carries no raw
 quote, so no value can end its own string and smuggle structure into the
 object around it. -/
-theorem escapeJson_no_quote (s : String) : '"' ∉ (escapeJson s).toList := by
+public theorem escapeJson_no_quote (s : String) : '"' ∉ (escapeJson s).toList := by
   simp only [escapeJson, String.toList_ofList]
   exact (escapeJson_go_safe s.toList #[] (by simp)).1
 
 /-- And no `<` at all: the escaped payload can never contain `</script`, so
 the `rawPayload` guard below never fires on it and the data block reaches
 the page intact rather than as `/* removed */`. -/
-theorem escapeJson_no_lt (s : String) : '<' ∉ (escapeJson s).toList := by
+public theorem escapeJson_no_lt (s : String) : '<' ∉ (escapeJson s).toList := by
   simp only [escapeJson, String.toList_ofList]
   exact (escapeJson_go_safe s.toList #[] (by simp)).2
 
-inductive Node where
+public inductive Node where
   | text (s : String)
   | elem (tag : String) (attrs : Array (String × String)) (kids : Array Node)
   /-- Stylesheet content. Not escaped — CSS has its own grammar — but the
@@ -186,13 +186,13 @@ inductive Node where
   deriving Inhabited
 
 /-- Elements with no closing tag. -/
-def voidTags : List String :=
+public def voidTags : List String :=
   ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
    "source", "track", "wbr"]
 
 /-- Elements whose whitespace is significant, so the printer must not indent
 inside them. -/
-def preserveTags : List String := ["pre", "code", "textarea"]
+public def preserveTags : List String := ["pre", "code", "textarea"]
 
 /-- Elements whose content is phrasing: their children are rendered without
 added newlines, because in HTML a newline collapses to a space and would
@@ -204,15 +204,15 @@ def phrasingTags : List String :=
    "code", "u", "s", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
    "text", "tspan"]
 
-def elem (tag : String) (kids : Array Node := #[])
+public def elem (tag : String) (kids : Array Node := #[])
     (attrs : Array (String × String) := #[]) : Node :=
   .elem tag attrs kids
 
-def text (s : String) : Node := .text s
+public def text (s : String) : Node := .text s
 
 /-- The tag of an element node; `none` for text, style, and script. What a
 statement about which element a tree ships at a position reads. -/
-def Node.tag? : Node → Option String
+public def Node.tag? : Node → Option String
   | .elem tag _ _ => some tag
   | .text _ => none
   | .style _ => none
@@ -320,11 +320,11 @@ end
 
 /-- Render a node. Indentation is cosmetic and suppressed where whitespace
 matters. -/
-def render (n : Node) (indent : Nat) : String :=
+public def render (n : Node) (indent : Nat) : String :=
   renderInto "" n indent
 
 /-- A complete document: doctype plus the root element. -/
-def document (lang : String) (head body : Array Node) : String :=
+public def document (lang : String) (head body : Array Node) : String :=
   "<!DOCTYPE html>\n" ++
   inlineRenderTop (elem "html" #[elem "head" head, elem "body" body]
     #[("lang", lang)])
@@ -336,11 +336,11 @@ builds `<html lang=...>` by construction, so no complete page can ship
 without the declaration WCAG 2.2 SC 3.1.1 asks for (the page's default
 human language, programmatically determinable — H57 is exactly this
 attribute). -/
-theorem document_declares_lang (lang : String) (head body : Array Node) :
+public theorem document_declares_lang (lang : String) (head body : Array Node) :
     document lang head body =
       "<!DOCTYPE html>\n" ++
         render (elem "html" #[elem "head" head, elem "body" body]
-          #[("lang", lang)]) 0 :=
+          #[("lang", lang)]) 0 := by
   rfl
 
 end LeanTex.Core.Html

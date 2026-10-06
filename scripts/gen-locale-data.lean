@@ -198,7 +198,7 @@ def emit (name : String) (l : IniLocale) : String :=
      { one := "", many := "", capOne := "", capMany := "" }, "")
   let (sec, eq, fig, tab, alg, to) := cref
   s!"/-- {name}: babel-{l.tag}.ini; cref names from cleveref.sty v0.21.4. -/
-def {name} : Locale := \{
+@[expose] public def {name} : Locale := \{
   tag := {leanStr l.tag}
   figure := {leanStr l.figure}
   table := {leanStr l.table}
@@ -241,13 +241,13 @@ def main (args : List String) : IO UInt32 := do
     if loc.decimal.isEmpty || loc.group.isEmpty then
       die s!"babel-{lang}.ini: missing [numbers] decimal or group"
     body := body ++ emit lang loc
-  let content := notice
-    ++ "import LeanTex.Core.Locale\n\n"
+  let content := "module\n\n" ++ notice
+    ++ "public import LeanTex.Core.Locale\n\n"
     ++ "namespace LeanTex.Core.Locale\n\n"
     ++ body
     ++ "/-- The shipped locales. Contracts quantify over this list — adding
 a locale is entering the contract (the `Theme.builtin` pattern). -/
-def builtin : List Locale := [en, fr, de]
+@[expose] public def builtin : List Locale := [en, fr, de]
 
 end LeanTex.Core.Locale
 "

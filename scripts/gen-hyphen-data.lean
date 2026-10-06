@@ -127,10 +127,10 @@ def main (args : List String) : IO UInt32 := do
   let exceptions ← block text "hyphenation"
   if patterns.isEmpty then
     die s!"{sourcePath} has no \\patterns block"
-  let content := spec.notice
+  let content := "module\n\n" ++ spec.notice
     ++ s!"namespace {spec.ns}\n\n"
-    ++ s!"def patterns : String := \"{leanString (String.intercalate " " patterns)}\"\n\n"
-    ++ s!"def exceptions : String := \"{leanString (String.intercalate " " exceptions)}\"\n\n"
+    ++ s!"public def patterns : String := \"{leanString (String.intercalate " " patterns)}\"\n\n"
+    ++ s!"public def exceptions : String := \"{leanString (String.intercalate " " exceptions)}\"\n\n"
     ++ s!"end {spec.ns}\n"
   IO.FS.writeFile outPath content
   IO.println s!"wrote {outPath}: {patterns.length} patterns, {exceptions.length} exceptions"

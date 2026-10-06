@@ -1,18 +1,20 @@
-import LeanTex.Cli.PicCache
+module
+
+public import LeanTex.Cli.PicCache
 
 namespace LeanTex.Cli.RunBounded
 
 -- Operational ceilings: one minute per conversion, two seconds to stop its
 -- process group, and 16 MiB per textual stream (including xmllint's SAX dump).
-def convBudgetMs : Nat := 60000
-def convGraceMs : Nat := 2000
-def maxCaptureBytes : Nat := 16 * 1024 * 1024
+public def convBudgetMs : Nat := 60000
+public def convGraceMs : Nat := 2000
+public def maxCaptureBytes : Nat := 16 * 1024 * 1024
 
 structure Capture where
   text : String := ""
   complete : Bool := false
 
-structure Ended where
+public structure Ended where
   ran : PicCache.Ran
   out : String
   err : String
@@ -54,7 +56,7 @@ private def killGroup (pid : UInt32) : IO Unit := do
     discard <| child.tryWait.toBaseIO
   catch _ => pure ()
 
-def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
+public def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
     (budgetMs : Nat := convBudgetMs) (graceMs : Nat := convGraceMs)
     (captureLimit : Nat := maxCaptureBytes)
     (env : Array (String × Option String) := #[]) : IO Ended := do
@@ -101,7 +103,7 @@ def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
     ran := if complete then .exited (code.getD 0).toNat else .overran (budgetMs / 1000),
     out := ← read outT, err := ← read errT, complete }
 
-def output (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
+public def output (args : IO.Process.SpawnArgs) : IO IO.Process.Output := do
   let got ← runBounded args.cmd args.args (args.cwd.getD (← IO.currentDir))
     (env := args.env)
   match got.ran with

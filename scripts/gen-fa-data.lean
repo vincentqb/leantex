@@ -78,9 +78,9 @@ def main (args : List String) : IO UInt32 := do
       die s!"label for {name} carries a delimiter: {label.quote}"
     lines := lines.push s!"{macroName}|{name}|{hex}|{label}"
   let body := String.intercalate "\n" lines.toList
-  let content := notice
+  let content := "module\n\n" ++ notice
     ++ "namespace LeanTex.Core.FaData\n\n"
-    ++ "def table : String :=\n  \""
+    ++ "public def table : String :=\n  \""
     ++ ((body.replace "\\" "\\\\").replace "\"" "\\\"").replace "\n" "\\n"
     ++ "\"\n\nend LeanTex.Core.FaData\n"
   IO.FS.writeFile "LeanTex/Core/FaData.lean" content

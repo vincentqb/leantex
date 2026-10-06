@@ -180,24 +180,24 @@ def main (args : List String) : IO UInt32 := do
   let mut lowerStr := ""
   for (a, b) in lower do
     lowerStr := lowerStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
-  let content := notice
+  let content := "module\n\n" ++ notice
     ++ "namespace LeanTex.Core.NfcData\n\n"
     ++ "/-- Nonzero canonical combining classes, 8 hex digits per entry:\n"
     ++ "6 for the codepoint, 2 for the class. Ascending by codepoint. -/\n"
-    ++ s!"def ccc : String := \"{cccStr}\"\n\n"
+    ++ s!"public def ccc : String := \"{cccStr}\"\n\n"
     ++ "/-- Fully expanded canonical decompositions: 6 hex digits for the\n"
     ++ "codepoint, 1 for the element count, then 6 per element. Ascending by\n"
     ++ "codepoint; the only table whose entries differ in width. -/\n"
-    ++ s!"def decomp : String := \"{decompStr}\"\n\n"
+    ++ s!"public def decomp : String := \"{decompStr}\"\n\n"
     ++ "/-- The primary composites of canonical composition, 18 hex digits\n"
     ++ "per entry: the two elements, then the composite. Ascending. -/\n"
-    ++ s!"def comp : String := \"{compStr}\"\n\n"
+    ++ s!"public def comp : String := \"{compStr}\"\n\n"
     ++ "/-- The merged codepoint ranges of general category L*, 12 hex digits\n"
     ++ "per entry: low then high, inclusive. Ascending. -/\n"
-    ++ s!"def letters : String := \"{lettersStr}\"\n\n"
+    ++ s!"public def letters : String := \"{lettersStr}\"\n\n"
     ++ "/-- The simple lowercase mappings, 12 hex digits per entry:\n"
     ++ "codepoint then its lowercase. Ascending. -/\n"
-    ++ s!"def lower : String := \"{lowerStr}\"\n\n"
+    ++ s!"public def lower : String := \"{lowerStr}\"\n\n"
     ++ "end LeanTex.Core.NfcData\n"
   IO.FS.writeFile output content
   IO.println s!"wrote {output}: {ccc.size} ccc, {decompEntries.size} decomps, \

@@ -1,4 +1,8 @@
-import LeanTex.Core.LocaleData
+module
+
+public import LeanTex.Core.LocaleData
+import all LeanTex.Core.Locale
+import all Init.Data.Array.Basic
 
 /-!
 Contracts and lookups over the generated locale data. The generated
@@ -13,14 +17,14 @@ namespace LeanTex.Core.Locale
 `none` is a language the engine has no record for — the caller names it
 (W0368) and uses English. Primary subtags compare as spelled — BCP 47
 conventionally lowercases them. -/
-def forTag (tag : String) : Option Locale :=
+public def forTag (tag : String) : Option Locale :=
   let primary := (tag.splitOn "-").headD tag
   builtin.find? (·.tag == primary)
 
 /-- locale_data_total: the record type has no `Option` and no defaults,
 so a shipped locale answers every site; this closes the loop by pinning
 that no generated value is empty either. -/
-theorem builtin_total : builtin.all (fun l =>
+public theorem builtin_total : builtin.all (fun l =>
     !l.tag.isEmpty && !l.figure.isEmpty && !l.table.isEmpty &&
     !l.algorithm.isEmpty &&
     !l.abstract.isEmpty && !l.references.isEmpty &&
@@ -33,13 +37,13 @@ theorem builtin_total : builtin.all (fun l =>
   decide +kernel
 
 /-- One record per tag: `forTag` is unambiguous. -/
-theorem builtin_tags_nodup : (builtin.map (·.tag)).Nodup := by decide +kernel
+public theorem builtin_tags_nodup : (builtin.map (·.tag)).Nodup := by decide +kernel
 
 /-- Every babel option name the engine maps resolves to a shipped
 record: the name table cannot point at a locale that is not there.
 (Stated over the tag lookup directly: `forTag`'s subtag split does not
 kernel-reduce.) -/
-theorem babelNames_resolve : babelNames.all (fun p =>
+public theorem babelNames_resolve : babelNames.all (fun p =>
     builtin.any (·.tag == p.2)) = true := by decide +kernel
 
 end LeanTex.Core.Locale

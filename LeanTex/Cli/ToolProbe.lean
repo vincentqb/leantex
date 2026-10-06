@@ -1,3 +1,6 @@
+module
+
+public import LeanTex.Cli.PicCache
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Core.Flate
@@ -16,7 +19,7 @@ open LeanTex.Core
 /-- The first executable regular file on PATH, including relative and
 empty (current-directory) entries. Explicit paths get the same check.
 An unset PATH has a platform-defined fallback, so supplies no identity. -/
-def onPath (tool : String) : IO (Option System.FilePath) := do
+public def onPath (tool : String) : IO (Option System.FilePath) := do
   let mut candidates := #[tool]
   unless tool.contains '/' do
     let some path ← IO.getEnv "PATH" | return none
@@ -41,7 +44,7 @@ changes those) — the three facts the font cache already keys a face on.
 Empty when PATH reaches nothing or its cwd/filesystem lookup fails, which
 is a witness no memo matches, so a machine with no tool asks again on every
 build and installing the tool takes effect at once. -/
-def witness (tool : String) : IO String := do
+public def witness (tool : String) : IO String := do
   try
     match ← onPath tool with
     | none => return ""
@@ -58,7 +61,7 @@ read: a spawn that reaches `exec` and fails there returns nonzero with
 whatever the forked child inherited on its stdout, so reading the version
 without reading the code reads the parent's own output back as a tool
 identity. -/
-def probeVersion (tool : String) : IO PicCache.Tool := do
+public def probeVersion (tool : String) : IO PicCache.Tool := do
   let (ran, said) ← try
       let out ← IO.Process.output { cmd := tool, args := #["--version"] }
       pure (PicCache.Ran.exited out.exitCode.toNat, out.stdout)
@@ -85,7 +88,7 @@ witness forces a new probe, whose version names the next picture slots.
 A witness that could not be taken is written nowhere: nothing would ever
 match it. Legacy raw memos are misses: they may contain a valid-looking
 prefix from an interrupted writer. -/
-def identify (memoPath : System.FilePath) (stamp : String)
+public def identify (memoPath : System.FilePath) (stamp : String)
     (probe : IO PicCache.Tool) : IO PicCache.Tool := do
   let memo? ← try
       pure (decodeMemo (← IO.FS.readFile memoPath))

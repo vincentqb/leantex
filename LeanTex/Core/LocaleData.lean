@@ -1,3 +1,5 @@
+module
+
 /-
 Generated from babel's locale ini files (babel-en.ini, babel-fr.ini,
 babel-de.ini); do not edit by hand. Regenerate with:
@@ -15,12 +17,12 @@ Public License (LPPL 1.3); their data derives from the Unicode CLDR
 fields are read from cleveref.sty v0.21.4 (2018/03/27), also LPPL 1.3;
 the generator carries that table, cited beside it.
 -/
-import LeanTex.Core.Locale
+public import LeanTex.Core.Locale
 
 namespace LeanTex.Core.Locale
 
 /-- en: babel-en.ini; cref names from cleveref.sty v0.21.4. -/
-def en : Locale := {
+@[expose] public def en : Locale := {
   tag := "en"
   figure := "Figure"
   table := "Table"
@@ -47,7 +49,7 @@ def en : Locale := {
   group := "\u2009" }
 
 /-- fr: babel-fr.ini; cref names from cleveref.sty v0.21.4. -/
-def fr : Locale := {
+@[expose] public def fr : Locale := {
   tag := "fr"
   figure := "Figure"
   table := "Table"
@@ -74,7 +76,7 @@ def fr : Locale := {
   group := "\u202F" }
 
 /-- de: babel-de.ini; cref names from cleveref.sty v0.21.4. -/
-def de : Locale := {
+@[expose] public def de : Locale := {
   tag := "de"
   figure := "Abbildung"
   table := "Tabelle"
@@ -102,6 +104,6 @@ def de : Locale := {
 
 /-- The shipped locales. Contracts quantify over this list — adding
 a locale is entering the contract (the `Theme.builtin` pattern). -/
-def builtin : List Locale := [en, fr, de]
+@[expose] public def builtin : List Locale := [en, fr, de]
 
 end LeanTex.Core.Locale
