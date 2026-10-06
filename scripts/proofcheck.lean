@@ -33,10 +33,15 @@ def moduleName (file : System.FilePath) : String :=
 def importName (name : String) : String :=
   String.intercalate "." ((name.splitOn ".").map fun part => "«" ++ part ++ "»")
 
-def wrapper (names : Array String) : String :=
+def auditCommand (root : System.FilePath) (names manifest : Array String) : String :=
+  "#audit_proofs [" ++ String.intercalate ", " (names.toList.map reprStr) ++ "] from " ++
+  reprStr root.toString ++ " manifest [" ++
+  String.intercalate ", " (manifest.toList.map reprStr) ++ "]\n"
+
+def wrapper (root : System.FilePath) (names manifest : Array String) : String :=
   "import scripts.ProofAudit\n" ++
   String.join (names.toList.map fun name => "import " ++ importName name ++ "\n") ++
-  "#audit_proofs [" ++ String.intercalate ", " (names.toList.map reprStr) ++ "]\n"
+  auditCommand root names manifest
 
 def compile (file : System.FilePath) (extra : Array String := #[])
     (search : Option System.FilePath := none) : IO IO.Process.Output := do
@@ -47,9 +52,10 @@ def compile (file : System.FilePath) (extra : Array String := #[])
   IO.Process.output {
     cmd := "lake", args := #["env", "lean", "-E", "hasSorry"] ++ extra ++ #[file.toString], env }
 
-def checkGroup (dir : System.FilePath) (index : Nat) (names : Array String) : IO Bool := do
+def checkGroup (dir : System.FilePath) (index : Nat)
+    (names manifest : Array String) : IO Bool := do
   let file := dir / s!"Audit{index}.lean"
-  IO.FS.writeFile file (wrapper names)
+  IO.FS.writeFile file (wrapper (← IO.currentDir) names manifest)
   let out ← compile file
   if out.exitCode != 0 then
     IO.eprint (out.stdout ++ out.stderr)
@@ -81,7 +87,7 @@ def verify : IO UInt32 := do
   IO.FS.withTempDir fun dir => do
     let mut passed := true
     for batch in (groups files).zipIdx do
-      if !(← checkGroup dir batch.2 batch.1) then passed := false
+      if !(← checkGroup dir batch.2 batch.1 (files.map moduleName)) then passed := false
     if passed then
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
     return if passed then 0 else 1
@@ -143,6 +149,8 @@ public theorem dependentBoundary : False := exportedBoundary
 "
   (_, failures) ← (expect "transitive-axiom consumer did not compile"
     (axiomConsumer.exitCode == 0)).run failures
+  let allFixtures := #["Valid", "Visible", "Hidden", "Foreign", "Foundation",
+    "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Unimported"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("accepted logical foundation", #["Foundation"], #["Foundation"], true),
@@ -156,11 +164,17 @@ public theorem dependentBoundary : False := exportedBoundary
     let file := dir / "Audit.lean"
     let source := "import scripts.ProofAudit\n" ++
       String.join (imports.toList.map fun name => "import " ++ importName name ++ "\n") ++
-      "#audit_proofs [" ++ String.intercalate ", " (manifest.toList.map reprStr) ++ "]\n"
+      auditCommand dir manifest allFixtures
     IO.FS.writeFile file source
     let out ← compile file #["-R", dir.toString] (some dir)
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
+  let modernAudit := dir / "ModernAudit.lean"
+  IO.FS.writeFile modernAudit ("module\n" ++ wrapper dir #["Hidden"] allFixtures)
+  let modernOut ← compile modernAudit #["-R", dir.toString] (some dir)
+  (_, failures) ← (expect "modern audit wrapper can hide private declarations"
+    (modernOut.exitCode != 0 &&
+      (modernOut.stdout ++ modernOut.stderr).contains "legacy audit wrapper")).run failures
   let sourceRoot := dir / "discovery"
   for name in ["LeanTex", "Tests", "scripts", "NewLibrary", "tests", "testdata", ".lake"] do
     IO.FS.createDirAll (sourceRoot / name)
@@ -177,6 +191,61 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "audit grouping lost or duplicated a source"
     (regrouped.size == discovered.size &&
       (discovered.map moduleName).all regrouped.contains)).run failures
+  -- An imported module omitted by discovery still belongs to this project.
+  -- Nothing in the root refers to these declarations: reachability is not enough.
+  for layout in ["hidden", "linked"] do
+    for (kind, body) in [
+        ("valid", "public theorem unused : True := True.intro\n"),
+        ("private-hole", s!"set_option {warning} false\nprivate theorem unused : False := by admit\n"),
+        ("public-hole", s!"set_option {warning} false\npublic theorem unused : False := by admit\n"),
+        ("private-axiom", "private axiom invented : False\n")] do
+      let root := dir / (layout ++ "-" ++ kind)
+      let src := root / "src"
+      let lib := root / "lib"
+      IO.FS.createDirAll (src / "Project")
+      IO.FS.createDirAll (src / "testdata")
+      let (hiddenPath, hiddenName) ← if layout == "hidden" then do
+          IO.FS.createDirAll (src / "Project" / ".hidden")
+          pure ("Project/.hidden/Hidden", "Project.«.hidden».Hidden")
+        else do
+          let linked ← IO.Process.output {
+            cmd := "ln", args := #["-s", "../testdata", (src / "Project" / "Linked").toString] }
+          unless linked.exitCode == 0 do throw <| IO.userError linked.stderr
+          pure ("Project/Linked/Hidden", "Project.Linked.Hidden")
+      let hiddenFile := src / (hiddenPath ++ ".lean")
+      let hiddenObject := lib / (hiddenPath ++ ".olean")
+      IO.FS.createDirAll hiddenObject.parent.get!
+      IO.FS.writeFile hiddenFile ("module\n" ++ body)
+      IO.FS.writeFile (src / "Project.lean")
+        s!"module\nimport {hiddenName}\npublic theorem retained : True := True.intro\n"
+      let hiddenBuild ← compile hiddenFile
+        #["-R", src.toString, "-o", hiddenObject.toString] (some lib)
+      let rootBuild ← compile (src / "Project.lean")
+        #["-R", src.toString, "-o", (lib / "Project.olean").toString] (some lib)
+      let discovered ← sources src
+      let label := layout ++ " " ++ kind
+      (_, failures) ← (expect (label ++ ": mutation did not compile")
+        (hiddenBuild.exitCode == 0 && rootBuild.exitCode == 0)).run failures
+      (_, failures) ← (expect (label ++ ": discovery fixture changed")
+        (discovered.map moduleName == #["Project"])).run failures
+      let audit := root / "Audit.lean"
+      IO.FS.writeFile audit (wrapper src (discovered.map moduleName) (discovered.map moduleName))
+      let out ← compile audit #["-R", root.toString] (some lib)
+      (_, failures) ← (expect (label ++ ": omitted imported module escaped")
+        (out.exitCode != 0 &&
+          (out.stdout ++ out.stderr).contains "is missing from the source manifest")).run failures
+      -- The same import is legal once discovery accounts for it. Its proof
+      -- obligations are then checked in its own batch, including private ones.
+      if layout == "linked" then
+        let complete := #["Project", hiddenName]
+        IO.FS.writeFile audit (wrapper src #["Project"] complete)
+        let rootOut ← compile audit #["-R", root.toString] (some lib)
+        (_, failures) ← (expect (label ++ ": a covered dependency was rejected")
+          (rootOut.exitCode == 0)).run failures
+        IO.FS.writeFile audit (wrapper src #[hiddenName] complete)
+        let leafOut ← compile audit #["-R", root.toString] (some lib)
+        (_, failures) ← (expect (label ++ ": the dependency's own batch missed its proof")
+          ((leafOut.exitCode == 0) == (kind == "valid"))).run failures
   let fromRelative ← sources "."
   let fromAbsolute ← sources (← IO.currentDir)
   (_, failures) ← (expect "relative source root changes module names"
