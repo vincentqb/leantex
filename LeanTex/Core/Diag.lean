@@ -710,6 +710,16 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     recovery := recovery
     output := output }
 
+/-- The diagnostic names exactly the supplied subject, independently of its
+message and optional recovery metadata. Effect-boundary accounting reads
+this projection without opening the constructor's implementation. -/
+public theorem Diag.of_subject (c : DiagCode) (message : String) (span : Option Span)
+    (help subject : Option String) (refused : Option String := none)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (Diag.of c message span help subject refused trigger recovery output).subject = subject := by
+  rfl
+
 /-- A refusal carries the name it refuses structurally, never as a reading of
 its own words: what the door was handed is what comes back out. The fact the
 name-refusal registry rests on — a consumer enumerating refusals reads a

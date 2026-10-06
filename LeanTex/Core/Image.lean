@@ -1,7 +1,9 @@
-import LeanTex.Core.Diag
-import LeanTex.Core.Dim
-import LeanTex.Core.Flate
-import LeanTex.Core.PdfRead
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Dim
+public import LeanTex.Core.Flate
+public import LeanTex.Core.PdfRead
 import LeanTex.Core.Binary
 
 namespace LeanTex.Core.Image
@@ -37,13 +39,13 @@ optional and "the physical size of each pixel is unknown" without it
 (ISO/IEC 15948 §11.3.5.3), JFIF density unit 0 declares aspect ratio only
 (ISO/IEC 10918-5 §5). The engine then adopts 72 pixels per inch, pdfTeX's
 `\pdfimageresolution` default, so one pixel is one point. -/
-def defaultDpi : Nat := 72
+@[expose] public def defaultDpi : Nat := 72
 
 /-- What the signature says a file is. The last four are recognised so the
 refusal can name them — no PDF filter decodes WebP, AVIF, or JPEG XL (ISO
 32000-2 Table 6), and a JPEG 2000 codestream passes through only under a
 permitting declaration, a later slice's arm. -/
-inductive Format where
+public inductive Format where
   | png
   | jpeg
   /-- A selected PDF page, embedded as a form XObject: vector stays vector. -/
@@ -57,7 +59,7 @@ inductive Format where
 
 /-- The name a refusal shows the reader: the one constant
 `plan_refuses_named` is stated over. -/
-def Format.name : Format → String
+public def Format.name : Format → String
   | .png => "PNG"
   | .jpeg => "JPEG"
   | .pdf => "PDF"
@@ -68,7 +70,7 @@ def Format.name : Format → String
 
 /-- The colour interpretation a PNG declares: what `colorKeyRanges` judges
 a `tRNS` chunk against. -/
-inductive Space where
+public inductive Space where
   | gray
   | rgb
   /-- PNG colour type 3: samples index the PLTE palette. -/
@@ -76,7 +78,7 @@ inductive Space where
   deriving Repr, BEq, Inhabited
 
 /-- Samples per pixel, for `/DecodeParms /Colors`. -/
-def Space.components : Space → Nat
+public def Space.components : Space → Nat
   | .gray => 1
   | .rgb => 3
   | .indexed => 1
@@ -87,7 +89,7 @@ bytes for a `/FlateDecode` stream; its alternate is the device space of
 `n` components. The writer's `/ICCBased` emission is a later slice's —
 until then the arm writes the alternate, and the default policy never
 plans it (`plan_losses_accounts`). -/
-inductive ColorSpaceDecl where
+public inductive ColorSpaceDecl where
   | gray
   | rgb
   /-- `[/Indexed /DeviceRGB hival <palette>]`: the PLTE payload, RGB triples. -/
@@ -96,7 +98,7 @@ inductive ColorSpaceDecl where
   deriving BEq, Inhabited
 
 /-- Samples per pixel, for `/DecodeParms /Colors`. -/
-def ColorSpaceDecl.components : ColorSpaceDecl → Nat
+public def ColorSpaceDecl.components : ColorSpaceDecl → Nat
   | .gray => 1
   | .rgb => 3
   | .indexed _ => 1
@@ -107,13 +109,13 @@ stream — a pass-through IDAT, or the colour plane deinterleaved from an
 alpha PNG's filtered rows and deflated again — legal as `/FlateDecode`
 with Predictor 15 declared (ISO 32000-2 §7.4.4.4); `dct` is a whole JPEG
 file. -/
-inductive FilterDecl where
+public inductive FilterDecl where
   | flatePredictor
   | dct
   deriving Repr, BEq, Inhabited
 
 /-- How a plan carries transparency, or that it has none. -/
-inductive Alpha where
+public inductive Alpha where
   | opaque
   /-- Colour-key masking (ISO 32000-2 §8.9.6.4): the `/Mask` ranges, two
   per component in sample units at the plan's bit depth, a pixel inside
@@ -128,7 +130,7 @@ inductive Alpha where
 
 /-- A `Source` fact the plan does not carry: the ledger the driver turns
 into diagnostics, one per entry. -/
-inductive PlanLoss where
+public inductive PlanLoss where
   /-- An embedded colour profile (PNG `iCCP`, JPEG `APP2`) dropped; the
   page reads the samples as device colour. -/
   | iccDropped
@@ -140,7 +142,7 @@ inductive PlanLoss where
 /-- What the PDF writer embeds and placement reads. `data` is the stream
 the writer embeds as-is: a PNG's concatenated IDAT zlib stream, a JPEG's
 whole file, or the recoded colour plane of an alpha PNG. -/
-structure Plan where
+public structure Plan where
   pxW : Nat
   pxH : Nat
   dpiX : Nat := defaultDpi
@@ -168,19 +170,19 @@ structure Plan where
 /-- Intrinsic physical width: pixels over density, in sp — and for a PDF
 page, its box, exact to the sp (the `form_bbox_exact` half of the story:
 the intrinsic size *is* the page box). -/
-def Plan.width (i : Plan) : Sp :=
+@[expose] public def Plan.width (i : Plan) : Sp :=
   match i.form with
   | some f => f.val.w
   | none => (i.pxW : Int) * 72 * spPerPt / max i.dpiX 1
 
-def Plan.height (i : Plan) : Sp :=
+@[expose] public def Plan.height (i : Plan) : Sp :=
   match i.form with
   | some f => f.val.h
   | none => (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
 
 /-- At the default density one pixel is one point: the convention is not
 just a comment, it is what `Plan.width` computes. -/
-theorem width_at_default_dpi (px : Nat) :
+public theorem width_at_default_dpi (px : Nat) :
     Plan.width { pxW := px, pxH := px } = Dim.pt px := by
   show ((px : Int) * 72 * 65536) / (((72 : Nat) : Int)) = (px : Int) * 65536
   omega
@@ -263,7 +265,7 @@ artifact, with no IR value behind it. -/
 `chs` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. The semantic
 route — what the fast path is proved to equal, and the tests' oracle; the
 engine itself never reconstructs the pixels. -/
-def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
+public def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
   (project px chs (chs - 1) id, project px chs 1 fun _ => chs - 1)
 
 /-- Source byte of byte `j` of a projected *predicted* stream: rows of
@@ -283,7 +285,7 @@ each, onto `k` samples per pixel — one read and one write per output byte. -/
 /-- The inflated IDAT of an alpha PNG (`chs` 4 or 2) as two predicted
 planes, colour and alpha, each row's filter byte preserved — what the PDF
 writer deflates and declares Predictor 15 on. -/
-def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
+public def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
   (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1)
 
 private theorem getElem?_project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) (j : Nat)
@@ -485,7 +487,7 @@ under every mix of the five row filters. The PDF reader's Predictor 15
 reconstructs what the pixel route would have shipped, and the engine never
 materializes the pixels. Stated over the artifact's encoding, not the IR
 (see the section note). -/
-theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2 : 2 ≤ chs)
+public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2 : 2 ≤ chs)
     (hW : 0 < W) (px : ByteArray)
     (h : Flate.pngUnfilter raw pxH (W * chs) chs = .ok px) :
     Flate.pngUnfilter (splitPredictedAlpha raw pxH W chs).1 pxH (W * (chs - 1)) (chs - 1) =
@@ -560,11 +562,11 @@ not this slice's). Entries past the chunk's length are opaque (§11.3.2.1),
 which the interval never reaches. -/
 
 /-- Sample `i` of a tRNS payload of two-byte big-endian samples. -/
-def trnsSample (trns : ByteArray) (i : Nat) : Nat :=
+public def trnsSample (trns : ByteArray) (i : Nat) : Nat :=
   (trns[2 * i]?.getD 0).toNat * 256 + (trns[2 * i + 1]?.getD 0).toNat
 
 /-- Palette entry `i`'s alpha as the tRNS chunk states it. -/
-def trnsEntry (trns : ByteArray) (i : Nat) : Nat := (trns[i]?.getD 0).toNat
+public def trnsEntry (trns : ByteArray) (i : Nat) : Nat := (trns[i]?.getD 0).toNat
 
 /-- Where a left-to-right scan of an indexed tRNS stands: no transparent
 entry yet, inside the transparent run that opened at `lo`, or past the
@@ -575,7 +577,7 @@ private inductive KeyState where
   | after (lo hi : Nat)
   deriving Repr, BEq
 
-def partialAlphaMsg : String :=
+public def partialAlphaMsg : String :=
   "indexed PNG with partial transparency (tRNS alpha entries other than 0 and 255, or \
 separated transparent entries) is not supported; re-export with a full alpha channel or \
 flatten it"
@@ -615,7 +617,7 @@ private def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
 `bitDepth` over `palette`, or the refusal: a malformed length, a sample
 past the bit depth, more entries than the palette or the depth allows,
 or indexed transparency no single interval can express. -/
-def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteArray) :
+public def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteArray) :
     Except String (Array Nat) :=
   match space with
   | .gray =>
@@ -639,14 +641,14 @@ def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteArray) :
 
 /-- Greyscale tRNS is exact: one sample, in range, is the degenerate range
 `[v v]`. -/
-theorem colorKeyRanges_gray_exact (bitDepth : Nat) (trns palette : ByteArray)
+public theorem colorKeyRanges_gray_exact (bitDepth : Nat) (trns palette : ByteArray)
     (hsz : trns.size = 2) (hv : trnsSample trns 0 < 2 ^ bitDepth) :
     colorKeyRanges .gray bitDepth trns palette = .ok #[trnsSample trns 0, trnsSample trns 0] := by
   simp [colorKeyRanges, hsz, Nat.not_le.mpr hv]
 
 /-- Truecolour tRNS is exact: three samples, in range, are the three
 degenerate ranges. -/
-theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
+public theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
     (hsz : trns.size = 6) (h0 : trnsSample trns 0 < 2 ^ bitDepth)
     (h1 : trnsSample trns 1 < 2 ^ bitDepth) (h2 : trnsSample trns 2 < 2 ^ bitDepth) :
     colorKeyRanges .rgb bitDepth trns palette =
@@ -748,7 +750,7 @@ private theorem keyScan_spec (trns : ByteArray) :
 indexed tRNS that maps to `/Mask [lo hi]` has entry `i` transparent
 exactly when `lo ≤ i ≤ hi` — over every index, the entries past the chunk
 being opaque by the PNG rule. -/
-theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : ByteArray) (lo hi : Nat)
+public theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : ByteArray) (lo hi : Nat)
     (h : colorKeyRanges .indexed bitDepth trns palette = .ok #[lo, hi]) :
     ∀ i, (i < trns.size ∧ trnsEntry trns i = 0) ↔ (lo ≤ i ∧ i ≤ hi) := by
   simp only [colorKeyRanges] at h
@@ -801,7 +803,7 @@ theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : ByteArray
 /-- Every emitted range value is a legal sample at the bit depth: the
 `/Mask` array the dictionary writes is in range for its
 `/BitsPerComponent`. -/
-theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
+public theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
     (ks : Array Nat) (h : colorKeyRanges space bitDepth trns palette = .ok ks) :
     ∀ v ∈ ks, v < 2 ^ bitDepth := by
   cases space with
@@ -864,7 +866,7 @@ theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns palette : 
 returns no ranges only for an indexed chunk whose every entry is opaque —
 there was no transparency to carry. Greyscale and truecolour tRNS never
 map to an empty mask: they are exact or refused. -/
-theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
+public theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
     (h : colorKeyRanges space bitDepth trns palette = .ok #[]) :
     space = .indexed ∧ ∀ i < trns.size, trnsEntry trns i = 255 := by
   cases space with
@@ -903,7 +905,7 @@ theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns palette :
 /-- **Lossy transparency is refused, never dropped.** An indexed tRNS
 carrying any alpha other than 0 or 255 maps to no ranges at all: the
 result is an error the driver names. -/
-theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : ByteArray)
+public theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : ByteArray)
     (hpartial : ∃ i < trns.size, trnsEntry trns i ≠ 0 ∧ trnsEntry trns i ≠ 255) :
     ∃ e, colorKeyRanges .indexed bitDepth trns palette = .error e := by
   obtain ⟨i, hi, hz, ho⟩ := hpartial
@@ -939,7 +941,7 @@ refused by name. `probe` is the one loop over the bytes; its totality is
 the fuzz oracle's claim (`scripts/img-fuzz.lean`), not a theorem, and the
 theorems live on `plan`, the pure match after it. -/
 
-structure Source where
+public structure Source where
   format : Format
   pxW : Nat
   pxH : Nat
@@ -1348,7 +1350,7 @@ private def probeJpx (b : ByteArray) : Except String Source := do
 /-- A PDF page's geometry and resource closure, shared by default and
 explicit page selection. The pixel fields round to whole points; placement
 reads the form's box exactly. -/
-def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
+public def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
     Except String Source := do
   let f ← PdfRead.readForm b page
   return { format := .pdf
@@ -1360,7 +1362,7 @@ def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
 whose page 1 reads as a form XObject, and the recognised-but-unembeddable
 containers. Total over every input — the fuzz oracle's claim, not a
 theorem: the loops are bounded by the file and every read is checked. -/
-def probe (b : ByteArray) : Except String Source :=
+public def probe (b : ByteArray) : Except String Source :=
   if sliceEq b 0 pngSig then probePng b
   else if sliceEq b 0 [0xFF, 0xD8] then probeJpeg b
   else if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b
@@ -1381,7 +1383,7 @@ def probe (b : ByteArray) : Except String Source :=
 page value, including zero and out-of-range ordinals: `luatex.def`'s
 `Gread@png` clears `Gin@page`, and `Gread@jpg` aliases it. The ordinary
 probe still owns format validation and its named refusals. -/
-def probePage (b : ByteArray) (page : PdfRead.PageSelection) : Except String Source :=
+public def probePage (b : ByteArray) (page : PdfRead.PageSelection) : Except String Source :=
   if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b page
   else probe b
 
@@ -1397,12 +1399,12 @@ not a plan input (a document path, an output path) enters the key. -/
 /-- What to do with an embedded colour profile: carry it as `/ICCBased`
 (the emission is a later slice's; the plan is typed for it), or drop it
 and say so (`.iccDropped`, the driver's W0603). -/
-inductive IccPolicy where
+public inductive IccPolicy where
   | dropWithDiag
   | carry
   deriving Repr, DecidableEq, Inhabited
 
-structure PlanParams where
+public structure PlanParams where
   /-- May a JPEG 2000 codestream pass through as `/JPXDecode`? The arm is a
   later slice's; every value refuses today, and the key already carries it. -/
   jpxPermitted : Bool := false
@@ -1417,11 +1419,11 @@ structure PlanParams where
   deriving Repr, DecidableEq, Inhabited
 
 /-- The parameters the driver passes until a declaration projects them. -/
-def PlanParams.default : PlanParams := {}
+public def PlanParams.default : PlanParams := {}
 
 /-- Fixed-width bytes: two flags, `maxBpc` as u32, the policy tag. The
 shape `planParams_serialize_inj` reads. -/
-def PlanParams.serialize (p : PlanParams) : ByteArray :=
+public def PlanParams.serialize (p : PlanParams) : ByteArray :=
   ⟨#[cond p.jpxPermitted 1 0, cond p.softMaskPermitted 1 0,
      UInt8.ofNat (p.maxBpc / 16777216 % 256), UInt8.ofNat (p.maxBpc / 65536 % 256),
      UInt8.ofNat (p.maxBpc / 256 % 256), UInt8.ofNat (p.maxBpc % 256),
@@ -1435,7 +1437,7 @@ private theorem ofNat_inj_of_lt (x y : Nat) (hx : x < 256) (hy : y < 256)
 /-- **The key tells plans apart.** Two parameter records with the same
 serialization are the same record (for a `maxBpc` inside the u32 the
 format spells — every declared depth is). -/
-theorem planParams_serialize_inj (a b : PlanParams)
+public theorem planParams_serialize_inj (a b : PlanParams)
     (ha : a.maxBpc < 4294967296) (hb : b.maxBpc < 4294967296)
     (h : a.serialize = b.serialize) : a = b := by
   obtain ⟨aj, as_, am, ai⟩ := a
@@ -1457,7 +1459,7 @@ theorem planParams_serialize_inj (a b : PlanParams)
     simp_all [PlanParams.serialize]
 
 /-- The cache-key segment: the serialization in hex. -/
-def PlanParams.key (p : PlanParams) : String := Id.run do
+public def PlanParams.key (p : PlanParams) : String := Id.run do
   let digits := "0123456789ABCDEF".toList.toArray
   let mut s := ""
   for byte in p.serialize do
@@ -1578,7 +1580,7 @@ private def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=
   | n => .error s!"corrupt JPEG: {n} components"
 
 /-- The embedding decision, a pure match over the source's format. -/
-def plan (p : PlanParams) (s : Source) : Except String Plan :=
+public def plan (p : PlanParams) (s : Source) : Except String Plan :=
   match s.format with
   | .png => planPng p s
   | .jpeg => planJpeg p s
@@ -1593,20 +1595,20 @@ def plan (p : PlanParams) (s : Source) : Except String Plan :=
 True exactly for the PNG colour types with an alpha channel (4 and 6): what
 the driver's image cache keys on, decided from the header alone and agreeing
 with the planner on every plan that succeeds (`recodes_iff`). -/
-def Plan.recodes (_p : PlanParams) (s : Source) : Bool :=
+public def Plan.recodes (_p : PlanParams) (s : Source) : Bool :=
   match s.format, pngSpace s.colorType with
   | .png, some (_, some _) => true
   | _, _ => false
 
 /-- Decode any embeddable asset under the default parameters: today's one
 call for every consumer. -/
-def decode (b : ByteArray) : Except String Plan :=
+public def decode (b : ByteArray) : Except String Plan :=
   probe b >>= plan PlanParams.default
 
 /-- **Pass-through is verbatim.** A plan for a PNG of colour type 0, 2, or 3
 embeds the source's IDAT bytes as they stand and recodes nothing — for
 every parameter record and every source the planner accepts. -/
-theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
+public theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
     (hf : s.format = .png) (hct : s.colorType = 0 ∨ s.colorType = 2 ∨ s.colorType = 3)
     (h : plan p s = .ok pl) : pl.data = s.payload ∧ pl.recoded = false := by
   simp only [plan, hf, planPng] at h
@@ -1660,7 +1662,7 @@ carries in `losses` each `Source` fact this slice does not embed: an
 embedded profile under the dropping policy (and the plan's colour is then
 a device space — the profile went nowhere else), and an orientation other
 than 1. The driver maps each entry to its diagnostic (W0603, W0604). -/
-theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
+public theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
     (h : plan p s = .ok pl) :
     (p.iccPolicy = .dropWithDiag → s.icc.size ≠ 0 →
       PlanLoss.iccDropped ∈ pl.losses ∧ ∀ n prof, pl.color ≠ .iccBased n prof) ∧
@@ -1735,7 +1737,7 @@ theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
 /-- **The cache gate is the planner's decision.** On every plan the planner
 accepts, `recoded` and the header-only `Plan.recodes` agree — the two read
 the one colour-type table. -/
-theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .ok pl) :
+public theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .ok pl) :
     pl.recoded = true ↔ Plan.recodes p s = true := by
   unfold plan at h
   unfold Plan.recodes
@@ -1794,7 +1796,7 @@ theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .o
 /-- **A refusal names the format.** A source whose signature said WebP,
 AVIF, or JPEG XL is refused, and the refusal opens with the format's own
 name — stated over `Format.name`, the one constant the message reads. -/
-theorem plan_refuses_named (p : PlanParams) (s : Source)
+public theorem plan_refuses_named (p : PlanParams) (s : Source)
     (hf : s.format = .webp ∨ s.format = .avif ∨ s.format = .jxl) :
     ∃ rest, plan p s = .error (s.format.name ++ rest) := by
   rcases hf with hf | hf | hf <;> exact ⟨_, by unfold plan; rw [hf]; rfl⟩
@@ -1857,7 +1859,7 @@ height, two densities, bit depth, orientation), then the variable parts'
 sizes (profile components, palette, profile, key count, soft-mask depth,
 plane, data, losses); then the key values as u32s, the loss tags, and the
 palette, profile, plane and data bytes. -/
-def encodeBin (i : Plan) : ByteArray :=
+public def encodeBin (i : Plan) : ByteArray :=
   let (palette, _, profile) := colorParts i.color
   let (keys, _, plane) := alphaParts i.alpha
   binMagic ++ Binary.natBE 1 (colorTag i.color) ++ Binary.natBE 1 (filterTag i.filter) ++
@@ -1915,11 +1917,11 @@ private def readBin : Binary.Reader Plan := do
 
 /-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
 truncated, or older-format file is a cache miss, never a wrong image. -/
-def decodeBin (b : ByteArray) : Option Plan := readBin.run b
+public def decodeBin (b : ByteArray) : Option Plan := readBin.run b
 
 /-- Raster cache representability: every stored natural and payload length fits
 its unsigned 32-bit field. PDF forms are deliberately outside this format. -/
-def binBounded (i : Plan) : Prop :=
+@[expose] public def binBounded (i : Plan) : Prop :=
   i.form = none ∧ i.pxW < 4294967296 ∧ i.pxH < 4294967296 ∧
     i.dpiX < 4294967296 ∧ i.dpiY < 4294967296 ∧ i.bitDepth < 4294967296 ∧
     i.orientation < 4294967296 ∧ i.data.size < 4294967296 ∧ i.losses.size < 4294967296 ∧
@@ -2010,12 +2012,12 @@ private theorem readBin_encodeBin (i : Plan) (hb : binBounded i) :
 
 /-- Every representable raster plan survives the persisted LTIMG3 codec,
 including empty payloads and every color, alpha and filter variant. -/
-theorem decodeBin_encodeBin_id (i : Plan) (hb : binBounded i) :
+public theorem decodeBin_encodeBin_id (i : Plan) (hb : binBounded i) :
     decodeBin (encodeBin i) = some i :=
   Binary.Reads.run_id readBin i (encodeBin i) (readBin_encodeBin i hb)
 
 /-- Equal cache bytes identify the same representable raster plan. -/
-theorem encodeBin_inj (a b : Plan) (ha : binBounded a) (hb : binBounded b)
+public theorem encodeBin_inj (a b : Plan) (ha : binBounded a) (hb : binBounded b)
     (h : encodeBin a = encodeBin b) : a = b := by
   have h := congrArg decodeBin h
   rw [decodeBin_encodeBin_id a ha, decodeBin_encodeBin_id b hb] at h
@@ -2031,7 +2033,7 @@ places its placeholder box instead. -/
 
 /-- Everything that can change which image reaches a page. Sizing is local
 to the include and does not change the loaded asset. -/
-structure Request where
+public structure Request where
   src : String
   page : PdfRead.PageSelection := .first
   /-- An animated include may use its source SVG for the browser while
@@ -2042,7 +2044,7 @@ structure Request where
 /-- The animate manual §6.1 fixes the animation canvas from its first
 frame, independently of the poster. The selected plan still supplies the
 ink; both backends read the separate canvas when sizing the include. -/
-def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
+public def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
     Except String (Plan × Option (Dim.Sp × Dim.Sp)) := do
   let selected ← probePage bytes req.page >>= plan params
   let canvas ← if req.animated then do
@@ -2052,7 +2054,7 @@ def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
     else pure none
   return (selected, canvas)
 
-structure Loaded extends Request where
+public structure Loaded extends Request where
   /-- The relative path the driver resolved, when it differs from `src`: a
   bare graphicx name (`figures/plot`) gains the extension the file on disk
   has, and an HTML link must name it. -/
@@ -2081,51 +2083,51 @@ structure Loaded extends Request where
 
 /-- The captured face the browser receives; naming and publication read
 these same bytes, even if the source file changes during the build. -/
-def Loaded.browserBytes (en : Loaded) : Option ByteArray :=
+@[expose] public def Loaded.browserBytes (en : Loaded) : Option ByteArray :=
   en.webSvg.orElse fun _ => en.source
 
 /-- One intrinsic size for both backends: a successfully loaded image's
 animation canvas, or its own geometry for an ordinary include. -/
-def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
+@[expose] public def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
   en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
 
 /-- The intrinsic box both backends read keeps a declared animation canvas
 independently of the selected poster's geometry. -/
-theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf) :
+public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some inf) :
     en.size? = some (en.canvasSize.getD (inf.width, inf.height)) := by
   simp [Loaded.size?, h]
 
 /-- Extension recognition for the browser image format. The CLI still
 validates its print face through the converter and native PDF reader. -/
-def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
+public def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
 /-- graphicx resolves an extensionless name against its extension list; the
 same convention here, over the formats that embed — `.pdf` first past the
 name as written, graphicx's own order under pdfTeX. -/
-def sourceCandidates (src : String) : List String :=
+public def sourceCandidates (src : String) : List String :=
   [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
    src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".svg", src ++ ".SVG"]
 
-structure Store where
+public structure Store where
   entries : Array Loaded := #[]
   deriving Inhabited
 
-def Store.findRequest? (s : Store) (req : Request) : Option Nat :=
+@[expose] public def Store.findRequest? (s : Store) (req : Request) : Option Nat :=
   s.entries.findIdx? (·.toRequest == req)
 
-def Store.find? (s : Store) (src : String) : Option Nat :=
+@[expose] public def Store.find? (s : Store) (src : String) : Option Nat :=
   s.findRequest? { src }
 
-def Store.get? (s : Store) (i : Nat) : Option Loaded :=
+@[expose] public def Store.get? (s : Store) (i : Nat) : Option Loaded :=
   s.entries[i]?
 
 /-- The decoded image behind a source, when the driver loaded one: the one
 resolving question a consumer asks of the store — `none` is the placeholder
 box, whatever the reason (`Ir.pending` counts exactly these). -/
-def Store.infoRequest? (s : Store) (req : Request) : Option Plan :=
+@[expose] public def Store.infoRequest? (s : Store) (req : Request) : Option Plan :=
   (s.entries.find? (·.toRequest == req)).bind (·.info)
 
-def Store.info? (s : Store) (src : String) : Option Plan :=
+@[expose] public def Store.info? (s : Store) (src : String) : Option Plan :=
   s.infoRequest? { src }
 
 /-! ## Fulfilment: the decision half of the image effect
@@ -2137,23 +2139,23 @@ store's coverage another (`fulfil_covers`), not a convention of the
 driver's loop. -/
 
 /-- W0601: the image file exists but reading it failed. -/
-def imageUnreadable (src err : String) : Diag :=
+public def imageUnreadable (src err : String) : Diag :=
   Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"
     (subject := some src)
 
 /-- W0601: no file answers the image source. -/
-def imageMissing (src looked : String) : Diag :=
+public def imageMissing (src looked : String) : Diag :=
   Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
     (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
     (subject := some src)
 
 /-- W0602: image decoding or conversion failed; the cause carries its recovery. -/
-def imageUndecodable (src err : String) : Diag :=
+public def imageUndecodable (src err : String) : Diag :=
   Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
     (subject := some src)
 
 /-- W0603: the source carries a colour profile the plan did not. -/
-def imageIccDropped (src : String) : Diag :=
+public def imageIccDropped (src : String) : Diag :=
   Diag.of .W0603
     s!"image '{src}' carries an embedded colour profile; the page reads its samples as device colour"
     (help := "re-export the image without the profile, or accept the device reading with \
@@ -2161,7 +2163,7 @@ def imageIccDropped (src : String) : Diag :=
     (subject := some src)
 
 /-- W0604: the source carries an orientation tag the plan did not apply. -/
-def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
+public def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
   Diag.of .W0604
     s!"image '{src}' carries orientation tag {orientation}; the page shows the stored orientation"
     (help := "rotate the pixels and re-export with orientation tag 1, or accept it with \
@@ -2174,7 +2176,7 @@ private def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
   | .orientationDropped => imageOrientationDropped src pl.orientation
 
 /-- Every diagnostic a loaded plan's ledger names, in ledger order. -/
-def lossDiags (src : String) (pl : Plan) : Array Diag :=
+public def lossDiags (src : String) (pl : Plan) : Array Diag :=
   pl.losses.map (lossDiag src pl)
 
 /-- What the driver found for one image source, before the pure decision
@@ -2184,7 +2186,7 @@ driver's content cache, which equals the pure decode
 file; a file that would not read; or a boundary picture nothing drew,
 carrying the boundary's own diagnostic (E0382, W0379), whose subject
 `fulfil` sets so the refusal names the picture whatever words it chose. -/
-inductive Fetch where
+public inductive Fetch where
   | decoded (href : String) (res : Except String Plan) (webSvg : Option ByteArray)
       (canvasSize : Option (Dim.Sp × Dim.Sp)) (source : Option ByteArray)
       (companion : Option ByteArray)
@@ -2195,7 +2197,7 @@ inductive Fetch where
 /-- One source's decision: its store entry, and the diagnostic naming the
 gap when there is one. Every arm that leaves `info := none` also returns
 a diagnostic whose subject is the source — `fulfilOne_named`. -/
-def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
+public def fulfilOne (req : Request) : Fetch → Loaded × Option Diag
   | .decoded href (.ok info) webSvg canvasSize source companion =>
     ({ toRequest := req, href, info := some info, webSvg, canvasSize, source, companion }, none)
   | .decoded href (.error e) _ _ _ _ =>
@@ -2213,34 +2215,34 @@ private def fulfilList (entries : Array Loaded) (diags : Array Diag) :
 
 /-- The store and the diagnostics one run's reads decide, in the order the
 document requested them (`Ir.imageRequests`, the driver's loop). -/
-def fulfilRequests (fetched : Array (Request × Fetch)) : Store × Array Diag :=
+public def fulfilRequests (fetched : Array (Request × Fetch)) : Store × Array Diag :=
   fulfilList #[] #[] fetched.toList
 
 /-- The default first-page request, for callers that only carry paths. -/
-def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
+public def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
   fulfilRequests (fetched.map fun (src, f) => ({ src }, f))
 
 /-- A gap is named: whenever the decision leaves no payload, it also returns
 a diagnostic whose subject is the source. -/
-theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.info = none) :
+public theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f).1.info = none) :
     ∃ d, (fulfilOne req f).2 = some d ∧ d.subject = some req.src := by
   cases f with
   | decoded href res webSvg canvasSize source companion =>
     cases res with
     | ok info => simp [fulfilOne] at h
-    | error e => exact ⟨_, rfl, rfl⟩
-  | missing looked => exact ⟨_, rfl, rfl⟩
-  | unreadable err => exact ⟨_, rfl, rfl⟩
+    | error e => exact ⟨_, rfl, by simp only [imageUndecodable, Diag.of_subject]⟩
+  | missing looked => exact ⟨_, rfl, by simp only [imageMissing, Diag.of_subject]⟩
+  | unreadable err => exact ⟨_, rfl, by simp only [imageUnreadable, Diag.of_subject]⟩
   | refused why => exact ⟨_, rfl, rfl⟩
 
 /-- Every entry the decision writes is the fetched source's, in order. -/
-theorem fulfilOne_request (req : Request) (f : Fetch) :
+public theorem fulfilOne_request (req : Request) (f : Fetch) :
     (fulfilOne req f).1.toRequest = req := by
   cases f with
   | decoded href res webSvg canvasSize source companion => cases res <;> rfl
   | missing _ | unreadable _ | refused _ => rfl
 
-theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.src = req.src :=
+public theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.src = req.src :=
   congrArg Request.src (fulfilOne_request req f)
 
 /-- **A decoded source's bytes reach its store entry unchanged.** When the
@@ -2250,7 +2252,7 @@ browser-face conversion converts those bytes and never rereads the file.
 Stated on the `.ok` arm, the only one that loads a plan and so the only one
 a browser face is planned for; a failed decode carries no bytes and needs
 none. -/
-theorem fulfilOne_bytes (req : Request) (href : String) (info : Plan)
+public theorem fulfilOne_bytes (req : Request) (href : String) (info : Plan)
     (webSvg source companion : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp)) :
     (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.source = source ∧
     (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.companion
@@ -2285,12 +2287,12 @@ private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
 placeholder box every consumer places — has a diagnostic in the same
 run's output whose subject is its source. The image half of the
 resolution gate (`pending_named`). -/
-theorem fulfilRequests_named (fetched : Array (Request × Fetch)) :
+public theorem fulfilRequests_named (fetched : Array (Request × Fetch)) :
     ∀ en ∈ (fulfilRequests fetched).1.entries, en.info = none →
       ∃ d ∈ (fulfilRequests fetched).2, d.subject = some en.src :=
   fulfilList_named #[] #[] (fun _ h => by simp at h) fetched.toList
 
-theorem fulfil_named (fetched : Array (String × Fetch)) :
+public theorem fulfil_named (fetched : Array (String × Fetch)) :
     ∀ en ∈ (fulfil fetched).1.entries, en.info = none →
       ∃ d ∈ (fulfil fetched).2, d.subject = some en.src :=
   fulfilRequests_named _
@@ -2311,12 +2313,12 @@ private theorem fulfilList_covers (entries : Array Loaded) (diags : Array Diag) 
 /-- **The store covers the request.** The entries are the fetched sources,
 one each, in order: the driver fetches `Ir.imageRequests doc`, so every source
 the document names has an entry to read. -/
-theorem fulfilRequests_covers (fetched : Array (Request × Fetch)) :
+public theorem fulfilRequests_covers (fetched : Array (Request × Fetch)) :
     (fulfilRequests fetched).1.entries.map (·.toRequest) = fetched.map (·.1) := by
   rw [← Array.toList_inj, fulfilRequests, fulfilList_covers]
   simp [Array.toList_map]
 
-theorem fulfil_covers (fetched : Array (String × Fetch)) :
+public theorem fulfil_covers (fetched : Array (String × Fetch)) :
     (fulfil fetched).1.entries.map (·.src) = fetched.map (·.1) := by
   have h := congrArg (·.map Request.src)
     (fulfilRequests_covers (fetched.map fun (src, f) => ({ src }, f)))
@@ -2336,26 +2338,26 @@ intrinsic ratio to within one sp of rounding. -/
 /-- A requested dimension as the shared typed affine algebra. Local measure
 names survive only as `Measure` constructors until the layout context is
 known. -/
-structure Len where
+public structure Len where
   value : Affine Measure := .lit {}
   deriving Repr, BEq, Inhabited
 
 /-- An absolute requested dimension. -/
-def Len.abs (sp : Sp) : Len := ⟨.lit { width := .ofSp sp }⟩
+@[expose] public def Len.abs (sp : Sp) : Len := ⟨.lit { width := .ofSp sp }⟩
 
 /-- A fraction of one local measure. -/
-def Len.frac (measure : Measure) (permille : Int) : Len :=
+@[expose] public def Len.frac (measure : Measure) (permille : Int) : Len :=
   ⟨Affine.scaleQ permille 1000 (.ref measure)⟩
 
 /-- Resolve with the local horizontal measure and text height supplied by
 layout. Every horizontal source name denotes the containing box here, as a
 minipage initializes them. -/
-def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
+@[expose] public def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
   l.value.resolveWidth (MeasureValues.horizontal textW textH)
 
 /-- The sizing request from the source, unresolved. `scaleNum/scaleDen`
 carry `scale = 0.6` exactly; 1/1 is unscaled. -/
-structure SizeSpec where
+public structure SizeSpec where
   width : Option Len := none
   height : Option Len := none
   scaleNum : Int := 1
@@ -2365,16 +2367,16 @@ structure SizeSpec where
 
 /-- An include's local sizing plus the asset selection shared by both
 backends. An animation's selected page is its static PDF poster. -/
-structure Spec extends SizeSpec where
+public structure Spec extends SizeSpec where
   page : PdfRead.PageSelection := .first
   animated : Bool := false
   deriving Repr, BEq, Inhabited
 
-def Spec.request (spec : Spec) (src : String) : Request :=
+@[expose] public def Spec.request (spec : Spec) (src : String) : Request :=
   { src, page := spec.page, animated := spec.animated }
 
 /-- The placed box, in sp. `iW`/`iH` are the intrinsic physical size. -/
-def resolveSize (spec : SizeSpec) (iW iH : Sp) (textW textH : Sp) : Sp × Sp :=
+@[expose] public def resolveSize (spec : SizeSpec) (iW iH : Sp) (textW textH : Sp) : Sp × Sp :=
   match spec.width, spec.height with
   | none, none =>
     (iW * spec.scaleNum / spec.scaleDen, iH * spec.scaleNum / spec.scaleDen)
@@ -2415,20 +2417,20 @@ private theorem ediv_within_one (a d : Int) (hd : 0 < d) :
 
 /-- Declared size wins: with both dimensions given and no `keepaspectratio`,
 the box is exactly the declared size. -/
-theorem resolveSize_both_exact (w h : Len) (n : Int) (d : Nat) (iW iH textW textH : Sp) :
+public theorem resolveSize_both_exact (w h : Len) (n : Int) (d : Nat) (iW iH textW textH : Sp) :
     resolveSize { width := some w, height := some h, scaleNum := n, scaleDen := d }
       iW iH textW textH = (w.resolve textW textH, h.resolve textW textH) := by
   simp [resolveSize]
 
 /-- With nothing declared the box is the intrinsic physical size. -/
-theorem resolveSize_intrinsic (ka : Bool) (iW iH textW textH : Sp) :
+public theorem resolveSize_intrinsic (ka : Bool) (iW iH textW textH : Sp) :
     resolveSize { keepAspect := ka } iW iH textW textH = (iW, iH) := by
   simp [resolveSize]
 
 /-- With `width` alone, the width is exact and the height holds the
 intrinsic ratio to within one sp: `out.2 / out.1 = iH / iW` up to the
 division's unit of rounding, stated multiplicatively so it is exact. -/
-theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
+public theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
     (iW iH textW textH : Sp) (hW : 0 < iW) :
     (resolveSize { width := some w, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).1 = w.resolve textW textH ∧
@@ -2441,7 +2443,7 @@ theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
   exact ⟨rfl, h.1, h.2⟩
 
 /-- The mirror statement for `height` alone. -/
-theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka : Bool)
+public theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka : Bool)
     (iW iH textW textH : Sp) (hH : 0 < iH) :
     (resolveSize { height := some h, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).2 = h.resolve textW textH ∧
@@ -2456,7 +2458,7 @@ theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka : Bool
 /-- With both given and `keepaspectratio`, the box fits inside the declared
 rectangle: the binding dimension is exact and the other never exceeds its
 declaration. -/
-theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
+public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
     (hW : 0 < iW) (hH : 0 < iH) :
     (resolveSize { width := some w, height := some h, keepAspect := true }
       iW iH textW textH).1 ≤ w.resolve textW textH ∧

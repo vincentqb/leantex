@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.Image
 
 namespace Tests.ImageInterface
