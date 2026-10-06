@@ -987,6 +987,270 @@ def Entry.decoded (e : Entry) : Except String (Option ByteArray) :=
   | none => pure none
   | some raw => (decodeStream e.val raw).map some
 
+private structure ObjectScan where
+  stms : Std.HashMap Nat (ByteArray × Array (Nat × Nat) × Nat) := {}
+  entries : Array Entry := #[]
+  afters : Std.HashMap Nat Nat := {}
+
+/-- One iteration of object enumeration. Naming its state makes the
+cache, consumed entries, and deferred stream positions part of the same
+progress invariant; the production loop below executes this step. -/
+private def Reader.collect (r : Reader) (size? : Option Nat) (num : Nat)
+    (s : ObjectScan) : Except String ObjectScan := do
+  if let some size := size? then
+    if num ≥ size then
+      throw s!"malformed PDF: object {num} lies beyond the trailer's /Size {size}"
+  match r.locs.get? num with
+  | none => return s
+  | some (.direct off) =>
+    let (header, val, j) ← parseIndirectAt r.b off
+    if header != num then
+      throw s!"malformed PDF: object {num} is not at its cross-referenced offset (the file spells {header} there)"
+    return { s with
+      afters := s.afters.insert num j
+      entries := s.entries.push { num, loc := .direct off, header, val, stream := none } }
+  | some (.inStm stm idx) =>
+    let (t, stms) ← match s.stms.get? stm with
+      | some t => pure (t, s.stms)
+      | none =>
+        let t ← r.objStm stm
+        pure (t, s.stms.insert stm t)
+    let (data, pairs, first) := t
+    let some (header, ooff) := pairs[idx]?
+      | throw s!"malformed PDF: object {num} is indexed beyond object stream {stm}'s header"
+    if header != num then
+      throw s!"malformed PDF: object stream {stm} lists {header} where the cross-reference names {num}"
+    let (val, _) ← parseVal data (first + ooff)
+    return { s with
+      stms := stms
+      entries := s.entries.push { num, loc := .inStm stm idx, header, val, stream := none } }
+
+/-- The local evidence needed to enumerate one object. Direct entries
+name the parsed value's end and its raw stream; compressed entries name
+the decoded object stream, header slot, and payload value. These are
+intermediate parsing contracts, not assumptions of a producer theorem. -/
+def Entry.Reads (b : ByteArray) (locs : Std.HashMap Nat Loc)
+    (e : Entry) (after : Option Nat) : Prop :=
+  e.header = e.num ∧ locs.get? e.num = some e.loc ∧
+  match e.loc, after with
+  | .direct off, some j =>
+    parseIndirectAt b off = .ok (e.num, e.val, j) ∧
+    ∀ intAt, Reader.streamAfterWith { b, locs } intAt e.val j = .ok e.stream
+  | .inStm stm idx, none =>
+    ∃ data pairs first off j,
+      Reader.objStm { b, locs } stm = .ok (data, pairs, first) ∧
+      pairs[idx]? = some (e.num, off) ∧
+      parseVal data (first + off) = .ok (e.val, j) ∧ e.stream = none
+  | _, _ => False
+
+private def bareEntry (e : Entry) : Entry := { e with stream := none }
+
+private def ObjectScan.Consistent (r : Reader) (model : Nat → Entry × Option Nat)
+    (seen : List Nat) (s : ObjectScan) : Prop :=
+  s.entries = (seen.map (fun n => bareEntry (model n).1)).toArray ∧
+  (∀ stm t, s.stms.get? stm = some t → r.objStm stm = .ok t) ∧
+  (∀ n, s.afters.get? n = if n ∈ seen then (model n).2 else none)
+
+private theorem ObjectScan.initial (r : Reader) (model : Nat → Entry × Option Nat) :
+    ObjectScan.Consistent r model [] {} := by
+  refine ⟨rfl, ?_, ?_⟩
+  · intro stm t ht
+    change (∅ : Std.HashMap Nat _)[stm]? = some t at ht
+    simp at ht
+  · intro n
+    change (∅ : Std.HashMap Nat Nat)[n]? = _
+    simp
+
+private theorem Reader.collect_progress (r : Reader) (model : Nat → Entry × Option Nat)
+    (seen : List Nat) (s : ObjectScan) (hs : s.Consistent r model seen)
+    (num : Nat) (size? : Option Nat)
+    (hsize : ∀ size ∈ size?, num < size)
+    (hn : (model num).1.num = num)
+    (hr : (model num).1.Reads r.b r.locs (model num).2) :
+    ∃ s', r.collect size? num s = .ok s' ∧
+      s'.Consistent r model (seen ++ [num]) := by
+  obtain ⟨he, hc, ha⟩ := hs
+  obtain ⟨hh, hl, hr⟩ := hr
+  rw [hn] at hh hl
+  have hcheck : r.collect size? num s = r.collect none num s := by
+    cases size? with
+    | none => rfl
+    | some size => simp [Reader.collect,
+        show ¬ num ≥ size from Nat.not_le.mpr (hsize size rfl)]
+  cases hloc : (model num).1.loc with
+  | direct off =>
+    cases hj : (model num).2 with
+    | none => simp [hloc, hj] at hr
+    | some j =>
+      simp only [hloc, hj] at hr
+      let s' : ObjectScan := { s with
+        entries := s.entries.push (bareEntry (model num).1)
+        afters := s.afters.insert num j }
+      refine ⟨s', ?_, ?_⟩
+      · rw [hcheck]
+        simp only [Reader.collect, hl, hloc, hr.1, bind, Except.bind, hn]
+        simp [s', bareEntry, hn, hh, hloc, pure, Except.pure]
+      · refine ⟨?_, hc, ?_⟩
+        · simp [s', he]
+        · intro n
+          change (s.afters.insert num j)[n]? = _
+          simp only [Std.HashMap.getElem?_insert,
+            beq_iff_eq, List.mem_append, List.mem_singleton]
+          by_cases h : num = n
+          · subst n
+            simp [hj]
+          · have h' : n ≠ num := Ne.symm h
+            simp only [h, h', ↓reduceIte, or_false]
+            exact ha n
+  | inStm stm idx =>
+    cases hj : (model num).2 with
+    | some j => simp [hloc, hj] at hr
+    | none =>
+      simp only [hloc, hj] at hr
+      obtain ⟨data, pairs, first, off, j, hstm, hidx, hv, _⟩ := hr
+      rw [hn] at hidx
+      let t := (data, pairs, first)
+      let cache := if (s.stms.get? stm).isSome then s.stms else s.stms.insert stm t
+      let s' : ObjectScan := { s with
+        stms := cache
+        entries := s.entries.push (bareEntry (model num).1) }
+      refine ⟨s', ?_, ?_⟩
+      · rw [hcheck]
+        cases hm : s.stms.get? stm with
+        | none =>
+          have hca : cache = s.stms.insert stm t := by simp only [cache, hm,
+            Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
+          simp only [Reader.collect, hl, hloc, hm, hstm, bind, Except.bind,
+            pure, Except.pure]
+          simp only [hidx, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, hv]
+          simp only [s', hca, t, bareEntry, hn, hh, hloc]
+        | some t' =>
+          have ht : t' = t := Except.ok.inj ((hc stm t' hm).symm.trans hstm)
+          subst t'
+          have hca : cache = s.stms := by
+            simp only [cache, hm, Option.isSome_some, ↓reduceIte]
+          simp only [Reader.collect, hl, hloc, hm, t, bind, Except.bind,
+            pure, Except.pure]
+          simp only [hidx, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, hv]
+          simp only [s', hca, bareEntry, hn, hh, hloc]
+      · refine ⟨?_, ?_, ?_⟩
+        · simp [s', he]
+        · intro other value hv'
+          dsimp only [s'] at hv'
+          unfold cache at hv'
+          split at hv'
+          · exact hc other value hv'
+          · change (s.stms.insert stm t)[other]? = some value at hv'
+            simp only [Std.HashMap.getElem?_insert, beq_iff_eq] at hv'
+            split at hv'
+            · subst other
+              cases Option.some.inj hv'
+              exact hstm
+            · exact hc other value hv'
+        · intro n
+          dsimp only [s']
+          rw [ha]
+          simp only [List.mem_append, List.mem_singleton]
+          by_cases h : n = num
+          · subst n
+            simp [hj]
+          · simp [h]
+
+private def Reader.collectStep (r : Reader) (size? : Option Nat) (num : Nat)
+    (s : ObjectScan) : Except String (ForInStep ObjectScan) := do
+  return .yield (← r.collect size? num s)
+
+private theorem Reader.collect_loop (r : Reader) (model : Nat → Entry × Option Nat)
+    (size? : Option Nat) (nums seen : List Nat)
+    (s : ObjectScan) (hs : s.Consistent r model seen)
+    (hb : ∀ num ∈ nums, ∀ size ∈ size?, num < size)
+    (hm : ∀ num ∈ nums, (model num).1.num = num ∧
+      (model num).1.Reads r.b r.locs (model num).2) :
+    ∃ s', forIn nums s (r.collectStep size?) = .ok s' ∧
+      s'.Consistent r model (seen ++ nums) := by
+  induction nums generalizing s seen with
+  | nil => exact ⟨s, rfl, by simpa using hs⟩
+  | cons num nums ih =>
+    obtain ⟨s', he, hs'⟩ := r.collect_progress model seen s hs num size?
+      (hb num (by simp)) (hm num (by simp)).1 (hm num (by simp)).2
+    obtain ⟨s'', he', hs''⟩ := ih (seen ++ [num]) s' hs'
+      (fun n hn => hb n (by simp [hn]))
+      (fun n hn => hm n (by simp [hn]))
+    refine ⟨s'', ?_, ?_⟩
+    · rw [List.forIn_cons]
+      simp only [Reader.collectStep, he, bind, Except.bind, pure, Except.pure]
+      exact he'
+    · simpa only [List.append_assoc, List.cons_append, List.nil_append] using hs''
+
+private def Reader.finish (r : Reader) (scan : ObjectScan) : Except String (Array Entry) := do
+  let ints := scan.entries.foldl (fun ints e =>
+    match e.val.int? with
+    | some n => ints.insert e.num n
+    | none => ints) ({} : Std.HashMap Nat Int)
+  scan.entries.mapM fun e => do
+    match scan.afters.get? e.num with
+    | none => return e
+    | some j =>
+      let stream ← r.streamAfterWith ints.get? e.val j
+      return { e with stream }
+
+private theorem mapM_ok {α β : Type} (xs : List α) (f : α → Except String β)
+    (g : α → β) (h : ∀ x ∈ xs, f x = .ok (g x)) :
+    xs.mapM f = .ok (xs.map g) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    rw [List.mapM_cons, h x (by simp), ih (fun y hy => h y (by simp [hy]))]
+    rfl
+
+private theorem Reader.finish_exact (r : Reader) (model : Nat → Entry × Option Nat)
+    (seen : List Nat) (s : ObjectScan) (hs : s.Consistent r model seen)
+    (hm : ∀ num ∈ seen, (model num).1.num = num ∧
+      (model num).1.Reads r.b r.locs (model num).2) :
+    r.finish s = .ok (seen.map (fun n => (model n).1)).toArray := by
+  unfold Reader.finish
+  let intAt : Nat → Option Int := (s.entries.foldl (fun ints e =>
+    match e.val.int? with
+    | some n => ints.insert e.num n
+    | none => ints) ({} : Std.HashMap Nat Int)).get?
+  change s.entries.mapM (fun e => do
+    match s.afters.get? e.num with
+    | none => return e
+    | some j =>
+      let stream ← r.streamAfterWith intAt e.val j
+      return { e with stream }) = _
+  rw [hs.1, List.mapM_toArray, List.mapM_map]
+  rw [mapM_ok (g := fun n => (model n).1)]
+  · rfl
+  · intro n hn
+    have ⟨hnum, hread⟩ := hm n hn
+    have ha : s.afters.get? n = (model n).2 := by rw [hs.2.2]; simp only [hn, ↓reduceIte]
+    dsimp only [Function.comp_def, bareEntry]
+    rw [hnum, ha]
+    obtain ⟨_, _, hr⟩ := hread
+    cases hl : (model n).1.loc with
+    | direct off =>
+      cases hj : (model n).2 with
+      | none => simp [hl, hj] at hr
+      | some j =>
+        simp only [hl, hj] at hr ⊢
+        rw [hr.2 intAt]
+        simp only [bind, Except.bind, pure, Except.pure]
+        congr 1
+        cases he : (model n).1
+        simp only [he] at hnum hl ⊢
+        simp only [hnum, hl]
+    | inStm stm idx =>
+      cases hj : (model n).2 with
+      | some j => simp [hl, hj] at hr
+      | none =>
+        simp only [hl, hj] at hr ⊢
+        obtain ⟨_, _, _, _, _, _, _, _, hs⟩ := hr
+        cases he : (model n).1
+        simp only [he] at hnum hl hs ⊢
+        simp only [hnum, hl, hs]
+        rfl
+
 /-- Every object a read cross-reference lists, in object-number order,
 each fetched and checked against the number the file spells for it. The
 strict reading the engine applies to its own output and a census applies
@@ -1004,50 +1268,60 @@ def objectsOf (b : ByteArray) (x : Xref) :
   let size? := ((x.trailer.bind (·.get? "Size")).bind Obj.int?).map (·.toNat)
   let r : Reader := { b, locs := x.locs }
   let nums := x.locs.keysArray.qsort (· < ·)
-  let mut stms : Std.HashMap Nat (ByteArray × Array (Nat × Nat) × Nat) := {}
-  let mut es : Array Entry := #[]
-  let mut afters : Std.HashMap Nat Nat := {}
+  let mut scan : ObjectScan := {}
   for num in nums do
-    if let some size := size? then
-      if num ≥ size then
-        throw s!"malformed PDF: object {num} lies beyond the trailer's /Size {size}"
-    match x.locs.get? num with
-    | none => pure ()
-    | some (.direct off) =>
-      let (header, val, j) ← parseIndirectAt b off
-      if header != num then
-        throw s!"malformed PDF: object {num} is not at its cross-referenced offset (the file spells {header} there)"
-      afters := afters.insert num j
-      es := es.push { num, loc := .direct off, header, val, stream := none }
-    | some (.inStm stm idx) =>
-      let (data, pairs, first) ← match stms.get? stm with
-        | some t => pure t
-        | none =>
-          let t ← r.objStm stm
-          stms := stms.insert stm t
-          pure t
-      let some (header, ooff) := pairs[idx]?
-        | throw s!"malformed PDF: object {num} is indexed beyond object stream {stm}'s header"
-      if header != num then
-        throw s!"malformed PDF: object stream {stm} lists {header} where the cross-reference names {num}"
-      let (val, _) ← parseVal data (first + ooff)
-      es := es.push { num, loc := .inStm stm idx, header, val, stream := none }
+    scan ← r.collect size? num scan
   -- All values are now available, including compressed length integers.
   -- Reuse them instead of decoding object streams again for each length.
-  let ints := es.foldl (fun ints e =>
-    match e.val.int? with
-    | some n => ints.insert e.num n
-    | none => ints) ({} : Std.HashMap Nat Int)
-  es ← es.mapM fun e => do
-    match afters.get? e.num with
-    | none => return e
-    | some j =>
-      let stream ← r.streamAfterWith ints.get? e.val j
-      return { e with stream }
+  let es ← r.finish scan
   if h : entriesWf es then
     return ⟨es, h⟩
   else
     throw "malformed PDF: an object's spelled number disagrees with the cross-reference"
+
+/-- Local byte reads compose through the actual enumeration loop, its
+object-stream cache, deferred stream extraction, and final number check.
+The returned array is exactly the supplied entry model in object-number
+order. A producer contract must establish `Entry.Reads` from its emitted
+spans; this theorem does not itself establish those spelling facts. -/
+theorem objectsOf_reads_exact (b : ByteArray) (x : Xref)
+    (model : Nat → Entry × Option Nat)
+    (hstart : (isWs (at? b x.start) || at? b x.start == 256 ||
+      (x.start > 0 && !(isWs (at? b (x.start - 1)) ||
+        isDelim (at? b (x.start - 1))))) = false)
+    (hsize : ∀ n ∈ x.locs.keysArray.qsort (· < ·),
+      ∀ size ∈ ((x.trailer.bind (·.get? "Size")).bind Obj.int?).map (·.toNat),
+        n < size)
+    (hread : ∀ n ∈ x.locs.keysArray.qsort (· < ·),
+      (model n).1.num = n ∧ (model n).1.Reads b x.locs (model n).2) :
+    ∃ es, objectsOf b x = .ok es ∧
+      es.val = (x.locs.keysArray.qsort (· < ·)).map (fun n => (model n).1) := by
+  let r : Reader := { b, locs := x.locs }
+  let nums := x.locs.keysArray.qsort (· < ·)
+  let size? := ((x.trailer.bind (·.get? "Size")).bind Obj.int?).map (·.toNat)
+  obtain ⟨s, hs, hc⟩ := r.collect_loop model size? nums.toList [] {}
+    (ObjectScan.initial r model)
+    (by simpa only [Array.mem_toList_iff, nums, size?] using hsize)
+    (by simpa only [Array.mem_toList_iff, nums, r] using hread)
+  simp only [List.nil_append] at hc
+  have hf := r.finish_exact model nums.toList s hc
+    (by simpa only [Array.mem_toList_iff, nums, r] using hread)
+  have hw : entriesWf (nums.map (fun n => (model n).1)) := by
+    simp only [entriesWf, Array.all_eq_true_iff_forall_mem]
+    intro e he
+    obtain ⟨n, hn, rfl⟩ := Array.mem_map.mp he
+    exact beq_iff_eq.mpr (hread n hn).2.1
+  refine ⟨⟨nums.map (fun n => (model n).1), hw⟩, ?_, rfl⟩
+  unfold objectsOf
+  simp only [hstart, Bool.false_eq_true, ↓reduceIte]
+  change (do
+    let s ← forIn nums ({} : ObjectScan) (r.collectStep size?)
+    let es ← r.finish s
+    if h : entriesWf es then pure (⟨es, h⟩ : { es : Array Entry // entriesWf es })
+    else throw "malformed PDF: an object's spelled number disagrees with the cross-reference") = _
+  rw [← Array.forIn_toList, hs]
+  simp only [bind, Except.bind, pure, Except.pure, hf, ← List.map_toArray,
+    Array.toArray_toList, hw, ↓reduceDIte]
 
 def objects (b : ByteArray) : Except String { es : Array Entry // entriesWf es } := do
   unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
