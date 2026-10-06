@@ -1,8 +1,6 @@
 import LeanTex.Core.Flate.TokenBlock
 import LeanTex.Core.Flate.TokenFrequencies
-import LeanTex.Core.Flate.CodeLengthsReader
-import LeanTex.Core.Flate.CodeLengthsWriter
-import LeanTex.Core.Flate.PackageMerge
+import LeanTex.Core.Flate.DynamicHeader
 
 namespace LeanTex.Core.Flate
 
@@ -27,10 +25,6 @@ private def fixedLit : Huff :=
 
 private def fixedDist : Huff :=
   mkHuff (Array.replicate 30 5)
-
-/-- The order code-length code lengths arrive in (RFC 1951 §3.2.7). -/
-private def clOrder : Array Nat :=
-  #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
 
 /-- Inflate a zlib stream into at most `maxOut` bytes (the caller knows the
 size a PNG's samples must have; anything else is malformed). The Adler-32
@@ -70,25 +64,11 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.ru
         out := out'
         r := r'
     else if btype == 2 then
-      let some (hlit, ra) := r.bits 5 | return .error "deflate: truncated"
-      let some (hdist, rb) := ra.bits 5 | return .error "deflate: truncated"
-      let some (hclen, rc) := rb.bits 4 | return .error "deflate: truncated"
-      r := rc
-      let nlit := hlit + 257
-      let ndist := hdist + 1
-      let mut clLengths : Array Nat := Array.replicate 19 0
-      for k in [0:hclen + 4] do
-        let some (v, r') := r.bits 3 | return .error "deflate: truncated"
-        r := r'
-        clLengths := clLengths.set! (clOrder[k]?.getD 0) v
-      let clHuff := mkHuff clLengths
-      let (lengths, r') ← match CodeLengths.read clHuff (nlit + ndist) r with
+      let (litLens, distLens, r') ← match DynamicHeader.read r with
         | .error e => return .error e
         | .ok state => pure state
       r := r'
-      let lit := mkHuff (lengths.extract 0 nlit)
-      let dist := mkHuff (lengths.extract nlit (nlit + ndist))
-      match TokenBlock.read lit dist r out maxOut with
+      match TokenBlock.read (mkHuff litLens) (mkHuff distLens) r out maxOut with
       | .error e => return .error e
       | .ok (out', r') =>
         out := out'
@@ -430,26 +410,12 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   let (litFreq, distFreq) := TokenBlock.alphabets tokens
   let litLens := pmLengths litFreq 15
   let distLens := pmLengths distFreq 15
-  let nlit := litLens.size
-  let ndist := distLens.size
-  let rle := CodeLengths.encode (litLens ++ distLens)
-  let clFreq := CodeLengths.frequencies rle
-  let clLens := pmLengths clFreq 7
-  let clCodes := canonCodes clLens
-  let mut nclen := 4
-  for k in [0:clOrder.size] do
-    if clLens[clOrder[k]?.getD 0]?.getD 0 > 0 then nclen := k + 1
   -- 0x78 0x9C: deflate, 32 KiB window, no preset dictionary, and
   -- (CMF·256 + FLG) ≡ 0 (mod 31) as RFC 1950 §2.2 requires.
   let mut w : Bw := { out := (ByteArray.empty.push 0x78).push 0x9C, bits := 0, nbits := 0 }
   w := w.push 1 1
   w := w.push 2 2
-  w := w.push (nlit - 257) 5
-  w := w.push (ndist - 1) 5
-  w := w.push (nclen - 4) 4
-  for k in [0:nclen] do
-    w := w.push (clLens[clOrder[k]?.getD 0]?.getD 0) 3
-  w := CodeLengths.write clLens clCodes rle w
+  w := DynamicHeader.write litLens distLens w
   w := TokenBlock.writePayload litLens distLens tokens w
   let mut out := w.flush
   return pushBe32 out (adler32 raw)
