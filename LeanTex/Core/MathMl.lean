@@ -1,5 +1,7 @@
-import LeanTex.Core.Html
-import LeanTex.Core.Math
+module
+
+public import LeanTex.Core.Html
+public import LeanTex.Core.Math
 
 /-! Math on the HTML backend: MathML Core, emitted from the parsed math AST
 the PDF lays out — one parser, two projections (PLAN, M6). MathML Core
@@ -28,13 +30,13 @@ a postfix stretchy operator with inline intrinsic stretch axis in MathML
 Core's operator dictionary (§B.1 category I; §B.3 maps U+0305 combining
 overline to it) — where the PDF draws the same accent as a rule from the
 overbar constants. -/
-def overlineChar : Char := '\u203E'
+public def overlineChar : Char := '\u203E'
 
 /-- The token element a lone scalar sets in, by its TeX class: operator
 classes are `mo` (MathML Core §3.2.4 — fences, separators and accents
 included); an Ord or Inner scalar is `mn` for a digit and `mi` otherwise
 (§3.2.2, §3.2.3). -/
-def leafTag (cls : MathClass) (c : Char) : String :=
+public def leafTag (cls : MathClass) (c : Char) : String :=
   match cls with
   | .op | .bin | .rel | .opening | .closing | .punct => "mo"
   | .ord | .inner => if c.isDigit then "mn" else "mi"
@@ -43,7 +45,7 @@ def leafTag (cls : MathClass) (c : Char) : String :=
 bound serialization error by half a millionth of that em; the integer SVG
 points themselves lose no precision. This is decimal serialization, not a
 font-size or attachment constant. -/
-def measuredEm (n em : Int) : String :=
+public def measuredEm (n em : Int) : String :=
   let d := (max 1 em).toNat
   let m := (n.natAbs * 1000000 + d / 2) / d
   let fs := toString (m % 1000000)
@@ -52,11 +54,11 @@ def measuredEm (n em : Int) : String :=
 
 /-- MathML width hints are nonnegative; a CSS end margin carries the
 negative part of an advance. Both are in the same current-style units. -/
-def widthParts (width : Int) : Int × Int := (max 0 width, min 0 width)
+public def widthParts (width : Int) : Int × Int := (max 0 width, min 0 width)
 
 /-- Artifact arithmetic: the browser's width and end margin preserve every
 signed advance, including zero, without an invalid negative width hint. -/
-theorem widthParts_contract (width : Int) :
+public theorem widthParts_contract (width : Int) :
     let p := widthParts width
     0 ≤ p.1 ∧ p.2 ≤ 0 ∧ p.1 + p.2 = width := by
   dsimp [widthParts]
@@ -128,7 +130,7 @@ where
 /-- A style switch as MathML Core's `displaystyle` and absolute
 `scriptlevel` (§2.1.6): `\displaystyle`, `\textstyle`, `\scriptstyle` and
 `\scriptscriptstyle` set a style, never a step from the current one. -/
-def styleAttrs : Option MathStyle → Array (String × String)
+public def styleAttrs : Option MathStyle → Array (String × String)
   | none => #[]
   | some (.display _) => #[("displaystyle", "true"), ("scriptlevel", "0")]
   | some (.text _) => #[("displaystyle", "false"), ("scriptlevel", "0")]
@@ -198,7 +200,7 @@ em: the math face's overbar rule and clearance when the page ships its
 faces — the two quantities the PDF lays the marks with — else TeX's own
 stand-ins, plain TeX's default rule (0.4 pt at the 10 pt base, 40 per
 mille) and rule 9's clearance of three rules. -/
-structure Marks where
+public structure Marks where
   rule : Nat := 40
   gap : Nat := 120
   /-- Resolved font units for physical math lengths, through the same native
@@ -218,7 +220,7 @@ structure Marks where
   deriving Inhabited
 
 /-- A length in thousandths of an em, as CSS reads it. -/
-def milliEm (m : Nat) : String :=
+public def milliEm (m : Nat) : String :=
   let fs := toString (m % 1000)
   s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
 
@@ -425,7 +427,7 @@ mutual
 
 /-- The MathML children of a math list, one element per item, onto `acc`;
 `ink` the colour a switch earlier in the list put in force. -/
-def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Array Html.Node) :
+public def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Array Html.Node) :
     MList → Array Html.Node
   | .nil => acc
   | .cons (.ink c n) rest => listNodes mk disp (some (inkCss c n)) acc rest
@@ -439,7 +441,7 @@ def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Array Html
 nucleus under its script schema (`scriptNode`). `disp` goes false inside
 scripts, as the script styles are never display. A colour switch is read
 by its list (`listNodes`) and emits nothing of its own. -/
-def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
+public def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
   | .space mu => -- Signed mu: 18ths of the current em (TeXbook p. 168).
     .elem "mspace" (advanceAttrs 18 mu) #[]
   | .ink _ _ => .elem "mrow" #[] #[]
@@ -464,7 +466,7 @@ operator (`overlineChar`). A grid is `mtable`/`mtr`/`mtd`; the table sets
 restores `displaystyle="true"` (§2.1.6) — amsmath sets align cells in
 display style — while an `array` keeps text style, as the PDF's cell
 style rule does. -/
-def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
+public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
   | .sym c =>
     -- A lone scalar never grows: TeX stretches a delimiter only under
     -- `\left`/`\right` (`delimMo`), and MathML Core's dictionary makes every
@@ -609,7 +611,7 @@ end
 the content box — MathML Core §2.1.1), absent for inline, which the same
 stylesheet treats as `inline`. The backend's own attributes (class,
 `data-tex`) ride in `extra`. -/
-def formula (display : Bool) (extra : Array (String × String))
+public def formula (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "math"
     ((if display then #[("display", "block")] else #[]) ++ extra)
@@ -633,7 +635,7 @@ child order — where the PDF census `MList.scalarsList` walks superscript
 first); a radical's body before its degree (`mroot` child order); a
 delimiter pair around its body; an accent mark after its base, the U+0305
 overline as `overlineChar`. Spaces carry no text. -/
-def listChars (acc : Array Char) : MList → Array Char
+public def listChars (acc : Array Char) : MList → Array Char
   | .nil => acc
   | .cons x rest => listChars (itemChars acc x) rest
 
@@ -694,13 +696,13 @@ mutual
 /-- The text content of an emitted node: every `.text` leaf in order. The
 emission above puts text only inside `mi`/`mn`/`mo` token leaves, so this
 is exactly their leaf text. -/
-def nodeChars (acc : Array Char) : Html.Node → Array Char
+public def nodeChars (acc : Array Char) : Html.Node → Array Char
   | .text s => pushChars acc s.toList
   | .elem _ _ kids => nodeListChars acc kids.toList
   | .style _ => acc
   | .script _ _ => acc
 
-def nodeListChars (acc : Array Char) : List Html.Node → Array Char
+public def nodeListChars (acc : Array Char) : List Html.Node → Array Char
   | [] => acc
   | n :: rest => nodeListChars (nodeChars acc n) rest
 
@@ -1080,7 +1082,7 @@ a cancel mark's strike and arrowhead are decorative SVG polygons (CSS in
 the unmeasured fallback), text of neither; the fold's agreement with the PDF's coverage census
 (`Math.MList.scalarsList` — same scalars, its order, overline excepted)
 is pinned by test in `mathmlChecks`. -/
-theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
+public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
   simp only [formula, nodeChars]
@@ -1090,7 +1092,7 @@ theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
 /-- The HTML projection consumes the same resolved math list the PDF layout
 consumes: its typed MathML leaf text is exactly that list's glyph-text
 projection, after the one shared alphabet pass. -/
-theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverage)
+public theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverage)
     (display : Bool) (extra : Array (String × String)) (body : MList)
     (mk : Marks) :
     nodeChars #[]

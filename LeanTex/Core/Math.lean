@@ -1,4 +1,6 @@
-import LeanTex.Core.Color
+module
+
+public import LeanTex.Core.Color
 
 namespace LeanTex.Core.Math
 
@@ -9,7 +11,7 @@ measurement against a font happens in layout. -/
 
 /-- TeX's eight atom classes (TeXbook ch. 17): the spacing between two
 adjacent atoms is a function of their classes and the style. -/
-inductive MathClass where
+public inductive MathClass where
   | ord
   | op
   | bin
@@ -20,10 +22,10 @@ inductive MathClass where
   | inner
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def allClasses : List MathClass :=
+public def allClasses : List MathClass :=
   [.ord, .op, .bin, .rel, .opening, .closing, .punct, .inner]
 
-def MathClass.label : MathClass → String
+public def MathClass.label : MathClass → String
   | .ord => "ord"
   | .op => "op"
   | .bin => "bin"
@@ -36,38 +38,38 @@ def MathClass.label : MathClass → String
 /-- The four styles with their cramped variants (TeXbook ch. 17). Cramped
 styles arise under subscripts; the only difference this slice reads is the
 superscript shift (`superscriptShiftUpCramped`). -/
-inductive MathStyle where
+public inductive MathStyle where
   | display (cramped : Bool)
   | text (cramped : Bool)
   | script (cramped : Bool)
   | scriptscript (cramped : Bool)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def allStyles : List MathStyle :=
+public def allStyles : List MathStyle :=
   [.display false, .display true, .text false, .text true,
    .script false, .script true, .scriptscript false, .scriptscript true]
 
 namespace MathStyle
 
 /-- Depth in the progression display → text → script → scriptscript. -/
-def rank : MathStyle → Nat
+public def rank : MathStyle → Nat
   | .display _ => 3
   | .text _ => 2
   | .script _ => 1
   | .scriptscript _ => 0
 
-def cramped : MathStyle → Bool
+public def cramped : MathStyle → Bool
   | .display c | .text c | .script c | .scriptscript c => c
 
 /-- The style of a superscript (TeXbook p. 141): display and text scripts
 set in script style, script and scriptscript in scriptscript; cramping
 carries. -/
-def sup : MathStyle → MathStyle
+public def sup : MathStyle → MathStyle
   | .display c | .text c => .script c
   | .script c | .scriptscript c => .scriptscript c
 
 /-- The style of a subscript: the superscript's style, cramped. -/
-def sub (s : MathStyle) : MathStyle :=
+public def sub (s : MathStyle) : MathStyle :=
   match s.sup with
   | .display _ => .display true
   | .text _ => .text true
@@ -77,7 +79,7 @@ def sub (s : MathStyle) : MathStyle :=
 /-- The cramped variant of a style: how a radicand sets (TeXbook
 Appendix G rule 11 — the radicand of `\sqrt` is set in the cramped
 current style). -/
-def cramp : MathStyle → MathStyle
+public def cramp : MathStyle → MathStyle
   | .display _ => .display true
   | .text _ => .text true
   | .script _ => .script true
@@ -86,20 +88,20 @@ def cramp : MathStyle → MathStyle
 /-- The style of a fraction's numerator (TeXbook Appendix G rule 15:
 display sets its numerator in text style, text in script, script and
 scriptscript in scriptscript; cramping carries). -/
-def fracNum : MathStyle → MathStyle
+public def fracNum : MathStyle → MathStyle
   | .display c => .text c
   | .text c => .script c
   | .script c | .scriptscript c => .scriptscript c
 
 /-- The style of a fraction's denominator: the numerator's, cramped
 (TeXbook Appendix G rule 15). -/
-def fracDen (s : MathStyle) : MathStyle :=
+public def fracDen (s : MathStyle) : MathStyle :=
   s.fracNum.cramp
 
 /-- Script styles suppress the conditional entries of the spacing table:
 TeX inserts medium and thick spaces (and the parenthesized thin ones) "in
 display and text styles only" (TeXbook p. 170). -/
-def scriptish (s : MathStyle) : Bool :=
+public def scriptish (s : MathStyle) : Bool :=
   s.rank ≤ 1
 
 end MathStyle
@@ -109,25 +111,25 @@ its base's, and it ranks strictly below whenever the base is not already at
 the scriptscript floor. The layout recursion is structural on the formula
 tree; this is what makes the style parameter it threads meaningful — sizes
 cannot shrink forever, because the progression bottoms out. -/
-theorem style_progression_decreasing :
+public theorem style_progression_decreasing :
     ∀ s ∈ allStyles,
       (s.sup.rank ≤ s.rank ∧ s.sub.rank ≤ s.rank) ∧
       (s.rank = 0 ∨ (s.sup.rank < s.rank ∧ s.sub.rank < s.rank)) := by decide
 
 /-- scriptscript is the fixed point of the progression: nesting scripts
 past the second level changes nothing, cramped or not. -/
-theorem scriptscript_fixed_point :
+public theorem scriptscript_fixed_point :
     ∀ s ∈ allStyles, s.rank = 0 → s.sup = s ∧ s.sub.rank = 0 := by decide
 
 /-- A subscript is always cramped (TeXbook p. 141). -/
-theorem sub_cramped : ∀ s ∈ allStyles, s.sub.cramped = true := by decide
+public theorem sub_cramped : ∀ s ∈ allStyles, s.sub.cramped = true := by decide
 
 /-- The fraction styles descend like the script styles (TeXbook Appendix G
 rule 15): a numerator never ranks above its base, a denominator is always
 cramped, and cramping preserves rank — the radicand of rule 11 sets at the
 base's own size. With `sizeFor_mono_rank`, none of these constituents ever
 sets larger than the formula it stands in. -/
-theorem frac_styles_descend :
+public theorem frac_styles_descend :
     ∀ s ∈ allStyles,
       s.fracNum.rank ≤ s.rank ∧ s.fracDen.rank ≤ s.rank ∧
       s.fracDen.cramped = true ∧ s.cramp.rank = s.rank := by decide
@@ -136,12 +138,12 @@ theorem frac_styles_descend :
 spec suggests 80/60 but declares no bounds, and "script sizes never grow"
 must hold for every font, not only well-behaved ones. Clamped into (0,100]
 with scriptscript no larger than script. -/
-structure ScriptScales where
+public structure ScriptScales where
   script : Nat
   scriptscript : Nat
   deriving Repr, BEq, Inhabited
 
-def ScriptScales.clamp (script scriptscript : Int) : ScriptScales :=
+public def ScriptScales.clamp (script scriptscript : Int) : ScriptScales :=
   { script := (script.toNat.min 100).max 1
     scriptscript := (scriptscript.toNat.min ((script.toNat.min 100).max 1)).max 1 }
 
@@ -149,15 +151,15 @@ def ScriptScales.clamp (script scriptscript : Int) : ScriptScales :=
 base, script and scriptscript at the font's declared percentages. Sizes are
 per style from the base, not compounding — which is why the scriptscript
 floor also bounds the size. -/
-def sizeFor (k : ScriptScales) (base : Int) : MathStyle → Int
+public def sizeFor (k : ScriptScales) (base : Int) : MathStyle → Int
   | .display _ | .text _ => base
   | .script _ => base * k.script / 100
   | .scriptscript _ => base * k.scriptscript / 100
 
-theorem clamp_le_100 (a b : Int) : (ScriptScales.clamp a b).script ≤ 100 :=
+public theorem clamp_le_100 (a b : Int) : (ScriptScales.clamp a b).script ≤ 100 :=
   Nat.max_le.mpr ⟨Nat.min_le_right _ _, by decide⟩
 
-theorem clamp_ss_le_script (a b : Int) :
+public theorem clamp_ss_le_script (a b : Int) :
     (ScriptScales.clamp a b).scriptscript ≤ (ScriptScales.clamp a b).script :=
   Nat.max_le.mpr ⟨Nat.min_le_right _ _, Nat.le_max_right _ _⟩
 
@@ -178,7 +180,7 @@ style — so no script ever sets larger than the formula it hangs from.
 Limits are scripts (Appendix G rule 13a sets an upper limit in superscript
 style and a lower limit in subscript style), so this theorem covers limit
 sizes too — no restatement needed. -/
-theorem sizes_shrink (a b base : Int) (hb : 0 ≤ base) (s : MathStyle) :
+public theorem sizes_shrink (a b base : Int) (hb : 0 ≤ base) (s : MathStyle) :
     sizeFor (ScriptScales.clamp a b) base s.sup ≤
       sizeFor (ScriptScales.clamp a b) base s ∧
     sizeFor (ScriptScales.clamp a b) base s.sub ≤
@@ -200,7 +202,7 @@ theorem sizes_shrink (a b base : Int) (hb : 0 ≤ base) (s : MathStyle) :
 percentages: a style no deeper in the progression never sets larger. This
 is what turns `frac_styles_descend` into sizes — a numerator, denominator,
 or radicand never sets larger than its base. -/
-theorem sizeFor_mono_rank (a b base : Int) (hb : 0 ≤ base) (s s' : MathStyle)
+public theorem sizeFor_mono_rank (a b base : Int) (hb : 0 ≤ base) (s s' : MathStyle)
     (h : s'.rank ≤ s.rank) :
     sizeFor (ScriptScales.clamp a b) base s' ≤
       sizeFor (ScriptScales.clamp a b) base s := by
@@ -231,10 +233,10 @@ the incoming face so its lowercase height matches the current font's
 `xhM`/`upemM` the math face's; the ideal scale factor is
 `(xhB/upemB) · (upemM/xhM)` and the one honest slack is the division
 quantum, bounded by the agreement theorems below. -/
-def mathSize (bodySize xhB upemB xhM upemM : Nat) : Nat :=
+public def mathSize (bodySize xhB upemB xhM upemM : Nat) : Nat :=
   bodySize * xhB * upemM / (upemB * xhM)
 
-theorem mathSize_le_body_xheight (bodySize xhB upemB xhM upemM : Nat) :
+public theorem mathSize_le_body_xheight (bodySize xhB upemB xhM upemM : Nat) :
     mathSize bodySize xhB upemB xhM upemM * xhM / upemM ≤
       bodySize * xhB * upemM / (upemB * upemM) := by
   unfold mathSize
@@ -246,7 +248,7 @@ theorem mathSize_le_body_xheight (bodySize xhB upemB xhM upemM : Nat) :
 
 /-- One side of optical agreement: at `mathSize`, the math face's x-height
 never exceeds the body's — the match errs toward the body, never past it. -/
-theorem mathSize_matches (bodySize xhB upemB xhM upemM : Nat) (h : 0 < upemM) :
+public theorem mathSize_matches (bodySize xhB upemB xhM upemM : Nat) (h : 0 < upemM) :
     mathSize bodySize xhB upemB xhM upemM * xhM / upemM ≤ bodySize * xhB / upemB := by
   have := mathSize_le_body_xheight bodySize xhB upemB xhM upemM
   rwa [Nat.mul_div_mul_right _ _ h] at this
@@ -257,7 +259,7 @@ at most 1. The hypotheses hold for every parsed font: `upem` is normalized
 positive at parse and `Font.xHeightOptical` is clamped into `(0, upem]`.
 With `mathSize_matches`: after scaling, the two x-heights agree to within
 one sp — the exact-ratio reading of fontspec's `MatchLowercase`, quantized. -/
-theorem body_xheight_le_mathSize_next (bodySize xhB upemB xhM upemM : Nat)
+public theorem body_xheight_le_mathSize_next (bodySize xhB upemB xhM upemM : Nat)
     (hB : 0 < upemB) (hM : 0 < xhM) (hle : xhM ≤ upemM) :
     bodySize * xhB / upemB ≤ mathSize bodySize xhB upemB xhM upemM * xhM / upemM + 1 := by
   have hupemM : 0 < upemM := Nat.lt_of_lt_of_le hM hle
@@ -287,7 +289,7 @@ Mathematical Alphanumeric Symbols form (Unicode ch. 22.2; unicode-math's
 `\um_to_usv:nn` mapping does the same). `rm` is the upright alphabet, which
 Unicode leaves at the ASCII letters themselves — remapping an italic
 variable back is what `\mathrm` means. -/
-inductive MathAlphabet where
+public inductive MathAlphabet where
   | bb
   | cal
   | frak
@@ -317,23 +319,23 @@ inductive MathAlphabet where
 
 /-- The distinct Unicode alphabets. `bfDefault` selects ranges of `bf`
 and `bfit`, so it must not duplicate them in coverage or `unapply`. -/
-def allAlphabets : List MathAlphabet :=
+public def allAlphabets : List MathAlphabet :=
   [.bb, .cal, .frak, .bf, .bfit, .sf, .tt, .rm, .it]
 
 /-- Whether a legacy math alphabet command takes glyphs from the selected
 math symbol face or from a text-family slot. unicode-math 0.8r defaults
 `mathrm`, `mathit`, `mathbf`, `mathsf`, and `mathtt` to `text`; each accepts
 `=sym`. The shape alphabets and `\bm` are always symbol sourced. -/
-inductive MathAlphabetSource where
+public inductive MathAlphabetSource where
   | sym
   | text
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def MathAlphabetSource.name : MathAlphabetSource → String
+public def MathAlphabetSource.name : MathAlphabetSource → String
   | .sym => "sym"
   | .text => "text"
 
-def MathAlphabetSource.ofName? : String → Option MathAlphabetSource
+public def MathAlphabetSource.ofName? : String → Option MathAlphabetSource
   | "sym" => some .sym
   | "text" => some .text
   | _ => none
@@ -344,7 +346,7 @@ knows whether to force the symbol face or consult the document policy.
 `MathAlphabetSources`. `.doc` is a legacy `\mathrm`/`\mathit`/`\mathbf`/
 `\mathsf`/`\mathtt`, `\text…`, `\bm`/`\boldsymbol`, or a plain-TeX
 `\cal`/`\frak` — the document's `MathAlphabetSources` decides its source. -/
-inductive AlphaSource where
+public inductive AlphaSource where
   | doc
   | sym
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -353,7 +355,7 @@ inductive AlphaSource where
 projection remains a scoped compatibility follow-up, so an explicit
 `mathrm=sym` is not discarded and no future resolver has to recover policy
 from source strings. -/
-structure MathAlphabetSources where
+public structure MathAlphabetSources where
   rm : MathAlphabetSource := .text
   it : MathAlphabetSource := .text
   bf : MathAlphabetSource := .text
@@ -361,7 +363,7 @@ structure MathAlphabetSources where
   tt : MathAlphabetSource := .text
   deriving Repr, BEq, Inhabited
 
-def MathAlphabet.sourceKey? : String → Option MathAlphabet
+public def MathAlphabet.sourceKey? : String → Option MathAlphabet
   | "mathrm" => some .rm
   | "mathit" => some .it
   | "mathbf" => some .bf
@@ -369,7 +371,7 @@ def MathAlphabet.sourceKey? : String → Option MathAlphabet
   | "mathtt" => some .tt
   | _ => none
 
-def MathAlphabet.sourceKey : MathAlphabet → Option String
+public def MathAlphabet.sourceKey : MathAlphabet → Option String
   | .rm => some "mathrm"
   | .it => some "mathit"
   | .bf => some "mathbf"
@@ -377,7 +379,7 @@ def MathAlphabet.sourceKey : MathAlphabet → Option String
   | .tt => some "mathtt"
   | .bb | .cal | .frak | .bfit | .bfDefault | .bm => none
 
-def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlphabetSource
+public def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlphabetSource
   | .rm => s.rm
   | .it => s.it
   | .bf => s.bf
@@ -385,7 +387,7 @@ def MathAlphabetSources.get (s : MathAlphabetSources) : MathAlphabet → MathAlp
   | .tt => s.tt
   | .bb | .cal | .frak | .bfit | .bfDefault | .bm => .sym
 
-def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
+public def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
     (source : MathAlphabetSource) : MathAlphabetSources :=
   match a with
   | .rm => { s with rm := source }
@@ -397,7 +399,7 @@ def MathAlphabetSources.set (s : MathAlphabetSources) (a : MathAlphabet)
 
 /-- Non-default source options as unicode-math reads them. The boundary
 standalone receives the same typed policy as the page. -/
-def MathAlphabetSources.options (s : MathAlphabetSources) : Array String :=
+public def MathAlphabetSources.options (s : MathAlphabetSources) : Array String :=
   [MathAlphabet.rm, .it, .bf, .sf, .tt].foldl (fun out a =>
     let source := s.get a
     if source == .text then out
@@ -457,7 +459,7 @@ def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
 /-- A separately installed range of a math alphabet. unicode-math tests the
 first scalar of each range before installing that range; an isolated glyph
 elsewhere in the range therefore does not make the alphabet available. -/
-inductive MathAlphabetRange where
+public inductive MathAlphabetRange where
   | latinUpper
   | latinLower
   | digits
@@ -469,7 +471,7 @@ inductive MathAlphabetRange where
 def allAlphabetRanges : List MathAlphabetRange :=
   [.latinUpper, .latinLower, .digits, .greekUpper, .greekLower, .misc]
 
-def MathAlphabetRange.anchor : MathAlphabetRange → Char
+public def MathAlphabetRange.anchor : MathAlphabetRange → Char
   | .latinUpper => 'A'
   | .latinLower => 'a'
   | .digits => '0'
@@ -482,7 +484,7 @@ Latin letters and digits unicode-math's text math alphabets cover. Greek
 and the miscellaneous `∇` stay math symbols under a text source (LuaLaTeX
 does not pull them from the text family), so a text-sourced alphabet does
 not style them. -/
-def MathAlphabetRange.textServed : MathAlphabetRange → Bool
+public def MathAlphabetRange.textServed : MathAlphabetRange → Bool
   | .latinUpper | .latinLower | .digits => true
   | .greekUpper | .greekLower | .misc => false
 
@@ -501,20 +503,20 @@ private def greekSlot? (c : Char) : Option Nat :=
 /-- unicode-math's default bold TeX style is a selection of two installed
 ranges. Scalar mapping and face coverage read this same choice, so a face
 carrying only upright bold cannot silently satisfy bold italic Greek. -/
-def MathAlphabet.forRange (a : MathAlphabet) (r : MathAlphabetRange) : MathAlphabet :=
+public def MathAlphabet.forRange (a : MathAlphabet) (r : MathAlphabetRange) : MathAlphabet :=
   if a == .bfDefault then
     if r == .greekLower then .bfit else .bf
   else a
 
 /-- Selecting a canonical range twice cannot change its alphabet. -/
-theorem MathAlphabet.forRange_fixed_point (a : MathAlphabet) (r : MathAlphabetRange) :
+public theorem MathAlphabet.forRange_fixed_point (a : MathAlphabet) (r : MathAlphabetRange) :
     (a.forRange r).forRange r = a.forRange r := by
   cases a <;> cases r <;> rfl
 
 /-- The range an input scalar asks this alphabet to remap, if any. The
 input is the parser's ordinary math scalar: Latin variables are already
 italic, so `unItalic` recovers their source letter. -/
-def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
+public def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
   if a == .bm then none
   else
   let c := unItalic c0
@@ -533,7 +535,7 @@ shared slot inventory, including identity ranges: an explicit upright or
 italic selection must override an enclosing alphabet even when its
 source scalar already has that shape. `bfDefault` selects its canonical
 range through `forRange`, just as coverage does. -/
-def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
+public def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
   let a := a.forRange ((a.rangeOf c0).getD .latinUpper)
   let c := unItalic c0
   match a.hole c with
@@ -557,7 +559,7 @@ def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
         | .bb | .cal | .frak | .bfDefault | .sf | .tt | .bm => c0
       | none => c0
 
-def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
+public def MathAlphabet.ranges (a : MathAlphabet) : List MathAlphabetRange :=
   allAlphabetRanges.filter fun r => a.rangeOf r.anchor == some r
 
 /-- Range anchors the selected math face covers, derived once after that
@@ -565,18 +567,18 @@ face is selected. The remap decision (`remaps`) reads `covered` alone.
 `sources` is orthogonal policy retained for phase-3 text-slot projection
 (setting a text-sourced alphabet from its declared text family); it does
 not gate remap-vs-keep. -/
-structure MathAlphabetCoverage where
+public structure MathAlphabetCoverage where
   sources : MathAlphabetSources := {}
   covered : Array (MathAlphabet × MathAlphabetRange) := #[]
   deriving Repr, BEq, Inhabited
 
-def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
+public def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.covered.contains (a.forRange r, r)
 
 /-- Coverage is exactly the coverage of the canonical range selected by
 the scalar mapper, including the two halves of default bold. -/
-theorem MathAlphabetCoverage.faceCovers_forRange_exact (c : MathAlphabetCoverage)
+public theorem MathAlphabetCoverage.faceCovers_forRange_exact (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) :
     c.faceCovers (a.forRange r) r = c.faceCovers a r := by
   simp only [faceCovers, MathAlphabet.forRange_fixed_point]
@@ -589,7 +591,7 @@ and the whole-alphabet loss is named once (N0018) by the IR census.
 `sources` no longer gates the remap: it is retained for phase-3 text-slot
 projection (setting a text-sourced alphabet from its declared text family),
 which is orthogonal to whether the math face covers the range. -/
-def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
+public def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.faceCovers a r
 
@@ -597,7 +599,7 @@ def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
 `\sym…` node forces the symbol source; a legacy node consults the document
 policy. `effectiveAlpha` pairs this with the alphabet selected by that
 policy before the resolver or missing-range census pushes its stack. -/
-def MathAlphabetCoverage.effectiveSource (c : MathAlphabetCoverage)
+public def MathAlphabetCoverage.effectiveSource (c : MathAlphabetCoverage)
     (src : AlphaSource) (a : MathAlphabet) : MathAlphabetSource :=
   match src with
   | .sym => .sym
@@ -608,7 +610,7 @@ the same default TeX bold as `symbf`, including italic lowercase Greek.
 Text-sourced legacy bold retains its body-face style, while explicit
 `symbfup` remains upright bold. Both the artifact resolver and its loss
 census consume this pair, so their canonical range selection agrees. -/
-def MathAlphabetCoverage.effectiveAlpha (c : MathAlphabetCoverage)
+public def MathAlphabetCoverage.effectiveAlpha (c : MathAlphabetCoverage)
     (src : AlphaSource) (a : MathAlphabet) : MathAlphabet × MathAlphabetSource :=
   match src, a with
   | .doc, .bf =>
@@ -619,26 +621,26 @@ def MathAlphabetCoverage.effectiveAlpha (c : MathAlphabetCoverage)
 
 /-- Explicit symbol alphabets retain their shape under every document
 policy; upright bold cannot become default bold through a source option. -/
-theorem MathAlphabetCoverage.effectiveAlpha_sym_exact (c : MathAlphabetCoverage)
+public theorem MathAlphabetCoverage.effectiveAlpha_sym_exact (c : MathAlphabetCoverage)
     (a : MathAlphabet) : c.effectiveAlpha .sym a = (a, .sym) := by
   cases a <;> rfl
 
 /-- Every text-sourced legacy alphabet retains its original alphabet and
 source pair, including the existing body-face projection of bold. -/
-theorem MathAlphabetCoverage.effectiveAlpha_text_exact (c : MathAlphabetCoverage)
+public theorem MathAlphabetCoverage.effectiveAlpha_text_exact (c : MathAlphabetCoverage)
     (a : MathAlphabet) (h : c.sources.get a = .text) :
     c.effectiveAlpha .doc a = (a, .text) := by
   cases a <;> simp_all [effectiveAlpha, effectiveSource, MathAlphabetSources.get]
 
 /-- Symbol-sourced legacy bold and forced default bold select exactly the
 same active pair, for all ranges and all enclosing alphabet stacks. -/
-theorem MathAlphabetCoverage.effectiveAlpha_bf_sym_exact (c : MathAlphabetCoverage)
+public theorem MathAlphabetCoverage.effectiveAlpha_bf_sym_exact (c : MathAlphabetCoverage)
     (h : c.sources.bf = .sym) :
     c.effectiveAlpha .doc .bf = c.effectiveAlpha .sym .bfDefault := by
   simp [effectiveAlpha, effectiveSource, h]
 
 /-- The Latin letters every alphabet maps. -/
-def latinLetters : List Char :=
+public def latinLetters : List Char :=
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toList
 
 /-- The (alphabet, base character) behind a mapped scalar — `apply`'s left
@@ -648,7 +650,7 @@ the mapped scalar: the base character is what still renders, the alphabet
 names the styling lost. A digit run shared by two alphabets (`bf`/`bfit`
 both use the bold digits) answers with the first, which recovery cannot
 tell apart anyway. -/
-def MathAlphabet.unapply (c : Char) : Option (MathAlphabet × Char) :=
+public def MathAlphabet.unapply (c : Char) : Option (MathAlphabet × Char) :=
   match alphaHoles.find? fun (_, _, h) => h == c with
   | some (a, l, _) => some (a, l)
   | none =>
@@ -669,12 +671,12 @@ two different letters never collide, and no two alphabets share a scalar —
 are four scalars. Stated constructively: `unapply` recovers the alphabet
 and the letter from every image, holes included — a left inverse, so two
 distinct (alphabet, letter) pairs cannot map to one scalar. -/
-theorem alpha_apply_inj :
+public theorem alpha_apply_inj :
     (allAlphabets.all fun a => latinLetters.all fun c =>
       MathAlphabet.unapply (a.apply c) == some (a, c)) = true := by decide
 
 /-- Stable key for one alphabet in diagnostics and generated reports. -/
-def MathAlphabet.name : MathAlphabet → String
+public def MathAlphabet.name : MathAlphabet → String
   | .bb => "bb"
   | .cal => "cal"
   | .frak => "frak"
@@ -688,7 +690,7 @@ def MathAlphabet.name : MathAlphabet → String
   | .bm => "bm"
 
 /-- The styling an alphabet declares, for the note that names its loss. -/
-def MathAlphabet.styleLabel : MathAlphabet → String
+public def MathAlphabet.styleLabel : MathAlphabet → String
   | .bb => "double-struck"
   | .cal => "calligraphic"
   | .frak => "fraktur"
@@ -707,7 +709,7 @@ alphabets keep their essence from the text face's own variants; the shape
 alphabets (double-struck, calligraphic, fraktur, sans-serif, monospace)
 cannot be synthesized — their base letter stands in plain, the loss
 named. -/
-def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
+public def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
   | .bf | .bfDefault => (true, false)
   | .bfit => (true, true)
   | .it => (false, true)
@@ -719,14 +721,14 @@ Numbered to match the layout's `FontSet` slots — body/serif is 0, sans 1,
 mono 2 (`FontSet.lookup`) — so the PDF projection is a slot lookup, never a
 per-scalar host guess. Math-owned so the resolved nucleus can carry it
 without `Math` importing `Ir`. -/
-inductive MathTextSlot where
+public inductive MathTextSlot where
   | body
   | sans
   | mono
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The `FontSet` slot number (0 body, 1 sans, 2 mono). -/
-def MathTextSlot.toNat : MathTextSlot → Nat
+public def MathTextSlot.toNat : MathTextSlot → Nat
   | .body => 0
   | .sans => 1
   | .mono => 2
@@ -737,7 +739,7 @@ def MathTextSlot.toNat : MathTextSlot → Nat
 this variable rather than the `FontSet` index, so the two encodings of one
 slot — the PDF's `toNat`, the browser's `fontVar` — partition the slots
 identically (`fontVar_toNat_agree`). -/
-def MathTextSlot.fontVar : MathTextSlot → String
+public def MathTextSlot.fontVar : MathTextSlot → String
   | .body => "--font-body"
   | .sans => "--font-sans"
   | .mono => "--font-mono"
@@ -749,7 +751,7 @@ family, weight and style declarations. This is the resolved surface of `\mathrm`
 `\mathbf`/`\mathsf`/`\mathtt` under unicode-math's default (text) source:
 the glyph is the plain base letter set in a text family, not a Mathematical
 Alphanumeric scalar. -/
-structure MathTextStyle where
+public structure MathTextStyle where
   slot : MathTextSlot
   bold : Bool := false
   italic : Bool := false
@@ -761,7 +763,7 @@ structure MathTextStyle where
 which are always symbol-sourced and have no text-slot form. `bf` is upright
 bold on the body slot, `it` italic on the body slot, matching what
 LuaLaTeX paints from the main family's variants. -/
-def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
+public def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
   | .rm => some { slot := .body, bold := false, italic := false }
   | .it => some { slot := .body, bold := false, italic := true }
   | .bf => some { slot := .body, bold := true, italic := false }
@@ -773,7 +775,7 @@ def MathAlphabet.textStyle? : MathAlphabet → Option MathTextStyle
 Unicode symbol ranges: `\mathit{5}` uses the body italic face even though
 Unicode has no mathematical italic digits. Other ranges retain their
 symbol classification, and a symbol source is unchanged. -/
-def MathAlphabet.sourceRangeOf (a : MathAlphabet) (src : MathAlphabetSource)
+public def MathAlphabet.sourceRangeOf (a : MathAlphabet) (src : MathAlphabetSource)
     (c : Char) : Option MathAlphabetRange :=
   if src == .text && a.textStyle?.isSome then
     (MathAlphabet.rm.rangeOf c).filter (·.textServed) <|> a.rangeOf c
@@ -781,14 +783,14 @@ def MathAlphabet.sourceRangeOf (a : MathAlphabet) (src : MathAlphabetSource)
 
 /-- Selecting a symbol source preserves the Unicode range classifier for
 every alphabet and scalar. Text-family coverage cannot invent a symbol
-range, including the absent italic digits. -/
-theorem MathAlphabet.sourceRangeOf_sym_exact (a : MathAlphabet) (c : Char) :
-    a.sourceRangeOf .sym c = a.rangeOf c := rfl
+range, including the absent italic digits. Exported as a rewrite equation. -/
+public theorem MathAlphabet.sourceRangeOf_sym_exact (a : MathAlphabet) (c : Char) :
+    a.sourceRangeOf .sym c = a.rangeOf c := (rfl)
 
 /-- The semantic MathML `mathvariant` a resolved text style declares: the
 attribute a MathML consumer reads to style the plain base letter, since the
 scalar is the ASCII letter, not a Mathematical Alphanumeric code point. -/
-def MathTextStyle.mathvariant : MathTextStyle → String
+public def MathTextStyle.mathvariant : MathTextStyle → String
   | { slot := .sans, bold := b, italic := i } =>
     if b && i then "sans-serif-bold-italic"
     else if b then "bold-sans-serif"
@@ -805,7 +807,7 @@ def MathTextStyle.mathvariant : MathTextStyle → String
 `bold → 700, else 400` mapping both backends read: the PDF passes it to
 `FontSet.lookup` (Layout's `.styled` arm), the browser emits it as
 `font-weight` (`MathTextStyle.css`). -/
-def MathTextStyle.weight (s : MathTextStyle) : Nat :=
+public def MathTextStyle.weight (s : MathTextStyle) : Nat :=
   if s.bold then 700 else 400
 
 /-- The CSS declarations a resolved text style projects — the
@@ -819,7 +821,7 @@ are exactly the axes `Layout` reads from the same style — `slot` through
 `FontSet.lookup`'s index, `weight`, and `italic` — so neither backend owns
 a second slot→family or bold→weight mapping (`fontVar_toNat_agree`,
 `MathTextStyle.weight`). -/
-def MathTextStyle.css (s : MathTextStyle) : String :=
+public def MathTextStyle.css (s : MathTextStyle) : String :=
   let fam := s!"font-family: var({s.slot.fontVar})"
   let wt := if s.bold then s!"; font-weight: {s.weight}" else ""
   let it := if s.italic then "; font-style: italic" else ""
@@ -829,7 +831,7 @@ def MathTextStyle.css (s : MathTextStyle) : String :=
 slots share a `--font-*` family exactly when they share a `FontSet` index.
 This proves agreement of slot identifiers, not of loaded font files or
 browser fallback; those environment-dependent facts need artifact checks. -/
-theorem fontVar_toNat_agree (s t : MathTextSlot) :
+public theorem fontVar_toNat_agree (s t : MathTextSlot) :
     s.fontVar = t.fontVar ↔ s.toNat = t.toNat := by
   cases s <;> cases t <;> decide
 
@@ -838,7 +840,7 @@ where 18 mu is one em of the math font at the current style's size
 (TeXbook p. 168). Set at natural width — the rubber TeX gives `\medmuskip`
 and `\thickmuskip` is not modelled in this slice, deliberately: a math box
 is one unbreakable, unstretchable box in the paragraph. -/
-inductive MathSpace where
+public inductive MathSpace where
   | none
   | thin
   | med
@@ -846,7 +848,7 @@ inductive MathSpace where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- Numerator over 18ths of an em. -/
-def MathSpace.mu : MathSpace → Nat
+public def MathSpace.mu : MathSpace → Nat
   | .none => 0
   | .thin => 3
   | .med => 4
@@ -900,7 +902,7 @@ def texSpacing (l r : MathClass) : MathSpace × Bool :=
 `r` in style `s`: the table entry, with the conditional entries suppressed
 in script styles. Total by construction — every pair of classes and every
 style has an answer. -/
-def spacing (l r : MathClass) (s : MathStyle) : MathSpace :=
+public def spacing (l r : MathClass) (s : MathStyle) : MathSpace :=
   let (sp, always) := texSpacing l r
   if always || !s.scriptish then sp else .none
 
@@ -910,7 +912,7 @@ list, or preceded by Bin, Op, Rel, Open, or Punct becomes Ord — the rule
 that sets a leading `-x` as a sign rather than a spaced operation — and a
 Bin followed by Rel, Close, or Punct becomes Ord too. One forward pass
 holding the previous atom pending, since the second rule rewrites it. -/
-def degrade (cs : List MathClass) : List MathClass :=
+public def degrade (cs : List MathClass) : List MathClass :=
   go #[] none cs |>.toList
 where
   binBefore (p : Option MathClass) : Bool :=
@@ -935,7 +937,7 @@ where
       go (acc.push p) (some c) rest
 
 /-- A Bin with nothing to bind on its left is an Ord: `$-x$` sets tight. -/
-theorem bin_leading_degrades : degrade [.bin, .ord] = [.ord, .ord] := by decide
+public theorem bin_leading_degrades : degrade [.bin, .ord] = [.ord, .ord] := by decide
 
 /-- The pass's size ledger: `go` emits exactly one atom per input atom, plus
 the pending one. Induction over the input with the accumulator and pending
@@ -952,7 +954,7 @@ theorem degrade_go_length (cs : List MathClass) (acc : Array MathClass)
 /-- Degradation changes classes, never the count or the order — for every
 list: the degraded class list is walked positionally beside the atom list,
 so a length change would mis-pair every following space. -/
-theorem degrade_length (cs : List MathClass) :
+public theorem degrade_length (cs : List MathClass) :
     (degrade cs).length = cs.length := by
   simp [degrade, degrade_go_length]
 
@@ -962,7 +964,7 @@ dumps (named muskips) on TeX Live 2026, per pair and per style band — the
 executable transcription of TeXbook p. 170 *after* Bin degradation. Row
 order is `allClasses` for `l`, column order `allClasses` for `r`; mu
 numerators (0 / 3 / 4 / 5). -/
-def luatexProbe (scriptish : Bool) : List (List Nat) :=
+public def luatexProbe (scriptish : Bool) : List (List Nat) :=
   if scriptish then
     [[0, 3, 0, 0, 0, 0, 0, 0],
      [3, 3, 3, 0, 0, 0, 0, 0],
@@ -987,7 +989,7 @@ of written classes in every style: simulating the probe — degrade
 `[ord, l, r, ord]`, then read the spacing between the middle pair — gives
 exactly the muskip luatex inserted, over all 64 pairs and both style bands.
 This is the spacing table's correctness theorem, Bin degradation included. -/
-theorem spacing_agrees_with_luatex :
+public theorem spacing_agrees_with_luatex :
     ∀ s ∈ allStyles, ∀ l ∈ allClasses, ∀ r ∈ allClasses,
       (match degrade [.ord, l, r, .ord] with
        | [_, l', r', _] => (spacing l' r' s).mu
@@ -996,7 +998,7 @@ theorem spacing_agrees_with_luatex :
         (allClasses.idxOf r) 1001) := by decide
 
 /-- How a grid column places a narrower cell inside the column's width. -/
-inductive ColAlign where
+public inductive ColAlign where
   | left
   | center
   | right
@@ -1017,7 +1019,7 @@ is amsmath's `smallmatrix`: script-style cells centred in their columns,
 come within `1.5\ex@` (its `\lineskip` and `\lineskiplimit`), and a thin
 space each side (amsmath.sty, `smallmatrix`; `\ex@` is 1 pt at the 10 pt
 base, amsgen.sty's `\compute@ex@`). -/
-inductive GridKind where
+public inductive GridKind where
   | align
   | gather
   | array (cols : Array ColAlign) (stretch : Nat)
@@ -1026,7 +1028,7 @@ inductive GridKind where
 
 /-- The alignment of column `k` under a grid kind. An `array` column past
 its spec centres — the spec mismatch was already diagnosed at elaboration. -/
-def GridKind.colAlign : GridKind → Nat → ColAlign
+public def GridKind.colAlign : GridKind → Nat → ColAlign
   | .align, k => if k % 2 == 0 then .right else .left
   | .gather, _ => .center
   | .array cols _, k => cols.getD k .center
@@ -1040,7 +1042,7 @@ this is a stated stand-in, not a sourced constant. `array` pays
 `\arraycolsep` each side of every column boundary: 5pt+5pt at the 10pt
 base is 18 mu (article.cls). `small` pays `\thickspace` before every
 column but the first, amsmath's `.2777em`: 5 mu. -/
-def GridKind.gapAfter : GridKind → Nat → Nat → Nat
+public def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .align, k, n => if k + 1 == n then 0 else if k % 2 == 0 then 0 else 36
   | .gather, _, _ => 0
   | .array _ _, k, n => if k + 1 == n then 0 else 18
@@ -1050,7 +1052,7 @@ def GridKind.gapAfter : GridKind → Nat → Nat → Nat
 follows it: the sum of everything before it. One definition placed cells
 and the width theorem both read, so "alignment points align" is a fact
 about this function — every row consults the same offsets. -/
-def colOffset (cols : List (Int × Int)) (k : Nat) : Int :=
+public def colOffset (cols : List (Int × Int)) (k : Nat) : Int :=
   match cols, k with
   | _, 0 => 0
   | [], _ + 1 => 0
@@ -1059,7 +1061,7 @@ def colOffset (cols : List (Int × Int)) (k : Nat) : Int :=
 /-- Past the last column, the offset is the whole grid: the assembled width
 is the sum of the column widths plus the declared gaps — no drift, whatever
 the widths. -/
-theorem colOffset_total (cols : List (Int × Int)) :
+public theorem colOffset_total (cols : List (Int × Int)) :
     colOffset cols cols.length = (cols.map fun c => c.1 + c.2).foldr (· + ·) 0 := by
   induction cols with
   | nil => rfl
@@ -1067,7 +1069,7 @@ theorem colOffset_total (cols : List (Int × Int)) :
     simp only [colOffset, List.length, List.map, List.foldr, ih]
 
 /-- The kern that places a box `inner` wide inside a column `outer` wide. -/
-def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
+public def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
   match a with
   | .left => 0
   | .right => outer - inner
@@ -1076,14 +1078,14 @@ def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
 /-- Padding stays inside the column: the cell starts at or after the
 column's left edge and ends at or before its right edge — so a padded cell
 can never disturb a neighbouring column's alignment point. -/
-theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
+public theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
     0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
   cases a <;> simp only [ColAlign.pad] <;> omega
 
 /-- Centring is symmetric to within the one sp integer division may owe:
 the space left after the cell differs from the space before it by at most
 one. Also what "display limits are centred on the operator" means in sp. -/
-theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
+public theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
     0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
     outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
   simp only [ColAlign.pad]
@@ -1094,7 +1096,7 @@ first in the font's size ladder at least `target` tall, else the last —
 the MATH spec orders variants by increasing size, so the last is the
 largest the font offers (glyph assembly, past it, is not read in this
 slice). -/
-def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
+public def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
   | [] => none
   | [v] => some v
   | v :: rest@(_ :: _) => if target ≤ v.2 then some v else pickVariant target rest
@@ -1102,7 +1104,7 @@ def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
 /-- An amsmath sized delimiter's `\vcenter` (amsmath.sty, `\bBigg@`):
 `step`⁄2 times `\big@size`, which is 1.2 times `paren`, the height and
 depth of the current `(`. -/
-def bigVcenter (paren : Int) (step : Nat) : Int :=
+public def bigVcenter (paren : Int) (step : Nat) : Int :=
   paren * 12 / 10 * (step : Int) / 2
 
 /-- The least size a sized delimiter grows to over its `\vcenter`, by
@@ -1111,7 +1113,7 @@ TeXbook Appendix G rule 19: `\delimiterfactor` 901‰ of it, or all of it but
 and `size` in one unit. The PDF picks its variant by this target, and
 MathML's stretch clamp is the same target in em, so both artifacts reach
 the same variant. -/
-def bigTarget (paren size : Int) (step : Nat) : Int :=
+public def bigTarget (paren size : Int) (step : Nat) : Int :=
   let v := bigVcenter paren step
   max (v * 901 / 1000) (v - size / 2)
 
@@ -1119,7 +1121,7 @@ def bigTarget (paren size : Int) (step : Nat) : Int :=
 not exceeding `target` — an accent may not overhang its base, the reverse
 of a delimiter's "at least as tall" — else the first, the narrowest the
 font offers. Same increasing-size order as `pickVariant`. -/
-def pickWidest (target : Int) : List (Nat × Int) → Option (Nat × Int)
+public def pickWidest (target : Int) : List (Nat × Int) → Option (Nat × Int)
   | [] => none
   | [v] => some v
   | v :: rest@(w :: _) =>
@@ -1128,7 +1130,7 @@ def pickWidest (target : Int) : List (Nat × Int) → Option (Nat × Int)
 /-- A stretched accent never overhangs: when the ladder's first variant
 fits the target at all, the picked one fits too — with the spec's
 increasing order it is the widest that does. -/
-theorem pickWidest_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+public theorem pickWidest_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
     (hp : pickWidest target vs = some v) (hw : ∀ w ∈ vs.take 1, w.2 ≤ target) :
     v.2 ≤ target := by
   induction vs with
@@ -1150,7 +1152,7 @@ theorem pickWidest_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × In
         exact hw _ (by simp [List.take])
 
 /-- What is stretched to is a variant the font really has. -/
-theorem pickWidest_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+public theorem pickWidest_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
     (hp : pickWidest target vs = some v) : v ∈ vs := by
   induction vs with
   | nil => simp [pickWidest] at hp
@@ -1173,7 +1175,7 @@ theorem pickWidest_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
 variant reaches the target, the picked one does. With the spec's
 increasing-size order this is the smallest sufficient variant; without it,
 still a sufficient one. -/
-theorem pickVariant_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+public theorem pickVariant_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
     (hp : pickVariant target vs = some v) (hw : ∃ w ∈ vs, target ≤ w.2) :
     target ≤ v.2 := by
   induction vs with
@@ -1198,7 +1200,7 @@ theorem pickVariant_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × I
 
 /-- What is picked is a variant the font really has — never an invented
 glyph. -/
-theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+public theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
     (hp : pickVariant target vs = some v) : v ∈ vs := by
   induction vs with
   | nil => simp [pickVariant] at hp
@@ -1223,7 +1225,7 @@ theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
 delimiters around the fraction, `none` the empty one; the rule, `none` the
 face's own and `some t` a thickness in sp, where 0 stacks the operands with
 no rule; and the style the construct sets in, `none` the current one. -/
-structure FracSpec where
+public structure FracSpec where
   left : Option Char := none
   right : Option Char := none
   rule : Option Int := none
@@ -1234,7 +1236,7 @@ structure FracSpec where
 — `up` (`\cancel`, the rising diagonal), `down` (`\bcancel`, the falling
 one), `cross` (`\xcancel`, both) — or `to` (`\cancelto`), the rising
 strike ending in an arrowhead that points at a value. -/
-inductive CancelMark where
+public inductive CancelMark where
   | up
   | down
   | cross
@@ -1245,13 +1247,13 @@ inductive CancelMark where
 (cancel.sty's table): `step` (`smaller`, the default) one style down the
 progression, `sup` (`Smaller`) a superscript's style, `same` (`samesize`)
 the current one. Always uncramped: the package switches style by name. -/
-inductive CancelSize where
+public inductive CancelSize where
   | same
   | step
   | sup
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def CancelSize.style : CancelSize → MathStyle → MathStyle
+public def CancelSize.style : CancelSize → MathStyle → MathStyle
   | .same, .display _ => .display false
   | .same, .text _ => .text false
   | .same, .script _ => .script false
@@ -1268,7 +1270,7 @@ doubles, as LaTeX's `\thicklines` doubles `\thinlines`), `room` only under
 `makeroom` (cancel.sty's default `\hidewidth` overlaps), the value's
 style, and the marks' colour with its palette name (`none`: the colour in
 force). -/
-structure CancelSpec where
+public structure CancelSpec where
   thick : Bool := false
   room : Bool := false
   size : CancelSize := .step
@@ -1279,7 +1281,7 @@ structure CancelSpec where
 order the package declares them, whatever order the document wrote them in
 — so `Smaller` beats `samesize` and `overlap` beats `makeroom` — with the
 names it does not declare returned for the caller to name. -/
-def CancelSpec.ofOptions (opts : List String) : CancelSpec × List String :=
+public def CancelSpec.ofOptions (opts : List String) : CancelSpec × List String :=
   let declared := ["samesize", "smaller", "Smaller", "makeroom", "overlap", "thicklines"]
   let apply (s : CancelSpec) : String → CancelSpec
     | "samesize" => { s with size := .same }
@@ -1302,7 +1304,7 @@ the value's advance and measured ink bounds (not its baseline-inclusive
 line box). `SpaceAfterScript` supplies the trailing space when room is
 requested. The target's size still follows the package's style table;
 its position is an attachment to the arrow tip, not a superscript. -/
-structure CancelIn where
+public structure CancelIn where
   rule : Int
   gap : Int
   w : Int
@@ -1318,19 +1320,19 @@ structure CancelIn where
 
 /-- A measured target paints only when both axes have nonzero extent.
 Its advance alone never creates attachment ink or a raised baseline. -/
-def CancelIn.hasValueInk (i : CancelIn) : Bool :=
+public def CancelIn.hasValueInk (i : CancelIn) : Bool :=
   i.vleft != i.vright && i.vbot != i.vtop
 
 /-- Ink presence depends only on the measured rectangle, never on source
 syntax, its logical advance or the baseline used to measure it. -/
-theorem CancelIn.hasValueInk_contract (i : CancelIn) :
+public theorem CancelIn.hasValueInk_contract (i : CancelIn) :
     i.hasValueInk = true ↔ i.vleft ≠ i.vright ∧ i.vbot ≠ i.vtop := by
   simp [hasValueInk]
 
 /-- Measured cancellation in the active math font and style. The operand's
 horizontal ink is distinct from its advance: signed spacing can leave ink
 outside the logical box. Consumers reserve both without moving the attachment. -/
-structure CancelMetric where
+public structure CancelMetric where
   em : Int
   input : CancelIn
   bodyLeft : Int
@@ -1343,7 +1345,7 @@ the operand starts at `gap`; overlapping, it starts at 0. Negative kerns
 can reverse the nominal horizontal endpoints, so both axes are ordered
 before marks are drawn. This bounds the signed endpoints, not
 the operand's horizontal glyph ink. -/
-def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
+public def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
   let x0 := if room then 0 else -i.gap
   let x1 := x0 + i.w + 2 * i.gap
   let y0 := i.bot - i.gap
@@ -1352,7 +1354,7 @@ def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
 
 /-- Every cancellation input supplies ordered bounds, including signed
 advances and clearances. -/
-theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
+public theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
     (i.box room).1 ≤ (i.box room).2.2.1 ∧
     (i.box room).2.1 ≤ (i.box room).2.2.2 := by
   simp only [box]
@@ -1360,7 +1362,7 @@ theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
 
 /-- Ordering changes neither endpoint when the original bounds already
 stand in order, including a zero width or height. -/
-theorem CancelIn.box_of_ordered_exact (i : CancelIn) (room : Bool)
+public theorem CancelIn.box_of_ordered_exact (i : CancelIn) (room : Bool)
     (hw : 0 ≤ i.w + 2 * i.gap) (hh : i.bot - i.gap ≤ i.top + i.gap) :
     i.box room =
       (let x0 := if room then 0 else -i.gap
@@ -1373,7 +1375,7 @@ theorem CancelIn.box_of_ordered_exact (i : CancelIn) (room : Bool)
   apply Prod.ext <;> dsimp <;> omega
 
 /-- A diagonal's length, to the sp below. -/
-def cancelDiag (w h : Int) : Int :=
+public def cancelDiag (w h : Int) : Int :=
   Int.ofNat (Nat.sqrt (w.toNat * w.toNat + h.toNat * h.toNat))
 
 /-- A strike: the band `rule` wide on a diagonal of the box `(x0, y0, x1,
@@ -1382,7 +1384,7 @@ from the top-left to the bottom-right — cut by the box's own edges. So it
 ends exactly in the corners and none of it leaves the box: `dx` and `dy`
 are where the band's edges cross the box's, half the rule divided by the
 diagonal's sine and cosine. -/
-def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+public def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := cancelDiag w h
@@ -1396,7 +1398,7 @@ def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
 /-- A strike runs corner to corner: its first and fourth points are the two
 corners of the box's diagonal, exactly — never a slope rounded to one the
 drawing vocabulary happens to have. -/
-theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
+public theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
     (cancelBand rising x0 y0 x1 y1 rule)[0]? = some (x0, if rising then y0 else y1) ∧
     (cancelBand rising x0 y0 x1 y1 rule)[3]? = some (x1, if rising then y1 else y0) := by
   cases rising <;> exact ⟨rfl, rfl⟩
@@ -1404,7 +1406,7 @@ theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
 /-- A strike never leaves its box: every point of the band lies inside it,
 whatever the slope, including a zero width or height. With room reserved
 the box is the construct's own width. -/
-theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
+public theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
     (hr : 0 ≤ rule) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     ∀ p ∈ cancelBand rising x0 y0 x1 y1 rule,
       x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
@@ -1426,7 +1428,7 @@ theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
 baseline: the struck subformula's start, the filled polygons the marks ink
 (each strike, or the arrow's shaft then its head), the value's baseline
 origin, and the construct's advance. -/
-structure CancelGeom where
+public structure CancelGeom where
   shift : Int
   polys : Array (Array (Int × Int))
   valueX : Int := 0
@@ -1447,7 +1449,7 @@ with perpendicular wings on both sides of the shared base. Wings may
 leave the operand rectangle; measuring the finished assembly reserves
 that reach. A zero rule or zero diagonal collapses the triangle, without
 inventing a minimum visible stroke. -/
-def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+public def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
@@ -1459,7 +1461,7 @@ def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
 corner to the shared head base, cut square there. Its full perpendicular
 cap joins the head without clipping. A diagonal too short for a shaft
 carries the head alone. -/
-def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
+public def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
   let w := x1 - x0
   let h := y1 - y0
   let l := max 1 (cancelDiag w h)
@@ -1478,7 +1480,7 @@ for every aspect ratio, without shaving or sliding either wing. Doubled
 base coordinates avoid rounding its centre again. This is a shape
 identity; a positive rule and nonzero quantized vectors are additionally
 needed for visible ink. -/
-theorem cancelHead_shape_exact (x0 y0 x1 y1 rule : Int) :
+public theorem cancelHead_shape_exact (x0 y0 x1 y1 rule : Int) :
     let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
     let head := cancelHead x0 y0 x1 y1 rule
     let a := head[1]'(by simp [head, cancelHead])
@@ -1495,7 +1497,7 @@ theorem cancelHead_shape_exact (x0 y0 x1 y1 rule : Int) :
 vertices. Bands stay inside the former and a shaft's cap is narrower than
 the latter. This envelope can exceed the operand rectangle on any side;
 it never changes a drawn vertex to make it fit. -/
-def cancelEnvelope (x0 y0 x1 y1 rule : Int) : Int × Int × Int × Int :=
+public def cancelEnvelope (x0 y0 x1 y1 rule : Int) : Int × Int × Int × Int :=
   let head := cancelHead x0 y0 x1 y1 rule
   let a := head[1]'(by simp [head, cancelHead])
   let b := head[2]'(by simp [head, cancelHead])
@@ -1504,7 +1506,7 @@ def cancelEnvelope (x0 y0 x1 y1 rule : Int) : Int × Int × Int × Int :=
 
 /-- The full measured head lies in the union envelope, even for signed
 rules or a degenerate diagonal. Containment alone does not imply paint. -/
-theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
+public theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     let e := cancelEnvelope x0 y0 x1 y1 rule
     ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
       e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
@@ -1516,7 +1518,7 @@ theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 �
 /-- A nonnegative shaft fits the union envelope: its tail is inside the
 ordered endpoint box, and its one-rule cap fits inside the three-rule
 head at their shared base. No operand-box clipping premise is used. -/
-theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hr : 0 ≤ rule)
+public theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hr : 0 ≤ rule)
     (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
     let e := cancelEnvelope x0 y0 x1 y1 rule
     ∀ p ∈ cancelShaft x0 y0 x1 y1 rule,
@@ -1566,7 +1568,7 @@ rays, the near y edge steep ones. The remaining coordinate is derived,
 rounded once. A zero direction uses horizontal attachment. No slope or
 glyph-specific offset is chosen. Bounds are outline hulls, not raster
 centres of mass. -/
-def inkRayOrigin (dx dy gap left bottom right top : Int) : Int × Int :=
+public def inkRayOrigin (dx dy gap left bottom right top : Int) : Int × Int :=
   let g := max 0 gap
   if dy ≤ 0 ∨ (0 < dx ∧ (right - left + 2 * g) * dy ≤ (top - bottom + 2 * g) * dx) then
     let step := max 1 dx
@@ -1577,7 +1579,7 @@ def inkRayOrigin (dx dy gap left bottom right top : Int) : Int × Int :=
 
 /-- One near ink edge is exactly a nonnegative clearance beyond the tip.
 This separates the target from every mark point behind the tip on that axis. -/
-theorem inkRayOrigin_axis_exact (dx dy gap left bottom right top : Int) :
+public theorem inkRayOrigin_axis_exact (dx dy gap left bottom right top : Int) :
     let o := inkRayOrigin dx dy gap left bottom right top;
     o.1 + left = max 0 gap ∨ o.2 + bottom = max 0 gap := by
   dsimp [inkRayOrigin]
@@ -1587,7 +1589,7 @@ theorem inkRayOrigin_axis_exact (dx dy gap left bottom right top : Int) :
 cross product with the direction is bounded by the larger direction
 component. Thus perpendicular distance is at most half a coordinate unit.
 This is geometric attachment, not a claim about perceived beauty. -/
-theorem inkRayOrigin_between (dx dy gap left bottom right top : Int)
+public theorem inkRayOrigin_between (dx dy gap left bottom right top : Int)
     (hx : 0 ≤ dx) (hy : 0 ≤ dy) :
     let o := inkRayOrigin dx dy gap left bottom right top;
     -(max dx dy) ≤ dx * (2 * o.2 + top + bottom) - dy * (2 * o.1 + right + left) ∧
@@ -1652,7 +1654,7 @@ private theorem roundRay_translation_exact (n step k : Int) (hs : 0 < step) :
 /-- Re-expressing the target in another local coordinate system changes
 only its origin. Invisible prefixes and raised baselines cannot change
 where the measured ink attaches. -/
-theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top sx sy : Int) :
+public theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top sx sy : Int) :
     inkRayOrigin dx dy gap (left + sx) (bottom + sy) (right + sx) (top + sy) =
       let o := inkRayOrigin dx dy gap left bottom right top;
       (o.1 - sx, o.2 - sy) := by
@@ -1678,7 +1680,7 @@ theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top sx sy : 
 edge clears the tip by exactly the font gap, while the other clears by no
 more than that gap. This bounds both separation and excess distance: the
 tip-to-hull distance lies between the gap and its diagonal. -/
-theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
+public theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
     (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
     let o := inkRayOrigin dx dy gap left bottom right top;
     (o.1 + left = max 0 gap ∧ o.2 + bottom ≤ max 0 gap) ∨
@@ -1728,7 +1730,7 @@ theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
 expanded target dimensions on both axes. This also keeps the far ink edges
 beyond the tip, completing the tip-to-hull clearance bound. These are
 bounds on quantized outline hulls, not raster centres or contour distances. -/
-theorem inkRayOrigin_forward_between (dx dy gap left bottom right top : Int)
+public theorem inkRayOrigin_forward_between (dx dy gap left bottom right top : Int)
     (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
     let o := inkRayOrigin dx dy gap left bottom right top;
     0 ≤ 2 * o.1 + left + right ∧
@@ -1759,14 +1761,14 @@ theorem inkRayOrigin_forward_between (dx dy gap left bottom right top : Int)
 /-- Reserve a measured horizontal interval and both logical endpoints.
 The first result is a common translation; the second is the total width.
 It adds only missing room, without changing any relative attachment. -/
-def inkRoom (left right advance : Int) : Int × Int :=
+public def inkRoom (left right advance : Int) : Int × Int :=
   let pad := max 0 (-min left advance)
   (pad, pad + max 0 (max right advance))
 
 /-- Both ink edges and the logical endpoints fit in their reservation,
 including a negative advance. This is interval containment, not a spacing
 preference; callers supply the measured ink and any declared clearance. -/
-theorem inkRoom_covers (left right advance : Int) :
+public theorem inkRoom_covers (left right advance : Int) :
     let r := inkRoom left right advance;
     0 ≤ r.1 ∧ 0 ≤ r.1 + left ∧ r.1 + right ≤ r.2 ∧
     0 ≤ r.1 + advance ∧ r.1 + advance ≤ r.2 ∧ 0 ≤ r.2 := by
@@ -1775,7 +1777,7 @@ theorem inkRoom_covers (left right advance : Int) :
 
 /-- Project the ray-relative attachment into the mark's coordinate system.
 Only measured target ink anchors the target; its advance is reserved later. -/
-def CancelIn.valueOrigin (i : CancelIn) (room : Bool) : Int × Int :=
+public def CancelIn.valueOrigin (i : CancelIn) (room : Bool) : Int × Int :=
   let b := i.box room
   let o := inkRayOrigin (b.2.2.1 - b.1) (b.2.2.2 - b.2.1) i.gap
     i.vleft i.vbot i.vright i.vtop
@@ -1788,7 +1790,7 @@ with font-derived clearance from the tip; and, with room, an advance that
 includes both the mark box and the target's ink and logical advance before
 ordinary inter-atom spacing. Overlapping, the construct
 advances as its subformula does and the marks overprint as cancel.sty's. -/
-def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
+public def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
   let b := i.box room
   let shift := if room then i.gap else 0
   let band (rising : Bool) := cancelBand rising b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
@@ -1809,7 +1811,7 @@ def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
 to within half an sp of perpendicular rounding, independent of aspect
 ratio, target depth or local baseline. The error is a cross product of
 doubled coordinates, avoiding a lossy square root in the contract. -/
-theorem cancelto_value_between (room : Bool) (i : CancelIn) :
+public theorem cancelto_value_between (room : Bool) (i : CancelIn) :
     let b := i.box room
     let dx := b.2.2.1 - b.1
     let dy := b.2.2.2 - b.2.1
@@ -1835,7 +1837,7 @@ theorem cancelto_value_between (room : Bool) (i : CancelIn) :
 /-- A near edge of the target's ink meets the font gap from the tip on
 one axis. This is tip-to-target clearance, not containment of the full
 perpendicular head behind either tip coordinate. -/
-theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
+public theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
     let b := i.box room
     let g := cancelGeom .to room i
     g.valueX + i.vleft = b.2.2.1 + max 0 i.gap ∨
@@ -1850,28 +1852,29 @@ theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
 advance, followed by nonnegative script spacing. The completed assembly
 also passes through `inkRoom`: full head wings or target ink can exceed
 the endpoint box, requiring a common translation to reserve that reach. -/
-theorem cancelto_room_covers (i : CancelIn) :
+public theorem cancelto_room_covers (i : CancelIn) :
     (i.box true).2.2.1 ≤ (cancelGeom .to true i).advance ∧
     (cancelGeom .to true i).valueX + i.vright ≤ (cancelGeom .to true i).advance ∧
     (cancelGeom .to true i).valueX + i.vw ≤ (cancelGeom .to true i).advance := by
   dsimp [cancelGeom]; omega
 
 /-- `\cancelto` inks exactly its arrow: shaft then head when the box holds
-a shaft, the head alone when it does not. Target placement adds no mark. -/
-theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
+a shaft, the head alone when it does not. Target placement adds no mark.
+Exported as a rewrite equation. -/
+public theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
     let b := i.box room
     (cancelGeom .to room i).polys =
       (if (cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).isEmpty then
           #[cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]
         else
           #[cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
-            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) := rfl
+            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) := (rfl)
 
 /-- Every mark's polygons lie in the envelope formed from the endpoint
 box and full head. A band's box is retained exactly; an arrow is allowed
 the reach of its un-clipped wings. The rule must be nonnegative, but either
 axis may vanish and containment does not claim a visible mark. -/
-theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
+public theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
     (hr : 0 ≤ i.rule) :
     let b := i.box room
     let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
@@ -1924,7 +1927,7 @@ and the logical advance, even after signed endpoint reversal. The common
 translation leaves the head shape and tip-to-value relation unchanged.
 Layout measures the finished assembly, including body and target ink,
 then uses this same interval reservation. -/
-theorem cancelGeom_envelope_between (mark : CancelMark) (room : Bool) (i : CancelIn)
+public theorem cancelGeom_envelope_between (mark : CancelMark) (room : Bool) (i : CancelIn)
     (hr : 0 ≤ i.rule) :
     let b := i.box room
     let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
@@ -1954,7 +1957,7 @@ variables were mapped to their mathematical-alphanumeric italic code
 points at elaboration (`x` is U+1D465), digits and function names stay
 upright, per the convention TeX and ISO 80000-2 share: variables italic,
 everything with a fixed meaning upright. -/
-inductive MNucleus where
+public inductive MNucleus where
   | sym (c : Char)
   | word (s : String)
   | list (body : MList)
@@ -2011,7 +2014,7 @@ whether its scripts set as limits in display style (TeX's
 names of TeXbook p. 162) — or an explicit space. Scripts are `MList`s with
 `.nil` meaning none: an empty script and an absent one set the same
 nothing. -/
-inductive MItem where
+public inductive MItem where
   | atom (cls : MathClass) (nuc : MNucleus) (sup : MList) (sub : MList)
       (limits : Bool)
   /-- Explicit space in mu (18ths of an em at the current size); negative
@@ -2025,54 +2028,54 @@ inductive MItem where
   | ink (color : Ir.Color) (name : Option String)
   deriving Repr, BEq
 
-inductive MList where
+public inductive MList where
   | nil
   | cons (head : MItem) (tail : MList)
   deriving Repr, BEq
 
 /-- One grid row: its cells. -/
-inductive MRow where
+public inductive MRow where
   | nil
   | cons (cell : MList) (tail : MRow)
   deriving Repr, BEq
 
-inductive MRows where
+public inductive MRows where
   | nil
   | cons (row : MRow) (tail : MRows)
   deriving Repr, BEq
 
 end
 
-instance : Inhabited MList := ⟨.nil⟩
-instance : Inhabited MItem := ⟨.space 0⟩
-instance : Inhabited MNucleus := ⟨.sym '?'⟩
-instance : Inhabited MRow := ⟨.nil⟩
-instance : Inhabited MRows := ⟨.nil⟩
+public instance : Inhabited MList := ⟨.nil⟩
+public instance : Inhabited MItem := ⟨.space 0⟩
+public instance : Inhabited MNucleus := ⟨.sym '?'⟩
+public instance : Inhabited MRow := ⟨.nil⟩
+public instance : Inhabited MRows := ⟨.nil⟩
 
-def MList.ofList (xs : List MItem) : MList :=
+public def MList.ofList (xs : List MItem) : MList :=
   match xs with
   | [] => .nil
   | x :: rest => .cons x (ofList rest)
 
-def MRow.ofList (xs : List MList) : MRow :=
+public def MRow.ofList (xs : List MList) : MRow :=
   match xs with
   | [] => .nil
   | x :: rest => .cons x (ofList rest)
 
-def MRows.ofList (xs : List MRow) : MRows :=
+public def MRows.ofList (xs : List MRow) : MRows :=
   match xs with
   | [] => .nil
   | x :: rest => .cons x (ofList rest)
 
-def MRow.cells : MRow → List MList
+public def MRow.cells : MRow → List MList
   | .nil => []
   | .cons c rest => c :: cells rest
 
-def MRows.rows : MRows → List MRow
+public def MRows.rows : MRows → List MRow
   | .nil => []
   | .cons r rest => r :: rows rest
 
-def MRow.length (r : MRow) : Nat := r.cells.length
+public def MRow.length (r : MRow) : Nat := r.cells.length
 
 /-- `n` empty cells. -/
 def MRow.blanks : Nat → MRow
@@ -2114,10 +2117,10 @@ theorem MRow.pad_length (r : MRow) (n : Nat) (h : r.length ≤ n) :
   omega
 
 /-- The widest row: what every row pads to. -/
-def MRows.maxCols (rs : MRows) : Nat :=
+public def MRows.maxCols (rs : MRows) : Nat :=
   (rs.rows.map (·.length)).foldr Nat.max 0
 
-def MRows.pad (rs : MRows) (n : Nat) : MRows :=
+public def MRows.pad (rs : MRows) (n : Nat) : MRows :=
   match rs with
   | .nil => .nil
   | .cons r rest => .cons (r.pad n) (pad rest n)
@@ -2144,7 +2147,7 @@ private theorem MRows.length_le_maxCols :
 /-- A padded grid is rectangular: every row of `pad rs rs.maxCols` has
 exactly `maxCols` cells — the invariant that keeps a column's alignment
 point one x for every row. -/
-theorem MRows.pad_rectangular (rs : MRows) :
+public theorem MRows.pad_rectangular (rs : MRows) :
     ∀ r ∈ (rs.pad rs.maxCols).rows, r.length = rs.maxCols := by
   intro r h
   rw [pad_rows] at h
@@ -2154,7 +2157,7 @@ theorem MRows.pad_rectangular (rs : MRows) :
 /-- The class an item contributes to spacing. Spaces carry none — spacing
 is inserted only between directly adjacent atoms — and neither does a
 colour switch, which the spacing walk steps over. -/
-def MItem.classOf : MItem → Option MathClass
+public def MItem.classOf : MItem → Option MathClass
   | .atom cls _ _ _ _ => some cls
   | .space _ => none
   | .ink _ _ => none
@@ -2162,7 +2165,7 @@ def MItem.classOf : MItem → Option MathClass
 /-- The classes of a list's atoms in order, spaces and colour switches
 skipped: what `degrade` normalizes and the spacing walk consumes. Shallow —
 each sub-list is normalized independently, as TeX processes each mlist. -/
-def MList.classes : MList → List MathClass
+public def MList.classes : MList → List MathClass
   | .nil => []
   | .cons (.atom cls _ _ _ _) rest => cls :: classes rest
   | .cons (.space _) rest => classes rest
@@ -2172,13 +2175,13 @@ mutual
 
 /-- Every scalar a math list can ask the math face for, `docScalars`-style:
 the driver checks coverage before layout, keeping layout pure. -/
-def MItem.scalars (acc : Array Char) : MItem → Array Char
+@[expose] public def MItem.scalars (acc : Array Char) : MItem → Array Char
   | .atom _ nuc sup sub _ =>
     MList.scalarsList (MList.scalarsList (nuc.scalars acc) sup) sub
   | .space _ => acc
   | .ink _ _ => acc
 
-def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
+@[expose] public def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .styled _ c => acc.push c
   | .word s => s.foldl (·.push ·) acc
@@ -2218,15 +2221,15 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   -- order, so the reading is the one `x^0` gets.
   | .cancel _ _ value body => MList.scalarsList (MList.scalarsList acc body) value
 
-def MList.scalarsList (acc : Array Char) : MList → Array Char
+@[expose] public def MList.scalarsList (acc : Array Char) : MList → Array Char
   | .nil => acc
   | .cons x rest => MList.scalarsList (x.scalars acc) rest
 
-def MRow.scalarsRow (acc : Array Char) : MRow → Array Char
+@[expose] public def MRow.scalarsRow (acc : Array Char) : MRow → Array Char
   | .nil => acc
   | .cons c rest => MRow.scalarsRow (MList.scalarsList acc c) rest
 
-def MRows.scalarsRows (acc : Array Char) : MRows → Array Char
+@[expose] public def MRows.scalarsRows (acc : Array Char) : MRows → Array Char
   | .nil => acc
   | .cons r rest => MRows.scalarsRows (MRow.scalarsRow acc r) rest
 
@@ -2282,7 +2285,7 @@ def MNucleus.mathScalars (acc : Array Char) : MNucleus → Array Char
   | .cancel _ _ value body =>
     MList.mathScalarsList (MList.mathScalarsList acc body) value
 
-def MList.mathScalarsList (acc : Array Char) : MList → Array Char
+public def MList.mathScalarsList (acc : Array Char) : MList → Array Char
   | .nil => acc
   | .cons x rest => MList.mathScalarsList (x.mathScalars acc) rest
 
@@ -2363,7 +2366,7 @@ mutual
 /-- Colours used by math atoms and generated marks, with their palette
 names. A switch changes the inherited ink but is not itself a use.
 Sublists, scripts and grid cells keep their enclosing ink on return. -/
-def MList.inks (ink : Option (Ir.Color × Option String))
+public def MList.inks (ink : Option (Ir.Color × Option String))
     (acc : Array (Ir.Color × Option String)) :
     MList → Array (Ir.Color × Option String)
   | .nil => acc
@@ -2419,17 +2422,17 @@ mutual
 name — the formula's share of contrast realization, the map
 `Ir.recolorRoles` applies to a text run's colour. Nothing else moves
 (`mapInk_scalars`). -/
-def MList.mapInk (f : Ir.Color → Option String → Ir.Color) : MList → MList
+@[expose] public def MList.mapInk (f : Ir.Color → Option String → Ir.Color) : MList → MList
   | .nil => .nil
   | .cons x rest => .cons (MItem.mapInk f x) (MList.mapInk f rest)
 
-def MItem.mapInk (f : Ir.Color → Option String → Ir.Color) : MItem → MItem
+@[expose] public def MItem.mapInk (f : Ir.Color → Option String → Ir.Color) : MItem → MItem
   | .atom cls nuc sup sub lim =>
     .atom cls (MNucleus.mapInk f nuc) (MList.mapInk f sup) (MList.mapInk f sub) lim
   | .space mu => .space mu
   | .ink c n => .ink (f c n) n
 
-def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus → MNucleus
+@[expose] public def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus → MNucleus
   | .sym c => .sym c
   | .styled sty c => .styled sty c
   | .word s => .word s
@@ -2445,11 +2448,11 @@ def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus →
     .cancel mark { spec with color := spec.color.map fun (c, n) => (f c n, n) }
       (MList.mapInk f value) (MList.mapInk f body)
 
-def MRow.mapInk (f : Ir.Color → Option String → Ir.Color) : MRow → MRow
+@[expose] public def MRow.mapInk (f : Ir.Color → Option String → Ir.Color) : MRow → MRow
   | .nil => .nil
   | .cons c rest => .cons (MList.mapInk f c) (MRow.mapInk f rest)
 
-def MRows.mapInk (f : Ir.Color → Option String → Ir.Color) : MRows → MRows
+@[expose] public def MRows.mapInk (f : Ir.Color → Option String → Ir.Color) : MRows → MRows
   | .nil => .nil
   | .cons r rest => .cons (MRow.mapInk f r) (MRows.mapInk f rest)
 
@@ -2460,7 +2463,7 @@ mutual
 /-- Recolouring preserves the formula's glyph census. Preservation of the
 full structural plaintext reading is proved separately by
 `Ir.formulaFloor_ink_id`; it does not follow from scalar equality alone. -/
-theorem MList.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+public theorem MList.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
     ∀ (l : MList) (acc : Array Char), (MList.mapInk f l).scalarsList acc = l.scalarsList acc
   | .nil, _ => rfl
   | .cons x rest, acc => by
@@ -2521,7 +2524,7 @@ end
 (`sym`), or the plain base letter carried under a resolved text style
 (`styled`) when a `text`-sourced alphabet took it. The two outcomes a
 resolved `.sym` nucleus becomes. -/
-inductive Resolved where
+public inductive Resolved where
   | sym (c : Char)
   | styled (style : MathTextStyle) (c : Char)
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -2561,7 +2564,7 @@ The first alphabet that classifies `c` into one of its ranges decides:
 
 With the stack exhausted the source scalar stands (`.sym c`). Structural
 recursion on the list, so total by construction. -/
-def resolveCharStack (coverage : MathAlphabetCoverage) :
+public def resolveCharStack (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c
   | (a, src) :: rest, c =>
@@ -2700,7 +2703,7 @@ end
 
 /-- Resolve every typed alphabet boundary against one selected face's
 coverage. This runs before the document scalar census and both backends. -/
-def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :=
+public def resolveMathAlphas (coverage : MathAlphabetCoverage) (body : MList) : MList :=
   resolveAlphaList coverage [] body
 
 /-- The alphabet a stack blames for a scalar left at its source glyph, if
@@ -2714,7 +2717,7 @@ and the alphabet would have changed it (`apply c ≠ c`), so an identity
 remap is not named. Mirrors
 `resolveCharStack` exactly, so the N0018 census reports the alphabet the
 reader asked for and could not get. -/
-def missingCharAlpha (coverage : MathAlphabetCoverage) :
+public def missingCharAlpha (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Option MathAlphabet
   | [], _ => none
   | (a, src) :: rest, c =>
@@ -2741,7 +2744,7 @@ def missingCharAlpha (coverage : MathAlphabetCoverage) :
 math scalar rather than remapping or text-styling it. This is a resolver
 fact; it does not establish that the retained scalar exists in a font, or
 that a later fallback diagnostic cannot also name it. -/
-theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
+public theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (c : Char),
       (missingCharAlpha coverage active c).isSome →
         resolveCharStack coverage active c = .sym c
@@ -2793,7 +2796,7 @@ theorem missingCharAlpha_kept (coverage : MathAlphabetCoverage) :
 /-- An unavailable, nonidentity symbol request whose resolver keeps the
 source scalar is named, including when its boundary discards an enclosing
 text family. This is the converse accounting fact for a classified range. -/
-theorem missingCharAlpha_sym_named (coverage : MathAlphabetCoverage)
+public theorem missingCharAlpha_sym_named (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))
     (c : Char) (r : MathAlphabetRange)
     (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = false)
@@ -2870,14 +2873,14 @@ private def missingAlphaRows (coverage : MathAlphabetCoverage)
 
 end
 
-def missingMathAlphas (coverage : MathAlphabetCoverage)
+public def missingMathAlphas (coverage : MathAlphabetCoverage)
     (body : MList) : Array MathAlphabet :=
   missingAlphaList coverage [] #[] body
 
 mutual
 
 /-- No unresolved alphabet boundary remains in this math tree. -/
-def MList.alphaFree : MList → Bool
+public def MList.alphaFree : MList → Bool
   | .nil => true
   | .cons x rest => x.alphaFree && rest.alphaFree
 
@@ -2988,7 +2991,7 @@ private theorem resolveAlphaRows_covers (coverage : MathAlphabetCoverage)
 end
 
 /-- Every alphabet boundary is eliminated before a backend can see it. -/
-theorem resolveMathAlphas_covers (coverage : MathAlphabetCoverage) (body : MList) :
+public theorem resolveMathAlphas_covers (coverage : MathAlphabetCoverage) (body : MList) :
     (resolveMathAlphas coverage body).alphaFree = true :=
   resolveAlphaList_covers coverage [] body
 
@@ -3063,13 +3066,13 @@ private theorem resolveAlphaRows_nil_id (coverage : MathAlphabetCoverage) :
 end
 
 /-- An already-resolved math list is unchanged. -/
-theorem resolveMathAlphas_id (coverage : MathAlphabetCoverage) (body : MList)
+public theorem resolveMathAlphas_id (coverage : MathAlphabetCoverage) (body : MList)
     (h : body.alphaFree = true) :
     resolveMathAlphas coverage body = body :=
   resolveAlphaList_nil_id coverage body h
 
 /-- Resolution is idempotent: its output is already the backend form. -/
-theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : MList) :
+public theorem resolveMathAlphas_fixed_point (coverage : MathAlphabetCoverage) (body : MList) :
     resolveMathAlphas coverage (resolveMathAlphas coverage body) =
       resolveMathAlphas coverage body :=
   resolveMathAlphas_id coverage _ (resolveMathAlphas_covers coverage body)
@@ -3146,12 +3149,12 @@ private theorem missingAlphaRows_nil_id (coverage : MathAlphabetCoverage) :
 end
 
 /-- An alpha-free tree contributes no whole-alphabet loss, for any coverage. -/
-theorem missingMathAlphas_alphaFree_exact (coverage : MathAlphabetCoverage) (body : MList)
+public theorem missingMathAlphas_alphaFree_exact (coverage : MathAlphabetCoverage) (body : MList)
     (h : body.alphaFree = true) : missingMathAlphas coverage body = #[] :=
   missingAlphaList_nil_id coverage #[] body h
 
 /-- Resolution spends its whole-alphabet census; a second pass adds no note. -/
-theorem missingMathAlphas_resolve_exact (coverage : MathAlphabetCoverage) (body : MList) :
+public theorem missingMathAlphas_resolve_exact (coverage : MathAlphabetCoverage) (body : MList) :
     missingMathAlphas coverage (resolveMathAlphas coverage body) = #[] :=
   missingMathAlphas_alphaFree_exact coverage _ (resolveMathAlphas_covers coverage body)
 
@@ -3176,7 +3179,7 @@ theorem resolveAlphaList_classes (coverage : MathAlphabetCoverage)
 
 /-- The top-level resolver leaves the class sequence — and the spacing it
 drives — exactly as elaborated. -/
-theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MList) :
+public theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MList) :
     (resolveMathAlphas coverage body).classes = body.classes :=
   resolveAlphaList_classes coverage [] body
 
@@ -3299,7 +3302,7 @@ driver runs before layout sees exactly as many scalars after resolution as
 before, so an alphabet changes which glyph each scalar asks the face for,
 never how many. The registry `_covers`/`_id` chain governs shape; this
 governs count. -/
-theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
+public theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
     ((resolveMathAlphas coverage body).scalarsList #[]).size
       = (MList.scalarsList #[] body).size :=
   resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
@@ -3311,7 +3314,7 @@ it remaps to the alphabet's mathematical-alphanumeric scalar — `\symsf{R}`
 maps into the math sans range even under a default `mathsf=text`, exactly
 as it would under an all-sym policy. The text-slot branch is never taken
 for a forced-sym push, because `.sym ≠ .text`. -/
-theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
+public theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))
     (c : Char) (r : MathAlphabetRange)
     (hr : a.rangeOf c = some r) (hcov : coverage.remaps a r = true) :
