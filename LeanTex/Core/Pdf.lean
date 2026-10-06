@@ -1667,12 +1667,15 @@ structure WritePlan where
   direct : Array Row
   compressed : List (Nat × PdfRead.Obj)
 
+private def WritePlan.rowsWith (p : WritePlan) (first : Nat) (payload : ByteArray) :
+    Array Row :=
+  p.direct.push (flateRow p.table.objStmId
+    s!"/Type /ObjStm /N {p.compressed.length} /First {first}" payload)
+
 /-- The one object stream is appended to the direct rows it accompanies. -/
 def WritePlan.rows (p : WritePlan) : Array Row :=
   let packed := objectStream p.compressed
-  p.direct.push (flateRow p.table.objStmId
-    s!"/Type /ObjStm /N {p.compressed.length} /First {packed.header.utf8ByteSize}"
-    packed.bytes)
+  p.rowsWith packed.header.utf8ByteSize packed.bytes
 
 def WritePlan.serialized (p : WritePlan) : ByteArray × Array (Nat × Nat) :=
   serialize p.head p.rows
@@ -1681,16 +1684,59 @@ def WritePlan.entries (p : WritePlan) : Array Xref.Entry :=
   let (body, locs) := p.serialized
   writerXrefEntries p.table locs p.compressed body.size
 
-/-- Finish the actual writer plan: the xref describes this serialization,
-and `startxref` names the byte immediately after its body. -/
+/-- The measured bytes retained for final emission. Numeric validation
+reads these values, then publishes the same body and xref payload.
+The object stream is assembled and compressed only during measurement. -/
+structure WriteMeasurement where
+  body : ByteArray
+  offsets : Array (Nat × Nat)
+  xrefPayload : ByteArray
+  objectPayloadSize : Nat
+
+def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
+  let packed := objectStream p.compressed
+  let payload := packed.bytes
+  let (body, locs) := serialize p.head (p.rowsWith packed.header.utf8ByteSize payload)
+  { body, offsets := locs,
+    xrefPayload := Xref.encode (writerXrefEntries p.table locs p.compressed body.size),
+    objectPayloadSize := payload.size }
+
+/-- Finish a measurement: its xref describes this serialization, and
+`startxref` names the byte immediately after its retained body. -/
+def WriteMeasurement.bytes (m : WriteMeasurement) (t : ObjTable) : ByteArray :=
+  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 m.body)
+  let idB := Flate.hex16 (Flate.fnv64 1099511628211 m.body)
+  let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
+  let (out, _) := serialize m.body #[flateRow t.xrefId xrefDict m.xrefPayload]
+  out ++ (s!"startxref\n{m.body.size}\n%%EOF\n").toUTF8
+
 def WritePlan.bytes (p : WritePlan) : ByteArray :=
-  let (body, locs) := p.serialized
-  let xrefRows := Xref.encode (writerXrefEntries p.table locs p.compressed body.size)
-  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
-  let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
-  let xrefDict := s!"/Type /XRef /Size {p.table.size} /W [1 4 2] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let (out, _) := serialize body #[flateRow p.table.xrefId xrefDict xrefRows]
-  out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8
+  p.measure.bytes p.table
+
+theorem WritePlan.measure_body_exact (p : WritePlan) :
+    p.measure.body = p.serialized.1 := rfl
+
+theorem WritePlan.measure_offsets_exact (p : WritePlan) :
+    p.measure.offsets = p.serialized.2 := rfl
+
+theorem WritePlan.measure_xref_exact (p : WritePlan) :
+    p.measure.xrefPayload = Xref.encode p.entries := rfl
+
+theorem WritePlan.measure_object_size_exact (p : WritePlan) :
+    p.measure.objectPayloadSize = (objectStream p.compressed).bytes.size := rfl
+
+/-- Retaining the measurement preserves the existing writer's complete
+byte spelling, including its hash identifiers, compression choices,
+offsets, and footer. This equality is independent of input bounds. -/
+theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
+    p.bytes =
+      let (body, locs) := p.serialized
+      let xrefRows := Xref.encode (writerXrefEntries p.table locs p.compressed body.size)
+      let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
+      let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
+      let dict := s!"/Type /XRef /Size {p.table.size} /W [1 4 2] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
+      let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
+      out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := rfl
 
 /-- Prepare positioned pages for a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (its program

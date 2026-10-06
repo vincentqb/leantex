@@ -18,12 +18,32 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
     (match small.checked with
       | .ok b => b == Pdf.write {} fs #[]
       | .error _ => false)
+  check "PDF bounds: positioned-page producer returns checked bytes"
+    (match Pdf.writeChecked {} fs #[], small.checked with
+      | .ok a, .ok b => a == b
+      | _, _ => false)
+  let badId := { small with table := { small.table with objStmId := 256 ^ 4 } }
+  check "PDF bounds: object-stream ID refusal carries the overflowing value"
+    (match badId.checked with
+      | .error (.objectNumber n) => n == 256 ^ 4
+      | _ => false)
+  let badSize := { small with table := { small.table with size := 256 ^ 4 } }
+  check "PDF bounds: table-size refusal carries the overflowing value"
+    (match badSize.checked with
+      | .error (.tableSize n) => n == 256 ^ 4
+      | _ => false)
   let outline := Array.replicate 65536 ({ title := "Synthetic" } : Layout.OutlineEntry)
   let large := Pdf.prepare {} fs #[] {} {} outline
   check "PDF bounds: outline entries share the compressed index space"
     (large.compressed.length > 65536)
   check "PDF bounds: oversized object index is refused"
-    (match large.checked with | .error _ => true | .ok _ => false)
+    (match large.checked with
+      | .error (.objectIndex n) => n == large.compressed.length
+      | _ => false)
+  check "PDF bounds: positioned-page producer refuses the oversized outline"
+    (match Pdf.writeChecked {} fs #[] {} {} outline with
+      | .error (.objectIndex n) => n == large.compressed.length
+      | _ => false)
   check "PDF bounds: the old unbounded font census claim is false"
     (match PdfCensus.census large.bytes with
       | .error _ => true
