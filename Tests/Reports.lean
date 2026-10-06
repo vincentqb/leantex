@@ -66,6 +66,7 @@ import Tests.ImageOrigins
 import Tests.SlideLabels
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
+import Tests.PictureMathLabels
 import Tests.PictureBoundary
 import Tests.FontDefaults
 import Tests.Batch
@@ -717,7 +718,17 @@ def reports : List Report := [
     accept := ["sixty-three artifact assertions failed before the lexer boundary supplied a terminal newline, covering shell aliases, both listing styles and both source surfaces",
       "the repaired path paints final and earlier comments alike in native glyphs, emitted PDF commands and typed HTML; validation preserves all authored whitespace and the original content key",
       "a reference presentation compiles to both artifacts; its eight comments share computed screen and print colours, and the final comment is present in the native PDF raster"]
-    state := .guarded "f373a48c" .before .author }
+    state := .guarded "f373a48c" .before .author },
+  { id := "R91", date := "2026-10-06"
+    what := "mathematics in diagram labels was printed as structural plain text in HTML, adding punctuation around scripts"
+    pins := [check% pictureMathLabelChecks, check% pictureHtmlBaselineChecks,
+      check% pictureHtmlFaceChecks, thm% HtmlDoc.labelFormula_glyphs_agree,
+      thm% HtmlDoc.pictureLabelBaseline_projects,
+      thm% HtmlResource.foreignObject_requests_exact]
+    accept := ["365 assertions fail against the previous renderer, across scripts, fractions, roots, five anchor directions and three font scales; native first-letter and script checks already pass",
+      "the repaired labels preserve their mathematical leaves and native PDF ink; passive HTML carriers retain the declared baseline and keep resource validation recursive",
+      "a reference presentation renders intact labels and native scripts in Chromium and Firefox on screen and in print"]
+    state := .guarded "f373a48c" .before .audit }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
