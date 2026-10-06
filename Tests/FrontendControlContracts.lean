@@ -56,6 +56,16 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       unknown.1.salvage.any (·.command == "zzNotAControl") &&
       unknown.1.salvage.all (fun s =>
         unknown.2.any (·.subject == some s.subject)))
+  let recovered : Ir.Recovered :=
+    { code := .W0301, command := "zzUnaccounted", text := "kept" }
+  let recoveryDoc : Ir.Doc :=
+    { body := #[.para #[.text "kept"]], salvage := #[recovered] }
+  let completion := Elab.completePrepared file (Elab.prepare file #[]) #[]
+    recoveryDoc #[] { ctx := { file }, offset := 0 } {}
+  t "completion accounts for the recovery records in its returned document"
+    (completion.1.salvage.all (fun s =>
+      completion.2.1.any (·.subject == some s.subject)) &&
+      Ir.blocksText completion.1.body == "kept")
   let executeFirst (value : String) :=
     Elab.run file ("\\documentclass{article}\\begin{document}" ++
       "\\PackageWarning{\\gdef\\probe{" ++ value ++ "}}{message}" ++

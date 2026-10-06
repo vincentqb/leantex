@@ -16426,6 +16426,49 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 
+def recoveryDiagnostic (item : Ir.Recovered) : Diag :=
+  let (code, message, help) := unknownCmdDiag item.command (RunShape.one false)
+  Diag.of code message none (help := help) (subject := some item.subject)
+
+def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered) : Array Diag :=
+  if diags.any (·.subject == some item.subject) then diags
+  else diags.push (recoveryDiagnostic item)
+
+/-- The final log is accountable to the recovery census of the returned
+IR, including callers that resume elaboration with earlier state.
+Existing reports retain their positions, wording and site counts. -/
+def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag) : Array Diag := Id.run do
+  let mut diags := diags
+  for item in items do
+    diags := accountRecoveredItem diags item
+  return diags
+
+theorem recoveryDiagnostic_subject_exact (item : Ir.Recovered) :
+    (recoveryDiagnostic item).subject = some item.subject := rfl
+
+theorem accountRecovered_run_exact (items : Array Ir.Recovered) (diags : Array Diag) :
+    accountRecovered items diags = items.foldl accountRecoveredItem diags := by
+  simp [accountRecovered, Array.forIn_pure_yield_eq_foldl]
+
+theorem accountRecoveredItem_mem (diags : Array Diag) (item : Ir.Recovered)
+    (d : Diag) (h : d ∈ diags) : d ∈ accountRecoveredItem diags item := by
+  unfold accountRecoveredItem
+  split
+  · exact h
+  · exact Array.mem_push.mpr (Or.inl h)
+
+private theorem accountRecoveredFold_mem (items : List Ir.Recovered)
+    (diags : Array Diag) (d : Diag) (h : d ∈ diags) :
+    d ∈ items.foldl accountRecoveredItem diags := by
+  induction items generalizing diags with
+  | nil => exact h
+  | cons item rest ih => exact ih _ (accountRecoveredItem_mem diags item d h)
+
+theorem accountRecovered_mem (items : Array Ir.Recovered) (diags : Array Diag)
+    (d : Diag) (h : d ∈ diags) : d ∈ accountRecovered items diags := by
+  rw [accountRecovered_run_exact, ← Array.foldl_toList]
+  exact accountRecoveredFold_mem items.toList diags d h
+
 /-- The actual prepared-frontend tail, factored so its contract can name
 the returned document and log without unfolding the body elaborator. -/
 def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
@@ -16443,9 +16486,9 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, Diag.tallySites
+  (doc, Diag.tallySites (accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
-      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences),
+      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences)),
     { bib := st.spans.bib
       images := st.spans.images
       frames := st.spans.frames.sites

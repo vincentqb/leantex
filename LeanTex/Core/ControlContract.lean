@@ -137,4 +137,127 @@ theorem configSkip_operands_agree (file : String) (scan : Compat.BoundaryScan)
     Compat.finishConfigSkipDocument_source_exact,
     Compat.finishConfigSkipDocument_source_exact]
 
+/-- Recovery is accounted by its structured command identity, the same
+census key the final diagnostic judge reads. -/
+def RecoveryNamed (ds : Array Diag) (item : Ir.Recovered) : Prop :=
+  ∃ d ∈ ds, d.subject = some item.subject
+
+theorem accountRecoveredItem_named (ds : Array Diag) (item : Ir.Recovered) :
+    RecoveryNamed (accountRecoveredItem ds item) item := by
+  unfold accountRecoveredItem
+  split
+  · rename_i h
+    rcases Array.any_eq_true'.mp h with ⟨d, hd, hs⟩
+    exact ⟨d, hd, by simpa only [beq_iff_eq] using hs⟩
+  · exact ⟨recoveryDiagnostic item, Array.mem_push_self,
+      recoveryDiagnostic_subject_exact item⟩
+
+private theorem recoveryFold_preserves (items : List Ir.Recovered)
+    (ds : Array Diag) (item : Ir.Recovered) (h : RecoveryNamed ds item) :
+    RecoveryNamed (items.foldl accountRecoveredItem ds) item := by
+  induction items generalizing ds with
+  | nil => exact h
+  | cons x xs ih =>
+    rcases h with ⟨d, hd, hs⟩
+    exact ih _ ⟨d, accountRecoveredItem_mem ds x d hd, hs⟩
+
+private theorem recoveryFold_names (items : List Ir.Recovered)
+    (ds : Array Diag) (item : Ir.Recovered) (h : item ∈ items) :
+    RecoveryNamed (items.foldl accountRecoveredItem ds) item := by
+  induction items generalizing ds with
+  | nil => simp at h
+  | cons x xs ih =>
+    rcases List.mem_cons.mp h with rfl | h
+    · exact recoveryFold_preserves xs _ item (accountRecoveredItem_named ds item)
+    · exact ih _ h
+
+/-- Each recovery in the returned IR has a report, even when completion
+resumes a document whose earlier log did not accompany its recovery data. -/
+theorem accountRecovered_named (items : Array Ir.Recovered)
+    (ds : Array Diag) (item : Ir.Recovered) (h : item ∈ items) :
+    RecoveryNamed (accountRecovered items ds) item := by
+  rw [accountRecovered_run_exact, ← Array.foldl_toList]
+  exact recoveryFold_names items.toList ds item (Array.mem_toList_iff.mpr h)
+
+private theorem recovery_tally (ds : Array Diag) (item : Ir.Recovered)
+    (h : RecoveryNamed ds item) : RecoveryNamed (Diag.tallySites ds) item := by
+  rcases h with ⟨d, hd, hs⟩
+  rcases Array.mem_iff_getElem.mp hd with ⟨i, hi, he⟩
+  rcases Diag.tallySites_id ds i hi with ⟨d', hd', _, _, _, _, _, hs'⟩
+  exact ⟨d', Array.mem_iff_getElem?.mpr ⟨i, hd'⟩, hs'.trans (he ▸ hs)⟩
+
+/-- The actual document completion names the recovery census of the
+document it returns, after colour realization and all document judges. -/
+theorem completePrepared_recovery_named (file : String) (p : Prepared)
+    (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
+    (report : PictureReportContext) (st : ESt) (item : Ir.Recovered)
+    (h : item ∈ (completePrepared file p earlier doc table report st).1.salvage) :
+    RecoveryNamed (completePrepared file p earlier doc table report st).2.1 item := by
+  unfold completePrepared at h ⊢
+  dsimp only at h ⊢
+  exact recovery_tally _ item (accountRecovered_named _ _ item h)
+
+/-- Every production declaration/body run reaches the accounting boundary.
+No premise about the body's commands or its earlier diagnostic log is
+needed. -/
+theorem runPrepared_recovery_named (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
+    (item : Ir.Recovered)
+    (h : item ∈ (runPrepared file p earlier metric withdrawn).1.salvage) :
+    RecoveryNamed (runPrepared file p earlier metric withdrawn).2.1 item := by
+  rcases runPrepared_complete_exact file p earlier metric withdrawn with
+    ⟨doc, table, report, st, heq⟩
+  rw [heq] at h ⊢
+  exact completePrepared_recovery_named file p earlier doc table report st item h
+
+attribute [local irreducible] runPrepared prepare prepareExecuted
+
+/-- Withdrawal selects a complete run; source erasure and reference
+diagnostics preserve its recovery identities. This is the final public
+frontend result, not the local warning helper's log. -/
+theorem runPreparedFinal_recovery_named (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
+    (h : item ∈ (runPreparedFinal file p earlier metric).1.salvage) :
+    RecoveryNamed (runPreparedFinal file p earlier metric).2 item := by
+  let first := runPrepared file p earlier metric
+  let chosen := if first.2.2.fallbacks.isEmpty then first
+    else runPrepared file p earlier metric first.2.2.fallbacks
+  change item ∈ chosen.1.salvage at h
+  change RecoveryNamed (Diag.tallySites (chosen.2.1 ++
+    Ir.refDiags chosen.2.2.labels (ReqSpans.spanOf chosen.2.2.refs) chosen.1)) item
+  have hchosen : RecoveryNamed chosen.2.1 item := by
+    dsimp only [chosen] at h ⊢
+    by_cases hempty : first.2.2.fallbacks.isEmpty = true
+    · simp only [hempty, ↓reduceIte] at h ⊢
+      exact runPrepared_recovery_named file p earlier metric #[] item h
+    · simp only [hempty] at h ⊢
+      exact runPrepared_recovery_named file p earlier metric first.2.2.fallbacks item h
+  apply recovery_tally
+  rcases hchosen with ⟨d, hd, hs⟩
+  exact ⟨d, Array.mem_append.mpr (Or.inl hd), hs⟩
+
+/-- Every recovery record in the file-free frontend's returned document is
+named in its final diagnostic array, for arbitrary parsed input. -/
+theorem runRaws_recovery_named (file : String) (raws : Array Raw)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
+    (h : item ∈ (runRaws file raws earlier metric).1.salvage) :
+    (runRaws file raws earlier metric).2.any (·.subject == some item.subject) = true := by
+  rcases runPreparedFinal_recovery_named file (prepare file raws) earlier metric item h with
+    ⟨d, hd, hs⟩
+  exact Array.any_eq_true'.mpr ⟨d, hd, by simp only [hs, BEq.rfl]⟩
+
+/-- The fulfilled-input frontend returns the same recovery guarantee. -/
+theorem runExecuted_recovery_named (file : String) (executed : Compat.Executed)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
+    (h : item ∈ (runExecuted file executed earlier metric).1.salvage) :
+    RecoveryNamed (runExecuted file executed earlier metric).2 item :=
+  runPreparedFinal_recovery_named file (prepareExecuted file executed) earlier metric item h
+
+/-- Lexing and parsing feed the same production frontend; its final
+recovery census is named for every source string, including malformed ones. -/
+theorem run_recovery_named (file input : String) (item : Ir.Recovered)
+    (h : item ∈ (run file input).1.salvage) :
+    (run file input).2.any (·.subject == some item.subject) = true :=
+  runRaws_recovery_named file _ _ _ item h
+
 end LeanTex.Core.Elab

@@ -155,6 +155,7 @@ theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
       (finishPictureKeys report
         (Contrast.realizeDoc doc (colorSiteOf st.spans.colors)).1 p.picSets st).diags.map
           p.sourceTriggers.attribute := Array.mem_map.mpr ⟨d, hd, rfl⟩
+  apply accountRecovered_mem
   simp only [Array.mem_append, hm, or_true, true_or]
 
 /-- The actual prepared run: an engine picture in the returned document
