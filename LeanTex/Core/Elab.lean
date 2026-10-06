@@ -15362,6 +15362,7 @@ The pure result equation is exported so contracts cross the diagnostic
 loop without depending on its private iteration state. -/
 def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
   let fragment := refusedTitleFragment s st.refusedTitleBody
+  let st := { st with refusedTitleBody := none }
   (titleStyleMerge s fragment, if fragment.isSome then titleStyleDiagState st else st)
 
 theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
@@ -15706,16 +15707,22 @@ def finishPictureKeys (report : PictureReportContext) (doc : Doc)
         st.diags.extract report.offset st.diags.size }
   else st
 
-/-- Elaborate the whole document: split preamble and body around the
-`document` environment, process declarations, then the body. Picture-key
-accounting is finalized by the public callers against their returned IR. -/
-private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
+/-- The declaration fold's output and the raw regions its continuation
+will read. Execution and declaration binding have finished; selected
+refused bodies are interpreted declaratively at this boundary. -/
+structure DocPreamble where
+  state : PreState
+  decls : Array PDecl
+  body : Array Raw
+  trailing : Array Raw
+
+private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
     (listingReplies : Array ListingReply.Answer := #[]) :
-    EM (Doc × Ir.RefTable × PictureReportContext) := do
+    EM DocPreamble := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -15770,12 +15777,11 @@ private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
                         sets := picSets.map (·.2) } } }
-  -- What a `\tikzset` left unread is named at the line that wrote it, and
-  -- the gate is *who drew the picture* — read below, off the elaborated
-  -- body, once the drawings are facts rather than a configuration.
-  -- What a refused `\maketitle` redefinition still declares, applied once
-  -- the fold has bound everything its body names.
-  let s ← applyRefusedTitleStyle s
+  return { state := s, decls, body, trailing }
+
+private def elabStyledDoc (file : String) (decls : Array PDecl)
+    (body trailing : Array Raw) (s : PreState) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
   -- What refused size redefinitions still declare: the document's ladder.
   let s ← applyRefusedSizeLadder s
   let mut ctx := s.ctx
@@ -16132,6 +16138,36 @@ declare \\assert\{ pages <= N } to take control" }
     else Ir.mapDoc (Ir.resolveRefInlines ctx.locale table) (Ir.resolveRefs ctx.locale table) doc
   return (doc, table, pictureReport)
 
+/-- The production continuation from a completed declaration fold through
+class defaults, body elaboration, numbering, and reference resolution.
+The title body is read once before this continuation consumes its style. -/
+def finishPreamble (file : String) (preamble : DocPreamble) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let s ← applyRefusedTitleStyle preamble.state
+  elabStyledDoc file preamble.decls preamble.body preamble.trailing s
+
+theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
+    (left right : ESt)
+    (h : (applyRefusedTitleStyle preamble.state).run left =
+      (applyRefusedTitleStyle preamble.state).run right) :
+    (finishPreamble file preamble).run left = (finishPreamble file preamble).run right := by
+  change
+    (let (s, st) := (applyRefusedTitleStyle preamble.state).run left
+     (elabStyledDoc file preamble.decls preamble.body preamble.trailing s).run st) =
+    (let (s, st) := (applyRefusedTitleStyle preamble.state).run right
+     (elabStyledDoc file preamble.decls preamble.body preamble.trailing s).run st)
+  rw [h]
+
+private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
+    (picSets : Array (Pos × Array Raw) := #[])
+    (picMacros : Array (String × String) := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[])
+    (listingReplies : Array ListingReply.Answer := #[]) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let preamble ← beginDoc file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
+  finishPreamble file preamble
+
 /-- Elaborate a document and account for every unread setting of its
 engine pictures. The output gate is read from the completed body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
@@ -16413,20 +16449,34 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
 
+/-- Run the production declaration fold, retaining its continuation state.
+Boundary withdrawal reruns this fold with the new picture environment. -/
+def preparedPreamble (file : String) (p : Prepared)
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
+    (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
+  -- One warn-once key set for the document, not one per pass: the rewrite
+  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
+  -- starts from what the document has already been told, not from empty.
+  (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
+    p.listingReplies).run { warnedUnknown := p.warned }
+
+/-- Finish a production preamble and run all prepared-document judges.
+This is the continuation used by `runPrepared`, including diagnostic
+attribution, picture accounting, contrast realization and request spans. -/
+def runPreamble (file : String) (p : Prepared) (earlier : Array Diag)
+    (preamble : DocPreamble) (initial : ESt) : Doc × Array Diag × ReqSpans :=
+  let ((doc, table, report), st) := (finishPreamble file preamble).run initial
+  completePrepared file p earlier doc table report st
+
 /-- Elaborate prepared input against a measurement, with the boundary
 requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
 def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (picWithdrawn : Array String := #[]) :
-    Doc × Array Diag × ReqSpans :=
-  -- One warn-once key set for the document, not one per pass: the rewrite
-  -- fires keys this walk also fires (`spec:overlay`), so the elaborator
-  -- starts from what the document has already been told, not from empty.
-  let ((doc, table, report), st) :=
-    (elabDocCore file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-      p.listingReplies).run { warnedUnknown := p.warned }
-  completePrepared file p earlier doc table report st
+    (picWithdrawn : Array String := #[]) : Doc × Array Diag × ReqSpans :=
+  let (preamble, st) := preparedPreamble file p picMetric picWithdrawn
+  runPreamble file p earlier preamble st
 
+attribute [local irreducible] preparedPreamble finishPreamble completePrepared in
 /-- The private body interpreter reaches the public document completion
 boundary. Proofs about that boundary need no unfolding of its recursive
 state machine. -/
@@ -16435,11 +16485,13 @@ theorem runPrepared_complete_exact (file : String) (p : Prepared)
     ∃ doc table report st,
       runPrepared file p earlier metric withdrawn =
         completePrepared file p earlier doc table report st := by
-  unfold runPrepared
-  generalize (elabDocCore file p.raws p.picPre p.picSets p.picMacros metric withdrawn
-    p.listingReplies).run { warnedUnknown := p.warned } = result
-  rcases result with ⟨⟨doc, table, report⟩, st⟩
-  exact ⟨doc, table, report, st, rfl⟩
+  cases hphase : preparedPreamble file p metric withdrawn with
+  | mk preamble initial =>
+    cases hresult : (finishPreamble file preamble).run initial with
+    | mk result st =>
+      obtain ⟨doc, table, report⟩ := result
+      refine ⟨doc, table, report, st, ?_⟩
+      simp only [runPrepared, hphase, runPreamble, hresult]
 
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
 written for another engine compiles as written. Returns the request spans
@@ -16469,13 +16521,25 @@ again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
 ships, the subset's drawing with its refusals named. The first pass — the
 requests, stated from the document alone — is `runRawsSpanned`'s. -/
-def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
-    (picMetric : Ir.Pic.LabelMetric) :
+def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
     Doc × Array Diag :=
-  let first := runPrepared file p earlier picMetric
+  let first := pass #[]
   let (doc, diags, rs) := if first.2.2.fallbacks.isEmpty then first
-    else runPrepared file p earlier picMetric first.2.2.fallbacks
+    else pass first.2.2.fallbacks
   (Ir.eraseLocations doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
+
+def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
+    (picMetric : Ir.Pic.LabelMetric) : Doc × Array Diag :=
+  finishPreparedRuns (fun withdrawn => runPrepared file p earlier picMetric withdrawn)
+
+/-- The actual frontend's declaration folds and complete continuation,
+once for each boundary-withdrawal environment. -/
+theorem runPreparedFinal_preamble_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
+    runPreparedFinal file p earlier metric =
+      finishPreparedRuns (fun withdrawn =>
+        let phase := preparedPreamble file p metric withdrawn
+        runPreamble file p earlier phase.1 phase.2) := rfl
 
 /-- Elaborate parsed input on the span-free, file-free path. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
