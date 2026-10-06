@@ -6,13 +6,31 @@ open ProofSources
 
 def auditCommand (root : System.FilePath) (names manifest : Array String) : String :=
   "#audit_proofs [" ++ String.intercalate ", " (names.toList.map reprStr) ++ "] from " ++
-  reprStr root.toString ++ " manifest [" ++
+  reprStr root.toString ++ " with [" ++
   String.intercalate ", " (manifest.toList.map reprStr) ++ "]\n"
 
 def wrapper (root : System.FilePath) (names manifest : Array String) : String :=
   "import scripts.ProofAudit\n" ++
   String.join (names.toList.map fun name => "import " ++ importName name ++ "\n") ++
   auditCommand root names manifest
+
+/-- Preserve the source's modern/legacy mode and import visibility. Importing
+the auditor normally initializes elaborators; replaying a freshly imported
+environment in-process would leave their initializers unexecuted. -/
+def sourceWrapper (file : System.FilePath) : IO String := do
+  let input ← IO.FS.readFile file
+  let (header, _, msgs) ← Lean.Parser.parseHeader (Lean.Parser.mkInputContext input file.toString)
+  if msgs.hasErrors then
+    throw <| IO.userError s!"proof audit: cannot parse imports of {file}"
+  let modern := Lean.Elab.HeaderSyntax.isModule header
+  let imports := Lean.Elab.HeaderSyntax.imports header |>.toList.map fun imp =>
+    (if modern && imp.isExported then "public " else "") ++
+    (if modern && imp.isMeta then "meta " else "") ++ "import " ++
+    (if imp.importAll then "all " else "") ++ imp.module.toString ++ "\n"
+  return (if modern then "module\n" else "") ++ "prelude\n" ++
+    String.join imports ++ (if modern then "meta " else "") ++
+    "import scripts.ProofAudit\n#audit_source " ++
+    reprStr file.toString ++ "\n"
 
 def compile (file : System.FilePath) (extra : Array String := #[])
     (search : Option System.FilePath := none) : IO IO.Process.Output := do
@@ -27,6 +45,15 @@ def checkGroup (dir : System.FilePath) (index : Nat)
     (names manifest : Array String) : IO Bool := do
   let file := dir / s!"Audit{index}.lean"
   IO.FS.writeFile file (wrapper (← IO.currentDir) names manifest)
+  let out ← compile file
+  if out.exitCode != 0 then
+    IO.eprint (out.stdout ++ out.stderr)
+    return false
+  return true
+
+def checkSource (dir : System.FilePath) (index : Nat) (source : System.FilePath) : IO Bool := do
+  let file := dir / s!"Source{index}.lean"
+  IO.FS.writeFile file (← sourceWrapper source)
   let out ← compile file
   if out.exitCode != 0 then
     IO.eprint (out.stdout ++ out.stderr)
@@ -59,6 +86,8 @@ def verify : IO UInt32 := do
     let mut passed := true
     for batch in (groups files).zipIdx do
       if !(← checkGroup dir batch.2 batch.1 (files.map moduleName)) then passed := false
+    for (source, index) in files.zipIdx do
+      if !(← checkSource dir index source) then passed := false
     if passed then
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
     return if passed then 0 else 1
@@ -222,6 +251,52 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "relative source root changes module names"
     (fromRelative == fromAbsolute &&
       fromRelative.all (fun file => !(moduleName file).isEmpty))).run failures
+  -- Anonymous proofs have no declarations in their compiled modules. They must
+  -- be checked in the frontend's saved environment before that environment goes
+  -- away, independently of both hasSorry and diagnostic suppression.
+  let anonymousCases := #[
+    ("ordinary", "example : 1 = 1 := rfl\nexample : 2 + 2 = 4 := by decide\n",
+      true, "2 anonymous examples checked before discard"),
+    ("ordinary-term", "example : Nat := 3\n",
+      true, "1 anonymous examples checked before discard"),
+    ("identifier", "def manifest : Nat := 3\nexample : manifest = 3 := rfl\n",
+      true, "1 anonymous examples checked before discard"),
+    ("foundation", "noncomputable example {α : Sort u} (h : Nonempty α) : α := Classical.choice h\n",
+      true, "1 anonymous examples checked before discard"),
+    ("admitted", s!"set_option {warning} false\nexample : False := by admit\n",
+      false, "depends on [sorryAx]"),
+    ("native", "example : 1 = 1 := by native_decide\n",
+      false, "native_decide"),
+    ("scoped", s!"set_option {warning} false in\nexample : False := by admit\n",
+      false, "depends on [sorryAx]"),
+    ("repeated", s!"set_option {warning} false\nexample : True := True.intro\nexample : False := by admit\n",
+      false, "depends on [sorryAx]"),
+    ("macro", s!"set_option {warning} false\nmacro \"lost_proof\" : command => `(example : False := by admit)\nlost_proof\n",
+      false, "depends on [sorryAx]"),
+    ("quoted", "macro \"unused_proof\" : command => `(example : False := by admit)\ndef sample : String := \"example : False := by admit\"\n/- example : False := by admit -/\n",
+      true, "0 anonymous examples checked before discard"),
+    ("mutual", "mutual\nexample : True := True.intro\nend\n",
+      false, "give it a theorem or definition name"),
+    ("macro-mutual", "macro \"mutual_proof\" : command => `(mutual\nexample : True := True.intro\nend)\nmutual_proof\n",
+      false, "give it a theorem or definition name"),
+    ("guarded", s!"set_option {warning} false\n#guard_msgs in\nexample : False := by admit\n",
+      false, "depends on [sorryAx]")]
+  for modern in [false, true] do
+    for (label, body, okay, diagnostic) in anonymousCases do
+      let source := dir / "Anonymous.lean"
+      IO.FS.writeFile source ((if modern then "module\n" else "") ++ "import Lean\n" ++ body)
+      let built ← compile source #["-R", dir.toString] (some dir)
+      let label := s!"{if modern then "modern" else "legacy"} anonymous {label}"
+      (_, failures) ← (expect (label ++ ": mutation did not compile")
+        (built.exitCode == 0)).run failures
+      if built.exitCode != 0 then IO.eprint (built.stdout ++ built.stderr)
+      let audit := dir / "AnonymousAudit.lean"
+      IO.FS.writeFile audit (← sourceWrapper source)
+      let out ← compile audit #["-R", dir.toString] (some dir)
+      (_, failures) ← (expect label
+        ((out.exitCode == 0) == okay && (out.stdout ++ out.stderr).contains diagnostic)).run failures
+      if (out.exitCode == 0) != okay || !(out.stdout ++ out.stderr).contains diagnostic then
+        IO.eprint (out.stdout ++ out.stderr)
   for failure in failures do IO.eprintln ("proof audit selftest: " ++ failure)
   if failures.isEmpty then IO.println "proof audit selftest: all passed"
   return if failures.isEmpty then 0 else 1

@@ -1,6 +1,9 @@
 module
 
 public meta import Lean.Elab.Command
+public meta import Lean.Elab.Frontend
+public meta import Lean.Elab.Import
+public meta import Lean.Server.InfoUtils
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
 
@@ -18,6 +21,92 @@ meta def projectModule (root : System.FilePath) (name : Name) : IO Bool := do
     return buildRoot.normalize.components.isPrefixOf (← IO.FS.realPath object).normalize.components
   return false
 
+meta def unexpectedAxioms (axioms : Array Name) : Array Name :=
+  axioms.filter fun ax => !#[`Quot.sound, `Classical.choice, `propext].contains ax
+
+/-- Count commands, not words in comments, strings, or syntax quotations.
+Macro expansions are checked separately in the elaborator's command info. -/
+meta def parsedExamples (stx : Syntax) : Array Syntax :=
+  let visit (node : Syntax) : StateM (Array Syntax) (Option Syntax) := do
+    if node.isQuot then return some node
+    if node.isOfKind ``Parser.Command.example then
+      modify (·.push node)
+      return some node
+    return none
+  ((stx.replaceM visit).run #[]).2
+
+/-- The frontend saves an example's kernel environment in its info tree before
+discarding it. Each command gets its own snapshot: consecutive examples reuse
+the same `_example` name, so deduplicating by name across commands loses proofs. -/
+meta def exampleSnapshot (ctx : ContextInfo) (tree : InfoTree) :
+    IO (Option (Name × Environment)) :=
+  (InfoTree.context (.commandCtx ctx.toCommandContextInfo) tree).foldInfoM
+    (init := none) fun inner _ found => do
+      if found.isSome then return found
+      let some name := inner.parentDecl? | return none
+      let .str _ "_example" := (privateToUserName name).eraseMacroScopes | return none
+      unless (inner.env.checked.get.find? name).isSome do return none
+      return some (name, inner.env)
+
+/-- Replay a maintained source with its original imports already initialized.
+Inspect actual parsed/elaborated commands, including macro expansions, and use
+the kernel snapshot saved before each anonymous declaration is discarded.
+Missing snapshots are a refusal, never evidence of a completed proof. -/
+elab "#audit_source" file:str : command => do
+  let path := file.getString
+  let input ← IO.FS.readFile path
+  let ictx := Parser.mkInputContext input path
+  let (header, ps, msgs) ← Parser.parseHeader ictx
+  let env ← getEnv
+  unless HeaderSyntax.isModule header == env.header.isModule do
+    throwError "proof audit: {path}: source and audit wrapper disagree on module mode"
+  for imp in HeaderSyntax.imports header do
+    unless env.header.moduleNames.contains imp.module do
+      throwError "proof audit: {path}: source import {imp.module} is absent from the audit wrapper"
+  let opts := Elab.async.set (← getOptions) false
+  let state ← IO.processCommands ictx ps (Command.mkState env msgs opts)
+  if state.commandState.messages.hasErrors then
+    for msg in state.commandState.messages.toList do
+      if msg.severity == .error then
+        logError m!"proof audit: {path}: source elaboration failed: {← msg.toString}"
+    return
+  let mut expected := state.commands.flatMap parsedExamples
+  let mut observed : Array Syntax := #[]
+  let mut count := 0
+  for tree in state.commandState.infoState.trees do
+    let commands := tree.foldInfoTree (init := #[]) fun ctx node found =>
+      match node with
+      | .node (.ofCommandInfo info) _ =>
+        found.push (ctx, node, info.stx)
+      | _ => found
+    for (ctx, node, command) in commands do
+      expected := expected ++ parsedExamples command
+      unless command.isOfKind ``Parser.Command.declaration &&
+          command[1].isOfKind ``Parser.Command.example do continue
+      let stx := command[1]
+      observed := observed.push stx
+      let pos := ictx.fileMap.toPosition (stx.getPos?.getD 0)
+      let some (name, snapshot) ← exampleSnapshot ctx node
+        | throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example has no checked kernel snapshot; give it a theorem or definition name so the compiled audit can verify it"
+      -- Include auxiliaries even when the resulting example never uses them.
+      let decls := snapshot.constants.map₂.toList.map (·.1) |>.filter (name.isPrefixOf ·)
+      unless decls.contains name do
+        throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example is missing from its kernel snapshot; give it a theorem or definition name"
+      for decl in decls do
+        unless (snapshot.checked.get.find? decl).isSome do
+          throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous auxiliary {decl} has no kernel information"
+        let (axioms, _) ← (collectAxioms decl : CoreM (Array Name)).toIO
+          { fileName := path, fileMap := ictx.fileMap } { env := snapshot }
+        let unexpected := unexpectedAxioms axioms
+        unless unexpected.isEmpty do
+          logError m!"proof audit: {path}:{pos.line}:{pos.column}: anonymous example {decl} depends on {unexpected}"
+      count := count + 1
+  for stx in expected do
+    unless observed.any (·.eqWithInfo stx) do
+      let pos := ictx.fileMap.toPosition (stx.getPos?.getD 0)
+      throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example was not audited before discard; give it a theorem or definition name (including examples nested in mutual or diagnostic commands)"
+  logInfo m!"proof audit: {path}: {count} anonymous examples checked before discard"
+
 /-- Audit the compiled declarations of an explicit source manifest, including
 private and unused declarations. The compiler loads the complete environment;
 checking only exported theorem names would miss private unfinished proofs.
@@ -29,7 +118,7 @@ The accepted foundation is Lean's quotient soundness, classical choice, and
 propositional extensionality. Any additional assumption must be an explicit
 hypothesis of a contract, with its external interpretation checked separately. -/
 elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
-    "manifest" "[" manifest:str,* "]" : command => do
+    "with" "[" manifest:str,* "]" : command => do
   let expected := modules.getElems.map (·.getString.toName)
   if expected.isEmpty then
     throwError "proof audit: an empty source manifest is not verification"
@@ -63,8 +152,7 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
       if (env.checked.get.find? decl).isNone then
         throwError "proof audit: {name}: declaration {decl} has no kernel information"
       let axioms ← liftCoreM (collectAxioms decl)
-      let unexpected := axioms.filter fun ax =>
-        !#[`Quot.sound, `Classical.choice, `propext].contains ax
+      let unexpected := unexpectedAxioms axioms
       if !unexpected.isEmpty then
         logError m!"proof audit: {name}: {decl} depends on {unexpected}"
         failures := failures + 1
