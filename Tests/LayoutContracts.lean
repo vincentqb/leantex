@@ -7,6 +7,58 @@ open Core Core.Dim Core.Ir Core.Layout Core.Font
 private def noDroppedGlyph (out : Out) : Bool :=
   !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
 
+/-- Frame ownership survives an authored running footer: suppressing the
+chrome band changes furniture, not which frame produced a physical page. -/
+def ownershipChecks (fs : FontSet) : Array (String × Bool) :=
+  let geom : Geom := {
+    pageW := pt 220, pageH := pt 120
+    hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
+    hyphenate := false, justify := false }
+  let frame := Block.frame #[.text "Title"] false .top false #[.para #[.text "Body"]]
+  let out := run geom fs none {
+    docClass := .slides, foot := some #[.text "Running footer"], body := #[frame] }
+  let chrome : Chrome := { footerRight := some .frameNumber }
+  let splitFrame := Block.frame #[.text "Title"] false .top false
+    #[.para #[.text "Before"], .pagebreak, .para #[.text "After"]]
+  let split := run geom fs none { docClass := .slides, chrome, body := #[splitFrame] }
+  let following := run geom fs none {
+    docClass := .slides, chrome, body := #[frame, .para #[.text "Outside"]] }
+  let restarted := run geom fs none {
+    docClass := .slides, chrome, frameRestart := some 1, body := #[frame, frame] }
+  let spilling := run geom fs none {
+    docClass := .slides, chrome, body := #[.frame #[.text "Title"] false .top false
+      (Array.replicate 24 (.para #[.text "Body"]))] }
+  let stepped := run geom fs none {
+    docClass := .slides, chrome, body := #[.frame #[.text "Title"] false .top false
+      #[.para #[.text "Body"],
+        .onSteps { first := 2, last := none } #[.para #[.text "Later"]]]] }
+  #[("authored running footer preserves displayed frame attribution",
+    noDroppedGlyph out && out.pages.size == 1 &&
+    out.pages.all (fun p => p.frame == some 1 && p.foot.isNone &&
+      p.frameOrigin == some ⟨0, 1⟩)),
+    ("authored page breaks retain the frame source and shared footer",
+      noDroppedGlyph split && split.pages.size == 2 &&
+      split.pages.all (fun p => p.frameOrigin == some ⟨0, 1⟩ &&
+        p.frame == some 1 && p.foot == chrome.frameFootBand none #[] (some 1) 1 false)),
+    ("flow after a closed frame has no inherited frame ownership or chrome",
+      noDroppedGlyph following && following.pages.size == 2 &&
+      following.pages[0]?.bind (·.frameOrigin) == some ⟨0, 1⟩ &&
+      following.pages[1]?.bind (·.frameOrigin) == none &&
+      following.pages[1]?.bind (·.frame) == none &&
+      following.pages[1]?.bind (·.foot) == none),
+    ("source identity distinguishes restarted display counters",
+      noDroppedGlyph restarted && restarted.pages.size == 2 &&
+      restarted.pages.all (·.frame == some 1) &&
+      restarted.pages.map (·.frameOrigin) == #[some ⟨0, 1⟩, some ⟨1, 1⟩]),
+    ("spill pages retain one source identity and one selected footer",
+      noDroppedGlyph spilling && spilling.pages.size > 1 &&
+      spilling.pages.all (fun p => p.frameOrigin == some ⟨0, 1⟩ &&
+        p.foot == chrome.frameFootBand none #[] (some 1) 1 false)),
+    ("overlays share a source while retaining their actual step identity",
+      noDroppedGlyph stepped && stepped.pages.size == 2 &&
+      stepped.pages.map (·.frameOrigin) == #[some ⟨0, 1⟩, some ⟨0, 2⟩] &&
+      stepped.pages.all (·.frame == some 1))]
+
 /-- Executable counterexamples to the old universal Layout contracts.
 These exercise legitimate pagination and furniture decisions, not a font
 failure or a desired geometry fix encoded as expected broken behaviour.

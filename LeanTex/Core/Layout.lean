@@ -1095,6 +1095,15 @@ structure LinkRect where
   target : String
   deriving Repr, BEq, Inhabited
 
+/-- A frame's identity in the physical layout input: its zero-based block
+index in `pdfView doc` and its one-based overlay step. The displayed frame
+counter may restart, and a step may spill onto several physical pages;
+neither event changes this identity. -/
+structure FrameOrigin where
+  source : Nat
+  step : Nat
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 structure PageOut where
   /-- The shared logical folio and running style at shipment. Physical
   page indices and `from` gates keep their separate meaning. -/
@@ -1118,13 +1127,13 @@ structure PageOut where
   footBox : Option (Sp × Sp) := none
   /-- The footer's resolved colour pair from the frame's palette epoch. -/
   footLook : Option Ir.TitledLook := none
-  /-- The countable frame this page belongs to — its `Ir.frameNumbers`
-  number, written at `finishPage` from the same `.foot` op that carries
-  the footer, so a stepped or spilling frame's pages all bear it. `none`
-  on section pages, the title page, and every page of a
-  flow-class document: the page→frame attribution the partition statement
-  `pages_partition_frames` (Obligations) ranges over. -/
+  /-- The displayed frame counter, read from `Ir.frameNumbers` when a
+  frame opens. It is independent of the selected furniture and is not a
+  source identity: a restart can give several frames the same number. -/
   frame : Option Nat := none
+  /-- Source frame and overlay owning this physical page. Continuation
+  pages retain the identity of the step that spilled. -/
+  frameOrigin : Option FrameOrigin := none
   /-- The bottom edge of this page's page-top chrome bar (`.titleBar`),
   when one painted: the extent the furniture pass lays the headline
   band's corner logos into. -/
@@ -5185,10 +5194,11 @@ private structure B where
   /-- The bottom edge of the open page's `.titleBar` fill, for
   `PageOut.band`: written where the bar paints, cleared with the page. -/
   curBand : Option Sp := none
-  /-- The countable frame owning pages closed from here on, from the same
-  `.foot` ops: written onto each closing page (`finishPage`), so the
-  attribution and the footer can only move together. -/
+  /-- The displayed counter of the frame opened by `.frameOpen`.
+  Furniture changes never assign this counter. -/
   curFrame : Option Nat := none
+  /-- The source frame and overlay opened by `.frameOpen`. -/
+  curFrameOrigin : Option FrameOrigin := none
   /-- The footline band's box — its glyphs' height above and depth below
   the baseline (`segsInk`) — for pages closed from here on, written with
   `curFoot` from the same `.foot` op: the one value the page's text-area
@@ -5603,7 +5613,8 @@ private def B.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
                                    links := links, paths := paths, foot := b.curFoot,
                                    footBox := b.footBox,
                                    footLook := b.curFootLook,
-                                   frame := b.curFrame, band := b.curBand },
+                                   frame := b.curFrame, frameOrigin := b.curFrameOrigin,
+                                   band := b.curBand },
            cur := {}, curBand := none, pageState := b.pageState.ship,
            shrinkAbove := #[], pageShrink := 0, stretchAbove := #[], pageStretch := 0,
            needed := 0, skip := {},
@@ -5622,6 +5633,18 @@ private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool)
   constructor
   · simp [B.finishPage]
   · rfl
+
+/-- The physical shipment door records ownership independently of furniture.
+Closing geometry changes neither the source frame nor its displayed counter
+and leaves the same assignment active for a continuation. -/
+private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
+    ((b.finishPage owed flush).pages.back?.map
+      (fun p => (p.frameOrigin, p.frame, p.foot))) =
+        some (b.curFrameOrigin, b.curFrame, b.curFoot) ∧
+    (b.finishPage owed flush).curFrameOrigin = b.curFrameOrigin ∧
+    (b.finishPage owed flush).curFrame = b.curFrame ∧
+    (b.finishPage owed flush).curFoot = b.curFoot := by
+  exact ⟨by simp [B.finishPage], rfl, rfl, rfl⟩
 
 /-- A y-only rewrite keeps every line's segs: the projection both closing
 transformations (the shrink zip and the distribution `mapIdx`) satisfy. -/
@@ -5808,6 +5831,21 @@ only seeds the next page's `cur`, so every pages-extension fact about
     (b.spillPage o).pages = (b.finishPage 0 b.flushes).pages := by
   unfold B.spillPage
   simp
+
+/-- Repeated title chrome and the overflow warning retain the source and
+footer selected by the actual frame opening. A spill adds a physical page,
+without inventing another source frame or overlay step. -/
+private theorem spillPage_frame_projects (b : B) (over : Sp) :
+    ((b.spillPage over).pages.back?.map
+      (fun p => (p.frameOrigin, p.frame, p.foot))) =
+        some (b.curFrameOrigin, b.curFrame, b.curFoot) ∧
+    (b.spillPage over).curFrameOrigin = b.curFrameOrigin ∧
+    (b.spillPage over).curFrame = b.curFrame ∧
+    (b.spillPage over).curFoot = b.curFoot := by
+  refine ⟨?_, ?_⟩
+  · simpa only [spillPage_pages] using (finishPage_frame_projects b 0 b.flushes).1
+  · simp only [B.spillPage, B.warnSpill, B.reopenChrome]
+    split <;> split <;> exact ⟨rfl, rfl, rfl⟩
 
 /-- The rider door: content that joins the open page with no vertical
 negotiation — no skip, no depth, no page close. A sibling `line` shares
@@ -6799,6 +6837,10 @@ private inductive Op where
   and which is an overflow to report (`warnSpill_accounts`). Cleared at the
   frame's `.brk`. -/
   | frameOpen (breakable : Bool) (source : Option Span)
+      (number : Option Nat) (origin : Option FrameOrigin)
+  /-- Close source ownership after the frame's final page boundary. A
+  `.brk` inside its body only closes a physical page. -/
+  | frameClose
   /-- A colour bar behind the line just placed — a titled block's title.
   Unlike the frame's bar it stands mid-page: `x` across `w` (the measure
   in force where the block stands), one `pad` above the line's ink top to
@@ -6822,12 +6864,9 @@ private inductive Op where
   /-- A progress bar under the line just placed: `bg` across `w` from `x`,
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  /-- The chrome footer for pages closed from here on, with the number of
-  the countable frame the pages belong to. A standout keeps its number
-  while hiding its footer; a section page clears both, and a spill page
-  inherits its frame's. -/
-  | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
-      (look : Option Ir.TitledLook)
+  /-- The selected chrome footer for pages closed from here on. Frame
+  ownership is assigned by `frameOpen`, independently of this band. -/
+  | foot (content : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook)
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
@@ -6965,6 +7004,8 @@ private structure Acc where
   frame. Threaded by `run`'s driver off the one numbering — nothing in the
   walk counts. -/
   frameNum : Option Nat := none
+  /-- Source frame and overlay from the top-level driver. -/
+  frameOrigin : Option FrameOrigin := none
   /-- Source declaration, before an overlay makes several collected frames. -/
   frameSource : Option Span := none
   /-- Countable frames elapsed at this point, read off the same numbering
@@ -7354,6 +7395,12 @@ private def Acc.chromeFoot (a : Acc) (standout : Bool := false) :
   let chrome : Ir.Chrome :=
     { footerLeft := a.chromeL, footerRight := a.chromeR, standoutNote := a.standoutNote }
   chrome.frameFootBand a.frameFoot a.curSection a.frameNum a.frameCount standout
+
+/-- The one footer decision read by both collection and body measurement.
+An authored running footer suppresses chrome without suppressing ownership. -/
+private def Acc.selectedFoot (a : Acc) (standout : Bool) :
+    Option (Array Ir.BandSlot) :=
+  if a.footAllowed then a.chromeFoot standout else none
 
 /-- Zero-ink targets follow the line carrying their next item. A target
 at the selected break rides the next line; trailing targets stay on the
@@ -8706,7 +8753,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
     let a := a.pageBreak
     -- A divider carries no footer; the break above closed the previous
     -- page with its own.
-    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none none) } else a
+    let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
     -- One page of the deck like any frame, on the palette's own ground.
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
@@ -8749,7 +8796,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   -- keep its page style, distribution and footline (`frameHeadingScopeChecks`).
   let a := if divider then a.pageBreak else a
   let a := if !r.inFrame && a.footAllowed then
-      { a with ops := a.ops.push (.foot none none none) } else a
+      { a with ops := a.ops.push (.foot none none) } else a
   let element := match level with
     | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
   let st := r.style element
@@ -9250,13 +9297,24 @@ The shared band rule keeps that furniture choice separate from counting
 the standout, and selects an explicitly restored standout note. -/
 private def collectFrameOpen (a : Acc) (standout breakable : Bool) : Acc :=
   let a := a.pageBreak
-  let a := { a with ops := a.ops.push (.frameOpen breakable a.frameSource) }
-  if a.footAllowed then
-    let band := a.chromeFoot standout
-    let foot := Op.foot band a.frameNum
-      (some ((Ir.Design.ofPalette a.pal).frameFootLook (standout && band.isSome)))
-    { a with ops := a.ops.push foot }
-  else a
+  let band := a.selectedFoot standout
+  let foot := Op.foot band
+    (some ((Ir.Design.ofPalette a.pal).frameFootLook (standout && band.isSome)))
+  { a with ops := (a.ops.push
+      (.frameOpen breakable a.frameSource a.frameNum a.frameOrigin)).push foot }
+
+/-- The real collector emits ownership even when the shared IR rule
+selects no footer. The boundary can pay pending glue, but cannot change
+either decision. -/
+private theorem collectFrameOpen_frame_exact (a : Acc) (standout breakable : Bool) :
+    (collectFrameOpen a standout breakable).ops =
+      ((a.pageBreak.ops.push
+        (.frameOpen breakable a.frameSource a.frameNum a.frameOrigin)).push
+        (.foot (a.selectedFoot standout)
+          (some ((Ir.Design.ofPalette a.pal).frameFootLook
+            (standout && (a.selectedFoot standout).isSome))))) := by
+  unfold collectFrameOpen Acc.pageBreak
+  split <;> rfl
 
 /-- The reader a frame's body is walked with: headings belong to the frame,
 including a frame without a footer. Where the frame's pages carry the
@@ -9265,12 +9323,24 @@ beamer's there: the paper less `\footheight`, `footFloor` of the band's
 box, the floor the page builder stands the body on (`B.bottom`). -/
 private def frameReader (r : Rd) (a : Acc) (standout : Bool) : Rd :=
   let r := { r with inFrame := true }
-  match (if a.footAllowed then a.chromeFoot standout else none) with
+  match a.selectedFoot standout with
   | some band =>
     let (h, d) := bandBox r.fs r.imgs r.geom r.xHeight 1 band
     { r with geom := { r.geom with
         frameTextHeight := some (footFloor r.geom.pageH r.footGap h d) } }
   | none => r
+
+/-- The body reader reserves precisely the footer the collector selected;
+omitting chrome retains the caller's text-height interpretation. -/
+private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) :
+    (frameReader r a standout).geom.frameTextHeight =
+      match a.selectedFoot standout with
+      | some band =>
+        let (h, d) := bandBox r.fs r.imgs r.geom r.xHeight 1 band
+        some (footFloor r.geom.pageH r.footGap h d)
+      | none => r.geom.frameTextHeight := by
+  unfold frameReader
+  split <;> rfl
 
 mutual
 
@@ -9846,7 +9916,7 @@ private def collectBlock (r : Rd) (a : Acc)
       -- inside the frame must reach what follows it (flow scope), so a
       -- saved copy would restore a stale epoch's ink.
       let a := { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
-      a.pageBreak
+      a.pageBreak.pushOp .frameClose
     else
     -- The frame's own ground (`Ir.frameGroundOf`): the title page's
     -- declared one, else the `bg` of the palette in force where the frame
@@ -9898,7 +9968,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := if pageGround.isSome then
         { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
       else a
-    a.pageBreak
+    a.pageBreak.pushOp .frameClose
 
 end
 
@@ -10774,13 +10844,14 @@ private inductive StagedOp where
   | pageGround (bg : Option Ir.Color)
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
   | frameOpen (breakable : Bool) (source : Option Span)
+      (number : Option Nat) (origin : Option FrameOrigin)
+  | frameClose
   | blockBar (color : Ir.Color) (pad x w : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
-      (look : Option Ir.TitledLook)
+  | foot (content : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook)
   | para (j : ParaJob) (t : Task (Array Nat))
   | linkOpen (target : String)
   | linkClose
@@ -11153,13 +11224,17 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
                     openLinks := b.openLinks.map LinkStart.nextPage, closedLinks := #[],
                     frameBreak := none, frameSource := none, spillWarned := false, opened := false }
-  | .frameOpen br source =>
-    b := { b with frameBreak := some br, frameSource := source, spillWarned := false }
+  | .frameOpen br source number origin =>
+    b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
+                  curFrame := number, curFrameOrigin := origin }
+  | .frameClose =>
+    b := { b with curFrame := none, curFrameOrigin := none,
+                  curFoot := none, footBox := none, curFootLook := none }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
-  | .foot c fr look =>
-    b := { b with curFoot := c, curFrame := fr, curFootLook := look
+  | .foot c look =>
+    b := { b with curFoot := c, curFootLook := look
                   footBox := c.map (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1)) }
   | .pin =>
     -- The resume depth clears the chrome's ink: the title bar (the last
@@ -11330,6 +11405,44 @@ private theorem pageOpening_step_projects (fs : FontSet) (imgs : Image.Store)
       st.b.pageState.applyOpening opening ∧
     (stepStaged fs imgs st (.pageOpening opening)).b.pages = st.b.pages := by
   exact ⟨rfl, rfl⟩
+
+/-- Placement reads the collector's source and displayed number directly,
+without conditioning either on the selected footer. -/
+private theorem frameOpen_step_projects (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (br : Bool) (source : Option Span)
+    (number : Option Nat) (origin : Option FrameOrigin) :
+    let next := (stepStaged fs imgs st (.frameOpen br source number origin)).b
+    next.curFrameOrigin = origin ∧ next.curFrame = number ∧
+      next.frameSource = source ∧ next.pages = st.b.pages :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Footer placement sets and measures the selected band, and cannot
+rewrite the source identity or the displayed counter. -/
+private theorem foot_step_projects (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (band : Option (Array Ir.BandSlot)) (look : Option Ir.TitledLook) :
+    let next := (stepStaged fs imgs st (.foot band look)).b
+    next.curFoot = band ∧ next.curFrameOrigin = st.b.curFrameOrigin ∧
+      next.curFrame = st.b.curFrame ∧
+      next.footBox = band.map
+        (bandBox fs imgs st.b.geom st.b.xHeight (st.b.pages.size + 1)) :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Authored physical breaks within a frame keep its ownership and selected
+band; only the explicit frame-close marker ends them. -/
+private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
+    let next := (stepStaged fs imgs st .brk).b
+    next.curFrameOrigin = st.b.curFrameOrigin ∧
+      next.curFrame = st.b.curFrame ∧ next.curFoot = st.b.curFoot := by
+  simp only [stepStaged, Id.run, pure]
+  split <;> exact ⟨rfl, rfl, rfl⟩
+
+/-- Ending a frame clears the assignment before any following flow content
+is placed. The pages already shipped remain unchanged. -/
+private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
+    let next := (stepStaged fs imgs st .frameClose).b
+    next.curFrameOrigin = none ∧ next.curFrame = none ∧ next.curFoot = none ∧
+      next.pages = st.b.pages :=
+  ⟨rfl, rfl, rfl, rfl⟩
 
 private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (hl : st.b.cur.lines.isEmpty = true)
@@ -13014,6 +13127,15 @@ theorem runPost_frames_projects (sh : Shipped) :
   dsimp only [Id.run, bind, pure, Id]
   exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
 
+/-- Physical source identities survive furniture in the same page order as
+displayed counters and selected bands. -/
+theorem runPost_frameOrigins_projects (sh : Shipped) :
+    (runPost sh).pages.map (fun p => (p.frameOrigin, p.frame, p.foot)) =
+      sh.pages.map (fun p => (p.frameOrigin, p.frame, p.foot)) := by
+  unfold runPost
+  dsimp only [Id.run, bind, pure, Id]
+  exact furnishFrom_projects _ _ (fun _ _ => rfl) _ _ _
+
 /-- Running furniture and drawn decoration retain every attributed line
 from the actual shipment, on the same physical page and in the same
 order. The equality includes its segments, geometry and source leaf. -/
@@ -13267,7 +13389,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     match blk with
     | .frame title standout valign breakable body =>
       let num := nums[i]?.getD none
-      acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone
+      acc := { acc with frameNum := num, frameOrigin := some ⟨i, 1⟩,
+                        framesDone := num.getD acc.framesDone
                         frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
       let steps := Ir.frameSteps blk
       if steps ≤ 1 then
@@ -13287,7 +13410,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         -- instead of being selected away before it.
         let leafStart := acc.leafNext
         for k in [1:steps + 1] do
-          acc := collectBlock { rd with step := k } { acc with leafNext := leafStart }
+          acc := collectBlock { rd with step := k }
+            { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
             (.frame title standout valign breakable
               (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
@@ -13310,13 +13434,14 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .pageStyle bg c => .pageStyle bg c
     | .pageGround bg => .pageGround bg
     | .titleBar color pad strut => .titleBar color pad strut
-    | .frameOpen br source => .frameOpen br source
+    | .frameOpen br source number origin => .frameOpen br source number origin
+    | .frameClose => .frameClose
     | .blockBar color pad x w => .blockBar color pad x w
     | .hrule color th => .hrule color th
     | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
-    | .foot c fr look => .foot c fr look
+    | .foot c look => .foot c look
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
@@ -13519,6 +13644,20 @@ theorem frame_pages_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.
       (ship geom fs pats doc imgs frameSpans).pages.map (fun p => (p.frame, p.foot)) := by
   simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
     runPost_frames_projects (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
+
+/-- Running furniture and cut marks preserve the source/step partition
+recorded by physical shipment, including every continuation page. This is
+the postlude bridge; source membership still belongs to the collector and
+placement invariants. -/
+theorem frame_origins_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
+    (run geom fs pats doc imgs frameSpans).pages.map
+        (fun p => (p.frameOrigin, p.frame, p.foot)) =
+      (ship geom fs pats doc imgs frameSpans).pages.map
+        (fun p => (p.frameOrigin, p.frame, p.foot)) := by
+  simpa only [run, runCore, ship, addMarks, Array.map_map, Function.comp_def] using
+    runPost_frameOrigins_projects
+      (shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans)
 
 /-- Physical page order retains the IR folio and furniture decision recorded
 at shipment, through both postlude passes of the actual public run. -/
