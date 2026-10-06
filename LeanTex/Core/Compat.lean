@@ -9500,22 +9500,11 @@ wrapper carries the file name). Reading the file is the driver's effect
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 
-/-- **The name-refusal registry: every code that refuses a declaration by
-name, with the file prefix that would have defined it.** The invariant behind
-it is that a refusal asks the input path first, and the registry is what lets
-that be *quantified* rather than restated per code — a refusal outside the
-list is a refusal nobody checked.
-
-Closed against the code list rather than kept by hand: a refusal carries the
-name it refuses on `Diag.refused`, and every code owes a firing witness, so
-the codes that refuse names are discoverable from the registry of codes
-itself. `nameRefusalRegistryChecks` runs that closure in both directions — a
-row whose code never carries a name is a stale row, and a code that carries
-one without a row is the hole `\usetheme` fell through, refusable without
-being enumerable.
-
-The prefix is this module's because the candidate scan is: a package `foo`
-would be defined by `foo.sty` and a theme `X` by `beamerthemeX.sty`. -/
+/-- Diagnostic codes that carry a refused name, checked in both directions
+by `nameRefusalRegistryChecks`. A code alone does not identify a file-loading
+door: native `\theme` also emits W0319, and `ulem` options emit W0103.
+The loading-call contract is `CompatContract.nameRefusals_asked`, over the
+expanded call inspected by the input reader. -/
 def nameRefusalAsk : List (DiagCode × String) :=
   [(.W0103, ""), (.W0319, "beamertheme")]
 
@@ -9568,25 +9557,159 @@ private def styCandRaw (out : Array String) : Raw → Array String
 
 end
 
-/-- **The invariant this engine owes every declaration it can refuse by
-name: it asks the input path first.** `\usetheme` was refusable — W0319,
-"unknown theme", the document left with no palette at all — and offered no
-candidate, so a theme file sitting beside the document was never opened and
-one unloaded theme cost the document its whole colour design.
-
-Two halves. The *structural* half holds by construction and needs no
-theorem: `themeAsking` is one list, read by the candidate scan and by the
-splice, so a slot cannot be asked for and then not spliced, or spliced under
-a prefix the scan never offered. The *behavioural* half — every slot asks
-for exactly its prefixed file, and no refusable-by-name declaration exists
-outside the registry — is two statements: the first is proved below
-(`themeAsking_candidates`, read through the argument layer rather than by
-kernel reduction, which does not reach through these readers), the second
-still owed (`Obligations.nameRefusals_asked`, which wants a declared
-name-refusal channel on the diagnostic). `themeAskingChecks` keeps the
-quantification running over the registry itself as a floor. -/
+/-- Style-file candidates from a source stream. The input reader calls this
+on each expanded loading request's `call`; the original, unexpanded document
+need not contain a macro-produced name. Native packages do not ask for files.
+`CompatContract.nameRefusals_asked` states the loading-call contract, including
+options, comma-separated package names, and every theme-family prefix. -/
 def localStyCandidates (raws : Array Raw) : Array String :=
   styCandList raws #[] raws.toList 0 0
+
+private theorem packageStep_mem (out : Array String) (p nm : String) :
+    nm ∈ (if p.isEmpty || nativePackages.contains p || out.contains p then out else out.push p) ↔
+    nm ∈ out ∨ (p = nm ∧ nm.isEmpty = false ∧ nativePackages.contains nm = false) := by
+  split
+  · next h =>
+    simp only [Bool.or_eq_true, Array.contains_iff_mem] at h
+    constructor
+    · exact Or.inl
+    · rintro (hm | ⟨rfl, he, hn⟩)
+      · exact hm
+      · rcases h with ((h | h) | h)
+        · simp_all
+        · simp_all
+        · exact h
+  · next h =>
+    simp only [Bool.or_eq_true, not_or, Bool.not_eq_true] at h
+    rw [Array.mem_push]
+    constructor
+    · rintro (hm | rfl)
+      · exact Or.inl hm
+      · exact Or.inr ⟨rfl, h.1.1, h.1.2⟩
+    · rintro (hm | ⟨rfl, _, _⟩)
+      · exact Or.inl hm
+      · exact Or.inr rfl
+
+private theorem packageFold_mem (parts : List String) (out : Array String) (nm : String) :
+    nm ∈ (parts.foldl (init := out) fun acc p =>
+      let p := p.trimAscii.toString
+      if p.isEmpty || nativePackages.contains p || acc.contains p then acc else acc.push p) ↔
+    nm ∈ out ∨ ∃ p ∈ parts, p.trimAscii.toString = nm ∧
+      nm.isEmpty = false ∧ nativePackages.contains nm = false := by
+  induction parts generalizing out with
+  | nil => simp
+  | cons p rest ih =>
+    simp only [List.foldl_cons, ih, packageStep_mem, List.mem_cons]
+    constructor
+    · rintro ((hm | hp) | ⟨q, hq, hn⟩)
+      · exact Or.inl hm
+      · exact Or.inr ⟨p, Or.inl rfl, hp⟩
+      · exact Or.inr ⟨q, Or.inr hq, hn⟩
+    · rintro (hm | ⟨q, (rfl | hq), hn⟩)
+      · exact Or.inl (Or.inl hm)
+      · exact Or.inl (Or.inr hn)
+      · exact Or.inr ⟨q, hq, hn⟩
+
+private theorem themeStep_monotone (out : Array String) (pre nm target : String)
+    (hm : target ∈ out) :
+    target ∈ (if nm.isEmpty then out else
+      let p := pre ++ nm
+      if out.contains p then out else out.push p) := by
+  split
+  · exact hm
+  · dsimp only
+    split
+    · exact hm
+    · exact Array.mem_push.mpr (Or.inl hm)
+
+mutual
+private theorem styCandList_monotone (raws : Array Raw) (out : Array String)
+    (xs : List Raw) (i skip : Nat) (nm : String) (hm : nm ∈ out) :
+    nm ∈ styCandList raws out xs i skip := by
+  cases xs with
+  | nil => exact hm
+  | cons x xs =>
+    cases skip with
+    | succ skip =>
+      rw [styCandList]
+      exact styCandList_monotone raws out xs (i + 1) skip nm hm
+    | zero =>
+      cases x with
+      | ctrl cn pos =>
+        by_cases hup : cn = "usepackage"
+        · subst cn
+          rw [styCandList]
+          apply styCandList_monotone
+          exact (packageFold_mem _ out nm).mpr (Or.inl hm)
+        · by_cases hrp : cn = "RequirePackage"
+          · subst cn
+            rw [styCandList]
+            apply styCandList_monotone
+            exact (packageFold_mem _ out nm).mpr (Or.inl hm)
+          · rw [styCandList]
+            case x_3 => exact fun h => hup h
+            case x_4 => exact fun h => hrp h
+            split
+            · apply styCandList_monotone
+              exact themeStep_monotone out _ _ nm hm
+            · exact styCandList_monotone raws out xs (i + 1) 0 nm hm
+      | word w pos | sym c pos | group body pos | math display body pos | env name body pos | verb name body pos | par pos | space =>
+        rw [styCandList]
+        · apply styCandList_monotone
+          exact styCandRaw_monotone out _ nm hm
+        all_goals simp
+termination_by sizeOf xs
+
+private theorem styCandRaw_monotone (out : Array String) (r : Raw) (nm : String)
+    (hm : nm ∈ out) : nm ∈ styCandRaw out r := by
+  cases r with
+  | env name body pos =>
+    simp only [styCandRaw]
+    split
+    · have hb : sizeOf body = 1 + sizeOf body.toList := rfl
+      exact styCandList_monotone body out body.toList 0 0 nm hm
+    · exact hm
+  | word w pos | ctrl cn pos | sym c pos | group body pos | math display body pos | verb name body pos | par pos | space => exact hm
+termination_by sizeOf r
+end
+
+/-- Every nonempty, non-native package name read at this expanded loading
+call remains a candidate after scanning arbitrary trailing input. -/
+theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
+    (tail : Array Raw) (nm : String)
+    (hcn : cn = "usepackage" ∨ cn = "RequirePackage")
+    (hname : ∃ p ∈ (rawSrc ((takeGroups (#[.ctrl cn pos] ++ tail)
+        (takeOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).splitOn ",",
+      p.trimAscii.toString = nm)
+    (hne : nm.isEmpty = false) (hnative : nativePackages.contains nm = false) :
+    nm ∈ localStyCandidates (#[.ctrl cn pos] ++ tail) := by
+  rcases hcn with rfl | rfl <;>
+    simp only [localStyCandidates, Array.toList_append, List.singleton_append]
+  all_goals
+    rw [styCandList]
+    apply styCandList_monotone
+    apply (packageFold_mem _ _ nm).mpr
+    obtain ⟨p, hp, hpn⟩ := hname
+    exact Or.inr ⟨p, hp, hpn, hne, hnative⟩
+
+/-- Every nonempty theme name read at this expanded loading call remains
+its registry-prefixed candidate after scanning arbitrary trailing input. -/
+theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
+    (tail : Array Raw) (nm : String)
+    (hup : cn ≠ "usepackage") (hrp : cn ≠ "RequirePackage")
+    (hpre : themeAsking.lookup cn = some pre)
+    (hname : (rawSrc ((takeGroups (#[.ctrl cn pos] ++ tail)
+      (takeOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).trimAscii.toString = nm)
+    (hne : nm.isEmpty = false) :
+    pre ++ nm ∈ localStyCandidates (#[.ctrl cn pos] ++ tail) := by
+  simp only [localStyCandidates, Array.toList_append, List.singleton_append]
+  rw [styCandList]
+  case x_3 => exact fun h => hup h
+  case x_4 => exact fun h => hrp h
+  simp only [hpre, Nat.zero_add, hname, hne, Bool.false_eq_true, ↓reduceIte,
+    Array.contains_empty, Array.push_empty]
+  apply styCandList_monotone
+  simp
 
 /-- One slot of the theme-loading family, read through the argument layer:
 the scan's answer for a preamble holding only that command. The two
