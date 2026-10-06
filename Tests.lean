@@ -231,6 +231,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   layoutSourceChecks ref oneFace
   for (name, ok) in LeanTex.Tests.LayoutContracts.ownershipChecks oneFace do
     check ref s!"layout ownership: {name}" ok
+  for (name, ok) in LeanTex.Tests.LayoutContracts.attributionChecks oneFace do
+    check ref s!"layout attribution: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.reflowChecks oneFace do
     check ref s!"layout reflow: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.footerChecks oneFace do

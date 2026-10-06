@@ -95,26 +95,11 @@ def blockLeafInk (t : Struct.Tree) (k : Nat) : List Char :=
       if id == k then some (ls.toList.flatMap fun (_, l) => inkChars l.census) else none
     | none => none).flatten
 
--- owed: lines_attributed_covers
--- owner: LeanTex.Core.Layout
--- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8 (the attribution channel indexes the structure tree's leaf array); PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
--- blocker: Layout.lines_attributed_projects now preserves the actual shipment's attributed lines, ink, geometry and page order through both postlude passes. Collection and placement still need an invariant connecting every non-furniture ink line to a valid Struct leaf, stated inside Layout over their own state; postlude preservation cannot supply a missing attribution.
--- goldens: no
-/-- Attribution covers the ink, weak public form: in a document of plain
-text paragraphs, every line that is not furniture and ships ink names a
-structure leaf, and the leaf is an index into the tree of the document
-the pages set (`Struct.leaves (Struct.ofDoc (Layout.pdfView doc))`, the
-array `structTree_leaves_id` numbers). The unrestricted form is false:
-generated ink the tree does not census (the abstract heading, the
-headline band, an `\item` with no text) ships lines with no leaf. -/
-theorem lines_attributed_covers
-    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns) (doc : Ir.Doc)
-    (hplain : ∀ b ∈ doc.body, plainPara b) :
-    ∀ p ∈ (Layout.run geom fs pats doc).pages, ∀ l ∈ p.lines,
-      l.furniture = false → lineInk l ≠ [] →
-        ∃ k, l.leaf = some k ∧
-          k < (Struct.ofDoc (Layout.pdfView doc)).leaves.size := by
-  sorry
+-- Layout.lines_attributed_covers connects every body line containing
+-- glyphs to a valid structure leaf through actual collection, placement,
+-- pagination and furniture. It counts all glyph characters, without the
+-- whitespace filter this former proposal used. LayoutContracts.attributionChecks
+-- exercises repeated paragraphs, spacing, pagination and furniture.
 
 -- owed: lines_attributed_text
 -- owner: LeanTex.Core.Layout
