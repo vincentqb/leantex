@@ -8128,6 +8128,45 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
           st := { st with after := some Ir.titleBlockAfter }
   return if st == ({} : Ir.ElementStyle) then none else some st
 
+mutual
+
+/-- The syntax read by a refused title body's declarative interpreter.
+Normalize only here, after execution has selected the body: a conditional
+or a definition elsewhere must still see the spelling the author wrote.
+This is a raw-tree walk, before IR; its list companion preserves positions,
+grouping and order. Math and verbatim are opaque to the title reader. -/
+def declarativeTitleRaw : Raw → Raw
+  | .ctrl n p => .ctrl (barCtrlName n) p
+  | .group body p => .group (declarativeTitleList #[] body.toList) p
+  | .env n body p => .env n (declarativeTitleList #[] body.toList) p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .sym c p => .sym c p
+  | .math d body p => .math d body p
+  | .verb n s p => .verb n s p
+
+def declarativeTitleList (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => declarativeTitleList (acc.push (declarativeTitleRaw r)) rest
+
+end
+
+theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
+    (declarativeTitleList acc rs).toList =
+      acc.toList ++ rs.map declarativeTitleRaw := by
+  induction rs generalizing acc with
+  | nil => simp [declarativeTitleList]
+  | cons r rs ih => simp [declarativeTitleList, ih, List.append_assoc]
+
+/-- The complete declarative readout, including event interpretation. Both
+the production preamble finalizer and the spelling contract read this
+value; neither exposes the scanner's private event or state types. -/
+def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
+    Option Ir.ElementStyle :=
+  barInterpret (barScanList user bound {} #[]
+    (declarativeTitleList #[] body.toList).toList)
+
 private def referencesParam (name : String) : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest => n == name || referencesParam name rest
@@ -15285,13 +15324,26 @@ extracted keys merge *under* anything the document declared itself
 the body gains the clause naming what survived. A redefinition that later
 won (the built-in will not render) extracts nothing; a body-walk
 redefinition keeps plain rule (b) — the venue's site is the preamble. -/
-private def applyRefusedTitleStyle (s : PreState) : EM PreState := do
-  let some body := (← get).refusedTitleBody | return s
-  if (lookupUser s.ctx "maketitle").isSome then return s
-  let events := barScanList s.ctx.user s.ctx.limit {} #[] body.toList
-  let some est := barInterpret events | return s
-  let merged := Theme.styleMerge ((s.styles.find? "titlepage").getD {}) est
-  modify fun st => Id.run do
+def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
+    Option Ir.ElementStyle := do
+  let body ← body
+  if (lookupUser s.ctx "maketitle").isSome then none
+  else refusedTitleReadout s.ctx.user s.ctx.limit body
+
+/-- The production merge, over the preamble fold's complete result. Explicit
+document styles retain their precedence over a refused body's readout. -/
+def titleStyleMerge (s : PreState) (fragment : Option Ir.ElementStyle) : PreState :=
+  match fragment with
+  | none => s
+  | some est =>
+    let styles := s.styles.declare "titlepage"
+      (Theme.styleMerge ((s.styles.find? "titlepage").getD {}) est)
+    { s with styles := styles }
+
+def titleStyleApply (s : PreState) (body : Option (Array Raw)) : PreState :=
+  titleStyleMerge s (refusedTitleFragment s body)
+
+private def titleStyleDiagState (st : ESt) : ESt := Id.run do
     let mut diags := st.diags
     let mut i := diags.size
     for _ in [0:st.diags.size] do
@@ -15303,7 +15355,16 @@ private def applyRefusedTitleStyle (s : PreState) : EM PreState := do
             message := d.message ++ ", styled by the redefinition's rules and spacing" } h
           break
     return { st with diags := diags, refusedTitleBody := none }
-  return { s with styles := s.styles.declare "titlepage" merged }
+
+/-- Apply the readout and retain the original refusal's site and provenance.
+The pure result equation is exported so contracts cross the diagnostic
+loop without depending on its private iteration state. -/
+def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
+  let fragment := refusedTitleFragment s st.refusedTitleBody
+  (titleStyleMerge s fragment, if fragment.isSome then titleStyleDiagState st else st)
+
+theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
+    ((applyRefusedTitleStyle s).run st).1 = titleStyleApply s st.refusedTitleBody := rfl
 
 /-- Rule (b)'s remainder for the size ladder: a refused size-command
 redefinition whose body opens with `\@setfontsize\X<size><leading>`
