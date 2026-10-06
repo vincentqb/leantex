@@ -11412,6 +11412,19 @@ private inductive StagedOp where
   | anchorRule (parskip : Glue)
   | noInterline
 
+/-- The operations emitted by a plain source paragraph and its boundary.
+The source bound belongs to the paragraph job; boundary operations carry
+no text and cannot manufacture a source label. -/
+private def Op.SourceBound (n : Nat) : Op → Prop
+  | .para j => j.SourceBound n
+  | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
+  | _ => False
+
+private def StagedOp.SourceBound (n : Nat) : StagedOp → Prop
+  | .para j _ => j.SourceBound n
+  | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
+  | _ => False
+
 /-- One column of a row as placed: where its ink starts in the page's
 arrays, its first baseline when a picture opened it (a label line is no
 baseline of the column's), and where the builder stood when it ended —
@@ -13036,6 +13049,73 @@ decreasing_by all_goals omega
 private def placeFrom (fs : FontSet) (imgs : Image.Store)
     (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
   (placeFlowFrom fs imgs staged { placed := st } si).placed
+
+private theorem sourceBound_keepHeading {n : Nat} (b : B) (j : ParaJob)
+    (lines : Nat) (hb : b.SourceBound n) :
+    (b.keepHeading j lines).SourceBound n := by
+  unfold B.keepHeading
+  split
+  · exact sourceBound_spillPage b 0 hb
+  · exact hb
+
+private theorem sourceBound_stepStaged {n : Nat} (fs : FontSet)
+    (imgs : Image.Store) (st : StepSt) (op : StagedOp)
+    (hb : st.b.SourceBound n) (ho : op.SourceBound n) :
+    (stepStaged fs imgs st op).b.SourceBound n := by
+  cases op <;> simp only [StagedOp.SourceBound] at ho
+  all_goals try contradiction
+  case para j t =>
+    simp only [stepStaged, Id.run, Id, pure]
+    split <;> exact sourceBound_placePara fs _ j t.get ho
+      (sourceBound_keepHeading st.b j t.get.size hb)
+  all_goals
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_keepAt {n : Nat} (b : B) (fs : FontSet)
+    (imgs : Image.Store) (staged : Array StagedOp) (si : Nat) (op : StagedOp)
+    (ho : op.SourceBound n) :
+    (keepAt b fs imgs staged si op).SourceBound n := by
+  cases op with
+  | para j t =>
+    simp only [keepAt]
+    split
+    · exact ⟨ho.source, ho.notes, ho.marker, ho.rule⟩
+    · exact ho
+  | _ => exact ho
+
+private theorem sourceBound_stepFlow {n : Nat} (fs : FontSet)
+    (imgs : Image.Store) (st : FlowSt) (op : StagedOp)
+    (hb : st.placed.b.SourceBound n) (ho : op.SourceBound n) :
+    (stepFlow fs imgs st op).placed.b.SourceBound n := by
+  cases op <;> simp only [StagedOp.SourceBound] at ho
+  all_goals try contradiction
+  all_goals exact sourceBound_stepStaged fs imgs st.placed _ hb ho
+
+private theorem sourceBound_placeFlowFrom {n : Nat} (fs : FontSet)
+    (imgs : Image.Store) (staged : Array StagedOp) (st : FlowSt) (si : Nat)
+    (ho : ∀ op ∈ staged, op.SourceBound n) (hb : st.placed.b.SourceBound n) :
+    (placeFlowFrom fs imgs staged st si).placed.b.SourceBound n := by
+  rw [placeFlowFrom]
+  split
+  · rename_i hi
+    have hop := ho _ (Array.getElem_mem hi)
+    split
+    · rename_i he
+      simp only [he, StagedOp.SourceBound] at hop
+    · exact sourceBound_placeFlowFrom fs imgs staged _ (si + 1) ho
+        (sourceBound_stepFlow fs imgs st _ hb
+          (sourceBound_keepAt st.placed.b fs imgs staged si _ hop))
+  · exact hb
+termination_by staged.size - si
+decreasing_by omega
+
+private theorem sourceBound_placeFrom {n : Nat} (fs : FontSet)
+    (imgs : Image.Store) (staged : Array StagedOp) (st : StepSt) (si : Nat)
+    (ho : ∀ op ∈ staged, op.SourceBound n) (hb : st.b.SourceBound n) :
+    (placeFrom fs imgs staged st si).b.SourceBound n :=
+  sourceBound_placeFlowFrom fs imgs staged { placed := st } si ho hb
 
 /-! A page's frame identity, displayed counter and footer travel together.
 Only an actual frame-opening op selects a stamp; closing a frame clears it.
