@@ -1,5 +1,7 @@
-import LeanTex.Core.Diag
-import LeanTex.Core.LocaleData
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Core.LocaleData
 import LeanTex.Core.Nfc
 import LeanTex.Core.TextSymData
 
@@ -18,7 +20,7 @@ extension, appended when the source does not spell it. Every fulfiller of
 the request — the driver's `resolveBibliography`/`resolveData`, the test
 harness's `elabFixture` — resolves through this def, so what the tests
 fulfil cannot drift from what the driver fulfils. -/
-def sourceName (src : String) : String :=
+public def sourceName (src : String) : String :=
   if src.endsWith ".bib" then src else src ++ ".bib"
 
 /-- One parsed entry: `@kind{key, fields}`. Kind and field names are
@@ -27,26 +29,26 @@ key keeps its case (keys are case-sensitive in practice: `\cite` must spell
 the key as the `.bib` does). Field values are stored raw — brace groups,
 TeX accents and all — because case protection (`{DNA}`) must survive until
 the style's own case-folding reads it. -/
-structure Entry where
+public structure Entry where
   kind : String
   key : String
   fields : Array (String × String)
   pos : Pos
   deriving Repr, BEq
 
-instance : Inhabited Entry :=
+public instance : Inhabited Entry :=
   ⟨{ kind := ""
      key := ""
      fields := #[]
      pos := {} }⟩
 
-def Entry.field? (e : Entry) (name : String) : Option String :=
+public def Entry.field? (e : Entry) (name : String) : Option String :=
   (e.fields.find? (·.1 == name)).map (·.2)
 
 /-- The parse keeps what it can: a malformed entry is recorded with its
 position and the parse resynchronises at the next `@`, so one broken entry
 never takes the bibliography down (W0352's contract). -/
-structure Parsed where
+public structure Parsed where
   entries : Array Entry := #[]
   errors : Array (Pos × String) := #[]
   deriving Repr, Inhabited
@@ -60,11 +62,11 @@ private def Parsed.entry (out : Parsed) (e : Entry) : Parsed :=
 /-- The month macro keys every BibTeX style file defines (plain.bst MACRO
 {jan}–{dec}); a `.bib` may use them without declaring them. The rendered
 names come from the document's locale (babel ini `months.wide`). -/
-def monthKeys : Array String :=
+private def monthKeys : Array String :=
   #["jan", "feb", "mar", "apr", "may", "jun",
     "jul", "aug", "sep", "oct", "nov", "dec"]
 
-def monthMacros (months : Array String) : Array (String × String) :=
+public def monthMacros (months : Array String) : Array (String × String) :=
   monthKeys.zip months
 
 private def isWs (c : Char) : Bool :=
@@ -261,7 +263,7 @@ by the input length and the cursor only moves forward. Everything outside
 later values read. A malformed entry is recorded at its position and
 skipped, and the parse continues at the next `@` — one bad entry costs
 itself, never the file (W0352). -/
-def parse (src : String)
+public def parse (src : String)
     (macros0 : Array (String × String) := monthMacros Locale.en.months) :
     Parsed := Id.run do
   let cs := src.toList.toArray
@@ -349,7 +351,7 @@ A stored value is TeX-flavoured: brace groups, `\'{e}` accents, `~` ties,
 `--` dashes. `text` renders it as the plain scalars the IR carries. -/
 
 /-- Word commands that are one character. -/
-def charCommands : Array (String × String) :=
+public def charCommands : Array (String × String) :=
   #[("ss", "ß"), ("o", "ø"), ("O", "Ø"), ("ae", "æ"), ("AE", "Æ"),
     ("aa", "å"), ("AA", "Å"), ("l", "ł"), ("L", "Ł"), ("i", "ı")]
 
@@ -357,7 +359,7 @@ def charCommands : Array (String × String) :=
 composes the pair to: the scalar lualatex sets under TU, whose composites
 are each such a canonical composition (`textSymChecks` holds all of them).
 A pair with no precomposed form has none. -/
-def composeAccent (mark base : Char) : Option Char :=
+public def composeAccent (mark base : Char) : Option Char :=
   match (Nfc.normalize (String.ofList [base, mark])).toList with
   | [c] => if c != base then some c else none
   | _ => none
@@ -366,7 +368,7 @@ def composeAccent (mark base : Char) : Option Char :=
 `\v{c}`), through TU's accent table and NFC, so a name renders identically
 in text and in a bibliography entry. A pair with no precomposed form keeps
 its base letter: a name never loses a character to an accent. -/
-def accentOf (mark base : Char) : Char :=
+public def accentOf (mark base : Char) : Char :=
   ((TextSymData.accents.lookup (String.ofList [mark])).bind (composeAccent · base)).getD base
 
 private def isAccentMark (c : Char) : Bool :=
@@ -374,7 +376,7 @@ private def isAccentMark (c : Char) : Bool :=
 
 /-- `text` without the trim: a span of a value that math interrupts keeps the
 space it opens or closes with — `lead` keeps a leading one too. -/
-def textSpan (v : String) (lead : Bool := false) : String := Id.run do
+public def textSpan (v : String) (lead : Bool := false) : String := Id.run do
   let cs := v.toList.toArray
   let mut out := ""
   let mut i := 0
@@ -468,7 +470,7 @@ runs one space. An unknown `\command` keeps its name as text, so nothing a
 value spells goes silently missing. Math and TeX's quote ligatures are the
 reference list's to set (`BibStyle.fieldInlines`); accents outside
 `accentTable` keep their base letter. -/
-def text (v : String) : String := (textSpan v).trimAscii.toString
+public def text (v : String) : String := (textSpan v).trimAscii.toString
 
 /-- BibTeX's `change.case$` lowering a value (bibtex.web's change-case
 procedure): `"t"` (`title`) is the sentence case plainnat's `format.title`
@@ -481,7 +483,7 @@ foreign-letter words (`\AA`, `\AE`, `\L`, `\O`, `\OE`) into their
 lowercase words, unless it stands where a kept letter would. Only ASCII
 letters change, as in bibtex 0.99d. The value is read as BibTeX's `.bib`
 reader leaves it: surrounding white space trimmed. -/
-def lowerCase (title : Bool) (v : String) : String := Id.run do
+public def lowerCase (title : Bool) (v : String) : String := Id.run do
   let cs := v.trimAscii.toString.toList.toArray
   let mut out := ""
   let mut depth : Nat := 0
@@ -521,7 +523,7 @@ def lowerCase (title : Bool) (v : String) : String := Id.run do
   return out
 
 /-- `"t" change.case$`: the title's sentence case (`lowerCase`). -/
-def sentenceCase (v : String) : String := lowerCase true v
+public def sentenceCase (v : String) : String := lowerCase true v
 
 /-! ## Names
 
@@ -529,7 +531,7 @@ BibTeX names (btxdoc §Names): `First von Last`, `von Last, First`, or
 `von Last, Jr, First`, joined by ` and `, with `others` closing an
 elided list. -/
 
-structure Name where
+public structure Name where
   first : String := ""
   von : String := ""
   last : String := ""
@@ -591,7 +593,7 @@ private def commaAt (cs : Array Char) (i : Nat) : Option Nat :=
 
 /-- The names of an `author` field, in order, raw: split on the word `and`
 at brace depth 0. -/
-def splitNames (v : String) : Array String :=
+public def splitNames (v : String) : Array String :=
   (splitTop v andAt).map (·.trimAscii.toString) |>.filter (!·.isEmpty)
 
 /-- Does a name token start lowercase? A brace-opening token counts as
@@ -626,7 +628,7 @@ prefix of uppercase-starting tokens that leaves a Last. Not handled,
 stated: pathological mixed-case von parts (`Maria de la Cruz Perez` keeps
 `Cruz Perez` whole) and case analysis of brace-opening tokens beyond
 "caseless attaches to Last". -/
-def parseName (s : String) : Name := Id.run do
+public def parseName (s : String) : Name := Id.run do
   let sections := (splitTop s commaAt).map (·.trimAscii.toString)
   let toks (t : String) : List String :=
     ((splitTop t (fun cs i => Id.run do
@@ -656,18 +658,18 @@ def parseName (s : String) : Name := Id.run do
 
 /-- `{ff }{vv }{ll}{, jj}`: the full-name order plainnat's `format.names`
 prints in the reference list (plainnat.bst FUNCTION {format.names}). -/
-def Name.full (n : Name) : String :=
+public def Name.full (n : Name) : String :=
   let parts := [n.first, n.von, n.last].filter (!·.isEmpty)
   joinSp parts ++ (if n.jr.isEmpty then "" else s!", {n.jr}")
 
 /-- `{vv~}{ll}`: the short form `\citet` and the label use. -/
-def Name.short (n : Name) : String :=
+public def Name.short (n : Name) : String :=
   joinSp ([n.von, n.last].filter (!·.isEmpty))
 
 /-- plain.bst's name join (FUNCTION {format.names}): two names join with
 ` and `, more with `, ` and a final `, and `; a closing `others` elides to
 `et al.` — appended directly after one name, after a comma otherwise. -/
-def andJoin (ns : List String) : String :=
+public def andJoin (ns : List String) : String :=
   match ns.reverse with
   | [] => ""
   | [n] => n
@@ -686,7 +688,7 @@ author's name; two joined with ` and `; more, or an elided list, take
 `et al.`), biblatex at its `maxcitenames` of three (`Doe, Roe, and Poe`).
 `withVon` keeps a name's von part, as BibTeX's `{vv~}{ll}` does; biblatex's
 `useprefix=false` drops it (`de Pome` cites as `Pome`). -/
-def labelNames (v : String) (upTo : Nat := 2) (withVon : Bool := true) : String :=
+public def labelNames (v : String) (upTo : Nat := 2) (withVon : Bool := true) : String :=
   let ns := splitNames v
   let short (s : String) : String :=
     let n := parseName s
@@ -699,7 +701,7 @@ def labelNames (v : String) (upTo : Nat := 2) (withVon : Bool := true) : String 
 /-- The full author list natbib's starred forms print (plainnat.bst
 FUNCTION {format.full.names}, the long names each `\bibitem` carries):
 every last name, joined as `andJoin` joins a list. -/
-def fullNames (v : String) : String :=
+public def fullNames (v : String) : String :=
   andJoin ((splitNames v).toList.map fun s =>
     if s == "others" then s else text (parseName s).short)
 

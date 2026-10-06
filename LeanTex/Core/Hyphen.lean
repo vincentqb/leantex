@@ -1,9 +1,11 @@
-import Std.Data.HashMap
+module
+
+public import Std.Data.HashMap
 import LeanTex.Core.HyphenData
 import LeanTex.Core.HyphenDataFr
 import LeanTex.Core.HyphenDataDe
 import LeanTex.Core.LocaleContract
-import LeanTex.Core.Nfc
+public import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.Hyphen
 
@@ -13,7 +15,7 @@ open Std
 plus the exception dictionary. The hyphenation minima are locale data
 (babel ini `lefthyphenmin`/`righthyphenmin`): the shortest fragment a
 break may leave on each side. -/
-structure Patterns where
+public structure Patterns where
   map : HashMap String (Array Nat)
   exceptions : HashMap String (Array Nat)
   maxLen : Nat
@@ -43,7 +45,7 @@ private def parseException (w : String) : String × Array Nat := Id.run do
 
 /-- Build one language's table from its generated pattern strings and its
 locale's hyphenation minima. -/
-def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
+public def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
     Patterns := Id.run do
   let mut map : HashMap String (Array Nat) := {}
   let mut maxLen := 0
@@ -59,28 +61,23 @@ def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
       exceptions := exceptions.insert word breaks
   return { map, exceptions, maxLen, leftMin, rightMin }
 
--- Each language's table is a `Thunk` (call-by-need): a zero-argument
--- constant is computed at process start, and parsing three pattern sets
--- there cost every run ~40 ms whichever language it used. Only the
--- selected table builds, once.
+-- Parse each language's table only when first selected.
 
-def english : Thunk Patterns := Thunk.mk fun _ =>
+public def english : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenData.patterns HyphenData.exceptions
     Locale.en.leftMin Locale.en.rightMin
 
-def french : Thunk Patterns := Thunk.mk fun _ =>
+public def french : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenDataFr.patterns HyphenDataFr.exceptions
     Locale.fr.leftMin Locale.fr.rightMin
 
-def german : Thunk Patterns := Thunk.mk fun _ =>
+public def german : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenDataDe.patterns HyphenDataDe.exceptions
     Locale.de.leftMin Locale.de.rightMin
 
-/-- The pattern table a BCP 47 tag selects: a language with a locale
-record but no landed table would be honestly unhyphenated rather than
-wrongly English. (German's 272 KB literal was gated on compile cost;
-measured at 0.65 s against the English file's 0.72 s, it lands.) -/
-def forTag (tag : String) : Option Patterns :=
+/-- Select the pattern table for a BCP 47 tag. A language without a
+supported table has no hyphenation patterns. -/
+public def forTag (tag : String) : Option Patterns :=
   match (Locale.forTag tag).map (·.tag) with
   | some "en" => some english.get
   | some "fr" => some french.get
@@ -113,7 +110,7 @@ private def rawBreaks (pats : Patterns) (lower : String) : Array Nat := Id.run d
 lowercase (Unicode fold: the fr patterns spell é directly). Only positions
 respecting leftMin/rightMin are returned — the shape is one final filter,
 which is what `hyphenate_respects_min` reads. -/
-def hyphenate (pats : Patterns) (word : String) : Array Nat :=
+public def hyphenate (pats : Patterns) (word : String) : Array Nat :=
   let lower := String.ofList (word.toList.map Nfc.toLower)
   let candidates :=
     if lower.length < pats.leftMin + pats.rightMin then #[]
@@ -126,7 +123,7 @@ def hyphenate (pats : Patterns) (word : String) : Array Nat :=
 `leftMin` letters stay before the hyphen and `rightMin` after (babel ini
 `lefthyphenmin`/`righthyphenmin`; TeX's `\lefthyphenmin` semantics). What
 makes German's 2/2 safe to vary per locale. -/
-theorem hyphenate_respects_min (pats : Patterns) (word : String) :
+public theorem hyphenate_respects_min (pats : Patterns) (word : String) :
     ∀ p ∈ hyphenate pats word,
       pats.leftMin ≤ p ∧
         p + pats.rightMin ≤ (word.toList.map Nfc.toLower).length := by

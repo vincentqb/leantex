@@ -16,6 +16,8 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Nfc
 import LeanTex.Core.FaIcons
 import LeanTex.Core.HtmlResource
+import LeanTex.Core.Hyphen
+import LeanTex.Core.Bib
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
@@ -57,6 +59,16 @@ example (value size height : Dim.Sp) :
   Dim.Length.resolve_ofSp value size height
 example : String → String := Nfc.normalize
 example : Thunk (Std.HashMap String FaIcons.Entry) := FaIcons.byName
+example : String → Option Hyphen.Patterns := Hyphen.forTag
+example (patterns : Hyphen.Patterns) (word : String) :
+    ∀ p ∈ Hyphen.hyphenate patterns word,
+      patterns.leftMin ≤ p ∧
+        p + patterns.rightMin ≤ (word.toList.map Nfc.toLower).length :=
+  Hyphen.hyphenate_respects_min patterns word
+example : Bib.Entry → String → Option String := Bib.Entry.field?
+example : String → Bib.Parsed := Bib.parse
+example : String → Bib.Name := Bib.parseName
+example : Bib.Name → String := Bib.Name.full
 example : HtmlResource.Media.png.mime = "image/png" := by rfl
 example (resources : Array HtmlResource.Embedded) (svgChecked : Array ByteArray)
     (script lang : String) (head body : Array Html.Node) :
@@ -79,4 +91,8 @@ example : True := by
   fail_if_success have := Nfc.tables
   fail_if_success have := FaIcons.entries
   fail_if_success have := HtmlResource.CssScan
+  fail_if_success have := Hyphen.parsePattern
+  fail_if_success have := Hyphen.rawBreaks
+  fail_if_success have := Bib.monthKeys
+  fail_if_success have := Bib.readWhile
   trivial
