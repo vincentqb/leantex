@@ -1326,12 +1326,6 @@ the smaller viewport dimension, so the ratio holds in either orientation.
 Overridable like any token (`--safearea`), by a bundle or a reader. -/
 private def safeareaVar : String := "var(--safearea, 6vmin)"
 
-/-- The title band's cap: a slide header may take at most this much of
-the slide's height — Keynote's default masters hold the title band to
-about 1/8 to 1/10 of the slide; the default takes the upper bound, 1/8,
-as `--titleband`'s engine value. -/
-private def titlebandVar : String := "var(--titleband, 12.5dvh)"
-
 /-- A named step as a CSS factor, through the one resolving site: a
 per-mille base makes `Ir.scaleStep` report the step itself, so the bar's
 type reads the scale the PDF sets from rather than a second reading of the
@@ -2581,8 +2575,9 @@ def deckBase (bodyVh : String) : List DeckRule :=
       part := .stage },
     { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
       part := .stage },
+    -- The band keeps its title and padding even when the body overflows.
     { selector := [.lit "section.slide > header"]
-      decls := [("max-height", titlebandVar)], part := .stage },
+      decls := [("flex-shrink", "0")], part := .stage },
     { selector := [.lit "section.slide > header h2"]
       decls := [("font-size", scaleSize "Large" "em")], part := .stage } ]
 
@@ -3362,7 +3357,7 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : String}
     (h10 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
                part := .stage })
     (h11 : P { selector := [.lit "section.slide > header"]
-               decls := [("max-height", titlebandVar)], part := .stage })
+               decls := [("flex-shrink", "0")], part := .stage })
     (h12 : P { selector := [.lit "section.slide > header h2"]
                decls := [("font-size", scaleSize "Large" "em")], part := .stage }) :
     ∀ r ∈ deckBase v, P r := by
@@ -3420,7 +3415,7 @@ side of the floor is `deck_css_partition`; attribute selectors
 def baselineProps : List String :=
   ["scroll-snap-type", "scroll-snap-align", "scroll-snap-stop",
    "scroll-behavior", "padding", "padding-bottom", "margin", "margin-top", "max-width",
-   "width", "flex", "background", "overflow-y",
+   "width", "flex", "flex-shrink", "background", "overflow-y",
    "min-height", "max-height", "height", "font-size", "color",
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",

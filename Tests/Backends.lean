@@ -1418,9 +1418,26 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "document.documentElement.dataset.deckScript" &&
      has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
      has deckPage "scrollIntoView" && !has deckPage "/* removed */")
-  t "the deck keeps the safe area and caps the title band"
-    (has deckPage "padding: var(--safearea, 6vmin); position: relative; }" &&
-     has deckPage "max-height: var(--titleband, 12.5dvh)")
+  t "the deck keeps the safe area"
+    (has deckPage "padding: var(--safearea, 6vmin); position: relative; }")
+  -- A title's background must contain all of its lines. An arbitrary
+  -- height cap or flex compression lets wrapped ink leave that ground;
+  -- the header owns its content height, on screen and in print.
+  for theme in "" :: Theme.builtin.map (·.name) do
+    let pre := if theme.isEmpty then "" else s!"\\theme\{{theme}}"
+    let (doc, _) := elabStr (deck169 pre
+      "\\begin{frame}{First line\\\\Second line}\nBody.\n\\end{frame}")
+    let (head, _, _) := HtmlDoc.emitTree {} doc
+    let declarations := (artCssBlocks (treeCssList "" head.toList)).toList.flatMap
+      fun (sel, decls) =>
+        if (sel.splitOn ",").any (fun s => s.trimAscii.toString == "section.slide > header")
+        then decls.splitOn ";" |>.map (·.trimAscii.toString)
+        else []
+    t s!"deck title bands keep their intrinsic height ({theme})"
+      (declarations.contains "flex-shrink: 0" &&
+       declarations.all fun d =>
+         !["height", "max-height", "block-size", "max-block-size", "flex-basis"].contains
+           ((d.splitOn ":").headD "").trimAscii.toString)
   -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
   -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.
   t "deck type is the PDF's stage ratio, in vh"
