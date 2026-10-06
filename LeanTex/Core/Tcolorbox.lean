@@ -1,4 +1,6 @@
-import LeanTex.Core.Parse
+module
+
+public import LeanTex.Core.Parse
 import LeanTex.Core.Decl
 
 namespace LeanTex.Core.Tcolorbox
@@ -8,17 +10,17 @@ open Parse
 /-- Environment bindings use the same scoped meaning table as commands.
 The space cannot occur in an authored control word, so the namespaces
 remain distinct without another definition store. -/
-def bindingName (name : String) : String := "tcolorbox " ++ name
+public def bindingName (name : String) : String := "tcolorbox " ++ name
 
 /-- The inverse of the reserved binding spelling. -/
-def boundName? (name : String) : Option String :=
+public def boundName? (name : String) : Option String :=
   name.dropPrefix? "tcolorbox " |>.map (·.toString)
 
 /-- A tcolorbox use expressed through the native block surface. Declaration
 arguments are bound by the compatibility reader before this function runs.
 Keys with unsupported paint or layout effects remain explicitly accounted,
 including partially supported spacing keys. -/
-structure Lowered where
+public structure Lowered where
   raws : Array Raw
   unsupported : Array String
   deriving Repr
@@ -152,7 +154,7 @@ private def gap (v : Option String) (pos : Pos) : Array Raw :=
 
 /-- Selected content and declarations, separated from keys the engine cannot
 apply. Only these token fields are executed; refused values are inert. -/
-structure Prepared where
+public structure Prepared where
   title : Array Raw
   bodyDecls : Array Raw
   before : Option String
@@ -174,7 +176,7 @@ private def Settings.prepared (s : Settings) (pos : Pos) : Prepared :=
     unsupported := s.unsupported }
 
 /-- Select the last assignments before executing any key's value. -/
-def prepare (options : Array Raw) (pos : Pos) : Prepared :=
+public def prepare (options : Array Raw) (pos : Pos) : Prepared :=
   (settings options).prepared pos
 
 /-- Capture the selected color operands at the use site before either font
@@ -182,7 +184,7 @@ hook executes. The caller resolves tokens through its existing bindings;
 this module neither interprets them nor runs effects. A failed capture
 refuses that key, while unsupported ground/foreground pairs are filtered
 before any capture. Returned declarations use the ordinary native resolver. -/
-def prepareM [Monad m]
+public def prepareM [Monad m]
     (capture : String → Array Raw → m (Option (Array Raw)))
     (options : Array Raw) (pos : Pos) : m Prepared := do
   let mut s := settings options
@@ -198,7 +200,7 @@ def prepareM [Monad m]
 
 /-- With already-resolved operands the staged API and direct lowering
 produce identical raw content, declarations, spacing and loss accounting. -/
-theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
+public theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
     prepareM (m := Id) (fun _ rs => pure (some rs)) options pos =
       prepare options pos := by
   unfold prepareM prepare
@@ -208,7 +210,7 @@ theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
     cases textInk <;> cases titleInk <;> rfl
 
 /-- Assemble the already-selected fields around the original body. -/
-def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
+public def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
   let block := Raw.env "block"
     #[.group s.title pos, .group (s.bodyDecls ++ body) pos] pos
   let before := gap s.before pos
@@ -220,25 +222,25 @@ def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
 semantics. No author text is lexed or parsed a second time. The gaps use
 native block spacing; tcolorbox's addvspace/parskip collision rules and
 decorations are not reimplemented. -/
-def lower (options body : Array Raw) (pos : Pos) : Lowered :=
+public def lower (options body : Array Raw) (pos : Pos) : Lowered :=
   (prepare options pos).lower body pos
 
 /-- A raw block carries the complete ordered body after only its local
 declarations. This is a surface property, before an IR exists; the native
 elaborator and both emitters are exercised by the artifact checks. -/
-def CarriesBody (rs body : Array Raw) (pos : Pos) : Prop :=
+@[expose] public def CarriesBody (rs body : Array Raw) (pos : Pos) : Prop :=
   ∃ title decls, Raw.env "block"
     #[.group title pos, .group (decls ++ body) pos] pos ∈ rs.toList
 
 /-- Every option combination retains the original body verbatim in the
 native block, including after a title or declaration has been expanded. -/
-theorem Prepared.lower_body_covers (s : Prepared) (body : Array Raw) (pos : Pos) :
+public theorem Prepared.lower_body_covers (s : Prepared) (body : Array Raw) (pos : Pos) :
     CarriesBody (s.lower body pos).raws body pos := by
   refine ⟨s.title, s.bodyDecls, ?_⟩
   simp [Prepared.lower]
 
 /-- The direct lowering projects the same body-preserving assembly. -/
-theorem lower_body_covers (options body : Array Raw) (pos : Pos) :
+public theorem lower_body_covers (options body : Array Raw) (pos : Pos) :
     CarriesBody (lower options body pos).raws body pos :=
   (prepare options pos).lower_body_covers body pos
 

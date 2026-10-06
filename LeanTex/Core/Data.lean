@@ -1,5 +1,7 @@
-import LeanTex.Core.Bib
-import LeanTex.Core.Parse
+module
+
+public import LeanTex.Core.Bib
+public import LeanTex.Core.Parse
 
 /-! Data-driven documents: `@job{…}` records read from a `.bib` file (or an
 inline `\data{ @job{…} }` group), expanded into the document before
@@ -24,7 +26,7 @@ open LeanTex.Core Parse
 
 /-- A `\data` file request resolves by the bibliography's own rule:
 records live in `.bib` files. -/
-abbrev sourceName := Bib.sourceName
+public abbrev sourceName := Bib.sourceName
 
 /-- What a `\data{…}` group declares: `.inl name` for `file = "name"`,
 `.inr text` for inline `@kind{…}` records, `none` when it is neither. -/
@@ -72,19 +74,19 @@ span. Input wrappers change the filename only within their own contents.
 The driver fulfils these requests before elaboration, where the expansion
 needs the records where `\begin{foreach}` stands. Files are effects, so
 the core never opens one. -/
-def fileRefsAt (file : String) (raws : Array Raw) : Array (String × Span) :=
+public def fileRefsAt (file : String) (raws : Array Raw) : Array (String × Span) :=
   refsList file #[] raws.toList
 
 /-- A file wrapper's requests are exactly its body's requests under the
 included filename, independent of the caller's filename and wrapper position. -/
-theorem fileRefsAt_input_exact (caller file name : String) (body : Array Raw) (pos : Pos)
+public theorem fileRefsAt_input_exact (caller file name : String) (body : Array Raw) (pos : Pos)
     (h : Parse.inputEnvFile? name = some file) :
     fileRefsAt caller #[.env name body pos] = fileRefsAt file body := by
   simp [fileRefsAt, refsList, h]
 
 /-- The filename-free view for callers that only load the named sources.
 Diagnostics use `fileRefsAt` with the actual root filename. -/
-def fileRefs (raws : Array Raw) : Array (String × Pos) :=
+public def fileRefs (raws : Array Raw) : Array (String × Pos) :=
   (fileRefsAt "" raws).map fun (name, span) => (name, span.pos)
 
 private def hasDataList : List Raw → Bool
@@ -103,7 +105,7 @@ decreasing_by
 declaration, no file scan, no expansion — a data-free document costs one
 short-circuiting walk and nothing else, and its own `\val` or `foreach`
 spellings stay its own (the vocabulary exists only where data does). -/
-def hasData (raws : Array Raw) : Bool :=
+public def hasData (raws : Array Raw) : Bool :=
   hasDataList raws.toList
 
 /-- The record store: every parsed record in declaration order, each with
@@ -392,7 +394,7 @@ a kind in file order, `\val` splices a field's text through the document's
 own lexer and parser, `\ifdata` branches on presence. A document that
 declares no `\data` is returned untouched: the vocabulary exists only
 where data does, so a document's own `\val` command stays its own. -/
-def expandData (file : String) (sources : Array (String × String))
+public def expandData (file : String) (sources : Array (String × String))
     (raws : Array Raw) : Array Raw × Array Diag :=
   if !hasDataList raws.toList then (raws, #[])
   else
