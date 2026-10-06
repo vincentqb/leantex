@@ -115,11 +115,11 @@ private def splitWord (acc : Array Tok) (s : String) : Array Tok := Id.run do
 mutual
 
 /-- `Parse.Raw` to picture micro-tokens; groups keep their tree. -/
-def ofRawList (acc : Array Tok) : List Parse.Raw → Array Tok
+private def ofRawList (acc : Array Tok) : List Parse.Raw → Array Tok
   | [] => acc
   | r :: rest => ofRawList (ofRawOne acc r) rest
 
-def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
+private def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
   | .word s _ => splitWord acc s
   | .space => acc.push .space
   | .par _ => acc.push .space
@@ -196,7 +196,7 @@ shunting-yard to RPN, then a stack evaluation — two flat passes, total by
 construction. Values are numbers in milli or strings (`"black"`, an
 `ifthenelse` branch); arithmetic on a string names it. Every failure names
 what stopped it. -/
-def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val := Id.run do
+private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val := Id.run do
   -- To RPN. `expectOperand` distinguishes unary minus from subtraction.
   let mut out : Array Rp := #[]
   let mut ops : Array Rp := #[]  -- operators and '(' markers (calls double as markers)
@@ -370,7 +370,7 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val
   | _ => return .error "malformed expression"
 
 /-- An expression in a place that needs a number: a coordinate, a scale. -/
-def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
+private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
   match evalExpr env toks with
   | .ok (.num m) => .ok m
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
@@ -444,7 +444,7 @@ picture in a horizontal box (`\pgfpicture` sets it with `\hbox`), so there
 TeX is in restricted horizontal mode — `\ifhmode` and `\ifinner` hold,
 `\ifvmode` and `\ifmmode` fail, whatever mode the picture stands in
 (measured against lualatex). -/
-def pictureMode (n : String) : Option Bool :=
+private def pictureMode (n : String) : Option Bool :=
   if n == "ifhmode" || n == "ifinner" then some true
   else if n == "ifvmode" || n == "ifmmode" then some false
   else none
@@ -453,7 +453,7 @@ def pictureMode (n : String) : Option Bool :=
 Keyed on the `if` prefix rather than on a list of primitives, because
 `\newif` lets a document mint `\ifmyflag` and a closed list cannot hold
 those — the same closed-list lesson the boundary's macro closure records. -/
-def condKindOf (n : String) : Option CondKind :=
+private def condKindOf (n : String) : Option CondKind :=
   if n == "ifnum" || n == "ifdim" then some (.num n)
   else if n == "iftrue" then some (.always true)
   else if n == "iffalse" then some (.always false)
@@ -466,7 +466,7 @@ value and the four mode tests read TeX's state (TeXbook chapter 20), so
 the branch begins with the very next token: collecting a test up to a
 space would swallow the branch's first statement, since TeX drops the
 space after a control word before this walk sees it. -/
-def condTakesNoTest (n : String) : Bool :=
+private def condTakesNoTest (n : String) : Bool :=
   n == "iftrue" || n == "iffalse" || n == "ifmmode" || n == "ifhmode" ||
     n == "ifvmode" || n == "ifinner"
 
@@ -575,7 +575,7 @@ option bracket belongs to the statement, so it rides on every slice.
 One slice always comes back, so a statement with no boundary in it is
 unchanged — and a malformed one still reaches the evaluator, which names
 it. -/
-def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
+private def subpaths (acc : Array Tok) : Array (Array Tok) := Id.run do
   -- The leading option bracket, which every subpath inherits.
   let mut head := 0
   for _ in [0:acc.size + 1] do
@@ -847,7 +847,7 @@ pre-matched group subtrees (a `\foreach` body), so totality is structural.
 Anything outside the subset is named (W0334) and skipped to the next `;` —
 never silently dropped, and never able to take the rest of the picture
 with it. -/
-def parseList : List Tok → PSt → PSt
+private def parseList : List Tok → PSt → PSt
   | [], st =>
     match st.mode with
     | .top => st
@@ -861,7 +861,7 @@ def parseList : List Tok → PSt → PSt
         with mode := .top, pending := #[] }
   | t :: rest, st => parseList rest (parseTok t st)
 
-def parseTok (t : Tok) (st : PSt) : PSt :=
+private def parseTok (t : Tok) (st : PSt) : PSt :=
   match st.mode, t with
   | .fbody vars list, .group g =>
     let sub := parseList g {}
@@ -979,7 +979,7 @@ cycle of styles, therefore finds nothing to splice and keeps its own name
 as a literal key — which the option loop that reads it then names as a key
 outside the subset (W0334), never silently dropped and never chased. No
 fuel, no fixed point: the recursion does not exist. -/
-def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
+private def expandBody (styles : List (String × Array Tok)) (g : List Tok) :
     Array Tok := Id.run do
   let mut expanded : Array Tok := #[]
   for part in splitTop (g.toArray.filter (· != .space)) ',' do
@@ -997,7 +997,7 @@ newest first, so an inner definition shadows an outer one of the same name
 (pgf scopes keys; a picture's own `[...]` is inside the document's
 `\tikzset`). The body is read by `expandBody`, which is where the
 termination property lives. -/
-def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+private def addStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   (n, expandBody styles g) :: styles
 
@@ -1019,7 +1019,7 @@ already had — a finite array — and yields that body twice over; nothing is
 chased, and the option loop reads the same keys it read before. Appending
 to a name nothing defined defines it, which is the reading that applies the
 keys the document asked for. -/
-def appendStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+private def appendStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   let added := expandBody styles g
   match styles.lookup n with
@@ -1033,23 +1033,23 @@ def appendStyle (styles : List (String × Array Tok)) (n : String) (g : List Tok
 definitions, because the elaborator hands the reader one list, and a tip is
 not an option bundle — so its slot is a name no key list can spell (a key
 path is idents, joined by single spaces). -/
-def tipKey (n : String) : String := ".tip " ++ n
+private def tipKey (n : String) : String := ".tip " ++ n
 
 /-- Fold one `name/.tip={...}` declaration in. The body is kept as written
 and never re-read as keys: it is an arrow-tip construction, not an option
 bundle, so there is nothing here to expand and nothing to chase. -/
-def declareTip (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
+private def declareTip (styles : List (String × Array Tok)) (n : String) (g : List Tok) :
     List (String × Array Tok) :=
   (tipKey n, g.toArray) :: styles
 
 /-- The name of the `every node` level, and of the `every path` level: the
 two key paths the option loops read (pgf manual §12.4.1 — every X is
 executed inside the X's own scope). -/
-def everyNodeKey : String := "every node"
-def everyPathKey : String := "every path"
+private def everyNodeKey : String := "every node"
+private def everyPathKey : String := "every path"
 /-- The style the text part of every node runs (tikz.code.tex): the keys a
 node's text reads, such as `align=`. -/
-def everyTextKey : String := "every text node part"
+private def everyTextKey : String := "every text node part"
 
 /-- Is this token that symbol? A structural match rather than `==`, which
 for a recursive inductive's derived `BEq` is compiled by well-founded
@@ -1167,7 +1167,7 @@ the entry is not a definition at all, or names a handler or a key path
 outside the subset. The one router both a document's `\tikzset` and a
 picture's own bracket go through, so the two cannot differ about what a
 definition means. -/
-def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
+private def readOneDef (styles : List (String × Array Tok)) (entry : List Tok) :
     Option (List (String × Array Tok)) :=
   match readDef entry with
   | some (n, "style", g) =>
@@ -1225,11 +1225,11 @@ draws: `-name`, `-{name}`, or `->`. A declared tip draws the engine's own
 arrow head, the way `latex` already does — pgf manual §16 names many tip
 kinds and this subset has one head to draw them with, so the substitution
 is the established one, not a new claim. -/
-def tipName : List Tok → Option String
+private def tipName : List Tok → Option String
   | [.group g] => identPath (g.filter (· != .space))
   | ts => identPath ts
 
-def arrowTipName : List Tok → Option String
+private def arrowTipName : List Tok → Option String
   | [.sym '-', .sym '>'] => some ">"
   | [.sym '-', t] => tipName [t]
   | _ => none
@@ -1242,7 +1242,7 @@ under two library names, so admitting it claims no new substitution. `>` is
 the shorthand itself. Anything else stays outside the subset and is named,
 which is what keeps a genuinely different tip kind a visible loss rather
 than a silent head of the wrong shape. -/
-def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
+private def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
   n == ">" || n == "latex" || n == "Latex" || (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
@@ -1285,7 +1285,7 @@ line that sets one is read rather than named as dropped. -/
 private def engineKeyNames : List String := ["node distance"]
 
 /-- Does this entry set a key the engine reads? -/
-def setsEngineKey (entry : Array Tok) : Bool :=
+private def setsEngineKey (entry : Array Tok) : Bool :=
   engineKeyNames.contains (keyPath entry.toList)
 
 /-- Split an option bracket into entries and expand a declared bundle's
@@ -1296,7 +1296,7 @@ The name is read with `keyName`, the one reader a definition is stored
 under, so every name pgf's grammar admits is looked up whole. An entry
 carrying a value is no bundle use — `keyName` stops at the `=` and answers
 `none` — so a key and a bundle of the same name cannot be confused. -/
-def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok) :
+private def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok) :
     Array (Array Tok) := Id.run do
   let mut opts : Array (Array Tok) := #[]
   for opt in splitTop (inner.filter (· != .space)) ',' do
@@ -1724,7 +1724,7 @@ theorem circleBorder_step (cx cy r qx qy : Int)
 
 /-- `inner sep`'s default, in ten-thousandths of an em: pgf's `0.3333em`
 (TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep` keys). -/
-def innerSepDefault : Int := 3333
+private def innerSepDefault : Int := 3333
 
 /-- One inner sep at this em. -/
 def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
@@ -1854,7 +1854,7 @@ inductive NodeAnchor where
 removed. An endpoint's tokens are space-filtered before its name is joined,
 so `south west` — pgf's declared spelling — and `southwest` arrive here as
 the same string, and one table answers both. -/
-def nodeAnchorOf : String → Option NodeAnchor
+private def nodeAnchorOf : String → Option NodeAnchor
   | "center" => some .center
   | "north" => some .north
   | "south" => some .south
@@ -1873,7 +1873,7 @@ def nodeAnchorOf : String → Option NodeAnchor
 anchors stand. pgf's `circle` shape puts `north east` on the *circle* at
 45° (`\pgfdeclareshape{circle}`), not on the bounding box's corner, so a
 corner is the radius times this on each axis. -/
-def diag45 : Int := 707
+private def diag45 : Int := 707
 
 /-- The horizontal reach of a corner anchor: a rectangle's corner is its
 own border, a circle's the point on the circle at 45°. -/
@@ -2001,7 +2001,7 @@ theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
 /-- A `(name.anchor)` endpoint split into its two halves. pgf reads
 everything after the first `.` as the anchor name (`\pgfpointanchor`), so a
 node's own name carries no dot. -/
-def splitAnchor (s : String) : Option (String × String) :=
+private def splitAnchor (s : String) : Option (String × String) :=
   match s.splitOn "." with
   | [nm, an] => if nm.isEmpty || an.isEmpty then none else some (nm, an)
   | _ => none
@@ -2038,7 +2038,7 @@ structure Ev where
   carries, and the refusals the final run carries name it. -/
   deferred : Nat := 0
 
-def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
+private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
 
 /-- The evaluated marks and authored bounds passed to both backends.
@@ -2151,7 +2151,7 @@ one every paragraph uses.
 
 The size is the document's body size times the label's scale, the same
 size the artifact's label metric reads. -/
-def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
+private def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
   Ir.leadingFor (bodySize * (scale : Int) / 1000)
 
 /-- The stand-in a label sets when its salvage comes to nothing and a loss
@@ -2173,7 +2173,7 @@ def phantomCtrl : List String := ["vphantom", "hphantom", "phantom"]
 read one token at a time, so a construct spanning several of them needs no
 lookahead and the recursion stays structural — the shape `step` already
 uses for the statement machine. -/
-inductive SalMode where
+private inductive SalMode where
   | text
   /-- An optional `[...]` run may stand here: it belongs to the construct
   just read (`\\[2ex]` is how an author spaces a label's lines, and
@@ -2201,7 +2201,7 @@ line's inlines and its pending text run, the size that line sets at, and
 the losses named so far. `fresh` is whether the current line has had
 anything contributed yet — a size switch may only open a line, since a
 label shape carries one size. -/
-structure Sal where
+private structure Sal where
   lines : Array LabelLine := #[]
   out : Array Ir.Inline := #[]
   text : String := ""
@@ -2227,18 +2227,18 @@ structure Sal where
 namespace Sal
 
 /-- Add readable characters to the current line. -/
-def str (s : Sal) (t : String) : Sal :=
+private def str (s : Sal) (t : String) : Sal :=
   if t.isEmpty then s else { s with text := s.text ++ t, fresh := false }
 
 /-- Close the pending text run, so an inline can follow it in order. -/
-def flush (s : Sal) : Sal :=
+private def flush (s : Sal) : Sal :=
   if s.text.isEmpty then s
   else
     let xs := s.styles.foldr (fun st inner => #[.styled st inner]) #[.text s.text]
     { s with out := xs.foldl Array.push s.out, text := "" }
 
 /-- Add elaborated inlines under the declarations in force. -/
-def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
+private def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
   if xs.isEmpty then s
   else
     let f := s.flush
@@ -2246,18 +2246,18 @@ def inlines (s : Sal) (xs : Array Ir.Inline) : Sal :=
     { f with out := xs.foldl Array.push f.out, fresh := false }
 
 /-- Add one elaborated inline (a math span, a coloured group). -/
-def inline (s : Sal) (i : Ir.Inline) : Sal :=
+private def inline (s : Sal) (i : Ir.Inline) : Sal :=
   s.inlines #[i]
 
-def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
+private def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
   { s with diags := ds.foldl Array.push s.diags }
 
 /-- Back to reading content: a mode the token at hand does not continue. -/
-def mode0 (s : Sal) : Sal := { s with mode := .text }
+private def mode0 (s : Sal) : Sal := { s with mode := .text }
 
 /-- Name one construct the subset could not read. The label keeps what it
 can read; the diagnostic says what was not drawn. -/
-def refuse (s : Sal) (what : String) : Sal :=
+private def refuse (s : Sal) (what : String) : Sal :=
   { s with diags := s.diags.push (.W0334, s!"{what} in a node body is outside \
 the rendered picture subset; the label sets the text it can read") }
 
@@ -2277,19 +2277,19 @@ private def trimEnds (left right : Bool) (xs : Array Ir.Inline) : Array Ir.Inlin
   xs.filter (· != .text "")
 
 /-- Close the current line and start the next: what `\\` does. -/
-def newline (s : Sal) : Sal :=
+private def newline (s : Sal) : Sal :=
   let s := s.flush
   { s with lines := s.lines.push (trimEnds s.trim s.trim s.out, s.scale)
            out := #[], text := "", scale := 1000, fresh := true, mode := .text }
 
 /-- A nested group's own salvage, sharing the losses named so far and the
 line's size but not its content. -/
-def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
+private def sub (s : Sal) : Sal := { scale := s.scale, diags := s.diags, depth := s.depth }
 
 /-- The salvage a styled or coloured body is walked in (`splice`): one
 group deeper, so a size switch inside it is named rather than set, and
 with its lines' ends untrimmed, since the body's edges are inside a line. -/
-def inner (s : Sal) : Sal := { s.sub with depth := s.depth + 1, trim := false }
+private def inner (s : Sal) : Sal := { s.sub with depth := s.depth + 1, trim := false }
 
 /-- Splice a nested body's salvage into this label, every line of it
 wrapped (`wrap`, a style or a colour): the body's first line continues the
@@ -2302,7 +2302,7 @@ does in a paragraph, and only the ends a break made are trimmed here. An
 empty line wraps nothing, so no empty wrapper ships; the body's own losses
 join this label's. The body was walked one group deeper, so no size switch
 inside it set a line's size — a size it asked for was named instead. -/
-def splice (s : Sal) (body : Sal)
+private def splice (s : Sal) (body : Sal)
     (wrap : Bool → Bool → Array Ir.Inline → Array Ir.Inline) : Sal := Id.run do
   let body := body.newline
   let n := body.lines.size
@@ -2321,9 +2321,9 @@ inlines rather than glyphs, and that is exact for what it guards: every
 inline the salvage pushes is a non-empty text run, a math span (which
 carries its own floor) or a non-empty coloured or styled group (`splice`
 wraps no empty line). -/
-def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
+private def inkCount (ls : Array LabelLine) : Nat := ls.foldl (fun n l => n + l.1.size) 0
 
-def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
+private def inked (ls : Array LabelLine) : Bool := 0 < inkCount ls
 
 /-- Has the machine come to rest? `.text` has, and so has `.optMaybe 0` —
 a trailing option run *may* follow a construct and need not. Every other
@@ -2331,7 +2331,7 @@ mode means a construct the body opened and never closed, which is why
 `nodeLabel` names it: a mode pending at the end of a body has eaten the
 rest of that body, and eating it silently is the very loss the floor
 exists to prevent. -/
-def settled : SalMode → Bool
+private def settled : SalMode → Bool
   | .text => true
   | .optMaybe k => k == 0
   | .optDrop _ | .dropArgs _ | .colorRole | .colorBody _ _ | .styleBody _ => false
@@ -2342,7 +2342,7 @@ so hand a token from a construct's option position to its argument position
 to the line. A colour whose body never came is named here rather than
 dropped in silence: the mathematics of it is that the *role* was read and
 the group it was to paint was not. -/
-def settle (t : Tok) (s : Sal) : Sal :=
+private def settle (t : Tok) (s : Sal) : Sal :=
   match s.mode, t with
   -- A starred command's star is part of its name (`\hspace*{1pt}`), and a
   -- space before an argument is the command's, as TeX reads it.
@@ -2433,7 +2433,7 @@ mutual
 
 /-- Salvage a node body's tokens into label lines: one fold, the only
 recursion into a pre-matched group subtree, so totality is structural. -/
-def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
+private def salList (cx : Cx) (env : List (String × Val)) : List Tok → Sal → Sal
   | [], s => s
   | t :: rest, s => salList cx env rest (salOne cx env t { s with next := rest.head? })
 
@@ -2444,7 +2444,7 @@ as the argument) — and `.text` is a fixed point, so two passes reach it.
 After settling, the content arm runs at most once per token and the walk
 needs no lookahead beyond `Sal.next`, the token after a text-command
 argument. -/
-def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
+private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : Sal :=
   let s : Sal := Sal.settle t (Sal.settle t s)
   match s.mode with
   -- Only a `[`, a `*` or a space reaches here: settling sent every other
@@ -3172,7 +3172,7 @@ private def readNodeDim (em ex : Sp) (toks : List Tok) : Except String Sp :=
 1575–1581): each is the style `line width=<w>`, so a name and the key it
 abbreviates stroke one width. `thin` and `thick` are the IR's own two
 widths, read rather than restated. -/
-def lineWidthStyles : List (String × Sp) :=
+private def lineWidthStyles : List (String × Sp) :=
   [("ultra thin", Dim.pt 1 / 10), ("very thin", Dim.pt 1 / 5),
    ("thin", Ir.Pic.thinWidth), ("semithick", Dim.pt 3 / 5),
    ("thick", Ir.Pic.thickWidth), ("very thick", Dim.pt 6 / 5),
@@ -3182,7 +3182,7 @@ def lineWidthStyles : List (String × Sp) :=
 where the entry sets no width. The one reader every stroke site and every
 vocabulary check reads, so a width a path strokes and a width a picture's
 bracket carries down are the same keys. -/
-def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
+private def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
   match opt with
   | .ident "line" :: .ident "width" :: .sym '=' :: rest => some (readDim rest)
   | ts => ((keyName ts).bind fun n => lineWidthStyles.lookup n).map .ok
@@ -3194,7 +3194,7 @@ written wins, as in TeX; the declarations apply in order; `\selectfont`
 selects what they already chose. A switch outside both tables is returned
 by name, so the loss names what it could not set and the rest still
 applies. -/
-def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style × Array String :=
+private def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style × Array String :=
   Id.run do
   let flat := toks.flatMap fun t => match t with
     | .group g => g
@@ -3215,7 +3215,7 @@ def readFont (cx : Cx) (toks : List Tok) : Option Nat × Array Ir.Style × Array
 
 /-- A label's lines set in the declarations a `font=` named, the first
 written outermost; an empty line stays empty, so no empty wrapper ships. -/
-def fontLines (sts : Array Ir.Style) (lines : Array LabelLine) : Array LabelLine :=
+private def fontLines (sts : Array Ir.Style) (lines : Array LabelLine) : Array LabelLine :=
   if sts.isEmpty then lines
   else lines.map fun (xs, rel) =>
     (if xs.isEmpty then xs else sts.foldr (fun st inner => #[.styled st inner]) xs, rel)
@@ -3225,7 +3225,7 @@ choice key), as the side each line stands flush to: `.west` for left,
 `.east` for right, `.center` for centred. `left` and `flush left` set lines
 broken with `\\` alike, as do their siblings; the spellings differ only in
 how TeX breaks a paragraph of declared width. -/
-def textAlignOf : List Tok → Option Ir.Pic.LabelAlign
+private def textAlignOf : List Tok → Option Ir.Pic.LabelAlign
   | [.ident "left"] | [.ident "flush", .ident "left"] => some .west
   | [.ident "right"] | [.ident "flush", .ident "right"] => some .east
   | [.ident "center"] | [.ident "flush", .ident "center"] => some .center
@@ -3236,7 +3236,7 @@ def textAlignOf : List Tok → Option Ir.Pic.LabelAlign
 line — the box's width — stays exactly where centring put it, so the block
 and the node's extent do not move. A line anchored any other way stands as
 it was. -/
-def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
+private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
     (ls : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
   let w := ls.foldl (fun w s => match s with
     | .label _ _ content _ sz a => if a == .center then max w (m content sz).w else w
@@ -3257,7 +3257,7 @@ inductive Dir where
   | aboveLeft | aboveRight | belowLeft | belowRight
   deriving Repr, BEq, Inhabited
 
-def dirOf : String → Option Dir
+private def dirOf : String → Option Dir
   | "left" => some .left
   | "right" => some .right
   | "above" => some .above
@@ -3556,7 +3556,7 @@ the whole document or for the picture can be carried into a path's bracket
 instead of dropped. A tip counts only where this subset can draw it
 (`drawsAsArrow`): an undrawable one is a real loss, and is named once at
 the line that declared it rather than at every edge that inherited it. -/
-def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
+private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
   match arrowTipName opt.toList with
   | some tip => drawsAsArrow styles tip
   | none =>
@@ -3573,7 +3573,7 @@ def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool 
 are read through the functions the loop reads them with, so the vocabulary
 cannot drift from the loop that consumes it; a `font=` is read whole, and
 the loop names any switch in it that it cannot set (`readFont`). -/
-def readsNodeOpt (opt : Array Tok) : Bool :=
+private def readsNodeOpt (opt : Array Tok) : Bool :=
   if (readPlace (0, 0) opt.toList).isSome then true
   else match opt.toList with
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
@@ -5098,7 +5098,7 @@ private def bindVars (vars : Array String) (item : Array Val)
 depth zero. TeX's ⟨relation⟩ is one of `<`, `=`, `>` (TeXbook chapter 20),
 and the first one at depth zero is it — a pgfmath expression holds no
 relation of its own, so there is nothing to disambiguate. -/
-def splitRel (toks : Array Tok) : Option (Array Tok × Char × Array Tok) := Id.run do
+private def splitRel (toks : Array Tok) : Option (Array Tok × Char × Array Tok) := Id.run do
   let mut depth := 0
   for k in [0:toks.size] do
     if let some t := toks[k]? then
@@ -5180,21 +5180,21 @@ theorem condFloor_mem (thenS elseS : List Stmt) :
   · exact Or.inr rfl
 
 /-- Which branch a decided test draws, in words. -/
-def condDrawnWords (holds : Bool) : String :=
+private def condDrawnWords (holds : Bool) : String :=
   if holds then "the branch before '\\else' is drawn" else "only the '\\else' branch is drawn"
 
 mutual
 
 /-- Evaluate statements in order, threading the macro environment: a
 `\pgfmathsetmacro` binds for the statements after it in its own scope. -/
-def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
+private def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | [], env, ev => (env, ev)
   | s :: rest, env, ev =>
     let (env2, ev2) := evalOne cx s env ev
     evalList cx rest env2 ev2
 
-def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
+private def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | .fill toks, env, ev =>
     match evalFill cx env toks with
@@ -5326,7 +5326,7 @@ and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
 /-- One body evaluation per item: the recursion is on the item list, the
 body a fixed subterm of its `\foreach`, so the unrolling is bounded by the
 expanded list — which `range` bounded before any value existed. -/
-def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
+private def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
     List (Array Val) → List (String × Val) → Ev → Ev
   | [], _, ev => ev
   | item :: rest, env, ev =>
@@ -5386,7 +5386,7 @@ theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
 
 /-- A document macro as the picture walk uses it: how many arguments it
 takes, and its body's tokens. -/
-structure Macro where
+private structure Macro where
   arity : Nat
   body : List Tok
   deriving Repr, Inhabited
@@ -5404,7 +5404,7 @@ def walkCtrls : List String :=
    "pgfmathtruncatemacro", "else", "fi"]
 
 /-- Does this walk give the name a meaning of its own? -/
-def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
+private def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
 
 /-- The names a picture binds for itself: a `\foreach` variable and a
 `\pgfmathsetmacro` target. pgf binds them in the picture's own scope, so
@@ -5412,7 +5412,7 @@ they are the picture's whatever the document also called them — which is
 why they are cut from the macro table before a single expansion happens.
 A scan over the token stream rather than over the parsed statements,
 because the binding has to be known before the stream is rewritten. -/
-def boundNames (ts : Array Tok) : List String := Id.run do
+private def boundNames (ts : Array Tok) : List String := Id.run do
   let mut out : List String := []
   let mut inVars := false
   for k in [0:ts.size] do
@@ -5574,7 +5574,7 @@ table has entries; the loop stops earlier the moment a pass changes
 nothing. A cycle therefore leaves its name standing and is *named* by the
 salvage rather than hanging the run — which is what a fuel parameter would
 have bought, at the cost of a number nobody can justify. -/
-def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array Tok :=
+private def expandMacros (tbl : List (String × Macro)) (ts : Array Tok) : Array Tok :=
   Id.run do
   if tbl.isEmpty then return ts
   let mut out := ts
@@ -5633,7 +5633,7 @@ Read with the real lexer and parser because the body is a *tree* — braces,
 control words, math — and the definition arrives as the source text of one.
 The engine's own re-emission is source the document could have written, so
 this is a LaTeX reader and not a reader of a private spelling. -/
-def readMacro (line : String) : Option Macro := Id.run do
+private def readMacro (line : String) : Option Macro := Id.run do
   let (toks, _) := Lex.lex "" line
   let (raws, _) := Parse.parse "" toks
   let mut bodyAt : Option Nat := none
@@ -5663,7 +5663,7 @@ a size name means its step of the document's ladder, which is where the
 elaborator reads a venue's `\@setfontsize` redefinition out, so expanding
 the redefinition here would set a picture's `font=\small` by a body the
 paragraphs never run. -/
-def macroTable (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
+private def macroTable (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
     (names : Array (String × String)) (ts : Array Tok) :
     List (String × Macro) := Id.run do
   let bound := boundNames ts
