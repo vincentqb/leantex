@@ -19,6 +19,7 @@ import LeanTex.Core.FaIcons
 import LeanTex.Core.HtmlResource
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Bib
+import LeanTex.Core.Binary
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
@@ -70,6 +71,9 @@ example : Bib.Entry → String → Option String := Bib.Entry.field?
 example : String → Bib.Parsed := Bib.parse
 example : String → Bib.Name := Bib.parseName
 example : Bib.Name → String := Bib.Name.full
+example (read : Binary.Reader α) (value : α) (encoded : ByteArray)
+    (h : Binary.Reads read value encoded) : read.run encoded = some value :=
+  Binary.Reads.run_id read value encoded h
 example : String → Option Dim.Length := Decl.parseLength
 example : String → Option Dim.SymGlue := Decl.parseGlue
 example : String → Except String Decl.LenExpr := Decl.parseLengthSyntax
@@ -106,6 +110,8 @@ example : True := by
   fail_if_success have := Hyphen.rawBreaks
   fail_if_success have := Bib.monthKeys
   fail_if_success have := Bib.readWhile
+  fail_if_success have := Binary.Reader.arrayLoop
+  fail_if_success have := Binary.array_acc
   fail_if_success have := Decl.parseScaled
   fail_if_success have := Decl.ETok
   fail_if_success have := Decl.exprToks
