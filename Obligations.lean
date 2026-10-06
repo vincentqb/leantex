@@ -369,72 +369,9 @@ theorem parseVal_render_id (o : PdfRead.Obj) (h : renderable o) :
 -- resolving operations under independent reads and writes. This is not a
 -- theorem about permutations of evalFixed's whole source/fixed-point walk.
 
-mutual
-
-/-- The characters a node body's tokens carry, in order: the source side of
-the label floor's lower bound. A group is grouping, so its body's
-characters are the group's own; a control sequence's *name* is not a
-character it carries, and neither is a math span's spelling — the span
-elaborates through the math layer, which decides its own content and
-carries its own floor. An accumulator rather than an append, so the measure
-has the shape the engine's walks do. -/
-def bodyChars (env : List (String × Picture.Val)) (acc : Array Char) :
-    List Picture.Tok → Array Char
-  | [] => acc
-  | t :: rest => bodyChars env (tokChars env acc t) rest
-
-/-- One token's own characters (`bodyChars`'s element case). -/
-def tokChars (env : List (String × Picture.Val)) (acc : Array Char) :
-    Picture.Tok → Array Char
-  | .ident w => w.toList.foldl Array.push acc
-  | .num m => (Picture.milliString m).toList.foldl Array.push acc
-  | .space => acc.push ' '
-  | .sym c => acc.push c
-  | .ctrl n =>
-    match env.lookup n with
-    | some v => v.text.toList.foldl Array.push acc
-    | none => acc
-  | .group g => bodyChars env acc g
-  | .math _ _ => acc
-  | .other _ => acc
-
-end
-
-mutual
-
-/-- The characters a label's inlines ink, in order. Recurses into a coloured
-or a styled group, the wrappers the node salvage introduces: a statement
-that read only top-level `.text` runs would be satisfied by a salvage that
-put whatever it liked inside a wrapper. A math span carries its own floor
-and is outside this measure, as it is outside `bodyChars`. -/
-def labelChars (acc : Array Char) : List Ir.Inline → Array Char
-  | [] => acc
-  | x :: rest => labelChars (inlineChars acc x) rest
-
-/-- One inline's own inked characters (`labelChars`'s element case). -/
-def inlineChars (acc : Array Char) : Ir.Inline → Array Char
-  | .text s => s.toList.foldl Array.push acc
-  | .colored _ _ body => labelChars acc body.toList
-  | .styled _ body => labelChars acc body.toList
-  | _ => acc
-
-end
-
--- owed: nodeLabel_mem
--- owner: LeanTex.Core.Picture
--- source: the node-label recovery floor (PLAN 2026-09-24, the node-label floor entry and its review round): the lower bound on what a degraded node label inks. `labelFloor_accounts` is the paid-for side — a label that named a loss ships ink — and it holds for a salvage that kept nothing at all, since the placeholder then pays for it; on its own it permits a diagram of bracketed ellipses where words stood, and it permits markup on the page. This is the other side: every character a salvaged label inks, inside a coloured or a styled group as well as at the top level, is a character its body carried or one of the declared placeholder's, and none of them is LaTeX punctuation. It bounds *provenance* and not *selection* — a naming argument's characters are the body's too, so this statement cannot express "dropped the argument it was told to drop", and that half is executable only: the whole-label rows in `pictureNodeFloorChecks` ("a length argument never rides onto the page", "a starred name's star does not stand in for its argument", "every trailing option run goes with the command", "the named key never reaches the page" and their siblings) pin the salvage of sixteen shapes against the shipped page, and each is paired with a positive row over the same input so none passes under an all-dropping salvage.
--- blocker: the stated provenance contract is false: literal `[x]` keeps brackets that markupChars forbids, and cx.math may translate an empty math span into text absent from bodyChars (PictureContracts.checks). A sound replacement must distinguish literal source characters, declared substitutions, math-produced content and generated placeholders, then carry their provenance through salList. A character blacklist or an arbitrary callback assumption cannot supply that internal producer contract; no replacement proof is claimed here.
--- goldens: no
-/-- Unresolved provenance specification. This old statement is false for
-literal brackets and math-produced text; its blocker records both witnesses
-and the semantic provenance contract still needed. -/
-theorem nodeLabel_mem (cx : Picture.Cx) (env : List (String × Picture.Val))
-    (toks : List Picture.Tok) :
-    ∀ l ∈ (Picture.nodeLabel cx env toks).1,
-      ∀ c ∈ (labelChars #[] l.1.toList).toList,
-        (c ∈ (bodyChars env #[] toks).toList ∨ c ∈ Ir.mathFloorPlaceholder) ∧
-          c ∉ Ir.markupChars := by
-  sorry
+-- Picture.nodeLabel_mem proves character provenance through the actual
+-- salvage: literals, selected substitutions, elaborated math, or a named
+-- generated floor. Literal punctuation is content, not a forbidden alphabet.
 
 /-- The lines a set of inlines declares: one per `\\`, plus the line the
 last segment ends. The measure the re-flow statement compares the shipped

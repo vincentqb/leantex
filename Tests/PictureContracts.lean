@@ -117,7 +117,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     { w := if Ir.plainText content == "wide" then 1000000000 else 100
       height := 40, depth := 10, boxHeight := 35, boxDepth := 8 }
   let coincident := Picture.evalFixed { cx with metric := varying }
-    [node "small" 0 0 [.ident "small"], node "wide" 0 0 [.ident "wide"]]
+    [nodeStmtAt "small" 0 0 [.ident "small"], nodeStmtAt "wide" 0 0 [.ident "wide"]]
   match coincident.nodes.lookup "small" with
   | some g =>
     check "picture equal anchors do not establish label ownership"
@@ -154,8 +154,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   check "picture missing references stay unregistered and diagnosed"
     (missing.nodes.lookup "p" == none && !missing.diags.isEmpty)
   let dependency := relative "p" "root" "right"
-  let old := node "root" 0 0
-  let replacement := node "root" 9000 0
+  let old := nodeStmtAt "root" 0 0
+  let replacement := nodeStmtAt "root" 9000 0
   check "picture placements that read the other write are order dependent"
     ((Picture.evalFixed cx [old, dependency, replacement]).nodes.lookup "p" !=
       (Picture.evalFixed cx [old, replacement, dependency]).nodes.lookup "p")
