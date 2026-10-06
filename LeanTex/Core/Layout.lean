@@ -5037,6 +5037,220 @@ private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size 
   simp only [itemsOfInlines]
   repeat first | exact hn | split
 
+private theorem widenLast_boxChars (items : Array Item) (w : Sp) :
+    (widenLast items w).toList.flatMap Item.boxChars =
+      items.toList.flatMap Item.boxChars := by
+  unfold widenLast
+  split
+  · rfl
+  · split
+    next g h =>
+      obtain ⟨xs, rfl⟩ := Array.back?_eq_some_iff.mp h
+      simp [Item.boxChars]
+    next g r h =>
+      obtain ⟨xs, rfl⟩ := Array.back?_eq_some_iff.mp h
+      simp [Item.boxChars]
+    next => rfl
+
+private def Tk.TextSource : Tk → Prop
+  | .word sty _ _ => sty.smallcaps = false
+  | .space _ => True
+  | _ => False
+
+private def Tk.itemChars : Tk → List Char
+  | .word _ cs _ => cs.toList.flatMap wordItemChars
+  | _ => []
+
+private def ItemsAcc.Clean (a : ItemsAcc) : Prop :=
+  a.dropped = #[] ∧ a.substs = #[]
+
+private def ItemsAcc.chars (a : ItemsAcc) : List Char :=
+  a.items.toList.flatMap Item.boxChars
+
+private theorem decoratedGlue_boxChars (g : Glue) (d : Decorations)
+    (font : Font) (size : Sp) (color : Ir.Color) :
+    (Item.ofDecoratedGlue g d font size color).boxChars = [] := by
+  unfold Item.ofDecoratedGlue
+  split <;> rfl
+
+private theorem itemsOfTok_none_chars (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
+    (anchors : Array (String × Nat)) (origins : Array (Option Span))
+    (source : Option Span) (ht : tk.TextSource) :
+    let out := itemsOfTok none size xHeight fs imgs textW textH
+      acc tk owners anchors origins source
+    out.Clean → acc.Clean ∧ out.chars = acc.chars ++ tk.itemChars := by
+  cases tk <;> simp only [Tk.TextSource] at ht
+  all_goals first | contradiction | skip
+  case word sty cs attr =>
+    simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
+      patsOf_off, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
+    intro hc
+    have hw := wordItems_none_chars (sty.lang.getD "")
+      (sty.metrics size xHeight textW textH).1
+      (sty.metrics size xHeight textW textH).2
+      (fs.lookup sty.slot sty.weight.css sty.italic) sty.color sty.ground sty.link
+      (sty.resolvedDecorations size xHeight textW textH fs) false attr fs
+      (fs.get (fs.lookup sty.slot sty.weight.css sty.italic)) cs
+      acc.dropped acc.substs acc.cache owners origins acc.origins hc.1 hc.2
+    refine ⟨⟨hw.1, hw.2.1⟩, ?_⟩
+    simp only [Array.toList_append, List.flatMap_append, widenLast_boxChars, hw.2.2]
+  case space sty =>
+    dsimp only
+    intro hc
+    refine ⟨hc, ?_⟩
+    simp [itemsOfTok, ItemsAcc.chars, Tk.itemChars, decoratedGlue_boxChars]
+
+private theorem cleanLoop_inv_census {α β γ : Type} (Inv Clean : β → Prop)
+    (read : β → List γ) (emit : α → List γ) (f : α → β → Id (ForInStep β)) :
+    ∀ (xs : List α) (init : β), Inv init →
+      (∀ x ∈ xs, ∀ st, Inv st → ∃ next, f x st = .yield next ∧ Inv next ∧
+        (Clean next → Clean st ∧ read next = read st ++ emit x)) →
+      Inv (forIn xs init f : Id β).run ∧
+      (Clean (forIn xs init f : Id β).run →
+        Clean init ∧ read (forIn xs init f : Id β).run = read init ++ xs.flatMap emit) := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro init hi _
+    exact ⟨hi, fun hc => ⟨hc, by simp⟩⟩
+  | cons x xs ih =>
+    intro init hi hs
+    obtain ⟨next, hf, hn, hnext⟩ := hs x (by simp) init hi
+    rw [List.forIn_cons, hf]
+    have ⟨hinv, hrest⟩ := ih next hn (fun y hy => hs y (by simp [hy]))
+    refine ⟨hinv, ?_⟩
+    intro hc
+    have ⟨hnc, hnr⟩ := hrest hc
+    have ⟨hic, hir⟩ := hnext hnc
+    refine ⟨hic, ?_⟩
+    change read (forIn xs next f : Id β).run = _
+    rw [hnr, hir]
+    simp [List.append_assoc]
+
+private theorem cleanLoop_array_inv_census {α β γ : Type} (Inv Clean : β → Prop)
+    (read : β → List γ) (emit : α → List γ) (f : α → β → Id (ForInStep β))
+    (xs : Array α) (init : β) (hi : Inv init)
+    (step : ∀ x ∈ xs, ∀ st, Inv st → ∃ next, f x st = .yield next ∧ Inv next ∧
+      (Clean next → Clean st ∧ read next = read st ++ emit x)) :
+    Inv (forIn xs init f : Id β).run ∧
+    (Clean (forIn xs init f : Id β).run →
+      Clean init ∧ read (forIn xs init f : Id β).run = read init ++ xs.toList.flatMap emit) := by
+  rw [← Array.forIn_toList]
+  exact cleanLoop_inv_census Inv Clean read emit f xs.toList init hi
+    (fun x hx => step x (by simpa using hx))
+
+private def pendingTextSource : Option (TextStyle × Array Char × Attribution) → Prop
+  | none => True
+  | some (sty, _, _) => sty.smallcaps = false
+
+private def pendingItemChars : Option (TextStyle × Array Char × Attribution) → List Char
+  | none => []
+  | some (_, chars, _) => chars.toList.flatMap wordItemChars
+
+private abbrev TokenState :=
+  ItemsAcc × Option (TextStyle × Array Char × Attribution) ×
+    Array Attribution × Array (Option Span) × List Span × Array (String × Nat)
+
+private theorem tokenLoop_census (toks : Array Tk) (acc : ItemsAcc)
+    (f : Tk → TokenState → Id (ForInStep TokenState))
+    (step : ∀ tk ∈ toks, ∀ st, pendingTextSource st.2.1 →
+      ∃ next, f tk st = .yield next ∧ pendingTextSource next.2.1 ∧
+        (next.1.Clean → st.1.Clean ∧
+          next.1.chars ++ pendingItemChars next.2.1 =
+            (st.1.chars ++ pendingItemChars st.2.1) ++ tk.itemChars)) :
+    let out := (forIn toks (acc, none, #[], #[], [], #[]) f : Id TokenState).run
+    pendingTextSource out.2.1 ∧
+      (out.1.Clean → acc.Clean ∧
+        out.1.chars ++ pendingItemChars out.2.1 =
+          acc.chars ++ toks.toList.flatMap Tk.itemChars) := by
+  simpa only [pendingItemChars, List.append_nil] using
+    cleanLoop_array_inv_census
+      (Inv := fun st : TokenState => pendingTextSource st.2.1)
+      (Clean := fun st : TokenState => st.1.Clean)
+      (read := fun st : TokenState => st.1.chars ++ pendingItemChars st.2.1)
+      (emit := Tk.itemChars) f toks (acc, none, #[], #[], [], #[]) trivial step
+
+private theorem itemsOfToks_none_chars (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (toks : Array Tk) (ht : ∀ tk ∈ toks, tk.TextSource) :
+    let out := itemsOfToks none size xHeight fs imgs textW textH acc toks
+    out.Clean → acc.Clean ∧
+      out.chars = acc.chars ++ toks.toList.flatMap Tk.itemChars := by
+  unfold itemsOfToks
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : TokenState =>
+      pendingTextSource st.2.1 ∧
+      (st.1.Clean → acc.Clean ∧
+        st.1.chars ++ pendingItemChars st.2.1 =
+          acc.chars ++ toks.toList.flatMap Tk.itemChars))
+    (Q := fun out : ItemsAcc =>
+      out.Clean → acc.Clean ∧
+        out.chars = acc.chars ++ toks.toList.flatMap Tk.itemChars)
+  · apply tokenLoop_census
+    · intro tk htk state hp
+      have htk' := ht tk htk
+      rcases state with ⟨a, pending, owners, origins, scope, anchors⟩
+      cases tk <;> simp only [Tk.TextSource] at htk'
+      all_goals first | contradiction | skip
+      case word sty chars attr =>
+        cases pending with
+        | none =>
+          refine ⟨_, rfl, htk', ?_⟩
+          intro hc
+          exact ⟨hc, by simp [pendingItemChars, Tk.itemChars]⟩
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          dsimp only
+          split
+          · refine ⟨_, rfl, hp, ?_⟩
+            intro hc
+            exact ⟨hc, by simp [pendingItemChars, Tk.itemChars, List.append_assoc]⟩
+          · refine ⟨_, rfl, htk', ?_⟩
+            intro hc
+            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
+              (.word prev word first) owners anchors origins none hp hc
+            exact ⟨hw.1, by simp [pendingItemChars, Tk.itemChars, hw.2,
+              List.append_assoc]⟩
+      case space sty =>
+        cases pending with
+        | none =>
+          cases hs : scope.head?
+          all_goals
+            refine ⟨_, rfl, trivial, ?_⟩
+            intro hc
+            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
+              (.space sty) #[] #[] #[] scope.head? trivial hc
+            exact ⟨hw.1, by simpa [pendingItemChars, hs, ItemsAcc.chars] using hw.2⟩
+        | some prev =>
+          rcases prev with ⟨prev, word, first⟩
+          cases hs : scope.head?
+          all_goals
+            refine ⟨_, rfl, trivial, ?_⟩
+            intro hc
+            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH
+              (itemsOfTok none size xHeight fs imgs textW textH a
+                (.word prev word first) owners anchors origins none)
+              (.space sty) #[] #[] #[] scope.head? trivial hc
+            have hpw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
+              (.word prev word first) owners anchors origins none hp hw.1
+            have heq := hw.2
+            rw [hpw.2] at heq
+            exact ⟨hpw.1, by simpa [pendingItemChars, Tk.itemChars, hs,
+              ItemsAcc.chars, List.append_assoc] using heq⟩
+  · rintro ⟨a, pending, owners, origins, scope, anchors⟩ ⟨hp, hc⟩
+    cases pending with
+    | none => simpa [pendingItemChars] using hc
+    | some prev =>
+      rcases prev with ⟨sty, word, attr⟩
+      intro hout
+      have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
+        (.word sty word attr) owners anchors origins none hp hout
+      obtain ⟨hacc, heq⟩ := hc hw.1
+      exact ⟨hacc, hw.2.trans heq⟩
+
 -- Knuth–Plass ------------------------------------------------------------------
 
 def canBreakAt (items : Array Item) (j : Nat) : Bool :=
