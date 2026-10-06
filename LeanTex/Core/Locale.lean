@@ -1,3 +1,5 @@
+module
+
 namespace LeanTex.Core
 
 /-!
@@ -18,7 +20,7 @@ the lowercase pair `\cref`/`\crefrange` read, `\Crefname` the capitalised
 pair `\Cref` reads — independent strings, not a case fold: English
 abbreviates `\cref{eq}` to "eq." while `\Cref` spells "Equation"
 (the package's own defaults, `abbrev` on and `capitalise` off). -/
-structure CrefName where
+public structure CrefName where
   one : String
   many : String
   capOne : String
@@ -30,7 +32,7 @@ field is a value the engine reads at a named site: captions at
 `Ir.captionPrefix` and the abstract/references furniture, months in the
 bibliography, quotes at `\enquote`, hyphenmins at pattern selection,
 cleveref names and the range conjunction at `Ir.refText`. -/
-structure Locale where
+public structure Locale where
   /-- BCP 47 language tag (`tag.bcp47` in the ini). -/
   tag : String
   figure : String
@@ -102,7 +104,7 @@ engine ships locales for (babel manual §1.3's option tables; the dialect
 spellings are babel's own — `ngerman` is the reformed orthography,
 `frenchb`/`francais` the historic French option names). A name outside
 this list is a language the engine has no record for, named W0368. -/
-def babelNames : List (String × String) :=
+public def babelNames : List (String × String) :=
   [("english", "en"), ("american", "en"), ("USenglish", "en"),
    ("british", "en"), ("UKenglish", "en"), ("canadian", "en"),
    ("australian", "en"), ("newzealand", "en"),
@@ -114,7 +116,7 @@ def babelNames : List (String × String) :=
 /-- The tag a babel language option names: the option table first, else
 the name taken as a BCP 47 tag itself (`\selectlanguage{fr}` is legal
 babel since 3.43). -/
-def babelTagOf (name : String) : String :=
+public def babelTagOf (name : String) : String :=
   (babelNames.lookup name).getD name
 
 end Locale

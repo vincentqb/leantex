@@ -1,8 +1,10 @@
-import LeanTex.Core.Diag
+module
+
+public import LeanTex.Core.Diag
 
 namespace LeanTex.Core.Utf8
 
-inductive ErrKind where
+public inductive ErrKind where
   | invalidStart (b : UInt8)
   | invalidContinuation (b : UInt8)
   | truncated
@@ -11,7 +13,7 @@ inductive ErrKind where
   | outOfRange
   deriving Repr, BEq
 
-def ErrKind.message : ErrKind → String
+public def ErrKind.message : ErrKind → String
   | .invalidStart b => s!"invalid start byte 0x{hex b}"
   | .invalidContinuation b => s!"invalid continuation byte 0x{hex b}"
   | .truncated => "truncated multi-byte sequence"
@@ -23,13 +25,13 @@ where
     let digit (n : UInt8) : Char := "0123456789ABCDEF".toList[n.toNat]!
     String.ofList [digit (b >>> 4), digit (b &&& 0xF)]
 
-structure Err where
+public structure Err where
   offset : Nat
   pos : Pos
   kind : ErrKind
   deriving Repr, BEq
 
-def Err.toDiag (e : Err) (file : String) : Diag :=
+public def Err.toDiag (e : Err) (file : String) : Diag :=
   Diag.of .E0002 s!"invalid UTF-8: {e.kind.message} at byte offset {e.offset}"
     (some ⟨file, e.pos⟩)
     (help := "every input is read as UTF-8; `iconv -t utf-8` re-encodes the file")
@@ -67,7 +69,7 @@ where
 when the bytes are valid. Terminating (not fueled): each step advances by
 `max 1 width`, and `seq` only ever returns 1–4, so the `max` is a no-op that
 makes the decrease visible to the checker. -/
-def validate (bs : ByteArray) : Option Err :=
+public def validate (bs : ByteArray) : Option Err :=
   go 0 {}
 where
   go (i : Nat) (pos : Pos) : Option Err :=

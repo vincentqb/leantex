@@ -1,3 +1,5 @@
+module
+
 /-!
 A bounded native listing lexer. It classifies source; it neither parses nor
 executes the language. Lean 4 and Python are the supported lexical subsets, following
@@ -12,26 +14,26 @@ comment or Python triple-quoted string can span any number of lines.
 -/
 namespace LeanTex.Core.ListingHighlight
 
-inductive Language where
+public inductive Language where
   | lean | python
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def language? (name : String) : Option Language :=
+public def language? (name : String) : Option Language :=
   match name.toLower with
   | "lean" | "lean4" => some .lean
   | "python" | "python3" | "py" => some .python
   | _ => none
 
-inductive Kind where
+public inductive Kind where
   | plain | keyword | string | number | comment | builtin | name | operator
   deriving Repr, BEq, DecidableEq, Inhabited
 
-structure Token where
+public structure Token where
   kind : Kind := .plain
   text : String
   deriving Repr, BEq, DecidableEq, Inhabited
 
-def lineText (tokens : Array Token) : String :=
+@[expose] public def lineText (tokens : Array Token) : String :=
   tokens.foldl (fun s t => s ++ t.text) ""
 
 private def charAt (chars : Array Char) (i : Nat) : Char := chars[i]?.getD '\x00'
@@ -182,7 +184,7 @@ private def tokenAt (lang : Language) (chars : Array Char) (i : Nat)
 adjacent scalars of the same class coalesce, including spaces within comments
 and strings. The shared IR reader separately certifies text preservation even
 for manually constructed or stale metadata. -/
-def tokenize (lang : Language) (lines : Array String) : Array (Array Token) := Id.run do
+public def tokenize (lang : Language) (lines : Array String) : Array (Array Token) := Id.run do
   if lines.isEmpty then return #[]
   let chars := (String.intercalate "\n" lines.toList).toList.toArray
   let mut result : Array (Array Token) := #[]
