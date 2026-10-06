@@ -42,4 +42,36 @@ def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
       !spills.isEmpty && spills.all fun d =>
         sameSource d.span first || sameSource d.span second)]
 
+/-- Each overflowing line names its own source, including a note whose
+generated mark shifts the item indices and expansions at shared coordinates. -/
+def overfullSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
+  let geom : Geom := {
+    pageW := pt 160, pageH := pt 400
+    hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
+    hyphenate := false, justify := false }
+  let first := source 17 31
+  let second := source 43 47
+  let word := Inline.text ("".pushn 'W' 96)
+  let content := #[.located first #[word], .linebreak {}, .located second #[word]]
+  let out := run geom fs none { body := #[.para content] }
+  let overfull := out.diags.filter (·.kind == .W0005)
+  let notes := run geom fs none
+    { body := #[.para #[.text "Note", .footnote (some 1) content]] }
+  let noteOverfull := notes.diags.filter (·.kind == .W0005)
+  let expansion := source 17 79
+  let expanded := run geom fs none
+    { body := #[.para #[.located first #[word]], .para #[.located expansion #[word]]] }
+  let expansionOverfull := expanded.diags.filter (·.kind == .W0005)
+  return #[
+    ("body really overflows", !overfull.isEmpty),
+    ("each body line retains its site", overfull.size == 2 &&
+      overfull.any (fun d => sameSource d.span first) &&
+      overfull.any (fun d => sameSource d.span second)),
+    ("each note line retains its site after the mark", noteOverfull.size == 2 &&
+      noteOverfull.any (fun d => sameSource d.span first) &&
+      noteOverfull.any (fun d => sameSource d.span second)),
+    ("expansions at identical coordinates retain distinct origins", expansionOverfull.size == 2 &&
+      expansionOverfull.any (fun d => sameSource d.span first) &&
+      expansionOverfull.any (fun d => sameSource d.span expansion))]
+
 end LeanTex.Tests.LayoutProvenance

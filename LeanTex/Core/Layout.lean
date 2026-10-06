@@ -3668,6 +3668,9 @@ private structure ItemsAcc where
   /-- Destinations indexed by the items their source position becomes.
   Metadata never becomes a breakable item or a shaping boundary. -/
   anchors : Array (String × Nat) := #[]
+  /-- First source scalar carried by each located item. The same shaping
+  map used by anchors supplies these sites without splitting a word. -/
+  itemSources : Array (Nat × Span) := #[]
   /-- Each footnote met: the index of its mark item, its number, its body,
   and the body's first leaf (`Tk.note`'s `bodyLeaf`). -/
   notes : Array (Nat × Nat × Array Inline × Option Nat) := #[]
@@ -3963,8 +3966,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         if g.word then spaceKern fs false ws[0]? else 0
       | _ => 0
     let n := acc.items.size
+    let itemSources := sources.foldl (fun sites (src, item) =>
+      match origins[src]?.getD none with
+      | none => sites
+      | some span =>
+        if sites.back?.map (·.1) == some (n + item) then sites
+        else sites.push (n + item, span)) acc.itemSources
     { acc with items := widenLast acc.items rk ++ ws, dropped := m, substs := s, cache := c'
-               origins := sites
+               origins := sites, itemSources := itemSources
                wordOffsets := offsets.fold (fun os k v => os.insert (n + k) v) acc.wordOffsets
                anchors := acc.anchors ++ anchors.map (fun (name, k) =>
                  (name, n + ((sources.find? (fun (src, _) => k ≤ src)).map (·.2)).getD ws.size))
@@ -4129,7 +4138,17 @@ interrupting shaping; spaces and other non-word tokens flush the word. -/
 private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (toks : Array Tk) : ItemsAcc := Id.run do
-  let step := itemsOfTok pats size xHeight fs imgs textW textH
+  let step (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
+      (anchors : Array (String × Nat)) (origins : Array (Option Span))
+      (source : Option Span) : ItemsAcc :=
+    let next := itemsOfTok pats size xHeight fs imgs textW textH
+      acc tk owners anchors origins source
+    match source with
+    | none => next
+    | some span =>
+      let sites := (Array.range (next.items.size - acc.items.size)).map
+        (fun i => (acc.items.size + i, span))
+      { next with itemSources := next.itemSources ++ sites }
   let mut acc := acc
   let mut pending : Option (TextStyle × Array Char × Attribution) := none
   let mut owners : Array Attribution := #[]
@@ -4185,7 +4204,8 @@ to extra vertical space the document asked for there (`\\[1ex]`); it
 rides beside the items because the line breaker has no use for it, and
 putting it in `Item` would make every pattern carry a field only the
 page builder reads. The final components carry original shaping offsets
-for ownership fragments and zero-ink destinations indexed by item. -/
+for ownership fragments, zero-ink destinations, and source sites indexed
+by item. A warning about a broken line reads only sites in that line. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
@@ -4194,7 +4214,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (roleMetrics : List (String × (Sp × Option Sp)) := []) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) ×
-      Std.HashMap Nat Sp × Array (String × Nat) := Id.run do
+      Std.HashMap Nat Sp × Array (String × Nat) × Array (Nat × Span) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
   let acc := itemsOfToks pats size xHeight fs imgs textW textH { cache := cache } st.toks
@@ -4231,7 +4251,8 @@ with \\allow{E0405}"))
       (trigger := String.singleton c) (recovery := some (.replacedBy s!"the base letter '{base}'"))
       (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
       (subject := some ("math-alpha:" ++ a.name)))
-  return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets, acc.anchors)
+  return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets,
+    acc.anchors, acc.itemSources)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -4805,7 +4826,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
   let delta := delta - boxTaken
-  let mut overfull := false
+  -- Feasibility belongs to the whole line, including a forced line made
+  -- of one unbreakable box with no glue. Ragged text uses none of the
+  -- available shrink, so its natural width must fit without it.
+  let overfull := decide ((if justify then m.shrink else 0) < -delta)
   -- Fill glue shares the leftover, but a line-running fill does not count as a
   -- sharer when the author wrote their own `\hfill`: otherwise
   -- `name \hfill dates` on a paragraph's last line puts the dates halfway to
@@ -4864,8 +4888,6 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
             g.width + d * g.shrink / m.shrink
           else
             g.width
-      if m.shrink < -delta then
-        overfull := true
       -- Authored glue can pull as well as push; interword glue cannot go
       -- negative because its declared shrink bounds it above.
       segs := segs.push (.gap setW g.word)
@@ -4889,8 +4911,6 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
             g.width + d * g.shrink / m.shrink
           else
             g.width
-      if m.shrink < -delta then
-        overfull := true
       segs := segs.push (.decoratedGap setW g.word rule)
       width := width + setW
     | .pen _ _ _ _ _ _ => pure ()
@@ -6606,8 +6626,15 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
-private def B.warnOverfull (b : B) : B :=
-  { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
+private def B.warnOverfull (b : B) (source : Option Span) : B :=
+  { b with
+    diags := b.diags.push
+      (Diag.of .W0005 "overfull line; no feasible break" (span := source)) }
+
+/-- First located item of the line actually set, never a neighbouring line's
+site. Callers shift this map alongside inserted marks and hanging kerns. -/
+private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Option Span :=
+  (sources.find? fun (i, _) => first ≤ i && i ≤ last).map (·.2)
 
 /-- A heading's declared rule as the line builder reads it: weight,
 position against the baseline, and colour — the print reading of
@@ -6626,6 +6653,7 @@ private structure ParaJob where
   extras : Std.HashMap Nat Sp
   wordOffsets : Std.HashMap Nat Sp := {}
   anchors : Array (String × Nat) := #[]
+  itemSources : Array (Nat × Span) := #[]
   diags : Array Diag
   target : Sp
   indent : Sp
@@ -7361,7 +7389,7 @@ private def collectPara (r : Rd) (a : Acc)
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground }
-  let (items, ds, cache, extras, rawNotes, wordOffsets, anchors) :=
+  let (items, ds, cache, extras, rawNotes, wordOffsets, anchors, itemSources) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
@@ -7397,7 +7425,7 @@ private def collectPara (r : Rd) (a : Acc)
     -- the note's leaves count from the note node's first leaf, read off the
     -- counter where the mark stood (`Tk.note`'s `bodyLeaf`)
     for (markIdx, num, body, noteLeaf) in rawNotes do
-      let (nitems0, nds, cache2, _, _, _, nanchors) :=
+      let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
           cache (LeafCtr.of noteLeaf (leafCount body) body) r.imgs r.geom.textWidth
           r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
@@ -7410,6 +7438,7 @@ private def collectPara (r : Rd) (a : Acc)
           s!"'{(r.fs.get idx).family}' has no glyph for '{c}'"
           (trigger := String.singleton c) (recovery := some .skipped) (output := some .pdf))
       let nitems := #[mk] ++ nitems0
+      let nsources := nsources.map (fun (i, span) => (i + 1, span))
       let nitems := if r.geom.justify then nitems else raggedItems nitems
       let breaks := kpTwoPass nitems target
       let mut lines : Array LineOut := #[]
@@ -7423,7 +7452,8 @@ private def collectPara (r : Rd) (a : Acc)
         let (lsegs, lw, overfull, _, _) :=
           setLine nitems s brk target (setsToMeasure r.geom.justify nitems s brk) false false
         if overfull then
-          ds := ds.push (Diag.of .W0005 "overfull line; no feasible break")
+          ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
+            (span := lineSource nsources s brk))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs
@@ -7455,17 +7485,19 @@ private def collectPara (r : Rd) (a : Acc)
   -- A hanging indent opens the items with its kern; what is indexed by
   -- item position (a forced break's extra space, a footnote mark) moves
   -- with them.
-  let (items, extras, noteBlocks, wordOffsets, anchors) :=
-    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors)
+  let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
+    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
     else (#[Item.box (-hangIndent) 0 a.fg none #[] size none {} 0 a.ground .unattributed] ++ items,
       extras.fold (fun m k v => m.insert (k + 1) v) {},
       noteBlocks.map (fun (i, nb) => (i + 1, nb)),
       wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
-      anchors.map (fun (n, i) => (n, i + 1)))
+      anchors.map (fun (n, i) => (n, i + 1)),
+      itemSources.map (fun (i, span) => (i + 1, span)))
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
-      items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors, diags := ds
+      items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors
+      itemSources := itemSources, diags := ds
       target := measure
       indent := indent, center := center, size := size
       firstBaseline := firstBaseline
@@ -8600,13 +8632,13 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
   -- Image fractions resolve against the current measure, as collectPara's.
   let target := (a.measure.getD r.geom.textWidth) - indent
-  let (citems, ds1, cache1, extras, _, cOffsets, cAnchors) :=
+  let (citems, ds1, cache1, extras, _, cOffsets, cAnchors, cSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
       r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
   -- the number's leaves follow the content's
   let numLeaf := leaf.map (· + leafCount content)
-  let (nitems, ds2, cache2, _, _, nOffsets, nAnchors) :=
+  let (nitems, ds2, cache2, _, _, nOffsets, nAnchors, nSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
       cache1 (LeafCtr.of numLeaf (leafCount num) num) r.imgs target r.geom.textHeight
       (ladder := r.geom.scale)
@@ -8621,6 +8653,8 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
     (fun m k v => m.insert (k + citems.size + 3) v) wordOffsets
   let anchors := cAnchors.map (fun (n, i) => (n, i + 2)) ++
     nAnchors.map (fun (n, i) => (n, i + citems.size + 3))
+  let itemSources := (cSources.filter (·.1 < citems.size)).map (fun (i, s) => (i + 2, s)) ++
+    (nSources.filter (·.1 < nitems.size)).map (fun (i, s) => (i + citems.size + 3, s))
   let numW := (measure nitems 0 nitems.size).natural
   -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
@@ -8635,6 +8669,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
     hyphCache := cache2
     ops := a.ops.push (.para {
       items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors,
+      itemSources := itemSources
       diags := ds1 ++ ds2
       target := target
       indent := indent, center := false, size := r.geom.fontSize
@@ -10346,6 +10381,10 @@ a strike or underline as the same kind of ink as the text under it. -/
   · exact absurd hr (by simp)
   · simp only [Option.some.injEq] at hr; simp [← hr]
 
+private def ParaJob.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
+  if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
+  else Layout.lineStart j.items (prev + 1)
+
 /-- The geometry of one paragraph line: its segs, x, set width, whether
 the break was overfull, the protrusion hang its x was shifted left by,
 and its expansion factor. Pure in the builder — it reads only the page
@@ -10357,8 +10396,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   -- further out: the breaker priced exactly that line (`ParaJob.hangIndent`).
   let lead := if first then j.hangIndent else 0
   let width := j.target + lead
-  let a := if first then lineStart j.items (if j.hangIndent == 0 then 0 else 1)
-    else lineStart j.items (prev + 1)
+  let a := j.lineStart first prev
   let (segs0, w0, overfull, hang, exf) :=
     setLine j.items a brk width
       (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk)
@@ -10493,7 +10531,9 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  let b1 := if g.2.2.2.1 then b0.warnOverfull else b0
+  let b1 := if g.2.2.2.1 then
+      b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
+    else b0
   -- The notes whose marks this line carries: mark boxes strictly between
   -- the previous break and this one ride with the line, so the note
   -- follows its mark through fit and spill alike.
@@ -11283,10 +11323,10 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d bl : Sp)
     (r c : Bool) (o : Sp) :
     (b.commit l d bl r c o).noBreak = b.noBreak := rfl
-@[simp] private theorem warnOverfull_pages (b : B) :
-    b.warnOverfull.pages = b.pages := rfl
-@[simp] private theorem warnOverfull_noBreak (b : B) :
-    b.warnOverfull.noBreak = b.noBreak := rfl
+@[simp] private theorem warnOverfull_pages (b : B) (source : Option Span) :
+    (b.warnOverfull source).pages = b.pages := rfl
+@[simp] private theorem warnOverfull_noBreak (b : B) (source : Option Span) :
+    (b.warnOverfull source).noBreak = b.noBreak := rfl
 @[simp] private theorem pushSibling_pages (b : B) (l? : Option LineOut)
     (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
     (fl : Option Nat) :
@@ -11352,9 +11392,10 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem warnNoteOverrun_docBg (b : B) (y d : Sp) :
     (b.warnNoteOverrun y d).docBg = b.docBg := by
   simp only [B.warnNoteOverrun]; split <;> rfl
-@[simp] private theorem warnOverfull_geom (b : B) : b.warnOverfull.geom = b.geom := rfl
-@[simp] private theorem warnOverfull_docBg (b : B) :
-    b.warnOverfull.docBg = b.docBg := rfl
+@[simp] private theorem warnOverfull_geom (b : B) (source : Option Span) :
+    (b.warnOverfull source).geom = b.geom := rfl
+@[simp] private theorem warnOverfull_docBg (b : B) (source : Option Span) :
+    (b.warnOverfull source).docBg = b.docBg := rfl
 @[simp] private theorem finishPage_geom (b : B) (o : Sp) (f : Bool) :
     (b.finishPage o f).geom = b.geom := rfl
 @[simp] private theorem finishPage_docBg (b : B) (o : Sp) (f : Bool) :
