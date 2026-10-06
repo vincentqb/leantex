@@ -2775,57 +2775,162 @@ private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
   · intro s hs
     exact hs
 
+/-- A literal source token, before any salvage decision. A number's
+spelling is the token reader's canonical `milliString`, since `Tok.num`
+retains its value rather than its original spelling. -/
+inductive LabelLiteral where
+  | word (text : String)
+  | number (milli : Int)
+  | symbol (char : Char)
+  | space
+  deriving Repr, BEq
+
+def LabelLiteral.text : LabelLiteral → String
+  | .word s => s
+  | .number m => milliString m
+  | .symbol c => String.singleton c
+  | .space => " "
+
+/-- An independently enumerable input to a node label. A substitution
+retains its declaration name and value; a math input retains its original
+body and display mode, not a certificate attached to the produced inline. -/
+inductive LabelInput where
+  | literal (source : LabelLiteral)
+  | substitution (name : String) (value : Val)
+  | math (display : Bool) (body : List Parse.Raw)
+  deriving Repr, BEq
+
+def LabelInput.text (cx : Cx) : LabelInput → String
+  | .literal source => source.text
+  | .substitution _ value => value.text
+  | .math d body => Ir.plainTextOne (cx.math d body.toArray).1
+
 mutual
 
-/-- Collect potential label sources without copying the remaining walk
-at each token. This census reads source tokens, bindings and the math
-callback only; it does not run the salvage machine. -/
-def labelSourceList (cx : Cx) (env : List (String × Val))
-    (acc : Array String) : List Tok → Array String
+/-- The independent source census: flatten source groups and resolve
+declared substitutions. It reads no salvage state, output or diagnostic.
+In particular it enumerates math *inputs* without invoking the callback.
+This walk is over `Tok`, whose group tree is not the document IR. -/
+def labelInputList (env : List (String × Val)) (acc : Array LabelInput) :
+    List Tok → Array LabelInput
   | [] => acc
-  | t :: rest => labelSourceList cx env (acc.push (labelSource cx env t)) rest
+  | t :: rest => labelInputList env (labelInputOne env acc t) rest
 
-/-- One token's possible contribution to a label. Literal punctuation is
-content; braces and other grouping syntax have already become token nodes. -/
-def labelSource (cx : Cx) (env : List (String × Val)) : Tok → String
-  | .ident w => w
-  | .num m => milliString m
-  | .sym c => String.singleton c
-  | .space => " "
+def labelInputOne (env : List (String × Val)) (acc : Array LabelInput) :
+    Tok → Array LabelInput
+  | .ident w => acc.push (.literal (.word w))
+  | .num m => acc.push (.literal (.number m))
+  | .sym c => acc.push (.literal (.symbol c))
+  | .space => acc.push (.literal .space)
   | .ctrl n => match env.lookup n with
-    | some v => v.text
-    | none => ""
-  | .group ts => String.join (labelSourceList cx env #[] ts).toList
-  | .math d ts => Ir.plainTextOne (cx.math d ts.toArray).1
-  | .other _ => ""
+    | some v => acc.push (.substitution n v)
+    | none => acc
+  | .group ts => labelInputList env acc ts
+  | .math d ts => acc.push (.math d ts)
+  | .other _ => acc
 
 end
 
-/-- Potential readable label characters, including bound values and the
-math elaborator's result. Groups contribute their own sources; command
-names and parser markers contribute none. The salvage may discard sources
-used as options or names, so this is a provenance bound, not an equality. -/
-def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
-  String.join (labelSourceList cx env #[] ts).toList
+mutual
 
-/-- The source census preserves its existing chunks exactly. Its
-equational API separates the accumulator from the remaining source. -/
-theorem labelSourceList_prefix_exact (cx : Cx) (env : List (String × Val))
-    (initial acc : Array String) (ts : List Tok) :
-    labelSourceList cx env (initial ++ acc) ts =
-      initial ++ labelSourceList cx env acc ts := by
-  induction ts generalizing acc with
+/-- The census preserves its initial sources exactly, including through
+nested groups. This equation exposes its accumulator to consumers. -/
+theorem labelInputList_prefix_exact (env : List (String × Val))
+    (initial acc : Array LabelInput) (ts : List Tok) :
+    labelInputList env (initial ++ acc) ts =
+      initial ++ labelInputList env acc ts := by
+  cases ts with
   | nil => rfl
-  | cons t ts ih =>
-    simpa only [labelSourceList, Array.append_push] using
-      ih (acc.push (labelSource cx env t))
+  | cons t ts =>
+    rw [labelInputList, labelInputOne_prefix_exact, labelInputList_prefix_exact]
+    rfl
+
+theorem labelInputOne_prefix_exact (env : List (String × Val))
+    (initial acc : Array LabelInput) (t : Tok) :
+    labelInputOne env (initial ++ acc) t = initial ++ labelInputOne env acc t := by
+  cases t with
+  | group ts => exact labelInputList_prefix_exact env initial acc ts
+  | ctrl n => simp only [labelInputOne]; split <;> simp only [Array.append_push]
+  | _ => simp only [labelInputOne, Array.append_push]
+
+end
+
+def labelInputText (cx : Cx) (inputs : Array LabelInput) : String :=
+  String.join (inputs.toList.map (LabelInput.text cx))
+
+theorem labelInputText_append (cx : Cx) (a b : Array LabelInput) :
+    labelInputText cx (a ++ b) = labelInputText cx a ++ labelInputText cx b := by
+  simp [labelInputText, String.join_append]
+
+/-- A character in the census text has an actual input witness. -/
+theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Char) :
+    c ∈ (labelInputText cx inputs).toList ↔
+      ∃ input ∈ inputs, c ∈ (input.text cx).toList := by
+  cases inputs with
+  | mk inputs =>
+    induction inputs with
+    | nil => simp [labelInputText]
+    | cons input inputs ih =>
+      simp only [labelInputText, List.map_cons, String.join_cons,
+        String.toList_append, List.mem_append] at ih ⊢
+      simp_all
+
+/-- Potential readable label characters. This projection of the source
+census allows arbitrary math callback output. Salvage may discard sources
+used as options or names, so the bound is containment, not equality. -/
+def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
+  labelInputText cx (labelInputList env #[] ts)
+
+def labelSource (cx : Cx) (env : List (String × Val)) (t : Tok) : String :=
+  labelInputText cx (labelInputOne env #[] t)
+
+/-- The single-token equation of the independently collected text. -/
+theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
+    labelSource cx env t = match t with
+      | .ident w => w
+      | .num m => milliString m
+      | .sym c => String.singleton c
+      | .space => " "
+      | .ctrl n => match env.lookup n with
+        | some v => v.text
+        | none => ""
+      | .group ts => labelSources cx env ts
+      | .math d ts => Ir.plainTextOne (cx.math d ts.toArray).1
+      | .other _ => "" := by
+  cases t <;> simp [labelSource, labelInputOne, labelInputText, LabelInput.text,
+    LabelLiteral.text, labelSources]
+  split <;> simp [LabelInput.text]
 
 theorem labelSources_cons (cx : Cx) (env : List (String × Val)) (t : Tok) (ts : List Tok) :
     labelSources cx env (t :: ts) = labelSource cx env t ++ labelSources cx env ts := by
-  unfold labelSources
-  change String.join (labelSourceList cx env (#[labelSource cx env t] ++ #[]) ts).toList = _
-  rw [labelSourceList_prefix_exact]
-  simp
+  unfold labelSources labelSource
+  change labelInputText cx (labelInputList env (labelInputOne env #[] t ++ #[]) ts) = _
+  rw [labelInputList_prefix_exact, labelInputText_append]
+
+/-- The closed vocabulary of text the label reader may generate. -/
+inductive LabelGenerated where
+  | nodeFloor
+  deriving Repr, BEq
+
+def LabelGenerated.text : LabelGenerated → String
+  | .nodeFloor => nodeFloorPlaceholder
+
+inductive LabelOrigin where
+  | source (input : LabelInput)
+  | generated (kind : LabelGenerated)
+  deriving Repr, BEq
+
+def LabelOrigin.text (cx : Cx) : LabelOrigin → String
+  | .source input => input.text cx
+  | .generated kind => kind.text
+
+/-- Source permission depends only on the input census. The one generated
+fallback is permitted only when the run names a loss. Neither permission
+uses a source tag supplied by the salvage implementation. -/
+def LabelOrigin.Permitted (env : List (String × Val)) (toks : List Tok)
+    (named : Bool) : LabelOrigin → Prop
+  | .source input => input ∈ labelInputList env #[] toks
+  | .generated .nodeFloor => named = true
 
 private theorem salCtrl_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
     (n : String) (s : Sal) (hs : s.from P)
@@ -2834,7 +2939,7 @@ private theorem salCtrl_from (P : Char → Prop) (cx : Cx) (env : List (String �
   unfold salCtrl
   split
   · rename_i v hv
-    exact s.str_from P _ hs (by simpa [labelSource, hv] using ht)
+    exact s.str_from P _ hs (by simpa only [labelSource_exact, hv] using ht)
   · repeat' first
       | exact hs
       | exact s.newline_from P hs
@@ -2858,6 +2963,7 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
     (t : Tok) (s : Sal) (hs : s.from P)
     (ht : textFrom P (labelSource cx env t)) :
     (salOne cx env t s).from P := by
+  rw [labelSource_exact] at ht
   have hs := Sal.settle_from P _ t (Sal.settle_from P _ t hs)
   unfold salOne
   generalize Sal.settle t (Sal.settle t s) = settled at hs ⊢
@@ -2888,15 +2994,15 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
     | ident w =>
       apply Sal.inlines_from P _ _ hs
       apply fontCmdInlines_from
-      simpa [labelSource, Ir.plainTextOne] using ht
+      simpa [Ir.plainTextOne] using ht
     | num m =>
       apply Sal.inlines_from P _ _ hs
       apply fontCmdInlines_from
-      simpa [labelSource, Ir.plainTextOne] using ht
+      simpa [Ir.plainTextOne] using ht
     | sym c =>
       apply Sal.inlines_from P _ _ hs
       apply fontCmdInlines_from
-      simpa [labelSource, Ir.plainTextOne] using ht
+      simpa [Ir.plainTextOne] using ht
     | _ => exact hs
   | text =>
     cases t with
@@ -2913,21 +3019,26 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
       · exact Sal.flush_from P _ hi
     | math d body => exact Sal.inline_from P _ _ hs ht
     | other _ => exact hs
-    | ctrl n => exact salCtrl_from P cx env n _ hs ht
+    | ctrl n =>
+      exact salCtrl_from P cx env n _ hs (by simpa only [labelSource_exact] using ht)
 
 end
 
 private theorem labelFloor_from (P : Char → Prop) (lines : Array LabelLine)
-    (named : Bool) (hs : linesFrom P lines) (hp : textFrom P nodeFloorPlaceholder) :
+    (named : Bool) (hs : linesFrom P lines)
+    (hp : named = true → textFrom P nodeFloorPlaceholder) :
     linesFrom P (labelFloor lines named) := by
   unfold labelFloor
   split
   · exact hs
-  · simpa [linesFrom, inlinesFrom, Ir.plainTextOne] using hp
+  · rename_i h
+    have hn : named = true := by
+      cases named <;> simp_all
+    simpa [linesFrom, inlinesFrom, Ir.plainTextOne] using hp hn
 
 private theorem nodeLabel_from (P : Char → Prop) (cx : Cx) (env : List (String × Val))
     (toks : List Tok) (ht : textFrom P (labelSources cx env toks))
-    (hp : textFrom P nodeFloorPlaceholder) :
+    (hp : (!(nodeLabel cx env toks).2.isEmpty) = true → textFrom P nodeFloorPlaceholder) :
     linesFrom P (nodeLabel cx env toks).1 := by
   let walked := salList cx env toks {}
   have hw : walked.from P := salList_from P cx env toks {} (by simp [Sal.from]) ht
@@ -2937,6 +3048,54 @@ private theorem nodeLabel_from (P : Char → Prop) (cx : Cx) (env : List (String
     dsimp only [closed]
     split <;> exact hw
   exact labelFloor_from P _ _ (Sal.newline_from P closed hc).1 hp
+
+/-- **Every output character has a permitted, typed origin.** The source
+census is computed independently from the token tree and declarations.
+Its witnesses distinguish literal tokens, resolved substitutions and
+math inputs; math text is read from the callback applied to that very
+input. The only generated text is the closed `nodeFloor` case, and its
+witness requires a diagnostic from this run.
+
+This quantifies over every context, binding environment and token tree,
+including malformed bodies, literal brackets and arbitrary math callback
+output. It bounds the actual `salList`/`salOne` salvage, its style/colour
+splice loop and its final floor. It makes no claim that every source is
+selected, nor that each occurrence has a unique origin. -/
+theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    ∀ line ∈ (nodeLabel cx env toks).1,
+      ∀ c ∈ (Ir.plainText line.1).toList,
+        ∃ origin : LabelOrigin,
+          origin.Permitted env toks (!(nodeLabel cx env toks).2.isEmpty) ∧
+          c ∈ (origin.text cx).toList := by
+  let P := fun c => ∃ origin : LabelOrigin,
+    origin.Permitted env toks (!(nodeLabel cx env toks).2.isEmpty) ∧
+    c ∈ (origin.text cx).toList
+  have ht : textFrom P (labelSources cx env toks) := by
+    intro c hc
+    obtain ⟨input, hi, hc⟩ := (labelInputText_mem cx _ c).mp hc
+    exact ⟨.source input, hi, hc⟩
+  have hp : (!(nodeLabel cx env toks).2.isEmpty) = true →
+      textFrom P nodeFloorPlaceholder := by
+    intro hn c hc
+    exact ⟨.generated .nodeFloor, hn, hc⟩
+  have h := nodeLabel_from P cx env toks ht hp
+  intro line hl
+  exact (plainText_from P line.1).mpr (h line hl)
+
+/-- A run without a diagnostic needs only genuine input witnesses; the
+generated fallback cannot account for any of its characters. -/
+theorem nodeLabel_clean_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok)
+    (clean : (nodeLabel cx env toks).2.isEmpty = true) :
+    ∀ line ∈ (nodeLabel cx env toks).1,
+      ∀ c ∈ (Ir.plainText line.1).toList,
+        ∃ input ∈ labelInputList env #[] toks, c ∈ (input.text cx).toList := by
+  intro line hl c hc
+  obtain ⟨origin, ho, hc⟩ := nodeLabel_mem cx env toks line hl c hc
+  cases origin with
+  | source input => exact ⟨input, ho, hc⟩
+  | generated kind =>
+    cases kind
+    simp [LabelOrigin.Permitted, clean] at ho
 
 /-- Every character returned by the label reader comes from literal text,
 a resolved macro value, the math elaborator's output, or the declared
@@ -2954,7 +3113,7 @@ theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks : List
   let P := fun c => c ∈ (labelSources cx env toks).toList ∨ c ∈ Ir.mathFloorPlaceholder
   have h := nodeLabel_from P cx env toks
     (fun _ hc => Or.inl hc)
-    (fun _ hc => Or.inr (by simpa [nodeFloorPlaceholder] using hc))
+    (fun _ _ hc => Or.inr (by simpa [nodeFloorPlaceholder] using hc))
   intro line hl
   exact (plainText_from P line.1).mpr (h line hl)
 
@@ -5404,11 +5563,10 @@ Expansion precedes execution, as it does in TeX: the stream the statement
 reader and the label salvage see is one a macro has already been taken out
 of, so a macro works in a node body, an edge label, a coordinate and a
 conditional's test alike, and neither the mode machine nor the salvage has
-to learn a table. That is the argument for pre-expansion over expanding at
-the salvage: the salvage is a mode machine with no equational theory — its
-own `nodeLabel_mem` is owed for that reason — and threading a shrinking
-table through its state would put that statement further out of reach,
-while a token rewrite is a pure function with one.
+to learn a table. The salvage's `nodeLabel_mem` now reads an independent
+census of that expanded source and proves provenance through the actual
+mode machine. Keeping macro expansion outside it leaves the shrinking
+declaration table with the token rewrite that consumes it.
 
 **The bound is the table, not a budget.** One pass resolves one level of
 nesting, so a chain of distinct names is exhausted in as many passes as the

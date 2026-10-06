@@ -1,4 +1,4 @@
-import LeanTex.Core.Picture
+import Tests.Support
 
 open LeanTex.Core
 
@@ -43,6 +43,24 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (labelText (Picture.nodeLabel cx [] [.sym '[', .ident "x", .sym ']']).1 == "[x]")
   check "picture math content comes from its elaborator"
     (labelText (Picture.nodeLabel cx [] [.math false []]).1 == "computed")
+  let inputs := Picture.labelInputList
+    [("value", .str "bound"), ("value", .str "shadowed"), ("unused", .str "unreferenced")]
+    #[] [.sym '[', .num (-1250), .group [.ctrl "value", .math true []],
+      .ctrl "unbound", .other "parser-marker"]
+  check "picture source census retains typed tokens and the selected declaration"
+    (inputs == #[.literal (.symbol '['), .literal (.number (-1250)),
+      .substitution "value" (.str "bound"), .math true []])
+  check "picture source census neither echoes controls nor imports unused declarations"
+    (Picture.labelSources cx [("unused", .str "unreferenced")]
+      [.ctrl "unbound", .other "parser-marker"] == "")
+  check "picture empty source does not manufacture the floor"
+    (let (ls, ds) := Picture.nodeLabel cx [] []
+     labelText ls == "" && ds.isEmpty)
+  check "picture generated floor is absent from the independent source census"
+    (let ts := [Picture.Tok.ctrl "unbound"]
+     let (ls, ds) := Picture.nodeLabel cx [] ts
+     Picture.labelSources cx [] ts == "" &&
+       labelText ls == Picture.LabelGenerated.nodeFloor.text && !ds.isEmpty)
   let styledCx : Picture.Cx :=
     { cx with
       pal := ({} : Ir.Palette).declare "accent" Ir.Color.black
@@ -135,5 +153,63 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let missing := Picture.evalFixed cx [relative "p" "absent" "right"]
   check "picture missing references stay unregistered and diagnosed"
     (missing.nodes.lookup "p" == none && !missing.diags.isEmpty)
+  let dependency := relative "p" "root" "right"
+  let old := node "root" 0 0
+  let replacement := node "root" 9000 0
+  check "picture placements that read the other write are order dependent"
+    ((Picture.evalFixed cx [old, dependency, replacement]).nodes.lookup "p" !=
+      (Picture.evalFixed cx [old, replacement, dependency]).nodes.lookup "p")
+
+/-- Provenance witnesses must survive actual placement and both artifact
+trees. The math callback intentionally supplies text absent from its raw
+input, and the substitution supplies text absent from its control name.
+The expected page content is written independently of the source census. -/
+def provenanceRenderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let metric := Layout.labelMetric geom fonts
+  let measuredCx : Picture.Cx := {
+    cx with
+    metric
+    pal := ({} : Ir.Palette).declare "accent" Ir.Color.black
+    argStyles := [("textbf", .bold), ("emph", .emph)]
+    math := fun display _ =>
+      (.styled .italic #[.text (if display then "[DISPLAY]" else "[math]")], #[]) }
+  let cases : Array (String × List Picture.Tok × Array String × Bool) := #[
+    ("literal brackets", [.sym '[', .ident "source", .sym ']'], #["[source]"], false),
+    ("declared substitution", [.ctrl "textbf", .group [.ctrl "value"]], #["Bound"], false),
+    ("arbitrary math output", [.math true [], .space, .math false []],
+      #["[DISPLAY] [math]"], false),
+    ("nested style and color", [.ctrl "textbf", .group [
+      .ident "first", .ctrl "\\", .math false [], .ctrl "textcolor",
+      .group [.ident "accent"], .group [.ident "last"]]], #["first", "[math]last"], false),
+    ("discarded naming argument", [.ident "kept", .ctrl "ref", .group [.ident "not-shipped"]],
+      #["kept"], true),
+    ("generated floor", [.ctrl "unbound"], #[Picture.nodeFloorPlaceholder], true),
+    ("incomplete color", [.ctrl "textcolor", .group [.ident "accent"]],
+      #[Picture.nodeFloorPlaceholder], true),
+    ("deliberately invisible", [.ctrl "phantom", .group [.ident "not-shipped"]], #[], false)]
+  let alignments : Array (String × Ir.Pic.LabelAlign) :=
+    #[("center", .center), ("west", .west), ("east", .east), ("north", .north), ("south", .south)]
+  for (name, body, expected, named) in cases do
+    let (labels, ds) := Picture.nodeLabel measuredCx [("value", .str "Bound")] body
+    t s!"picture provenance: {name} accounts for its loss" ((!ds.isEmpty) == named)
+    for (side, align) in alignments do
+      for scale in #[650, 1000, 1750] do
+        let pic : Ir.Pic.Picture := {
+          shapes := Picture.stackLabels (Dim.pt 13) (Dim.pt (-4)) geom.fontSize
+            scale Ir.Color.black align labels #[] }
+        let doc : Ir.Doc := {
+          body := #[.picture pic]
+          tokens := ({} : Ir.Tokens).declare "topskip" {} }
+        let lines := (bodyLines (layoutOf fonts doc geom)).filter hasGlyphRun
+        let html := HtmlDoc.pictureSvg { labelMetric := metric } pic
+        let name := s!"picture provenance: {name}/{side}/{scale}"
+        t (name ++ " ships the independently expected native lines")
+          (lines.map lineText == expected)
+        t (name ++ " ships the same visible SVG text")
+          (shownTextOne "" html == String.join expected.toList)
+        t (name ++ " preserves the SVG line partition")
+          ((elemAttrsOne (· == "text") #[] html).size == expected.size)
 
 end PictureContracts
