@@ -472,20 +472,9 @@ theorem nameRefusals_asked (file : String) (raws : Array Parse.Raw) :
             (Compat.localStyCandidates raws).contains (p.2 ++ nm) = true := by
   sorry
 
--- owed: titleStyle_spelling_agree
--- owner: LeanTex.Core.Elab
--- source: template-family audit 2026-09-24: `\setbeamertemplate{title page}` failed two real decks outright once `\usetheme{X}` began reading `beamerthemeX.sty`, and the read-out that should have salvaged the body knew latex.ltx's `\@title` and not beamer's `\inserttitle` — a refusal that read nothing because it did not recognise the spelling in front of it
--- blocker: This statement is false for arbitrary surrounding raws: a conditional can inspect the exact spelling (elabTitleBoundaryChecks). Elab.barScan_alias_agree proves the actual declarative scan step. The replacement must restrict the claim to refused title-body read-out, then carry it through the preamble fold and style merge; global alias normalization would change source semantics.
--- goldens: no
-/-- Staged title-alias equivalence. Arbitrary surrounding source can inspect
-the exact command spelling in a conditional, so this statement is false.
-Equivalence belongs to the refused title body's declarative read-out;
-`Elab.barScan_alias_agree` proves its individual scan step. -/
-theorem titleStyle_spelling_agree (file : String)
-    (pre post : Array Parse.Raw) (p q : Pos) (b l : String)
-    (h : Elab.beamerInsertAlias.lookup b = some l) :
-    ((Elab.runRaws file (pre ++ #[.ctrl b p] ++ post)).1.styles.find? "titlepage")
-      = ((Elab.runRaws file (pre ++ #[.ctrl l q] ++ post)).1.styles.find? "titlepage") := by
-  sorry
+-- `Elab.titleStyle_spelling_agree` proves alias equivalence through the
+-- production preamble and complete frontend at the selected declarative
+-- body boundary. Global source equivalence is false: executable source
+-- can inspect a spelling, as `elabTitleBoundaryChecks` demonstrates.
 
 end Obligations
