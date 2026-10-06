@@ -8,6 +8,8 @@ Reference point, not a fair fight: lualatex loads formats and fonts per run,
 and does far more. Median of N runs (env var `N`, default 5), milliseconds.
 `LEANTEX_BENCH_BINARY` selects a saved compiler for before/after comparisons
 over the same inputs, environment and benchmark driver.
+`--boundary-only` measures independent picture requests with a cold and a
+warm content cache, after warming font discovery.
 -/
 
 def compiler : IO String := do
@@ -113,9 +115,61 @@ def benchImageDeck (n frames : Nat) : IO Unit := do
     bench n s!"leantex  image deck, {frames} frames (HTML)" leantex
       #["-q", "build", input.toString, "-o", (dir / "deck.html").toString]
 
-def main : IO UInt32 := do
+/-- Measure the real picture boundary, not a synthetic sleep. A private
+content cache makes each cold run comparable; the following warm run must
+ship identical bytes and every requested picture must have a cached PDF. -/
+def benchPictures (n requests : Nat) : IO Unit := do
+  let leantex ← IO.FS.realPath (← compiler)
+  let fonts ← IO.FS.realPath "tests/corpus/fonts"
+  IO.FS.withTempDir fun dir => do
+    let head := "\\documentclass{article}\n\\usepackage{tikz}\n" ++
+      "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Open Sans\" }\n" ++
+      "\\begin{document}\n"
+    let mut source := head
+    for i in [:requests] do
+      source := source ++ "\\begin{tikzpicture}\n" ++
+        "\\node[text width=4cm] at (0,0) {Invented request " ++ toString i ++ "};\n" ++
+        "\\end{tikzpicture}\n"
+    let input := dir / "pictures.tex"
+    let output := dir / "pictures.pdf"
+    let cache := dir / "cache"
+    let pictures := cache / "leantex" / "pics"
+    let run (input : System.FilePath) : IO Nat := do
+      let start ← IO.monoMsNow
+      let out ← IO.Process.output {
+        cmd := leantex.toString
+        args := #["-q", "build", input.toString, "-o", output.toString]
+        env := #[("XDG_CACHE_HOME", some cache.toString)] }
+      if out.exitCode != 0 then
+        die s!"picture benchmark failed:\n{out.stdout}{out.stderr}"
+      return (← IO.monoMsNow) - start
+    let primer := dir / "fonts.tex"
+    IO.FS.writeFile primer (head ++ "Invented text.\n\\end{document}\n")
+    discard <| run primer
+    IO.FS.writeFile input (source ++ "\\end{document}\n")
+    let mut cold := #[]
+    let mut warm := #[]
+    for _ in [:n] do
+      if ← pictures.pathExists then IO.FS.removeDirAll pictures
+      cold := cold.push (← run input)
+      let cached ← pictures.readDir
+      unless (cached.filter (·.path.extension == some "pdf")).size == requests do
+        die "picture benchmark did not render every external request"
+      let bytes ← IO.FS.readBinFile output
+      warm := warm.push (← run input)
+      unless (← IO.FS.readBinFile output) == bytes do
+        die "picture benchmark changed the PDF when replaying the same cache"
+    for (label, times) in [("cold", cold), ("warm", warm)] do
+      IO.println s!"{padRight s!"leantex  {requests} picture requests ({label})" 42} {padLeft (toString (median times)) 6} ms (median of {n})"
+
+def main (args : List String) : IO UInt32 := do
   let leantex ← compiler
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5
+  if args == ["--boundary-only"] then
+    unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
+    benchPictures n 8
+    benchPictures n 16
+    return 0
   let genLorem ← IO.Process.output
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/gen-lorem.lean"] }
   if genLorem.exitCode != 0 then

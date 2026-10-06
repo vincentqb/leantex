@@ -31,7 +31,9 @@ import LeanTex.Cli.FontAssembly
 import LeanTex.Cli.FontFix
 import LeanTex.Cli.SlotLoss
 import LeanTex.Cli.Boundary
+import LeanTex.Cli.Batch
 import LeanTex.Cli.PicCache
+import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
@@ -237,27 +239,11 @@ structure PicResult where
   bytes : ByteArray
   cached : System.FilePath
 
-/-- Run one process with a wall-clock budget: poll-and-sleep, kill on
-overrun. The boundary tool is external and a runaway TeX must not hang the
-build. The ending is returned as a value (`PicCache.Ran`), because whether
-the tool reached a decision is what decides whether its answer is worth
-remembering. -/
-def runBounded (cmd : String) (args : Array String) (cwd : System.FilePath)
-    (budgetMs : Nat) : IO PicCache.Ran := do
-  let child ← IO.Process.spawn {
-    cmd := cmd
-    args := args
-    cwd := cwd
-    stdout := .null
-    stderr := .null
-    stdin := .null }
-  for _ in [0:budgetMs / 50 + 1] do
-    match ← child.tryWait with
-    | some code => return .exited code.toNat
-    | none => IO.sleep 50
-  child.kill
-  let _ ← child.wait
-  return .overran (budgetMs / 1000)
+private structure PicAttempt where
+  result : Option PicResult := none
+  undrawn : Option (String × Boundary.Undrawn) := none
+  detail : String
+  elapsed : Nat
 
 /-- The last words of a batchmode log: the `!` error lines, else the last
 line — what E0382's help shows so the failure is diagnosable without
@@ -304,7 +290,9 @@ by the picture's image source, for `Image.fulfil` to name (the subject is
 set there, so the gate's match cannot depend on the words chosen here).
 The inventory (`-v` and the porcelain phases) says per picture what came
 through the boundary: tool, version, the picture's id and its request
-key, size. -/
+key, size. Independent requests run in bounded batches; a repeated content
+key starts only after the previous owner has finished (`Batch.plan_keys_nodup`).
+Results and reporting retain request order (`Batch.plan_exact`). -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
@@ -323,12 +311,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
   let stamp ← ToolProbe.witness tool
   let found ← ToolProbe.identify (picDir / PicCache.versionName (Ir.picHash tool))
     stamp (ToolProbe.probeVersion tool)
-  let mut results : Array PicResult := #[]
-  -- Each request no drawing came back for, with how its attempt ended —
-  -- an answer the withdrawal may act on, in the tool's own words where it
-  -- ran, or an attempt that never finished (`Boundary.withdraw`).
-  let mut undrawn : Array (String × Boundary.Undrawn) := #[]
-  for (id, wrapped) in refs do
+  let fulfil (request : String × String) : IO PicAttempt := do
+    let (id, wrapped) := request
     let src := Ir.picSrcPrefix ++ id
     -- The cache key is the *request* — the body wrapped with the design it
     -- reads — so a palette or font edit a picture mentions re-renders it
@@ -343,15 +327,15 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       match ← Boundary.coldPicture picDir tool key (spanFor id) with
       | .ok cached =>
         let bytes ← IO.FS.readBinFile cached
-        results := results.push { src, bytes, cached }
-        ui.phase "boundary"
-          s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
-          (← since t0)
+        return {
+          result := some { src, bytes, cached }
+          detail := s!"{tool} (?), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
+          elapsed := ← since t0 }
       | .error d =>
-        undrawn := undrawn.push (src, .answered d none)
-        ui.phase "boundary"
-          s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
-          (← since t0)
+        return {
+          undrawn := some (src, .answered d none)
+          detail := s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
+          elapsed := ← since t0 }
     | .present version =>
       -- One slot per request and tool version, holding whichever way the
       -- tool answered: the drawn PDF, or its own refusal in the tool's own
@@ -365,57 +349,61 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       match PicCache.step drawn remembered? with
       | .serve =>
         let bytes ← IO.FS.readBinFile cached
-        results := results.push { src, bytes, cached }
-        ui.phase "boundary"
-          s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
-          (← since t0)
+        return {
+          result := some { src, bytes, cached }
+          detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
+          elapsed := ← since t0 }
       | .replay says =>
         -- The tool already answered no for exactly these bytes under
         -- exactly this version: its own words, the same code, the same
         -- dropped loss — one attempt per request, not one per build.
-        if let some u := Boundary.undrawnOf tool (.refused says) (spanFor id) then
-          undrawn := undrawn.push (src, u)
-        ui.phase "boundary"
-          s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
-          (← since t0)
+        return {
+          undrawn := (Boundary.undrawnOf tool (.refused says) (spanFor id)).map (src, ·)
+          detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing (cached)"
+          elapsed := ← since t0 }
       | .run =>
         let work := picDir / s!"work-{key}"
         IO.FS.createDirAll work
         IO.FS.writeFile (work / "pic.tex") wrapped
-        let ran ← try
-          runBounded tool #["-interaction=batchmode", "-halt-on-error", "pic.tex"]
-            work 120000
-        catch e =>
-          pure (.unstarted (toString e))
+        let ended ← RunBounded.runBounded tool
+          #["-interaction=batchmode", "-halt-on-error", "pic.tex"] work 120000
         let produced := work / "pic.pdf"
         let drew ← produced.pathExists
         let logPath := work / "pic.log"
         let log ← if ← logPath.pathExists then
             pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
           else pure PicCache.Log.absent
-        let outcome := PicCache.outcome ran drew log
-        match outcome with
+        let outcome := PicCache.outcome ended.ran drew log
+        let (result, detail) : Option PicResult × String ← match outcome with
         | .drawn =>
           let bytes ← IO.FS.readBinFile produced
           IO.FS.writeBinFile cached bytes
-          results := results.push { src, bytes, cached }
-          ui.phase "boundary"
-            s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes"
-            (← since t0)
+          pure (some { src, bytes, cached },
+            s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes")
         | .refused words =>
           IO.FS.writeFile slot words
-          ui.phase "boundary"
-            s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing"
-            (← since t0)
+          pure (none, s!"{tool} ({version}), {id.take 16} as {key.take 16}, drew nothing")
         | .inconclusive words =>
           -- Nothing the machine did is written: the next build retries.
-          ui.phase "boundary"
-            s!"{tool} ({version}), {id.take 16} as {key.take 16}, did not finish ({words})"
-            (← since t0)
-        if let some u := Boundary.undrawnOf tool outcome (spanFor id) then
-          undrawn := undrawn.push (src, u)
+          pure (none,
+            s!"{tool} ({version}), {id.take 16} as {key.take 16}, did not finish ({words})")
         -- The scratch directory is per-content and spent either way.
         try IO.FS.removeDirAll work catch _ => pure ()
+        let elapsed ← since t0
+        return {
+          result
+          detail
+          elapsed
+          undrawn := (Boundary.undrawnOf tool outcome (spanFor id)).map (src, ·) }
+  -- Four TeX processes bound peak memory on a laptop; this changes
+  -- scheduling alone, never the request or its cache key.
+  let attempts ← Batch.map 4 (fun (_, wrapped) => Ir.picHash wrapped) fulfil refs
+  let mut results := #[]
+  let mut undrawn := #[]
+  for attempt in attempts do
+    if let some result := attempt.result then results := results.push result
+    if let some loss := attempt.undrawn then undrawn := undrawn.push loss
+    ui.phase "boundary" attempt.detail attempt.elapsed
   return (results, undrawn)
 
 /-- Where the image cache files a plan: beside the font and boundary

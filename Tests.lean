@@ -1,4 +1,5 @@
 import Tests.Support
+import Tests.Batch
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.FontSize
@@ -539,6 +540,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   smartChecks ref
   boundaryChecks ref
   picCacheChecks ref
+  Tests.batchChecks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref
