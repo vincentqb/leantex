@@ -651,10 +651,32 @@ private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → Sourc
 
 end
 
+/-- A file read reached by the bounded macro evaluator. The filename is
+already bound by the call's arguments; stored definitions and unselected
+branches produce no request. The driver supplies parsed surface tokens. -/
+structure InputRequest where
+  command : String
+  file : String
+  pos : Pos
+  /-- The call token's position, distinct from a macro's attributed use site. -/
+  callPos : Pos
+  /-- The executed operand slice. Filename, options and the style-file
+  candidate scan all read this one value. -/
+  operands : Array Raw
+  deriving Repr, BEq
+
+/-- An actual reader call and whether it supplied parsed input. This does
+not infer filesystem success from a diagnostic or from a source scan. -/
+structure InputAttempt where
+  request : InputRequest
+  answered : Bool
+  deriving Repr, BEq
+
 private structure St where
   file : String
   diags : Array Diag := #[]
   sourceTriggers : SourceTriggers := {}
+  inputAttempts : Array InputAttempt := #[]
   /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`,
   landing as one declaration once the preamble ends. Slot 0 inner, 1 centre,
   2 outer — one entry per slot: a same-slot repeat replaces, as fancyhdr
@@ -900,20 +922,6 @@ private structure St where
 
 private abbrev M := StateM St
 
-/-- A file read reached by the bounded macro evaluator. The filename is
-already bound by the call's arguments; stored definitions and unselected
-branches produce no request. The driver supplies parsed surface tokens. -/
-structure InputRequest where
-  command : String
-  file : String
-  pos : Pos
-  /-- The call token's position, distinct from a macro's attributed use site. -/
-  callPos : Pos
-  /-- The executed operand slice. Filename, options and the style-file
-  candidate scan all read this one value, so they cannot disagree about
-  which expanded call reached the driver. -/
-  operands : Array Raw
-
 /-- The actual call offered to the driver's existing candidate and splice
 readers. Its command is the request's command; operands stay parsed syntax. -/
 def InputRequest.call (request : InputRequest) : Array Raw :=
@@ -924,12 +932,48 @@ fragment against it; the driver carries it without inspecting meanings. -/
 structure InputContext where
   private state : St
 
+/-- Completed reads, including reads made while an answer was resumed.
+An enclosing call is recorded after those nested reads return. -/
+def InputContext.inputAttempts (context : InputContext) : Array InputAttempt :=
+  context.state.inputAttempts
+
 /-- File effects cross the core boundary as requests and parsed answers.
 The answer runs in the requesting context, so its definitions and flag
 changes are visible to the caller's next token. `none` leaves the original
 call for ordinary compatibility dispatch, as when no local style exists. -/
 abbrev InputReader (m : Type → Type) :=
   InputRequest → InputContext → m (Option (Array Raw) × InputContext)
+
+/-- Accept the reader's answer without changing its syntax or diagnostic
+state. The receipt records the exact call, after any reads inside it. -/
+def finishInput (request : InputRequest)
+    (response : Option (Array Raw) × InputContext) :
+    Option (Array Raw) × InputContext :=
+  (response.1, { state := { response.2.state with
+    inputAttempts := response.2.inputAttempts.push ⟨request, response.1.isSome⟩ } })
+
+/-- The evaluator's file-effect door. Every recorded receipt is made here
+from the request passed to the reader and the answer it actually returned. -/
+def dispatchInput [Monad m] (reader : InputReader m) (request : InputRequest)
+    (context : InputContext) : m (Option (Array Raw) × InputContext) := do
+  return finishInput request (← reader request context)
+
+theorem finishInput_answer_exact (request : InputRequest)
+    (response : Option (Array Raw) × InputContext) :
+    (finishInput request response).1 = response.1 := rfl
+
+theorem finishInput_attempts_exact (request : InputRequest)
+    (response : Option (Array Raw) × InputContext) :
+    (finishInput request response).2.inputAttempts =
+      response.2.inputAttempts.push ⟨request, response.1.isSome⟩ := rfl
+
+/-- The effectful production door calls the supplied reader exactly once.
+There is no second candidate scan, replay or guessed answer in its receipt. -/
+theorem dispatchInput_reader_exact [Monad m] (reader : InputReader m)
+    (request : InputRequest) (context : InputContext) :
+    dispatchInput reader request context = (do
+      let response ← reader request context
+      pure (finishInput request response)) := rfl
 
 private abbrev EvalM (m : Type → Type) := StateT St m
 
@@ -4213,7 +4257,7 @@ without that selection or those changes")
     let request : InputRequest :=
       { command := n, file := st.file, pos := site.getD pos
         callPos := pos, operands := raws.extract start (j + 1) }
-    let (answer, context) ← reader request { state := st }
+    let (answer, context) ← dispatchInput (m := m) reader request { state := st }
     write fun _ => context.state
     return answer.map fun answer => { raws := answer, stop := j + 1 }
 termination_by (bound, textBound, if prepareBox then 1 else 0)
@@ -9937,6 +9981,10 @@ structure Executed where
 /-- The original source index survives execution and included-file fulfilment. -/
 def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
   executed.state.sourceTriggers
+
+/-- Exact reader receipts retained by the production evaluator. -/
+def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
+  executed.state.inputAttempts
 
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)

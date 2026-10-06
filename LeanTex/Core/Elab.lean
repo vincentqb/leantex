@@ -17069,6 +17069,9 @@ the `Doc`, never in it: two spellings of one document elaborate to one
 `Doc` (the compat conservation oracle holds them equal), while their
 marker positions differ. -/
 structure ReqSpans where
+  /-- The exact input-reader calls that produced the prepared surface.
+  Measurement and withdrawal passes carry these receipts, never repeat I/O. -/
+  inputAttempts : Array Compat.InputAttempt := #[]
   /-- Each `\bibliography` marker's span, keyed by its named source: the
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
@@ -17107,6 +17110,8 @@ structure Prepared where
   compatDiags : Array Diag
   /-- Original spellings remain available after compatibility expands macros. -/
   sourceTriggers : Compat.SourceTriggers := {}
+  /-- Reader receipts belong to execution, before compatibility rewriting. -/
+  inputAttempts : Array Compat.InputAttempt := #[]
   /-- One external highlighter snapshot for every elaboration of this input.
   Pure callers need no provider; unsupported languages keep their source. -/
   listingReplies : Array ListingReply.Answer := #[]
@@ -17208,13 +17213,14 @@ the only source sent to text rewriting and then body elaboration. -/
 def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String) : Prepared :=
+    (rewritten : Array Raw × Array Diag × Array String)
+    (inputAttempts : Array Compat.InputAttempt := #[]) : Prepared :=
   let (raws, compatDiags, warned) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
     compatDiags := priorDiags ++ compatDiags ++ textDiags
-    sourceTriggers := sourceTriggers }
+    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts }
 
 /-- Prepare a document whose macro and input execution already ran. Scans
 see the fulfilled surface, and compatibility translation continues from
@@ -17223,7 +17229,29 @@ def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let picScan := Compat.boundaryScan executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
-    (Compat.rewriteExecuted executed)
+    (Compat.rewriteExecuted executed) executed.inputAttempts
+
+attribute [local irreducible] Compat.rewriteText in
+/-- Input receipts are independent of text rewriting. Exposing this
+projection keeps preparation proofs out of the compatibility state. -/
+theorem prepareRewritten_inputAttempts_exact (file : String)
+    (scan : Compat.BoundaryScan) (macros : Array (String × String))
+    (triggers : Compat.SourceTriggers) (prior : Array Diag)
+    (rewritten : Array Raw × Array Diag × Array String)
+    (attempts : Array Compat.InputAttempt) :
+    (prepareRewritten file scan macros triggers prior rewritten attempts).inputAttempts =
+      attempts := by
+  rcases rewritten with ⟨raws, diags, warned⟩
+  unfold prepareRewritten
+  cases Compat.rewriteText file raws warned
+  rfl
+
+attribute [local irreducible] prepareRewritten Compat.rewriteExecuted
+  Compat.boundaryScan macroScan in
+theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
+    (prepareExecuted file executed).inputAttempts = executed.inputAttempts := by
+  unfold prepareExecuted
+  exact prepareRewritten_inputAttempts_exact file _ _ _ _ _ _
 
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
@@ -17433,7 +17461,8 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
     (earlier ++ p.compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
       contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences)
     (st.spans.recoveryDiags.map p.sourceTriggers.attribute)),
-    { bib := st.spans.bib
+    { inputAttempts := p.inputAttempts
+      bib := st.spans.bib
       images := st.spans.images
       frames := st.spans.frames.sites
       fallbacks := st.spans.fallbacks
@@ -17442,6 +17471,12 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
           if seen.contains key then (out, seen)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
+
+theorem completePrepared_inputAttempts_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (doc : Doc) (table : Ir.RefTable)
+    (report : PictureReportContext) (st : ESt) :
+    (completePrepared file p earlier doc table report st).2.2.inputAttempts =
+      p.inputAttempts := rfl
 
 /-- Run the production declaration fold, retaining its continuation state.
 Boundary withdrawal reruns this fold with the new picture environment. -/
@@ -17505,6 +17540,15 @@ theorem runPrepared_complete_exact (file : String) (p : Prepared)
       obtain ⟨doc, table, report⟩ := result
       refine ⟨doc, table, report, st, ?_⟩
       simp only [runPrepared, hphase, runPreamble, hresult]
+
+/-- Input evidence is carried from the actual execution snapshot through
+every full elaboration and final diagnostic judge. -/
+theorem runPrepared_inputAttempts_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
+    (runPrepared file p earlier metric withdrawn).2.2.inputAttempts = p.inputAttempts := by
+  obtain ⟨doc, table, report, st, h⟩ :=
+    runPrepared_complete_exact file p earlier metric withdrawn
+  rw [h, completePrepared_inputAttempts_exact]
 
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
 written for another engine compiles as written. Returns the request spans
