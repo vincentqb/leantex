@@ -14,6 +14,7 @@ import LeanTex.Core.Struct
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 import LeanTex.Core.Layout.LabelAudit
+import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.Layout
 
@@ -5782,97 +5783,852 @@ def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat)
     { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
   else m
 
+private theorem arrayGetD_set_self {α : Type} (xs : Array α) (i : Nat) (x : α)
+    (hi : i < xs.size) {d : α} : (xs.set! i x).getD i d = x := by
+  simp only [Array.set!_eq_setIfInBounds, Array.getD_eq_getD_getElem?,
+    Array.getElem?_setIfInBounds_self_of_lt hi, Option.getD_some]
+
+private theorem arrayGetD_set_ne {α : Type} (xs : Array α) (i j : Nat) (x : α)
+    (hij : i ≠ j) {d : α} : (xs.set! i x).getD j d = xs.getD j d := by
+  simp only [Array.set!_eq_setIfInBounds, Array.getD_eq_getD_getElem?,
+    Array.getElem?_setIfInBounds_ne hij]
+
+private abbrev KpEntry := Int × Nat
+
+/-- One candidate keeps the original strict demerit comparison and tie order. -/
+private def kpChoose (old : Option KpEntry) (candidate : KpEntry) : Option KpEntry :=
+  match old with
+  | some best => if candidate.1 < best.1 then some candidate else old
+  | none => some candidate
+
+private structure KpCandidates where
+  here : Option KpEntry := none
+  survivors : Array Nat := #[]
+  droppedPlain : Option KpEntry := none
+  droppedFlagged : Option KpEntry := none
+
+private structure KpState where
+  best : Array (Option KpEntry)
+  active : Array Nat
+
+private def kpStart (items : Array Item) (p : Nat) : Nat :=
+  lineStart items (if p == items.size then 0 else p + 1)
+
+private def kpCandidate (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool)
+    (best : Array (Option KpEntry)) (j p : Nat) (c : KpCandidates) : KpCandidates := Id.run do
+  let n := items.size
+  if p == n || p < j then
+    let a := kpStart items p
+    let spansForced := a < j && (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) > 0
+    if !spansForced && a ≤ j then
+      match (best.getD (p) none) with
+      | some (d0, _) =>
+        let m := kpMeasure items sums a j protrude
+        let dbl := if p != n && isFlagged items p && isFlagged items j then
+          doubleHyphenDemerits else 0
+        let fin := if p != n && isFlagged items p && j == n - 1 then
+          finalHyphenDemerits else 0
+        let d := d0 + lineDemerits items m target j expand + dbl + fin
+        let c := { c with here := kpChoose c.here (d, p) }
+        if m.natural - (m.shrink + m.ex expand) > target + slack then
+          if p != n && isFlagged items p then
+            return { c with droppedFlagged := kpChoose c.droppedFlagged (d, p) }
+          else
+            return { c with droppedPlain := kpChoose c.droppedPlain (d, p) }
+        else
+          return { c with survivors := c.survivors.push p }
+      | none => return c
+    else if !spansForced then
+      return { c with survivors := c.survivors.push p }
+    else return c
+  else return { c with survivors := c.survivors.push p }
+
+private def KpEntry.Valid (items : Array Item) (best : Array (Option KpEntry))
+    (j : Nat) (e : KpEntry) : Prop :=
+  (e.2 = items.size ∨ e.2 < j) ∧ ((best.getD (e.2) none)).isSome = true ∧ kpStart items e.2 ≤ j
+
+private def KpCandidates.Good (items : Array Item) (c : KpCandidates) : Prop :=
+  (∃ p ∈ c.survivors, kpStart items p < items.size) ∨
+    (∃ e, c.droppedPlain = some e ∧ kpStart items e.2 < items.size) ∨
+    (∃ e, c.droppedFlagged = some e ∧ kpStart items e.2 < items.size)
+
+private theorem kpChoose_all (P : KpEntry → Prop) (old : Option KpEntry) (candidate : KpEntry)
+    (ho : ∀ e, old = some e → P e) (hc : P candidate) :
+    ∀ e, kpChoose old candidate = some e → P e := by
+  cases old with
+  | none => intro e he; cases he; exact hc
+  | some b =>
+    simp only [kpChoose]
+    split
+    · intro e he; cases he; exact hc
+    · exact ho
+
+private theorem kpChoose_isSome (old : Option KpEntry) (candidate : KpEntry) :
+    (kpChoose old candidate).isSome = true := by
+  cases old <;> simp [kpChoose]
+  split <;> rfl
+
+private theorem kpChoose_eq_some (old : Option KpEntry) (candidate : KpEntry) :
+    ∃ e, kpChoose old candidate = some e := by
+  exact Option.isSome_iff_exists.mp (kpChoose_isSome old candidate)
+
+private def KpCandidates.Valid (items : Array Item) (best : Array (Option KpEntry))
+    (j : Nat) (c : KpCandidates) : Prop :=
+  (∀ e, c.here = some e → e.Valid items best j) ∧
+  (∀ e, c.droppedPlain = some e → e.Valid items best j) ∧
+  (∀ e, c.droppedFlagged = some e → e.Valid items best j) ∧
+  (∀ p ∈ c.survivors, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
+
+private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j p : Nat) (c : KpCandidates) (hc : c.Valid items best j)
+    (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) :
+    (kpCandidate items sums target slack protrude expand best j p c).Valid items best j := by
+  have hpj : (p == items.size || p < j) = true := by simpa using hp.1
+  simp only [kpCandidate, hpj, ite_true, pure, Id.run]
+  split
+  · rename_i h
+    have ha : kpStart items p ≤ j := by
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+      exact h.2
+    split
+    · have hv (d : Int) : KpEntry.Valid items best j (d, p) := ⟨hp.1, hp.2, ha⟩
+      split
+      · split
+        · exact ⟨kpChoose_all _ _ _ hc.1 (hv _), hc.2.1,
+            kpChoose_all _ _ _ hc.2.2.1 (hv _), hc.2.2.2⟩
+        · exact ⟨kpChoose_all _ _ _ hc.1 (hv _), kpChoose_all _ _ _ hc.2.1 (hv _),
+            hc.2.2.1, hc.2.2.2⟩
+      · refine ⟨kpChoose_all _ _ _ hc.1 (hv _), hc.2.1, hc.2.2.1, ?_⟩
+        intro q hq
+        rcases Array.mem_push.mp hq with hq | rfl
+        · exact hc.2.2.2 q hq
+        · exact hp
+    · exact hc
+  · split
+    · refine ⟨hc.1, hc.2.1, hc.2.2.1, ?_⟩
+      intro q hq
+      rcases Array.mem_push.mp hq with hq | rfl
+      · exact hc.2.2.2 q hq
+      · exact hp
+    · exact hc
+
+private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j p : Nat) (c : KpCandidates) (hj : j < items.size)
+    (hc : c.Valid items best j)
+    (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
+    (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : c.Good items ∨ kpStart items p < items.size) :
+    (kpCandidate items sums target slack protrude expand best j p c).Good items := by
+  have hpj : (p == items.size || p < j) = true := by simpa using hp.1
+  have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
+    by_cases ha : kpStart items p < j
+    · rw [hf _ ha]
+      simp
+    · simp [ha]
+  simp only [kpCandidate, hpj, ite_true, hn, Bool.not_false, Bool.true_and,
+    pure, Id.run]
+  split
+  · rename_i ha
+    have hpg : kpStart items p < items.size := Nat.lt_of_le_of_lt (of_decide_eq_true ha) hj
+    split
+    · split
+      · split
+        · obtain ⟨e, he⟩ := kpChoose_eq_some c.droppedFlagged (_, p)
+          refine Or.inr (Or.inr ⟨e, he, ?_⟩)
+          exact kpChoose_all (fun e => kpStart items e.2 < items.size) _ _
+            (fun e he => Nat.lt_of_le_of_lt (hc.2.2.1 e he).2.2 hj) hpg e he
+        · obtain ⟨e, he⟩ := kpChoose_eq_some c.droppedPlain (_, p)
+          refine Or.inr (Or.inl ⟨e, he, ?_⟩)
+          exact kpChoose_all (fun e => kpStart items e.2 < items.size) _ _
+            (fun e he => Nat.lt_of_le_of_lt (hc.2.1 e he).2.2 hj) hpg e he
+      · exact Or.inl ⟨p, Array.mem_push_self, hpg⟩
+    · rename_i he
+      simp [he] at hp
+  · rcases hg with (⟨q, hq, hqg⟩ | hg) | hpg
+    · exact Or.inl ⟨q, Array.mem_push_of_mem p hq, hqg⟩
+    · exact Or.inr hg
+    · exact Or.inl ⟨p, Array.mem_push_self, hpg⟩
+
+private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j p : Nat) (c : KpCandidates)
+    (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
+    (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : c.here.isSome = true ∨ kpStart items p ≤ j) :
+    (kpCandidate items sums target slack protrude expand best j p c).here.isSome = true := by
+  have hpj : (p == items.size || p < j) = true := by simpa using hp.1
+  have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
+    by_cases ha : kpStart items p < j
+    · rw [hf _ ha]
+      simp
+    · simp [ha]
+  simp only [kpCandidate, hpj, ite_true, hn, Bool.not_false, Bool.true_and, pure, Id.run]
+  split
+  · split
+    · split
+      · split <;> exact kpChoose_isSome _ _
+      · exact kpChoose_isSome _ _
+    · rename_i he
+      simp [he] at hp
+  · rename_i ha
+    rcases hg with hg | hg
+    · exact hg
+    · simp [hg] at ha
+
+private theorem kpScan_valid (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j : Nat) (ps : List Nat) : ∀ c,
+    c.Valid items best j →
+    (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
+    (forIn ps c (fun p c => pure (.yield
+      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).Valid
+        items best j := by
+  induction ps with
+  | nil => intro c hc _; exact hc
+  | cons p ps ih =>
+    intro c hc hp
+    simp only [List.forIn_cons, bind, pure]
+    exact ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
+      (fun q hq => hp q (by simp [hq]))
+
+private theorem kpScan_good (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j : Nat) (hj : j < items.size)
+    (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (ps : List Nat) : ∀ c,
+    c.Valid items best j →
+    (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
+    (c.Good items ∨ ∃ p ∈ ps, kpStart items p < items.size) →
+    (forIn ps c (fun p c => pure (.yield
+      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).Good
+        items := by
+  induction ps with
+  | nil =>
+    intro c _ _ hg
+    simpa [pure] using hg
+  | cons p ps ih =>
+    intro c hc hp hg
+    simp only [List.forIn_cons, bind, pure]
+    apply ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
+      (fun q hq => hp q (by simp [hq]))
+    rcases hg with hg | ⟨q, hq, hqg⟩
+    · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ hj hc (hp p (by simp)) hf (Or.inl hg))
+    · rcases List.mem_cons.mp hq with rfl | hq
+      · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ hj hc (hp q (by simp)) hf (Or.inr hqg))
+      · exact Or.inr ⟨q, hq, hqg⟩
+
+private theorem kpScan_here (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (j : Nat) (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (ps : List Nat) : ∀ c,
+    (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
+    (c.here.isSome = true ∨ ∃ p ∈ ps, kpStart items p ≤ j) →
+    (forIn ps c (fun p c => pure (.yield
+      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).here.isSome = true := by
+  induction ps with
+  | nil =>
+    intro c _ hg
+    simpa [pure] using hg
+  | cons p ps ih =>
+    intro c hp hg
+    simp only [List.forIn_cons, bind, pure]
+    apply ih _ (fun q hq => hp q (by simp [hq]))
+    rcases hg with hg | ⟨q, hq, hqg⟩
+    · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ (hp p (by simp)) hf (Or.inl hg))
+    · rcases List.mem_cons.mp hq with rfl | hq
+      · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ (hp q (by simp)) hf (Or.inr hqg))
+      · exact Or.inr ⟨q, hq, hqg⟩
+
+private def KpTable (items : Array Item) (t : Nat) (best : Array (Option KpEntry)) : Prop :=
+  best.size = items.size + 1 ∧
+  ∀ k e, k < items.size → (best.getD (k) none) = some e →
+    k < t ∧ canBreakAt items k = true ∧ e.Valid items best k
+
+private def KpState.Valid (items : Array Item) (t : Nat) (st : KpState) : Prop :=
+  KpTable items t st.best ∧
+  ∀ p ∈ st.active, (p = items.size ∨ p < t) ∧ ((st.best.getD (p) none)).isSome = true
+
+private theorem kpTable_mono (items : Array Item) (s t : Nat) (best : Array (Option KpEntry))
+    (h : KpTable items s best) (hst : s ≤ t) : KpTable items t best := by
+  refine ⟨h.1, ?_⟩
+  intro k e hk he
+  obtain ⟨hks, hb, hp⟩ := h.2 k e hk he
+  exact ⟨Nat.lt_of_lt_of_le hks hst, hb, hp⟩
+
+private theorem kpTable_set (items : Array Item) (j : Nat) (best : Array (Option KpEntry))
+    (e : KpEntry) (hj : j < items.size) (ht : KpTable items j best)
+    (hb : canBreakAt items j = true) (he : e.Valid items best j) :
+    KpTable items (j+1) (best.set! j (some e)) := by
+  have hsize := ht.1
+  refine ⟨by simpa using ht.1, ?_⟩
+  intro k d hk hd
+  by_cases hkj : k = j
+  · subst k
+    rw [arrayGetD_set_self _ _ _ (by omega)] at hd
+    cases hd
+    refine ⟨by omega, hb, he.1, ?_, he.2.2⟩
+    rw [arrayGetD_set_ne _ _ _ _ (by rcases he.1 with he | he <;> omega)]
+    exact he.2.1
+  · rw [arrayGetD_set_ne _ _ _ _ (Ne.symm hkj)] at hd
+    obtain ⟨hkj', hbk, hp⟩ := ht.2 k d hk hd
+    refine ⟨by omega, hbk, hp.1, ?_, hp.2.2⟩
+    rw [arrayGetD_set_ne _ _ _ _ (by rcases hp.1 with hp | hp <;> omega)]
+    exact hp.2.1
+
+private def kpRetain (ps : Array Nat) : Option KpEntry → Array Nat
+  | some (_, p) => ps.push p
+  | none => ps
+
+private def kpClose (j : Nat) (best : Array (Option KpEntry)) (c : KpCandidates) : KpState :=
+  let chosen := if c.here.isSome then best.set! j c.here else best
+  let survivors := if c.here.isSome then c.survivors.push j else c.survivors
+  { best := chosen, active := kpRetain (kpRetain survivors c.droppedPlain) c.droppedFlagged }
+
+private theorem kpRetain_mem (ps : Array Nat) (e : Option KpEntry) (p : Nat) :
+    p ∈ kpRetain ps e ↔ p ∈ ps ∨ ∃ d, e = some d ∧ p = d.2 := by
+  cases e with
+  | none => simp [kpRetain]
+  | some d => simp [kpRetain]
+
+private theorem kpClose_valid (items : Array Item) (j : Nat) (best : Array (Option KpEntry))
+    (c : KpCandidates) (hj : j < items.size) (ht : KpTable items j best)
+    (hb : canBreakAt items j = true) (hc : c.Valid items best j) :
+    (kpClose j best c).Valid items (j+1) := by
+  have hsize := ht.1
+  cases hh : c.here with
+  | none =>
+    simp only [kpClose, hh, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
+    refine ⟨kpTable_mono _ _ _ _ ht (by omega), ?_⟩
+    intro p hp
+    simp only [kpRetain_mem] at hp
+    rcases hp with (hp | ⟨e, he, rfl⟩) | ⟨e, he, rfl⟩
+    · obtain ⟨hp, hs⟩ := hc.2.2.2 p hp
+      exact ⟨hp.imp_right (by omega), hs⟩
+    · have h := hc.2.1 e he
+      exact ⟨h.1.imp_right (by omega), h.2.1⟩
+    · have h := hc.2.2.1 e he
+      exact ⟨h.1.imp_right (by omega), h.2.1⟩
+  | some e =>
+    simp only [kpClose, hh, Option.isSome_some, ↓reduceIte]
+    refine ⟨kpTable_set _ _ _ _ hj ht hb (hc.1 e hh), ?_⟩
+    intro p hp
+    simp only [kpRetain_mem, Array.mem_push] at hp
+    rcases hp with ((hp | rfl) | ⟨d, hd, rfl⟩) | ⟨d, hd, rfl⟩
+    · obtain ⟨hp, hs⟩ := hc.2.2.2 p hp
+      refine ⟨hp.imp_right (by omega), ?_⟩
+      rw [arrayGetD_set_ne _ _ _ _ (by rcases hp with hp | hp <;> omega)]
+      exact hs
+    · refine ⟨Or.inr (by omega), ?_⟩
+      rw [arrayGetD_set_self _ _ _ (by omega)]
+      rfl
+    · have h := hc.2.1 d hd
+      refine ⟨h.1.imp_right (by omega), ?_⟩
+      rw [arrayGetD_set_ne _ _ _ _ (by rcases h.1 with h | h <;> omega)]
+      exact h.2.1
+    · have h := hc.2.2.1 d hd
+      refine ⟨h.1.imp_right (by omega), ?_⟩
+      rw [arrayGetD_set_ne _ _ _ _ (by rcases h.1 with h | h <;> omega)]
+      exact h.2.1
+
+private theorem kpClose_good (items : Array Item) (j : Nat) (best : Array (Option KpEntry))
+    (c : KpCandidates) (hg : c.Good items) :
+    ∃ p ∈ (kpClose j best c).active, kpStart items p < items.size := by
+  simp only [kpClose, kpRetain_mem]
+  rcases hg with ⟨p, hp, hg⟩ | ⟨e, he, hg⟩ | ⟨e, he, hg⟩
+  · refine ⟨p, Or.inl (Or.inl ?_), hg⟩
+    split
+    · exact Array.mem_push_of_mem _ hp
+    · exact hp
+  · exact ⟨e.2, Or.inl (Or.inr ⟨e, he, rfl⟩), hg⟩
+  · exact ⟨e.2, Or.inr ⟨e, he, rfl⟩, hg⟩
+
+private theorem kpClose_here (j : Nat) (best : Array (Option KpEntry))
+    (c : KpCandidates) (hj : j < best.size) (hh : c.here.isSome = true) :
+    (((kpClose j best c).best.getD j none)).isSome = true := by
+  simp only [kpClose, hh, ↓reduceIte]
+  rw [arrayGetD_set_self _ _ _ hj]
+  exact hh
+
+private def kpPosition (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
+  if !canBreakAt items j then return st
+  let mut c : KpCandidates := {}
+  for p in st.active do
+    c := kpCandidate items sums target slack protrude expand st.best j p c
+  return kpClose j st.best c
+
+private theorem kpCandidates_empty (items : Array Item) (best : Array (Option KpEntry))
+    (j : Nat) : ({} : KpCandidates).Valid items best j := by
+  simp [KpCandidates.Valid]
+
+private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (hj : j < items.size) (hs : st.Valid items j) :
+    (kpPosition items sums target slack protrude expand j st).Valid items (j+1) := by
+  by_cases hb : canBreakAt items j = true
+  · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+      bind, pure, Id.run]
+    apply kpClose_valid _ _ _ _ hj hs.1 hb
+    rw [← Array.forIn_toList]
+    exact kpScan_valid _ _ _ _ _ _ _ _ _ _ (kpCandidates_empty _ _ _) (by simpa using hs.2)
+  · simp only [kpPosition, hb, Bool.not_eq_true', ↓reduceIte, pure, Id.run]
+    exact ⟨kpTable_mono _ _ _ _ hs.1 (by omega),
+      fun p hp => ⟨(hs.2 p hp).1.imp_right (by omega), (hs.2 p hp).2⟩⟩
+
+private theorem kpPosition_good (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (hj : j < items.size) (hs : st.Valid items j)
+    (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : ∃ p ∈ st.active, kpStart items p < items.size) :
+    ∃ p ∈ (kpPosition items sums target slack protrude expand j st).active,
+      kpStart items p < items.size := by
+  by_cases hb : canBreakAt items j = true
+  · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+      bind, pure, Id.run]
+    apply kpClose_good
+    rw [← Array.forIn_toList]
+    apply kpScan_good _ _ _ _ _ _ _ _ hj hf _ _ (kpCandidates_empty _ _ _)
+      (by simpa using hs.2)
+    exact Or.inr (by simpa using hg)
+  · simpa only [kpPosition, hb, Bool.not_eq_true', Bool.false_eq_true, ↓reduceIte,
+      pure, Id.run] using hg
+
+private theorem kpPosition_here (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (hj : j < items.size) (hs : st.Valid items j)
+    (hb : canBreakAt items j = true)
+    (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : ∃ p ∈ st.active, kpStart items p ≤ j) :
+    (((kpPosition items sums target slack protrude expand j st).best.getD j none)).isSome = true := by
+  simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+    bind, pure, Id.run]
+  apply kpClose_here _ _ _ (by rw [hs.1.1]; omega)
+  rw [← Array.forIn_toList]
+  apply kpScan_here _ _ _ _ _ _ _ _ hf _ _ (by simpa using hs.2)
+  exact Or.inr (by simpa using hg)
+
+private theorem kpRange_progress {β : Type} (P : Nat → β → Prop) (lo len : Nat)
+    (f : Nat → β → β) (init : β) (h0 : P lo init)
+    (step : ∀ i, lo ≤ i → i < lo + len → ∀ b, P i b → P (i+1) (f i b)) :
+    P (lo+len) (forIn (List.range' lo len) init
+      (fun i b => pure (.yield (f i b))) : Id β).run := by
+  induction len generalizing lo init with
+  | zero => simpa using h0
+  | succ len ih =>
+    simp only [List.range'_succ, List.forIn_cons, bind, pure, Id.run]
+    have h := ih (lo+1) (f lo init) (step lo (by omega) (by omega) init h0)
+      (fun i hlo hhi b hb => step i (by omega) (by omega) b hb)
+    simpa only [Nat.add_assoc, Nat.add_comm 1 len, pure, Id.run] using h
+
+private def kpInit (n : Nat) : KpState :=
+  {best := (Array.replicate (n+1) none).set! n (some (0,n)), active := #[n]}
+
+private theorem kpInit_valid (items : Array Item) :
+    (kpInit items.size).Valid items 0 := by
+  refine ⟨⟨by simp [kpInit], ?_⟩, ?_⟩
+  · intro k e hk he
+    change ((Array.replicate (items.size+1) (none : Option KpEntry)).set!
+      items.size (some (0, items.size))).getD k none = some e at he
+    rw [arrayGetD_set_ne _ _ _ _ (by omega)] at he
+    simp [Nat.lt_succ_of_lt hk] at he
+  · intro p hp
+    have hp : p = items.size := by simpa [kpInit] using hp
+    subst p
+    refine ⟨Or.inl rfl, ?_⟩
+    simp [kpInit]
+
+private def kpForward (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (count : Nat) : KpState := Id.run do
+  let mut st := kpInit items.size
+  for j in [0:count] do
+    st := kpPosition items sums target slack protrude expand j st
+  return st
+
+private theorem kpForward_valid (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (count : Nat) (hc : count ≤ items.size) :
+    (kpForward items sums target slack protrude expand count).Valid items count := by
+  simp only [kpForward, bind, pure, Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
+  simpa only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, pure, Id.run,
+    Nat.zero_add] using
+    kpRange_progress (KpState.Valid items) 0 count
+      (kpPosition items sums target slack protrude expand) (kpInit items.size)
+      (kpInit_valid items)
+      (fun i _ hi st hs => kpPosition_valid _ _ _ _ _ _ _ _ (by omega) hs)
+
+private theorem kpForward_good (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (count : Nat) (hc : count ≤ items.size)
+    (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : kpStart items items.size < items.size) :
+    ∃ p ∈ (kpForward items sums target slack protrude expand count).active,
+      kpStart items p < items.size := by
+  let P := fun i (st : KpState) => st.Valid items i ∧ ∃ p ∈ st.active, kpStart items p < items.size
+  have h0 : P 0 (kpInit items.size) :=
+    ⟨kpInit_valid items, items.size, by simp [kpInit], hg⟩
+  have h := kpRange_progress P 0 count
+    (kpPosition items sums target slack protrude expand) (kpInit items.size) h0
+    (fun i _ hi st hs => ⟨kpPosition_valid _ _ _ _ _ _ _ _ (by omega) hs.1,
+      kpPosition_good _ _ _ _ _ _ _ _ (by omega) hs.1
+        (fun a ha => hf a i ha (by omega)) hs.2⟩)
+  simpa only [kpForward, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run] using h.2
+
+private theorem kpForward_succ (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool) (count : Nat) :
+    kpForward items sums target slack protrude expand (count+1) =
+      kpPosition items sums target slack protrude expand count
+        (kpForward items sums target slack protrude expand count) := by
+  simp only [kpForward, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run]
+  rw [List.range'_1_concat]
+  change (forIn _ _ (fun j st => pure (.yield
+    (kpPosition items sums target slack protrude expand j st))) : Id KpState) =
+    kpPosition items sums target slack protrude expand count
+      (forIn _ _ (fun j st => pure (.yield
+        (kpPosition items sums target slack protrude expand j st))) : Id KpState)
+  have h1 := List.forIn_pure_yield_eq_foldl (m := Id)
+    (l := List.range' 0 count ++ [count])
+    (kpPosition items sums target slack protrude expand) (kpInit items.size)
+  have h2 := List.forIn_pure_yield_eq_foldl (m := Id)
+    (l := List.range' 0 count)
+    (kpPosition items sums target slack protrude expand) (kpInit items.size)
+  simp only [Nat.zero_add] at *
+  rw [h1, h2]
+  simp only [List.foldl_append, List.foldl_cons, List.foldl_nil, pure]
+
+private theorem kpForward_last (items : Array Item) (sums : KpSums)
+    (target slack : Sp) (protrude expand : Bool)
+    (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
+    (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
+    (hg : kpStart items items.size < items.size) :
+    (((kpForward items sums target slack protrude expand items.size).best.getD (items.size-1) none)).isSome = true := by
+  have h := kpPosition_here items sums target slack protrude expand (items.size-1)
+    (kpForward items sums target slack protrude expand (items.size-1)) (by omega)
+    (kpForward_valid _ _ _ _ _ _ _ (by omega)) hb
+    (fun a ha => hf a _ ha (by omega)) (by
+      obtain ⟨p, hp, hg⟩ := kpForward_good items sums target slack protrude expand
+        (items.size-1) (by omega) hf hg
+      exact ⟨p, hp, by omega⟩)
+  rw [← kpForward_succ] at h
+  simpa only [Nat.sub_add_cancel hn] using h
+
+/-- The actual predecessor chain, in forward line order. Each break is legal
+and its next line starts no later than its endpoint. -/
+private inductive KpChain (items : Array Item) : Nat → List Nat → Prop
+  | first {j} : j < items.size → canBreakAt items j = true →
+      kpStart items items.size ≤ j → KpChain items j [j]
+  | next {p j breaks} : KpChain items p breaks → p < j → j < items.size →
+      canBreakAt items j = true → kpStart items p ≤ j →
+      KpChain items j (breaks ++ [j])
+
+private def kpBackStep (n : Nat) (best : Array (Option KpEntry))
+    (st : Array Nat × Nat) : Id (ForInStep (Array Nat × Nat)) :=
+  let breaks := st.1.push st.2
+  match (best.getD (st.2) none) with
+  | some (_, p) => if p == n then .done (breaks, st.2) else .yield (breaks, p)
+  | none => .done (breaks, st.2)
+
+private def kpBack (n : Nat) (best : Array (Option KpEntry)) (last : Nat) : Array Nat := Id.run do
+  let st ← forIn [0:n+1] (#[], last) (fun _ => kpBackStep n best)
+  return st.1.reverse
+
+private theorem kpBack_trace (items : Array Item) (best : Array (Option KpEntry))
+    (ht : KpTable items items.size best) :
+    ∀ j, j < items.size → ((best.getD (j) none)).isSome = true →
+      ∃ breaks, KpChain items j breaks ∧ ∀ acc : Array Nat,
+        ∃ steps st, steps ≤ j+1 ∧ Loop.Stops (kpBackStep items.size best) (acc,j) steps st ∧
+          st.1.toList.reverse = breaks ++ acc.toList.reverse := by
+  intro j
+  induction j using Nat.strongRecOn with
+  | ind j ih =>
+    intro hj hr
+    obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hr
+    obtain ⟨_, hb, hp, hrp, ha⟩ := ht.2 j e hj he
+    rcases hp with hp | hp
+    · refine ⟨[j], .first hj hb (by simpa [hp] using ha), ?_⟩
+      intro acc
+      refine ⟨1, (acc.push j, j), by omega, ?_, ?_⟩
+      · apply Loop.Stops.done
+        simp [kpBackStep, he, hp, Id.run]
+      · simp
+    · obtain ⟨breaks, chain, trace⟩ := ih e.2 hp (by omega) hrp
+      refine ⟨breaks ++ [j], .next chain hp hj hb ha, ?_⟩
+      intro acc
+      obtain ⟨steps, st, hsteps, hs, hchars⟩ := trace (acc.push j)
+      refine ⟨steps+1, st, by omega, ?_, ?_⟩
+      · apply Loop.Stops.yield (b := (acc.push j, e.2))
+        · simp [kpBackStep, he, show e.2 ≠ items.size by omega, Id.run]
+        · exact hs
+      · simpa only [Array.toList_push, List.reverse_append, List.reverse_singleton,
+          List.append_assoc] using hchars
+
+private theorem kpBack_chain (items : Array Item) (best : Array (Option KpEntry))
+    (ht : KpTable items items.size best) (j : Nat) (hj : j < items.size)
+    (hr : ((best.getD (j) none)).isSome = true) :
+    KpChain items j (kpBack items.size best j).toList := by
+  obtain ⟨breaks, chain, trace⟩ := kpBack_trace items best ht j hj hr
+  obtain ⟨steps, st, hsteps, hs, he⟩ := trace #[]
+  have hf := Loop.forIn_range_stops_exact hs (items.size+1) (by omega)
+  dsimp only [kpBack, bind, pure, Id.run]
+  simp only [Id.run] at hf
+  rw [hf, Array.toList_reverse, he]
+  simpa using chain
+
+
+private def lineStartStep (items : Array Item) (start a : Nat) : Id (ForInStep Nat) :=
+  match items[a]? with
+  | some (.glue g) | some (.decoratedGlue g _) =>
+    if start == 0 && !g.word && !g.parfill then .done a else .yield (a+1)
+  | some (.pen _ cost _ _ _ _) =>
+    if cost ≥ 10000 then .done a else .yield (a+1)
+  | _ => .done a
+
+private theorem lineStart_loop (items : Array Item) (start : Nat) :
+    lineStart items start =
+      (forIn [start:items.size] start (fun _ => lineStartStep items start) : Id Nat).run := by
+  rfl
+
+private theorem lineStart_skip (items : Array Item) (start : Nat) (hs : start ≤ items.size) :
+    start ≤ lineStart items start ∧ lineStart items start ≤ items.size ∧
+      ∀ k, start ≤ k → k < lineStart items start → (items.getD k default).boxChars = [] := by
+  rw [lineStart_loop]
+  apply Loop.forIn_range_inv
+    (fun a => start ≤ a ∧ a ≤ items.size ∧
+      ∀ k, start ≤ k → k < a → (items.getD k default).boxChars = [])
+  · exact ⟨Nat.le_refl _, hs, fun _ _ h => by omega⟩
+  · intro _ _ _ a ha
+    have next (it : Item) (hi : items[a]? = some it) (hc : it.boxChars = []) :
+        start ≤ a+1 ∧ a+1 ≤ items.size ∧
+          ∀ k, start ≤ k → k < a+1 → (items.getD k default).boxChars = [] := by
+      have hb : a < items.size := (Array.getElem?_eq_some_iff.mp hi).1
+      refine ⟨by omega, by omega, ?_⟩
+      intro k hk hka
+      by_cases h : k < a
+      · exact ha.2.2 k hk h
+      · have he : k = a := by omega
+        subst k
+        simpa only [Array.getD_eq_getD_getElem?, hi, Option.getD_some] using hc
+    unfold lineStartStep
+    split
+    · rename_i g hi
+      split
+      · exact ha
+      · exact next _ hi rfl
+    · rename_i g ds hi
+      split
+      · exact ha
+      · exact next _ hi rfl
+    · rename_i w cost flagged fi color glyphs hi
+      split
+      · exact ha
+      · exact next _ hi rfl
+    · exact ha
+
+private def itemSpan (items : Array Item) (a b : Nat) : List Char :=
+  (List.range' a (b-a)).flatMap (fun k => (items.getD k default).boxChars)
+
+private theorem itemSpan_self (items : Array Item) (a : Nat) :
+    itemSpan items a a = [] := by simp [itemSpan]
+
+private theorem itemSpan_append (items : Array Item) (a b c : Nat)
+    (hab : a ≤ b) (hbc : b ≤ c) :
+    itemSpan items a c = itemSpan items a b ++ itemSpan items b c := by
+  unfold itemSpan
+  have hc : c-a = (b-a)+(c-b) := by omega
+  rw [hc, ← List.range'_append_1]
+  have he : a+(b-a) = b := by omega
+  simp only [he, List.flatMap_append]
+
+private theorem itemSpan_nil (items : Array Item) (a b : Nat)
+    (h : ∀ k, a ≤ k → k < b → (items.getD k default).boxChars = []) :
+    itemSpan items a b = [] := by
+  apply List.flatMap_eq_nil_iff.mpr
+  intro k hk
+  have hm := List.mem_range'_1.mp hk
+  exact h k hm.1 (by omega)
+
+private theorem itemSpan_lineStart (items : Array Item) (a b : Nat)
+    (ha : a ≤ items.size) (hab : lineStart items a ≤ b) :
+    itemSpan items a b = itemSpan items (lineStart items a) b := by
+  obtain ⟨hla, _, hc⟩ := lineStart_skip items a ha
+  rw [itemSpan_append items a (lineStart items a) b hla hab,
+    itemSpan_nil items a (lineStart items a) hc, List.nil_append]
+
+private theorem canBreakAt_boxChars (items : Array Item) (j : Nat)
+    (hb : canBreakAt items j = true) :
+    (items.getD j default).boxChars = [] := by
+  unfold canBreakAt at hb
+  split at hb
+  · rename_i g he
+    simp only [Array.getD_eq_getD_getElem?, he, Option.getD_some, Item.boxChars]
+  · rename_i g d he
+    simp only [Array.getD_eq_getD_getElem?, he, Option.getD_some, Item.boxChars]
+  · rename_i w cost flag fi col gs he
+    simp only [Array.getD_eq_getD_getElem?, he, Option.getD_some, Item.boxChars]
+  · contradiction
+
+private theorem itemSpan_break (items : Array Item) (a j : Nat)
+    (ha : a ≤ j) (hb : canBreakAt items j = true) :
+    itemSpan items a (j+1) = itemSpan items a j := by
+  rw [itemSpan_append items a j (j+1) ha (by omega)]
+  simp only [itemSpan, Nat.add_sub_cancel_left, List.range'_one, List.flatMap_cons,
+    List.flatMap_nil, canBreakAt_boxChars items j hb, List.append_nil]
+
+private theorem itemSpan_all (items : Array Item) :
+    itemSpan items 0 items.size = items.toList.flatMap Item.boxChars := by
+  have he : (List.range' 0 items.size).map (fun k => items.getD k default) = items.toList := by
+    apply List.ext_getElem
+    · simp
+    · intro k hk hk'
+      have h : k < items.size := by simpa using hk'
+      simp [List.getElem_range', Array.getD, h]
+  simpa only [itemSpan, Nat.sub_zero, List.flatMap_map, Function.comp_def] using
+    congrArg (List.flatMap Item.boxChars) he
+
+private theorem range_yields_progress {β : Type} (P : Nat → β → Prop)
+    (f : Nat → β → Id (ForInStep β)) (lo len : Nat) (init : β) (h0 : P lo init)
+    (step : ∀ i, lo ≤ i → i < lo+len → ∀ b, P i b →
+      ∃ c, (f i b).run = .yield c ∧ P (i+1) c) :
+    P (lo+len) (forIn (List.range' lo len) init f : Id β).run := by
+  induction len generalizing lo init with
+  | zero => simpa using h0
+  | succ len ih =>
+    obtain ⟨c, hc, hp⟩ := step lo (by omega) (by omega) init h0
+    simp only [Id.run] at hc
+    simp only [List.range'_succ, List.forIn_cons, bind, Id.run, hc]
+    have h := ih (lo+1) c hp (fun i hl hi b hb => step i (by omega) (by omega) b hb)
+    simpa only [Nat.add_assoc, Nat.add_comm 1 len, Id.run] using h
+
+private theorem kpSums_forced_zero (items : Array Item)
+    (hf : ∀ k, k+1 < items.size → isForced items k = false) :
+    (kpSums items).forced.size = items.size+1 ∧
+      ∀ j, j < items.size → ((kpSums items).forced.getD j 0) = 0 := by
+  let P := fun t (st : Array Sp × Array Sp × Array Sp × Array Nat × Array Nat × Array Sp × Sp) =>
+    st.2.2.2.2.1.size = t+1 ∧ ∀ j, j < st.2.2.2.2.1.size → j < items.size →
+      (st.2.2.2.2.1.getD j 0) = 0
+  unfold kpSums
+  simp only [Array.getElem!_eq_getD]
+  apply Loop.bind_of_inv
+    (P := P items.size)
+    (Q := fun sums : KpSums => sums.forced.size = items.size+1 ∧
+      ∀ j, j < items.size → (sums.forced.getD (j) 0) = 0)
+  · rw [Std.Legacy.Range.forIn_eq_forIn_range']
+    simp only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+    apply (fun st (h : P (0+items.size) st) =>
+      (show P items.size st from by simpa only [Nat.zero_add] using h))
+    apply range_yields_progress P
+    · simp [P]
+    · intro i _ hi st hp
+      rcases st with ⟨pw, ps, pk, pf, pforced, pb, btot⟩
+      have hs : pforced.size = i+1 := hp.1
+      have next : (pforced.push ((pforced.getD i 0) + if isForced items i then 1 else 0)).size = i+1+1 ∧
+          ∀ j, j < (pforced.push ((pforced.getD i 0) + if isForced items i then 1 else 0)).size →
+            j < items.size →
+            (pforced.push ((pforced.getD i 0) + if isForced items i then 1 else 0)).getD j 0 = 0 := by
+        refine ⟨by simp [hs], ?_⟩
+        intro j hj hjn
+        by_cases h : j < pforced.size
+        · simpa only [Array.getD_eq_getD_getElem?, Array.getElem?_push_lt h,
+            Array.getElem?_eq_getElem h, Option.getD_some] using hp.2 j h hjn
+        · have he : j = pforced.size := by simp only [Array.size_push] at hj; omega
+          subst j
+          have hz := hp.2 i (by dsimp only at *; omega) (by omega)
+          have hforced := hf i (by omega)
+          simp only [Array.getD_eq_getD_getElem?, Array.getElem?_push_size, Option.getD_some]
+          simp only [Array.getD_eq_getD_getElem?] at hz
+          simp only [hz, hforced, Bool.false_eq_true, ite_false, Nat.add_zero]
+      exact ⟨_, rfl, next⟩
+  · intro st hst
+    exact ⟨hst.1, fun j hj => hst.2 j (by rw [hst.1]; omega) hj⟩
+
+
+/-- Ordered glyph intervals as consumed by paragraph placement. -/
+private def breakSpans (items : Array Item) (breaks : List Nat) : List Char × Nat :=
+  breaks.foldl (fun st j => (st.1 ++ itemSpan items (kpStart items st.2) j, j))
+    ([], items.size)
+
+private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List Nat}
+    (h : KpChain items last breaks) :
+    breakSpans items breaks = (itemSpan items 0 (last+1), last) := by
+  induction h with
+  | @first j hj hb ha =>
+    have ha' : lineStart items 0 ≤ j := by simpa [kpStart] using ha
+    simp only [breakSpans, List.foldl_cons, List.foldl_nil, List.nil_append]
+    rw [itemSpan_break items 0 j (by omega) hb,
+      itemSpan_lineStart items 0 j (by omega) ha']
+    simp [kpStart]
+  | @next p j bs chain hpj hj hb ha ih =>
+    have hp : p < items.size := by omega
+    have ha' : lineStart items (p+1) ≤ j := by simpa [kpStart, Nat.ne_of_lt hp] using ha
+    change List.foldl _ _ (bs ++ [j]) = _
+    rw [List.foldl_append]
+    change ((breakSpans items bs).1 ++
+      itemSpan items (kpStart items (breakSpans items bs).2) j, j) = _
+    rw [ih]
+    dsimp only
+    rw [itemSpan_break items 0 j (by omega) hb,
+      itemSpan_append items 0 (p+1) j (by omega) (by omega),
+      itemSpan_lineStart items (p+1) j (by omega) ha']
+    simp [kpStart, Nat.ne_of_lt hp]
+
+
 /-- Optimal breakpoints by dynamic programming over break positions, with
 prefix-sum line measures and an active list: a node whose line to the
 current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
 retained so a solution exists even for unbreakable content). -/
 def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) : Array Nat := Id.run do
-  let n := items.size
+    (expand : Bool := false) : Array Nat :=
   let sums := kpSums items
-  let measureAt (a j : Nat) : Measure := kpMeasure items sums a j protrude
-  -- Under protrusion the deactivation test slackens by the largest right
-  -- overhang any break can grant: a node overfull beyond shrink at this
-  -- break could otherwise become feasible again at a later break whose
-  -- boundary glyph protrudes more, and dropping it would lose the
-  -- optimum kp-fuzz checks against.
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let mut best : Array (Option (Int × Nat)) := Array.replicate (n + 1) none
-  best := best.set! n (some (0, n))
-  let mut active : Array Nat := #[n]
-  for j in [0:n] do
-    if canBreakAt items j then
-      let mut bestHere : Option (Int × Nat) := none
-      let mut survivors : Array Nat := #[]
-      let mut bestDroppedPlain : Option (Int × Nat) := none
-      let mut bestDroppedFlagged : Option (Int × Nat) := none
-      for p in active do
-        if p == n || p < j then
-          let a := lineStart items (if p == n then 0 else p + 1)
-          let spansForced := a < j && sums.forced[j]! - sums.forced[a]! > 0
-          if !spansForced && a ≤ j then
-            match best[p]! with
-            | some (d0, _) =>
-              let m := measureAt a j
-              let dbl := if p != n && isFlagged items p && isFlagged items j then
-                doubleHyphenDemerits else 0
-              let fin := if p != n && isFlagged items p && j == n - 1 then
-                finalHyphenDemerits else 0
-              let d := d0 + lineDemerits items m target j expand + dbl + fin
-              match bestHere with
-              | some (dBest, _) =>
-                if d < dBest then bestHere := some (d, p)
-              | none => bestHere := some (d, p)
-              -- Once overfull beyond shrink, this predecessor only gets
-              -- worse. Keep the best one per flagged state because that is
-              -- the only predecessor property future line costs observe.
-              -- The shrink read is the *expanded* shrink: pruning against
-              -- the bare glue would drop predecessors expansion could
-              -- still save (kp-fuzz catches the violation).
-              if m.natural - (m.shrink + m.ex expand) > target + slack then
-                if p != n && isFlagged items p then
-                  match bestDroppedFlagged with
-                  | some (dD, _) =>
-                    if d < dD then bestDroppedFlagged := some (d, p)
-                  | none => bestDroppedFlagged := some (d, p)
-                else
-                  match bestDroppedPlain with
-                  | some (dD, _) =>
-                    if d < dD then bestDroppedPlain := some (d, p)
-                  | none => bestDroppedPlain := some (d, p)
-              else
-                survivors := survivors.push p
-            | none => pure ()
-          else if !spansForced then
-            survivors := survivors.push p
-        else
-          survivors := survivors.push p
-      if bestHere.isSome then
-        best := best.set! j bestHere
-        survivors := survivors.push j
-      -- Overfull predecessors keep their relative order as j grows. One per
-      -- flagged state preserves the optimum (double-hyphen demerits are the
-      -- only future cost that distinguishes the two classes).
-      if let some (_, p) := bestDroppedPlain then
-        survivors := survivors.push p
-      if let some (_, p) := bestDroppedFlagged then
-        survivors := survivors.push p
-      active := survivors
-  let last := n - 1
-  let mut breaks : Array Nat := #[]
-  match best[last]! with
-  | none => return #[]
-  | some _ =>
-    let mut cur := last
-    for _ in [0:n + 1] do
-      breaks := breaks.push cur
-      match best[cur]! with
-      | some (_, p) =>
-        if p == n then break
-        cur := p
-      | none => break
-    return breaks.reverse
+  let st := kpForward items sums target slack protrude expand items.size
+  match (st.best.getD (items.size-1) none) with
+  | none => #[]
+  | some _ => kpBack items.size st.best (items.size-1)
+
+/-- The actual breaker retains all box glyphs in source order. The domain
+allows arbitrary widths, costs and overflow; it excludes internal forced
+ends, whose independently authored segments need their own chain. -/
+private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
+    (hf : ∀ k, k+1 < items.size → isForced items k = false) :
+    (breakSpans items (kp items target protrude expand).toList).1 =
+      items.toList.flatMap Item.boxChars := by
+  let sums := kpSums items
+  let slack : Sp := if protrude then maxProtrudeRight items else 0
+  let st := kpForward items sums target slack protrude expand items.size
+  have ht := (kpForward_valid items sums target slack protrude expand items.size
+    (Nat.le_refl _)).1
+  have hz : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0 := by
+    intro a j haj hj
+    rw [(kpSums_forced_zero items hf).2 j hj,
+      (kpSums_forced_zero items hf).2 a (by omega)]
+  change (breakSpans items (match (st.best.getD (items.size-1) none) with
+    | none => #[] | some _ => kpBack items.size st.best (items.size-1)).toList).1 = _
+  cases he : (st.best.getD (items.size-1) none) with
+  | none =>
+    have hg : ¬ kpStart items items.size < items.size := by
+      intro hg
+      have h := kpForward_last items sums target slack protrude expand hn hb hz hg
+      change ((st.best.getD (items.size-1) none)).isSome = true at h
+      rw [he] at h
+      contradiction
+    have hs := lineStart_skip items 0 (Nat.zero_le _)
+    have hstart : lineStart items 0 = items.size := by
+      simp only [kpStart, beq_self_eq_true, ite_true] at hg
+      omega
+    have hc : itemSpan items 0 items.size = [] := by
+      apply itemSpan_nil
+      intro k hk hkn
+      exact hs.2.2 k hk (by omega)
+    simp only [breakSpans, List.foldl_nil, ← itemSpan_all, hc]
+  | some e =>
+    have chain := kpBack_chain items st.best ht (items.size-1) (by omega)
+      (by rw [he]; rfl)
+    rw [chain.spans]
+    simpa only [Nat.sub_add_cancel hn] using itemSpan_all items
 
 /-- TeX's `\pretolerance` (plain.tex sets 100): the badness bound the
 hyphenless first pass must meet, per line, for its breaks to stand. -/

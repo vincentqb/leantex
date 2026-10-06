@@ -6,6 +6,13 @@ import Tests.MathInterface
 import Tests.ImageInterface
 import Tests.InkInterface
 import Tests.FontInterface
+import Tests.FontDiscoveryInterface
+import Tests.FontSubsetInterface
+import Tests.GlyphBoundsInterface
+import Tests.IrInterface
+import Tests.MathParseInterface
+import Tests.MdParseInterface
+import Tests.PictureInterface
 import Tests.ParseInterface
 import Tests.DataInterface
 import Tests.TcolorboxInterface
