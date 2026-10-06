@@ -5251,6 +5251,228 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
       obtain ⟨hacc, heq⟩ := hc hw.1
       exact ⟨hacc, hw.2.trans heq⟩
 
+
+/-- Scalars represented by glyph ink, as opposed to fixed or word spacing. -/
+def inkScalar (c : Char) : Bool :=
+  !(c.isWhitespace || (fixedSpace c).isSome || c == '\u00a0' || c == '\u00ad')
+
+/-- The ordered source/body census omits scalars represented only by spacing. -/
+def inkCensus (cs : List Char) : List Char := cs.filter inkScalar
+
+private theorem pushWord_textSource (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
+    (attr : Attribution) (hs : sty.smallcaps = false) (h : ∀ tk ∈ st.toks, tk.TextSource) :
+    ∀ tk ∈ (pushWord st sty cur attr).toks, tk.TextSource := by
+  intro tk ht
+  simp only [pushWord, Array.mem_push] at ht
+  rcases ht with ht | rfl
+  · exact h tk ht
+  · exact hs
+
+private theorem pushChars_textSource (sty : TextStyle) (attr : Attribution)
+    (cs : List Char) (hs : sty.smallcaps = false) : ∀ (st : FlattenSt) (cur : Array Char),
+    (∀ tk ∈ st.toks, tk.TextSource) →
+      ∀ tk ∈ (pushChars sty attr st cur cs).toks, tk.TextSource := by
+  induction cs with
+  | nil =>
+    intro st cur h
+    simp only [pushChars]
+    split
+    · exact h
+    · exact pushWord_textSource st sty cur attr hs h
+  | cons c rest ih =>
+    intro st cur h
+    simp only [pushChars]
+    split
+    · apply ih
+      intro tk ht
+      simp only [Array.mem_push] at ht
+      rcases ht with ht | rfl
+      · split at ht
+        · exact h tk ht
+        · exact pushWord_textSource st sty cur attr hs h tk ht
+      · trivial
+    · exact ih st (cur.push c) h
+
+private theorem pushText_textSource (st : FlattenSt) (sty : TextStyle) (s : String)
+    (hs : sty.smallcaps = false) (h : ∀ tk ∈ st.toks, tk.TextSource) :
+    ∀ tk ∈ (pushText st sty s).toks, tk.TextSource :=
+  pushChars_textSource sty st.ctr.take.1 s.toList hs _ #[] h
+
+private theorem flattenList_textSource (mathOk noteOk : Bool) (sty : TextStyle)
+    (xs : List Inline) (hs : sty.smallcaps = false) : ∀ st,
+    (∀ x ∈ xs, ∃ s, x = .text s) → (∀ tk ∈ st.toks, tk.TextSource) →
+    ∀ tk ∈ (flattenList mathOk noteOk st sty xs).toks, tk.TextSource := by
+  induction xs with
+  | nil => intro st _ h; exact h
+  | cons x xs ih =>
+    intro st hp ht
+    obtain ⟨s, rfl⟩ := hp x (by simp)
+    exact ih _ (fun x hx => hp x (by simp [hx])) (pushText_textSource st sty s hs ht)
+
+private theorem flatten_textSource (mathOk noteOk : Bool) (st : FlattenSt)
+    (sty : TextStyle) (xs : Array Inline) (hp : PlainInlines xs)
+    (hs : sty.smallcaps = false) (ht : ∀ tk ∈ st.toks, tk.TextSource) :
+    ∀ tk ∈ (flatten mathOk noteOk st sty xs).toks, tk.TextSource := by
+  rw [flatten]
+  exact flattenList_textSource mathOk noteOk sty xs.toList hs st
+    (fun x hx => hp x (by simpa using hx)) ht
+
+private theorem wordItemChars_inkCensus (c : Char) :
+    inkCensus (wordItemChars c) = inkCensus [c] := by
+  unfold wordItemChars
+  split
+  · rfl
+  · split
+    · rename_i h
+      simp only [Bool.or_eq_true, beq_iff_eq] at h
+      rcases h with h | rfl
+      · simp [inkCensus, inkScalar, h]
+      · simp [inkCensus, inkScalar]
+    · rfl
+
+private theorem flatMap_wordItemChars_inkCensus (cs : List Char) :
+    inkCensus (cs.flatMap wordItemChars) = inkCensus cs := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+    change inkCensus (wordItemChars c ++ cs.flatMap wordItemChars) =
+      inkCensus ([c] ++ cs)
+    simp only [inkCensus, List.filter_append]
+    rw [show (wordItemChars c).filter inkScalar = [c].filter inkScalar from
+      wordItemChars_inkCensus c, show (cs.flatMap wordItemChars).filter inkScalar =
+      cs.filter inkScalar from ih]
+
+private theorem Tk.itemChars_inkCensus (tk : Tk) (ht : tk.TextSource) :
+    inkCensus tk.itemChars = inkCensus tk.sourceChars := by
+  cases tk <;> simp only [Tk.TextSource] at ht
+  all_goals first | contradiction | skip
+  · exact flatMap_wordItemChars_inkCensus _
+  · simp [Tk.itemChars, Tk.sourceChars, inkCensus, inkScalar, fixedSpace]
+
+private theorem toks_itemChars_inkCensus (ts : List Tk) (ht : ∀ tk ∈ ts, tk.TextSource) :
+    inkCensus (ts.flatMap Tk.itemChars) = inkCensus (ts.flatMap Tk.sourceChars) := by
+  induction ts with
+  | nil => rfl
+  | cons t ts ih =>
+    simp only [List.flatMap_cons, inkCensus, List.filter_append]
+    rw [show t.itemChars.filter inkScalar = t.sourceChars.filter inkScalar from
+      Tk.itemChars_inkCensus t (ht t (by simp))]
+    rw [show (ts.flatMap Tk.itemChars).filter inkScalar =
+      (ts.flatMap Tk.sourceChars).filter inkScalar from
+      ih (fun t h => ht t (by simp [h]))]
+
+private theorem itemsOfToks_flatten_none_chars (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
+    (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
+    (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp)))
+    (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
+    let st := flatten (fs.mathFont?.isSome) noteOk
+      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
+    let out := itemsOfToks none size xHeight fs imgs textW textH { cache := cache } st.toks
+    out.Clean → inkCensus out.chars = inkCensus (Ir.plainText xs).toList := by
+  dsimp only
+  intro hc
+  have ht := flatten_textSource (fs.mathFont?.isSome) noteOk
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+    baseStyle xs hp hs (by simp)
+  have hitems := (itemsOfToks_none_chars size xHeight fs imgs textW textH
+    { cache := cache } _ ht hc).2
+  rw [hitems]
+  simp only [ItemsAcc.chars, List.flatMap_nil, List.nil_append]
+  rw [toks_itemChars_inkCensus _ (fun tk h => ht tk (by simpa using h))]
+  rw [flatten_sourceChars _ _ _ _ _ hp]
+  rfl
+
+private theorem pushLoop_array {α β : Type} (xs : Array α) (init : Array β) (f : α → β) :
+    (forIn xs init (fun x out => ForInStep.yield (out.push (f x))) : Id (Array β)) =
+      init ++ xs.map f := by
+  apply Array.toList_inj.mp
+  rw [Array.toList_append, Array.toList_map, List.map_eq_flatMap]
+  exact scalarLoop_array_census (fun out : Array β => out.toList)
+    (fun x => [f x]) (fun x out => pure (.yield (out.push (f x)))) xs init (by
+      intro x _ out
+      exact ⟨_, rfl, by simp⟩)
+
+private theorem clean_of_diagnostic_maps (acc : ItemsAcc) (ds : Array Diag)
+    (dropped : Nat × Char → Diag) (substs : Nat × Char × Nat → Diag)
+    (unstyled : Nat × Char × Math.MathAlphabet × Char → Diag)
+    (hd : ∀ x, (dropped x).code = "E0405")
+    (hs : ∀ x, (substs x).code = "W0009")
+    (h : ∀ d ∈ ds ++ acc.dropped.map dropped ++ acc.substs.map substs ++
+        acc.unstyled.map unstyled, d.code ≠ "E0405" ∧ d.code ≠ "W0009") :
+    acc.Clean := by
+  constructor
+  · apply Array.eq_empty_iff_forall_not_mem.mpr
+    intro x hx
+    exact (h (dropped x) (by
+      simp only [Array.mem_append, Array.mem_map]
+      exact Or.inl (Or.inl (Or.inr ⟨x, hx, rfl⟩)))).1 (hd x)
+  · apply Array.eq_empty_iff_forall_not_mem.mpr
+    intro x hx
+    exact (h (substs x) (by
+      simp only [Array.mem_append, Array.mem_map]
+      exact Or.inl (Or.inr ⟨x, hx, rfl⟩))).2 (hs x)
+
+private theorem itemsOfInlines_noLoss_clean
+    (size xHeight : Sp) (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
+    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp))) :
+    let st := flatten (fs.mathFont?.isSome) noteOk
+      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
+    let out := itemsOfToks none size xHeight fs imgs textW textH { cache := cache } st.toks
+    (∀ d ∈ (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs textW textH
+      noteOk ladder step roleMetrics).2.1, d.code ≠ "E0405" ∧ d.code ≠ "W0009") → out.Clean := by
+  dsimp only
+  simp only [itemsOfInlines, bind, pure, Id.run]
+  split
+  · split <;> simp only [pushLoop_array]
+    all_goals
+      intro h
+      exact clean_of_diagnostic_maps _ _ _ _ _ (fun _ => rfl) (fun _ => rfl) h
+  · simp only [Bool.not_false, ite_true]
+    simp only [pushLoop_array]
+    intro h
+    exact clean_of_diagnostic_maps _ _ _ _ _ (fun _ => rfl) (fun _ => rfl) h
+
+private theorem itemsOfInlines_itemChars
+    (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
+    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp))) :
+    (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
+      noteOk ladder step roleMetrics).1.toList.flatMap Item.boxChars =
+    (itemsOfToks pats size xHeight fs imgs textW textH { cache := cache }
+      (flatten fs.mathFont?.isSome noteOk
+        { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+        baseStyle xs).toks).chars := by
+  simp only [itemsOfInlines, bind, pure, Id.run]
+  split
+  · split <;> simp [ItemsAcc.chars, Item.boxChars]
+  · simp [ItemsAcc.chars, Item.boxChars]
+
+private theorem itemsOfInlines_none_chars (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
+    (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
+    (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Sp × Option Sp)))
+    (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false)
+    (hd : ∀ d ∈ (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs
+      textW textH noteOk ladder step roleMetrics).2.1,
+      d.code ≠ "E0405" ∧ d.code ≠ "W0009") :
+    inkCensus ((itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs
+      textW textH noteOk ladder step roleMetrics).1.toList.flatMap Item.boxChars) =
+      inkCensus (Ir.plainText xs).toList := by
+  rw [itemsOfInlines_itemChars]
+  exact itemsOfToks_flatten_none_chars size xHeight fs imgs textW textH cache ctr
+    baseStyle xs noteOk ladder step roleMetrics hp hs
+    (itemsOfInlines_noLoss_clean size xHeight fs baseStyle xs cache ctr imgs
+      textW textH noteOk ladder step roleMetrics hd)
+
 -- Knuth–Plass ------------------------------------------------------------------
 
 def canBreakAt (items : Array Item) (j : Nat) : Bool :=
