@@ -2,7 +2,7 @@
 The parity ladder's regenerator: the only thing in this repository that
 invokes the reference engine. Run from the repository root:
 
-  lake build ParityLib
+  lake build ScriptsModules
   lake env lean --run scripts/parity-regen.lean --selftest
   lake env lean --run scripts/parity-regen.lean            # only missing ones
   lake env lean --run scripts/parity-regen.lean --force     # all of them

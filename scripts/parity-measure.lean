@@ -2,7 +2,7 @@
 The parity ladder's three premises, measured rather than assumed. Run from
 the repository root:
 
-  lake build ParityLib
+  lake build ScriptsModules
   lake env lean --run scripts/parity-measure.lean
 
 This is a report, never a gate: it prints what two engines actually agree

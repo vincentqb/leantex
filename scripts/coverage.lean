@@ -8,8 +8,8 @@ Documented-command coverage: how much of LaTeX does this engine answer?
   lake env lean --run scripts/coverage.lean --denominator <latex2e.texi>
                                                              rebuild tests/coverage/latex2e-index.txt
 
-Each mode imports `BoardLib`, which `scoreboard` builds before it fans out;
-run standalone, build it first (`lake build BoardLib`).
+Each mode imports compiled script modules, which `scoreboard` builds before
+fan-out; run standalone, build them first (`lake build ScriptsModules`).
 
 The number is a measurement, never a list. Every rung comes from running
 the engine's own dispatch over a probe of the command (`Elab.run`), so the

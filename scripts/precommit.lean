@@ -2695,6 +2695,11 @@ def main (args : List String) : IO UInt32 := do
   lines, so a duplicate past the fifth is invisible there.
   Fix: keep the one field value you mean and delete the others."
 
+  -- The standard lint driver invokes these source checks without starting
+  -- another build. Compile and proof checks are owned by that driver.
+  if args.contains "--conventions" then
+    return if ← failed.get then 1 else 0
+
   -- Proof debt stays in its source records — one hole per named record,
   -- no duplicate names, no import of Obligations from the gated
   -- library. The check reads the whole tree, not the diff, so the count

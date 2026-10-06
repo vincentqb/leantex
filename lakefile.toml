@@ -1,6 +1,7 @@
 name = "leantex"
 defaultTargets = ["LeanTex", "leantex"]
 testDriver = "Tests"
+lintDriver = "lint"
 
 [leanOptions]
 weak."linter.extra" = true
@@ -18,6 +19,7 @@ weak."linter.loopingSimpArgs" = true
 
 [[lean_lib]]
 name = "LeanTex"
+globs = ["LeanTex", "LeanTex.+"]
 
 # The owed-theorem staging area: statements the engine does not yet earn,
 # type-checked, proofs open. Not a default target: `lake build` and
@@ -48,13 +50,19 @@ root = "scripts.convprobe"
 name = "runBoundProbe"
 root = "scripts.runboundprobe"
 
-# The gate scripts, compiled: the sh trampoline execs the precommit binary
-# when it is newer than the scripts (interpreting the 1,000-line script cost
-# ~1.9 s of a 2.1 s hook); the gate's own build step refreshes both. GateLib
-# carries the helpers the two scripts share.
+# All maintained tools are compiled, including tools outside the default
+# executable targets. Each executable retains its own compiler environment.
 [[lean_lib]]
-name = "GateLib"
-globs = ["scripts.Gate"]
+name = "ScriptsModules"
+globs = ["scripts.+"]
+
+[[lean_exe]]
+name = "proofcheck"
+root = "scripts.proofcheck"
+
+[[lean_exe]]
+name = "lint"
+root = "scripts.lint"
 
 [[lean_exe]]
 name = "precommit"
@@ -64,49 +72,18 @@ root = "scripts.precommit"
 name = "owed"
 root = "scripts.owed"
 
-# The citation gate: it resolves a cited theorem name against the compiled
-# environment, so it imports the tree at run time rather than linking it.
-# Its own build stays independent of whether the library compiles.
+# Citation checks inspect the compiled environment.
 [[lean_exe]]
 name = "cites"
 root = "scripts.cites"
-
-# The scoreboard: one committed baseline per goal, each under a ratchet.
-# BoardLib carries the format, the ratchet and the deficit ranking the
-# aggregate and every tier producer share; the producers themselves are run
-# interpreted (`lake env lean --run scripts/<tier>.lean`), which is the
-# convention tier discovery relies on.
-[[lean_lib]]
-name = "BoardLib"
-globs = ["scripts.Board", "scripts.Rung"]
 
 [[lean_exe]]
 name = "scoreboard"
 root = "scripts.scoreboard"
 
-# The cross-engine parity ladder. Its scripts must agree on the level
-# vocabulary, the divergence registry, the sidecar format and the ratchet's
-# arithmetic, so they read one module rather than a copy each — the reason
-# GateLib exists for the two gate scripts. `scripts/parity-regen.lean`
-# invokes the reference engine and is run as the other oracles are
-# (`lake env lean --run`); the gate is compiled, because it imports
-# test-suite internals other branches edit and nothing else would fail when
-# one of them moves, and because interpreting it cost 7.4 s of a gate that
-# will grow.
-[[lean_lib]]
-name = "ParityLib"
-globs = ["scripts.ParityCore"]
-
 [[lean_exe]]
 name = "parity"
 root = "scripts.parity"
-
-# The landing procedure. `LandCore` is its pure core — a state machine over
-# observations whose only outputs are actions, with the merge-needs-gates
-# theorem; `land` is the boundary that feeds it from files.
-[[lean_lib]]
-name = "LandLib"
-globs = ["scripts.LandCore"]
 
 [[lean_exe]]
 name = "land"

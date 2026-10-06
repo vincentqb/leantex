@@ -859,26 +859,11 @@ is what makes the permission narrow rather than a hole the size of
 def pendingTiers : List String :=
   []
 
-/-- The lake targets a tier's `--check` imports. `lake env lean --run` uses
-whatever `.olean` the last build left and builds nothing itself, so without
-this the whole scoreboard measures a stale tree: a module edited and not
-rebuilt still reports its old value, and this branch's own `lake build`
-passed over a syntactically broken `Board.lean` because
-`defaultTargets = ["leantex"]` covers neither `BoardLib` nor `scoreboard`.
-
-The aggregate builds these once before fanning out, and a failed build is a
-`fault` — the honest answer when the thing to measure did not compile.
-`ParityLib` is a sibling's, named ahead of its arrival so it is built the
-moment that tier lands; a name no `lakefile.toml` declares is skipped
-rather than failed, so the list can run ahead of the tree.
-
-No tier reads the `leantex` binary: HTML and browser-face source freshness
-keys are built in-process from the library `BoardLib` imports
-(`hermeticHtmlKeys`), so building `BoardLib` refreshes them. The exact
-converted-face key is committed report data. A tier that starts spawning the
-binary owes `leantex` a place here. -/
+/-- Build every tier producer and its test dependencies before fan-out.
+Interpreted tools otherwise read stale compiled modules. No tier spawns
+the document executable; a producer that does must add that target here. -/
 def tierImports : List String :=
-  ["BoardLib", "GateLib", "TestsModules", "ParityLib"]
+  ["ScriptsModules", "TestsModules"]
 
 /-- The `tierImports` this tree actually declares. Read off `lakefile.toml`,
 so a name that has not arrived yet is skipped instead of failing the build
