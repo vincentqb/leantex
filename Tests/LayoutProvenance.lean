@@ -33,6 +33,11 @@ def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let second := source 73 29
   let out := run geom fs none doc (frameSpans := #[(0, first), (1, second)])
   let spills := out.diags.filter (·.kind == .W0384)
+  let htmlOnly := Block.only #["html"] #[.para #[.text "Web-only content"]]
+  let mixed := { doc with body := #[htmlOnly, frame, htmlOnly, frame] }
+  let sites := frameSpansForPdf mixed #[(1, first), (3, second)]
+  let filtered := run geom fs none mixed (frameSpans := sites)
+  let filteredSpills := filtered.diags.filter (·.kind == .W0384)
   return #[
     ("frames really expand and spill", out.pages.size > 4),
     ("frame opening 7 survives overlays and spills", spills.any fun d => sameSource d.span first),
@@ -40,7 +45,14 @@ def frameSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
     ("identical messages at distinct declarations stay distinct", spills.size == 2),
     ("every spill names its own opening",
       !spills.isEmpty && spills.all fun d =>
-        sameSource d.span first || sameSource d.span second)]
+        sameSource d.span first || sameSource d.span second),
+    ("PDF filtering remaps real body indices",
+      sites.size == 2 && sites[0]?.map (·.1) == some 0 &&
+        sites[1]?.map (·.1) == some 1),
+    ("filtered frames retain their own opening through actual layout",
+      filteredSpills.size == 2 &&
+        filteredSpills.any (fun d => sameSource d.span first) &&
+        filteredSpills.any (fun d => sameSource d.span second))]
 
 /-- Each overflowing line names its own source, including a note whose
 generated mark shifts the item indices and expansions at shared coordinates. -/

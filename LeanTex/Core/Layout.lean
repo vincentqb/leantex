@@ -12845,6 +12845,56 @@ lose content). The structure tree the attribution channel indexes is
 set. -/
 def pdfView (doc : Doc) : Doc := { doc with body := Ir.keepFor "pdf" doc.body }
 
+/-- Translate opening-frame source sites from the final elaborated document's
+body indices to the indices `run` reads after backend filtering. The producer
+must return these sites alongside that same document after normalization and
+re-elaboration. Frame numbers and frame ordinals are never source indices.
+Non-frame and stale out-of-range entries are discarded. -/
+def frameSpansForPdf (doc : Doc) (spans : Array (Nat × Span)) : Array (Nat × Span) :=
+  spans.filterMap fun (i, source) =>
+    match doc.body[i]? with
+    | some (.frame _ _ _ _ _) =>
+      some (((doc.body.toList.take i).filter (keptBy "pdf")).length, source)
+    | _ => none
+
+private theorem keepForList_frame (bs : List Block) (i : Nat)
+    (title : Array Inline) (standout : Bool) (valign : VAlign) (breakable : Bool)
+    (body : Array Block)
+    (h : bs[i]? = some (.frame title standout valign breakable body)) :
+    (keepForList "pdf" bs)[((bs.take i).filter (keptBy "pdf")).length]? =
+      some (keepForOne "pdf" (.frame title standout valign breakable body)) := by
+  induction bs generalizing i with
+  | nil => simp at h
+  | cons b bs ih =>
+    cases i with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at h
+      subst b
+      rfl
+    | succ i =>
+      simp only [List.getElem?_cons_succ] at h
+      have hr := ih i h
+      cases hk : keptBy "pdf" b <;>
+        simpa [keepForList, hk, List.filter_cons] using hr
+
+/-- Every supplied frame site names the same frame in the actual PDF view.
+The source value is preserved whole, including its expansion origin stack. -/
+theorem frameSpansForPdf_covers (doc : Doc) (spans : Array (Nat × Span))
+    (i : Nat) (source : Span)
+    (title : Array Inline) (standout : Bool) (valign : VAlign) (breakable : Bool)
+    (body : Array Block)
+    (hs : (i, source) ∈ spans)
+    (hb : doc.body[i]? = some (.frame title standout valign breakable body)) :
+    let j := ((doc.body.toList.take i).filter (keptBy "pdf")).length
+    (j, source) ∈ frameSpansForPdf doc spans ∧
+      (pdfView doc).body[j]? =
+        some (keepForOne "pdf" (.frame title standout valign breakable body)) := by
+  constructor
+  · exact Array.mem_filterMap.mpr ⟨(i, source), hs, by simp [hb]⟩
+  · simpa [pdfView, keepFor] using
+      keepForList_frame doc.body.toList i title standout valign breakable body
+        (by simpa using hb)
+
 /-- The existing collection/staging seam, with its postlude. The continuation
 lets the background contract inspect the exact ops placement consumes, without
 re-running another IR walk or adding background state to the runtime builder. -/
