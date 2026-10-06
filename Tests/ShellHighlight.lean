@@ -25,6 +25,18 @@ The simple colour pins use the existing Default/Friendly shared classes.
 Variables must differ from literal strings without fixing a Pygments subtype
 to the coarse `name` colour. Complex constructs owe conservation here. -/
 def shellProbes : Array Probe := #[
+  -- EOF and LF must give comments the same class ink in both artifacts.
+  -- The trailing spaces and tab remain authored source, even at EOF.
+  { name := "final-inline",
+    source := "echo first  # earlier\n\n\tprintf last\t  # terminal  ",
+    pins := #[("# earlier", .ink .comment), ("# terminal", .ink .comment)] },
+  { name := "final-standalone",
+    source := "# heading\nprintf next\n# ending",
+    pins := #[("# heading", .ink .comment), ("# ending", .ink .comment)] },
+  { name := "final-hash-context",
+    source := "echo '# quoted' word#hash \\#literal  # trailing",
+    pins := #[("# quoted", .ink .string), ("word#hash", .ink .plain),
+      ("literal", .ink .plain), ("# trailing", .ink .comment)] },
   { name := "basic",
     source := "if test -n \"$VALUE\"; then\n\techo '<ready>&' && printf 42\nfi\n# boundary comment\npwd",
     pins := #[("if", .ink .keyword), ("then", .ink .keyword),
@@ -192,6 +204,37 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (as.all fun a => a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
     t "listing reply: unknown token classes leave plain paint"
       (as.all fun a => a.tokens.flatten.all (·.kind == .plain))
+  -- The lexer boundary may be part of the final token or a separate token.
+  -- Deliberately bypass normalization here to include authored trailing LFs.
+  for source in ["", "\n", "\n\n", "\n\techo λ😀  ", "echo x\n\n", "# tail\t  "] do
+    let r : ListingReply.Request := { language := "bash", source }
+    let boundary := ShellHighlight.shellTokenJson source.length "Token.Text" "\n"
+    for pieces in [
+        #[ShellHighlight.shellTokenJson 0 "Token.Comment.Single" (source ++ "\n")],
+        #[ShellHighlight.shellTokenJson 0 "Token.Comment.Single" source, boundary]] do
+      let body := ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson r pieces]
+      let .ok (as, errors) := ListingReply.decode #[r] body (terminalLf := true)
+        | failures ref "listing reply: exact terminal LF rejected"
+      t "listing reply: terminal LF keeps the content key and all authored whitespace"
+        (errors.isEmpty && as.size == 1 && as.all fun a =>
+          a.request == r && a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
+      t "listing reply: raw mode still rejects the lexer-only LF"
+        (ShellHighlight.shellDecodeRejected #[r] body)
+    for text in [source, source ++ "\n\n", source ++ " \n", source ++ "\r\n"] do
+      t "listing reply: terminal LF must be exactly one LF beyond the source"
+        (match ListingReply.decode #[r] (ShellHighlight.shellBatchJson #[
+            ShellHighlight.shellSuccessJson r #[
+              ShellHighlight.shellTokenJson 0 "Token.Text" text]]) (terminalLf := true) with
+          | .error _ => true
+          | .ok _ => false)
+    let badOffset := ShellHighlight.shellTokenJson (source.length + 1) "Token.Text" "\n"
+    t "listing reply: terminal LF does not waive contiguous Unicode offsets"
+      (match ListingReply.decode #[r] (ShellHighlight.shellBatchJson #[
+          ShellHighlight.shellSuccessJson r #[
+            ShellHighlight.shellTokenJson 0 "Token.Text" source, badOffset]])
+          (terminalLf := true) with
+        | .error _ => true
+        | .ok _ => false)
   let encoded := ListingReply.encode #[normalized, request, { language := "", source := "" }]
   let .ok json := Lean.Json.parse encoded | failures ref "listing reply: encoding invalid JSON"
   let .ok encodedRequests := json.getObjValAs? (Array Lean.Json) "requests"
@@ -262,6 +305,10 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (match ListingReply.decode #[request] refusal with
         | .ok (_, replay) => replay == failures
         | .error _ => false)
+    t "listing reply: terminal LF mode leaves keyed refusals unchanged"
+      (match ListingReply.decode #[request] refusal (terminalLf := true) with
+        | .ok (replayedPlain, replay) => replayedPlain == plain && replay == failures
+        | .error _ => false)
   let native := ListingHighlight.sourceDoc "python" "print(7)"
   let lean := ListingHighlight.sourceDoc "lean4" "def n := 7"
   let bash := (ShellHighlight.minted "bash" .default "echo x").1
@@ -289,7 +336,8 @@ def shellHighlightChecks (ref : IO.Ref (List String))
   let .ok font := Font.parse bytes | failures ref "shell highlight: fixture font invalid"
   let fonts := oneFaceOf font
   for probe in ShellHighlight.shellProbes do
-    let aliases := if probe.name == "basic" then ["bash", "sh", "shell"] else ["bash"]
+    let aliases := if probe.name == "basic" || probe.name.startsWith "final-" then
+      ["bash", "sh", "shell"] else ["bash"]
     for language in aliases do
       let inputs := [
         ("minted/default", Ir.ListingStyle.default,

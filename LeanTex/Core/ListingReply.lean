@@ -153,17 +153,40 @@ private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.
 
 /-- Offsets count Unicode characters, as Pygments does. Every token starts
 where its predecessor ended; the whole text and every normalized line must
-also match. Tab expansion and an inserted final LF both fail. -/
-def ofTokens (request : Request) (tokens : Array Classified) : Except Failure Answer := do
-  let (_, contiguous) := tokens.foldl (fun (offset, valid) token =>
-    (offset + token.text.length, valid && token.offset == offset)) (0, true)
-  if !contiguous then throw .sourceMismatch
-  if tokens.foldl (fun text token => text ++ token.text) "" != request.source then
-    throw .sourceMismatch
-  let highlight := if request.source.isEmpty then #[] else splitTokens tokens
-  if highlight.map lineText = request.lines then
-    return { request, tokens := highlight }
-  else throw .sourceMismatch
+also match. `terminalLf` allows exactly one lexer-only LF after the requested
+source: validate it before removing its empty last line. No authored whitespace
+is trimmed, and the answer keeps the original content key. -/
+def ofTokens (request : Request) (tokens : Array Classified)
+    (terminalLf : Bool := false) : Except Failure Answer :=
+  let contiguous := (tokens.foldl (fun (offset, valid) token =>
+    (offset + token.text.length, valid && token.offset == offset)) (0, true)).2
+  let expected := if terminalLf then request.source ++ "\n" else request.source
+  if !contiguous || tokens.foldl (fun text token => text ++ token.text) "" != expected then
+    .error .sourceMismatch
+  else
+    let lines := splitTokens tokens
+    let highlight := if request.source.isEmpty then #[] else
+      if terminalLf then lines.pop else lines
+    if highlight.map lineText = request.lines then
+      .ok { request, tokens := highlight }
+    else .error .sourceMismatch
+
+/-- Successful validation preserves the source lines and content key in both
+raw and terminal-LF modes. The lexical boundary never becomes displayed text. -/
+theorem ofTokens_source_exact (request : Request) (tokens : Array Classified)
+    (terminalLf : Bool) (answer : Answer)
+    (h : ofTokens request tokens terminalLf = .ok answer) :
+    answer.request = request ∧ answer.tokens.map lineText = request.lines := by
+  dsimp only [ofTokens] at h
+  generalize (if terminalLf then request.source ++ "\n" else request.source) = expected at h
+  generalize (if request.source.isEmpty then #[] else
+    if terminalLf then (splitTokens tokens).pop else splitTokens tokens) = highlight at h
+  split at h
+  · contradiction
+  · split at h
+    · cases Except.ok.inj h
+      exact ⟨rfl, by assumption⟩
+    · contradiction
 
 -- Operational protocol ceilings: one MiB of source per batch, at most 256
 -- requests and 262144 token records, and sixteen MiB of UTF-8 JSON. These
@@ -195,7 +218,7 @@ private def classified (value : Json) : Except String Classified := do
 and repeated content keys never partially poison the cache. Per-request
 errors are completed plain replies with a typed failure keyed by the request.
 The CLI owns diagnostic translation; external error text is never its prose. -/
-def decode (rs : Array Request) (body : String) :
+def decode (rs : Array Request) (body : String) (terminalLf : Bool := false) :
     Except String (Array Answer × Array (Request × Failure)) := do
   if !withinBudget rs || body.utf8ByteSize > maxReplyBytes then
     throw "listing protocol resource limit exceeded"
@@ -223,7 +246,7 @@ def decode (rs : Array Request) (body : String) :
       tokenCount := tokenCount + values.size
       if tokenCount > maxTokens then throw "listing token count limit exceeded"
       let tokens ← values.mapM classified
-      match ofTokens request tokens with
+      match ofTokens request tokens terminalLf with
       | .ok answer => answers := answers.push answer
       | .error _ => throw "listing tokens do not reproduce the requested source"
     | .error _, .ok error =>

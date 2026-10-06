@@ -21,6 +21,8 @@ launcher. Only that installed directory is searched, and latexminted is never
 executed. Neither provider discovery nor lexer selection reads a document path.
 
 The raw-token API bypasses Pygments' newline, tab and filter preprocessing.
+One lexer-only LF lets newline-terminated rules also classify the final line.
+The pure decoder validates that boundary and removes only its empty last line.
 Plugin discovery is disabled before importing lexer modules, including for
 built-in lexers that delegate embedded languages. The registry supplies both
 module and class names; no authored string becomes an import. -/
@@ -70,7 +72,7 @@ for request in batch['requests']:
             lexer = getattr(importlib.import_module(entry[0]), name)(
                 stripnl=False, stripall=False, ensurenl=False, tabsize=0)
             tokens = []
-            for offset, kind, text in lexer.get_tokens_unprocessed(source):
+            for offset, kind, text in lexer.get_tokens_unprocessed(source + '\n'):
                 token_count += 1
                 if token_count > max_tokens:
                     raise SystemExit(4)
@@ -120,7 +122,7 @@ def fulfil (_file : String) (requests : Array ListingReply.Request) :
           | _ => .budget)
       match got.ran with
       | .exited 0 =>
-        match ListingReply.decode requests got.out with
+        match ListingReply.decode requests got.out (terminalLf := true) with
         | .ok (answers, failures) =>
           return (answers, failures.map fun (request, failure) => diagnostic request failure)
         | .error _ => return failed requests .invalidReply

@@ -7,7 +7,7 @@ namespace Tests.ListingProvider
 
 -- Synthetic classification data, independent of an installed lexer. The
 -- provider's language accuracy is a separate rendered acceptance report.
-def providerSource : String := "echo\t\"ready\"\n\n$HOME"
+def providerSource : String := "echo\t\"ready\"\n\n$HOME  # terminal\t  "
 
 def reply (request : ListingReply.Request) : String :=
   ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson request #[
@@ -15,7 +15,9 @@ def reply (request : ListingReply.Request) : String :=
     ShellHighlight.shellTokenJson 4 "Token.Text" "\t",
     ShellHighlight.shellTokenJson 5 "Token.Literal.String.Double" "\"ready\"",
     ShellHighlight.shellTokenJson 12 "Token.Text" "\n\n",
-    ShellHighlight.shellTokenJson 14 "Token.Name.Variable" "$HOME"]]
+    ShellHighlight.shellTokenJson 14 "Token.Name.Variable" "$HOME",
+    ShellHighlight.shellTokenJson 19 "Token.Text" "  ",
+    ShellHighlight.shellTokenJson 21 "Token.Comment.Single" "# terminal\t  \n"]]
 
 def prepared (markdown : Bool) (input : String) : Elab.Prepared × Array Diag :=
   let (raws, ds) := if markdown then Md.read "listing.md" input else
@@ -54,6 +56,7 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
         requests.all (·.source == source))
     let some request := requests[0]? | failures ref "listing provider: request missing"
     let .ok (answers, errors) := ListingReply.decode requests (ListingProvider.reply request)
+        (terminalLf := true)
       | failures ref "listing provider: synthetic reply rejected"
     t "listing provider: complete classification has no refusal" errors.isEmpty
     let snapshot := { base with listingReplies := answers }
@@ -75,7 +78,7 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
     let painted := ShellHighlight.htmlPaintList none #[] codes.toList
     let pdf := pdfText (Pdf.write (Layout.Geom.ofPage doc.page) fonts out.pages doc.info)
     for (word, kind) in [("echo", LeanTex.Core.ListingHighlight.Kind.builtin),
-        ("ready", .string), ("$HOME", .name)] do
+        ("ready", .string), ("$HOME", .name), ("# terminal", .comment)] do
       let ink := (Listing.ink doc.palette none kind (style := style)).getD Ir.Color.black
       t "listing provider: Layout.Out ships checked class ink"
         ((ShellHighlight.witnessPaint? source word glyphs).any fun colors =>
