@@ -34,7 +34,7 @@ block α..ω maps onto the Mathematical Italic block in order (ο and ς
 included), the six symbol-slot forms ϵ ϑ ϰ ϕ ϱ ϖ onto their own italic
 slots, and the capitals stay upright. The literal and the control word
 denote one scalar — `greek_literal_agree` is the statement. -/
-def greekLiteral (c : Char) : Option Char :=
+private def greekLiteral (c : Char) : Option Char :=
   let n := c.toNat
   if 0x3B1 ≤ n && n ≤ 0x3C9 then some (Char.ofNat (0x1D6FC + (n - 0x3B1)))
   else if 0x391 ≤ n && n ≤ 0x3A9 && n != 0x3A2 then some c
@@ -52,7 +52,7 @@ def greekLiteral (c : Char) : Option Char :=
 class and the scalar actually set — `-` is MINUS SIGN, `*` is ASTERISK
 OPERATOR. Digits and Latin letters classify after the table; a literal
 Greek letter is the second spelling of its `ctrlAtom` row (`greekLiteral`). -/
-def charAtom (c : Char) : Option (MathClass × Char) :=
+private def charAtom (c : Char) : Option (MathClass × Char) :=
   match c with
   | '+' => some (.bin, '+')
   | '-' => some (.bin, '\u2212')
@@ -90,7 +90,7 @@ def charAtom (c : Char) : Option (MathClass × Char) :=
 
 /-- The literal spellings of `ctrlAtom`'s Greek rows: unicode-math's one
 table keyed by scalar, read as (literal, name) pairs. -/
-def greekSpellings : List (Char × String) :=
+private def greekSpellings : List (Char × String) :=
   [('α', "alpha"), ('β', "beta"), ('γ', "gamma"), ('δ', "delta"),
    ('ϵ', "epsilon"), ('ε', "varepsilon"), ('ζ', "zeta"), ('η', "eta"),
    ('θ', "theta"), ('ϑ', "vartheta"), ('ι', "iota"), ('κ', "kappa"),
@@ -151,14 +151,14 @@ def ctrlAtom : List (String × MathClass × Char) :=
 /-- Two spellings, one atom: every literal Greek letter classifies to exactly
 the atom its control word does. The invariant whose absence let `$λ$`
 degrade to source text while `$\lambda$` set the italic scalar. -/
-theorem greek_literal_agree :
+private theorem greek_literal_agree :
     ∀ p ∈ greekSpellings, charAtom p.1 = ctrlAtom.lookup p.2 := by
   decide
 
 /-- Every letter of the lowercase and capital Greek blocks classifies —
 including ο, ς, and the capitals TeX has no control word for (Α, Β, …),
 which unicode-math sets from their literal spelling alone. -/
-theorem greek_literal_covers :
+private theorem greek_literal_covers :
     (∀ k < 25, (charAtom (Char.ofNat (0x3B1 + k))).isSome) ∧
     (∀ k < 25, k ≠ 17 → (charAtom (Char.ofNat (0x391 + k))).isSome) := by
   decide
@@ -166,7 +166,7 @@ theorem greek_literal_covers :
 /-- The big operators whose scripts become above/below limits in display
 style — TeX's `\displaylimits` default for every `\mathop` except the
 integrals, which plain TeX declares `\nolimits` (TeXbook p. 144). -/
-def limitOps : List String :=
+private def limitOps : List String :=
   ["sum", "prod", "coprod", "bigcup", "bigcap", "bigvee", "bigwedge",
    "bigoplus", "bigotimes", "bigodot", "bigsqcup", "biguplus"]
 
@@ -185,7 +185,7 @@ def ctrlWord : List (String × String) :=
 
 /-- The function names whose scripts set as limits (TeXbook p. 162 marks
 them: "the following … have limits that are placed above and below"). -/
-def limitWords : List String :=
+private def limitWords : List String :=
   ["det", "gcd", "inf", "lim", "liminf", "limsup", "max", "min", "Pr", "sup"]
 
 /-- Explicit spacing commands, in mu (18ths of an em): TeX's values
@@ -265,7 +265,7 @@ structure Env where
 there the body is one upright word, so the command contributes its letters
 and the styling is named as lost. At the formula's own level these resolve
 through `alphaCtrl` instead, with no loss. -/
-def textStyleCtrl : List String :=
+private def textStyleCtrl : List String :=
   ["textbf", "textit", "textsf", "texttt", "textsc", "emph",
    "bf", "it", "sf", "tt"]
 
@@ -274,7 +274,7 @@ body sets: inside it they lose nothing, so they contribute their letters
 and say nothing. Keeping them out of `textStyleCtrl` is what stops a
 `degraded` code from firing over a no-op and failing a `--werror` run for
 it — one code, one meaning, and the meaning is a loss. -/
-def textNeutralCtrl : List String :=
+private def textNeutralCtrl : List String :=
   ["text", "mbox", "textrm", "textup", "textnormal", "rm"]
 
 /-- The shared accent registry: parsing and the plaintext reading use one
@@ -284,7 +284,7 @@ def accentCtrl : List (String × Char × Bool) := Ir.mathAccentCommands
 /-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
 for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`
 works. -/
-def delimChar : Char → Option (Option Char)
+private def delimChar : Char → Option (Option Char)
   | '.' => some none
   | '(' => some (some '(')
   | ')' => some (some ')')
@@ -313,7 +313,7 @@ def structuralCtrl : List String :=
 
 /-- cancel.sty's one-argument marks (v2.2): the command and the mark it
 draws. `\cancelto` takes two arguments and is structural. -/
-def cancelCtrl : List (String × CancelMark) :=
+private def cancelCtrl : List (String × CancelMark) :=
   [("cancel", .up), ("bcancel", .down), ("xcancel", .cross)]
 
 /-- The fraction commands, each the `\genfrac` row its definition is
@@ -353,7 +353,7 @@ def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
 classes: `\bigl` is `\mathopen\big`, `\bigr` `\mathclose\big`, `\bigm`
 `\mathrel\big`, and `\big` itself sets an ordinary atom. The step is the
 size in halves of `\big@size`. -/
-def bigCtrl : List (String × MathClass × Nat) :=
+private def bigCtrl : List (String × MathClass × Nat) :=
   [("big", 2), ("Big", 3), ("bigg", 4), ("Bigg", 5)].flatMap fun (n, s) =>
     [(n, .ord, s), (n ++ "l", .opening, s), (n ++ "r", .closing, s), (n ++ "m", .rel, s)]
 
