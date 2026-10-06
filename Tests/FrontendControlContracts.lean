@@ -66,6 +66,56 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     (completion.1.salvage.all (fun s =>
       completion.2.1.any (·.subject == some s.subject)) &&
       Ir.blocksText completion.1.body == "kept")
+  let pending := { recovered with code := .W0370 }
+  t "a recovery fallback preserves the code supplied by the producer"
+    ((Elab.recoveryDiagnostic pending).kind == pending.code)
+  t "synthetic recovery without option evidence makes no shape claim"
+    ((Elab.recoveryDiagnostic recovered).help == none)
+  let unrelated := Diag.of .W0346 "a separate declaration" none
+    (subject := some recovered.subject)
+  t "a different diagnostic code cannot account for recovered content"
+    ((Elab.accountRecoveredItem #[unrelated] recovered).any
+      (fun d => d.kind == recovered.code && d.subject == some recovered.subject))
+  let footnote ← pure (Elab.run file
+    "\\begin{document}\\footnotetext{kept}\\end{document}")
+  t "pending footnote recovery records carry their emitted code"
+    (!footnote.1.salvage.isEmpty && footnote.1.salvage.all (fun item =>
+      footnote.2.any (fun d => d.subject == some item.subject && d.kind == item.code)))
+  for (label, input) in #[
+      ("plain", "\\begin{document}\n\\zzRecovered{kept}\n\\end{document}"),
+      ("options", "\\begin{document}\n\\zzRecovered[option]{kept}\n\\end{document}"),
+      ("mixed", "\\begin{document}\n\\zzRecovered{kept} " ++
+        "\\zzRecovered[option]{also kept}\n\\end{document}"),
+      ("mixed reversed", "\\begin{document}\n\\zzRecovered[option]{kept} " ++
+        "\\zzRecovered{also kept}\n\\end{document}"),
+      ("nested", "\\begin{document}\n\\zzRecovered{\\zzRecovered{kept}}\n\\end{document}"),
+      ("replacement", "\\newcommand{\\recoverMe}{\\zzRecovered{kept}}\n" ++
+        "\\begin{document}\n\\recoverMe\n\\end{document}"),
+      ("replacement options", "\\newcommand{\\recoverMe}{\\zzRecovered[option]{kept}}\n" ++
+        "\\begin{document}\n\\recoverMe\n\\end{document}")] do
+    let (tokens, lexDiags) := Lex.lex file input
+    let (raws, parseDiags) := Parse.parse file tokens
+    let prepared := Elab.prepare file raws
+    let (preamble, initial) := Elab.preparedPreamble file prepared
+    let ((doc, table, report), st) := (Elab.finishPreamble file preamble).run initial
+    let expectedReports := (Diag.tallySites
+      (st.diags.map prepared.sourceTriggers.attribute)).filter
+        (·.subject == some "ctrl:zzRecovered")
+    let expected := expectedReports[0]?
+    let resumed := Elab.completePrepared file prepared (lexDiags ++ parseDiags)
+      doc table report { st with diags := #[] }
+    let actual := resumed.2.1.find? (·.subject == some "ctrl:zzRecovered")
+    t s!"recovery completion replays every complete producer record: {label}"
+      (expectedReports == resumed.2.1.filter
+        (·.subject == some "ctrl:zzRecovered"))
+    t s!"recovery completion retains source and trigger: {label}"
+      (match expected, actual with
+      | some a, some b => a.span.isSome && a.span == b.span && a.trigger == b.trigger
+      | _, _ => false)
+    t s!"recovery completion retains the producer's code and option wording: {label}"
+      (match expected, actual with
+      | some a, some b => a.kind == b.kind && a.message == b.message && a.help == b.help
+      | _, _ => false)
   let executeFirst (value : String) :=
     Elab.run file ("\\documentclass{article}\\begin{document}" ++
       "\\PackageWarning{\\gdef\\probe{" ++ value ++ "}}{message}" ++

@@ -442,6 +442,10 @@ structure SpanRecords where
   fallbacks : Array String := #[]
   /-- Top-level frame openings, maintained with the block accumulator. -/
   frames : FrameSources := {}
+  /-- The actual log at the last content-recovery emission. Its persistent
+  array retains every site's source, aggregate wording, help and demotion
+  for completion after a caller discards the ordinary log. -/
+  recoveryDiags : Array Diag := #[]
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -743,7 +747,11 @@ the trial had pushed at a recorded position — a diagnostic another construct
 emitted — and W0361 then quoted that construct. One helper, so a field of
 this kind is reset at the one place a trial begins, never field by field. -/
 def ESt.freshReport (e : ESt) : ESt :=
-  { e with diags := #[], warnedUnknown := #[], runShapes := #[] }
+  { e with
+    diags := #[]
+    warnedUnknown := #[]
+    runShapes := #[]
+    spans := { e.spans with recoveryDiags := #[] } }
 /-- Where a listing body's content starts: past the option head and, for
 `{minted}`, its language argument — the one index both the block arm and
 the inline degradation strip from. -/
@@ -4110,9 +4118,17 @@ private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
   let key := "ctrl:" ++ name
   let (code, msg, help) := unknownCmdDiag name (RunShape.one optionRun)
   modify fun st =>
-    warnOnceState ctx key code msg pos help
+    let emitted := warnOnceState ctx key code msg pos help
       (code == .W0301 && Compat.styInternal ctx.file name)
       (bumpRunShape name key optionRun st)
+    { emitted with spans := { emitted.spans with recoveryDiags := emitted.diags } }
+
+/-- Recovery retains the emitted records themselves, including earlier
+sites reworded by the emitter to describe a mixture of argument shapes. -/
+theorem warnUnknownCmd_recovery_exact (ctx : Ctx) (name : String) (optionRun : Bool)
+    (pos : Pos) (st : ESt) :
+    ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags =
+      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags := rfl
 
 /-- The index past an unknown command's `{...}` groups: up to `n` of them,
 each after any spaces. Spaces after the last group stay where they stand, as
@@ -4290,7 +4306,8 @@ private def noteSalvage (code : DiagCode) (name text : String) : EM Unit := do
   let t := text.trimAscii.toString
   unless t.isEmpty do
     modify fun st =>
-      { st with salvage := st.salvage.push { code := code, command := name, text := t } }
+      { st with
+        salvage := st.salvage.push { code := code, command := name, text := t } }
 
 /-- The misplaced-declaration diagnostics (E0347 for running content,
 W0346 for configuration), outside the knot: the arm calls one sealed
@@ -5920,7 +5937,8 @@ def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   -- What the floor kept, recorded as salvage: this ink is the engine's
   -- recovery, not the author's prose, and nothing downstream could tell
   -- the two apart from the bytes alone.
-  noteSalvage .W0301 name (Parse.rawSrc (raws.extract j2 j3))
+  noteSalvage (unknownCmdDiag name (RunShape.one false)).1 name
+    (Parse.rawSrc (raws.extract j2 j3))
   -- The control word swallowed a space after it; give back only one
   -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
   -- gains no ink the author never wrote.
@@ -6312,14 +6330,14 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
       ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.back? = some d ∧
       d.kind = (unknownCmdDiag name (RunShape.one optionRun)).1 ∧
       d.subject = some ("ctrl:" ++ name) := by
-  have hrun : ((warnUnknownCmd ctx name optionRun pos).run st).2 =
-      warnOnceState ctx ("ctrl:" ++ name)
+  have hrun : ((warnUnknownCmd ctx name optionRun pos).run st).2.diags =
+      (warnOnceState ctx ("ctrl:" ++ name)
         (unknownCmdDiag name (RunShape.one optionRun)).1
         (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
         (unknownCmdDiag name (RunShape.one optionRun)).2.2
         ((unknownCmdDiag name (RunShape.one optionRun)).1 == .W0301 &&
           Compat.styInternal ctx.file name)
-        (bumpRunShape name ("ctrl:" ++ name) optionRun st) := rfl
+        (bumpRunShape name ("ctrl:" ++ name) optionRun st)).diags := rfl
   refine ⟨warnOnceDiag ctx ("ctrl:" ++ name)
       (unknownCmdDiag name (RunShape.one optionRun)).1
       (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
@@ -16426,48 +16444,109 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
   ((elabDoc file raws p.picPre p.picSets p.picMacros).run
     { warnedUnknown := p.warned }).1.1
 
+/-- Synthetic recovery data may arrive without its producer's report. Name
+its supplied code and command without claiming a source, option shape, or
+advice that was never observed. Production recovery retains its real records
+in `SpanRecords.recoveryDiags` and completion replays those instead. -/
 def recoveryDiagnostic (item : Ir.Recovered) : Diag :=
-  let (code, message, help) := unknownCmdDiag item.command (RunShape.one false)
-  Diag.of code message none (help := help) (subject := some item.subject)
+  Diag.of item.code
+    s!"{item.code.meaning}; content from '\\{item.command}' was kept"
+    none (subject := some item.subject)
 
-def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered) : Array Diag :=
-  if diags.any (·.subject == some item.subject) then diags
-  else diags.push (recoveryDiagnostic item)
+/-- Accounting requires the code as well as the command identity: a
+configuration warning for a name cannot discharge that name's content loss. -/
+def recoveryMatches (item : Ir.Recovered) (d : Diag) : Bool :=
+  decide (d.kind = item.code) && d.subject == some item.subject
+
+def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered)
+    (observed : Array Diag := #[]) : Array Diag :=
+  if diags.any (recoveryMatches item) then diags
+  else
+    let reports := observed.filter (recoveryMatches item)
+    if reports.isEmpty then diags.push (recoveryDiagnostic item)
+    else diags ++ reports
 
 /-- The final log is accountable to the recovery census of the returned
-IR, including callers that resume elaboration with earlier state.
-Existing reports retain their positions, wording and site counts. -/
-def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag) : Array Diag := Id.run do
+IR, including resumed completions. A missing report replays every matching
+producer record verbatim, preserving all sites, source spans and wording.
+A synthetic recovery with no producer evidence gets an explicitly unlocated
+report that makes no claim about its argument shape. -/
+def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag)
+    (observed : Array Diag := #[]) : Array Diag := Id.run do
   let mut diags := diags
   for item in items do
-    diags := accountRecoveredItem diags item
+    diags := accountRecoveredItem diags item observed
   return diags
 
 theorem recoveryDiagnostic_subject_exact (item : Ir.Recovered) :
     (recoveryDiagnostic item).subject = some item.subject := rfl
 
-theorem accountRecovered_run_exact (items : Array Ir.Recovered) (diags : Array Diag) :
-    accountRecovered items diags = items.foldl accountRecoveredItem diags := by
+theorem recoveryDiagnostic_code_exact (item : Ir.Recovered) :
+    (recoveryDiagnostic item).kind = item.code := rfl
+
+/-- The fallback cannot pretend to carry source evidence. -/
+theorem recoveryDiagnostic_unlocated_exact (item : Ir.Recovered) :
+    (recoveryDiagnostic item).span = none ∧
+      (recoveryDiagnostic item).help = none := ⟨rfl, rfl⟩
+
+/-- When the producer evidence exists, accounting is exact replay. Every
+field is retained, including any additional fields the diagnostic gains. -/
+theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
+    (item : Ir.Recovered)
+    (hmissing : diags.any (recoveryMatches item) = false)
+    (hevidence : (observed.filter (recoveryMatches item)).isEmpty = false) :
+    accountRecoveredItem diags item observed =
+      diags ++ observed.filter (recoveryMatches item) := by
+  simp only [accountRecoveredItem, hmissing, hevidence, Bool.false_eq_true, ↓reduceIte]
+
+/-- The production command emitter always supplies the evidence needed
+for exact replay, for any source position, prior state and argument shape.
+This path cannot take the synthetic fallback. -/
+theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
+    (optionRun : Bool) (pos : Pos) (st : ESt) (diags : Array Diag)
+    (hmissing : diags.any (recoveryMatches
+      { code := (unknownCmdDiag name {}).1, command := name, text }) = false) :
+    let item : Ir.Recovered :=
+      { code := (unknownCmdDiag name {}).1, command := name, text }
+    let observed := ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags
+    accountRecoveredItem diags item observed =
+      diags ++ observed.filter (recoveryMatches item) := by
+  apply accountRecoveredItem_replay_exact _ _ _ hmissing
+  rw [warnUnknownCmd_recovery_exact]
+  rcases warnUnknownCmd_push_exact ctx name optionRun pos st with ⟨d, _, hd, hk, hs⟩
+  apply Array.isEmpty_eq_false_iff_exists_mem.mpr
+  refine ⟨d, Array.mem_filter.mpr ⟨Array.mem_of_back? hd, ?_⟩⟩
+  have hc := hk.trans (unknownCmdDiag_shape_id name (RunShape.one optionRun))
+  simp [recoveryMatches, hc, hs, Ir.Recovered.subject]
+
+theorem accountRecovered_run_exact (items : Array Ir.Recovered) (diags observed : Array Diag) :
+    accountRecovered items diags observed =
+      items.foldl (fun ds item => accountRecoveredItem ds item observed) diags := by
   simp [accountRecovered, Array.forIn_pure_yield_eq_foldl]
 
 theorem accountRecoveredItem_mem (diags : Array Diag) (item : Ir.Recovered)
-    (d : Diag) (h : d ∈ diags) : d ∈ accountRecoveredItem diags item := by
+    (observed : Array Diag) (d : Diag) (h : d ∈ diags) :
+    d ∈ accountRecoveredItem diags item observed := by
   unfold accountRecoveredItem
   split
   · exact h
-  · exact Array.mem_push.mpr (Or.inl h)
+  · dsimp only
+    split
+    · exact Array.mem_push.mpr (Or.inl h)
+    · exact Array.mem_append.mpr (Or.inl h)
 
 private theorem accountRecoveredFold_mem (items : List Ir.Recovered)
-    (diags : Array Diag) (d : Diag) (h : d ∈ diags) :
-    d ∈ items.foldl accountRecoveredItem diags := by
+    (observed diags : Array Diag) (d : Diag) (h : d ∈ diags) :
+    d ∈ items.foldl (fun ds item => accountRecoveredItem ds item observed) diags := by
   induction items generalizing diags with
   | nil => exact h
-  | cons item rest ih => exact ih _ (accountRecoveredItem_mem diags item d h)
+  | cons item rest ih => exact ih _ (accountRecoveredItem_mem diags item observed d h)
 
-theorem accountRecovered_mem (items : Array Ir.Recovered) (diags : Array Diag)
-    (d : Diag) (h : d ∈ diags) : d ∈ accountRecovered items diags := by
+theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed : Array Diag)
+    (d : Diag) (h : d ∈ diags) :
+    d ∈ accountRecovered items diags observed := by
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
-  exact accountRecoveredFold_mem items.toList diags d h
+  exact accountRecoveredFold_mem items.toList observed diags d h
 
 /-- The actual prepared-frontend tail, factored so its contract can name
 the returned document and log without unfolding the body elaborator. -/
@@ -16488,7 +16567,8 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
   let sequences := Ir.footerSequenceDiags doc
   (doc, Diag.tallySites (accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
-      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences)),
+      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences)
+    (st.spans.recoveryDiags.map p.sourceTriggers.attribute)),
     { bib := st.spans.bib
       images := st.spans.images
       frames := st.spans.frames.sites
