@@ -60,4 +60,22 @@ theorem write_contract {α : Type} (emit : Bw → α → Bw) (entries : Array α
   exact ⟨he.1, he.2.trans hs.2⟩
 
 end BitStream
+/-- The one-bit header reader recovers a certified bit field. -/
+theorem bitField_bit_exact (r : Br) (v : Nat) (hv : v < 2)
+    (hf : BitField r.data r.bitPos 1 v) :
+    r.bit = some (v, {r with bitPos := r.bitPos + 1}) := by
+  have hi : r.bitPos / 8 < r.data.size := by have := hf.1; omega
+  have he := hf.2 0 (by decide)
+  simp only [Nat.add_zero, Nat.shiftRight_zero, Nat.and_one_is_mod,
+    Nat.mod_eq_of_lt hv, getElem?_pos r.data (r.bitPos / 8) hi, Option.getD_some] at he
+  simpa only [Br.bit, getElem?_pos r.data (r.bitPos / 8) hi, Nat.and_one_is_mod] using
+    congrArg (fun x => some (x, {r with bitPos := r.bitPos + 1})) he
+
+theorem push_bit_exact (w : Bw) (data : ByteArray) (v : Nat)
+    (hw : w.Valid) (hv : v < 2) (hr : (w.push v 1).Realizes data) :
+    ({data, bitPos := w.position} : Br).bit =
+      some (v, {data, bitPos := (w.push v 1).position}) := by
+  rw [push_position_exact w v 1 hw (by decide)]
+  exact bitField_bit_exact _ v hv (hr.field (push_field_exact w v 1 hw (by decide) hv))
+
 end LeanTex.Core.Flate

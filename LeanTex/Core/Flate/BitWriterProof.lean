@@ -137,4 +137,24 @@ theorem packageMerge_push_decode_exact (freqs : Array Nat) (limit : Nat) (w : Bw
   rw [(canonCodes_exact _ hb).2 s (by simpa [hc.1.size_eq] using hi)]
   exact Canonical.reverseBits_between _ _
 
+/-- Realization preserves each completed byte, including the zlib wrapper. -/
+theorem Bw.Realizes.byte_exact {w : Bw} {data : ByteArray} (hr : w.Realizes data)
+    (i : Nat) (hi : i < w.out.size) : data[i]? = w.out[i]? := by
+  have hd : i < data.size := by have := hr.1; dsimp only [Bw.position] at this; omega
+  rw [getElem?_pos data i hd, getElem?_pos w.out i hi]
+  congr 1
+  apply UInt8.toNat_inj.mp
+  apply Nat.eq_of_testBit_eq
+  intro k
+  by_cases hk : k < 8
+  · have hb : 8 * i + k < 8 * w.out.size := by omega
+    have hpos : 8 * i + k < w.position := by dsimp only [Bw.position]; omega
+    have hdiv : (8 * i + k) / 8 = i := by omega
+    have hmod : (8 * i + k) % 8 = k := by omega
+    simpa only [Bw.bitValue, hb, ite_true, hdiv, hmod,
+      getElem?_pos data i hd, getElem?_pos w.out i hi, Option.getD_some] using hr.2 _ hpos
+  · have hbound : 2 ^ 8 ≤ 2 ^ k := Nat.pow_le_pow_right Nat.zero_lt_two (by omega)
+    rw [Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le (UInt8.toNat_lt _) hbound),
+      Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le (UInt8.toNat_lt _) hbound)]
+
 end LeanTex.Core.Flate

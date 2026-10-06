@@ -1,10 +1,8 @@
-import LeanTex.Core.Flate.TokenBlock
-import LeanTex.Core.Flate.TokenFrequencies
-import LeanTex.Core.Flate.DynamicHeader
+import LeanTex.Core.Flate.BlockStream
 
 namespace LeanTex.Core.Flate
 
-/-! # Flate: inflate and a stored-block deflate
+/-! # Flate: bounded zlib compression and decompression
 
 `inflate` decodes a zlib stream (RFC 1950 wrapping RFC 1951 deflate): what a
 PNG's IDAT holds. It exists for the PNG forms whose samples cannot pass
@@ -14,70 +12,21 @@ total function: every read is bounds-checked, every loop bounded by the
 input's bit count or the declared output size, and a malformed stream is an
 error value, never a hang or a crash.
 
-`deflateStored` is the way back: a valid zlib stream of stored (uncompressed)
-blocks plus the Adler-32, which any inflater — a PDF viewer's included —
-accepts. Recompression is not this engine's job; correctness is. -/
-
-/-- The fixed litlen table (RFC 1951 §3.2.6). -/
-private def fixedLit : Huff :=
-  mkHuff (Array.ofFn (n := 288) fun i =>
-    if i < 144 then 8 else if i < 256 then 9 else if i < 280 then 7 else 8)
-
-private def fixedDist : Huff :=
-  mkHuff (Array.replicate 30 5)
+`deflate` writes a dynamic-Huffman block from the hash-chain LZ77 tokenizer,
+followed by its Adler-32 checksum. `deflateStored` is the uncompressed option
+for callers that do not need compression. Both emit the standard zlib
+wrapper that a PDF viewer's `/FlateDecode` reader accepts. -/
 
 /-- Inflate a zlib stream into at most `maxOut` bytes (the caller knows the
 size a PNG's samples must have; anything else is malformed). The Adler-32
 trailer is not verified: the sample data is judged by its shape, as chunk
 CRCs are. -/
-def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.run do
-  let some cmf := data[0]? | return .error "zlib: empty stream"
-  let some flg := data[1]? | return .error "zlib: truncated header"
-  if cmf.toNat % 16 != 8 then
-    return .error "zlib: not deflate"
-  if flg.toNat / 32 % 2 == 1 then
-    return .error "zlib: preset dictionary is not supported"
-  let mut r : Br := { data, bitPos := 16 }
-  let mut out := ByteArray.empty
-  -- Every block consumes at least three bits, so the bit count bounds the
-  -- block loop.
-  for _ in [0:8 * data.size / 3 + 2] do
-    let some (bfinal, r1) := r.bit | return .error "deflate: truncated"
-    let some (btype, r2) := r1.bits 2 | return .error "deflate: truncated"
-    r := r2
-    if btype == 0 then
-      -- Stored: skip to the byte boundary, LEN, ~LEN, raw copy.
-      let byte := (r.bitPos + 7) / 8
-      let some l0 := data[byte]? | return .error "deflate: truncated stored block"
-      let some l1 := data[byte + 1]? | return .error "deflate: truncated stored block"
-      let len := l0.toNat + 256 * l1.toNat
-      if byte + 4 + len > data.size then
-        return .error "deflate: stored block overruns the stream"
-      if out.size + len > maxOut then
-        return .error "deflate: output exceeds the declared size"
-      out := out ++ data.extract (byte + 4) (byte + 4 + len)
-      r := { r with bitPos := 8 * (byte + 4 + len) }
-    else if btype == 1 then
-      match TokenBlock.read fixedLit fixedDist r out maxOut with
-      | .error e => return .error e
-      | .ok (out', r') =>
-        out := out'
-        r := r'
-    else if btype == 2 then
-      let (litLens, distLens, r') ← match DynamicHeader.read r with
-        | .error e => return .error e
-        | .ok state => pure state
-      r := r'
-      match TokenBlock.read (mkHuff litLens) (mkHuff distLens) r out maxOut with
-      | .error e => return .error e
-      | .ok (out', r') =>
-        out := out'
-        r := r'
-    else
-      return .error "deflate: reserved block type"
-    if bfinal == 1 then
-      return .ok out
-  return .error "deflate: no final block"
+def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
+  let some cmf := data[0]? | .error "zlib: empty stream"
+  let some flg := data[1]? | .error "zlib: truncated header"
+  if cmf.toNat % 16 != 8 then .error "zlib: not deflate"
+  else if flg.toNat / 32 % 2 == 1 then .error "zlib: preset dictionary is not supported"
+  else BlockStream.read {data, bitPos := 16} ByteArray.empty maxOut
 
 /-- Adler-32 (RFC 1950 §8.2). Both sums ride in one `UInt64` — `s2` in
 the high word, `s1` in the low — and reduce modulo 65521 once per 5552
@@ -136,22 +85,10 @@ bytes and lengths up to 258 bytes"), then one dynamic-Huffman block
 (§3.2.7) whose two code sets are optimal length-limited Huffman codes
 built by boundary package-merge. The engine owns both halves of the round
 trip — `deflate` emits only symbols `inflate`'s tables decode — and the
-statement is `inflate_deflate_id` (staged in `Obligations/`; the
-executable oracle is `scripts/flate-fuzz.lean`, which also cross-checks
-every stream against a foreign inflater). Pure and total: every loop is
+statement is `inflate_deflate_id` in `Flate/RoundtripProof.lean`. The
+executable oracle `scripts/flate-fuzz.lean` also cross-checks every stream
+against a foreign inflater. Pure and total: every loop is
 bounded by the input size or a table's length. -/
-
-/-- Optimal length-limited Huffman code lengths by boundary package-merge
-(Larmore & Hirschberg 1990): lengths ≤ `limit`, zero for a symbol never
-seen, and a single-symbol alphabet gets the one-bit code RFC 1951 §3.2.7
-expects. Sound whenever the live alphabet fits the limit (`n ≤ 2^limit`;
-286 ≤ 2¹⁵ and 19 ≤ 2⁷ for the two uses here). The counting formulation:
-with items sorted ascending and a leaf preferred on weight ties, the
-leaves inside any package-list prefix are the rarest symbols, so each
-level only records which of its packages are leaves, and the walk back
-from the solution prefix (2n−2 packages) adds one bit to the `leaves`
-rarest symbols per level — no symbol sets, no per-level sort. -/
-private abbrev pmLengths := PackageMerge.lengths
 
 /-- The three-byte rolling hash: Knuth's multiplicative constant over the
 window the next match must open with. `UInt64` arithmetic — the product
@@ -400,25 +337,22 @@ theorem tokenize_covers (raw : ByteArray) : TokensFor raw 0 (tokenize raw) raw.s
   exact tokGo_tokens raw _ raw.size 0 0 _ #[] (Nat.zero_le _) (by omega)
     (.empty 0 (Nat.zero_le _))
 
+/-- 0x78 0x9C declares deflate, a 32 KiB window, and no preset dictionary;
+CMF·256 + FLG is divisible by 31 (RFC 1950 §2.2). -/
+def zlibWriter : Bw :=
+  {out := (ByteArray.empty.push 0x78).push 0x9C, bits := 0, nbits := 0}
+
+/-- The production writer before its final byte flush and checksum. -/
+def deflateWriter (raw : ByteArray) : Bw :=
+  BlockStream.write (tokenize raw) zlibWriter
+
 /-- Compress to a zlib stream (RFC 1950 wrapping RFC 1951): LZ77 tokens in
-one dynamic-Huffman block, both code sets optimal for this data. Any
-inflater accepts the result; the engine's own `inflate` inverting it is
-`inflate_deflate_id` (staged; fuzz-checked by `scripts/flate-fuzz.lean`).
+one dynamic-Huffman block, both code sets optimal for this data. The
+engine's own `inflate` inverts it by `inflate_deflate_id` in
+`Flate/RoundtripProof.lean`; `scripts/flate-fuzz.lean` also checks foreign zlib.
 `deflateStored` stays for callers that must never pay compression time. -/
-def deflate (raw : ByteArray) : ByteArray := Id.run do
-  let tokens := tokenize raw
-  let (litFreq, distFreq) := TokenBlock.alphabets tokens
-  let litLens := pmLengths litFreq 15
-  let distLens := pmLengths distFreq 15
-  -- 0x78 0x9C: deflate, 32 KiB window, no preset dictionary, and
-  -- (CMF·256 + FLG) ≡ 0 (mod 31) as RFC 1950 §2.2 requires.
-  let mut w : Bw := { out := (ByteArray.empty.push 0x78).push 0x9C, bits := 0, nbits := 0 }
-  w := w.push 1 1
-  w := w.push 2 2
-  w := DynamicHeader.write litLens distLens w
-  w := TokenBlock.writePayload litLens distLens tokens w
-  let mut out := w.flush
-  return pushBe32 out (adler32 raw)
+def deflate (raw : ByteArray) : ByteArray :=
+  pushBe32 (deflateWriter raw).flush (adler32 raw)
 
 /-- FNV-1a over bytes: the content hash the PDF trailer ID and the
 driver's content-keyed caches share. Not cryptographic — a fingerprint
