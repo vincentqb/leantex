@@ -2298,6 +2298,339 @@ private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Op
       · intro st hst
         split <;> simpa [Item.boxChars] using hst
 
+private theorem cursorLoop_complete {α β : Type} (P : β → Prop) (pos : β → Nat)
+    (n : Nat) (f : α → β → Id (ForInStep β)) :
+    ∀ (xs : List α) (init : β), P init → n ≤ pos init + xs.length →
+      (∀ x ∈ xs, ∀ st, P st →
+        match (f x st).run with
+        | .yield next => P next ∧ pos st < pos next
+        | .done next => P next ∧ n ≤ pos next) →
+      P (forIn xs init f : Id β).run ∧ n ≤ pos (forIn xs init f : Id β).run := by
+  intro xs
+  induction xs with
+  | nil => intro init hp hn _; simpa using And.intro hp hn
+  | cons x xs ih =>
+    intro init hp hn hs
+    have step := hs x (by simp) init hp
+    rw [List.forIn_cons]
+    cases hf : f x init with
+    | done next =>
+      change P next ∧ n ≤ pos next
+      simpa only [hf, Id.run] using step
+    | yield next =>
+      simp only [hf, Id.run] at step
+      change P (forIn xs next f : Id β).run ∧ n ≤ pos (forIn xs next f : Id β).run
+      exact ih next step.1 (by simp only [List.length_cons] at hn; omega)
+        (fun y hy st hst => hs y (by simp [hy]) st hst)
+
+private theorem cursorLoop_range_complete {β : Type} (P : β → Prop) (pos : β → Nat)
+    (n budget : Nat) (f : Nat → β → Id (ForInStep β)) (init : β)
+    (hp : P init) (hn : n ≤ pos init + budget)
+    (step : ∀ k, k < budget → ∀ st, P st →
+      match (f k st).run with
+      | .yield next => P next ∧ pos st < pos next
+      | .done next => P next ∧ n ≤ pos next) :
+    P (forIn [:budget] init f : Id β).run ∧
+      n ≤ pos (forIn [:budget] init f : Id β).run := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  apply cursorLoop_complete P pos n
+  · exact hp
+  · simpa using hn
+  · intro k hk st hs
+    apply step k _ st hs
+    rcases List.mem_range'.mp hk with ⟨j, hj, he⟩
+    simp [Std.Legacy.Range.size] at hj he
+    omega
+
+private theorem glyphOfSc_char (sc : Bool) (size : Sp) (font : Font)
+    (c : Char) (g : Nat × Char × Sp) (h : glyphOfSc sc size font c = some g) :
+    g.2.1 = c := by
+  unfold glyphOfSc at h
+  cases hg : font.gid c <;> simp only [hg, Option.map_none, Option.map_some] at h
+  · contradiction
+  · cases h
+    rfl
+
+/-- The scanner used by `wordItems` to select its next contiguous letter run.
+Its source interval is retained by the actual cursor, including early exit. -/
+private def letterRun (chars : Array Char) (start : Nat) : Nat × Array Char := Id.run do
+  let mut j := start
+  let mut run : Array Char := #[]
+  for _ in [start:chars.size] do
+    if h : j < chars.size then
+      if Nfc.isLetter chars[j] then
+        run := run.push chars[j]
+        j := j + 1
+      else
+        break
+    else
+      break
+  return (j, run)
+
+private theorem letterRun_prefix (chars : Array Char) (start : Nat)
+    (hstart : start ≤ chars.size) :
+    start ≤ (letterRun chars start).1 ∧ (letterRun chars start).1 ≤ chars.size ∧
+      chars.toList.take (letterRun chars start).1 =
+        chars.toList.take start ++ (letterRun chars start).2.toList ∧
+      ∀ c ∈ (letterRun chars start).2, Nfc.isLetter c = true := by
+  unfold letterRun
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : Nat × Array Char =>
+      start ≤ st.1 ∧ st.1 ≤ chars.size ∧
+      chars.toList.take st.1 = chars.toList.take start ++ st.2.toList ∧
+      ∀ c ∈ st.2, Nfc.isLetter c = true)
+    (Q := fun out : Nat × Array Char =>
+      start ≤ out.1 ∧ out.1 ≤ chars.size ∧
+      chars.toList.take out.1 = chars.toList.take start ++ out.2.toList ∧
+      ∀ c ∈ out.2, Nfc.isLetter c = true)
+  · apply Loop.forIn_range_inv
+      (P := fun st : Nat × Array Char =>
+        start ≤ st.1 ∧ st.1 ≤ chars.size ∧
+        chars.toList.take st.1 = chars.toList.take start ++ st.2.toList ∧
+        ∀ c ∈ st.2, Nfc.isLetter c = true)
+    · simp [hstart]
+    · intro k _ _ st hs
+      rcases st with ⟨j, run⟩
+      rcases hs with ⟨hlo, hhi, hp, hletters⟩
+      dsimp only
+      split
+      · rename_i hj
+        split
+        · rename_i hl
+          change start ≤ j + 1 ∧ j + 1 ≤ chars.size ∧
+            chars.toList.take (j + 1) = chars.toList.take start ++ (run.push chars[j]).toList ∧
+            ∀ c ∈ run.push chars[j], Nfc.isLetter c = true
+          refine ⟨by omega, by omega, ?_, ?_⟩
+          · rw [List.take_succ_eq_append_getElem (l := chars.toList)
+              (by simpa only [Array.length_toList] using hj), hp]
+            simp [List.append_assoc]
+          · intro c hc
+            rcases Array.mem_push.mp hc with hc | rfl
+            · exact hletters c hc
+            · exact hl
+        · exact ⟨hlo, hhi, hp, hletters⟩
+      · exact ⟨hlo, hhi, hp, hletters⟩
+  · intro st hs
+    exact hs
+
+private theorem letterRun_advances (chars : Array Char) (start : Nat)
+    (hstart : start < chars.size) (hletter : Nfc.isLetter chars[start] = true) :
+    start < (letterRun chars start).1 := by
+  unfold letterRun
+  simp only [Id.run, bind, pure, Std.Legacy.Range.forIn_eq_forIn_range',
+    Std.Legacy.Range.size, Nat.add_sub_cancel, Nat.div_one]
+  have hn : chars.size - start = (chars.size - start - 1) + 1 := by omega
+  rw [hn, List.range'_succ, List.forIn_cons]
+  simp only [hstart, hletter, ↓reduceDIte, ↓reduceIte, bind]
+  change start < (forIn _ (start + 1, #[chars[start]]) _ : Id (Nat × Array Char)).run.1
+  apply Loop.forIn_inv (P := fun st : Nat × Array Char => start < st.1)
+  · simp
+  · intro k _ st hs
+    rcases st with ⟨j, run⟩
+    dsimp only
+    split
+    · split
+      · change start < j + 1
+        omega
+      · exact hs
+    · exact hs
+
+private theorem cleanLoop_census {α β γ : Type} (Clean : β → Prop) (read : β → List γ)
+    (emit : α → List γ) (f : α → β → Id (ForInStep β)) :
+    ∀ (xs : List α) (init : β),
+      (∀ x ∈ xs, ∀ st, ∃ next, f x st = .yield next ∧
+        (Clean next → Clean st ∧ read next = read st ++ emit x)) →
+      Clean (forIn xs init f : Id β).run →
+      Clean init ∧ read (forIn xs init f : Id β).run = read init ++ xs.flatMap emit := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro init _ hc
+    simpa using And.intro hc (Eq.refl (read init))
+  | cons x xs ih =>
+    intro init hs
+    obtain ⟨next, hf, hnext⟩ := hs x (by simp) init
+    rw [List.forIn_cons, hf]
+    intro hc
+    have ⟨hnc, hnr⟩ := ih next (fun y hy => hs y (by simp [hy])) hc
+    have ⟨hic, hir⟩ := hnext hnc
+    refine ⟨hic, ?_⟩
+    change read (forIn xs next f : Id β).run = _
+    rw [hnr, hir]
+    simp [List.append_assoc]
+
+private theorem cleanLoop_array_census {α β γ : Type} (Clean : β → Prop) (read : β → List γ)
+    (emit : α → List γ) (f : α → β → Id (ForInStep β)) (xs : Array α) (init : β)
+    (step : ∀ x ∈ xs, ∀ st, ∃ next, f x st = .yield next ∧
+      (Clean next → Clean st ∧ read next = read st ++ emit x)) :
+    Clean (forIn xs init f : Id β).run →
+    Clean init ∧ read (forIn xs init f : Id β).run = read init ++ xs.toList.flatMap emit := by
+  rw [← Array.forIn_toList]
+  exact cleanLoop_census Clean read emit f xs.toList init
+    (fun x hx => step x (by simpa using hx))
+
+/-- Word shaping state: emitted fragments and the current buffered glyphs.
+Loss ledgers survive every flush and glyph operation. -/
+private structure WordAcc where
+  items : Array Item := #[]
+  offsets : Std.HashMap Nat Sp := {}
+  sources : Array (Nat × Nat) := #[]
+  box : Array (Nat × Char × Sp) := #[]
+  owners : Array Attribution := #[]
+  sourceIds : Array Nat := #[]
+  width : Sp := 0
+  missing : Array (Nat × Char) := #[]
+  substs : Array (Nat × Char × Nat) := #[]
+  sites : GlyphOrigins := #[]
+
+private def WordAcc.chars (st : WordAcc) : List Char :=
+  st.items.toList.flatMap Item.boxChars ++ st.box.toList.map (·.2.1)
+
+private def WordAcc.Clean (st : WordAcc) : Prop :=
+  st.missing = #[] ∧ st.substs = #[]
+
+private def WordAcc.flush (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) : WordAcc :=
+  let (items, offsets, sources) := flushWord fontIdx color link size leading decorations ground attr
+    st.items st.offsets st.sources st.box st.owners st.sourceIds st.width
+  { st with items, offsets, sources, box := #[], owners := #[], sourceIds := #[], width := 0 }
+
+private theorem WordAcc.flush_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) :
+    (st.flush fontIdx color link size leading decorations ground attr).chars = st.chars := by
+  simpa [WordAcc.flush, WordAcc.chars] using
+    flushWord_boxChars fontIdx color link size leading decorations ground attr
+      st.items st.offsets st.sources st.box st.owners st.sourceIds st.width
+
+private theorem WordAcc.flush_clean (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) :
+    (st.flush fontIdx color link size leading decorations ground attr).Clean ↔ st.Clean := by
+  rfl
+
+/-- Both branches of the source scanner append glyphs through this one
+operation. Missing and substituted glyphs retain the original loss ledgers. -/
+private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
+    (owner : Attribution) (origin : Option Span) (st : WordAcc) : WordAcc :=
+  match glyphOfSc smallcaps size font c with
+  | some g =>
+    let ks := kernVal Ir.features size font st.box g.1
+    { st with box := (kernApply st.box ks).push g, owners := st.owners.push owner
+              sourceIds := st.sourceIds.push sourceId, width := st.width + ks + g.2.2 }
+  | none =>
+    match fs.fallbackFor c |>.bind fun fb =>
+        (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
+    | some (fb, g) =>
+      let st := st.flush fontIdx color link size leading decorations ground attr
+      let st := { st with sources := st.sources.push (sourceId, st.items.size),
+                           items := st.items.push (.box g.2.2 fb color link #[g] size leading
+                             decorations 0 ground owner) }
+      if st.substs.any (fun e => e.1 == fontIdx && e.2.1 == c) then st
+      else { st with substs := st.substs.push (fontIdx, c, fb)
+                     sites := rememberGlyph st.sites .W0009 fontIdx c origin }
+    | none =>
+      if st.missing.contains (fontIdx, c) then st
+      else { st with missing := st.missing.push (fontIdx, c)
+                     sites := rememberGlyph st.sites .E0405 fontIdx c origin }
+
+private theorem WordAcc.glyph_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
+    (owner : Attribution) (origin : Option Span) (st : WordAcc) :
+    (st.glyph fontIdx color link size leading decorations ground attr smallcaps
+      fs font c sourceId owner origin).Clean →
+    st.Clean ∧
+      (st.glyph fontIdx color link size leading decorations ground attr smallcaps
+        fs font c sourceId owner origin).chars = st.chars ++ [c] := by
+  unfold WordAcc.glyph
+  split
+  · rename_i g hg
+    intro h
+    refine ⟨h, ?_⟩
+    simp only [WordAcc.chars, Array.toList_push, List.map_append, List.map_cons,
+      List.map_nil, kernApply_sourceChars, glyphOfSc_char _ _ _ _ _ hg, List.append_assoc]
+  · split
+    · rename_i fb g _
+      dsimp only
+      split
+      · rename_i h
+        intro hc
+        have he : st.substs = #[] := hc.2
+        simp [WordAcc.flush, he] at h
+      · intro hc
+        have he := congrArg Array.size hc.2
+        simp [WordAcc.flush] at he
+    · split
+      · rename_i h
+        intro hc
+        simp [hc.1] at h
+      · intro hc
+        have he := congrArg Array.size hc.1
+        simp at he
+
+private def WordAcc.letters (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
+    (owners : Array Attribution) (origins : Array (Option Span)) (breaks : Array Nat)
+    (hyphW : Sp) (st : WordAcc) : WordAcc := Id.run do
+  let mut st := st
+  for (c, k) in run.zipIdx do
+    if breaks.contains k then
+      st := st.flush fontIdx color link size leading decorations ground attr
+      st := { st with items := st.items.push (.pen hyphW hyphenPenalty true fontIdx color
+        (hyphenGlyph size font)) }
+    st := st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font c
+      (start + k) (owners[start + k]?.getD attr) (origins[start + k]?.getD none)
+  return st
+
+private theorem WordAcc.letters_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
+    (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
+    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Sp) (st : WordAcc) :
+    (st.letters fontIdx color link size leading decorations ground attr smallcaps fs font
+      run start owners origins #[] hyphW).Clean →
+    st.Clean ∧
+      (st.letters fontIdx color link size leading decorations ground attr smallcaps fs font
+        run start owners origins #[] hyphW).chars = st.chars ++ run.toList := by
+  unfold WordAcc.letters
+  simp only [Array.contains_empty, Bool.false_eq_true, ↓reduceIte, Id.run]
+  have h := cleanLoop_array_census WordAcc.Clean WordAcc.chars
+    (fun x : Char × Nat => [x.1])
+    (fun x st => pure (.yield (st.glyph fontIdx color link size leading decorations ground attr
+      smallcaps fs font x.1 (start + x.2) (owners[start + x.2]?.getD attr)
+        (origins[start + x.2]?.getD none))))
+    run.zipIdx st (by
+      intro x _ st
+      refine ⟨_, rfl, ?_⟩
+      exact WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
+        smallcaps fs font x.1 (start + x.2) (owners[start + x.2]?.getD attr)
+          (origins[start + x.2]?.getD none) st)
+  simpa only [bind, pure, Id.run, Array.toList_zipIdx, ← List.map_eq_flatMap,
+    List.zipIdx_map_fst] using h
+
+private def wordItemChars (c : Char) : List Char :=
+  if Nfc.isLetter c then [c]
+  else if (fixedSpace c).isSome || c == '\u00a0' then [] else [c]
+
+private theorem wordItemChars_letters (xs : List Char)
+    (h : ∀ c ∈ xs, Nfc.isLetter c = true) :
+    xs.flatMap wordItemChars = xs := by
+  induction xs with
+  | nil => rfl
+  | cons c cs ih =>
+    have hc := h c (by simp)
+    have hcs := ih (fun x hx => h x (by simp [hx]))
+    simp [wordItemChars, hc, hcs]
+
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
 A scalar the styled face lacks is set from the precomputed fallback face
@@ -2323,35 +2656,15 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
       Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins := Id.run do
-  let mut sites := sites
-  let mut missing := missing
-  let mut substs := substs
+  let mut st : WordAcc := { missing, substs, sites }
   let mut cache := cache
   let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
-  let mut items : Array Item := #[]
-  let mut wordOffsets : Std.HashMap Nat Sp := {}
-  let mut sources : Array (Nat × Nat) := #[]
-  let mut box : Array (Nat × Char × Sp) := #[]
-  let mut boxOwners : Array Attribution := #[]
-  let mut boxSources : Array Nat := #[]
-  let mut boxW : Sp := 0
-  let flush := flushWord fontIdx color link size leading decorations ground attr
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
       let c := chars[i]
       if Nfc.isLetter c then
-        let mut j := i
-        let mut run : Array Char := #[]
-        for _ in [i:chars.size] do
-          if h' : j < chars.size then
-            if Nfc.isLetter chars[j] then
-              run := run.push chars[j]
-              j := j + 1
-            else
-              break
-          else
-            break
+        let (j, run) := letterRun chars i
         let word := String.ofList run.toList
         -- The cache key carries the language: one paragraph can mix
         -- tagged runs, and a French word's breaks must never answer for
@@ -2368,127 +2681,164 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             cache := cache.insert key b
             breaks := b
         | none => pure ()
-        for (c', k) in run.zipIdx do
-          if breaks.contains k then
-            let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-            items := out
-            wordOffsets := offsets
-            sources := srcs
-            box := #[]
-            boxOwners := #[]
-            boxSources := #[]
-            boxW := 0
-            items := items.push
-              (.pen hyphW hyphenPenalty true fontIdx color (hyphenGlyph size font))
-          match glyphOfSc smallcaps size font c' with
-          | some g =>
-            let ks := kernVal Ir.features size font box g.1
-            box := (kernApply box ks).push g
-            boxOwners := boxOwners.push (owners[i + k]?.getD attr)
-            boxSources := boxSources.push (i + k)
-            boxW := boxW + ks + g.2.2
-          | none =>
-            match fs.fallbackFor c' |>.bind fun fb =>
-                (glyphOfSc smallcaps size (fs.get fb) c').map (fb, ·) with
-            | some (fb, g) =>
-              let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-              items := out
-              wordOffsets := offsets
-              sources := srcs
-              box := #[]
-              boxOwners := #[]
-              boxSources := #[]
-              boxW := 0
-              sources := sources.push (i + k, items.size)
-              items := items.push (.box g.2.2 fb color link #[g] size leading decorations 0 ground
-                (owners[i + k]?.getD attr))
-              unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
-                substs := substs.push (fontIdx, c', fb)
-                sites := rememberGlyph sites .W0009 fontIdx c' (origins[i + k]?.getD none)
-            | none =>
-              unless missing.contains (fontIdx, c') do
-                missing := missing.push (fontIdx, c')
-                sites := rememberGlyph sites .E0405 fontIdx c' (origins[i + k]?.getD none)
+        st := st.letters fontIdx color link size leading decorations ground attr smallcaps fs font
+          run i owners origins breaks hyphW
         i := j
       else
         match fixedSpace c with
         | some (num, den) =>
           -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
           -- become a place to end a line.
-          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-          items := out
-          wordOffsets := offsets
-          sources := srcs
-          box := #[]
-          boxOwners := #[]
-          boxSources := #[]
-          boxW := 0
-          sources := sources.push (i, items.size)
-          items := items.push
-            (.box (size * num / den) fontIdx color link #[] size leading decorations 0 ground
-              (owners[i]?.getD attr))
+          st := st.flush fontIdx color link size leading decorations ground attr
+          st := { st with
+            sources := st.sources.push (i, st.items.size)
+            items := st.items.push (.box (size * num / den) fontIdx color link #[] size leading
+              decorations 0 ground (owners[i]?.getD attr)) }
           i := i + 1
         | none =>
-        if c == '\u00a0' then
-          -- A no-break space is an interword space that is not glue.
-          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-          items := out
-          wordOffsets := offsets
-          sources := srcs
-          box := #[]
-          boxOwners := #[]
-          boxSources := #[]
-          boxW := 0
-          sources := sources.push (i, items.size)
-          items := items.push
-            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size leading decorations 0
-              ground (owners[i]?.getD attr))
-          i := i + 1
-        else
-        match glyphOfSc smallcaps size font c with
-        | some g =>
-          let ks := kernVal Ir.features size font box g.1
-          box := (kernApply box ks).push g
-          boxOwners := boxOwners.push (owners[i]?.getD attr)
-          boxSources := boxSources.push i
-          boxW := boxW + ks + g.2.2
-        | none =>
-          match fs.fallbackFor c |>.bind fun fb =>
-              (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
-          | some (fb, g) =>
-            let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-            items := out
-            wordOffsets := offsets
-            sources := srcs
-            box := #[]
-            boxOwners := #[]
-            boxSources := #[]
-            boxW := 0
-            sources := sources.push (i, items.size)
-            items := items.push (.box g.2.2 fb color link #[g] size leading decorations 0 ground
-              (owners[i]?.getD attr))
-            unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
-              substs := substs.push (fontIdx, c, fb)
-              sites := rememberGlyph sites .W0009 fontIdx c (origins[i]?.getD none)
-          | none =>
-            unless missing.contains (fontIdx, c) do
-              missing := missing.push (fontIdx, c)
-              sites := rememberGlyph sites .E0405 fontIdx c (origins[i]?.getD none)
-        i := i + 1
-        if c == '-' then
-          let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-          items := out
-          wordOffsets := offsets
-          sources := srcs
-          box := #[]
-          boxOwners := #[]
-          boxSources := #[]
-          boxW := 0
-          items := items.push (.pen 0 hyphenPenalty false fontIdx color #[])
+          if c == '\u00a0' then
+            -- A no-break space is an interword space that is not glue.
+            st := st.flush fontIdx color link size leading decorations ground attr
+            st := { st with
+              sources := st.sources.push (i, st.items.size)
+              items := st.items.push (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size leading
+                  decorations 0 ground (owners[i]?.getD attr)) }
+            i := i + 1
+          else
+            st := st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font c i
+              (owners[i]?.getD attr) (origins[i]?.getD none)
+            i := i + 1
+            if c == '-' then
+              st := st.flush fontIdx color link size leading decorations ground attr
+              st := { st with items := st.items.push (.pen 0 hyphenPenalty false fontIdx color #[]) }
     else
       break
-  let (out, offsets, srcs) := flush items wordOffsets sources box boxOwners boxSources boxW
-  return (out, missing, substs, cache, offsets, srcs, sites)
+  st := st.flush fontIdx color link size leading decorations ground attr
+  return (st.items, st.missing, st.substs, cache, st.offsets, st.sources, st.sites)
+
+private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
+    (substs : Array (Nat × Char × Nat)) (i : Nat) (st : WordAcc) : Prop :=
+  i ≤ chars.size ∧ (st.Clean → missing = #[] ∧ substs = #[] ∧
+    st.chars = (chars.toList.take i).flatMap wordItemChars)
+
+/-- Without automatic hyphenation, a clean word producer preserves its
+source scalars, except the explicitly nonpainting fixed spaces. The cursor
+invariant proves that the actual loop consumed the entire input. -/
+private theorem wordItems_none_chars (langKey : String)
+    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
+    (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
+    (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
+    (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
+    (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
+    (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
+    let out := wordItems none langKey size leading fontIdx color ground link decorations
+      smallcaps attr fs font chars missing substs cache owners origins sites
+    out.2.1 = #[] → out.2.2.1 = #[] →
+      missing = #[] ∧ substs = #[] ∧
+        out.1.toList.flatMap Item.boxChars = chars.toList.flatMap wordItemChars := by
+  unfold wordItems
+  dsimp only
+  apply Loop.bind_of_inv
+    (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat =>
+      st.1.Prefix chars missing substs st.2.2 ∧ chars.size ≤ st.2.2)
+    (Q := fun out : Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
+        Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins =>
+      out.2.1 = #[] → out.2.2.1 = #[] →
+        missing = #[] ∧ substs = #[] ∧
+          out.1.toList.flatMap Item.boxChars = chars.toList.flatMap wordItemChars)
+  · apply cursorLoop_range_complete
+      (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat =>
+        st.1.Prefix chars missing substs st.2.2)
+      (pos := fun st => st.2.2) (n := chars.size)
+    · refine ⟨Nat.zero_le _, ?_⟩
+      intro hc
+      exact ⟨hc.1, hc.2, by simp [WordAcc.chars]⟩
+    · change chars.size ≤ 0 + (chars.size + 1)
+      omega
+    · intro k _ state hp
+      rcases state with ⟨st, cache, i⟩
+      rcases hp with ⟨hi, hp⟩
+      dsimp only at hi hp
+      dsimp only
+      by_cases hin : i < chars.size
+      · simp only [hin, ↓reduceDIte, Id.run]
+        by_cases hl : Nfc.isLetter chars[i] = true
+        · simp only [hl, ↓reduceIte]
+          have ⟨_, hj, hrun, hletters⟩ := letterRun_prefix chars i hi
+          refine ⟨⟨hj, ?_⟩, letterRun_advances chars i hin hl⟩
+          intro hc
+          obtain ⟨hcprev, hchars⟩ := WordAcc.letters_chars fontIdx color link size leading decorations
+            ground attr smallcaps fs font (letterRun chars i).2 i owners origins _ st hc
+          obtain ⟨hm, hs, hpchars⟩ := hp hcprev
+          refine ⟨hm, hs, ?_⟩
+          rw [hchars, hpchars, hrun, List.flatMap_append]
+          have hcensus : (letterRun chars i).2.toList.flatMap wordItemChars =
+              (letterRun chars i).2.toList := by
+            exact wordItemChars_letters _ (fun c hc => hletters c (by simpa using hc))
+          rw [hcensus]
+        · simp only [hl]
+          cases hf : fixedSpace chars[i] with
+          | some nd =>
+            rcases nd with ⟨num, den⟩
+            refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
+            intro hc
+            obtain ⟨hm, hs, hpchars⟩ := hp hc
+            refine ⟨hm, hs, ?_⟩
+            rw [List.take_succ_eq_append_getElem (l := chars.toList)
+              (by simpa only [Array.length_toList] using hin)]
+            simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf] using
+              (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans hpchars
+          | none =>
+            by_cases hnb : (chars[i] == '\u00a0') = true
+            · simp only [hnb, ↓reduceIte]
+              refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
+              intro hc
+              obtain ⟨hm, hs, hpchars⟩ := hp hc
+              refine ⟨hm, hs, ?_⟩
+              rw [List.take_succ_eq_append_getElem (l := chars.toList)
+                (by simpa only [Array.length_toList] using hin)]
+              simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf, hnb] using
+                (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans hpchars
+            · simp only [hnb]
+              by_cases hh : (chars[i] == '-') = true
+              · simp only [hh, ↓reduceIte]
+                refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
+                intro hc
+                have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
+                  smallcaps fs font chars[i] i (owners[i]?.getD attr) (origins[i]?.getD none) st hc
+                obtain ⟨hm, hs, hpchars⟩ := hp hg.1
+                refine ⟨hm, hs, ?_⟩
+                rw [List.take_succ_eq_append_getElem (l := chars.toList)
+                  (by simpa only [Array.length_toList] using hin)]
+                simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf, hnb] using
+                  (WordAcc.flush_chars fontIdx color link size leading decorations ground attr
+                    (st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font
+                      chars[i] i (owners[i]?.getD attr) (origins[i]?.getD none))).trans
+                    (hg.2.trans (congrArg (· ++ [chars[i]]) hpchars))
+              · simp only [hh]
+                refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
+                intro hc
+                have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
+                  smallcaps fs font chars[i] i (owners[i]?.getD attr) (origins[i]?.getD none) st hc
+                obtain ⟨hm, hs, hpchars⟩ := hp hg.1
+                refine ⟨hm, hs, ?_⟩
+                rw [List.take_succ_eq_append_getElem (l := chars.toList)
+                  (by simpa only [Array.length_toList] using hin)]
+                simpa [wordItemChars, hl, hf, hnb, hpchars] using hg.2
+      · simp only [hin, ↓reduceDIte, Id.run]
+        exact ⟨⟨hi, hp⟩, Nat.le_of_not_gt hin⟩
+  · intro state hs
+    rcases state with ⟨st, cache, i⟩
+    rcases hs with ⟨⟨hi, hp⟩, hdone⟩
+    dsimp only at hi hp hdone
+    have heq : i = chars.size := by omega
+    intro hm hs
+    have hc : st.Clean := ⟨hm, hs⟩
+    have hprefix := hp hc
+    refine ⟨hprefix.1, hprefix.2.1, ?_⟩
+    simpa [heq, WordAcc.flush, WordAcc.chars, ← Array.length_toList] using
+      (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans
+        hprefix.2.2
 
 /-- Interword glue: the face's space advance, stretching by half and
 shrinking by a third. The proportions are TeX's plain-font fontdimens
