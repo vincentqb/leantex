@@ -1140,6 +1140,23 @@ theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   rw [List.mem_toArray, List.mem_filter]
   simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
 
+/-- The native stream prefixes owned by the writer. -/
+inductive StreamPrefix where
+  | content
+  | openType
+  | trueType (length : Nat)
+  | metadata
+  deriving Repr
+
+def StreamPrefix.text : StreamPrefix → String
+  | .content => ""
+  | .openType => "/Subtype /OpenType"
+  | .trueType n => s!"/Length1 {n}"
+  | .metadata => "/Type /Metadata /Subtype /XML"
+
+def StreamPrefix.fragment (p : StreamPrefix) (filtered : Bool) : String :=
+  p.text ++ if filtered then " /Filter /FlateDecode" else ""
+
 /-- One physical object as the bytes `serialize` writes for it: a
 dictionary fragment and a stream payload whose filter is already chosen, a
 form XObject whose `/Resources` is a copied graph's renumbered bytes, or a
@@ -1156,6 +1173,13 @@ inductive Body where
   /-- A copied object: its value verbatim and its stream when it has one.
   The filters are the source file's, never this writer's. -/
   | copied (value : ByteArray) (stream : Option ByteArray)
+
+/-- Native streams have a writer-owned dictionary prefix and retained
+payload. This syntax condition makes no claim about the font program or
+the validity of a caller's compressed cache entry. -/
+def Body.Native (body : Body) : Prop :=
+  ∃ p : StreamPrefix, ∃ filtered : Bool, ∃ raw : ByteArray,
+    body = .stream (p.fragment filtered) raw
 
 /-- An object with the id the table allocated it. -/
 structure Row where
@@ -1659,6 +1683,17 @@ def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
 def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
   zRow id dict data (Flate.deflate data)
 
+theorem zRow_native_exact (id : Nat) (p : StreamPrefix) (data z : ByteArray) :
+    (zRow id p.text data z).body.Native := by
+  unfold zRow
+  split
+  · exact ⟨p, true, z, rfl⟩
+  · exact ⟨p, false, data, by simp [StreamPrefix.fragment]⟩
+
+theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteArray) :
+    (flateRow id p.text data).body.Native :=
+  zRow_native_exact id p data _
+
 /-- The writer's actual allocation and emissions, before serialization.
 The object stream and xref are derived from these rows and values; their
 offsets are never supplied separately. This is artifact bookkeeping. -/
@@ -2123,6 +2158,65 @@ private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut)
             · exact (Bool.and_eq_true_iff.mp hk).1
           · exact h
         · exact h
+
+private theorem usedImagesOf_empty (pages : Array PageOut) :
+    usedImagesOf {} pages = #[] := by
+  apply Array.eq_empty_iff_forall_not_mem.mpr
+  intro k hk
+  have h := usedImagesOf_loaded {} pages k hk
+  simp [Image.Store.get?] at h
+
+/-- Without imported image resources, every direct row emitted by the
+actual preparation loops uses a native dictionary prefix. The invariant
+allows every page, font-program, and compressed-cache input. -/
+theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    ∀ r ∈ (prepare geom fs pages info {} outline streams tree ops programs).direct,
+      r.body.Native := by
+  let P := fun rows : Array Row => ∀ r ∈ rows, r.body.Native
+  have push (rows : Array Row) (r : Row) (h : P rows) (hr : r.body.Native) :
+      P (rows.push r) := by
+    intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · exact h s hs
+    · exact hr
+  have zfont (id : Nat) (cff : Bool) (data z : ByteArray) :
+      (zRow id (if cff then "/Subtype /OpenType" else s!"/Length1 {data.size}")
+        data z).body.Native := by
+    cases cff
+    · exact zRow_native_exact id (.trueType data.size) data z
+    · exact zRow_native_exact id .openType data z
+  have ffont (id : Nat) (cff : Bool) (data : ByteArray) :
+      (flateRow id (if cff then "/Subtype /OpenType" else s!"/Length1 {data.size}")
+        data).body.Native := zfont id cff data _
+  change P (prepare geom fs pages info {} outline streams tree ops programs).direct
+  unfold prepare
+  simp only [Id.run, bind, pure, usedImagesOf_empty]
+  apply push
+  · apply Loop.forIn_range_inv P
+    · apply Loop.forIn_array_inv P
+      · apply Loop.forIn_range_inv P
+        · simp [P]
+        · intro i _ _ rows h
+          dsimp only [Id.run, bind, pure]
+          apply push _ _ h
+          split
+          · exact zRow_native_exact _ .content _ _
+          · exact flateRow_native_exact _ .content _
+      · intro x _ rows h
+        dsimp only [Id.run, bind, pure]
+        simpa only [Image.Store.get?, Array.getElem?_empty, Option.bind_none,
+          ForInStep.value] using h
+    · intro k _ _ rows h
+      dsimp only [Id.run, bind, pure]
+      apply push
+      · exact push _ _ h (flateRow_native_exact _ .content _)
+      · split
+        · exact zfont _ _ _ _
+        · exact ffont _ _ _
+  · exact flateRow_native_exact _ .metadata _
 
 private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
     l.zipIdx.map (fun p => f p.2) = (List.range l.length).map f := by

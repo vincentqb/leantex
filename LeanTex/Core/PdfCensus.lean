@@ -75,6 +75,35 @@ def kindOf (o : Obj) : Kind :=
     if (o.get? "Title").isSome && (o.get? "Parent").isSome then .outlineItem else .other
   | _, _ => .other
 
+/-- Without a subtype, only an explicit `/Type /Font` can enter the
+font census. This states the classifier's own rule, independently of a
+producer's dictionary layout. -/
+theorem kindOf_no_subtype_not_font (o : Obj)
+    (ht : o.get? "Type" ≠ some (.name "Font"))
+    (hs : o.get? "Subtype" = none) :
+    kindOf o ≠ .font := by
+  have hsub : nameOf o "Subtype" = none := by simp [nameOf, hs]
+  unfold kindOf
+  rw [hsub]
+  split <;> simp_all [nameOf]
+  all_goals split at * <;> simp_all
+  all_goals split <;> simp_all
+
+theorem kindOf_catalog_exact (o : Obj)
+    (h : o.get? "Type" = some (.name "Catalog")) :
+    kindOf o = .catalog := by
+  simp [kindOf, nameOf, h]
+
+theorem kindOf_pages_exact (o : Obj)
+    (h : o.get? "Type" = some (.name "Pages")) :
+    kindOf o = .pages := by
+  simp [kindOf, nameOf, h]
+
+theorem kindOf_page_exact (o : Obj)
+    (h : o.get? "Type" = some (.name "Page")) :
+    kindOf o = .page := by
+  simp [kindOf, nameOf, h]
+
 /-- The value behind a reference, one hop; a direct value unchanged; an
 unlisted reference is the null object (§7.3.10). -/
 def deref (es : Array Entry) (o : Obj) : Obj :=

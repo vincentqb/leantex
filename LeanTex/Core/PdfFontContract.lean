@@ -24,6 +24,26 @@ private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font.Font)
       have hfile := (fontObjects_links_exact t k font baseFont widths).2.2.2
       cases hcff : font.isCff <;> simp_all
 
+/-- A font row in the emitted family satisfies the census once its
+descriptor reference resolves. The third row is a descriptor and cannot
+enter the font census. -/
+theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
+    (font : Font.Font) (baseFont : String) (widths : PdfRead.Obj)
+    (es : Array PdfRead.Entry) (e : PdfRead.Entry)
+    (he : (e.num, e.val) ∈ (fontObjects t k font baseFont widths).rows k)
+    (hf : PdfCensus.kindOf e.val = .font)
+    (hd : PdfCensus.deref es (.ref (ObjTable.fdId k) 0) =
+      (fontObjects t k font baseFont widths).descriptor) :
+    PdfCensus.fontEmbedded es e = true := by
+  simp only [FontObjects.rows, List.mem_cons, List.not_mem_nil, or_false,
+    Prod.mk.injEq] at he
+  rcases he with he | he | he
+  · exact fontObjects_embedded t k font baseFont widths es e (Or.inl he.2) hd
+  · exact fontObjects_embedded t k font baseFont widths es e (Or.inr he.2) hd
+  · rw [he.2] at hf
+    change PdfCensus.Kind.fontDescriptor = .font at hf
+    contradiction
+
 /-- The read-side font census follows from recovered font dictionaries
 and descriptor references. These premises are the reader boundary:
 parsing, decompression, and object-stream lookup must recover the writer's
