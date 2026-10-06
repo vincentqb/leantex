@@ -4,10 +4,20 @@ open LeanTex.Core
 
 namespace Tests
 
+private def formulaTrees (doc : Ir.Doc) : Array String :=
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  (elemNodesList (· == "math") #[] body.toList).filterMap fun node =>
+    match node with
+    | .elem _ attrs _ =>
+      if (HtmlDoc.attrOf? attrs "data-tex").isSome then some (Html.render node 0)
+      else none
+    | _ => none
+
 /-- A formula's plaintext reading must retain operation and operand
 boundaries. These invented expressions previously collapsed into strings
-of digits on pages without a math font. The same reading belongs to SVG
-labels and the document's accessible structure. -/
+of digits on PDF pages without a math font. Accessible structure keeps that
+reading too. HTML diagram labels retain the complete mathematical tree used
+in prose instead of painting the fallback notation. -/
 def formulaFloorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fonts := { fonts with math := none }
   let cases : List (String × String) :=
@@ -29,8 +39,13 @@ def formulaFloorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     check ref s!"formula floor structure: {expected}" ((Struct.ofDoc doc).text == expected)
     let labelDoc := metricDoc ("\\begin{tikzpicture}\\node at (0,0) {$" ++ source ++
       "$};\\end{tikzpicture}")
-    let (_, _, _, labelText) := sourceArtifacts fonts labelDoc
-    check ref s!"formula floor SVG: expected {expected}, got {labelText}" (labelText == expected)
+    let labelText := pageTextOf fonts labelDoc
+    check ref s!"formula floor diagram PDF: expected {expected}, got {labelText}"
+      (labelText == expected)
+    let proseMath := formulaTrees doc
+    let labelMath := formulaTrees (elabStr labelDoc).1
+    check ref s!"formula diagram HTML retains the complete prose math tree: {source}"
+      (proseMath.size == 1 && labelMath == proseMath)
   -- Invisible delimiters and layout parameters are valid nonprinting
   -- syntax. Raw-source punctuation is not a sound content premise.
   for source in ["\\big.", "\\left.\\right.", "\\quad", "{}",
