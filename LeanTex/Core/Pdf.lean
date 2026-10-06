@@ -886,6 +886,82 @@ theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs :
   · rfl
   · split <;> rfl
 
+/-- A row of the writer's cross-reference. A missing direct object is
+declared free; it is never redirected to an unrelated compressed object. -/
+def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+    (xrefOff id : Nat) : Xref.Entry :=
+  if id == t.xrefId then .direct xrefOff 0 else
+    match compressedIdx id with
+    | some idx => .compressed t.objStmId idx
+    | none => match offset id with
+      | some off => .direct off 0
+      | none => .free 0 0
+
+/-- The free-list head and one row per allocated id, in allocation order.
+`write` encodes this array itself; it is not a reconstructed certificate. -/
+def xrefEntries (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+    (xrefOff : Nat) : Array Xref.Entry :=
+  #[.free 0 65535] ++ t.ids.map (xrefEntry t compressedIdx offset xrefOff)
+
+/-- The row selection is the allocation table's kind decision on every
+allocated id, including its explicit missing-direct-object case. -/
+theorem xrefEntry_kind_exact (t : ObjTable)
+    (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
+    (hlo : 0 < id) (hhi : id < t.size) :
+    some (xrefEntry t compressedIdx offset xrefOff id) =
+      (t.kindOf compressedIdx id).map (fun k => match k with
+        | .xref => .direct xrefOff 0
+        | .inStream idx => .compressed t.objStmId idx
+        | .direct => match offset id with
+          | some off => .direct off 0
+          | none => .free 0 0) := by
+  have hbad : (id == 0 || decide (t.size ≤ id)) ≠ true := by
+    simp only [ne_eq, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]
+    omega
+  simp only [ObjTable.kindOf, ite_eq_right hbad]
+  unfold xrefEntry
+  split
+  · rfl
+  · cases compressedIdx id <;> rfl
+
+/-- The actual xref payload has exactly the number of seven-byte rows
+declared by `/Size` and `/Index`, including row zero. -/
+theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
+    (usedImgs : Array Nat) (np nOut nElems : Nat)
+    (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) :
+    let t := objTable keep imgs usedImgs np nOut nElems
+    (xrefEntries t compressedIdx offset xrefOff).size = t.size ∧
+      (Xref.encode (xrefEntries t compressedIdx offset xrefOff)).size = 7 * t.size := by
+  dsimp only
+  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
+  have hn := congrArg List.length ht
+  simp only [Array.length_toList, List.length_range'] at hn
+  have hpos : 0 < (objTable keep imgs usedImgs np nOut nElems).size := by
+    simp only [objTable]
+    omega
+  have hsize : (xrefEntries (objTable keep imgs usedImgs np nOut nElems)
+      compressedIdx offset xrefOff).size =
+      (objTable keep imgs usedImgs np nOut nElems).size := by
+    simp only [xrefEntries, Array.size_append, Array.size_map, Array.size_singleton, hn]
+    omega
+  exact ⟨hsize, by rw [Xref.encode_size_exact, hsize]⟩
+
+/-- Numeric field bounds suffice for every emitted xref entry. This
+assumes no property of our writer, parser, or compressor. -/
+theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+    (xrefOff id : Nat) (hx : xrefOff < 256 ^ 4) (hs : t.objStmId < 256 ^ 4)
+    (hc : ∀ n i, compressedIdx n = some i → i < 256 ^ 2)
+    (ho : ∀ n i, offset n = some i → i < 256 ^ 4) :
+    (xrefEntry t compressedIdx offset xrefOff id).Fits := by
+  unfold xrefEntry
+  split
+  · exact ⟨hx, by change 0 < 256 ^ 2; omega⟩
+  · split
+    · exact ⟨hs, hc _ _ ‹_›⟩
+    · split
+      · exact ⟨ho _ _ ‹_›, by change 0 < 256 ^ 2; omega⟩
+      · exact ⟨by decide, by decide⟩
+
 -- ## The feature census
 
 /-- What a written file asks of a reader, one constructor per thing a
@@ -1639,28 +1715,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
   -- kind the table's answer.
   let xrefOff := body.size
-  let directRow (off : Nat) : ByteArray := Xref.row 1 off 0
-  let streamRow (idx : Nat) : ByteArray := Xref.row 2 t.objStmId idx
-  let mut xrefRows : ByteArray := Xref.row 0 0 65535
-  for h : id in t.ids do
-    match hk : t.kindOf compressedIdx id with
-    | some .xref => xrefRows := xrefRows ++ directRow xrefOff
-    | some (.inStream idx) => xrefRows := xrefRows ++ streamRow idx
-    | some .direct =>
-      match (offs[id]?).join with
-      | some off => xrefRows := xrefRows ++ directRow off
-      | none =>
-        -- A direct id `serialize` never wrote is written free: the file then
-        -- says the object is absent, which the read-side census sees (its
-        -- objects are the table's ids, per fixture), instead of a row
-        -- pointing into the object stream at another object. Unreachable as
-        -- the writer stands — every allocated id is a row — but the arm is
-        -- the honest answer rather than a guessed offset.
-        xrefRows := xrefRows ++ Xref.row 0 0 0
-    | none =>
-      have hs : (t.kindOf compressedIdx id).isSome = true :=
-        objTable_kindOf_some keep imgs usedImgs np nOut es.size compressedIdx id h
-      xrefRows := absurd hs (by rw [hk]; exact Bool.false_ne_true)
+  let xrefRows := Xref.encode
+    (xrefEntries t compressedIdx (fun id => (offs[id]?).join) xrefOff)
   let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
   let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
