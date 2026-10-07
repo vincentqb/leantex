@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.PdfStruct
 import LeanTex.Core.PdfRowRecovery
 import LeanTex.Core.PdfAgreement
@@ -13,6 +15,13 @@ example : Repr Pdf.PathOp := inferInstance
 example : BEq Pdf.TextItem := inferInstance
 example : Inhabited Pdf.ContentOp := inferInstance
 example : Pdf.Rect → String := Pdf.Rect.render
+
+example (_rect : Pdf.Rect) : True := by
+  fail_if_success
+    have : _rect.render =
+        s!"[{Dim.Sp.toPtString _rect.x0} {Dim.Sp.toPtString _rect.y0} {Dim.Sp.toPtString _rect.x1} {Dim.Sp.toPtString _rect.y1}]" :=
+      by rfl
+  trivial
 
 example : ({} : Ir.OutputContract).unmet Pdf.profile = #[] :=
   Pdf.pdf_default_contract_exact
