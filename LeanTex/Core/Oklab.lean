@@ -1,4 +1,7 @@
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Ir
+import all LeanTex.Core.Ir
 
 /-!
 Oklab as pure integer arithmetic over the engine's 8-bit `Color`, for one
@@ -52,7 +55,7 @@ every entry to the spec formula evaluated in `Float`. The formula
 (WCAG 2.2 dfn-relative-luminance = CSS Color 4 §10.2): c' = c/255,
 c' ≤ 0.04045 → c'/12.92, else ((c'+0.055)/1.055)^2.4. Entries 0–10 take
 the first branch (10/255 ≈ 0.0392 ≤ 0.04045). -/
-def channelLinear : Array Nat := #[
+public def channelLinear : Array Nat := #[
   0, 3035, 6071, 9106, 12141, 15176, 18212, 21247, 24282, 27317,
   30353, 33465, 36765, 40247, 43914, 47770, 51815, 56054, 60488, 65121,
   69954, 74990, 80232, 85681, 91341, 97212, 103298, 109601, 116122, 122865,
@@ -83,7 +86,7 @@ def channelLinear : Array Nat := #[
 /-- Binary search on structural fuel: the bracket `[lo, hi)` holds
 `lo³ ≤ n < hi³` and halves each step, so the fuel is a bound the spec
 discharges — structural recursion, no escape hatch. -/
-def icbrtGo : Nat → Nat → Nat → Nat → Nat
+private def icbrtGo : Nat → Nat → Nat → Nat → Nat
   | 0, _, lo, _ => lo
   | fuel + 1, n, lo, hi =>
     if lo + 1 < hi then
@@ -95,9 +98,9 @@ def icbrtGo : Nat → Nat → Nat → Nat → Nat
 scaled by 10¹⁸, so results fit in 10⁶ + 1 and 20 halvings close the
 bracket. Kernel-reducible (structural fuel), so `decide`-based palette
 contracts can evaluate the whole pipeline. -/
-def icbrt (n : Nat) : Nat := icbrtGo 20 n 0 1000001
+public def icbrt (n : Nat) : Nat := icbrtGo 20 n 0 1000001
 
-theorem icbrtGo_spec (fuel n lo hi : Nat) (h1 : lo ^ 3 ≤ n) (h2 : n < hi ^ 3)
+private theorem icbrtGo_spec (fuel n lo hi : Nat) (h1 : lo ^ 3 ≤ n) (h2 : n < hi ^ 3)
     (h3 : lo < hi) (hf : hi ≤ lo + 2 ^ fuel) :
     (icbrtGo fuel n lo hi) ^ 3 ≤ n ∧ n < (icbrtGo fuel n lo hi + 1) ^ 3 := by
   induction fuel generalizing lo hi with
@@ -122,7 +125,7 @@ the cube root rounded down, exactly. The domain is `n ≤ 10 ^ 18` because
 `labOf` reaches that bound exactly: each M1 row sums to exactly 10¹⁰, so
 pure white produces n = 10¹⁸ at the gamut corner — a hypothesis of
 `n < 1000000 ^ 3` would exclude a reachable input (color-factor F6). -/
-theorem icbrt_spec (n : Nat) (hn : n ≤ 10 ^ 18) :
+public theorem icbrt_spec (n : Nat) (hn : n ≤ 10 ^ 18) :
     (icbrt n) ^ 3 ≤ n ∧ n < (icbrt n + 1) ^ 3 :=
   icbrtGo_spec 20 n 0 1000001 (by simp) (by omega) (by omega) (by omega)
 
@@ -136,7 +139,7 @@ example : (icbrt (10 ^ 18)) ^ 3 ≤ 10 ^ 18 ∧ 10 ^ 18 < (icbrt (10 ^ 18) + 1) 
 
 /-- An Oklab value at fixed scale: `labOf` produces coordinates scaled by
 10¹⁸ (L in [0, 10¹⁸], a and b in roughly ±4·10¹⁷), `labMix` by 10²⁰. -/
-structure Lab where
+public structure Lab where
   L : Int
   a : Int
   b : Int
@@ -151,7 +154,7 @@ exact rather than approximate: each M1 row sums to exactly 10¹⁰ (m₂₃ is
 M2 sum to exactly 0 (b₂₃ is −373·10⁻¹⁰ from Ottosson's, under the 10⁻⁶
 pipeline granularity), so a grey has a = b = 0 — `labOf_achromatic` is a
 theorem, not a measurement. No division anywhere in this direction. -/
-def labOf (c : Color) : Lab :=
+public def labOf (c : Color) : Lab :=
   let x := channelLinear.getD c.r.toNat 0
   let y := channelLinear.getD c.g.toNat 0
   let z := channelLinear.getD c.b.toNat 0
@@ -166,14 +169,14 @@ def labOf (c : Color) : Lab :=
 coordinate, kept at the finer 10²⁰ scale so there is no division and the
 hue algebra below is exact. This is CSS `color-mix(in oklab, c f%, bg)`
 (Color 5 §3.1: Oklab is the default interpolation space). -/
-def labMix (f : Nat) (c bg : Lab) : Lab :=
+public def labMix (f : Nat) (c bg : Lab) : Lab :=
   { L := f * c.L + (100 - (f : Int)) * bg.L
     a := f * c.a + (100 - (f : Int)) * bg.a
     b := f * c.b + (100 - (f : Int)) * bg.b }
 
 /-- Binary search for the greatest table entry ≤ v, on structural fuel:
 255 halves to 1 in 8 steps. -/
-def nearestGo (v : Nat) : Nat → Nat → Nat → Nat
+private def nearestGo (v : Nat) : Nat → Nat → Nat → Nat
   | 0, lo, _ => lo
   | fuel + 1, lo, hi =>
     if lo + 1 < hi then
@@ -187,7 +190,7 @@ the transfer function inverted by search over the same table the forward
 direction reads, so the answer is exact by table. Out-of-range `v` clamps
 to the gamut edge — the standard clip; no shipped role reaches it
 (measured, see the 2026-09-17 PLAN entry). -/
-def nearestChannel (v : Int) : UInt8 :=
+private def nearestChannel (v : Int) : UInt8 :=
   if v ≤ 0 then 0
   else
     let v := v.toNat
@@ -217,7 +220,7 @@ compositions are `cover` (`toColor (labMix …)`) — pinned by the round-trip
 oracle — and `toColorOfLab`, the scale wrapper every caller holding a
 `labOf`-scale value goes through; a new caller uses one of the two, never
 a bare `toColor`. -/
-def toColor (lab : Lab) : Color :=
+private def toColor (lab : Lab) : Color :=
   let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
   let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
   let sp := rdiv (10000000000 * lab.L - 894841775 * lab.a - 12914855480 * lab.b) (10 ^ 24)
@@ -232,14 +235,14 @@ def toColor (lab : Lab) : Color :=
 conversion spelled once (F8's wrapper), so a caller holding forward-space
 coordinates — the lightness search in `Contrast.realize` — cannot be
 silently wrong by 100×. -/
-def toColorOfLab (lab : Lab) : Color :=
+public def toColorOfLab (lab : Lab) : Color :=
   toColor { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
 
 /-- The cover of a colour: `f`% of its own Oklab value over the surface —
 Material's 38% disabled-state opacity translated to compositing over an
 opaque page, computed in the space where mixing preserves hue. Partial
 application (`cover f bg`) evaluates the surface once. -/
-def cover (f : Nat) (bg : Color) : Color → Color :=
+public def cover (f : Nat) (bg : Color) : Color → Color :=
   let bgLab := labOf bg
   fun c => toColor (labMix f (labOf c) bgLab)
 
@@ -248,19 +251,21 @@ def cover (f : Nat) (bg : Color) : Color → Color :=
 -- evaluates the whole pipeline — table, icbrt, both matrix stages, the
 -- nearest-entry inversion — inside `decide`.
 example : cover 38 Color.white Color.black == { r := 0x86, g := 0x86, b := 0x86 } := by
+  rw [Color.beq_screen_exact]
+  unfold Color.white Color.black
   decide +kernel
 
 /-- Chroma squared, `a² + b²`: chroma itself needs a square root the
 theorems below never need — scaling of the square by `f²` is scaling of
 chroma by `f`. -/
-def chromaSq (l : Lab) : Int := l.a * l.a + l.b * l.b
+public def chromaSq (l : Lab) : Int := l.a * l.a + l.b * l.b
 
 /-- An exact grey has no chroma: both `(a, b)` coordinates are exactly 0.
 Equal channels read one table entry, the normalised M1 rows (each exactly
 10¹⁰) make l = m = s, and the normalised a/b rows of M2 (each exactly 0)
 annihilate. Both shipped surfaces are exact greys (#FAFAFA, #FFFFFF), so
 this hypothesis is the shipped case, not an idealisation. -/
-theorem labOf_achromatic (c : Color) (hg : c.g = c.r) (hb : c.b = c.r) :
+public theorem labOf_achromatic (c : Color) (hg : c.g = c.r) (hb : c.b = c.r) :
     (labOf c).a = 0 ∧ (labOf c).b = 0 := by
   simp only [labOf, hg, hb]
   grind
@@ -272,7 +277,7 @@ Ottosson's hue-preserving-blend property as algebra over the engine's own
 `labMix`, with no tolerance. (The 8-bit quantisation `toColor` applies
 afterwards is bounded by the round-trip oracle, measured ≤ 0.5° on every
 shipped role.) -/
-theorem hue_preserved (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
+public theorem hue_preserved (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
     (labMix f (labOf c) (labOf bg)).a = f * (labOf c).a ∧
     (labMix f (labOf c) (labOf bg)).b = f * (labOf c).b := by
   obtain ⟨ha, hb'⟩ := labOf_achromatic bg hg hb
@@ -281,7 +286,7 @@ theorem hue_preserved (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = b
 /-- Chroma scales by exactly the mix fraction over an achromatic surface:
 `C(mix) = f · C(c)` stated on squares (the mix is at the 100× finer scale,
 so `f²` here is chroma ×(f/100) in real units — at 38%, ×0.38 exactly). -/
-theorem chroma_scaled (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
+public theorem chroma_scaled (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
     chromaSq (labMix f (labOf c) (labOf bg)) = (f : Int) * f * chromaSq (labOf c) := by
   obtain ⟨h1, h2⟩ := hue_preserved f c bg hg hb
   simp only [chromaSq, h1, h2]
@@ -293,12 +298,12 @@ private theorem mul_self_nonneg (a : Int) : 0 ≤ a * a := by
   · have := Int.mul_nonneg (Int.neg_nonneg.mpr h) (Int.neg_nonneg.mpr h)
     simpa [Int.neg_mul_neg] using this
 
-theorem chromaSq_nonneg (l : Lab) : 0 ≤ chromaSq l :=
+public theorem chromaSq_nonneg (l : Lab) : 0 ≤ chromaSq l :=
   Int.add_nonneg (mul_self_nonneg l.a) (mul_self_nonneg l.b)
 
 /-- Covering never adds chroma: at any fraction up to 100%, the covered
 chroma is at most the active chroma (both read at the mix's scale). -/
-theorem chroma_reduced (f : Nat) (hf : f ≤ 100) (c bg : Color)
+public theorem chroma_reduced (f : Nat) (hf : f ≤ 100) (c bg : Color)
     (hg : bg.g = bg.r) (hb : bg.b = bg.r) :
     chromaSq (labMix f (labOf c) (labOf bg)) ≤ 100 * 100 * chromaSq (labOf c) := by
   rw [chroma_scaled f c bg hg hb]
@@ -309,7 +314,7 @@ theorem chroma_reduced (f : Nat) (hf : f ≤ 100) (c bg : Color)
 
 /-- The mix's lightness, isolated: the surface plus `f`% of the way toward
 the ink. The identity `toward_surface` rests on. -/
-theorem labMix_L (f : Nat) (c s : Lab) :
+public theorem labMix_L (f : Nat) (c s : Lab) :
     (labMix f c s).L = 100 * s.L + (f : Int) * (c.L - s.L) := by
   simp only [labMix, Int.mul_sub, Int.sub_mul]
   generalize (f : Int) * c.L = A
@@ -319,7 +324,7 @@ theorem labMix_L (f : Nat) (c s : Lab) :
 /-- Covering moves toward the surface, definitionally: the covered
 lightness lies between the ink's and the surface's (at the mix's 100×
 scale) when the surface is the darker of the two. -/
-theorem toward_surface (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : s.L ≤ c.L) :
+public theorem toward_surface (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : s.L ≤ c.L) :
     100 * s.L ≤ (labMix f c s).L ∧ (labMix f c s).L ≤ 100 * c.L := by
   rw [labMix_L]
   have h1 : 0 ≤ (f : Int) * (c.L - s.L) := Int.mul_nonneg (by omega) (by omega)
@@ -333,7 +338,7 @@ shipped page colours (#FAFAFA, #FFFFFF) are lighter than their inks, so
 covering *lightens* toward the surface and never past it (color-factor
 F7 — the docstring's "whichever is darker … never past either" needs
 both lemmas to be a theorem, not a promise). Same algebra. -/
-theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : c.L ≤ s.L) :
+public theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : c.L ≤ s.L) :
     100 * c.L ≤ (labMix f c s).L ∧ (labMix f c s).L ≤ 100 * s.L := by
   rw [labMix_L]
   have h1 : (f : Int) * (c.L - s.L) ≤ 0 :=
@@ -355,7 +360,7 @@ surface, and the plain cover for runs with no colour of their own — the
 declared `covered` colour when the document names one, the fraction of
 the body ink otherwise. Everything that covers — the layout dim walks,
 the contrast contract — reads this and nothing else. -/
-def Design.cover (d : Design) : Cover :=
+public def Design.cover (d : Design) : Cover :=
   let of := Oklab.cover d.coveredFraction d.bg
   { plain := d.covered.getD (of d.fg), of := of }
 

@@ -1,3 +1,5 @@
+import Tests.ColourInterface
+import Tests.PresentationInterfaces
 import Tests.Support
 import Tests.CliFoundationInterface
 import Tests.DiagInterface

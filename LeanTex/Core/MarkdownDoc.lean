@@ -1,4 +1,7 @@
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Ir
+import all LeanTex.Core.Ir
 
 /-! The markdown backend. A web page today publishes a plain-text twin — the
 llms.txt convention (llmstxt.org): `# title`, a `> summary`, then sections —
@@ -119,7 +122,7 @@ end
 /-- The markdown spelling of inline content: what a heading or a cell sets.
 Public because the placement theorems below quote it — the emitted title
 line is `# ` followed by exactly this. -/
-def inlineText (xs : Array Inline) : String :=
+public def inlineText (xs : Array Inline) : String :=
   inlinesInto "" xs.toList
 
 /-- The reference list's markdown spelling: one paragraph per entry, the
@@ -137,7 +140,7 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
 rank (`Ir.headingRank`, which carries the sourcing and the cap), so the
 marker and the HTML tag cannot drift; `heading_renderings_agree` in Tests
 states the agreement over every level. -/
-def headingMarker (level : Nat) : String :=
+public def headingMarker (level : Nat) : String :=
   String.ofList (List.replicate (Ir.headingRank level) '#')
 
 mutual
@@ -342,7 +345,7 @@ the walk sets the summary right after it. The placement theorems below pin
 both title sources (`emit_meta_title_first`, `emit_body_title_first`); the
 titleless remainder — summary first, nothing for it to follow — is pinned by
 test. -/
-def emit (doc : Doc) : String :=
+public def emit (doc : Doc) : String :=
   -- The twin's view of the document: backend conditionals resolve here, at
   -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
   -- content).
@@ -748,7 +751,7 @@ level-0 heading — so the preamble states both lines, in that order: the
 summary can never precede the title line, and nothing the body emits can
 move either. The newline-free hypotheses say the metadata strings are
 lines. -/
-theorem emit_meta_title_first (doc : Doc) (t s : String)
+public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
     (hbody : ((Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0) = false)
     (htn : ∀ c ∈ t.toList, c ≠ '\n') (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
@@ -767,7 +770,7 @@ summary above the body — and the summary lands immediately after the body's
 title line, whatever the rest of the body emits and whether or not the
 metadata also declares a title. This is the defect's contrapositive: the
 summary follows the title, wherever the title came from. -/
-theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
+public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
     (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st none ttl :: rest)

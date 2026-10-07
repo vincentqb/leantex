@@ -1,5 +1,7 @@
-import LeanTex.Core.MdParse
-import LeanTex.Core.Parse
+module
+
+public import LeanTex.Core.MdParse
+public import LeanTex.Core.Parse
 import LeanTex.Core.Decl
 import LeanTex.Core.Ir
 
@@ -49,13 +51,13 @@ today the thematic break, which has no block in the engine at all.
 A construct that *does* ship, diminished, takes `routeDegraded` instead. The
 two were one code, and the census then read four shipping constructs as
 absent content. -/
-def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
+private def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
   Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
 
 /-- A `W0392`: the construct sets, with part of its declaration dropped —
 `degraded`, floor `content`, which is what the census must see for a heading
 that sets one level up or a link that sets without its title. -/
-def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
+private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
     (help : Option String := none) : Diag :=
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
 
@@ -63,7 +65,7 @@ def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
 source: `Decl.splitEntries`, then `Decl.splitEntry`, then the one layer of
 braces or quotes `readImageOpts` strips, then its trim. `none` when the
 source does not read as exactly one `alt` entry. -/
-def altReadBack (src : String) : Option String :=
+public def altReadBack (src : String) : Option String :=
   match Decl.splitEntries src with
   | [e] =>
     match Decl.splitEntry e with
@@ -83,7 +85,7 @@ text, checked with the reader's own splitter rather than argued: quoted,
 where nothing but a `"` ends the value; else braced, where the splitter's
 depth and string tracking must both come back balanced. `none` when neither
 spelling reads back — the text is then not carried as written. -/
-def altSource (t : String) : Option String :=
+public def altSource (t : String) : Option String :=
   let want := t.trimAscii.toString
   let quoted := "alt=\"" ++ t ++ "\""
   let braced := "alt={" ++ t ++ "}"
@@ -95,7 +97,7 @@ def altSource (t : String) : Option String :=
 non-space characters. Going through `word` rather than through generated
 source is also what lets markdown text carry `$`, `%` and `#` with no
 escape — they never become control tokens. -/
-def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
+private def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
   let mut cur := ""
   let mut col := pos.col
@@ -118,7 +120,7 @@ def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
 /-- The control name a heading level takes. Levels beyond the third are
 routed: the kernel has three sectioning levels, so a fourth is a level
 question, not a markdown one. -/
-def sectionCtrl : Nat → String
+private def sectionCtrl : Nat → String
   | 0 | 1 => "section"
   | 2 => "subsection"
   | _ => "subsubsection"
@@ -126,7 +128,7 @@ def sectionCtrl : Nat → String
 mutual
 
 /-- One inline node's text. -/
-def inlText1 : Inl → String
+private def inlText1 : Inl → String
   | .text s _ => s
   | .code s _ => s
   | .soft _ => " "
@@ -136,7 +138,7 @@ def inlText1 : Inl → String
   | .link _ _ b _ => inlTextList "" b.toList
   | .image _ _ a _ => inlTextList "" a.toList
 
-def inlTextList (acc : String) : List Inl → String
+private def inlTextList (acc : String) : List Inl → String
   | [] => acc
   | x :: rest => inlTextList (acc ++ inlText1 x) rest
 
@@ -144,12 +146,12 @@ end
 
 /-- The flattened text of inline content: what an `alt` attribute carries,
 which HTML states as text and markdown writes as inline content. -/
-def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
+private def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
 
 mutual
 
 /-- One inline node as surface raws. -/
-def inlRaws (file : String) : Inl → Array Raw × Array Diag
+private def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
   | .soft _ => (#[.space], #[])
@@ -193,7 +195,7 @@ the image option cannot carry them as written" p
 
 /-- A list of inline nodes, accumulating: prepending to the recursive result
 would copy it at every element. -/
-def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
+private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Inl → Array Raw × Array Diag
   | [] => (out, ds)
   | x :: rest =>
@@ -205,7 +207,7 @@ end
 mutual
 
 /-- One block as surface raws. -/
-def blkRaws (file : String) : Blk → Array Raw × Array Diag
+private def blkRaws (file : String) : Blk → Array Raw × Array Diag
   | .para body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     (rs.push (.par p), ds)
@@ -255,7 +257,7 @@ without a language" p
         "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
     (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
 
-def blkListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
+private def blkListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Blk → Array Raw × Array Diag
   | [] => (out, ds)
   | b :: rest =>
@@ -263,7 +265,7 @@ def blkListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     blkListRaws file (out ++ rs) (ds ++ ds') rest
 
 /-- One `\item` per list item, its blocks inside. -/
-def itemsRaws (file : String) (out : Array Raw) (ds : Array Diag) :
+private def itemsRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List (Array Blk) → Pos → Array Raw × Array Diag
   | [], _ => (out, ds)
   | it :: rest, p =>
@@ -274,13 +276,13 @@ end
 
 /-- The whole document: markdown source to the surface AST the elaborator
 reads, with the reader's own diagnostics carrying `.md` spans. -/
-def desugar (file : String) (input : String) : Array Raw × Array Diag :=
+public def desugar (file : String) (input : String) : Array Raw × Array Diag :=
   let (bs, ds) := blocks file input
   let (rs, ds') := blkListRaws file #[] #[] bs.toList
   (rs, ds ++ ds')
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring, in
 the shape `Lex.lex` and `Parse.parse` present for `.tex`. -/
-def read (file input : String) : Array Raw × Array Diag := desugar file input
+public def read (file input : String) : Array Raw × Array Diag := desugar file input
 
 end LeanTex.Core.Md

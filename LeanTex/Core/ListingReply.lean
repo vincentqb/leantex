@@ -1,5 +1,7 @@
+module
+
 import Lean.Data.Json
-import LeanTex.Core.Ir
+public import LeanTex.Core.Ir
 
 /-!
 The pure boundary for external listing classification. Source is normalized
@@ -17,23 +19,23 @@ namespace LeanTex.Core.ListingReply
 open Lean (Json toJson)
 open LeanTex.Core.ListingHighlight (Token Kind lineText)
 
-structure Request where
+public structure Request where
   language : String
   source : String
   deriving BEq, ReflBEq, LawfulBEq, Repr
 
 /-- Normalize only at the frontend boundary. Calling `verbatimLines` on
 `request.source` again would discard a retained initial blank line. -/
-def Request.ofSource (language : String) (rawSource : String) : Request :=
+public def Request.ofSource (language : String) (rawSource : String) : Request :=
   { language := language.trimAscii.toString.toLower
     source := String.intercalate "\n" (Ir.verbatimLines rawSource).toList }
 
-def Request.lines (request : Request) : Array String :=
+public def Request.lines (request : Request) : Array String :=
   if request.source.isEmpty then #[] else (request.source.splitOn "\n").toArray
 
 /-- Classification data, always checked by `lookup` before installation.
 The shared IR reader checks it again before either artifact consumes it. -/
-structure Answer where
+public structure Answer where
   request : Request
   tokens : Array (Array Token)
   deriving BEq, Repr
@@ -41,7 +43,7 @@ structure Answer where
 /-- Requests are leaves of the one generic document fold, including listings
 inside captions, notes and nested containers. Styles share a classification. -/
 -- conserves: none — this collector returns requests, not a rewritten document.
-def requests (doc : Ir.Doc) : Array Request :=
+public def requests (doc : Ir.Doc) : Array Request :=
   Ir.foldDoc (fun acc _ => acc) #[] doc (fb := fun acc block =>
     match block with
     | .verbatim _ source spec =>
@@ -55,7 +57,7 @@ def requests (doc : Ir.Doc) : Array Request :=
 
 /-- Exact content-key lookup, with the raw source checked at the install
 site as well. A foreign, stale, or malformed answer cannot change code. -/
-def lookup (answers : Array Answer) (language : String)
+public def lookup (answers : Array Answer) (language : String)
     (rawSource : String) : Option (Array (Array Token)) :=
   let request := Request.ofSource language rawSource
   match answers.find? (fun answer => answer.request == request) with
@@ -68,7 +70,7 @@ def lookup (answers : Array Answer) (language : String)
 /-- Every installed classification comes from the snapshot's exact language
 and source key, and reproduces the original lines. Text equality alone would
 admit another language's classification of the same source. -/
-theorem lookup_contract (answers : Array Answer) (language : String)
+public theorem lookup_contract (answers : Array Answer) (language : String)
     (source : String) (highlight : Array (Array Token))
     (h : lookup answers language source = some highlight) :
     (∃ answer ∈ answers, answer.request = Request.ofSource language source ∧
@@ -86,17 +88,17 @@ theorem lookup_contract (answers : Array Answer) (language : String)
     · contradiction
 
 /-- A lookup is installable only for the original listing's exact lines. -/
-theorem lookup_source_exact (answers : Array Answer) (language : String)
+public theorem lookup_source_exact (answers : Array Answer) (language : String)
     (source : String) (highlight : Array (Array Token))
     (h : lookup answers language source = some highlight) :
     highlight.map lineText = Ir.verbatimLines source :=
   (lookup_contract answers language source highlight h).2
 
-inductive Failure where
+public inductive Failure where
   | unavailable | unsupported | rejected | invalidReply | sourceMismatch | budget
   deriving BEq, Repr
 
-def Failure.reason : Failure → String
+public def Failure.reason : Failure → String
   | .unavailable => "Pygments is unavailable"
   | .unsupported => "the installed Pygments has no built-in lexer for this language"
   | .rejected => "the built-in lexer could not classify this source"
@@ -107,17 +109,17 @@ def Failure.reason : Failure → String
 /-- Source-valid plain data for a completed refusal. Its typed failure is
 returned alongside it by `decode`; callers retaining answers must retain
 failures too. Interrupted or unstarted attempts have no answer to remember. -/
-def plainAnswer (request : Request) : Answer :=
+public def plainAnswer (request : Request) : Answer :=
   { request
     tokens := request.lines.map fun text => #[{ text }] }
 
-theorem plainAnswer_source_exact (request : Request) :
+public theorem plainAnswer_source_exact (request : Request) :
     (plainAnswer request).tokens.map lineText = request.lines := by
   simp [plainAnswer, Array.map_map, Function.comp_def, lineText]
 
 /-- Unrecognized namespaces, error tokens and punctuation stay plain.
 `Name.Builtinish` is a Name, but never a Builtin; `Names` is not a Name. -/
-def projectKind (tokenClass : String) : Kind :=
+public def projectKind (tokenClass : String) : Kind :=
   let parts := tokenClass.splitOn "."
   let parts := if parts.head? == some "Token" then parts.drop 1 else parts
   match parts with
@@ -130,7 +132,7 @@ def projectKind (tokenClass : String) : Kind :=
   | "Operator" :: _ => .operator
   | _ => .plain
 
-structure Classified where
+public structure Classified where
   offset : Nat
   tokenClass : String
   text : String
@@ -156,7 +158,7 @@ where its predecessor ended; the whole text and every normalized line must
 also match. `terminalLf` allows exactly one lexer-only LF after the requested
 source: validate it before removing its empty last line. No authored whitespace
 is trimmed, and the answer keeps the original content key. -/
-def ofTokens (request : Request) (tokens : Array Classified)
+public def ofTokens (request : Request) (tokens : Array Classified)
     (terminalLf : Bool := false) : Except Failure Answer :=
   let contiguous := (tokens.foldl (fun (offset, valid) token =>
     (offset + token.text.length, valid && token.offset == offset)) (0, true)).2
@@ -173,7 +175,7 @@ def ofTokens (request : Request) (tokens : Array Classified)
 
 /-- Successful validation preserves the source lines and content key in both
 raw and terminal-LF modes. The lexical boundary never becomes displayed text. -/
-theorem ofTokens_source_exact (request : Request) (tokens : Array Classified)
+public theorem ofTokens_source_exact (request : Request) (tokens : Array Classified)
     (terminalLf : Bool) (answer : Answer)
     (h : ofTokens request tokens terminalLf = .ok answer) :
     answer.request = request ∧ answer.tokens.map lineText = request.lines := by
@@ -191,18 +193,18 @@ theorem ofTokens_source_exact (request : Request) (tokens : Array Classified)
 -- Operational protocol ceilings: one MiB of source per batch, at most 256
 -- requests and 262144 token records, and sixteen MiB of UTF-8 JSON. These
 -- limit allocation and process capture, not the syntax of any language.
-def maxSourceBytes : Nat := 1024 * 1024
-def maxRequests : Nat := 256
-def maxTokens : Nat := 262144
-def maxReplyBytes : Nat := 16 * 1024 * 1024
+public def maxSourceBytes : Nat := 1024 * 1024
+public def maxRequests : Nat := 256
+public def maxTokens : Nat := 262144
+public def maxReplyBytes : Nat := 16 * 1024 * 1024
 
-def withinBudget (rs : Array Request) : Bool :=
+public def withinBudget (rs : Array Request) : Bool :=
   rs.size ≤ maxRequests &&
     rs.foldl (fun bytes r => bytes + r.source.utf8ByteSize + r.language.utf8ByteSize) 0
       ≤ maxSourceBytes
 
 /-- Only language and normalized source cross the process boundary as data. -/
-def encode (rs : Array Request) : String :=
+public def encode (rs : Array Request) : String :=
   (Json.mkObj [
     ("version", toJson (1 : Nat)),
     ("requests", Json.arr (rs.map fun request => Json.mkObj [
@@ -218,7 +220,7 @@ private def classified (value : Json) : Except String Classified := do
 and repeated content keys never partially poison the cache. Per-request
 errors are completed plain replies with a typed failure keyed by the request.
 The CLI owns diagnostic translation; external error text is never its prose. -/
-def decode (rs : Array Request) (body : String) (terminalLf : Bool := false) :
+public def decode (rs : Array Request) (body : String) (terminalLf : Bool := false) :
     Except String (Array Answer × Array (Request × Failure)) := do
   if !withinBudget rs || body.utf8ByteSize > maxReplyBytes then
     throw "listing protocol resource limit exceeded"

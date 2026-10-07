@@ -1,4 +1,8 @@
+module
+
+public import LeanTex.Core.Ir
 import LeanTex.Core.ContrastRatio
+import LeanTex.Core.Oklab
 
 /-!
 Shared listing paint, downstream of the IR and upstream of both backends.
@@ -11,7 +15,7 @@ namespace LeanTex.Core.Listing
 open Ir ListingHighlight
 
 /-- The palette role corresponding to a lexical class. -/
-def role : Kind → Option String
+public def role : Kind → Option String
   | .plain => none
   | .keyword => some "codekeyword"
   | .string => some "codestring"
@@ -22,7 +26,7 @@ def role : Kind → Option String
   | .operator => some "codeoperator"
 
 /-- Projection of the one resolved palette; ordinary text inherits its ink. -/
-def color (d : Design) : Kind → Option Color
+public def color (d : Design) : Kind → Option Color
   | .plain => none
   | .keyword => some d.listing.keyword
   | .string => some d.listing.string
@@ -37,7 +41,7 @@ grounds, choose the first whole-percent sRGB tint/shade that clears WCAG AA.
 This chooses an undeclared default; it never changes an authored colour.
 The endpoints and percentage scale are xcolor's `Color.mix`, not new
 palette constants. -/
-def defaultInk (ground seed : Color) : Color := Id.run do
+public def defaultInk (ground seed : Color) : Color := Id.run do
   if Contrast.contrastMilli seed ground ≥ Contrast.aaText then return seed
   let pole := if Contrast.contrastMilli Color.black ground >
       Contrast.contrastMilli Color.white ground then Color.black else Color.white
@@ -49,7 +53,7 @@ def defaultInk (ground seed : Color) : Color := Id.run do
 /-- One class's colour on the actual ground. A recorded realization on a local
 ground takes precedence over the palette's page colour. Undeclared defaults
 are selected here once, identically for PDF, screen and print. -/
-def ink (pal : Palette) (ground : Option Color) (kind : Kind)
+public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
     (style : ListingStyle := .default) : Option Color := do
   let d := Design.ofPalette pal (style := style)
   let seed ← color d kind
@@ -73,7 +77,7 @@ private def fontStyle (kind : Kind) (body : Array Inline) : Array Inline :=
 /-- A classified source token as ordinary typed inlines. Both backends consume
 this projection. Covering acts on each token's own colour; an outer colour
 alone would be overridden by the token's inner colour during flattening. -/
-def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
+public def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
     (style : ListingStyle := .default) : Inline :=
   let body := fontStyle t.kind #[.text t.text]
   match ink pal ground t.kind (style := style) with
@@ -92,7 +96,7 @@ def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
 /-- Painting a classified token conserves its exact scalar sequence, under
 every palette, ground and overlay. Together with `Ir.listing_source_exact`,
 this is the source-preservation premise both artifact projections consume. -/
-theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color)
+public theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color)
     (t : Token) (style : ListingStyle := .default) :
     plainTextOne (tokenInline pal ground covered t (style := style)) = t.text := by
   unfold tokenInline
@@ -104,7 +108,7 @@ theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color
 
 /-- Every lexical colour a listing can draw is held to text AA, even if the
 surrounding frame uses the lower large-text threshold. -/
-def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
+public def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
     Bool :=
   ([.keyword, .string, .number, .comment, .builtin, .name, .operator] : List Kind).all
     fun k => match ink pal ground k (style := style) with

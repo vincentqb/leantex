@@ -1,4 +1,7 @@
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Ir
+import all LeanTex.Core.Ir
 
 namespace LeanTex.Core.Theme
 
@@ -21,7 +24,7 @@ checkable half over the shipped bundles. Keep it that way: a bundle wanting
 geometry is a genre or class question, never a theme field (the
 value-vs-consumer layering rule; audit-layer's `Theme.apply`/W0348 fixed
 the value-vs-value face, and W0355 names the consumer face at install). -/
-structure Decls where
+public structure Decls where
   palette : Palette := {}
   tokens : Tokens := {}
   styles : Styles := {}
@@ -46,7 +49,7 @@ declaring `frametitlebg` turns the frame title into a colour bar,
 `progressfg`/`bg` draw the section-page progress bar (`progressheight`
 sizes it), `standoutfg`/`bg` invert a `[standout]` frame, and `muted`
 quiets secondary furniture — the chrome footer draws in it. -/
-structure Theme extends Decls where
+public structure Theme extends Decls where
   name : String
 
 /-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
@@ -96,7 +99,7 @@ private def builtinChrome : Chrome :=
 one warm accent, a near-white page. Values map the moloch beamer theme's
 light preset onto the semantic keys, mixes evaluated (the original xcolor
 spelling rides in the comment beside each). -/
-def moloch : Theme :=
+public def moloch : Theme :=
   let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
   -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
@@ -148,7 +151,7 @@ def moloch : Theme :=
 /-- A quieter default: near-black ink on white, one restrained accent, no
 title bar — frame titles set as plain bold headings because the bar key is
 simply absent. A third theme costs exactly one more table like this. -/
-def plain : Theme :=
+public def plain : Theme :=
   let fg : Color := { r := 0x1B, g := 0x1B, b := 0x1F }
   let bg : Color := { r := 0xFF, g := 0xFF, b := 0xFF }
   { name := "plain"
@@ -184,7 +187,7 @@ own on-surface is never pure black), the accent is a link-blue azure at
 clears the 3:1 state change at it (`Contrast.builtin_designs_covered`
 re-decides on entry). The slides class installs this bundle when a deck
 declares no theme; `moloch` stays by name. -/
-def daylight : Theme :=
+public def daylight : Theme :=
   let fg : Color := { r := 0x29, g := 0x25, b := 0x24 }     -- stone-800
   let bg : Color := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
   let accent : Color := { r := 0x0B, g := 0x66, b := 0xC2 } -- azure, 5.54:1 on bg
@@ -221,7 +224,7 @@ original spelling beside it; the poster class is the intended consumer
 bundle deliberately declares no chrome and no slides furniture styles —
 the poster class never draws them (W0355 names an install that would be
 inert). -/
-def gemini : Theme :=
+public def gemini : Theme :=
   let blue : Color := { r := 0x40, g := 0x73, b := 0x9E }      -- blue, RGB 64,115,158
   let lightgray : Color := { r := 0xF5, g := 0xF6, b := 0xFA } -- lightgray, RGB 245,246,250
   let darkblue : Color := { r := 0x27, g := 0x3C, b := 0x75 }  -- darkblue, RGB 39,60,117
@@ -265,7 +268,7 @@ def gemini : Theme :=
       ("titlepage", { align := some "center"
                       separator := some (darkblue, some "separator") })] } }
 
-def builtin : List Theme := [moloch, plain, daylight, gemini]
+public def builtin : List Theme := [moloch, plain, daylight, gemini]
 
 /-- `footline_left_contract`: no shipped bundle declares a footer-left
 datum. The lineage's footline template (beamerouterthememoloch.dtx,
@@ -274,7 +277,7 @@ author's `frame footer` and the frame number — so a bundle that cites it
 owes an empty left slot; a bundle wanting a section title there would be
 adding to its source and must say so as an opt-in, not as data read from
 the dtx. Quantified over `builtin`: adding a bundle enters the contract. -/
-theorem footline_left_contract : ∀ th ∈ builtin, th.chrome.footerLeft = none := by
+public theorem footline_left_contract : ∀ th ∈ builtin, th.chrome.footerLeft = none := by
   intro th h
   simp only [builtin, List.mem_cons, List.not_mem_nil, or_false] at h
   rcases h with rfl | rfl | rfl | rfl <;> rfl
@@ -287,21 +290,21 @@ yield to a declared entry of the same name, so the two spellings of a role
 use cannot diverge; a bundle declaring an entry named `black` would fail
 this contract's proof only if the yield rule broke. Adding a bundle is
 entering the contract. -/
-theorem role_resolves_at_one_site :
+public theorem role_resolves_at_one_site :
     (builtin.all fun t => t.palette.entries.toList.all fun e =>
       t.palette.resolve e.1 == t.palette.find? e.1) = true := by decide
 
-def find? (name : String) : Option Theme :=
+public def find? (name : String) : Option Theme :=
   builtin.find? (·.name == name)
 
-def names : List String := builtin.map (·.name)
+public def names : List String := builtin.map (·.name)
 
 /-- Key-wise onto the element's existing entry: the theme's key wins where
 both declare it (the positional last-writer rule every palette entry
 follows), and the document's survives where the theme is silent — over
 every `Option` field of `ElementStyle`, the same merge a later `\style`
 block performs against the running entry. -/
-def styleMerge (top base : ElementStyle) : ElementStyle :=
+public def styleMerge (top base : ElementStyle) : ElementStyle :=
   { font := top.font <|> base.font
     before := top.before <|> base.before
     after := top.after <|> base.after
@@ -367,7 +370,7 @@ instead of the band replacing wholesale. Values in, values out, no
 elaborator state — effects as data: `Elab` calls exactly this function at
 the `\theme` site, so a statement about layering ranges over the install
 the engine runs. -/
-def apply (th : Theme) (s : Decls) : Decls :=
+public def apply (th : Theme) (s : Decls) : Decls :=
   { palette := paletteApply th.palette s.palette
     tokens := installTokens s.tokens th.tokens.entries.toList
     styles := installStyles s.styles th.styles.entries.toList
@@ -378,7 +381,7 @@ own declarations win per key — `apply` with the priorities mirrored,
 because the author never wrote this bundle and a default must not replace
 a declaration. `\theme{...}` keeps `apply`'s positional rule; only the
 class-default site calls this. -/
-def applyUnder (th : Theme) (s : Decls) : Decls :=
+public def applyUnder (th : Theme) (s : Decls) : Decls :=
   { palette :=
       let pal := installPalette th.palette s.palette.entries.toList
       { pal with
@@ -398,7 +401,7 @@ the executable oracles: Elab's WF recursion is kernel-irreducible (the
 2026-09-19 probe — `decide +kernel` stalls at the `Decidable` instance
 even with every function total), and this statement over the install
 function is the same fact one definitional step earlier. -/
-theorem titlepage_align_declared_engine :
+public theorem titlepage_align_declared_engine :
     (builtin.all fun t =>
       match (apply t {}).styles.find? "titlepage" with
       | some st => st.align.isSome && st.separator.isSome
@@ -407,7 +410,7 @@ theorem titlepage_align_declared_engine :
 /-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
 `("chrome", "footer.left")` — whatever stood there before: the keys whose
 standing value is the theme's after `apply`. -/
-def declares (th : Theme) : Array (String × String) := Id.run do
+public def declares (th : Theme) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for (k, _) in th.palette.entries do
     out := out.push ("palette", k)
@@ -430,7 +433,7 @@ says so out loud when the loser was the document's own declaration. A key
 the theme re-declares at the standing value replaces nothing and is not
 listed. Install order: palette entries, `covered`, tokens, styles,
 chrome. -/
-def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
+public def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for (k, c) in th.palette.entries do
     if let some c0 := s.palette.find? k then
@@ -467,7 +470,7 @@ and assertions unchanged by construction. The checkable residue is this
 contract: every key a shipped bundle installs lives on one of the four
 visual surfaces. Quantified over `builtin` — adding a bundle is entering
 the contract. -/
-theorem theme_layer_contract :
+public theorem theme_layer_contract :
     (builtin.all fun t => (declares t).toList.all fun e =>
       ["palette", "tokens", "style", "chrome"].contains e.1) = true := by decide
 
@@ -492,14 +495,14 @@ same terms, over the install the engine runs (`apply`):
 /-- No key declared twice. Every shipped bundle satisfies it
 (`builtin_styles_nodup`), and it is what pins the style fold's read-back
 to the pre-install state in `apply_fixed_point`. -/
-def nodupKeys {α : Type} : List (String × α) → Bool
+public def nodupKeys {α : Type} : List (String × α) → Bool
   | [] => true
   | e :: es => !(es.any (·.1 == e.1)) && nodupKeys es
 
 /-- Entering the contract: every shipped bundle declares each style element
 once, so `apply_fixed_point` covers it. Quantified over `builtin` — adding
 a bundle re-runs this check. -/
-theorem builtin_styles_nodup :
+public theorem builtin_styles_nodup :
     (builtin.all fun th => nodupKeys th.styles.entries.toList) = true := by decide
 
 private theorem orElse_absorb {α : Type} (a b : Option α) :
@@ -834,7 +837,7 @@ private theorem chromeApply_idem (bc c : Chrome) :
 /-- T2, the palette half, in `Palette.declare_keeps_others`'s terms: a
 bundle changes only the keys it declares — a key the theme does not name
 resolves after `\theme` exactly as before it. -/
-theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : String)
+public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : String)
     (h : th.palette.find? k = none) :
     (apply th s).palette.find? k = s.palette.find? k := by
   have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
@@ -848,7 +851,7 @@ theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : String)
 
 /-- The covered fraction is part of the same contract: a bundle that
 declares no `covered` leaves the document's standing. -/
-theorem apply_keeps_covered (th : Theme) (s : Decls)
+public theorem apply_keeps_covered (th : Theme) (s : Decls)
     (h : th.palette.coveredFraction = none) :
     (apply th s).palette.coveredFraction = s.palette.coveredFraction := by
   show (th.palette.coveredFraction <|>
@@ -859,7 +862,7 @@ theorem apply_keeps_covered (th : Theme) (s : Decls)
 /-- The decorative exemption is per key and rides with declarations
 (`declare_decorative_rides`); a bundle that does not declare a key never
 touches its exemption. -/
-theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : String)
+public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : String)
     (h : th.palette.find? k = none) :
     (k ∈ (apply th s).palette.decorative) ↔ k ∈ s.palette.decorative := by
   have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
@@ -880,7 +883,7 @@ theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : String)
 
 /-- T2, the tokens half: `Tokens.declare_keeps_others` lifted over the
 bundle fold. -/
-theorem apply_tokens_keeps_others (th : Theme) (s : Decls) (k : String)
+public theorem apply_tokens_keeps_others (th : Theme) (s : Decls) (k : String)
     (h : th.tokens.find? k = none) :
     (apply th s).tokens.find? k = s.tokens.find? k := by
   have hall : ∀ e ∈ th.tokens.entries.toList, e.1 ≠ k := by
@@ -894,7 +897,7 @@ theorem apply_tokens_keeps_others (th : Theme) (s : Decls) (k : String)
 
 /-- T2, the styles half: an element the bundle does not style keeps the
 document's whole entry. -/
-theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : String)
+public theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : String)
     (h : th.styles.find? element = none) :
     (apply th s).styles.find? element = s.styles.find? element := by
   have hall : ∀ e ∈ th.styles.entries.toList, e.1 ≠ element := by
@@ -906,14 +909,14 @@ theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : String)
 /-- T2, the chrome half: a slot the bundle leaves silent keeps the
 document's datum — the statement whose absence let the install replace the
 band wholesale. -/
-theorem apply_chrome_keeps_left (th : Theme) (s : Decls)
+public theorem apply_chrome_keeps_left (th : Theme) (s : Decls)
     (h : th.chrome.footerLeft = none) :
     (apply th s).chrome.footerLeft = s.chrome.footerLeft := by
   show (th.chrome.footerLeft <|> s.chrome.footerLeft) = _
   rw [h]
   rfl
 
-theorem apply_chrome_keeps_right (th : Theme) (s : Decls)
+public theorem apply_chrome_keeps_right (th : Theme) (s : Decls)
     (h : th.chrome.footerRight = none) :
     (apply th s).chrome.footerRight = s.chrome.footerRight := by
   show (th.chrome.footerRight <|> s.chrome.footerRight) = _
@@ -926,7 +929,7 @@ performing an action, so a repeated `\theme{name}` cannot drift the
 document. The one hypothesis — the bundle declares each style element
 once — holds for every shipped bundle (`builtin_styles_nodup`) and is what
 pins the style fold's read-back to the pre-install state. -/
-theorem apply_fixed_point (th : Theme) (s : Decls)
+public theorem apply_fixed_point (th : Theme) (s : Decls)
     (h : nodupKeys th.styles.entries.toList = true) :
     apply th (apply th s) = apply th s := by
   simp only [apply]

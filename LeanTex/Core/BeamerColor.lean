@@ -1,4 +1,6 @@
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Ir
 
 namespace LeanTex.Core.BeamerColor
 
@@ -6,13 +8,13 @@ open Ir
 
 /-- A space cannot occur in an author's control word. The two original
 groups follow this internal marker; no author text is encoded into it. -/
-def marker : String := " beamer color"
-def starMarker : String := " beamer color*"
+public def marker : String := " beamer color"
+public def starMarker : String := " beamer color*"
 
 /-- Beamer's named elements with genuine native paint sites. In particular,
 the head/foot progress placement is absent: a section rule is not that site.
 Sources: beamercolorthemedefault.sty and beamercolorthememoloch.sty. -/
-def roles : List (String × String × String) :=
+public def roles : List (String × String × String) :=
   [("normal text", "fg", "bg"), ("background canvas", "", "bg"),
    ("frametitle", "frametitlefg", "frametitlebg"),
    ("headline", "frametitlefg", "frametitlebg"),
@@ -39,12 +41,12 @@ private def defaultParents : String → List String
   | "progress bar in section page" | "title separator" => ["progress bar"]
   | _ => []
 
-inductive Value where
+public inductive Value where
   | source (text : String)
   | native (color : Color)
   deriving Inhabited
 
-structure Element where
+public structure Element where
   name : String
   fg : Option Value := none
   bg : Option Value := none
@@ -59,14 +61,14 @@ structure Element where
 private def Element.site (e : Element) (key : String) : Span :=
   (e.sites.lookup key).getD e.span
 
-structure Issue where
+public structure Issue where
   message : String
   span : Span
 
 /-- Flow palette and named declarations share one elaborator state field.
 `opening` remembers the native values displaced by resolution, so a later
 parent update never inherits its own previously resolved result. -/
-structure State where
+public structure State where
   current : Option Palette := none
   elements : List Element := []
   opening : Palette := {}
@@ -85,7 +87,7 @@ private def names (s : String) : List String :=
 
 /-- Update only the keys that occur, except that the starred form first
 clears both channels and both relationships (beamerbasecolor.sty). -/
-def State.declare (s : State) (name : String) (star : Bool) (src : String)
+public def State.declare (s : State) (name : String) (star : Bool) (src : String)
     (span : Span) : State × List String := Id.run do
   let mut e := if star then { name := name, reset := true, span := span }
     else { ((s.elements.find? (·.name == name)).getD { name := name }) with
@@ -106,7 +108,7 @@ def State.declare (s : State) (name : String) (star : Bool) (src : String)
 
 /-- A native role declared later wins too. Fixed colours retain their native
 model, including CMYK; the compatibility resolver never converts them. -/
-def State.native (s : State) (key : String) (color : Color) : State := Id.run do
+public def State.native (s : State) (key : String) (color : Color) : State := Id.run do
   if s.elements.isEmpty then return s
   let mut s := { s with opening := s.opening.declare key color }
   for (name, fg, bg) in roles do
@@ -191,7 +193,7 @@ decreasing_by all_goals
 Later explicit aliases of one native site win. `use` makes temporary xcolor
 aliases available to expressions, but contributes no inherited channel.
 Missing parents contribute nothing, as in Beamer. -/
-def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
+public def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
   let base := s.painted.foldl (fun p key => p.restore s.opening key) pal
   let mut s := s
   let mut out := base
