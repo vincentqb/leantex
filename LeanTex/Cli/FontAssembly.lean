@@ -1,5 +1,13 @@
+module
+
+public import LeanTex.Core.Font
+public import LeanTex.Core.FontDb
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Ir
+public import LeanTex.Cli.FontEnv
+import LeanTex.Core.Math
 import LeanTex.Cli.FontDiscovery
-import LeanTex.Cli.FontEnv
+import LeanTex.Cli.DriverDiag
 import LeanTex.Core.Layout
 
 /-! Font assembly shared by the driver and its artifact checks. Host discovery
@@ -23,7 +31,7 @@ both are taken once and handed to every assembly that needs them. Two
 assemblies do need them: the provisional font environment a picture's
 labels are measured against, resolved from the preamble, and the final one
 the document settles. -/
-structure FaceScan where
+public structure FaceScan where
   faces : Array FontDb.Face
   docDirs : List String
   dirs : Array String
@@ -33,7 +41,7 @@ structure FaceScan where
 provisional one a picture's labels are measured against before the body has
 been read. A value rather than a flag — it says what the caller is doing,
 and the assembly reads its own consequences off it. -/
-inductive Purpose where
+public inductive Purpose where
   /-- The environment the artifact is a function of. -/
   | settled
   /-- The face resolved from the preamble alone, with a math slot where the
@@ -70,7 +78,7 @@ Neither `ui` nor `file` is an argument any more: the host's answer and the
 document's own directories were the only reasons to hold them, and both are
 now the scan's (`scanFaces`). Assembly is a function of the document, the
 faces in hand, the parses already made, and which assembly this is. -/
-def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
+public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (cache : FontEnv.Cache) (purpose : Purpose) :
     IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × String)) := do
   let spec := doc.fonts

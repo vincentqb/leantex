@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Cli.FontFix
 import LeanTex.Cli.FontEnv
 import LeanTex.Cli.FontAssembly
@@ -54,6 +56,10 @@ example : Array FontDb.Face → Option String → Option String → Bool →
     IO FontEnv.MathFace :=
   fun faces declared body wantsMath fonts paths missing cache =>
     FontEnv.resolveMath faces declared body wantsMath fonts paths missing cache
+example : Array FontDb.Face → Option String → Option String → Bool →
+    Array Font.Font → Array String → Array String → IO FontEnv.MathFace :=
+  fun faces declared body wantsMath fonts paths missing =>
+    FontEnv.resolveMath faces declared body wantsMath fonts paths missing
 example (answer : FontEnv.MathFace) :
     Array Font.Font × Array String × Option Nat × Array String × Array Diag :=
   (answer.fonts, answer.paths, answer.index, answer.missing, answer.diags)
@@ -78,6 +84,8 @@ example : Image.Loaded → BrowserFaces.Plan → BrowserFaces.Outcome → Image.
 example : Image.Loaded → IO Image.Loaded := BrowserFaces.prepare
 example : Array Image.Loaded → Nat → IO (Array Image.Loaded) :=
   fun entries limit => BrowserFaces.prepareAll entries limit
+example : Array Image.Loaded → IO (Array Image.Loaded) :=
+  fun entries => BrowserFaces.prepareAll entries
 
 example (en : Image.Loaded) (plan : BrowserFaces.Plan) (answer : BrowserFaces.Outcome) :
     (BrowserFaces.apply en plan answer).info = en.info :=

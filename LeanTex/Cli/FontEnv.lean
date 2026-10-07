@@ -1,4 +1,8 @@
-import LeanTex.Core.Font
+module
+
+public import LeanTex.Core.Font
+public import LeanTex.Core.FontDb
+public import LeanTex.Core.Diag
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.DriverDiag
 
@@ -27,7 +31,7 @@ measured against, resolved from the preamble, and the final one the
 document settles — and `Font.parse` of a face is the cost the second
 assembly would otherwise repeat. It caches the *parse* and never the set,
 because the order faces enter a set is what its index means. -/
-structure Cache where
+public structure Cache where
   private mk ::
   private ref : IO.Ref (Array (String × Font.Font))
   /-- Face *resolution* answers, keyed by the question. `FontDb.resolveWeight`
@@ -39,11 +43,11 @@ structure Cache where
   private weights : IO.Ref (Array ((String × Option String × Nat × Bool) ×
     Option (FontDb.Face × Option FontDb.Substituted)))
 
-def Cache.mk' : IO Cache := do
+public def Cache.mk' : IO Cache := do
   return ⟨← IO.mkRef #[], ← IO.mkRef #[]⟩
 
 /-- Resolve a family's face for one weight and slant, through the memo. -/
-def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family : String)
+public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family : String)
     (declared : Option String) (weight : Nat) (italic : Bool) :
     IO (Option (FontDb.Face × Option FontDb.Substituted)) := do
   let key := (family, declared, weight, italic)
@@ -54,7 +58,7 @@ def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family : String
   return answer
 
 /-- Parse a face, or hand back the parse already made for that path. -/
-def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
+public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
   if let some f := (← c.ref.get).find? (·.1 == path) then
     return .ok f.2
   let data ← IO.FS.readBinFile path
@@ -78,7 +82,7 @@ declares no `\fonts`: one face serves every slot and variant, no scan.
 Either the parsed face and the path it came from, or the diagnostic naming
 why that path yielded none (E0402, for a path that is not there and for one
 that is not a font). -/
-def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
+public def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
   if ← System.FilePath.pathExists path then
     let data ← IO.FS.readBinFile path
     match Font.parse data with
@@ -93,7 +97,7 @@ really is a directory: a document that ships its fonts renders the same on
 every host, and a declaration naming nothing is W0008 — config, not a
 loss, because the scan simply looks elsewhere. A trailing slash is the same
 directory as none. -/
-def resolveDocDirs (file : String) (dirs : Array String) :
+public def resolveDocDirs (file : String) (dirs : Array String) :
     IO (List String × Array Diag) := do
   let mut docDirs : List String := []
   let mut diags : Array Diag := #[]
@@ -111,7 +115,7 @@ def resolveDocDirs (file : String) (dirs : Array String) :
 paths, extended where a file had to be read; `index` the set's math slot;
 `missing` the families already named, so no second E0403 repeats one; and
 `diags` what the decision decided. -/
-structure MathFace where
+public structure MathFace where
   fonts : Array Font.Font
   paths : Array String
   index : Option Nat
@@ -131,7 +135,7 @@ without the table earns W0011 naming it and math sets as its glyph text
 page, the body family's designed companion answers when the scan holds it,
 else the first scanned MATH-table face — either way N0016 names it, so a
 face the document did not choose is never silent. -/
-def resolveMath (faces : Array FontDb.Face) (declared : Option String)
+public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
     (body : Option String) (wantsMath : Bool)
     (fonts : Array Font.Font) (paths : Array String)
     (missing : Array String) (cache : Option Cache := none) : IO MathFace := do
