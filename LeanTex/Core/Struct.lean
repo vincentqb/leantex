@@ -1,4 +1,6 @@
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Ir
 
 /-! # The structure tree
 
@@ -34,10 +36,15 @@ namespace LeanTex.Core.Struct
 
 open Ir
 
+-- Ir is part of the public signatures: the tree is a projection of its
+-- blocks and retains its alternatives. Backend consumers use the tree,
+-- censuses and contracts; Layout also unfolds the raw projection and leaf
+-- counts when proving that its source attribution follows the same tree.
+
 /-- A structure node's kind: the standard structure types the IR can
 honestly fill (ISO 32000-2 §14.8.4; the HTML element each maps to is the
 one `HtmlDoc` already emits for the arm). -/
-inductive Kind where
+public inductive Kind where
   /-- The root, one per document. -/
   | document
   /-- A titled region that is not an outline heading: an abstract, a
@@ -84,7 +91,7 @@ inductive Kind where
   deriving Repr, BEq, Inhabited
 
 /-- What a leaf stands for: the ink-bearing atoms of the document. -/
-inductive Leaf where
+public inductive Leaf where
   | text (s : String)
   /-- An image, its source and its text alternative. -/
   | image (src : String) (alt : Alt)
@@ -98,7 +105,7 @@ inductive Leaf where
 
 /-- A leaf's census text: exactly what `plainTextOne` says of the inline
 it came from. -/
-def Leaf.census : Leaf → String
+public def Leaf.census : Leaf → String
   | .text s => s
   | .image _ _ => ""
   | .picture _ => ""
@@ -117,7 +124,7 @@ def Leaf.altCensus (out : Array (Option String × Alt)) :
 image or picture declared decorative is held by nothing, so its ink is an
 artifact (ISO 32000-2 §14.8.2.2) — the one resolving site the PDF's
 skeleton and its leaf census both read. -/
-def Leaf.held : Leaf → Bool
+@[expose] public def Leaf.held : Leaf → Bool
   | .image _ .decorative | .picture .decorative => false
   | .image _ .undeclared | .image _ (.described _) | .picture .undeclared
   | .picture (.described _) | .text _ | .linebreak => true
@@ -140,7 +147,7 @@ def Kind.outlineEmit (out : Array Nat) : Kind → Array Nat
 /-- Does the outline census read a kind's content? A speaker note is a side
 channel, so no heading inside one reaches the outline (`.aside`); every other
 kind reads through. The one place a census declines a subtree. -/
-def Kind.outlineDescends : Kind → Bool
+@[expose] public def Kind.outlineDescends : Kind → Bool
   | .aside => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
@@ -152,13 +159,13 @@ theorem Kind.outlineEmit_acc (out : Array Nat) (kind : Kind) :
     kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
   cases kind <;> simp [Kind.outlineEmit]
 
-inductive Node where
+public inductive Node where
   | leaf (id : Nat) (l : Leaf)
   | node (kind : Kind) (children : Array Node)
   deriving Repr, BEq, Inhabited
 
 /-- The tree: a `.document` root over the body's nodes. -/
-structure Tree where
+public structure Tree where
   children : Array Node
   deriving Repr, BEq, Inhabited
 
@@ -168,14 +175,19 @@ structure Tree where
 -- exactly that nesting. Structural recursion through `List`, an `Array`
 -- accumulator threaded through, one explicit arm per constructor. Leaf ids
 -- are placeholders here; `number` assigns the preorder index once.
+--
+-- The raw walk's bodies are exposed for Layout's count equations. The
+-- title, table, bibliography and algorithm builders named by those bodies
+-- are public constants with hidden implementations. Their own auxiliary
+-- walks and the numbering step remain private.
 
 mutual
 
-def inlinesRaw (out : Array Node) : List Inline → Array Node
+@[expose] public def inlinesRaw (out : Array Node) : List Inline → Array Node
   | [] => out
   | x :: rest => inlinesRaw (inlineRaw out x) rest
 
-def inlineRaw (out : Array Node) : Inline → Array Node
+@[expose] public def inlineRaw (out : Array Node) : Inline → Array Node
   | .text s => out.push (.leaf 0 (.text s))
   | .math _ src => out.push (.node .formula #[.leaf 0 (.text (mathFloor src))])
   | .formula _ _ body => out.push (.node .formula #[.leaf 0 (.text (formulaFloor body))])
@@ -211,11 +223,11 @@ end
 
 /-- A title region's node, when the title is not empty: an empty title is
 beamer's untitled block or a bare frame, and no node is invented for it. -/
-def titleRaw (title : Array Inline) : Array Node :=
+public def titleRaw (title : Array Inline) : Array Node :=
   if title.isEmpty then #[] else #[.node .title (inlinesRaw #[] title.toList)]
 
 /-- A caption's node, when there is one to caption with. -/
-def captionRaw (caption : Array Inline) : Array Node :=
+public def captionRaw (caption : Array Inline) : Array Node :=
   if caption.isEmpty then #[] else #[.node .caption (inlinesRaw #[] caption.toList)]
 
 /-- Table cells, each its own `.cell` over its inline content. -/
@@ -223,21 +235,21 @@ def cellsRaw (out : Array Node) : List (Array Inline) → Array Node
   | [] => out
   | cell :: rest => cellsRaw (out.push (.node .cell (inlinesRaw #[] cell.toList))) rest
 
-def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array Node
+public def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array Node
   | [] => out
   | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
 
 /-- Reference-list entries: one leaf each, the entry's whole text, as
 `textLeaves` reads them — the entries are the style's renderings, not
 authored content, and no walk descends them. -/
-def bibRaw (out : Array Node) : List BibItem → Array Node
+public def bibRaw (out : Array Node) : List BibItem → Array Node
   | [] => out
   | item :: rest =>
     bibRaw (out.push (.node .bibEntry #[.leaf 0 (.text (plainText item.content))])) rest
 
 /-- Pseudocode lines: each line's content then its comment, in reading
 order — the order `algLineText` and `foldAlgLines` both read. -/
-def algRaw (out : Array Node) : List AlgLine → Array Node
+public def algRaw (out : Array Node) : List AlgLine → Array Node
   | [] => out
   | l :: rest =>
     algRaw (match l.comment with
@@ -246,11 +258,11 @@ def algRaw (out : Array Node) : List AlgLine → Array Node
 
 mutual
 
-def blocksRaw (out : Array Node) : List Block → Array Node
+@[expose] public def blocksRaw (out : Array Node) : List Block → Array Node
   | [] => out
   | b :: rest => blocksRaw (blockRaw out b) rest
 
-def blockRaw (out : Array Node) : Block → Array Node
+@[expose] public def blockRaw (out : Array Node) : Block → Array Node
   | .para content => out.push (.node .paragraph (inlinesRaw #[] content.toList))
   | .section level _ _ title => out.push (.node (.heading level) (inlinesRaw #[] title.toList))
   | .list ordered items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
@@ -301,13 +313,13 @@ def blockRaw (out : Array Node) : Block → Array Node
     out.push (.node .figure (blocksRaw (captionRaw caption) body.toList))
   | .bibliography _ _ items => bibRaw out items.toList
 
-def itemsRaw (out : Array Node) : List (Array Block) → Array Node
+public def itemsRaw (out : Array Node) : List (Array Block) → Array Node
   | [] => out
   | item :: rest =>
     itemsRaw (out.push (.node .item
       #[.node .label #[], .node .body (blocksRaw #[] item.toList)])) rest
 
-def colsRaw (out : Array Node) : List (BoxWidth × Array Block) → Array Node
+public def colsRaw (out : Array Node) : List (BoxWidth × Array Block) → Array Node
   | [] => out
   | (_, body) :: rest => colsRaw (blocksRaw out body.toList) rest
 
@@ -319,7 +331,7 @@ end
 
 mutual
 
-def numberList (k : Nat) (out : Array Node) : List Node → Array Node × Nat
+public def numberList (k : Nat) (out : Array Node) : List Node → Array Node × Nat
   | [] => (out, k)
   | n :: rest =>
     let r := numberOne k n
@@ -334,22 +346,22 @@ def numberOne (k : Nat) : Node → Node × Nat
 end
 
 /-- Number a shape's leaves in preorder from `k`. -/
-def number (k : Nat) (ns : Array Node) : Array Node := (numberList k #[] ns.toList).1
+@[expose] public def number (k : Nat) (ns : Array Node) : Array Node := (numberList k #[] ns.toList).1
 
 /-- The structure of a block sequence, leaves numbered from 0. -/
-def ofBlocks (bs : Array Block) : Array Node := number 0 (blocksRaw #[] bs.toList)
+@[expose] public def ofBlocks (bs : Array Block) : Array Node := number 0 (blocksRaw #[] bs.toList)
 
 /-- The document's structure tree: its body under one `.document` root.
 The furniture regions (`Doc.head`, `foot`, `logo`, the headline band) are
 page artifacts the furniture pass writes and flags as such; they are not
 document structure and have no node here. -/
-def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
+@[expose] public def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
 
 /-- **A picture's leaf projects the one IR value** (`_projects`): its own
 leaf, carrying `Ir.Pic.Picture.alternative` — the value the HTML's svg
 reads too (`HtmlDoc.html_picture_name_projects`) — which the PDF turns into
 its `Figure` (`Pdf.altElem`). -/
-theorem picture_leaf_projects (out : Array Node) (pic : Pic.Picture) :
+public theorem picture_leaf_projects (out : Array Node) (pic : Pic.Picture) :
     blockRaw out (.picture pic) = out.push (.leaf 0 (.picture pic.alternative)) := by
   simp [blockRaw]
 
@@ -372,18 +384,18 @@ theorem picture_leaf_projects (out : Array Node) (pic : Pic.Picture) :
 -- accumulator left to right. Structural mutual recursion through `List`,
 -- the knot the projection walks already tie.
 
-structure NodeFold (α : Type) where
+public structure NodeFold (α : Type) where
   leaf : α → Nat → Leaf → α
   enter : α → Kind → α
   descends : Kind → Bool
 
 mutual
 
-def foldNodeList (f : NodeFold α) (acc : α) : List Node → α
+public def foldNodeList (f : NodeFold α) (acc : α) : List Node → α
   | [] => acc
   | n :: rest => foldNodeList f (foldNode f acc n) rest
 
-def foldNode (f : NodeFold α) (acc : α) : Node → α
+public def foldNode (f : NodeFold α) (acc : α) : Node → α
   | .leaf id l => f.leaf acc id l
   | .node kind kids =>
     match f.descends kind with
@@ -397,19 +409,19 @@ end
 -- appends builds onto the accumulator it was given. Stated once over any
 -- `NodeFold`; each census's named form below is an instance.
 
-theorem foldNodeList_nil_exact (f : NodeFold α) (acc : α) : foldNodeList f acc [] = acc := rfl
+public theorem foldNodeList_nil_exact (f : NodeFold α) (acc : α) : foldNodeList f acc [] = acc := by rfl
 
-theorem foldNodeList_cons_exact (f : NodeFold α) (acc : α) (n : Node) (rest : List Node) :
-    foldNodeList f acc (n :: rest) = foldNodeList f (foldNode f acc n) rest := rfl
+public theorem foldNodeList_cons_exact (f : NodeFold α) (acc : α) (n : Node) (rest : List Node) :
+    foldNodeList f acc (n :: rest) = foldNodeList f (foldNode f acc n) rest := by rfl
 
-theorem foldNode_leaf_exact (f : NodeFold α) (acc : α) (id : Nat) (l : Leaf) :
-    foldNode f acc (.leaf id l) = f.leaf acc id l := rfl
+public theorem foldNode_leaf_exact (f : NodeFold α) (acc : α) (id : Nat) (l : Leaf) :
+    foldNode f acc (.leaf id l) = f.leaf acc id l := by rfl
 
-theorem foldNode_node_exact (f : NodeFold α) (acc : α) (kind : Kind) (kids : Array Node) :
+public theorem foldNode_node_exact (f : NodeFold α) (acc : α) (kind : Kind) (kids : Array Node) :
     foldNode f acc (.node kind kids)
       = match f.descends kind with
         | true => foldNodeList f (f.enter acc kind) kids.toList
-        | false => f.enter acc kind := rfl
+        | false => f.enter acc kind := by rfl
 
 theorem foldNodeList_append (f : NodeFold α) (acc : α) (a b : List Node) :
     foldNodeList f acc (a ++ b) = foldNodeList f (foldNodeList f acc a) b := by
@@ -431,13 +443,13 @@ theorem foldNodeList_push (f : NodeFold α) (acc : α) (out : Array Node) (n : N
 accumulator it was given, so the whole walk does. The hypothesis the
 accumulator-extraction argument needs, named rather than repeated per
 census. -/
-structure Appends {β : Type} (f : NodeFold (Array β)) : Prop where
+public structure Appends {β : Type} (f : NodeFold (Array β)) : Prop where
   leaf : ∀ (out : Array β) (id : Nat) (l : Leaf), f.leaf out id l = out ++ f.leaf #[] id l
   enter : ∀ (out : Array β) (kind : Kind), f.enter out kind = out ++ f.enter #[] kind
 
 mutual
 
-theorem foldNodeList_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
+public theorem foldNodeList_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
     (ns : List Node) : foldNodeList f out ns = out ++ foldNodeList f #[] ns := by
   match ns with
   | [] => simp [foldNodeList_nil_exact]
@@ -445,7 +457,7 @@ theorem foldNodeList_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (
     rw [foldNodeList_cons_exact, foldNodeList_acc h _ rest, foldNode_acc h out n,
       foldNodeList_cons_exact, foldNodeList_acc h (foldNode f #[] n) rest, Array.append_assoc]
 
-theorem foldNode_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
+public theorem foldNode_acc {β : Type} {f : NodeFold (Array β)} (h : Appends f) (out : Array β)
     (n : Node) : foldNode f out n = out ++ foldNode f #[] n := by
   match n with
   | .leaf id l => rw [foldNode_leaf_exact, foldNode_leaf_exact, h.leaf]
@@ -469,33 +481,33 @@ def leafTextList (acc : String) (ns : List Node) : String := foldNodeList leafTe
 
 def leafTextOne (acc : String) (n : Node) : String := foldNode leafTextFold acc n
 
-def leafText (ns : Array Node) : String := leafTextList "" ns.toList
+public def leafText (ns : Array Node) : String := leafTextList "" ns.toList
 
-def Tree.text (t : Tree) : String := leafText t.children
+public def Tree.text (t : Tree) : String := leafText t.children
 
 /-- Every leaf with its id, in preorder. -/
-def leavesFold : NodeFold (Array (Nat × Leaf)) where
+@[expose] public def leavesFold : NodeFold (Array (Nat × Leaf)) where
   leaf := fun out id l => out.push (id, l)
   enter := fun out _ => out
   descends := fun _ => true
 
-def leavesList (out : Array (Nat × Leaf)) (ns : List Node) : Array (Nat × Leaf) :=
+@[expose] public def leavesList (out : Array (Nat × Leaf)) (ns : List Node) : Array (Nat × Leaf) :=
   foldNodeList leavesFold out ns
 
-def leavesOne (out : Array (Nat × Leaf)) (n : Node) : Array (Nat × Leaf) :=
+@[expose] public def leavesOne (out : Array (Nat × Leaf)) (n : Node) : Array (Nat × Leaf) :=
   foldNode leavesFold out n
 
-def leaves (ns : Array Node) : Array (Nat × Leaf) := leavesList #[] ns.toList
+@[expose] public def leaves (ns : Array Node) : Array (Nat × Leaf) := leavesList #[] ns.toList
 
-def Tree.leaves (t : Tree) : Array (Nat × Leaf) := Struct.leaves t.children
+@[expose] public def Tree.leaves (t : Tree) : Array (Nat × Leaf) := Struct.leaves t.children
 
 /-- How many leaves the tree gives an inline sequence: the projection's own
 count, so a consumer that has to step over a group it does not ship steps
 by exactly what the tree numbered. -/
-def leafCountInlines (xs : Array Inline) : Nat := (leaves (inlinesRaw #[] xs.toList)).size
+@[expose] public def leafCountInlines (xs : Array Inline) : Nat := (leaves (inlinesRaw #[] xs.toList)).size
 
 /-- How many leaves the tree gives a block sequence. -/
-def leafCountBlocks (bs : Array Block) : Nat := (leaves (blocksRaw #[] bs.toList)).size
+@[expose] public def leafCountBlocks (bs : Array Block) : Nat := (leaves (blocksRaw #[] bs.toList)).size
 
 /-- The outline headings, in preorder: every `.heading`'s level. An
 `.aside` is a side channel and never ships a heading, as `headingLevels`
@@ -507,13 +519,13 @@ def headingsFold : NodeFold (Array Nat) where
   enter := Kind.outlineEmit
   descends := Kind.outlineDescends
 
-def headingsList (out : Array Nat) (ns : List Node) : Array Nat := foldNodeList headingsFold out ns
+public def headingsList (out : Array Nat) (ns : List Node) : Array Nat := foldNodeList headingsFold out ns
 
-def headingsOne (out : Array Nat) (n : Node) : Array Nat := foldNode headingsFold out n
+public def headingsOne (out : Array Nat) (n : Node) : Array Nat := foldNode headingsFold out n
 
-def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
+public def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
 
-def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
+@[expose] public def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
 
 /-- Every non-text leaf's source and text alternative, in preorder. -/
 def altsFold : NodeFold (Array (Option String × Alt)) where
@@ -527,11 +539,11 @@ def altsList (out : Array (Option String × Alt)) (ns : List Node) : Array (Opti
 def altsOne (out : Array (Option String × Alt)) (n : Node) : Array (Option String × Alt) :=
   foldNode altsFold out n
 
-def alts (ns : Array Node) : Array (Option String × Alt) := altsList #[] ns.toList
+public def alts (ns : Array Node) : Array (Option String × Alt) := altsList #[] ns.toList
 
-def Tree.alts (t : Tree) : Array (Option String × Alt) := Struct.alts t.children
+public def Tree.alts (t : Tree) : Array (Option String × Alt) := Struct.alts t.children
 
-theorem leavesAppends : Appends leavesFold where
+public theorem leavesAppends : Appends leavesFold where
   leaf := by intros; simp [leavesFold]
   enter := by intros; simp [leavesFold]
 
@@ -553,7 +565,7 @@ def altPicPush (out : Array (Option String × Alt)) (b : Block) :
   | .picture pic => out.push (none, pic.alternative)
   | _ => out
 
-def irAlts (bs : Array Block) : Array (Option String × Alt) :=
+public def irAlts (bs : Array Block) : Array (Option String × Alt) :=
   foldBlocks altPicPush altPush #[] bs
 
 -- **The censuses' interface**: the equations a prover may cite, stated. A
@@ -579,26 +591,26 @@ theorem leafTextOne_node_exact (acc : String) (kind : Kind) (kids : Array Node) 
 
 theorem leafText_eq_exact (ns : Array Node) : leafText ns = leafTextList "" ns.toList := rfl
 
-theorem leavesList_nil_exact (out : Array (Nat × Leaf)) : leavesList out [] = out := rfl
+public theorem leavesList_nil_exact (out : Array (Nat × Leaf)) : leavesList out [] = out := by rfl
 
-theorem leavesList_cons_exact (out : Array (Nat × Leaf)) (n : Node) (rest : List Node) :
-    leavesList out (n :: rest) = leavesList (leavesOne out n) rest := rfl
+public theorem leavesList_cons_exact (out : Array (Nat × Leaf)) (n : Node) (rest : List Node) :
+    leavesList out (n :: rest) = leavesList (leavesOne out n) rest := by rfl
 
-theorem leavesOne_leaf_exact (out : Array (Nat × Leaf)) (id : Nat) (l : Leaf) :
-    leavesOne out (.leaf id l) = out.push (id, l) := rfl
+public theorem leavesOne_leaf_exact (out : Array (Nat × Leaf)) (id : Nat) (l : Leaf) :
+    leavesOne out (.leaf id l) = out.push (id, l) := by rfl
 
-theorem leavesOne_node_exact (out : Array (Nat × Leaf)) (kind : Kind) (kids : Array Node) :
-    leavesOne out (.node kind kids) = leavesList out kids.toList := rfl
+public theorem leavesOne_node_exact (out : Array (Nat × Leaf)) (kind : Kind) (kids : Array Node) :
+    leavesOne out (.node kind kids) = leavesList out kids.toList := by rfl
 
-theorem leaves_eq_exact (ns : Array Node) : leaves ns = leavesList #[] ns.toList := rfl
+public theorem leaves_eq_exact (ns : Array Node) : leaves ns = leavesList #[] ns.toList := by rfl
 
-theorem headingsList_nil_exact (out : Array Nat) : headingsList out [] = out := rfl
+public theorem headingsList_nil_exact (out : Array Nat) : headingsList out [] = out := by rfl
 
-theorem headingsList_cons_exact (out : Array Nat) (n : Node) (rest : List Node) :
-    headingsList out (n :: rest) = headingsList (headingsOne out n) rest := rfl
+public theorem headingsList_cons_exact (out : Array Nat) (n : Node) (rest : List Node) :
+    headingsList out (n :: rest) = headingsList (headingsOne out n) rest := by rfl
 
-theorem headingsOne_leaf_exact (out : Array Nat) (id : Nat) (l : Leaf) :
-    headingsOne out (.leaf id l) = out := rfl
+public theorem headingsOne_leaf_exact (out : Array Nat) (id : Nat) (l : Leaf) :
+    headingsOne out (.leaf id l) = out := by rfl
 
 /-- The outline's descent equation, over any kind: the classification says
 whether the content is read and what the node ships, so a citation names no
@@ -609,14 +621,14 @@ theorem headingsOne_node_exact (out : Array Nat) (kind : Kind) (kids : Array Nod
         | true => headingsList (kind.outlineEmit out) kids.toList
         | false => kind.outlineEmit out := rfl
 
-theorem headingsOne_heading_exact (out : Array Nat) (level : Nat) (kids : Array Node) :
-    headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList :=
+public theorem headingsOne_heading_exact (out : Array Nat) (level : Nat) (kids : Array Node) :
+    headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList := by
   rfl
 
-theorem headingsOne_aside_exact (out : Array Nat) (kids : Array Node) :
-    headingsOne out (.node .aside kids) = out := rfl
+public theorem headingsOne_aside_exact (out : Array Nat) (kids : Array Node) :
+    headingsOne out (.node .aside kids) = out := by rfl
 
-theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array Node)
+public theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array Node)
     (hh : ∀ level, kind ≠ .heading level) (ha : kind ≠ .aside) :
     headingsOne out (.node kind kids) = headingsList out kids.toList := by
   cases kind
@@ -624,7 +636,7 @@ theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array 
   case aside => exact absurd rfl ha
   all_goals rfl
 
-theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := rfl
+public theorem headings_eq_exact (ns : Array Node) : headings ns = headingsList #[] ns.toList := by rfl
 
 theorem altsList_nil_exact (out : Array (Option String × Alt)) : altsList out [] = out := rfl
 
@@ -674,13 +686,13 @@ theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
 /-- The outline census builds onto its accumulator: the census of a list is
 the accumulator, then the list's own — the fact a projection proof needs of
 the walk, in place of its equations. -/
-theorem headingsList_acc (out : Array Nat) (ns : List Node) :
-    headingsList out ns = out ++ headingsList #[] ns :=
-  foldNodeList_acc headingsAppends out ns
+public theorem headingsList_acc (out : Array Nat) (ns : List Node) :
+    headingsList out ns = out ++ headingsList #[] ns := by
+  exact foldNodeList_acc headingsAppends out ns
 
-theorem headingsOne_acc (out : Array Nat) (n : Node) :
-    headingsOne out n = out ++ headingsOne #[] n :=
-  foldNode_acc headingsAppends out n
+public theorem headingsOne_acc (out : Array Nat) (n : Node) :
+    headingsOne out n = out ++ headingsOne #[] n := by
+  exact foldNode_acc headingsAppends out n
 
 theorem altsList_append (out : Array (Option String × Alt)) (a b : List Node) :
     altsList out (a ++ b) = altsList (altsList out a) b :=
@@ -694,13 +706,13 @@ theorem altsList_push (out : Array (Option String × Alt)) (ns : Array Node) (n 
     altsList out (ns.push n).toList = altsOne (altsList out ns.toList) n :=
   foldNodeList_push altsFold out ns n
 
-theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
-    leavesList out (a ++ b) = leavesList (leavesList out a) b :=
-  foldNodeList_append leavesFold out a b
+public theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
+    leavesList out (a ++ b) = leavesList (leavesList out a) b := by
+  exact foldNodeList_append leavesFold out a b
 
-theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : Node) :
-    leavesList out (l ++ [n]) = leavesOne (leavesList out l) n :=
-  foldNodeList_snoc leavesFold out l n
+public theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : Node) :
+    leavesList out (l ++ [n]) = leavesOne (leavesList out l) n := by
+  exact foldNodeList_snoc leavesFold out l n
 
 theorem leavesList_push (out : Array (Nat × Leaf)) (ns : Array Node) (n : Node) :
     leavesList out (ns.push n).toList = leavesOne (leavesList out ns.toList) n :=
@@ -1032,7 +1044,8 @@ end
 
 /-- **Numbering conserves the text**: the ids pass is a `Conserves`
 instance over the tree's own census. -/
-theorem number_text (k : Nat) : Conserves leafText (number k) := fun ns => by
+public theorem number_text (k : Nat) : Conserves leafText (number k) := by
+  intro ns
   rw [leafText_eq_exact, leafText_eq_exact, number, numberList_text]
   rfl
 
@@ -1042,14 +1055,14 @@ dropped, nothing invented, the ids added on top. The census equality of
 the `_text` shape; not a `Conserves` instance itself because the walk is
 IR → tree, not IR → IR — `number_text` is the instance the tree-side pass
 owes, and `structTree_text` composes it with the raw walk's equality. -/
-theorem structTree_text (bs : Array Block) : leafText (ofBlocks bs) = blocksText bs := by
+public theorem structTree_text (bs : Array Block) : leafText (ofBlocks bs) = blocksText bs := by
   unfold ofBlocks
   rw [number_text, leafText, blocksRaw_text]
   rfl
 
 /-- The document face: the tree's text is the body's. -/
-theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body :=
-  structTree_text doc.body
+public theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body := by
+  exact structTree_text doc.body
 
 -- **The outline is the IR's** (`structTree_headings_covers`): the tree's
 -- `.heading` levels in preorder are `headingLevels`. Inline content opens
@@ -1369,7 +1382,7 @@ end
 exactly `headingLevels`: every `\section` at its level, in order, and no
 heading the outline does not know — the fact the outline diagnostics, the
 markdown preamble, and a tagger's `H<n>` sequence all read. -/
-theorem structTree_headings_covers (bs : Array Block) :
+public theorem structTree_headings_covers (bs : Array Block) :
     headings (ofBlocks bs) = headingLevels bs := by
   unfold ofBlocks headingLevels
   rw [headings_eq_exact, number, numberList_headings, blocksRaw_headings]
@@ -1694,7 +1707,7 @@ end
 /-- **The alternatives are the IR's.** Every image and native-picture
 leaf of the structure tree, source where one exists and resolved
 alternative, is exactly the shared fold's whole-document census. -/
-theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts bs := by
+public theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts bs := by
   unfold ofBlocks irAlts foldBlocks
   rw [alts_eq_exact, number, numberList_alts, blocksRaw_alts]
   rfl
@@ -1705,7 +1718,7 @@ theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts 
 
 /-- `leaves` builds onto its accumulator: the census of a list is the
 accumulator, then the list's own. -/
-theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
+public theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
     leavesList out ns = out ++ leavesList #[] ns :=
   foldNodeList_acc leavesAppends out ns
 
@@ -1775,7 +1788,7 @@ end
 sequence, in preorder, carry `0, 1, …, n − 1`: the k-th leaf is the one
 whose id is `k`, so `leaves t` is the one array the attribution channel's
 `Option Nat` and a tagger's marked-content keys both index. -/
-theorem structTree_leaves_id (bs : Array Block) :
+public theorem structTree_leaves_id (bs : Array Block) :
     (leaves (ofBlocks bs)).toList.map Prod.fst = List.range (leaves (ofBlocks bs)).size := by
   unfold ofBlocks number
   rw [leaves_eq_exact]
@@ -1877,7 +1890,7 @@ theorem blocksRaw_acc (out : Array Node) (bs : List Block) :
     rw [blocksRaw, blocksRaw_acc _ rest, blockRaw_acc out b, blocksRaw,
       blocksRaw_acc (blockRaw #[] b) rest, Array.append_assoc]
 
-theorem blockRaw_acc (out : Array Node) (b : Block) :
+public theorem blockRaw_acc (out : Array Node) (b : Block) :
     blockRaw out b = out ++ blockRaw #[] b := by
   match b with
   | .para content => simp [blockRaw]
@@ -1938,9 +1951,7 @@ end
 
 mutual
 
-/-- Numbering moves no leaf: the numbered shape has exactly the leaves the
-shape had. -/
-theorem numberList_leafCount (k : Nat) (ns : List Node) :
+theorem numberList_leafCount_aux (k : Nat) (ns : List Node) :
     (leavesList #[] (numberList k #[] ns).1.toList).size = (leavesList #[] ns).size := by
   match ns with
   | [] => simp [numberList, leavesList_nil_exact]
@@ -1950,7 +1961,7 @@ theorem numberList_leafCount (k : Nat) (ns : List Node) :
     rw [h1, Array.toList_append, leavesList_append, leavesList_acc, Array.size_append,
       Array.toList_push, leavesList_cons_exact, leavesList_acc (leavesOne #[] n) rest,
       Array.size_append]
-    rw [numberList_leafCount (numberOne k n).2 rest]
+    rw [numberList_leafCount_aux (numberOne k n).2 rest]
     simp only [List.nil_append, leavesList_nil_exact, leavesList_cons_exact]
     rw [numberOne_leafCount k n]
 
@@ -1960,9 +1971,15 @@ theorem numberOne_leafCount (k : Nat) (n : Node) :
   | .leaf id l => simp [numberOne, leavesOne_leaf_exact]
   | .node kind kids =>
     simp only [numberOne, leavesOne_node_exact]
-    exact numberList_leafCount k kids.toList
+    exact numberList_leafCount_aux k kids.toList
 
 end
+
+/-- Numbering moves no leaf: the numbered shape has exactly the leaves the
+shape had. The recursive proof keeps the single-node numbering step private. -/
+public theorem numberList_leafCount (k : Nat) (ns : List Node) :
+    (leavesList #[] (numberList k #[] ns).1.toList).size = (leavesList #[] ns).size := by
+  exact numberList_leafCount_aux k ns
 
 /-- The counter a numbering leaves: the start plus the shape's leaf count. -/
 theorem numberList_count (k : Nat) (ns : List Node) :
@@ -1995,7 +2012,7 @@ theorem numberList_append (k : Nat) (a b : List Node) :
 
 /-- Two shapes numbered as one from `k`: the first takes `k …`, the second
 resumes at `k` plus the first's leaf count. -/
-theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
+public theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
     (leaves (number k (a ++ b))).toList.map Prod.fst
       = List.range' k (leaves a).size
         ++ List.range' (k + (leaves a).size) (leaves b).size := by
@@ -2017,11 +2034,11 @@ theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
 
 /-- Covering with any selector preserves the whole numbered structure,
 including leaf contents and ids, at both IR levels. -/
-theorem onSteps_id (spec : OverlaySpec) (bodyI : Array Inline) (bodyB : Array Block)
+public theorem onSteps_id (spec : OverlaySpec) (bodyI : Array Inline) (bodyB : Array Block)
     (out : Array Node) (k : Nat) :
     number k (inlineRaw out (.onSteps spec bodyI)) = number k (inlinesRaw out bodyI.toList)
-      ∧ number k (blockRaw out (.onSteps spec bodyB)) = number k (blocksRaw out bodyB.toList) :=
-  ⟨rfl, rfl⟩
+      ∧ number k (blockRaw out (.onSteps spec bodyB)) = number k (blocksRaw out bodyB.toList) := by
+  exact ⟨rfl, rfl⟩
 
 /-- **`alt_leaf_projects`** (`_projects`): the ids the tree gives an overlay
 alternation's two groups, for every selector and at both IR levels. The group
@@ -2036,7 +2053,7 @@ the id the tree already assigned it. That is what keeps one leaf per group
 across a frame's step pages — the id is the node's position in the document
 tree, not a count the walk accumulates, and nothing has to reconcile two
 counters after the fact. -/
-theorem alt_leaf_projects (spec : OverlaySpec)
+public theorem alt_leaf_projects (spec : OverlaySpec)
     (firstI otherI : Array Inline) (firstB otherB : Array Block) (k : Nat) :
     (leaves (number k (inlineRaw #[] (Inline.altSteps spec firstI otherI)))).toList.map Prod.fst
         = List.range' k (leafCountInlines firstI)
