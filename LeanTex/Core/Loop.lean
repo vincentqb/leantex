@@ -117,7 +117,7 @@ theorem bind_of_inv {β γ : Type} (P : β → Prop) (Q : γ → Prop) (L : Id �
 /-- A successful result satisfies `P`. Failure supplies no value and makes
 no claim about one; in particular this is not a termination or success
 guarantee. -/
-def OnSuccess {ε α : Type} (P : α → Prop) : Except ε α → Prop
+@[expose] def OnSuccess {ε α : Type} (P : α → Prop) : Except ε α → Prop
   | .error _ => True
   | .ok a => P a
 

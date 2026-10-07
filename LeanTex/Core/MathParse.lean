@@ -1,8 +1,10 @@
-import LeanTex.Core.Parse
+module
+
+public import LeanTex.Core.Parse
+public import LeanTex.Core.Math
+public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
-import LeanTex.Core.Math
 import LeanTex.Core.MathSymData
-import LeanTex.Core.Ir
 import LeanTex.Core.Loop
 
 /-! The math surface: `$...$` bodies and alignment environments elaborated
@@ -22,7 +24,7 @@ letters denote variables and set italic; digits, operators, and named
 functions are upright). The Mathematical Alphanumeric Symbols block carries
 the italic letters, with Unicode's one hole: italic h is U+210E PLANCK
 CONSTANT. -/
-def italicVar (c : Char) : Char :=
+public def italicVar (c : Char) : Char :=
   if c == 'h' then '\u210E'
   else if 'a' ≤ c && c ≤ 'z' then Char.ofNat (0x1D44E + (c.toNat - 'a'.toNat))
   else if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (0x1D434 + (c.toNat - 'A'.toNat))
@@ -110,7 +112,7 @@ below, so a row here is the one `lookup` finds for its name. Greek
 lowercase is italic (the Mathematical Italic block, with TeX's `\epsilon` ↦
 lunate and `\phi` ↦ straight forms); Greek capitals upright, TeX's
 convention — kept whole here because `greek_literal_agree` reads it. -/
-def ctrlAtom : List (String × MathClass × Char) :=
+public def ctrlAtom : List (String × MathClass × Char) :=
   [-- Greek, lowercase italic
    ("alpha", .ord, '𝛼'), ("beta", .ord, '𝛽'),
    ("gamma", .ord, '𝛾'), ("delta", .ord, '𝛿'),
@@ -172,7 +174,7 @@ private def limitOps : List String :=
 
 /-- The named functions TeX sets upright (TeXbook p. 162): Op atoms whose
 nucleus is a word. -/
-def ctrlWord : List (String × String) :=
+public def ctrlWord : List (String × String) :=
   [("arccos", "arccos"), ("arcsin", "arcsin"), ("arctan", "arctan"),
    ("arg", "arg"), ("cos", "cos"), ("cosh", "cosh"), ("cot", "cot"),
    ("coth", "coth"), ("csc", "csc"), ("deg", "deg"), ("det", "det"),
@@ -190,7 +192,7 @@ private def limitWords : List String :=
 
 /-- Explicit spacing commands, in mu (18ths of an em): TeX's values
 (TeXbook p. 167); `\ ` and `~` take an interword third of an em. -/
-def ctrlSpace : List (String × Int) :=
+public def ctrlSpace : List (String × Int) :=
   [(",", 3), (":", 4), (";", 5), ("!", -3), ("quad", 18), ("qquad", 36),
    (" ", 6), ("~", 6)]
 
@@ -198,7 +200,7 @@ def ctrlSpace : List (String × Int) :=
 (`Math.MathAlphabet.apply`): LaTeX's `\math…` family, `\bm`/`\boldsymbol`
 (bold with variables kept italic), and the plain-TeX `\cal`/`\frak`, whose
 dominant use `{\cal L}` reads here as `\cal` taking the single letter. -/
-def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
+public def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
   [("mathbb", .bb, .doc), ("mathcal", .cal, .doc), ("cal", .cal, .doc),
    ("mathfrak", .frak, .doc), ("frak", .frak, .doc),
    -- amsfonts.sty's obsolete spellings of `\mathbb` and `\mathbf`
@@ -228,7 +230,7 @@ mathematics renders, something about its presentation does not. Typed
 rather than a bare string so the elaborator dispatches each kind to its own
 diagnostic — a ragged alignment row and a dropped colour are different
 losses and may not share a code. -/
-inductive Note where
+public inductive Note where
   | ragged (msg : String)
   /-- A colour or font change inside math whose content renders in the
   surrounding style: `what` names the change for the message. -/
@@ -253,7 +255,7 @@ whether it names a declared entry (`Palette.find?`, the HTML custom
 property's name), and the cancel package's options and `\CancelColor`. The
 defaults resolve nothing and load no option, which is how a formula parses
 where no document stands behind it. -/
-structure Env where
+public structure Env where
   ink : String → Option (Ir.Color × Bool) := fun _ => none
   cancel : CancelSpec := {}
   /-- The expression `\CancelColor` names when the palette cannot resolve
@@ -279,7 +281,7 @@ private def textNeutralCtrl : List String :=
 
 /-- The shared accent registry: parsing and the plaintext reading use one
 mapping between the control name, combining mark and stretch flag. -/
-def accentCtrl : List (String × Char × Bool) := Ir.mathAccentCommands
+public def accentCtrl : List (String × Char × Bool) := Ir.mathAccentCommands
 
 /-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
 for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`
@@ -305,7 +307,7 @@ Listed rather than derived because the parse loop's arms are a `match` and
 not a table; `containKnownChecks` probes each name here through
 `parseMath`, so a name that stops being structural fails the suite rather
 than quietly starting to be contained. -/
-def structuralCtrl : List String :=
+public def structuralCtrl : List String :=
   ["over", "genfrac", "sqrt", "ensuremath", "left", "right",
    "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor",
    "color", "cancelto",
@@ -321,7 +323,7 @@ private def cancelCtrl : List (String × CancelMark) :=
 `\genfrac{}{}{}1`, `\binom` `\genfrac()\z@{}`, `\dbinom` `\genfrac(){0pt}0`,
 `\tbinom` `\genfrac(){0pt}1`; `\frac` sets the face's rule in the current
 style, as `\genfrac{}{}{}{}` does). -/
-def fracCmds : List (String × FracSpec) :=
+public def fracCmds : List (String × FracSpec) :=
   let binom : FracSpec := { left := some '(', right := some ')', rule := some 0 }
   [("frac", {}), ("dfrac", { style := some (.display false) }),
    ("tfrac", { style := some (.text false) }),
@@ -337,7 +339,7 @@ closed by `\right.`, under `\def\arraystretch{1.2}`; `aligned`,
 `gathered` and `split` are the display alignments' own column models).
 `\substack` is `subarray{c}`, one centred column. `smallmatrix` is its own
 grid (`GridKind.small`), undelimited. -/
-def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
+public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
   let matrix : GridKind := .array (Array.replicate 10 .center) 1000
   [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),
    ("bmatrix", matrix, some '[', some ']'), ("Bmatrix", matrix, some '{', some '}'),
@@ -358,7 +360,7 @@ private def bigCtrl : List (String × MathClass × Nat) :=
     [(n, .ord, s), (n ++ "l", .opening, s), (n ++ "r", .closing, s), (n ++ "m", .rel, s)]
 
 /-- Does this slice model the control word at all? -/
-def knownCtrl (n : String) : Bool :=
+public def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
     || (cancelCtrl.lookup n).isSome
     || (bigCtrl.lookup n).isSome
@@ -1537,7 +1539,7 @@ stays, and the formula parses. Where containment leaves the formula inking
 nothing at all the whole-formula floor is the better recovery — it has a
 declared placeholder (`Ir.floorInk_accounts`) where this path would ship a
 blank — so the construct is named through the same channel it always was. -/
-def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
+public def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
   let (l, notes) ← parseToks toks none display env
@@ -1549,7 +1551,7 @@ def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
 the containment policy: its control word is not modelled and its naming
 arguments have a declared count. Text scans, grids, and the parser loop
 preserve this provenance, for every document environment. -/
-theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
+public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
     (l : MList) (notes : Array Note) {env : Env}
     (h : parseMath display raws env = .ok (l, notes)) :
     ∀ w, Note.constructFloored w ∈ notes →
@@ -1587,7 +1589,7 @@ theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
 /-- Parse an alignment environment's body (`align`/`gather` rows split at
 `&` and `\\`) into one grid formula. Containment applies as it does to a
 formula (`parseMath`): one unmodelled addend of one row costs that addend. -/
-def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env := {}) :
+public def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
   let (l, notes) ← parseToks toks (some kind) true env

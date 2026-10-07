@@ -1,4 +1,7 @@
+module
+
 import LeanTex.Core.MathParse
+import LeanTex.Core.Loop
 
 /-! Ordinary consumers can construct the formula environment, classify the
 reported notes, call both readers and use their containment contract.
@@ -9,6 +12,12 @@ open LeanTex.Core.Math
 open LeanTex.Core.MathParse
 
 namespace Tests.MathParseInterface
+
+example {ε α : Type} (P : α → Prop) (a : α) :
+    Loop.OnSuccess P (Except.ok a : Except ε α) = P a := rfl
+
+example {ε α : Type} (P : α → Prop) (e : ε) :
+    Loop.OnSuccess P (Except.error e : Except ε α) := True.intro
 
 example : Repr Note := inferInstance
 example : BEq Note := inferInstance
@@ -42,6 +51,23 @@ example (display : Bool) (raws : Array Parse.Raw) (env : Env)
       ∃ command, name = "\\" ++ command ∧ knownCtrl command = false ∧
         (Ir.floorNamedArgs.lookup command).isSome :=
   mathContain_accounts display raws formula notes parsed
+
+/-- The parity suites enumerate these vocabularies to cover every supported
+spelling. Ordinary clients may read them without unfolding their implementation. -/
+example : Char → Char := italicVar
+example : List (String × MathClass × Char) := ctrlAtom
+example : List (String × String) := ctrlWord
+example : List (String × Int) := ctrlSpace
+example : List (String × MathAlphabet × AlphaSource) := alphaCtrl
+example : List (String × Char × Bool) := accentCtrl
+example : List String := structuralCtrl
+example : List (String × FracSpec) := fracCmds
+example : List (String × GridKind × Option Char × Option Char) := gridEnvs
+
+example : True := by
+  fail_if_success
+    have : italicVar 'h' = 'ℎ' := by rfl
+  trivial
 
 example : True := by
   fail_if_success have := MathParse.greekLiteral
