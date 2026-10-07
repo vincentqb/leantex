@@ -1,4 +1,9 @@
-import LeanTex.Core.PdfFontContract
+module
+
+public import LeanTex.Core.PdfFontContract
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfCensus
+import all LeanTex.Core.PdfRead
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfCensus
@@ -22,7 +27,7 @@ private theorem catalog_not_font (root : Option Nat) (xmp : Nat)
 read-side census when their source values and references are recovered.
 The recovery premises are discharged by the complete reader composition;
 the construction of font and descriptor links is proved here. -/
-theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)

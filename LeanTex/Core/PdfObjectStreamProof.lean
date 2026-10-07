@@ -1,5 +1,9 @@
-import LeanTex.Core.Pdf
-import LeanTex.Core.PdfReadProof
+module
+
+public import LeanTex.Core.Pdf
+public import LeanTex.Core.PdfReadProof
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfRead
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex PdfRead.ObjReader
@@ -57,7 +61,7 @@ No parser result or decompressor result occurs among the premises.
 This artifact theorem closes payload recovery; reading the object-stream
 header, selecting its xref index, and inflating its bytes remain separate
 composition steps. -/
-theorem objectStream_parse_entry_exact (before after : List (Nat × Obj))
+public theorem objectStream_parse_entry_exact (before after : List (Nat × Obj))
     (id : Nat) (v : Obj) (hv : v.Representable)
     (ha : ∀ e ∈ after, e.2.Representable) :
     let out := objectStream (before ++ (id,v)::after)

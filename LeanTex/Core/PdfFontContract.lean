@@ -1,5 +1,9 @@
-import LeanTex.Core.Pdf
-import LeanTex.Core.PdfCensus
+module
+
+public import LeanTex.Core.Pdf
+public import LeanTex.Core.PdfCensus
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfCensus
 
 namespace LeanTex.Core.Pdf
 
@@ -27,7 +31,7 @@ private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font.Font)
 /-- A font row in the emitted family satisfies the census once its
 descriptor reference resolves. The third row is a descriptor and cannot
 enter the font census. -/
-theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
+public theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
     (font : Font.Font) (baseFont : String) (widths : PdfRead.Obj)
     (es : Array PdfRead.Entry) (e : PdfRead.Entry)
     (he : (e.num, e.val) ∈ (fontObjects t k font baseFont widths).rows k)
@@ -52,7 +56,7 @@ values, and any foreign font needs a separate contract.
 The conclusion is the census's rule (a descriptor carries a program
 reference), not validation of the font program's bytes. No reader success
 or font-program validity is inferred from construction alone. -/
-theorem fontObjects_census_contract (t : ObjTable) (font : Nat → Font.Font)
+public theorem fontObjects_census_contract (t : ObjTable) (font : Nat → Font.Font)
     (baseFont : Nat → String) (widths : Nat → PdfRead.Obj)
     (trailer : PdfRead.Obj) (es : Array PdfRead.Entry)
     (hfonts : ∀ e ∈ PdfCensus.fontEntries es, ∃ k, k < t.nf ∧

@@ -1,5 +1,13 @@
-import LeanTex.Core.Pdf
-import LeanTex.Core.PdfCensus
+module
+
+public import LeanTex.Core.Pdf
+public import LeanTex.Core.PdfCensus
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfCensus
+import all LeanTex.Core.PdfRead
+import all LeanTex.Core.PdfObj
+import all LeanTex.Core.PdfLex
+import all LeanTex.Core.PdfStreamSpelling
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
@@ -8,20 +16,20 @@ open PdfRead PdfLex
 The descriptions below cover the writer's literal prefixes; they contain
 no parser result or assumption about the validity of a font program. -/
 
-def StreamPrefix.fields : StreamPrefix → Array (String × Obj)
+private def StreamPrefix.fields : StreamPrefix → Array (String × Obj)
   | .content => #[]
   | .openType => #[("Subtype", .name "OpenType")]
   | .trueType n => #[("Length1", .int n)]
   | .metadata => #[("Type", .name "Metadata"), ("Subtype", .name "XML")]
 
-def StreamPrefix.dict (p : StreamPrefix) (filtered : Bool) (length : Nat) : Obj :=
+public def StreamPrefix.dict (p : StreamPrefix) (filtered : Bool) (length : Nat) : Obj :=
   .dict (p.fields ++ (if filtered then #[("Filter", .name "FlateDecode")] else #[]) ++
     #[("Length", .int length)])
 
-def StreamPrefix.spelling (p : StreamPrefix) (filtered : Bool) (length : Nat) : ByteArray :=
+public def StreamPrefix.spelling (p : StreamPrefix) (filtered : Bool) (length : Nat) : ByteArray :=
   (s!"<< {p.fragment filtered} /Length {length} >>").toUTF8
 
-theorem StreamPrefix.dict_representable_exact (p : StreamPrefix) (filtered : Bool)
+public theorem StreamPrefix.dict_representable_exact (p : StreamPrefix) (filtered : Bool)
     (length : Nat) : (p.dict filtered length).Representable := by
   cases p <;> cases filtered <;>
     unfold StreamPrefix.dict StreamPrefix.fields <;> apply Obj.Representable.dict
@@ -61,12 +69,14 @@ private theorem StreamPrefix.spelling_rendered (p : StreamPrefix) (filtered : Bo
       ByteArray.append_assoc, ByteArray.empty_append]
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp
-  all_goals simp only [ByteArray.data_append, Array.toList_append]
+  all_goals simp only [ByteArray.data_append, Array.toList_append,
+    String.toUTF8_eq_toByteArray, Int.repr_eq_ite, Int.natCast_nonneg,
+    ↓reduceIte, Int.toNat_natCast]
   all_goals rfl
 
 /-- The four production prefixes spell the very dictionary they describe,
 including the extra space emitted for an empty prefix. -/
-theorem StreamPrefix.spelling_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
+public theorem StreamPrefix.spelling_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     (p.dict filtered length).Spelling (p.spelling filtered length) := by
   rw [p.spelling_rendered]
   have h := p.dict_representable_exact filtered length
@@ -76,14 +86,14 @@ theorem StreamPrefix.spelling_exact (p : StreamPrefix) (filtered : Bool) (length
       StreamPrefix.rendered] using Obj.Spelling.paddedDict h
   all_goals exact Obj.Spelling.render h
 
-theorem StreamPrefix.length_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
+public theorem StreamPrefix.length_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     (p.dict filtered length).get? "Length" = some (.int length) := by
   cases p <;> cases filtered <;> simp [StreamPrefix.dict, StreamPrefix.fields, Obj.get?]
 
 /-- These stream dictionaries never enter the font-dictionary census.
 A font program's stream is distinct from the font and descriptor objects
 that reference it. -/
-theorem StreamPrefix.kind_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
+public theorem StreamPrefix.kind_exact (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     PdfCensus.kindOf (p.dict filtered length) ≠ .font := by
   cases p <;> cases filtered
   all_goals first
@@ -92,7 +102,7 @@ theorem StreamPrefix.kind_exact (p : StreamPrefix) (filtered : Bool) (length : N
 
 /-- The row serializer emits the certified dictionary spelling followed
 by precisely the retained bytes and the real closing markers. -/
-theorem native_row_bytes_exact (id : Nat) (p : StreamPrefix) (filtered : Bool)
+public theorem native_row_bytes_exact (id : Nat) (p : StreamPrefix) (filtered : Bool)
     (raw : ByteArray) :
     rowInto ByteArray.empty id (.stream (p.fragment filtered) raw) =
       (s!"{id} 0 obj\n").toUTF8 ++ p.spelling filtered raw.size ++
@@ -101,7 +111,7 @@ theorem native_row_bytes_exact (id : Nat) (p : StreamPrefix) (filtered : Bool)
     ByteArray.empty_append, ByteArray.append_assoc]
   apply ByteArray.ext
   apply Array.toList_inj.mp
-  simp only [ByteArray.data_append, Array.toList_append]
+  simp only [ByteArray.data_append, Array.toList_append, String.toUTF8_eq_toByteArray]
   rfl
 
 end LeanTex.Core.Pdf

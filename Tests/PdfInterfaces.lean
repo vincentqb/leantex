@@ -1,5 +1,6 @@
 import LeanTex.Core.PdfStruct
 import LeanTex.Core.PdfRowRecovery
+import LeanTex.Core.PdfAgreement
 
 /-! Ordinary consumers use typed content operations and structure
 projections without depending on rendering, allocation, or traversal helpers. -/
@@ -11,6 +12,10 @@ open LeanTex.Core
 example : Repr Pdf.PathOp := inferInstance
 example : BEq Pdf.TextItem := inferInstance
 example : Inhabited Pdf.ContentOp := inferInstance
+example : Pdf.Rect → String := Pdf.Rect.render
+
+example : ({} : Ir.OutputContract).unmet Pdf.profile = #[] :=
+  Pdf.pdf_default_contract_exact
 
 example (operations : Array Pdf.ContentOp) :
     Pdf.render operations = Pdf.joinLines (Pdf.lines operations) :=
@@ -45,6 +50,60 @@ example (plan : Pdf.WritePlan) (before after : List Pdf.Row) (row : Pdf.Row)
       (PdfLex.octets (Pdf.rowInto ByteArray.empty row.id row.body)) :=
   plan.direct_span_exact before after row h
 
+example : Repr Pdf.WriteError := inferInstance
+example : BEq Pdf.WriteError := inferInstance
+example (plan : Pdf.WritePlan) : Decidable plan.WithinDomain := inferInstance
+
+example (plan : Pdf.WritePlan) (bytes : ByteArray) :
+    plan.checked = .ok bytes ↔ plan.WithinDomain ∧ plan.bytes = bytes :=
+  plan.checked_exact bytes
+
+example (plan : Pdf.WritePlan) (error : Pdf.WriteError)
+    (h : plan.checked = .error error) : ¬ plan.WithinDomain :=
+  plan.checked_error_gated error h
+
+example (plan : Pdf.WritePlan) (h : plan.WithinBounds) :
+    ∀ entry ∈ plan.entries, entry.Fits :=
+  plan.entries_fits h
+
+example (geom : Layout.Geom) (fonts : Font.FontSet) (pages : Array Layout.PageOut)
+    (info : Ir.Meta) (images : Image.Store) (outline : Array Layout.OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (operations : Array (Array Pdf.ContentOp)) (programs : Array (ByteArray × Bool))
+    (bytes : ByteArray) :
+    Pdf.writeChecked geom fonts pages info images outline streams tree operations programs =
+        .ok bytes ↔
+      (Pdf.prepare geom fonts pages info images outline streams tree operations programs).WithinDomain ∧
+      Pdf.write geom fonts pages info images outline streams tree operations programs = bytes :=
+  Pdf.writeChecked_exact geom fonts pages info images outline streams tree operations programs bytes
+
+/-- Typed publishers can inspect every refusal without reading serializer internals. -/
+example (error : Pdf.WriteError) : Nat :=
+  match error with
+  | .objectIndex count => count
+  | .byteOffset bytes => bytes
+  | .objectNumber number => number
+  | .tableSize count => count
+  | .objectStreamSize bytes => bytes
+  | .xrefStreamSize bytes => bytes
+  | .objectSpelling id => id
+
+example (fonts : Font.FontSet) (pages : Array Layout.PageOut)
+    (h : 0 < fonts.fonts.size) :
+    ∀ k ∈ Pdf.keepFaces fonts pages,
+      ∃ face ∈ HtmlDoc.shipFaces fonts, face.index = k :=
+  Pdf.html_fonts_cover_pdf fonts pages h
+
+example (features : Ir.Features) :
+    (!(HtmlDoc.kernCssFor features).isEmpty) = Layout.kernEnabled features :=
+  Pdf.features_agree features
+
+example (floor : String) (alternative : Ir.Alt) :
+    (Pdf.altElem #[Pdf.rootElem] 0 0 alternative).size = 1 ↔
+      HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor alternative) "aria-hidden" =
+        some "true" :=
+  Pdf.alt_hidden_agree floor alternative
+
 example : Repr Pdf.StructKid := inferInstance
 example : Repr Pdf.StructElem := inferInstance
 example : Struct.Tree → Array Pdf.StructElem := Pdf.skeleton
@@ -72,6 +131,13 @@ example (elements : Array Pdf.StructElem) (parent leaf : Nat) (alternative : Ir.
 
 example : True := by
   fail_if_success have := Pdf.serializeList_row_span_exact
+  fail_if_success have := Pdf.serializeList
+  fail_if_success have := Pdf.indexObjectsList
+  fail_if_success have := Pdf.objectStreamList
+  fail_if_success have := Pdf.ImgExtra
+  fail_if_success have := Pdf.Rect.obj
+  fail_if_success have := Pdf.ptObj
+  fail_if_success have := Pdf.WritePlan.find_unencodable_none
   fail_if_success have := Pdf.pushGid
   fail_if_success have := Pdf.dashOp
   fail_if_success have := Pdf.paintOp
@@ -80,6 +146,8 @@ example : True := by
   fail_if_success have := Pdf.renderStep
   fail_if_success have := Pdf.TextOp.renderLines
   fail_if_success have := Pdf.ContentOp.renderLines
+  fail_if_success have := Pdf.TextOp.render_lines
+  fail_if_success have := Pdf.ContentOp.render_lines
   fail_if_success have := Pdf.widthμOf
   fail_if_success have := Pdf.penTarget
   fail_if_success have := Pdf.TextSt.closeTJ

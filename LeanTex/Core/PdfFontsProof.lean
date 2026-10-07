@@ -1,5 +1,10 @@
-import LeanTex.Core.PdfPlanRecovery
-import LeanTex.Core.PdfPrepareFonts
+module
+
+public import LeanTex.Core.PdfPlanRecovery
+public import LeanTex.Core.PdfPrepareFonts
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfWriteContract
+import all LeanTex.Core.PdfCensus
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfCensus
@@ -20,7 +25,7 @@ private theorem WritePlan.head_suffix (p : WritePlan) :
 
 /-- Both supported PDF versions retain their header in the complete
 emitted byte array, irrespective of the following object payloads. -/
-theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -36,7 +41,8 @@ theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
       (if info.pdfVersion == some "1.7" then "%PDF-1.7\n%" else "%PDF-2.0\n%").toUTF8 ++
         ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8 := rfl
   rw [hh]
-  split <;> simp only [byte_get, ByteArray.data_append, Array.getElem?_append] <;> rfl
+  split <;> simp only [byte_get, ByteArray.data_append, Array.getElem?_append,
+    String.toUTF8_eq_toByteArray] <;> rfl
 
 /-- The bounded replacement for the unrestricted font-embedding claim:
 the actual writer's bytes pass the actual reader's font census.
@@ -47,7 +53,7 @@ allocation, object enumeration, and descriptor recovery are proved,
 not premises. As in the original obligation, the image store is empty:
 foreign PDF resource graphs have a separate acceptance boundary.
 Page streams, structure trees, and cached font programs remain arbitrary. -/
-theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -78,7 +84,7 @@ theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
 /-- Successful checked production establishes the complete font census
 contract on the returned bytes. The publisher needs no separate storage
 or grammar premise; the API that produced the artifact checked both. -/
-theorem writeChecked_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem writeChecked_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)

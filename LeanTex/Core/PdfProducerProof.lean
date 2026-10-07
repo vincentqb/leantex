@@ -1,6 +1,11 @@
-import LeanTex.Core.PdfWriteContract
-import LeanTex.Core.PdfXrefSpelling
-import LeanTex.Core.PdfFlateProof
+module
+
+public import LeanTex.Core.PdfWriteContract
+public import LeanTex.Core.PdfXrefSpelling
+public import LeanTex.Core.PdfFlateProof
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfWriteContract
+import all LeanTex.Core.PdfRead
 
 namespace LeanTex.Core.Pdf
 open PdfRead
@@ -10,7 +15,7 @@ The parser and codec in these statements are the production functions. -/
 
 /-- The actual xref dictionary, including the writer's compression choice
 and its two identifiers. This value describes the emitted bytes. -/
-def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj :=
+public def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj :=
   let z := Flate.deflate m.xrefPayload
   let filtered := decide (z.size < m.xrefPayload.size)
   xrefStreamDict t.size t.infoId
@@ -18,7 +23,7 @@ def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj :=
     (Flate.fnv64 1099511628211 m.body) filtered
     (if z.size < m.xrefPayload.size then z.size else m.xrefPayload.size)
 
-theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : ObjTable) :
+public theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : ObjTable) :
     let z := Flate.deflate m.xrefPayload
     let raw := if z.size < m.xrefPayload.size then z else m.xrefPayload
     m.bytes t =
@@ -34,13 +39,14 @@ theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : ObjTable
     ByteArray.append_assoc]
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp
-  all_goals simp only [ByteArray.data_append, Array.toList_append]
+  all_goals simp only [ByteArray.data_append, Array.toList_append,
+    String.toUTF8_eq_toByteArray]
   all_goals rfl
 
 /-- The complete emitted file parses through the real footer scan,
 dictionary parser, stream extraction, Flate decoder, checksum check, and
 xref traversal. Only byte-offset and decoded-payload bounds are assumed. -/
-theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTable)
+public theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTable)
     (hb : m.body.size < 256^4) (hp : m.xrefPayload.size ≤ maxDecoded) :
     readXref (m.bytes t) =
       .ok ((readXrefSubsection m.xrefPayload 1 4 2 0 t.size 0
@@ -79,7 +85,7 @@ theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTable)
 /-- The numeric checked domain suffices to recover the complete xref
 stream from a plan's actual emitted file. Allocation coverage determines
 which of these rows are live; no parser or codec premise is required. -/
-theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
+public theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
     readXref p.bytes =
       .ok ((readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0
         {start := p.measure.body.size, root := some 1,
@@ -89,7 +95,7 @@ theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
 /-- A numerically bounded plan yields a readable xref whose root and
 declared size are exactly the allocation's. Relating that declared size
 to the number of live locations additionally needs emission coverage. -/
-theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBounds) :
+public theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBounds) :
     ∃ x, readXref p.bytes = .ok x ∧ x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind Obj.int? = some p.table.size ∧
       x.start = p.measure.body.size := by
@@ -116,7 +122,7 @@ theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBounds) :
 /-- Checked production supplies the storage bounds for the actual xref.
 The source-grammar check further restricts successful production without
 weakening the xref theorem on numerically bounded raw plans. -/
-theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
+public theorem WritePlan.checked_readXref_contract (p : WritePlan) (b : ByteArray)
     (h : p.checked = .ok b) :
     ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind Obj.int? = some p.table.size ∧
@@ -132,7 +138,7 @@ structure element, and cached input accepted by the writer.
 The premises are storage bounds only. Footer parsing, compression,
 checksums, binary row decoding, allocation coverage, and the reader's
 live-object count are proved here through their production functions. -/
-theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
     (tree : Struct.Tree) (ops : Array (Array ContentOp))
@@ -177,7 +183,7 @@ theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
 /-- Every successful result from the checked producer satisfies the
 complete xref obligation. The publisher needs no separate bounds proof:
 success of the API that supplied its bytes establishes that domain. -/
-theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
     (tree : Struct.Tree) (ops : Array (Array ContentOp))

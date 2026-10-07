@@ -1,6 +1,8 @@
-import LeanTex.Core.Struct
-import LeanTex.Core.PdfContent
-import LeanTex.Core.PdfRead
+module
+
+public import LeanTex.Core.Struct
+public import LeanTex.Core.PdfContent
+public import LeanTex.Core.PdfRead
 
 /-!
 # The PDF structure tree, as a typed model
@@ -44,7 +46,7 @@ open LeanTex.Core
 elements array), a placeholder for leaf `k`'s marked content (the
 skeleton's spelling, before `fill`), or one marked-content sequence on a
 page (after `fill`). -/
-inductive StructKid where
+public inductive StructKid where
   | elem (idx : Nat)
   | leaf (k : Nat)
   | mcid (page mcid : Nat)
@@ -56,7 +58,7 @@ itself), its kids in reading order, and the attributes later slices fill:
 `/Alt` for a figure, `/Lang` and `/ActualText` for spans, `/A` entries.
 `heading` is the tree's heading level when the element is an `Hn` — the
 census `pdf_headings_covers` reads. -/
-structure StructElem where
+public structure StructElem where
   s : String
   /-- The type is in the PDF 2.0 standard structure namespace (§14.8.4;
   the element names it through `/NS`). `false` for the types PDF 2.0
@@ -164,7 +166,7 @@ private def bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Opt
   (es, l, lb)
 
 /-- The `Figure` an image or picture leaf's alternative projects to. -/
-def figureElem (k : Nat) (alt : Option String) : StructElem :=
+public def figureElem (k : Nat) (alt : Option String) : StructElem :=
   { s := structTypeOf .figure, kids := #[.leaf k], alt := alt }
 
 /-- The one projection of a non-text leaf's alternative into the structure
@@ -173,13 +175,13 @@ tree (ISO 32000-2 §14.8.4.8.5 Figure, §14.9.3 alternate descriptions,
 `Figure` without — the honest failure a checker names; decorative, no
 element, so no element holds the leaf and the content stream marks its ink
 `/Artifact` (`PdfContent.Origin.of`), latex-lab's `artifact`. -/
-def altElem (es : Array StructElem) (parent k : Nat) : Ir.Alt → Array StructElem
+public def altElem (es : Array StructElem) (parent k : Nat) : Ir.Alt → Array StructElem
   | .described t => (pushElem es parent (figureElem k (some t))).1
   | .undeclared => (pushElem es parent (figureElem k none)).1
   | .decorative => es
 
 /-- Only decorative alternatives omit a structure element. -/
-theorem altElem_size_exact (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
+public theorem altElem_size_exact (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
     (altElem es parent k a).size =
       es.size + match a with
         | .decorative => 0
@@ -234,11 +236,11 @@ private def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Boo
 end
 
 /-- The `Document` root, its parent the structure tree root. -/
-def rootElem : StructElem := { s := structTypeOf .document }
+public def rootElem : StructElem := { s := structTypeOf .document }
 
 /-- The rooted figure emission carries the IR alternative, including the
 absence of a decorative element. -/
-theorem altElem_root_alt_exact (a : Ir.Alt) :
+public theorem altElem_root_alt_exact (a : Ir.Alt) :
     (altElem #[rootElem] 0 0 a).back?.bind (·.alt) =
       match a with
       | .described text => some text
@@ -247,7 +249,7 @@ theorem altElem_root_alt_exact (a : Ir.Alt) :
 
 /-- The structure elements of a tree, in preorder, the root at index 0,
 leaf placeholders in place of marked content. -/
-def skeleton (t : Struct.Tree) : Array StructElem :=
+public def skeleton (t : Struct.Tree) : Array StructElem :=
   skelList #[rootElem] 0 0 false none t.children.toList
 
 private def assignOwner (i : Nat) (out : Array (Option Nat)) : StructKid → Array (Option Nat)
@@ -259,7 +261,7 @@ private def assignOwner (i : Nat) (out : Array (Option Nat)) : StructKid → Arr
 `.leaf k`. The soundness half — an owner listed does hold the leaf — is
 `leafOwners_mem`; that each leaf is held once is the skeleton's
 (`skeleton_leafKids_nodup`). -/
-def leafOwners (es : Array StructElem) (n : Nat) : Array (Option Nat) :=
+public def leafOwners (es : Array StructElem) (n : Nat) : Array (Option Nat) :=
   (es.toList.zipIdx).foldl (fun out (e, i) =>
     e.kids.foldl (assignOwner i) out) (Array.replicate n none)
 
@@ -297,7 +299,7 @@ the elements that carry the leaf): `leafOwners` records `some i` at slot
 leaf. The fold's inversion, by the invariant `OwnerSound`. That each leaf
 is held by *one* element is the separate census
 (`skeleton_leafKids_nodup`). -/
-theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
+public theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
     (h : (leafOwners es n)[j]? = some (some i)) :
     ∃ e, es[i]? = some e ∧ StructKid.leaf j ∈ e.kids := by
   have base : OwnerSound es (Array.replicate n (none : Option Nat)) := by
@@ -321,7 +323,7 @@ theorem leafOwners_mem (es : Array StructElem) (n j i : Nat)
 census `skeleton_leafKids_nodup` says holds each leaf once; `leafIdsOf` is
 its element case, and `leafKids_addKid_leaf` the reason the census is a
 permutation of the ids and not an append of them. -/
-def leafKids (es : Array StructElem) : List Nat :=
+public def leafKids (es : Array StructElem) : List Nat :=
   es.toList.flatMap fun e => e.kids.toList.filterMap fun k =>
     match k with
     | .leaf j => some j
@@ -332,12 +334,12 @@ def leafKids (es : Array StructElem) : List Nat :=
 of the element holding it, `none` for a leaf no element holds (a leaf under
 a speaker note, or beyond the tree) — the content stream marks such a
 line an artifact (`Origin.of`). -/
-def leafTags (es : Array StructElem) (n : Nat) : Array (Option String) :=
+public def leafTags (es : Array StructElem) (n : Nat) : Array (Option String) :=
   (leafOwners es n).map fun o => o.bind fun i => es[i]?.map (·.s)
 
 /-- The `(page, mcid)` pairs painting each leaf `k < n`, page by page in
 stream order, from the numbered streams' marks. -/
-def leafPagesOf (n : Nat) (marks : Array (Array (Nat × Nat))) : Array (Array (Nat × Nat)) :=
+public def leafPagesOf (n : Nat) (marks : Array (Array (Nat × Nat))) : Array (Array (Nat × Nat)) :=
   (marks.toList.zipIdx).foldl (fun out (pm, p) =>
     pm.foldl (fun out (m, k) => out.modify k (·.push (p, m))) out)
     (Array.replicate n #[])
@@ -349,25 +351,25 @@ private def fillKid (lp : Array (Array (Nat × Nat))) : StructKid → Array Stru
   | .mcid p m => #[.mcid p m]
 
 /-- The elements with every placeholder filled. -/
-def fill (es : Array StructElem) (lp : Array (Array (Nat × Nat))) : Array StructElem :=
+public def fill (es : Array StructElem) (lp : Array (Array (Nat × Nat))) : Array StructElem :=
   es.map fun e => { e with kids := e.kids.flatMap (fillKid lp) }
 
 /-- Filling marked-content placeholders preserves the allocated element IDs. -/
-theorem fill_size_exact (es : Array StructElem) (lp : Array (Array (Nat × Nat))) :
+public theorem fill_size_exact (es : Array StructElem) (lp : Array (Array (Nat × Nat))) :
     (fill es lp).size = es.size := by
   simp only [fill, Array.size_map]
 
 /-- The parent tree (§14.7.5.4), page by page: entry `m` of page `p` is the
 element holding the leaf that identifier `m` paints. Reads the marks by
 position — `numberMarks_mcids_exact` says position and identifier agree. -/
-def parentTreeOf (marks : Array (Array (Nat × Nat))) (owners : Array (Option Nat)) :
+public def parentTreeOf (marks : Array (Array (Nat × Nat))) (owners : Array (Option Nat)) :
     Array (Array (Option Nat)) :=
   marks.map fun pm => pm.map fun (_, k) => (owners[k]?).join
 
 /-! ## Theorems -/
 
 /-- The heading levels of an element array, in order. -/
-def headingsOf (es : Array StructElem) : List Nat := es.toList.filterMap (·.heading)
+public def headingsOf (es : Array StructElem) : List Nat := es.toList.filterMap (·.heading)
 
 private theorem List.filterMap_modify_of {α β : Type} (g : α → Option β) (f : α → α)
     (hf : ∀ a, g (f a) = g a) (l : List α) (i : Nat) :
@@ -409,7 +411,7 @@ non-text leaf gets is a function of its one alternative — a described one
 the last element pushed, a `Figure` under `parent` holding the leaf with
 `/Alt` its text; an undeclared one the same `Figure` with no `/Alt`; a
 decorative one no element at all. -/
-theorem pdf_alt_projects (es : Array StructElem) (parent k : Nat) :
+public theorem pdf_alt_projects (es : Array StructElem) (parent k : Nat) :
     (∀ t, (altElem es parent k (.described t)).back? =
         some { figureElem k (some t) with parent := some parent }) ∧
     (altElem es parent k .undeclared).back? =
@@ -484,20 +486,20 @@ corollary of `structTree_headings_covers`): the heading elements of the
 structure tree, in preorder, carry exactly the tree's heading levels — so,
 over `Struct.ofDoc`, exactly `Ir.headingLevels` of the document's body.
 The type spelled is `H{level+1}`. -/
-theorem pdf_headings_covers (t : Struct.Tree) :
+public theorem pdf_headings_covers (t : Struct.Tree) :
     headingsOf (skeleton t) = t.headings.toList := by
   unfold skeleton Struct.Tree.headings
   rw [Struct.headings_eq_exact, skelList_headings]
   simp [headingsOf, rootElem]
 
-theorem pdf_headings_covers_doc (doc : Ir.Doc) :
+public theorem pdf_headings_covers_doc (doc : Ir.Doc) :
     headingsOf (skeleton (Struct.ofDoc doc)) = (Ir.headingLevels doc.body).toList := by
   rw [pdf_headings_covers, Struct.Tree.headings, Struct.ofDoc, Struct.structTree_headings_covers]
 
 /-- **`structKids_mem`** (the `_mem` statement): every marked-content kid of
 a filled element is drawn from `leafPages` — a pair the streams carry for
 some leaf the element held. -/
-theorem structKids_mem (es : Array StructElem) (lp : Array (Array (Nat × Nat))) :
+public theorem structKids_mem (es : Array StructElem) (lp : Array (Array (Nat × Nat))) :
     ∀ e ∈ fill es lp, ∀ p m, StructKid.mcid p m ∈ e.kids →
       ∃ k : Nat, (p, m) ∈ (lp[k]?).getD #[] ∨ StructKid.mcid p m ∈ (es.toList.flatMap (·.kids.toList)) := by
   intro e he p m hm
@@ -618,7 +620,8 @@ private def skelLeafIds (l : List Struct.Node) : Array Nat := Struct.foldNodeLis
 
 private def skelLeafIdsOne (n : Struct.Node) : Array Nat := Struct.foldNode skelLeafFold #[] n
 
-private theorem skelLeafIds_nil : skelLeafIds [] = #[] := rfl
+private theorem skelLeafIds_nil : skelLeafIds [] = #[] :=
+  Struct.foldNodeList_nil_exact skelLeafFold #[]
 
 private theorem skelLeafIds_cons (n : Struct.Node) (l : List Struct.Node) :
     skelLeafIds (n :: l) = skelLeafIdsOne n ++ skelLeafIds l := by
@@ -825,7 +828,7 @@ function (`leafTags`) rather than a last-writer-wins fold.
 The census is a permutation and not an equality — `addKid` is
 `Array.modify`, so a leaf lands in the middle of the element array — and a
 permutation is all `Nodup` needs. -/
-theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
+public theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
     (leafKids (skeleton (Struct.ofDoc doc))).Nodup := by
   have hroot : leafKids #[rootElem] = [] := by
     simp [leafKids_eq_flatMap, leafIdsOf, rootElem]
@@ -846,7 +849,7 @@ theorem skeleton_leafKids_nodup (doc : Ir.Doc) :
 /-- Before filling, every marked-content reference must come from a leaf
 placeholder. This premise is specific to the PDF projection: an arbitrary
 `StructElem` can already carry an `.mcid` absent from the page streams. -/
-def Unfilled (es : Array StructElem) : Prop :=
+@[expose] public def Unfilled (es : Array StructElem) : Prop :=
   ∀ e ∈ es, ∀ p m, StructKid.mcid p m ∉ e.kids
 
 private theorem forall_modify {α : Type} (P : α → Prop) (xs : Array α)
@@ -924,7 +927,7 @@ end
 
 /-- Every skeleton starts without marked-content references, for any input
 tree. Thus `fill` alone introduces them from the numbered page streams. -/
-theorem skeleton_unfilled_contract (t : Struct.Tree) : Unfilled (skeleton t) :=
+public theorem skeleton_unfilled_contract (t : Struct.Tree) : Unfilled (skeleton t) :=
   unfilled_skelList t.children.toList #[rootElem] 0 0 false none
     (by simp [Unfilled, rootElem])
 
@@ -1027,7 +1030,7 @@ private theorem leafIdsOf_mem (e : StructElem) (k : Nat) (h : StructKid.leaf k �
 /-- Completeness of the owner map: a bounded, uniquely held leaf names its
 actual element. Together with `leafOwners_mem`, this is the inverse of the
 skeleton's leaf-to-element relation, rather than a last-writer convention. -/
-theorem leafOwners_covers (es : Array StructElem) (n : Nat)
+public theorem leafOwners_covers (es : Array StructElem) (n : Nat)
     (hnodup : (leafKids es).Nodup) (i : Nat) (e : StructElem) (k : Nat)
     (hi : es[i]? = some e) (hk : k < n) (hmem : StructKid.leaf k ∈ e.kids) :
     (leafOwners es n)[k]? = some (some i) := by
@@ -1065,7 +1068,7 @@ private theorem pagesSound_kids (marks : Array (Array (Nat × Nat))) (pm : Array
 /-- Every filled leaf reference comes from the marks of the named page.
 This is the soundness invariant of both folds in `leafPagesOf`; it does
 not assume that a leaf is bounded or that stream identifiers are ordered. -/
-theorem leafPagesOf_mem (n : Nat) (marks : Array (Array (Nat × Nat))) (k p m : Nat)
+public theorem leafPagesOf_mem (n : Nat) (marks : Array (Array (Nat × Nat))) (k p m : Nat)
     (h : (p, m) ∈ ((leafPagesOf n marks)[k]?).getD #[]) :
     ∃ pm, marks[p]? = some pm ∧ (m, k) ∈ pm := by
   have base : PagesSound marks (Array.replicate n #[]) := by
@@ -1105,7 +1108,7 @@ its parent-tree entry (ISO 32000-2 §14.7.5.4). The skeleton must contain no
 earlier `.mcid` references: `fill` preserves those, and an arbitrary one
 need not occur in any page stream. `skeleton_unfilled_contract` proves that premise
 for the producer, while `skeleton_leafKids_nodup` supplies unique ownership. -/
-theorem parentTree_covers (es : Array StructElem) (n : Nat)
+public theorem parentTree_covers (es : Array StructElem) (n : Nat)
     (marks : Array (Array (Nat × Nat)))
     (hpos : ∀ p (hp : p < marks.size) j (hj : j < marks[p].size), (marks[p][j]).1 = j)
     (hnodup : (leafKids es).Nodup) (hlt : ∀ k ∈ leafKids es, k < n)
@@ -1137,7 +1140,7 @@ theorem parentTree_covers (es : Array StructElem) (n : Nat)
 /-- Every placeholder a skeleton holds is drawn from its input tree.
 Speaker notes and decorative figures may omit leaves, but cannot invent
 one; this is the range premise of the parent-tree projection. -/
-theorem skeleton_leafKids_mem (t : Struct.Tree) (k : Nat) (hk : k ∈ leafKids (skeleton t)) :
+public theorem skeleton_leafKids_mem (t : Struct.Tree) (k : Nat) (hk : k ∈ leafKids (skeleton t)) :
     k ∈ t.leaves.toList.map Prod.fst := by
   have hperm := skelList_leafKids t.children.toList #[rootElem] 0 0 false none (by simp)
   have hroot : leafKids #[rootElem] = [] := by
@@ -1149,7 +1152,7 @@ theorem skeleton_leafKids_mem (t : Struct.Tree) (k : Nat) (hk : k ∈ leafKids (
 fresh references, unique owners, and in-range leaf identifiers. Only the
 page-stream numbering premise remains, supplied by `numberMarks_mcids_exact`
 when content streams are numbered. -/
-theorem doc_parentTree_covers (doc : Ir.Doc) (marks : Array (Array (Nat × Nat)))
+public theorem doc_parentTree_covers (doc : Ir.Doc) (marks : Array (Array (Nat × Nat)))
     (hpos : ∀ p (hp : p < marks.size) j (hj : j < marks[p].size), (marks[p][j]).1 = j) :
     let t := Struct.ofDoc doc
     let es := skeleton t

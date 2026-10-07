@@ -1,5 +1,10 @@
-import LeanTex.Core.Pdf
-import LeanTex.Core.PdfRead
+module
+
+public import LeanTex.Core.Pdf
+public import LeanTex.Core.PdfRead
+import LeanTex.Core.PdfNumber
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfRead
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
@@ -11,11 +16,11 @@ reader result. -/
 
 /-- The producer's payload positions, before any fixed-width encoding.
 The increment is the exact rendered value size and its terminating LF. -/
-def objectStreamPositions (offset : Nat) : List (Nat × Obj) → List (Nat × Nat)
+public def objectStreamPositions (offset : Nat) : List (Nat × Obj) → List (Nat × Nat)
   | [] => []
   | (id,v)::xs => (id,offset) :: objectStreamPositions (offset+v.render.size+1) xs
 
-@[simp] theorem objectStreamPositions_length (offset : Nat) (xs : List (Nat × Obj)) :
+@[simp] public theorem objectStreamPositions_length (offset : Nat) (xs : List (Nat × Obj)) :
     (objectStreamPositions offset xs).length = xs.length := by
   induction xs generalizing offset with
   | nil => rfl
@@ -63,6 +68,7 @@ private theorem pair_octets (num off : Nat) :
       octets (toString num).toUTF8 ++
         32 :: (octets (toString off).toUTF8 ++ [32]) := by
   simp only [utf8_append, octets_append, List.append_assoc]
+  simp only [String.toUTF8_eq_toByteArray]
   rfl
 
 private def headerStep (b : ByteArray) (_ : Nat)
@@ -137,13 +143,13 @@ private theorem header_loop_exact (xs : List (Nat × Nat)) (counters : List Nat)
 position transcript, including the empty stream. Every offset is the
 size of the preceding rendered values; this is an arbitrary-input proof,
 not a collection of sample headers. -/
-theorem objectStream_header_exact (xs : List (Nat × Obj)) :
+public theorem objectStream_header_exact (xs : List (Nat × Obj)) :
     readObjectStreamHeader (objectStream xs).bytes xs.length =
       .ok (objectStreamPositions 0 xs).toArray := by
   have hh : (objectStream xs).header.toUTF8 =
       headerBytes (objectStreamPositions 0 xs) := by
     simpa only [objectStream, ByteArray.size_empty,
-      show "".toUTF8 = ByteArray.empty from rfl,
+      show "".toUTF8 = ByteArray.empty from by simp,
       ByteArray.empty_append] using objectStreamList_header_bytes xs {}
   have hs : PdfLex.Span (objectStream xs).bytes 0
       (octets (headerBytes (objectStreamPositions 0 xs))) := by

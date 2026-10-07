@@ -1,6 +1,16 @@
-import LeanTex.Core.PdfAllocation
-import LeanTex.Core.PdfRowRecovery
-import LeanTex.Core.PdfSortProof
+module
+
+public import LeanTex.Core.PdfAllocation
+public import LeanTex.Core.PdfRowRecovery
+public import LeanTex.Core.PdfSortProof
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfWriteContract
+import all LeanTex.Core.PdfProducerProof
+import all LeanTex.Core.PdfObjectRecovery
+import all LeanTex.Core.PdfPlanLocations
+import all LeanTex.Core.PdfRead
+import all LeanTex.Core.PdfCensus
+import all LeanTex.Core.PdfXrefSpelling
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
@@ -10,12 +20,12 @@ premises describe allocation, spelling, and numeric storage; none names
 a parser result. -/
 
 /-- The two source transcripts partition the consecutive allocation. -/
-structure WritePlan.Allocated (p : WritePlan) : Prop where
+public structure WritePlan.Allocated (p : WritePlan) : Prop where
   ids : p.table.ids.toList = List.range' 1 (p.table.size - 1)
   sources : (p.compressed.map Prod.fst ++ p.direct.toList.map Row.id ++
     [p.table.objStmId, p.table.xrefId]).Perm p.table.ids.toList
 
-theorem prepare_allocated_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_allocated_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -152,6 +162,9 @@ private theorem WritePlan.start_boundary (p : WritePlan) :
     exact ⟨_, rfl⟩
   have hn : PdfLex.Span p.bytes p.measure.body.size (octets (toString p.table.xrefId).toUTF8) := by
     rw [WritePlan.bytes, p.measure.bytes_stream_exact]
+    rw [show (s!"{p.table.xrefId} 0 obj\n").toUTF8 =
+      (toString p.table.xrefId).toUTF8 ++ " 0 obj\n".toUTF8 from
+      utf8_append (toString p.table.xrefId) " 0 obj\n"]
     change PdfLex.Span (p.measure.body ++
       ((toString p.table.xrefId).toUTF8 ++ " 0 obj\n".toUTF8) ++
       (p.measure.xrefDict p.table).render ++ "\nstream\n".toUTF8 ++
@@ -171,7 +184,9 @@ private theorem WritePlan.start_boundary (p : WritePlan) :
     (Number.nat_nonempty p.table.xrefId) (nat_numeric p.table.xrefId))
   have hp : ∃ pre, p.measure.body = pre ++ "\n".toUTF8 := by
     rw [p.object_body_exact, show "\nendstream\nendobj\n".toUTF8 =
-      "\nendstream\nendobj".toUTF8 ++ "\n".toUTF8 from rfl]
+      "\nendstream\nendobj".toUTF8 ++ "\n".toUTF8 from by
+        simp only [String.toUTF8_eq_toByteArray]
+        rfl]
     rw [← ByteArray.append_assoc]
     exact ⟨_, rfl⟩
   obtain ⟨pre, hp⟩ := hp
@@ -179,12 +194,14 @@ private theorem WritePlan.start_boundary (p : WritePlan) :
   have hw : at? p.bytes (p.measure.body.size - 1) = 10 := by
     have hs : p.measure.body.size = pre.size + 1 := by
       rw [hp, ByteArray.size_append]
+      simp only [String.toUTF8_eq_toByteArray]
       rfl
     rw [ht, at?_append_left _ _ _ (by omega), hs, hp]
     simp only [Nat.add_sub_cancel]
     have h := PdfLex.Span.of_bytes pre "\n".toUTF8 ByteArray.empty
+    simp only [String.toUTF8_eq_toByteArray] at h
     change PdfLex.Span _ _ [10] at h
-    simpa only [ByteArray.append_empty] using h.head
+    simpa only [ByteArray.append_empty, String.toUTF8_eq_toByteArray] using h.head
   simp only [hd.2.1, beq_eq_false_iff_ne.mpr hd.2.2.2.2, hw]
   simp only [show isWs 10 = true from rfl, Bool.true_or, Bool.not_true,
     Bool.and_false, Bool.false_or]
@@ -282,7 +299,7 @@ private theorem WritePlan.compressed_unique (p : WritePlan) (ha : p.Allocated)
 compressed source objects, and every compressed source reference resolves
 to its original value. This composes the actual xref parser, both stream
 codecs, object-stream lookup, key enumeration, and object reader. -/
-theorem WritePlan.objects_recovered_exact (p : WritePlan)
+public theorem WritePlan.objects_recovered_exact (p : WritePlan)
     (hb : p.WithinBounds) (ha : p.Allocated)
     (hc : ∀ e ∈ p.compressed, e.2.Representable)
     (hn : ∀ r ∈ p.direct, r.body.Native) :

@@ -1,12 +1,18 @@
-import LeanTex.Core.PdfPlanLocations
-import LeanTex.Core.PdfNativeStream
+module
+
+public import LeanTex.Core.PdfPlanLocations
+public import LeanTex.Core.PdfNativeStream
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfWriteContract
+import all LeanTex.Core.PdfPlanLocations
+import all LeanTex.Core.PdfNativeStream
 
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
 /-! Recovery of native stream rows from the serializer's own offsets. -/
 
-theorem indexObjects_unique_exact {α : Type} (size : Nat)
+public theorem indexObjects_unique_exact {α : Type} (size : Nat)
     (rows : List (Nat × α)) (id : Nat) (v : α) (hi : id < size)
     (hm : (id,v) ∈ rows) (hn : (rows.map Prod.fst).Nodup) :
     ((indexObjects size rows)[id]?).join = some v := by
@@ -18,7 +24,7 @@ theorem indexObjects_unique_exact {α : Type} (size : Nat)
   intro r hr he
   exact hnot (List.mem_map.mpr ⟨r, hr, he⟩)
 
-theorem WritePlan.direct_suffix_exact (p : WritePlan) :
+public theorem WritePlan.direct_suffix_exact (p : WritePlan) :
     ∃ tail, p.bytes = (serialize p.head p.direct).1 ++ tail := by
   rw [WritePlan.bytes, p.measure.bytes_stream_exact, p.object_body_exact]
   simp only [ByteArray.append_assoc]
@@ -44,7 +50,7 @@ private theorem span_append {b : ByteArray} {off : Nat} {cs : List Nat}
     rw [at?_append_left b tail (off+j) (by have := h.bound; omega)]
     exact h.byte j hj
 
-theorem WritePlan.direct_span_exact (p : WritePlan) (before after : List Row)
+public theorem WritePlan.direct_span_exact (p : WritePlan) (before after : List Row)
     (r : Row) (hs : p.direct.toList = before ++ r::after) :
     PdfLex.Span p.bytes (serialize p.head before.toArray).1.size
       (octets (rowInto ByteArray.empty r.id r.body)) := by
@@ -55,7 +61,7 @@ theorem WritePlan.direct_span_exact (p : WritePlan) (before after : List Row)
   rw [hs]
   exact serializeList_row_span_exact ..
 
-theorem WritePlan.direct_offset_exact (p : WritePlan) (before after : List Row)
+public theorem WritePlan.direct_offset_exact (p : WritePlan) (before after : List Row)
     (r : Row) (hs : p.direct.toList = before ++ r::after)
     (hi : r.id < p.table.size) (hn : (p.rows.toList.map Row.id).Nodup) :
     ((indexObjects p.table.size p.serialized.2.toList)[r.id]?).join =
@@ -83,7 +89,7 @@ theorem WritePlan.direct_offset_exact (p : WritePlan) (before after : List Row)
     exact Array.mem_toList_iff.mpr (Array.mem_of_getElem? hoff)
   · exact (serialize_locs_covers p.head p.rows).symm ▸ hn
 
-theorem WritePlan.direct_location_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.direct_location_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (before after : List Row) (r : Row)
     (hs : p.direct.toList = before ++ r::after)
@@ -103,7 +109,7 @@ theorem WritePlan.direct_location_exact (p : WritePlan) (h : p.WithinBounds)
 /-- A native source row is read from the complete file at the offset
 recorded by its actual serializer. The retained stream bytes are exact;
 neither an external decoder nor a supplied reader result is assumed. -/
-theorem WritePlan.native_readback_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.native_readback_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (before after : List Row) (r : Row)
     (hs : p.direct.toList = before ++ r::after)

@@ -1,4 +1,9 @@
-import LeanTex.Core.PdfObjectRecovery
+module
+
+public import LeanTex.Core.PdfObjectRecovery
+import all LeanTex.Core.Pdf
+import all LeanTex.Core.PdfProducerProof
+import all LeanTex.Core.PdfObjectRecovery
 
 namespace LeanTex.Core.Pdf
 open PdfRead
@@ -7,16 +12,16 @@ open PdfRead
 objects and serializer offsets. These are artifact contracts. -/
 
 /-- The xref value computed by the production reader on a bounded plan. -/
-def WritePlan.readback (p : WritePlan) : PdfRead.Xref :=
+public def WritePlan.readback (p : WritePlan) : PdfRead.Xref :=
   (readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0
     {start := p.measure.body.size, root := some 1,
      trailer := some (p.measure.xrefDict p.table)}).1
 
-theorem WritePlan.readback_exact (p : WritePlan) (h : p.WithinBounds) :
+public theorem WritePlan.readback_exact (p : WritePlan) (h : p.WithinBounds) :
     readXref p.bytes = .ok p.readback :=
   p.readXref_exact h
 
-theorem WritePlan.readback_locations_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.readback_locations_exact (p : WritePlan) (h : p.WithinBounds)
     (hs : p.entries.size = p.table.size) (id : Nat) :
     p.readback.locs.get? id = p.entries[id]?.bind xrefEntryLocation := by
   have hx := p.xref_locations_exact h
@@ -27,7 +32,7 @@ theorem WritePlan.readback_locations_exact (p : WritePlan) (h : p.WithinBounds)
 
 /-- An in-range id with one source position selects that exact position,
 through the real dense object-stream index. -/
-theorem compressedIndex_entry_exact (size : Nat) (objects : List (Nat × Obj))
+public theorem compressedIndex_entry_exact (size : Nat) (objects : List (Nat × Obj))
     (id i : Nat) (value : Obj) (hid : id < size)
     (hi : objects[i]? = some (id,value))
     (hn : (objects.map Prod.fst).Nodup) :
@@ -42,7 +47,7 @@ theorem compressedIndex_entry_exact (size : Nat) (objects : List (Nat × Obj))
     (by simp only [List.getElem?_map, hi, hv, Option.map_some])
   simpa only [← he] using hj
 
-theorem compressedIndex_absent_exact (size : Nat) (objects : List (Nat × Obj))
+public theorem compressedIndex_absent_exact (size : Nat) (objects : List (Nat × Obj))
     (id : Nat) (h : id ∉ objects.map Prod.fst) :
     ((compressedIndex size objects)[id]?).join = none := by
   cases hi : ((compressedIndex size objects)[id]?).join with
@@ -53,7 +58,7 @@ theorem compressedIndex_absent_exact (size : Nat) (objects : List (Nat × Obj))
 
 /-- The allocation's consecutive id transcript makes the array position
 the id itself. The actual producer proves this transcript separately. -/
-theorem WritePlan.entry_index_exact (p : WritePlan)
+public theorem WritePlan.entry_index_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (id : Nat) (hid : id < p.table.size) :
     p.entries[id]? = some (if id = 0 then .free 0 65535 else
@@ -73,7 +78,7 @@ theorem WritePlan.entry_index_exact (p : WritePlan)
       List.getElem?_toArray]
     simp [show id < p.table.size - 1 by omega, Nat.add_comm]
 
-theorem WritePlan.entries_size_exact (p : WritePlan)
+public theorem WritePlan.entries_size_exact (p : WritePlan)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (hpos : 0 < p.table.size) :
     p.entries.size = p.table.size := by
@@ -85,7 +90,7 @@ theorem WritePlan.entries_size_exact (p : WritePlan)
 
 /-- The object-stream row is appended last, so its recorded offset is
 exact even without a uniqueness premise on preceding direct rows. -/
-theorem WritePlan.object_offset_exact (p : WritePlan)
+public theorem WritePlan.object_offset_exact (p : WritePlan)
     (hi : p.table.objStmId < p.table.size) :
     ((indexObjects p.table.size p.serialized.2.toList)[p.table.objStmId]?).join =
       some (serialize p.head p.direct).1.size := by
@@ -101,7 +106,7 @@ theorem WritePlan.object_offset_exact (p : WritePlan)
   rw [hs, Array.toList_push]
   exact indexObjects_entry_exact _ _ [] _ _ hi (by simp)
 
-theorem WritePlan.object_location_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.object_location_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (hpos : 0 < p.table.objStmId) (hi : p.table.objStmId < p.table.size)
     (hx : p.table.objStmId ≠ p.table.xrefId)
@@ -116,7 +121,7 @@ theorem WritePlan.object_location_exact (p : WritePlan) (h : p.WithinBounds)
     compressedIndex_absent_exact _ _ _ hc, p.object_offset_exact hi,
     xrefEntryLocation]
 
-theorem WritePlan.compressed_location_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.compressed_location_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (id i : Nat) (value : Obj) (hpos : 0 < id) (hi : id < p.table.size)
     (hx : id ≠ p.table.xrefId) (hs : p.compressed[i]? = some (id,value))
@@ -132,7 +137,7 @@ theorem WritePlan.compressed_location_exact (p : WritePlan) (h : p.WithinBounds)
 /-- Complete compressed-object recovery through the actual file's xref.
 The premises concern source allocation, numeric bounds, and grammar.
 There is no supplied parser, location, or decompression result. -/
-theorem WritePlan.compressed_readback_exact (p : WritePlan) (h : p.WithinBounds)
+public theorem WritePlan.compressed_readback_exact (p : WritePlan) (h : p.WithinBounds)
     (ht : p.table.ids.toList = List.range' 1 (p.table.size - 1))
     (hstm : 0 < p.table.objStmId ∧ p.table.objStmId < p.table.size ∧
       p.table.objStmId ≠ p.table.xrefId ∧

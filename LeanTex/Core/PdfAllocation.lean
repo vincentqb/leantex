@@ -1,4 +1,7 @@
-import LeanTex.Core.Pdf
+module
+
+public import LeanTex.Core.Pdf
+import all LeanTex.Core.Pdf
 
 namespace LeanTex.Core.Pdf
 
@@ -59,7 +62,7 @@ private theorem allocation_perm (t : ObjTable) :
 /-- The actual compressed and direct transcripts, with the two final
 stream ids, are a permutation of every allocated slot. Thus no source id
 can be silently replaced by another emission with the same number. -/
-theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -73,7 +76,7 @@ theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
 
 /-- Every producer allocation is the consecutive positive range named
 by its trailer, regardless of caches, images, or structure input. -/
-theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -86,7 +89,7 @@ theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
 
 /-- The production emissions themselves have unique ids; this is
 stronger than allocation coverage and prevents last-write-wins aliases. -/
-theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)

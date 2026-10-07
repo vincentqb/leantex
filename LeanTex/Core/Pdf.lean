@@ -1,13 +1,15 @@
-import LeanTex.Core.Dim
+module
+
+public import LeanTex.Core.Dim
 import LeanTex.Core.Flate
-import LeanTex.Core.Font
+public import LeanTex.Core.Font
 import LeanTex.Core.FontSubset
-import LeanTex.Core.HtmlDoc
-import LeanTex.Core.Layout
+import LeanTex.Core.Html
+public import LeanTex.Core.Layout
 import LeanTex.Core.Loop
-import LeanTex.Core.PdfContent
-import LeanTex.Core.PdfStruct
-import LeanTex.Core.PdfXref
+public import LeanTex.Core.PdfContent
+public import LeanTex.Core.PdfStruct
+public import LeanTex.Core.PdfXref
 
 namespace LeanTex.Core.Pdf
 
@@ -17,7 +19,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Layout
 Fields are spelled `Int` (the same type `Sp` names) because `omega`
 reads the bare spelling only: the nesting proof below is the point of
 the type. -/
-structure Rect where
+public structure Rect where
   x0 : Int
   y0 : Int
   x1 : Int
@@ -25,11 +27,14 @@ structure Rect where
   deriving Repr, BEq
 
 /-- Containment, the relation ISO 32000-2 expects between the page boxes. -/
-def Rect.within (inner outer : Rect) : Prop :=
+public def Rect.within (inner outer : Rect) : Prop :=
   outer.x0 ≤ inner.x0 ∧ outer.y0 ≤ inner.y0 ∧
   inner.x1 ≤ outer.x1 ∧ inner.y1 ≤ outer.y1
 
-def Rect.render (r : Rect) : String :=
+/-- The point-coordinate spelling used to compare declared page boxes
+with the artifact. Callers can format a rectangle without depending on
+the producer's object conversion or allocation. -/
+public def Rect.render (r : Rect) : String :=
   s!"[{Sp.toPtString r.x0} {Sp.toPtString r.y0} {Sp.toPtString r.x1} {Sp.toPtString r.y1}]"
 
 /-- A length in points as an object: an integer when its rounded spelling
@@ -37,14 +42,14 @@ is one, a real otherwise. The distinction is the reader's — `parseVal`
 answers `.int` for a dotless number — so a writer that spelled every
 length `.real` would build a value its own reader never returns, and
 `parseVal_render_id` would be false of it. -/
-def ptObj (x : Sp) : PdfRead.Obj :=
+private def ptObj (x : Sp) : PdfRead.Obj :=
   let milli := (x.natAbs * 1000 + 32768) / 65536
   if milli % 1000 == 0 then
     .int (if x < 0 then -(milli / 1000 : Int) else (milli / 1000 : Int))
   else .real x.toPtString
 
 /-- The page box as an object — the four corners, each `ptObj`. -/
-def Rect.obj (r : Rect) : PdfRead.Obj :=
+private def Rect.obj (r : Rect) : PdfRead.Obj :=
   .arr #[ptObj r.x0, ptObj r.y0, ptObj r.x1, ptObj r.y1]
 
 /-- The page boxes, as consequences of the declared trim size and bleed —
@@ -58,7 +63,7 @@ the declared bleed on every side, which is exactly the whole medium here;
 by the page's creator" — for a finished artefact like a card, the trim;
 **MediaBox** (§7.7.3.3) is "the boundaries of the physical medium",
 containing them all. -/
-def pageBoxes (pageW pageH bleed : Int) : Rect × Rect × Rect :=
+public def pageBoxes (pageW pageH bleed : Int) : Rect × Rect × Rect :=
   (⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨bleed, bleed, pageW + bleed, pageH + bleed⟩)
@@ -68,7 +73,7 @@ TrimBox ⊆ BleedBox ⊆ MediaBox — and the trim is exactly the declared page
 size, whatever the bleed. The same shape as the `text.in_area` assertion:
 what the file tells the finishing knife matches what the document
 declared. -/
-theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
+public theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
     (pageBoxes W H b).2.2.within (pageBoxes W H b).2.1 ∧
     (pageBoxes W H b).2.1.within (pageBoxes W H b).1 ∧
     (pageBoxes W H b).2.2.x1 - (pageBoxes W H b).2.2.x0 = W ∧
@@ -82,7 +87,7 @@ set; ISO 32000-2 §14.8.6 adds the others): a document title stands as a
 paragraph, a footnote as a `Note`, an aside as a `Div`, and a heading past
 the sixth level as `H6`. Every other type the engine writes is standard
 in both. -/
-def pdf17Role (s : String) : Option String :=
+public def pdf17Role (s : String) : Option String :=
   if s == "Title" then some "P"
   else if s == "FENote" then some "Note"
   else if s == "Aside" then some "Div"
@@ -169,7 +174,7 @@ census a PDF build's embedding decisions read — the faces the file keeps
 (`keepFaces`, its `keepOf`), their subset programs (`facePrograms`), and
 the writer's own tables. The driver takes it once for the programs, their
 cache keys and the page operators; `write` takes its own. -/
-def usedAll (fs : FontSet) (pages : Array PageOut) : Array (Array (Nat × Char)) :=
+public def usedAll (fs : FontSet) (pages : Array PageOut) : Array (Array (Nat × Char)) :=
   let seen := markUsed fs pages
   (Array.range fs.fonts.size).map fun k =>
     ((seen[k]?.getD #[]).zipIdx.filterMap fun (c?, g) => c?.map (g, ·))
@@ -182,13 +187,13 @@ private theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut) :
 embeds. Only faces that actually contribute glyphs are kept — a declared
 but unused face would otherwise cost a megabyte of font file — and face 0
 stands in when nothing set text: a PDF's page resources still name a font. -/
-def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
+public def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
   let keep := (Array.range used.size).filter fun k => !((used[k]?.getD #[]).isEmpty)
   if keep.isEmpty then #[0] else keep
 
 /-- The faces `write` embeds for these pages, named so the cross-backend
 contract below can quantify over the writer's own decision, not a copy. -/
-def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
+public def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
   keepOf (usedAll fs pages)
 
 /-- The font program `write` embeds for each face the census `used`
@@ -196,7 +201,7 @@ def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
 its pages do not paint (`FontSubset.program`), and whether it is a subset.
 The driver builds it once, deflates it through its cache (`FontSet.zdata`),
 and hands it to `write`. -/
-def facePrograms (fs : FontSet) (used : Array (Array (Nat × Char))) : Array (ByteArray × Bool) :=
+public def facePrograms (fs : FontSet) (used : Array (Array (Nat × Char))) : Array (ByteArray × Bool) :=
   (keepOf used).map fun k =>
     let f := fs.get k
     FontSubset.program f ((used[k]?.getD #[]).map (·.1))
@@ -205,12 +210,12 @@ def facePrograms (fs : FontSet) (used : Array (Array (Nat × Char))) : Array (By
 face's slot in the file, so no two subsets in one file share a tag, and the
 rest a digest of the glyphs it keeps, so one subset is always spelled the
 same. -/
-def subsetTag (k : Nat) (used : Array Nat) : String :=
+private def subsetTag (k : Nat) (used : Array Nat) : String :=
   let h := used.foldl (fun h g => (h * 31 + g + 1) % 456976) 7
   let v := k % 676 * 456976 + h
   String.ofList ((List.range 6).reverse.map fun i => Char.ofNat (65 + v / 26 ^ i % 26))
 
-theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
+public theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) : ∀ k ∈ keepFaces fs pages, k < fs.fonts.size := by
   intro k hk
   unfold keepFaces keepOf at hk
@@ -228,103 +233,12 @@ alternative channel until the file is tagged, device colour with no output
 intent, faces embedded (`keepFaces`), no script, mathematics as placed
 glyphs. Nothing in `write` reads this record; it describes the bytes, it
 does not shape them. -/
-def profile : Ir.Realization :=
+public def profile : Ir.Realization :=
   { alternatives := .none
     color := .device
     fonts := .embeds
     scripting := .never
     math := .layout }
-
-/-- The undeclared contract is met by this writer (`_exact`): a document
-that declares no contract key gets no W0701 from its PDF. -/
-theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
-  decide
-
-/-- **The HTML ships the faces the PDF embeds: one `FontSet`, two
-projections.** Every face this writer would embed for these pages
-(`keepFaces`) is declared by a `@font-face` in the HTML emission built
-from the same set (`HtmlDoc.shipFaces`, which `fontFaceCss` renders one
-rule per entry and whose files `fontAssets` requests of the driver,
-`HtmlDoc.shipFaces_src_shipped`). Stated as the superset the HTML can
-honestly promise: it never sees layout's used-glyph data, so it declares
-every face of the set, and the embedded subset is covered a fortiori. The
-convention is AGENTS': the artifact is a function of the document and the
-font environment — a viewer without the document's faces installed must
-not read it in a stand-in. -/
-theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
-    (h : 0 < fs.fonts.size) :
-    ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
-  fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
-
-/-- **Both artifacts' kerning request is one record's two projections**
-(`_agree`). `HtmlDoc.kernCssFor` emits the browser request and
-`Layout.kernEnabled` gates every pair and space-pair lookup. The live
-stylesheet and all three layout call sites pass `Ir.features` itself, so a
-caller cannot substitute a detached literal at one backend. Quantifying the
-record keeps the statement meaningful when a document-level feature switch
-reaches the resolving site. -/
-theorem features_agree (features : Ir.Features) :
-    (!(HtmlDoc.kernCssFor features).isEmpty) = Layout.kernEnabled features := by
-  cases features with
-  | mk kern => cases kern <;> simp [HtmlDoc.kernCssFor, Layout.kernEnabled]
-
-/-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
-reserves and places a picture by `Layout.pictureBox`, and the SVG's
-`viewBox` is `HtmlDoc.pictureBoxOf` (`HtmlDoc.pictureViewBox_projects`);
-under the measurement the driver hands both — `Layout.labelMetric` over the
-one face set, the x-height the layout resolves — the two are the one value
-`Ir.Pic.Picture.box`: the declared box exactly (`box_declared_exact`), else
-every mark's ink and every node's border (`box_covers`). Before, the SVG
-read the hull of label *anchors* while the page read the ink, so one
-picture had two sizes. -/
-theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Picture) :
-    Layout.pictureBox geom fs {} (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
-      HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic := rfl
-
-/-- **The two artifacts carry one text for a non-text object** (`_agree`):
-whatever text a `Figure` carries as `/Alt` (`altElem`, the PDF's projection
-of the object's `Ir.Alt`), the HTML names the object by that same text — an
-svg's `aria-label`, an img's `alt` — because both project the one value
-(for a picture, `Ir.Pic.Picture.alternative`: the author's words, else its
-labels'). -/
-theorem alt_text_agree (floor : String) (a : Ir.Alt) (t : String)
-    (ht : HtmlDoc.nonBlank t = true)
-    (h : (altElem #[rootElem] 0 0 a).back?.bind (·.alt) = some t) :
-    HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-label" = some t ∧
-      HtmlDoc.attrOf? (HtmlDoc.imgAltAttrs a) "alt" = some t := by
-  rw [altElem_root_alt_exact] at h
-  cases a with
-  | described s =>
-    simp only [Option.some.injEq] at h
-    subst h
-    simp [HtmlDoc.pictureAltAttrs, HtmlDoc.imgAltAttrs, HtmlDoc.attrOf?, HtmlDoc.firstNonBlank, ht]
-  | undeclared => contradiction
-  | decorative => contradiction
-
-/-- **The two artifacts hide the same objects** (`_agree`): the PDF adds no
-element for a non-text object — its ink an artifact — exactly when the HTML
-takes its svg out of the accessibility tree. -/
-theorem alt_hidden_agree (floor : String) (a : Ir.Alt) :
-    (altElem #[rootElem] 0 0 a).size = 1 ↔
-      HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-hidden" = some "true" := by
-  rw [altElem_size_exact]
-  cases a <;> simp [HtmlDoc.pictureAltAttrs, HtmlDoc.attrOf?]
-
-/-- **Both artifacts' font decisions are projections of one policy value**
-(`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
-`shipFonts` is the spelling `doc.fontPolicy == .embedded`, and the HTML's
-shipment is `shipFaces` under it and nothing otherwise — the `if` here is
-that gate, written out. Under `.embedded` the shipment covers every face
-this writer embeds (`html_fonts_cover_pdf` is the body); under `.none` the
-document declared that its stylesheet owns the faces, and the PDF still
-embeds its own, as `profile.fonts = .embeds` records. -/
-theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut)
-    (h : 0 < fs.fonts.size) (hp : doc.fontPolicy == .embedded) :
-    ∀ k ∈ keepFaces fs pages,
-      ∃ ff ∈ (if doc.fontPolicy == .embedded then HtmlDoc.shipFaces fs else #[]),
-        ff.index = k := by
-  rw [ite_eq_left hp]
-  exact html_fonts_cover_pdf fs pages h
 
 /-- Link rectangles for one page, in PDF user space. Block links arrive
 as one placed rectangle over their whole page segment; adjacent inline runs
@@ -389,7 +303,7 @@ end"
 
 /-- A `/W` width in millionths of the em as the number the file spells:
 thousandths, with up to three decimals — an integer when it is one. -/
-def widthObj (μ : Int) : PdfRead.Obj :=
+private def widthObj (μ : Int) : PdfRead.Obj :=
   if μ % 1000 == 0 then .int (μ / 1000) else
     let frs := toString (μ.natAbs % 1000)
     let frs := (("".pushn '0' (3 - frs.length)) ++ frs).dropEndWhile (· == '0')
@@ -461,7 +375,7 @@ document's main language over every text run that carries no finer mark
 (ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document declares
 none. The same `Ir.Meta` field the HTML root's `lang` attribute reads
 (`HtmlDoc.emit_lang_declared`). -/
-def langEntry : Option String → Array (String × PdfRead.Obj)
+public def langEntry : Option String → Array (String × PdfRead.Obj)
   | some tag => #[("Lang", .str s!"({pdfString tag})".toUTF8)]
   | none => #[]
 
@@ -470,13 +384,13 @@ def langEntry : Option String → Array (String × PdfRead.Obj)
 unconditionally: every PDF this writer ships is tagged, whatever the
 document declares — tagging is a fact of the artifact, the profile claim
 (`pdfuaid`) is a separate, withheld statement. -/
-def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
+public def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
   #[("MarkInfo", .dict #[("Marked", .bool true)]), ("StructTreeRoot", .ref structTreeRoot 0)]
 
 /-- `/ViewerPreferences /DisplayDocTitle`: the reader's window titles from
 the document's own metadata title rather than its file name (§12.2;
 PDF/UA requires it). -/
-def viewerEntry : Array (String × PdfRead.Obj) :=
+private def viewerEntry : Array (String × PdfRead.Obj) :=
   #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
 /-- The document catalog (ISO 32000-2 §7.7.2): the page tree, an outline
@@ -484,7 +398,7 @@ when the layout carried one, the XMP metadata stream, the declared
 language, the mark information and structure tree root, and the viewer
 preference. A typed object, not a spelling: `Obj.render` is the only place
 its bytes are decided. -/
-def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
+public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
@@ -501,7 +415,7 @@ statement over the typed entries rather than a substring of a spelling:
 the value is what both the writer and a reader see. The webMetaChecks
 census in Tests/Backends is the wiring witness that `write` ships this
 dictionary. -/
-theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
+public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
     ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
       = .dict (pre ++ langEntry lang ++ post) :=
@@ -519,7 +433,7 @@ fixed runs, whatever the language, the outline, or the document declares
 — tagging is unconditional. The structTreeChecks round trip in
 Tests/Backends is the wiring witness that `write` ships this dictionary
 with a tree behind the reference. -/
-theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
+public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
     (structTreeRoot : Nat) :
     ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
       = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
@@ -560,14 +474,14 @@ private def imgMapOf (imgs : Image.Store) (used : Array Nat) : Array (Option Nat
 /-- The structure type each leaf's marked content is tagged with, read off
 the tree's skeleton (`leafTags`): the one answer both the content streams
 and the structure elements are built from. -/
-def tagsOf (tree : Struct.Tree) : Array (Option String) :=
+public def tagsOf (tree : Struct.Tree) : Array (Option String) :=
   leafTags (skeleton tree) tree.leaves.size
 
 /-- Each page's typed operators, resolved against the faces and images the
 document actually uses and the structure tree's leaf tags: what
 `pageStreams` renders, before spelling. `keep` is `keepFaces` over these
 pages, read by the driver off the census it took once. -/
-def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩)
     (keep : Array Nat := keepFaces fs pages) : Array (Array ContentOp) :=
   let remap := remapOf fs keep
@@ -581,7 +495,7 @@ bytes `write` computes for itself, exposed so the driver can deflate them
 through its content-hash cache (the font files' shape — a page whose
 content is unchanged since the last build reads its stream instead of
 compressing it) and hand them back as `write`'s `streams`. -/
-def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩) : Array ByteArray :=
   (pageOps geom fs pages imgs tree).map fun ops => (render ops).toUTF8
 
@@ -591,7 +505,7 @@ def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 §7.5.8.3, Table 18): the object is written at a byte offset (type 1), sits
 at an index inside the object stream (type 2), or is the cross-reference
 stream itself — type 1 too, at the offset the trailer's `startxref` names. -/
-inductive ObjKind where
+public inductive ObjKind where
   | direct
   | inStream (idx : Nat)
   | xref
@@ -599,14 +513,14 @@ inductive ObjKind where
 
 /-- What a placed image brings beyond its own XObject: nothing, an alpha
 plane's SMask, or a copied page's resource graph — one id per object. -/
-inductive ImgExtra where
+private inductive ImgExtra where
   | plain
   | alpha
   | form (objects : Nat)
   deriving Repr
 
 /-- How many ids an image's block spans: its XObject plus what it brings. -/
-def ImgExtra.span : ImgExtra → Nat
+private def ImgExtra.span : ImgExtra → Nat
   | .plain => 1
   | .alpha => 2
   | .form n => n + 1
@@ -614,7 +528,7 @@ def ImgExtra.span : ImgExtra → Nat
 /-- What image `k` of the store brings: a decoded page is a form, a raster
 with an alpha plane brings its SMask, anything else (a placeholder too)
 nothing. -/
-def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
+private def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
   match (imgs.get? k).bind (·.info) with
   | some inf =>
     match inf.form with
@@ -628,7 +542,7 @@ def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
 
 /-- Where each of a run of consecutive blocks starts: `base`, then each
 start plus its own block's span. -/
-def blockStarts (base : Nat) : List Nat → List Nat
+private def blockStarts (base : Nat) : List Nat → List Nat
   | [] => []
   | n :: ns => base :: blockStarts (base + n) ns
 
@@ -639,7 +553,7 @@ what it brings (`ImgExtra`), two per page, Info, the outline — root then
 items — when the layout carried one, XMP, the object stream, and the
 cross-reference stream last. `write` reads its ids here and nowhere else;
 the conditional families are slots no document fills yet. -/
-structure ObjTable where
+public structure ObjTable where
   nf : Nat
   ni : Nat
   np : Nat
@@ -675,20 +589,20 @@ structure ObjTable where
 
 namespace ObjTable
 
-def type0Id (k : Nat) : Nat := 3 + 4 * k
-def cidId (k : Nat) : Nat := 3 + 4 * k + 1
-def fdId (k : Nat) : Nat := 3 + 4 * k + 2
-def toUniId (k : Nat) : Nat := 3 + 4 * k + 3
-def fileId (t : ObjTable) (k : Nat) : Nat := 3 + 4 * t.nf + k
-def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
-def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
-def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
-def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
+public def type0Id (k : Nat) : Nat := 3 + 4 * k
+public def cidId (k : Nat) : Nat := 3 + 4 * k + 1
+public def fdId (k : Nat) : Nat := 3 + 4 * k + 2
+public def toUniId (k : Nat) : Nat := 3 + 4 * k + 3
+public def fileId (t : ObjTable) (k : Nat) : Nat := 3 + 4 * t.nf + k
+public def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
+public def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
+public def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
+public def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
 
 /-- Every allocated id, in emission order — each block spelled from its
 own slot function, so `objTable_inj` and `objTable_covers` are facts about
 the allocation and not about a range. -/
-def ids (t : ObjTable) : Array Nat :=
+public def ids (t : ObjTable) : Array Nat :=
   #[1, 2]
   ++ (Array.range t.nf).flatMap (fun k => #[type0Id k, cidId k, fdId k, toUniId k])
   ++ (Array.range t.nf).map t.fileId
@@ -705,7 +619,7 @@ def ids (t : ObjTable) : Array Nat :=
 holds it (`compressedIdx`): a function of the table, so an id the table
 never allocated is `none` — and `objTable_kindOf_some` says that never
 happens on `ids`. -/
-def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
+public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
   if id == 0 || t.size ≤ id then none
   else if id == t.xrefId then some .xref
   else match compressedIdx id with
@@ -716,7 +630,7 @@ end ObjTable
 
 /-- The table for `keep` faces, the placed images `usedImgs` of `imgs`,
 `np` pages, `nOut` outline entries and `nElems` structure elements. -/
-def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) : ObjTable :=
   let nf := keep.size
   let extras := usedImgs.map (imgExtraOf imgs)
@@ -747,14 +661,14 @@ def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
 /-- The table `write` reads for these inputs: the faces it embeds
 (`keepFaces`), the images it places (`usedImagesOf`), the page and outline
 counts, and the structure tree's element count. -/
-def tableOf (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+public def tableOf (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree := ⟨#[]⟩) : ObjTable :=
   objTable (keepFaces fs pages) imgs (usedImagesOf imgs pages) pages.size outline.size
     (skeleton tree).size
 
 /-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
 the range from `base` of the spans' total, exactly. -/
-theorem blockIds_exact (base : Nat) (spans : List Nat) :
+private theorem blockIds_exact (base : Nat) (spans : List Nat) :
     ((blockStarts base spans).zip spans).flatMap (fun p => List.range' p.1 p.2)
       = List.range' base spans.sum := by
   induction spans generalizing base with
@@ -766,7 +680,7 @@ theorem blockIds_exact (base : Nat) (spans : List Nat) :
     rw [this]
 
 /-- Constant-size blocks over `range n` tile `range' a (c * n)`. -/
-theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
+private theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
     (hf : ∀ k, f k = List.range' (a + c * k) c) :
     (List.range n).flatMap f = List.range' a (c * n) := by
   induction n with
@@ -781,7 +695,7 @@ theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
 `objTable` writes has ids that tile `[1, size)` — each block, spelled from
 its slot function, is a range, and the ranges abut. Stated over the fields
 so the proof never sees the structure literal. -/
-theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
+private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (himg : t.imgIds.toList = blockStarts (3 + 5 * t.nf) spans)
     (hsp : t.imgSpans.toList = spans)
     (hpb : t.pageBase = 3 + 5 * t.nf + spans.sum)
@@ -839,7 +753,7 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
 /-- **`objTable_ids_exact`** (the `_exact` statement the two theorems below
 project): the table's ids, block by block from its slot functions, are the
 range `[1, size)` — the allocation is a tiling. -/
-theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) :
     (objTable keep imgs usedImgs np nOut nElems).ids.toList
       = List.range' 1 ((objTable keep imgs usedImgs np nOut nElems).size - 1) :=
@@ -848,7 +762,7 @@ theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : A
 
 /-- **`objTable_inj`** (the `_inj` statement): no two slots of the table
 share an id — the allocation is injective. -/
-theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) : (objTable keep imgs usedImgs np nOut nElems).ids.toList.Nodup := by
   rw [objTable_ids_exact]
   exact List.nodup_range' 1
@@ -856,7 +770,7 @@ theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array N
 /-- **`objTable_covers`** (the `_covers` statement): every id below the
 trailer's `/Size`, other than the free-list head 0, is allocated — no row
 of the cross-reference is left to a default. -/
-theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) :
     ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut nElems).size →
       id ∈ (objTable keep imgs usedImgs np nOut nElems).ids := by
@@ -867,7 +781,7 @@ theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Arra
 /-- **`objTable_between`** (the `_between` statement): every allocated id
 lies in `[1, size)` — the converse of `objTable_covers`, and what makes
 `kindOf` answer on every id `write` iterates. -/
-theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) :
     ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
       1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut nElems).size := by
@@ -880,7 +794,7 @@ theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Arr
 
 /-- `kindOf` is defined on every id the table allocates: the `none` arm of
 the match in `write` is dead by this theorem, not by a default. -/
-theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+public theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems : Nat) (compressedIdx : Nat → Option Nat) :
     ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
       ((objTable keep imgs usedImgs np nOut nElems).kindOf compressedIdx id).isSome = true := by
@@ -894,7 +808,7 @@ theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs :
 
 /-- A row of the writer's cross-reference. A missing direct object is
 declared free; it is never redirected to an unrelated compressed object. -/
-def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+public def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff id : Nat) : Xref.Entry :=
   if id == t.xrefId then .direct xrefOff 0 else
     match compressedIdx id with
@@ -905,13 +819,13 @@ def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
 
 /-- The free-list head and one row per allocated id, in allocation order.
 `write` encodes this array itself; it is not a reconstructed certificate. -/
-def xrefEntries (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+public def xrefEntries (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff : Nat) : Array Xref.Entry :=
   #[.free 0 65535] ++ t.ids.map (xrefEntry t compressedIdx offset xrefOff)
 
 /-- The row selection is the allocation table's kind decision on every
 allocated id, including its explicit missing-direct-object case. -/
-theorem xrefEntry_kind_exact (t : ObjTable)
+public theorem xrefEntry_kind_exact (t : ObjTable)
     (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
     (hlo : 0 < id) (hhi : id < t.size) :
     some (xrefEntry t compressedIdx offset xrefOff id) =
@@ -932,7 +846,7 @@ theorem xrefEntry_kind_exact (t : ObjTable)
 
 /-- The actual xref payload has exactly the number of seven-byte rows
 declared by `/Size` and `/Index`, including row zero. -/
-theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
+public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) :
     let t := objTable keep imgs usedImgs np nOut nElems
@@ -955,7 +869,7 @@ theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
 /-- The row index is the object id, including the free-list head at zero.
 This derives from the actual allocation's tiling, without an ordering
 premise on the table. -/
-theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
+public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
     (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
@@ -978,7 +892,7 @@ theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
 
 /-- Numeric field bounds suffice for every emitted xref entry. This
 assumes no property of our writer, parser, or compressor. -/
-theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+public theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff id : Nat) (hx : xrefOff < 256 ^ 4) (hs : t.objStmId < 256 ^ 4)
     (hc : ∀ n i, compressedIdx n = some i → i < 256 ^ 2)
     (ho : ∀ n i, offset n = some i → i < 256 ^ 4) :
@@ -1005,7 +919,7 @@ emitting is a row the matrix must carry, red until the readers pass it.
 verbatim: their filters are theirs, not this writer's, and the census
 does not read them — the graph census will name them; until then the
 whole graph is one feature the readers must pass. -/
-inductive Feature where
+public inductive Feature where
   | xrefStream
   | objStm
   | flatePredictor15
@@ -1032,19 +946,19 @@ inductive Feature where
 /-- How many features the census names: the one number a new constructor
 bumps (`all_complete` fails on an undercount, `all_nodup` on an overcount,
 `ofNat` clamping the excess onto the last constructor). -/
-def Feature.count : Nat := 21
+public def Feature.count : Nat := 21
 
 /-- Every feature, in declaration order — derived from the type through
 the `ofNat` that `deriving DecidableEq` synthesises, never hand-kept. -/
-def Feature.all : List Feature := (List.range Feature.count).map Feature.ofNat
+public def Feature.all : List Feature := (List.range Feature.count).map Feature.ofNat
 
-theorem Feature.all_complete (f : Feature) : f ∈ Feature.all := by
+public theorem Feature.all_complete (f : Feature) : f ∈ Feature.all := by
   cases f <;> decide
 
-theorem Feature.all_nodup : Feature.all.Nodup := by decide
+public theorem Feature.all_nodup : Feature.all.Nodup := by decide
 
 /-- The matrix row a feature is spelled as. -/
-def Feature.name : Feature → String
+public def Feature.name : Feature → String
   | .xrefStream => "xref-stream"
   | .objStm => "objstm"
   | .flatePredictor15 => "flate-predictor15"
@@ -1069,10 +983,10 @@ def Feature.name : Feature → String
 
 /-- **`Feature.name_inj`** (the `_inj` statement): no two features share a
 row name, so a matrix row names one feature. -/
-theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b := by
+public theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b := by
   cases a <;> cases b <;> first | rfl | (simp [Feature.name] at h)
 
-def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
+public def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
 
 /-- Whether one run of `write` on these inputs reaches a feature: the
 table's slots say what was allocated (a soft mask, a copied graph, an
@@ -1082,7 +996,7 @@ annotations and the outline its URI targets; the content operators whether
 a marked sequence opens. The four the writer cannot emit yet (`tabs`,
 `transparencyGroup`, `brotli`, `jpx`) are `false` here and rows the matrix
 already carries, so the day one is emitted the census says so. -/
-def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) : Feature → Bool
   | .xrefStream => true
   | .objStm => true
@@ -1120,14 +1034,14 @@ where
 the closed census the reader matrix's rows are checked against, computed
 by the test and the oracle script from the same inputs `write` reads,
 never from the bytes. -/
-def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
+public def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[]) : Array Feature :=
   (Feature.all.filter (reaches geom fs pages imgs outline)).toArray
 
 /-- **`features_mem`** (the `_mem` statement): every feature the census
 reports is drawn from `Feature.all` — the row set is closed, so a matrix
 carrying a row per `Feature.all` has a row for whatever a fixture emits. -/
-theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (f : Feature) (h : f ∈ features geom fs pages imgs outline) :
     f ∈ Feature.all := by
   unfold features at h
@@ -1136,7 +1050,7 @@ theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs 
 /-- **`features_smask_iff`** (the `_exact` statement): the census says
 `smask` exactly when the table allocated a soft-mask id — the same slot
 `write` reads to emit `/SMask`. -/
-theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store) (outline : Array OutlineEntry) :
     .smask ∈ features geom fs pages imgs outline ↔
       ∃ k, ∃ h : k < (tableOf fs pages imgs outline).smaskIds.size,
@@ -1146,20 +1060,20 @@ theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
 
 /-- The native stream prefixes owned by the writer. -/
-inductive StreamPrefix where
+public inductive StreamPrefix where
   | content
   | openType
   | trueType (length : Nat)
   | metadata
   deriving Repr
 
-def StreamPrefix.text : StreamPrefix → String
+public def StreamPrefix.text : StreamPrefix → String
   | .content => ""
   | .openType => "/Subtype /OpenType"
   | .trueType n => s!"/Length1 {n}"
   | .metadata => "/Type /Metadata /Subtype /XML"
 
-def StreamPrefix.fragment (p : StreamPrefix) (filtered : Bool) : String :=
+public def StreamPrefix.fragment (p : StreamPrefix) (filtered : Bool) : String :=
   p.text ++ if filtered then " /Filter /FlateDecode" else ""
 
 /-- One physical object as the bytes `serialize` writes for it: a
@@ -1168,7 +1082,7 @@ form XObject whose `/Resources` is a copied graph's renumbered bytes, or a
 copied object's own value bytes with its own stream. No offset rides here —
 `serialize` decides where an object lands, and it decides it by having
 written everything before it. -/
-inductive Body where
+public inductive Body where
   | stream (dict : String) (data : ByteArray)
   /-- The dictionary up to `/Resources`, the renumbered resource bytes, and
   the form's content. The resources are bytes with reference holes
@@ -1182,19 +1096,19 @@ inductive Body where
 /-- Native streams have a writer-owned dictionary prefix and retained
 payload. This syntax condition makes no claim about the font program or
 the validity of a caller's compressed cache entry. -/
-def Body.Native (body : Body) : Prop :=
+public def Body.Native (body : Body) : Prop :=
   ∃ p : StreamPrefix, ∃ filtered : Bool, ∃ raw : ByteArray,
     body = .stream (p.fragment filtered) raw
 
 /-- An object with the id the table allocated it. -/
-structure Row where
+public structure Row where
   id : Nat
   body : Body
 
 /-- The bytes one object is written as, appended to the buffer it lands in:
 the accumulator form, so a 60 MB font program is appended in place rather
 than built beside the file and copied into it. -/
-def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
+public def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
   | .stream dict data =>
     ((out ++ (s!"{id} 0 obj\n<< {dict} /Length {data.size} >>\nstream\n").toUTF8) ++ data)
       ++ "\nendstream\nendobj\n".toUTF8
@@ -1210,7 +1124,7 @@ def rowInto (out : ByteArray) (id : Nat) : Body → ByteArray
 
 /-- The `List` companion: the offset is bound before the append so the
 buffer stays uniquely owned and the append is in place. -/
-def serializeList (out : ByteArray) (locs : Array (Nat × Nat)) :
+private def serializeList (out : ByteArray) (locs : Array (Nat × Nat)) :
     List Row → ByteArray × Array (Nat × Nat)
   | [] => (out, locs)
   | r :: rest =>
@@ -1222,11 +1136,11 @@ fold's own — the size the buffer had when the object's bytes began — so
 nothing can disagree with them: the cross-reference is built from this
 result, not from a table filled beside the writing. `write_readXref_exact`
 is the statement this shape exists for. -/
-def serialize (head : ByteArray) (rows : Array Row) : ByteArray × Array (Nat × Nat) :=
+public def serialize (head : ByteArray) (rows : Array Row) : ByteArray × Array (Nat × Nat) :=
   serializeList head #[] rows.toList
 
 /-- A row appends its bytes independently of the preceding file. -/
-theorem rowInto_bytes (pre : ByteArray) (id : Nat) (body : Body) :
+public theorem rowInto_bytes (pre : ByteArray) (id : Nat) (body : Body) :
     rowInto pre id body = pre ++ rowInto ByteArray.empty id body := by
   cases body with
   | stream dict data => simp [rowInto, ByteArray.append_assoc]
@@ -1234,7 +1148,7 @@ theorem rowInto_bytes (pre : ByteArray) (id : Nat) (body : Body) :
   | copied value stream =>
     cases stream <;> simp [rowInto, ByteArray.append_assoc]
 
-theorem serializeList_bytes (rows : List Row) (out : ByteArray)
+private theorem serializeList_bytes (rows : List Row) (out : ByteArray)
     (locs : Array (Nat × Nat)) :
     (serializeList out locs rows).1 =
       out ++ (serializeList ByteArray.empty #[] rows).1 := by
@@ -1246,7 +1160,7 @@ theorem serializeList_bytes (rows : List Row) (out : ByteArray)
     rw [rowInto_bytes out]
     exact ByteArray.append_assoc
 
-theorem serializeList_offsets (rows : List Row) (out : ByteArray)
+private theorem serializeList_offsets (rows : List Row) (out : ByteArray)
     (locs : Array (Nat × Nat)) :
     (serializeList out locs rows).2 =
       locs ++ (serializeList out #[] rows).2 := by
@@ -1258,7 +1172,7 @@ theorem serializeList_offsets (rows : List Row) (out : ByteArray)
       ih (rowInto out r.id r.body) (#[].push (r.id, out.size))]
     simp only [Array.push_eq_append, Array.empty_append, Array.append_assoc]
 
-theorem serializeList_offsetSize (rows : List Row) (out : ByteArray)
+private theorem serializeList_offsetSize (rows : List Row) (out : ByteArray)
     (locs : Array (Nat × Nat)) :
     (serializeList out locs rows).2.size = locs.size + rows.length := by
   induction rows generalizing out locs with
@@ -1267,7 +1181,7 @@ theorem serializeList_offsetSize (rows : List Row) (out : ByteArray)
     simp only [serializeList, ih, Array.size_push, List.length_cons]
     omega
 
-theorem serializeList_append (before after : List Row) (out : ByteArray)
+private theorem serializeList_append (before after : List Row) (out : ByteArray)
     (locs : Array (Nat × Nat)) :
     serializeList out locs (before ++ after) =
       serializeList (serializeList out locs before).1
@@ -1281,7 +1195,7 @@ theorem serializeList_append (before after : List Row) (out : ByteArray)
 /-- Every recorded offset selects exactly that row's bytes in the
 serialized file. This artifact-specific law quantifies over all preceding
 and following rows, including binary streams and copied objects. -/
-theorem serialize_row_exact (head : ByteArray) (before after : Array Row) (r : Row) :
+public theorem serialize_row_exact (head : ByteArray) (before after : Array Row) (r : Row) :
     let pre := (serialize head before).1
     let out := serialize head (before ++ #[r] ++ after)
     out.2[before.size]? = some (r.id, pre.size) ∧
@@ -1310,41 +1224,41 @@ theorem serialize_row_exact (head : ByteArray) (before after : Array Row) (r : R
 /-- **`serialize_locs_covers`** (the `_covers` statement): `serialize`
 reports one offset per row, in the rows' own order — so a cross-reference
 built from `locs` names every object the writer wrote and no other. -/
-theorem serializeList_ids (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)) :
+private theorem serializeList_ids (l : List Row) (out : ByteArray) (locs : Array (Nat × Nat)) :
     (serializeList out locs l).2.toList.map (·.1) = locs.toList.map (·.1) ++ l.map (·.id) := by
   induction l generalizing out locs with
   | nil => simp [serializeList]
   | cons r rest ih => simp [serializeList, ih]
 
-theorem serialize_locs_covers (head : ByteArray) (rows : Array Row) :
+public theorem serialize_locs_covers (head : ByteArray) (rows : Array Row) :
     (serialize head rows).2.toList.map (·.1) = rows.toList.map (·.id) := by
   simp [serialize, serializeList_ids]
 
 /-- **`serialize_locs_id`** (the `_id` statement): the first object lands at
 the head's own size — the offset a reader following `startxref` arrives at,
 and the base case of the induction over the rows. -/
-theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
+public theorem serialize_locs_id (head : ByteArray) (r : Row) (rest : Array Row) :
     (serialize head (#[r] ++ rest)).2[0]? = some (r.id, head.size) := by
   simpa [serialize, serializeList] using (serialize_row_exact head #[] rest r).1
 
 /-- A dense lookup of the positions recorded by the writer. Out-of-range
 ids are ignored; when an id repeats, the last source row wins. -/
-def indexObjectsList {α : Type} (out : Array (Option α)) :
+private def indexObjectsList {α : Type} (out : Array (Option α)) :
     List (Nat × α) → Array (Option α)
   | [] => out
   | (id, value) :: rest => indexObjectsList (out.setIfInBounds id (some value)) rest
 
-def indexObjects {α : Type} (size : Nat) (rows : List (Nat × α)) : Array (Option α) :=
+public def indexObjects {α : Type} (size : Nat) (rows : List (Nat × α)) : Array (Option α) :=
   indexObjectsList (Array.replicate size none) rows
 
-@[simp] theorem indexObjectsList_size {α : Type} (rows : List (Nat × α))
+@[simp] private theorem indexObjectsList_size {α : Type} (rows : List (Nat × α))
     (out : Array (Option α)) :
     (indexObjectsList out rows).size = out.size := by
   induction rows generalizing out with
   | nil => rfl
   | cons r rest ih => simp [indexObjectsList, ih]
 
-theorem indexObjectsList_append {α : Type} (before after : List (Nat × α))
+private theorem indexObjectsList_append {α : Type} (before after : List (Nat × α))
     (out : Array (Option α)) :
     indexObjectsList out (before ++ after) =
       indexObjectsList (indexObjectsList out before) after := by
@@ -1352,7 +1266,7 @@ theorem indexObjectsList_append {α : Type} (before after : List (Nat × α))
   | nil => rfl
   | cons r rest ih => exact ih _
 
-theorem indexObjectsList_absent {α : Type} (rows : List (Nat × α))
+private theorem indexObjectsList_absent {α : Type} (rows : List (Nat × α))
     (out : Array (Option α)) (id : Nat)
     (habsent : ∀ r ∈ rows, r.1 ≠ id) :
     (indexObjectsList out rows)[id]? = out[id]? := by
@@ -1363,7 +1277,7 @@ theorem indexObjectsList_absent {α : Type} (rows : List (Nat × α))
     rw [ih _ (fun s hs => habsent s (List.mem_cons_of_mem _ hs))]
     simp [habsent r (List.mem_cons_self)]
 
-theorem indexObjectsList_source {α : Type} (rows : List (Nat × α))
+private theorem indexObjectsList_source {α : Type} (rows : List (Nat × α))
     (out : Array (Option α)) (id : Nat) (value : α)
     (h : ((indexObjectsList out rows)[id]?).join = some value) :
     (out[id]?).join = some value ∨ (id, value) ∈ rows := by
@@ -1381,7 +1295,7 @@ theorem indexObjectsList_source {α : Type} (rows : List (Nat × α))
     · exact Or.inr (List.mem_cons_of_mem _ h)
 
 /-- Every answer is one of the writer's recorded positions. -/
-theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α))
+public theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α))
     (id : Nat) (value : α)
     (h : ((indexObjects size rows)[id]?).join = some value) :
     (id, value) ∈ rows := by
@@ -1393,7 +1307,7 @@ theorem indexObjects_mem {α : Type} (size : Nat) (rows : List (Nat × α))
 /-- A recorded position is recovered exactly when its id fits and no
 later row replaces it. Neither a unique-id assumption nor an initial
 table is needed for the preceding rows. -/
-theorem indexObjects_entry_exact {α : Type} (size : Nat)
+public theorem indexObjects_entry_exact {α : Type} (size : Nat)
     (before after : List (Nat × α)) (id : Nat) (value : α)
     (hid : id < size) (hlast : ∀ r ∈ after, r.1 ≠ id) :
     ((indexObjects size (before ++ (id, value) :: after))[id]?).join =
@@ -1406,12 +1320,12 @@ theorem indexObjects_entry_exact {α : Type} (size : Nat)
 
 /-- The object-stream index uses the same position list that is packed
 into the object stream. -/
-def compressedIndex (size : Nat) (objects : List (Nat × PdfRead.Obj)) :
+public def compressedIndex (size : Nat) (objects : List (Nat × PdfRead.Obj)) :
     Array (Option Nat) :=
   indexObjects size (objects.zipIdx.map (fun (row, i) => (row.1, i)))
 
 /-- Each compressed lookup selects a source object with that same id. -/
-theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.Obj))
+public theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
     ∃ value, objects[i]? = some (id, value) := by
   have hm := indexObjects_mem size _ id i h
@@ -1424,7 +1338,7 @@ theorem compressedIndex_mem (size : Nat) (objects : List (Nat × PdfRead.Obj))
 
 /-- Even when source ids repeat, every returned index points inside the
 actual packed list. -/
-theorem compressedIndex_between (size : Nat) (objects : List (Nat × PdfRead.Obj))
+public theorem compressedIndex_between (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id i : Nat) (h : ((compressedIndex size objects)[id]?).join = some i) :
     i < objects.length := by
   have hm := indexObjects_mem size _ id i h
@@ -1433,7 +1347,7 @@ theorem compressedIndex_between (size : Nat) (objects : List (Nat × PdfRead.Obj
   have := List.snd_lt_of_mem_zipIdx hj
   simpa [hi] using this
 
-theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
+private theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
     (locs : Array (Nat × Nat)) (h : ∀ r ∈ locs, r.2 ≤ out.size) :
     ∀ r ∈ (serializeList out locs rows).2,
       r.2 ≤ (serializeList out locs rows).1.size := by
@@ -1450,14 +1364,14 @@ theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
     · simpa [hr] using hsize
 
 /-- Recorded offsets cannot exceed the actual serialized body size. -/
-theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
+public theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
     (id off : Nat) (h : (id, off) ∈ (serialize head rows).2) :
     off ≤ (serialize head rows).1.size :=
   serializeList_offsetBound rows.toList head #[] (by simp) (id, off) h
 
 /-- The xref payload is formed from the actual serializer's locations and
 the actual object-stream position list. -/
-def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
+public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) : Array Xref.Entry :=
   let offsets := indexObjects t.size locs.toList
   let compressed := compressedIndex t.size objects
@@ -1467,7 +1381,7 @@ def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
 /-- Scalar representability bounds suffice for the actual xref payload:
 the serialized body and object-stream id fit four bytes, and at most
 65536 compressed objects fit the two-byte positional index. -/
-theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array Row)
+public theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array Row)
     (objects : List (Nat × PdfRead.Obj))
     (hbody : (serialize head rows).1.size < 256 ^ 4)
     (hstream : t.objStmId < 256 ^ 4) (hobjects : objects.length ≤ 256 ^ 2) :
@@ -1491,7 +1405,7 @@ theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array R
 object id. The table is constructed from source counts; the only premises
 are the three numeric limits imposed by its declared field widths.
 Decompression and the reader's row walk remain separate contracts. -/
-theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
+public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems : Nat) (head : ByteArray) (rows : Array Row)
     (objects : List (Nat × PdfRead.Obj))
     (hbody : (serialize head rows).1.size < 256 ^ 4)
@@ -1520,34 +1434,34 @@ theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
 
 /-- The two buffers of an object stream (§7.5.7). Header offsets are
 relative to `payload`, whose bytes are appended by the same step. -/
-structure ObjectStream where
+public structure ObjectStream where
   header : String := ""
   payload : ByteArray := ByteArray.empty
 
-def ObjectStream.push (s : ObjectStream) (id : Nat) (value : PdfRead.Obj) : ObjectStream :=
+private def ObjectStream.push (s : ObjectStream) (id : Nat) (value : PdfRead.Obj) : ObjectStream :=
   { header := s.header ++ s!"{id} {s.payload.size} "
     payload := (s.payload ++ PdfRead.Obj.render value).push 10 }
 
 /-- The actual writer's accumulator, shared by the emission and its
 offset laws. No object offsets are supplied by a caller. -/
-def objectStreamList (s : ObjectStream) : List (Nat × PdfRead.Obj) → ObjectStream
+private def objectStreamList (s : ObjectStream) : List (Nat × PdfRead.Obj) → ObjectStream
   | [] => s
   | (id, value) :: rest => objectStreamList (s.push id value) rest
 
-def objectStream (objects : List (Nat × PdfRead.Obj)) : ObjectStream :=
+public def objectStream (objects : List (Nat × PdfRead.Obj)) : ObjectStream :=
   objectStreamList {} objects
 
-def ObjectStream.bytes (s : ObjectStream) : ByteArray :=
+public def ObjectStream.bytes (s : ObjectStream) : ByteArray :=
   s.header.toUTF8 ++ s.payload
 
-theorem objectStreamList_append (s : ObjectStream) (before after : List (Nat × PdfRead.Obj)) :
+private theorem objectStreamList_append (s : ObjectStream) (before after : List (Nat × PdfRead.Obj)) :
     objectStreamList s (before ++ after) =
       objectStreamList (objectStreamList s before) after := by
   induction before generalizing s with
   | nil => rfl
   | cons r rest ih => exact ih _
 
-theorem objectStreamList_header (objects : List (Nat × PdfRead.Obj))
+private theorem objectStreamList_header (objects : List (Nat × PdfRead.Obj))
     (header : String) (payload : ByteArray) :
     (objectStreamList ⟨header, payload⟩ objects).header =
       header ++ (objectStreamList ⟨"", payload⟩ objects).header := by
@@ -1558,7 +1472,7 @@ theorem objectStreamList_header (objects : List (Nat × PdfRead.Obj))
     rw [ih, ih s!"{r.1} {payload.size} "]
     simp [String.append_assoc]
 
-theorem objectStreamList_payload (objects : List (Nat × PdfRead.Obj)) (s : ObjectStream) :
+private theorem objectStreamList_payload (objects : List (Nat × PdfRead.Obj)) (s : ObjectStream) :
     (objectStreamList s objects).payload =
       s.payload ++ (objectStream objects).payload := by
   induction objects generalizing s with
@@ -1576,7 +1490,7 @@ theorem objectStreamList_payload (objects : List (Nat × PdfRead.Obj)) (s : Obje
 payload, and that offset after `/First` selects exactly its rendered
 bytes. This holds for arbitrary objects and surrounding objects; parser
 grammar and xref field bounds are separate obligations. -/
-theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj))
+public theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj))
     (id : Nat) (value : PdfRead.Obj) :
     let pre := objectStream before
     let out := objectStream (before ++ (id, value) :: after)
@@ -1610,18 +1524,18 @@ theorem objectStream_entry_exact (before after : List (Nat × PdfRead.Obj))
 
 /-- The three dictionaries of one embedded face (ISO 32000-2 §§9.7, 9.8).
 The stream rows hold its program and ToUnicode separately. -/
-structure FontObjects where
+public structure FontObjects where
   type0 : PdfRead.Obj
   cid : PdfRead.Obj
   descriptor : PdfRead.Obj
 
-def FontObjects.rows (o : FontObjects) (k : Nat) : List (Nat × PdfRead.Obj) :=
+public def FontObjects.rows (o : FontObjects) (k : Nat) : List (Nat × PdfRead.Obj) :=
   [(ObjTable.type0Id k, o.type0), (ObjTable.cidId k, o.cid),
     (ObjTable.fdId k, o.descriptor)]
 
 /-- Font dictionaries from the face metrics and the allocated ids.
 The name and widths have already been resolved for the selected glyphs. -/
-def fontObjects (t : ObjTable) (k : Nat) (font : Font)
+public def fontObjects (t : ObjTable) (k : Nat) (font : Font)
     (baseFont : String) (widths : PdfRead.Obj) : FontObjects :=
   let ascent1000 := font.ascent * 1000 / font.unitsPerEm
   let descent1000 := font.descent * 1000 / font.unitsPerEm
@@ -1668,7 +1582,7 @@ def fontObjects (t : ObjTable) (k : Nat) (font : Font)
 /-- The composite font, its descendant, and its descriptor point to the
 table's own slots, for every face and glyph-width table. This is a PDF
 dictionary contract; it does not assume a reader or certify a font file. -/
-theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
+public theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
     (baseFont : String) (widths : PdfRead.Obj) :
     let o := fontObjects t k font baseFont widths
     o.type0.get? "DescendantFonts" = some (.arr #[.ref (ObjTable.cidId k) 0]) ∧
@@ -1681,28 +1595,28 @@ theorem fontObjects_links_exact (t : ObjTable) (k : Nat) (font : Font)
 
 /-- Select the smaller of a stream's original and deflated spellings.
 The cached spelling is supplied by the same codec as `flateRow`. -/
-def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
+public def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
   if z.size < data.size then ⟨id, .stream (dict ++ " /Filter /FlateDecode") z⟩
   else ⟨id, .stream dict data⟩
 
-def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
+public def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
   zRow id dict data (Flate.deflate data)
 
-theorem zRow_native_exact (id : Nat) (p : StreamPrefix) (data z : ByteArray) :
+public theorem zRow_native_exact (id : Nat) (p : StreamPrefix) (data z : ByteArray) :
     (zRow id p.text data z).body.Native := by
   unfold zRow
   split
   · exact ⟨p, true, z, rfl⟩
   · exact ⟨p, false, data, by simp [StreamPrefix.fragment]⟩
 
-theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteArray) :
+public theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteArray) :
     (flateRow id p.text data).body.Native :=
   zRow_native_exact id p data _
 
 /-- The writer's actual allocation and emissions, before serialization.
 The object stream and xref are derived from these rows and values; their
 offsets are never supplied separately. This is artifact bookkeeping. -/
-structure WritePlan where
+public structure WritePlan where
   table : ObjTable
   head : ByteArray
   direct : Array Row
@@ -1714,27 +1628,27 @@ private def WritePlan.rowsWith (p : WritePlan) (first : Nat) (payload : ByteArra
     s!"/Type /ObjStm /N {p.compressed.length} /First {first}" payload)
 
 /-- The one object stream is appended to the direct rows it accompanies. -/
-def WritePlan.rows (p : WritePlan) : Array Row :=
+public def WritePlan.rows (p : WritePlan) : Array Row :=
   let packed := objectStream p.compressed
   p.rowsWith packed.header.utf8ByteSize packed.bytes
 
-def WritePlan.serialized (p : WritePlan) : ByteArray × Array (Nat × Nat) :=
+public def WritePlan.serialized (p : WritePlan) : ByteArray × Array (Nat × Nat) :=
   serialize p.head p.rows
 
-def WritePlan.entries (p : WritePlan) : Array Xref.Entry :=
+public def WritePlan.entries (p : WritePlan) : Array Xref.Entry :=
   let (body, locs) := p.serialized
   writerXrefEntries p.table locs p.compressed body.size
 
 /-- The measured bytes retained for final emission. Numeric validation
 reads these values, then publishes the same body and xref payload.
 The object stream is assembled and compressed only during measurement. -/
-structure WriteMeasurement where
+public structure WriteMeasurement where
   body : ByteArray
   offsets : Array (Nat × Nat)
   xrefPayload : ByteArray
   objectPayloadSize : Nat
 
-def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
+public def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
   let packed := objectStream p.compressed
   let payload := packed.bytes
   let (body, locs) := serialize p.head (p.rowsWith packed.header.utf8ByteSize payload)
@@ -1744,32 +1658,32 @@ def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
 
 /-- Finish a measurement: its xref describes this serialization, and
 `startxref` names the byte immediately after its retained body. -/
-def WriteMeasurement.bytes (m : WriteMeasurement) (t : ObjTable) : ByteArray :=
+public def WriteMeasurement.bytes (m : WriteMeasurement) (t : ObjTable) : ByteArray :=
   let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 m.body)
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 m.body)
   let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
   let (out, _) := serialize m.body #[flateRow t.xrefId xrefDict m.xrefPayload]
   out ++ (s!"startxref\n{m.body.size}\n%%EOF\n").toUTF8
 
-def WritePlan.bytes (p : WritePlan) : ByteArray :=
+public def WritePlan.bytes (p : WritePlan) : ByteArray :=
   p.measure.bytes p.table
 
-theorem WritePlan.measure_body_exact (p : WritePlan) :
-    p.measure.body = p.serialized.1 := rfl
+public theorem WritePlan.measure_body_exact (p : WritePlan) :
+    p.measure.body = p.serialized.1 := by rfl
 
-theorem WritePlan.measure_offsets_exact (p : WritePlan) :
-    p.measure.offsets = p.serialized.2 := rfl
+public theorem WritePlan.measure_offsets_exact (p : WritePlan) :
+    p.measure.offsets = p.serialized.2 := by rfl
 
-theorem WritePlan.measure_xref_exact (p : WritePlan) :
-    p.measure.xrefPayload = Xref.encode p.entries := rfl
+public theorem WritePlan.measure_xref_exact (p : WritePlan) :
+    p.measure.xrefPayload = Xref.encode p.entries := by rfl
 
-theorem WritePlan.measure_object_size_exact (p : WritePlan) :
-    p.measure.objectPayloadSize = (objectStream p.compressed).bytes.size := rfl
+public theorem WritePlan.measure_object_size_exact (p : WritePlan) :
+    p.measure.objectPayloadSize = (objectStream p.compressed).bytes.size := by rfl
 
 /-- Retaining the measurement preserves the existing writer's complete
 byte spelling, including its hash identifiers, compression choices,
 offsets, and footer. This equality is independent of input bounds. -/
-theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
+public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
     p.bytes =
       let (body, locs) := p.serialized
       let xrefRows := Xref.encode (writerXrefEntries p.table locs p.compressed body.size)
@@ -1777,7 +1691,7 @@ theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
       let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
       let dict := s!"/Type /XRef /Size {p.table.size} /W [1 4 2] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
-      out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := rfl
+      out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl
 
 /-- Prepare positioned pages for a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (its program
@@ -1788,7 +1702,7 @@ information the source declared (Info dictionary plus XMP). `streams`,
 `ops` and `programs` are the driver's cache path: the page operators it
 built through `pageOps` (one walk, not two), their rendered and deflated
 bytes, and the face programs it built through `facePrograms`. -/
-def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
@@ -2118,7 +2032,7 @@ def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 
 /-- Serialize the prepared emissions. The plan is also the input to the
 numeric representability check in `PdfWriteContract`. -/
-def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
     (streams : Array (ByteArray × Option ByteArray) := #[])
@@ -2128,12 +2042,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 
 /-- The plan checked by the PDF contracts is exactly the one serialized
 by `write`, for every source and every supplied cache value. -/
-theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
     write geom fs pages info imgs outline streams tree ops programs =
-      (prepare geom fs pages info imgs outline streams tree ops programs).bytes := rfl
+      (prepare geom fs pages info imgs outline streams tree ops programs).bytes := by rfl
 
 private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut) :
     ∀ k ∈ usedImagesOf imgs pages, ((imgs.get? k).bind (·.info)).isSome = true := by
@@ -2174,7 +2088,7 @@ private theorem usedImagesOf_empty (pages : Array PageOut) :
 /-- Without imported image resources, every direct row emitted by the
 actual preparation loops uses a native dictionary prefix. The invariant
 allows every page, font-program, and compressed-cache input. -/
-theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
@@ -2228,7 +2142,7 @@ private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
   have h := congrArg (List.map f) (List.zipIdx_map_snd 0 l)
   simpa only [List.map_map, List.range_eq_range', Function.comp_def] using h
 /-- The producer uses the public allocation table, for every cache value. -/
-theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
+public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
@@ -2238,7 +2152,7 @@ theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   simp only [Id.run, pure, bind, keepFaces, fill_size_exact]
 
 /-- The exact IDs of the producer's object-stream values. -/
-theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
+public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
@@ -2314,7 +2228,7 @@ private theorem image_slots (keep : Array Nat) (imgs : Image.Store) (used : Arra
     t.smaskIds[n]?.join =
       (match imgExtraOf imgs k with | .alpha => some (id + 1) | _ => none) := by
   dsimp only
-  simp only [objTable, Array.getElem?_map, Array.zip, Array.getElem?_zipWith',
+  simp only [objTable, Array.getElem?_map, Array.zip_eq_zipWith, Array.getElem?_zipWith',
     show (blockStarts (3 + 5 * keep.size)
       ((used.map (imgExtraOf imgs)).map ImgExtra.span).toList).toArray[n]? = some id
       from hi, hk, Option.map_some, Option.bind_some, Option.join_some]
@@ -2349,7 +2263,7 @@ private theorem image_transcript (used ids : Array Nat) (imgs : Image.Store) :
 
 /-- The direct-stream loops emit the complete image, page, font, and metadata families.
 This is a progress proof of the production loops. -/
-theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
+public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array Layout.PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
@@ -2450,7 +2364,7 @@ private theorem emission_covers (p : WritePlan)
 /-- Every allocated object is emitted by the production writer: as the
 xref itself, a direct row, or a value in the object stream. This includes
 the resource graphs and soft masks of all loaded images. -/
-theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
@@ -2480,13 +2394,13 @@ private theorem indexObjectsList_live {α : Type} (rows : List (Nat × α))
 
 /-- Every recorded, in-range id has a position in the actual dense
 index, including when later records replace its value. -/
-theorem indexObjects_covers {α : Type} (size : Nat) (rows : List (Nat × α))
+public theorem indexObjects_covers {α : Type} (size : Nat) (rows : List (Nat × α))
     (id : Nat) (hid : id < size) (hm : id ∈ rows.map Prod.fst) :
     (((indexObjects size rows)[id]?).join).isSome = true :=
   indexObjectsList_live rows _ id (by simpa using hid) (Or.inr hm)
 
 /-- The compressed index covers every in-range id of its source list. -/
-theorem compressedIndex_covers (size : Nat) (objects : List (Nat × PdfRead.Obj))
+public theorem compressedIndex_covers (size : Nat) (objects : List (Nat × PdfRead.Obj))
     (id : Nat) (hid : id < size) (hm : id ∈ objects.map Prod.fst) :
     (((compressedIndex size objects)[id]?).join).isSome = true := by
   apply indexObjects_covers size _ id hid
@@ -2571,7 +2485,7 @@ private theorem plan_entries_contract (p : WritePlan)
 /-- The actual producer emits one live xref entry per allocated nonzero
 object. Row zero is free and `/Size` counts it exactly once. The proof
 uses the production emission loops and their recorded byte offsets. -/
-theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+public theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
