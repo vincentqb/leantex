@@ -1495,6 +1495,9 @@ properties rather than resolved literals, deliberately: a reader's
 stylesheet can override a token, which is the HTML backend's contract. -/
 public def themeCss (doc : Doc) : String :=
   let d := Design.ofDoc doc
+  -- A removed epoch token must reach the shared undeclared default, never
+  -- the opening document's colour. CSS tokens retain first priority.
+  let defaults := Design.ofPalette {}
   (if d.bgDeclared then "body { background: var(--bg); }\n" else "") ++
   (if d.fgDeclared then "body { color: var(--fg); }\n" else "") ++
   -- Paint is carried by each block's palette epoch. A document-level
@@ -1581,7 +1584,7 @@ public def themeCss (doc : Doc) : String :=
   (match d.titlepage with
    | some _ =>
      "section.slide.title-page { background: var(--titlepagebg);\n" ++
-     "  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n" ++
+     s!"  color: var(--titlepagefg, var(--bg, {cssColor defaults.bg})); }\n" ++
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
@@ -4376,6 +4379,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- would be a value no theorem covers.
   let lt := Contrast.light
   let dk := Contrast.dark
+  let defaults := Design.ofPalette {}
   let parskip := parskipVar doc.page
   let dual := dualScheme cfg.imgs doc
   ":root {\n" ++
@@ -4639,8 +4643,8 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
   -- Its size is the scale's own Large step (`\Large\bfseries`, the shipped
   -- bundles' standout template), never a re-spelled decimal.
-  "section.slide.standout { background: var(--standoutbg, var(--fg, #18181b));\n" ++
-  "  color: var(--standoutfg, var(--bg, #fafaf9)); text-align: center;\n" ++
+  s!"section.slide.standout \{ background: var(--standoutbg, var(--fg, {cssColor defaults.standout.bg}));\n" ++
+  s!"  color: var(--standoutfg, var(--bg, {cssColor defaults.standout.fg})); text-align: center;\n" ++
   s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules doc.page.scale ++
@@ -5741,7 +5745,7 @@ sibling rhythm and host selectors); deck stages already paint their own full
 page from the same `--bg`. -/
 private def epochSurfaceStyle (style : String) (groundChanged : Bool) : String :=
   if groundChanged then
-    joinStyles style "background: var(--bg, var(--surface, #fafaf9))"
+    joinStyles style ("background: " ++ stageGround)
   else style
 
 /-- The epoch's redefinitions onto one emitted sibling node. The epoch
