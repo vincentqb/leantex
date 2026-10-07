@@ -37,6 +37,10 @@ example (pic : Ir.Pic.Picture) (x y : Dim.Sp) (content : Array Ir.Inline)
     (content, scale) ∈ FontFix.probesOfPic pic :=
   FontFix.probesOfPic_covers pic x y content color scale align h
 
+example : True := by
+  fail_if_success have := FontFix.instDecidableEqLabelInk
+  trivial
+
 -- The scan and filesystem remain explicit inputs to the effect boundary.
 example : IO FontEnv.Cache := FontEnv.Cache.mk'
 example : FontEnv.Cache → String → IO (Except String Font.Font) := FontEnv.Cache.parse
