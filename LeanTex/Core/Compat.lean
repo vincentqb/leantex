@@ -980,12 +980,24 @@ private abbrev EvalM (m : Type → Type) := StateT St m
 private instance [Monad m] : MonadLift M (EvalM m) where
   monadLift act := fun st => pure (act st)
 
+private theorem evalLift_id {α : Type} (act : M α) :
+    (liftM act : EvalM Id α) = act := rfl
+
+private theorem state_array_forIn_empty {α β : Type} (init : β)
+    (step : α → β → M (ForInStep β)) :
+    (forIn (#[] : Array α) init step : M β) = pure init := by
+  rw [← Array.forIn_toList]
+  rfl
+
 /-- The one door for a state mutation: `f`, then the `writes` bump the
 dispatcher's silence guard reads. Every `modify`/`set` in this file outside
 `say`/`write`/`account` is rejected by the pre-commit hook, so an arm
 cannot mutate state invisibly to the guard. -/
 private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
+
+private theorem write_eq (f : St → St) :
+    write f = fun st => ((), { f st with writes := st.writes + 1 }) := rfl
 
 /-- Beamer's font and template definitions are local TeX assignments.
 Input wrappers do not introduce a scope; groups and environments do. -/
@@ -3321,6 +3333,25 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
   setBind n v
   if global then write fun st => { st with globals := st.globals.push (n, v) }
 
+private def withSpaceBinding (st : St) : St :=
+  let value : CondVal :=
+    { raws := #[.space], long := false, prot := false, live := true,
+      serial := st.serial + 1, textSerial := st.serial + 1 }
+  { st with
+    serial := st.serial + 1
+    binds := st.binds.insert "space" (some value)
+    undo := st.undo.push (.bind "space" st.binds["space"]?)
+    writes := st.writes + 2 }
+
+private theorem recordValue_space_exact (st : St) :
+    recordValue "space"
+      (some { raws := #[.space], long := false, prot := false, live := true }) false false st =
+        ((), withSpaceBinding st) := by
+  simp [recordValue, setBind, withSpaceBinding,
+    bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    write_eq,
+    pure, StateT.pure, Nat.add_assoc]
+
 /-- The prefixes standing before the definer at `raws[i]`, nearest first: a
 run of at most three of `\long`, `\protected`, `\outer` and `\global`
 (TeXbook chapter 24's ⟨prefix⟩, with e-TeX's `\protected`). -/
@@ -4083,6 +4114,53 @@ private def condTerminalRaw : Raw → Bool
 
 end
 
+/-- Select the request of an unbound input command at its executed site.
+Settlement reads stored text and never crosses the input door. -/
+private def inputRequestAt (st : St) (n : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) : Option (InputRequest × Nat) := do
+  if st.settling.isSome then none else do
+    let input := ["input", "include", "markdownInput"].contains n
+    -- premise: frontendInputRequestChecks — execution inside a live macro
+    -- can load a local style; settlement cannot.
+    let style := !st.condInDoc &&
+      (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
+    if !(input || style) then none else do
+      let (_, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
+      let j := skipSpaces raws k
+      let some (.group _ _) := raws[j]? | none
+      some ({
+        command := n
+        file := st.file
+        pos := st.useSite.getD pos
+        callPos := pos
+        operands := raws.extract start (j + 1) }, j + 1)
+
+/-- The unbound-command arm of the production evaluator. Selection, the
+actual reader call, its receipt and acceptance of its state have one owner. -/
+private def condReadAt [Monad m] (reader : Option (InputReader m))
+    (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    EvalM m (Option CondRun) := do
+  let st ← get
+  let some reader := reader | return none
+  let some (request, stop) := inputRequestAt st n pos raws start | return none
+  let (answer, context) ← dispatchInput (m := m) reader request { state := st }
+  write fun _ => context.state
+  return answer.map fun answer => { raws := answer, stop }
+
+private theorem condReadAt_refused_exact (reader : InputReader Id)
+    (st : St) (name : String) (pos : Pos) (raws : Array Raw) (start stop : Nat)
+    (request : InputRequest)
+    (hs : inputRequestAt st name pos raws start = some (request, stop))
+    (hr : reader request { state := st } = (none, { state := st })) :
+    condReadAt (some reader) name pos raws start st =
+      (none, { st with
+        inputAttempts := st.inputAttempts.push ⟨request, false⟩
+        writes := st.writes + 1 }) := by
+  simp only [condReadAt, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get, hs, dispatchInput, hr, finishInput, InputContext.inputAttempts,
+    Option.isSome_none, pure, StateT.pure]
+  rfl
+
 /-- Expand the macro `n` where the conditional pass meets it in live
 content, when its optional argument or text needs the use's state
 (`CondVal.live`), during the opening space scan, or inside a picture, which reads a
@@ -4240,26 +4318,7 @@ without that selection or those changes")
     else return none
   | some none => return none
   | none =>
-    -- A stored replacement may be inspected during settlement, but only
-    -- execution may ask the driver for a file.
-    if st.settling.isSome then return none
-    let some reader := reader | return none
-    let input := ["input", "include", "markdownInput"].contains n
-    -- premise: frontendInputRequestChecks — a live macro can load a local
-    -- style in the preamble. Settlement is excluded above; fileTop is not
-    -- execution provenance and would suppress this genuine file request.
-    let style := !st.condInDoc &&
-      (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
-    unless input || style do return none
-    let (_, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
-    let j := skipSpaces raws k
-    let some (.group _ _) := raws[j]? | return none
-    let request : InputRequest :=
-      { command := n, file := st.file, pos := site.getD pos
-        callPos := pos, operands := raws.extract start (j + 1) }
-    let (answer, context) ← dispatchInput (m := m) reader request { state := st }
-    write fun _ => context.state
-    return answer.map fun answer => { raws := answer, stop := j + 1 }
+    condReadAt reader n pos raws start
 termination_by (bound, textBound, if prepareBox then 1 else 0)
 decreasing_by
   all_goals
@@ -4279,6 +4338,286 @@ private def condTopExpand [Monad m] (reader : Option (InputReader m))
     EvalM m (Option CondRun) := do
   let bound := (← get).serial + 1
   condExpandAt reader bound bound true n pos raws start
+
+private theorem condTopExpand_unbound_exact (reader : Option (InputReader Id))
+    (st : St) (name : String) (pos : Pos) (raws : Array Raw) (start : Nat)
+    (hb : Tcolorbox.boundName? name = none)
+    (hv : condValueOf st.binds name = none) :
+    condTopExpand reader name pos raws start st =
+      condReadAt reader name pos raws start st := by
+  simp only [condTopExpand, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get]
+  change condExpandAt reader (st.serial + 1) (st.serial + 1) true
+    name pos raws start st = _
+  rw [condExpandAt]
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure, hb, hv]
+
+private theorem condStopSpaces_quiet (st : St) (h : st.ignoreSpaces = false) :
+    condStopSpaces st = ((), st) := by
+  simp [condStopSpaces, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get, pure, StateT.pure, h]
+
+private theorem condOne_word_exact
+    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (scope : Bool) (word : String) (pos : Pos) (st : St)
+    (h : st.ignoreSpaces = false) :
+    condOne ex scope (.word word pos) st = (.word word pos, st) := by
+  simp only [condOne, bind, StateT.bind, pure, StateT.pure]
+  change (match condStopSpaces st with
+    | ((), s) => (Raw.word word pos, s)) = _
+  rw [condStopSpaces_quiet st h]
+
+private theorem condList_word_exact
+    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (word : String) (pos : Pos) (raws following : Array Raw)
+    (out : OverlayPrefix) (i : Nat) (st : St)
+    (h : st.ignoreSpaces = false) :
+    condList ex [] raws following out [] [.word word pos] i 0 st =
+      ({ raws := (out.push (.word word pos)).raws, stop := i + 1 }, st) := by
+  rw [condList]
+  all_goals try simp
+  simp only [bind, StateT.bind, pure, StateT.pure,
+    condOne_word_exact ex true word pos st h, condList, Nat.add_zero]
+
+private theorem condClose_current_exact (st : St) :
+    condClose {
+      undo := st.undo.size, globals := st.globals.size
+      picBound := st.picBound.size, primitives := st.primitiveScopes.size } st =
+      ((), { st with writes := st.writes + 1 }) := by
+  simp [condClose, condUnwind, bind, StateT.bind, get, getThe,
+    MonadStateOf.get, StateT.get, pure, StateT.pure, write_eq,
+    Array.extract_empty_of_stop_le_start, Array.shrink_eq_take]
+
+private theorem condOne_literal_group_exact
+    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (word : String) (pos gp : Pos) (st : St)
+    (h : st.ignoreSpaces = false) :
+    condOne ex true (.group #[.word word pos] gp) st =
+      (.group #[.word word pos] gp, { st with writes := st.writes + 3 }) := by
+  simp only [condOne, bind, StateT.bind, pure, StateT.pure,
+    ↓reduceIte]
+  change (do
+    condStopSpaces
+    let mark ← condMark
+    let top := (← get).fileTop
+    write fun s => { s with fileTop := false }
+    let body ← condList ex [] #[.word word pos] #[] (OverlayPrefix.ofArray #[])
+      [] [.word word pos] 0 0
+    let _ ← swapTop top
+    condClose mark
+    pure (Raw.group body.raws gp) : M Raw) st = _
+  simp only [bind, StateT.bind, condStopSpaces_quiet st h,
+    condMark, get, getThe, MonadStateOf.get, StateT.get,
+    pure, StateT.pure, write_eq]
+  rw [condList_word_exact ex word pos _ _ _ _
+    { st with fileTop := false, writes := st.writes + 1 } h]
+  simp only [swapTop, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get, pure, StateT.pure, write_eq]
+  rw [condClose_current_exact { st with writes := st.writes + 1 + 1 }]
+  simp [OverlayPrefix.push, OverlayPrefix.ofArray, Nat.add_assoc]
+
+private theorem condList_literal_group_exact
+    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (word : String) (pos gp : Pos) (raws following : Array Raw)
+    (out : OverlayPrefix) (i : Nat) (st : St)
+    (h : st.ignoreSpaces = false) :
+    condList ex [] raws following out [] [.group #[.word word pos] gp] i 0 st =
+      ({ raws := (out.push (.group #[.word word pos] gp)).raws, stop := i + 1 },
+        { st with writes := st.writes + 3 }) := by
+  rw [condList]
+  all_goals try simp
+  simp only [bind, StateT.bind, pure, StateT.pure,
+    condOne_literal_group_exact ex word pos gp st h, condList, Nat.add_zero]
+
+private theorem condList_package_read_step
+    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (name : String) (pos : Pos) (raws following : Array Raw)
+    (out : OverlayPrefix) (first : Raw) (rest : List Raw) (i : Nat) (st after : St)
+    (hc : name = "usepackage" ∨ name = "RequirePackage")
+    (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
+    (hflags : st.flags = {})
+    (ho : out.scan.opened = false)
+    (he : ex name pos (raws ++ following) (i + 1)
+      (recordLoad raws name i st).2 = (none, after))
+    (hs : after.ignoreSpaces = false) :
+    condList ex [] raws following out [] (.ctrl name pos :: first :: rest) i 0 st =
+      condList ex [] raws following (out.push (.ctrl name pos)) [] (first :: rest)
+        (i + 1) 0 after := by
+  have hn : name ≠ "newif" ∧ name ≠ "else" ∧ name ≠ "or" ∧
+      name ≠ "fi" ∧ name ≠ "endinput" ∧ name ≠ "unless" ∧
+      name ≠ "ifstrequal" ∧ name ≠ "apptocmd" ∧
+      name ≠ "newtcolorbox" ∧ name ≠ "renewtcolorbox" := by
+    rcases hc with rfl | rfl <;> decide
+  have hcond : isCondHead st.flags name = false := by
+    have heads : condHeads.contains name = false := by
+      have base : name ∉ texPrimitives.toList := by
+        rcases hc with rfl | rfl <;> decide
+      have extra : name ∉ ["ifdefined", "ifcsname", "iffontchar"] := by
+        rcases hc with rfl | rfl <;> decide
+      apply Bool.eq_false_iff.mpr
+      intro h
+      have hmem := List.contains_iff_mem.mp h
+      rcases List.mem_append.mp hmem with h | h
+      · exact base (List.mem_filter.mp h).1
+      · exact extra h
+    simp only [isCondHead, heads, Bool.false_or, flagTested, hflags,
+      Std.HashMap.getElem?_empty]
+    split <;> rfl
+  have hg : groupPrimitives.lookup name = none := by
+    rcases hc with rfl | rfl <;> decide
+  have hh : deferredHooks.lookup name = none := by
+    rcases hc with rfl | rfl <;> decide
+  have hl : loadedTests.find? (·.ctrl == name) = none := by
+    rcases hc with rfl | rfl <;> decide
+  have ht : (name.endsWith "true" &&
+      st.flags.contains (name.dropEnd 4).toString) = false := by simp [hflags]
+  have hf : (name.endsWith "false" &&
+      st.flags.contains (name.dropEnd 5).toString) = false := by simp [hflags]
+  have hdef : condDefiners.contains name = false := by
+    rcases hc with rfl | rfl <;> decide
+  have hno : condNoExpand.contains name = false := by
+    rcases hc with rfl | rfl <;> decide
+  have hbox : (name == "newtcolorbox" || name == "renewtcolorbox") = false := by
+    rcases hc with rfl | rfl <;> decide
+  have htcb : name ≠ "tcbuselibrary" := by
+    rcases hc with rfl | rfl <;> decide
+  rw [condList.eq_16]
+  all_goals try solve | simp_all
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure]
+  simp only [hn.2.2.2.2.2.1, beq_iff_eq, ↓reduceIte, Option.map_none,
+    Option.getD_none, hcond, List.all_nil,
+    Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
+    Option.any_none, hh, hn.2.2.2.2.2.2.1, hl, Option.bind_none,
+    hn.2.2.2.2.2.2.2.1, ht, hf,
+    hbox, htcb, hdef, hno, hd, Bool.not_false, ho]
+  cases hload : recordLoad raws name i st with
+  | mk tick loaded =>
+    cases tick
+    simp only [hload] at he
+    simp only [evalLift_id, bind, StateT.bind, hload,
+      he, condStopSpaces_quiet after hs]
+
+/-- One live package call with a literal comma-separated name argument.
+All names and positions are parameters; execution still uses the normal
+conditional dispatcher and the supplied input reader. -/
+def packageCall (command names : String) (pos groupPos namePos : Pos) : Array Raw :=
+  #[.ctrl command pos, .group #[.word names namePos] groupPos]
+
+private theorem packageCall_readers (command names : String)
+    (pos groupPos namePos : Pos) :
+    skipSpaces (packageCall command names pos groupPos namePos) 1 = 1 ∧
+    takeOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) ∧
+    takeGroups (packageCall command names pos groupPos namePos) 1 1 =
+      (#[#[.word names namePos]], 2) := by
+  have hs : skipSpaces (packageCall command names pos groupPos namePos) 1 = 1 := by
+    rw [skipSpaces]
+    simp [packageCall]
+  refine ⟨hs, ?_, ?_⟩
+  · simp only [takeOpt, takeRawOpt, hs, Id.run]
+    simp [packageCall]
+  · simp [takeGroups, hs]
+    simp [packageCall]
+
+/-- The actual request's filename projection reads the package operand,
+including the same outer whitespace normalization as the producer. -/
+theorem InputRequest.package_name_exact (file command names : String)
+    (pos groupPos namePos : Pos) :
+    (InputRequest.mk command file pos pos
+      #[.group #[.word names namePos] groupPos]).name = names.trimAscii.toString := by
+  change rawSrc ((takeGroups (packageCall command names pos groupPos namePos)
+    (takeOpt (packageCall command names pos groupPos namePos) 1).2 1).1.getD 0 #[]) = _
+  rw [(packageCall_readers command names pos groupPos namePos).2.1,
+    (packageCall_readers command names pos groupPos namePos).2.2]
+  simp [rawSrc, rawSrcList, rawSrcOne]
+
+private theorem packageCall_request_exact (command names : String)
+    (pos groupPos namePos : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.condInDoc = false) (hs : st.settling = none) :
+    inputRequestAt st command pos (packageCall command names pos groupPos namePos) 1 =
+      some (⟨command, st.file, st.useSite.getD pos, pos,
+        #[.group #[.word names namePos] groupPos]⟩, 2) := by
+  have hp : (command == "usepackage" || command == "RequirePackage") = true := by
+    rcases hc with rfl | rfl <;> decide
+  have ht := (packageCall_readers command names pos groupPos namePos).2.1
+  have hj := (packageCall_readers command names pos groupPos namePos).1
+  simp [inputRequestAt, hs, hd, hp, ht, hj]
+  simp [packageCall]
+
+private def packageLoaded (st : St) (names : String) : St :=
+  { st with
+    loads := (optionItems names.trimAscii.toString).foldl
+      (fun s p => s.addPkg p (some (optionItems ""))) st.loads
+    writes := st.writes + 1 }
+
+private theorem recordLoad_package_exact (command names : String)
+    (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") :
+    recordLoad (packageCall command names pos gp np) command 0 st =
+      ((), packageLoaded st names) := by
+  have hw : (command == "RequirePackageWithOptions") = false := by
+    rcases hc with rfl | rfl <;> decide
+  simp only [recordLoad, ↓reduceIte, Nat.zero_add,
+    (packageCall_readers command names pos gp np).2.1,
+    (packageCall_readers command names pos gp np).2.2, hw, Bool.false_eq_true,
+    Option.getD_none]
+  simp [hc, rawSrc, rawSrcList, rawSrcOne, optionItems, packageLoaded, write_eq]
+
+private def packageRequest (command names : String) (pos gp np : Pos)
+    (st : St) : InputRequest :=
+  ⟨command, st.file, st.useSite.getD pos, pos, #[.group #[.word names np] gp]⟩
+
+private def packageFailed (command names : String) (pos gp np : Pos) (st : St) : St :=
+  { packageLoaded st names with
+    inputAttempts := st.inputAttempts.push ⟨packageRequest command names pos gp np st, false⟩
+    writes := st.writes + 5 }
+
+private theorem condList_package_failed_exact (reader : InputReader Id)
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
+    (hflags : st.flags = {}) (hi : st.ignoreSpaces = false)
+    (hsettling : st.settling = none)
+    (hv : condValueOf st.binds command = none)
+    (hr : ∀ request context, reader request context = (none, context)) :
+    condList (condTopExpand (some reader)) []
+      (packageCall command names pos gp np) #[] (OverlayPrefix.ofArray #[])
+      [] (packageCall command names pos gp np).toList 0 0 st =
+      ({ raws := packageCall command names pos gp np, stop := 2 },
+        packageFailed command names pos gp np st) := by
+  have hb : Tcolorbox.boundName? command = none := by
+    unfold Tcolorbox.boundName?
+    have h : command.toSlice.dropPrefix? "tcolorbox " = none := by
+      rw [String.Slice.dropPrefix?_eq_none_iff,
+        String.Slice.startsWith_string_eq_false_iff, String.copy_toSlice]
+      rcases hc with rfl | rfl <;> decide
+    rw [String.dropPrefix?_eq_dropPrefix?_toSlice, h]
+    rfl
+  let loaded := packageLoaded st names
+  let attempted : St := { loaded with
+    inputAttempts := loaded.inputAttempts.push
+      ⟨packageRequest command names pos gp np loaded, false⟩
+    writes := loaded.writes + 1 }
+  have hex : condTopExpand (some reader) command pos
+      (packageCall command names pos gp np ++ #[]) (0 + 1)
+      (recordLoad (packageCall command names pos gp np) command 0 st).2 =
+      (none, attempted) := by
+    rw [recordLoad_package_exact command names pos gp np st hc]
+    simp only [Array.append_empty, Nat.zero_add]
+    rw [condTopExpand_unbound_exact (some reader) loaded command pos _ 1 hb hv]
+    exact condReadAt_refused_exact reader loaded command pos _ 1 2
+      (packageRequest command names pos gp np loaded)
+      (packageCall_request_exact command names pos gp np loaded hc hd hsettling)
+      (hr _ _)
+  change condList _ [] _ #[] _ [] (.ctrl command pos ::
+    [.group #[.word names np] gp]) 0 0 st = _
+  rw [condList_package_read_step _ command pos _ #[] _ _ [] 0 st attempted
+    hc hp hd hflags rfl hex hi]
+  rw [condList_literal_group_exact _ names np gp _ #[] _ 1 attempted hi]
+  simp [OverlayPrefix.push, OverlayPrefix.ofArray, packageFailed,
+    attempted, loaded, packageLoaded, packageRequest, packageCall, Nat.add_assoc]
 
 /-- Execute a parsed file answer in the state of its request, before
 continuing the caller. The input wrapper carries its filename and opens
@@ -4379,6 +4718,14 @@ private def condReplay [Monad m] (reader : Option (InputReader m))
     condReplaying := saved.condReplaying }
   return out
 
+private theorem condReplay_empty_exact (reader : Option (InputReader Id))
+    (point : DeferPoint) (st : St) :
+    condReplay reader #[] point st = (#[], { st with writes := st.writes + 2 }) := by
+  simp [condReplay,
+    bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    write_eq,
+    pure, StateT.pure, Nat.add_assoc]
+
 /-- Execute the preamble, its end hooks, the begin-document hooks, then the
 body. Stored definitions settle after end-preamble hooks have run. Every
 phase reads the same conditional, binding and load state, so a hook reads
@@ -4401,6 +4748,45 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   write fun st => { st with deferred := endHooks ++ beginHooks }
   let post' ← condList (condTopExpand reader) [] post #[] (OverlayPrefix.ofArray #[]) [] post.toList 0 0
   return patch file pre'.raws ++ post'.raws
+
+private theorem condDocument_without_seam_exact
+    (reader : Option (InputReader Id)) (raws : Array Raw) (st after : St)
+    (run : CondRun)
+    (hseam : raws.findIdx? (· matches .env "document" _ _) = none)
+    (hpre : condList (condTopExpand reader) [] raws #[]
+      (OverlayPrefix.ofArray #[]) [] raws.toList 0 0 st = (run, after))
+    (hdeferred : after.deferred = #[]) :
+    condDocument reader raws st =
+      (run.raws, { after with deferred := #[], writes := after.writes + 5 }) := by
+  have ht : raws.extract raws.size raws.size = #[] :=
+    Array.extract_empty_of_stop_le_start (Nat.le_refl _)
+  simp only [condDocument, hseam, Option.getD_none,
+    Array.extract_size, ht, bind, StateT.bind, hpre, get, getThe,
+    MonadStateOf.get, StateT.get, pure, hdeferred,
+    condReplay_empty_exact, Option.isSome_none, Bool.false_eq_true,
+    ↓reduceIte, StateT.pure, Array.isEmpty_empty, Array.map_empty,
+    Array.empty_append, evalLift_id, write_eq, Array.toList_empty, condList]
+  simp only [OverlayPrefix.ofArray, Array.append_empty]
+
+private theorem condDocument_package_failed_exact (reader : InputReader Id)
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
+    (hflags : st.flags = {}) (hi : st.ignoreSpaces = false)
+    (hsettling : st.settling = none) (hdeferred : st.deferred = #[])
+    (hv : condValueOf st.binds command = none)
+    (hr : ∀ request context, reader request context = (none, context)) :
+    condDocument (some reader) (packageCall command names pos gp np) st =
+      (packageCall command names pos gp np,
+        { packageFailed command names pos gp np st with writes := st.writes + 10 }) := by
+  have hs : (packageCall command names pos gp np).findIdx?
+      (· matches .env "document" _ _) = none := by
+    simp [packageCall]
+  rw [condDocument_without_seam_exact (some reader) _ st _
+    { raws := packageCall command names pos gp np, stop := 2 } hs
+    (condList_package_failed_exact reader command names pos gp np st
+      hc hp hd hflags hi hsettling hv hr) hdeferred]
+  simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
 `\relax` vanishes. Each control word goes through `ref`, told whether an
@@ -7199,6 +7585,333 @@ formula's marks read (`Ctx.cancel`). A space is in no control word, so no
 document spells the mark. -/
 def cancelOptionsMark : String := "cancel options"
 
+/-- Interpret one package in the loading call's declared order. The caller
+owns the option and group readers; this producer owns each package's exact
+native replacement or refusal record. Keeping the scalar transition named
+lets the request contract read its diagnostic without expanding the whole
+control dispatcher. -/
+private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
+    M (Array Raw) := do
+  let mut out : Array Raw := #[]
+  if p == "geometry" then
+    out := out ++ (← geometry (opt.getD "") pos)
+  else if p == "crop" then
+    out := out ++ (← crop (opt.getD "") pos)
+  else if p == "beamerposter" then
+    out := out ++ (← beamerposter (opt.getD "") pos)
+  else if p == "parskip" then
+    -- The package sets `\parskip` to half a line plus 2pt and drops the
+    -- indent; the half line is what changes the page.
+    let native := "\\page{ parskip = 0.6em plus 2pt }"
+    became "\\usepackage{parskip}" native pos
+    out := out ++ (← synthAt native pos)
+  else if p == "amsthm" then
+    -- amsthm's documented default style is plain (amsthm manual §4:
+    -- `plain` is in force until a `\theoremstyle`), which is also what
+    -- tells the elaborator amsthm's heads and its `proof` are in force.
+    let native := "\\theoremstyle{plain}"
+    became "\\usepackage{amsthm}" native pos
+    out := out ++ (← synthAt native pos)
+  else if (p == "caption" || p == "subcaption") && opt.isSome then
+    -- The package options are `\captionsetup` keys (caption manual
+    -- §1.3): route them to the one site that judges caption keys, so
+    -- `[tableposition=top]` is honoured or named exactly as the
+    -- command form is.
+    let native := s!"\\captionsetup\{{opt.getD ""}}"
+    became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
+    out := out ++ (← synthAt native pos)
+  else if p == "babel" then
+    -- babel's package options are its language list, and "the last
+    -- language option is the main one" (babel manual §1.2). The main
+    -- language becomes document metadata (`\pdfmeta{ language }`);
+    -- the locale record then words captions, selects hyphenation
+    -- patterns, and shapes `\enquote`. Non-language options carry
+    -- `=` and are configuration, skipped as before.
+    let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+      |>.filter (fun o => !o.isEmpty && !o.contains '=')
+    match names.reverse.head? with
+    | some main =>
+      let tag := Locale.babelTagOf main
+      if (Locale.forTag tag).isSome then
+        let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
+        became s!"\\usepackage[{main}]\{babel}" native pos
+        write fun st => { st with mainLang := tag }
+        out := out ++ (← synthAt native pos)
+      else
+        say .W0368 s!"no locale for language '{main}'; English \
+captions and patterns stand in" pos
+          (help := "the engine ships locale records for: en, fr, de")
+    | none =>
+      discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+  else if p == "natbib" then
+    out := out ++ (← natbibLoad name (opt.getD "") pos)
+  else if p == "biblatex" then
+    -- biblatex's style options (biblatex manual §3.1.1: style defaults
+    -- to numeric, sorting to nty — name-title-year) select onto the
+    -- same four-axis record door natbib's \bibliographystyle opens:
+    -- numeric over a name-sorted list is `plain`, numeric over
+    -- citation order (sorting=none) is `unsrt`, authoryear is
+    -- `plainnat`. A style outside the record set (alphabetic labels)
+    -- is W0353's meaning, judged here where the author wrote the
+    -- name, with unsrtnat standing in.
+    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+    let pick (key dflt : String) : String := opts.foldl (init := dflt) fun acc kv =>
+      match (kv.splitOn "=").map (·.trimAscii.toString) with
+      | [k, v] => if k == key then v else acc
+      | _ => acc
+    let style := pick "citestyle" (pick "style" "numeric")
+    let mapped :=
+      if style.startsWith "numeric" then
+        some (if pick "sorting" "nty" == "none" then "unsrt" else "plain")
+      else if style.startsWith "authoryear" then some "plainnat"
+      else none
+    match mapped with
+    | some s =>
+      became s!"\\usepackage[style={style}]\{biblatex}"
+        s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
+      write fun st => { st with bibStyle := some s }
+      -- The citations are biblatex's (`Bib.CitePunct.biblatex`). The numeric
+      -- styles take the plain row through the open door; authoryear's
+      -- round brackets and semicolons are natbib's own load values, the
+      -- style's square-bracket row shut out, and its name and year stand
+      -- apart by a space alone (`\nameyeardelim`).
+      natbibDefer (if s == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
+        else #["biblatex"]) pos
+    | none =>
+      say .W0353 s!"bibliography style '{style}' is not one the engine \
+knows; the reference list is set as 'unsrtnat'" pos
+        (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv")
+      write fun st => { st with bibStyle := some "unsrtnat" }
+  else if let some spec := fontPackages.lookup p then
+    -- carlito's `sfdefault` promotes its sans face to the body slot
+    -- (carlito README); every other option (psnfss's `scaled=`) asks
+    -- for a face adjustment the engine does not model and is dropped
+    -- by name.
+    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+      |>.filter (!·.isEmpty)
+    let sfdefault := p == "carlito" && opts.contains "sfdefault"
+    let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
+    let dropped := opts.filter (· != "sfdefault")
+    unless dropped.isEmpty do
+      say .W0101 s!"'{p}' options without a native equivalent were \
+dropped: {String.intercalate ", " dropped}" pos
+    let native := s!"\\fonts\{ {spec} }"
+    became s!"\\usepackage\{{p}}" native pos
+    out := out ++ (← synthAt native pos)
+  else if p == "lineno" && opt.isSome then
+    out := out ++ (← linenoLoad (opt.getD "") pos)
+  else if p == "cancel" then
+    -- The package's options are the marks' own settings, read where a
+    -- formula draws one: carried as data to the elaborator's preamble
+    -- (`cancelOptionsMark`), each named option read as the package's
+    -- `\ProcessOptions` reads it, an undeclared one named and dropped.
+    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+      |>.filter (!·.isEmpty)
+    let (_, unknown) := Math.CancelSpec.ofOptions opts
+    unless unknown.isEmpty do
+      say .W0101 s!"'cancel' options without a native equivalent were \
+dropped: {String.intercalate ", " unknown}" pos
+    became s!"\\usepackage\{cancel}"
+      "the cancel marks, drawn from the math font's own rule constants" pos
+    out := (out.push (.ctrl cancelOptionsMark pos)).push
+      (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
+  else if p == "animate" then
+    -- animate manual §6 allows package-wide animation defaults. This
+    -- scoped lowering reads only each command's own options.
+    -- premise: animatedGraphicsChecks — local posters select distinct
+    -- shipped images, and package defaults keep their named warning.
+    let opts := (opt.getD "").trimAscii.toString
+    if opts.isEmpty then
+      discard s!"\\{name}\{{p}}"
+        "whole multipage animations are read at each '\\animategraphics' command"
+        s!"{name}:{p}" pos
+    else
+      sayOnce "animate:package-options" .W0110
+        s!"'animate' package options '{opts}' are not applied" pos
+        (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
+  else if p == "markdown" then
+    -- premise: markdownInputChecks — the driver reads native
+    -- fragments, and unsupported package options keep their warning.
+    let opts := (opt.getD "").trimAscii.toString
+    if opts.isEmpty then
+      discard s!"\\{name}\{{p}}"
+        "native Markdown fragments are read at each '\\markdownInput' command"
+        s!"{name}:{p}" pos
+    else
+      sayOnce "markdown:package-options" .W0110
+        s!"'markdown' package options '{opts}' are not applied; \
+no package options are supported by the strict native Markdown dialect" pos
+        (help := "remove the package options")
+  else if p == "unicode-math" && opt.isSome then
+    out := out ++ (← unicodeMathOptions
+      s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
+  else if p == "hyperref" && opt.isSome then
+    -- hyperref's package options are `\hypersetup`'s keys; the link
+    -- colours become the link kinds' `\style` colours, the rest are the
+    -- viewer's, discarded as before.
+    let mut links := (← get).links
+    let mut linked := false
+    for o in (opt.getD "").splitOn "," do
+      match o.splitOn "=" with
+      | k :: v =>
+        if let some l := links.read k.trimAscii.toString
+            (String.intercalate "=" v).trimAscii.toString then
+          links := l
+          linked := true
+      | [] => pure ()
+    if linked then write fun st => { st with links }
+    if linked && links.colorlinks then
+      let native := links.native
+      became s!"\\usepackage[{opt.getD ""}]\{hyperref}" native pos
+      out := out ++ (← synthAt native pos)
+    else
+      discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+  else if p == "ulem" then
+    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+      |>.filter (!·.isEmpty)
+    if opts == ["normalem"] then
+      discard s!"\\{name}[normalem]\{{p}}"
+        "strikeout is native and normal emphasis remains in force"
+        s!"{name}:{p}:normalem" pos
+    else
+      say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
+        pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
+        (refused := some p)
+  else if nativePackages.contains p then
+    discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+  else if boundaryPkgs.contains p && (← get).boundaryOpen then
+    -- A picture package's load is the boundary's: `boundaryDecls`
+    -- carried it, with its options, into every wrapped standalone,
+    -- where the real TeX reads it — W0103 would misname a load the
+    -- engine consumes. A declared refusal (`tool = none`) restores
+    -- the named loss.
+    became s!"\\{name}\{{p}}"
+      "the boundary standalone's preamble; each picture outside the \
+rendered subset is drawn whole at the boundary" pos
+  else if let some (slot, _, nm) := themeSlotOfPackage? p then
+    -- beamer's own identity, read backwards: `beamerthemeX` **is**
+    -- `\usetheme{X}` (beamerbasethemes.sty defines the family through
+    -- the package loader), and a theme inheriting another writes that
+    -- file name. W0103 answered it as a CTAN support question, so a
+    -- bundle the engine ships was refused under the one spelling an
+    -- inheriting theme uses. The candidate scan has already offered
+    -- `p.sty`; reaching here means no file answered, so what is left
+    -- is the slot's own meaning.
+    if slot == "usetheme" then
+      let nm := themeAlias nm
+      let native := s!"\\theme\{{nm}}"
+      became s!"\\{name}\{{p}}" native pos
+      if (Theme.find? nm).isSome then
+        write fun st => { st with themed := true }
+      out := out ++ (← synthAt native pos)
+    else
+      -- The four sub-theme slots have no bundle of their own here: a
+      -- token bundle is whole. Their file name gets the slot's named
+      -- configuration warning, which is what the slot spelling gets —
+      -- never a claim about package support.
+      sayOnce ("beamer:" ++ slot) .W0104
+        s!"'\\{slot}' is beamer configuration the engine does not have; skipped" pos
+        (help := (beamerNative.lookup slot).getD
+          "a theme is a token bundle here: \\theme selects one, and \\palette \
+and \\tokens declare the design directly")
+  else
+    say .W0103 s!"package '{p}' is not supported; skipped" pos
+      (refused := some p)
+  return out
+
+/-- The external-package refusal's whole record, before the source index
+adds its trigger. Native package options are judged by their own producer;
+sharing W0103 does not make them failed file requests. -/
+def packageRefusal (file : String) (pos : Pos) (p : String) : Diag :=
+  Diag.of .W0103 s!"package '{p}' is not supported; skipped"
+    (some ⟨file, pos⟩) (refused := some p)
+
+private theorem atSource_package_exact (st : St) (pos : Pos) (p : String) :
+    atSource st pos (packageRefusal st.file pos p) =
+      st.sourceTriggers.attribute (packageRefusal st.file pos p) := by
+  simp [atSource, SourceTriggers.attribute, packageRefusal, Diag.of]
+
+private theorem rewritePackage_external_exact (name p : String)
+    (opt : Option String) (pos : Pos) (st : St)
+    (hn : nativePackages.contains p = false)
+    (hb : (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : themeSlotOfPackage? p = none) :
+    rewritePackage name p opt pos st =
+      (#[], { st with diags := st.diags.push (atSource st pos (packageRefusal st.file pos p)) }) := by
+  have hn' := hn
+  simp only [nativePackages, List.contains_cons, List.contains_nil,
+    Bool.or_eq_false_iff] at hn'
+  have hf : fontPackages.lookup p = none := by
+    simp_all [List.lookup_eq_none_iff, fontPackages]
+  have hnmem : p ∉ nativePackages := by simpa using hn
+  have hbmem : ¬(p ∈ boundaryPkgs ∧ st.boundaryOpen = true) := by simpa using hb
+  simp [rewritePackage, hf, hnmem, ht, hn']
+  dsimp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure]
+  simp only [hbmem, ↓reduceIte]
+  rfl
+
+/-- The package-loading arm's production loop. Each spelling in one
+comma-separated operand is judged in order against the same current
+compatibility state. -/
+private def rewritePackages (name : String) (pkgs : List String)
+    (opt : Option String) (pos : Pos) : M (Array Raw) := do
+  let mut out : Array Raw := #[]
+  for p in pkgs do
+    out := out ++ (← rewritePackage name p opt pos)
+  return out
+
+private theorem rewritePackages_external_exact (name : String)
+    (pkgs : List String) (opt : Option String) (pos : Pos) (st : St)
+    (hn : ∀ p ∈ pkgs, nativePackages.contains p = false)
+    (hb : ∀ p ∈ pkgs, (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : ∀ p ∈ pkgs, themeSlotOfPackage? p = none) :
+    rewritePackages name pkgs opt pos st =
+      (#[], { st with diags := st.diags ++
+        (pkgs.map fun p => atSource st pos (packageRefusal st.file pos p)).toArray }) := by
+  have loop :
+      ∀ (xs : List String) (out : Array Raw) (s : St),
+        (∀ p ∈ xs, nativePackages.contains p = false) →
+        (∀ p ∈ xs, (boundaryPkgs.contains p && s.boundaryOpen) = false) →
+        (∀ p ∈ xs, themeSlotOfPackage? p = none) →
+        ((forIn xs out fun p acc => do
+          let repl ← rewritePackage name p opt pos
+          pure (.yield (acc ++ repl))) : M (Array Raw)) s =
+          (out, { s with diags := s.diags ++
+            (xs.map fun p => atSource s pos (packageRefusal s.file pos p)).toArray }) := by
+    intro xs
+    induction xs with
+    | nil =>
+      intro out s _ _ _
+      simp only [List.forIn_nil, pure, StateT.pure, List.map_nil,
+        List.toArray, Array.append_empty]
+    | cons p ps ih =>
+      intro out s hn hb ht
+      rw [List.forIn_cons]
+      simp only [bind, StateT.bind, pure, StateT.pure,
+        rewritePackage_external_exact name p opt pos s
+          (hn p List.mem_cons_self) (hb p List.mem_cons_self) (ht p List.mem_cons_self),
+        Array.append_empty]
+      let next : St :=
+        { s with diags := s.diags.push (atSource s pos (packageRefusal s.file pos p)) }
+      have tail := ih out next (fun q hq => hn q (List.mem_cons_of_mem _ hq))
+        (fun q hq => hb q (List.mem_cons_of_mem _ hq))
+        (fun q hq => ht q (List.mem_cons_of_mem _ hq))
+      calc
+        _ = (out, { next with diags := next.diags ++
+            (ps.map fun q => atSource next pos (packageRefusal next.file pos q)).toArray }) :=
+          tail
+        _ = _ := by
+          change (out, { s with diags := (
+            s.diags.push (atSource s pos (packageRefusal s.file pos p)) ++
+              (ps.map fun q => atSource s pos (packageRefusal s.file pos q)).toArray) }) = _
+          rw [List.push_append_toArray, List.map_cons]
+  have h := loop pkgs #[] st hn hb ht
+  unfold rewritePackages
+  simp only [bind, StateT.bind, pure, StateT.pure]
+  simp only [bind, pure] at h
+  rw [h]
+
 /-- Named arms after the dispatcher's state-dependent guards. Registry
 contracts quantify over this actual match: an ordinary body control emits
 no replacement, consumes its declared argument prefix, and leaves the
@@ -7225,232 +7938,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
     let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
-    let mut out : Array Raw := #[]
-    for p in pkgs do
-      if p == "geometry" then
-        out := out ++ (← geometry (opt.getD "") pos)
-      else if p == "crop" then
-        out := out ++ (← crop (opt.getD "") pos)
-      else if p == "beamerposter" then
-        out := out ++ (← beamerposter (opt.getD "") pos)
-      else if p == "parskip" then
-        -- The package sets `\parskip` to half a line plus 2pt and drops the
-        -- indent; the half line is what changes the page.
-        let native := "\\page{ parskip = 0.6em plus 2pt }"
-        became "\\usepackage{parskip}" native pos
-        out := out ++ (← synthAt native pos)
-      else if p == "amsthm" then
-        -- amsthm's documented default style is plain (amsthm manual §4:
-        -- `plain` is in force until a `\theoremstyle`), which is also what
-        -- tells the elaborator amsthm's heads and its `proof` are in force.
-        let native := "\\theoremstyle{plain}"
-        became "\\usepackage{amsthm}" native pos
-        out := out ++ (← synthAt native pos)
-      else if (p == "caption" || p == "subcaption") && opt.isSome then
-        -- The package options are `\captionsetup` keys (caption manual
-        -- §1.3): route them to the one site that judges caption keys, so
-        -- `[tableposition=top]` is honoured or named exactly as the
-        -- command form is.
-        let native := s!"\\captionsetup\{{opt.getD ""}}"
-        became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
-        out := out ++ (← synthAt native pos)
-      else if p == "babel" then
-        -- babel's package options are its language list, and "the last
-        -- language option is the main one" (babel manual §1.2). The main
-        -- language becomes document metadata (`\pdfmeta{ language }`);
-        -- the locale record then words captions, selects hyphenation
-        -- patterns, and shapes `\enquote`. Non-language options carry
-        -- `=` and are configuration, skipped as before.
-        let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-          |>.filter (fun o => !o.isEmpty && !o.contains '=')
-        match names.reverse.head? with
-        | some main =>
-          let tag := Locale.babelTagOf main
-          if (Locale.forTag tag).isSome then
-            let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
-            became s!"\\usepackage[{main}]\{babel}" native pos
-            write fun st => { st with mainLang := tag }
-            out := out ++ (← synthAt native pos)
-          else
-            say .W0368 s!"no locale for language '{main}'; English \
-captions and patterns stand in" pos
-              (help := "the engine ships locale records for: en, fr, de")
-        | none =>
-          discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
-      else if p == "natbib" then
-        out := out ++ (← natbibLoad name (opt.getD "") pos)
-      else if p == "biblatex" then
-        -- biblatex's style options (biblatex manual §3.1.1: style defaults
-        -- to numeric, sorting to nty — name-title-year) select onto the
-        -- same four-axis record door natbib's \bibliographystyle opens:
-        -- numeric over a name-sorted list is `plain`, numeric over
-        -- citation order (sorting=none) is `unsrt`, authoryear is
-        -- `plainnat`. A style outside the record set (alphabetic labels)
-        -- is W0353's meaning, judged here where the author wrote the
-        -- name, with unsrtnat standing in.
-        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-        let pick (key dflt : String) : String := opts.foldl (init := dflt) fun acc kv =>
-          match (kv.splitOn "=").map (·.trimAscii.toString) with
-          | [k, v] => if k == key then v else acc
-          | _ => acc
-        let style := pick "citestyle" (pick "style" "numeric")
-        let mapped :=
-          if style.startsWith "numeric" then
-            some (if pick "sorting" "nty" == "none" then "unsrt" else "plain")
-          else if style.startsWith "authoryear" then some "plainnat"
-          else none
-        match mapped with
-        | some s =>
-          became s!"\\usepackage[style={style}]\{biblatex}"
-            s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
-          write fun st => { st with bibStyle := some s }
-          -- The citations are biblatex's (`Bib.CitePunct.biblatex`). The numeric
-          -- styles take the plain row through the open door; authoryear's
-          -- round brackets and semicolons are natbib's own load values, the
-          -- style's square-bracket row shut out, and its name and year stand
-          -- apart by a space alone (`\nameyeardelim`).
-          natbibDefer (if s == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
-            else #["biblatex"]) pos
-        | none =>
-          say .W0353 s!"bibliography style '{style}' is not one the engine \
-knows; the reference list is set as 'unsrtnat'" pos
-            (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv")
-          write fun st => { st with bibStyle := some "unsrtnat" }
-      else if let some spec := fontPackages.lookup p then
-        -- carlito's `sfdefault` promotes its sans face to the body slot
-        -- (carlito README); every other option (psnfss's `scaled=`) asks
-        -- for a face adjustment the engine does not model and is dropped
-        -- by name.
-        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-          |>.filter (!·.isEmpty)
-        let sfdefault := p == "carlito" && opts.contains "sfdefault"
-        let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
-        let dropped := opts.filter (· != "sfdefault")
-        unless dropped.isEmpty do
-          say .W0101 s!"'{p}' options without a native equivalent were \
-dropped: {String.intercalate ", " dropped}" pos
-        let native := s!"\\fonts\{ {spec} }"
-        became s!"\\usepackage\{{p}}" native pos
-        out := out ++ (← synthAt native pos)
-      else if p == "lineno" && opt.isSome then
-        out := out ++ (← linenoLoad (opt.getD "") pos)
-      else if p == "cancel" then
-        -- The package's options are the marks' own settings, read where a
-        -- formula draws one: carried as data to the elaborator's preamble
-        -- (`cancelOptionsMark`), each named option read as the package's
-        -- `\ProcessOptions` reads it, an undeclared one named and dropped.
-        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-          |>.filter (!·.isEmpty)
-        let (_, unknown) := Math.CancelSpec.ofOptions opts
-        unless unknown.isEmpty do
-          say .W0101 s!"'cancel' options without a native equivalent were \
-dropped: {String.intercalate ", " unknown}" pos
-        became s!"\\usepackage\{cancel}"
-          "the cancel marks, drawn from the math font's own rule constants" pos
-        out := (out.push (.ctrl cancelOptionsMark pos)).push
-          (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
-      else if p == "animate" then
-        -- animate manual §6 allows package-wide animation defaults. This
-        -- scoped lowering reads only each command's own options.
-        -- premise: animatedGraphicsChecks — local posters select distinct
-        -- shipped images, and package defaults keep their named warning.
-        let opts := (opt.getD "").trimAscii.toString
-        if opts.isEmpty then
-          discard s!"\\{name}\{{p}}"
-            "whole multipage animations are read at each '\\animategraphics' command"
-            s!"{name}:{p}" pos
-        else
-          sayOnce "animate:package-options" .W0110
-            s!"'animate' package options '{opts}' are not applied" pos
-            (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
-      else if p == "markdown" then
-        -- premise: markdownInputChecks — the driver reads native
-        -- fragments, and unsupported package options keep their warning.
-        let opts := (opt.getD "").trimAscii.toString
-        if opts.isEmpty then
-          discard s!"\\{name}\{{p}}"
-            "native Markdown fragments are read at each '\\markdownInput' command"
-            s!"{name}:{p}" pos
-        else
-          sayOnce "markdown:package-options" .W0110
-            s!"'markdown' package options '{opts}' are not applied; \
-no package options are supported by the strict native Markdown dialect" pos
-            (help := "remove the package options")
-      else if p == "unicode-math" && opt.isSome then
-        out := out ++ (← unicodeMathOptions
-          s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
-      else if p == "hyperref" && opt.isSome then
-        -- hyperref's package options are `\hypersetup`'s keys; the link
-        -- colours become the link kinds' `\style` colours, the rest are the
-        -- viewer's, discarded as before.
-        let mut links := (← get).links
-        let mut linked := false
-        for o in (opt.getD "").splitOn "," do
-          match o.splitOn "=" with
-          | k :: v =>
-            if let some l := links.read k.trimAscii.toString
-                (String.intercalate "=" v).trimAscii.toString then
-              links := l
-              linked := true
-          | [] => pure ()
-        if linked then write fun st => { st with links }
-        if linked && links.colorlinks then
-          let native := links.native
-          became s!"\\usepackage[{opt.getD ""}]\{hyperref}" native pos
-          out := out ++ (← synthAt native pos)
-        else
-          discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
-      else if p == "ulem" then
-        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-          |>.filter (!·.isEmpty)
-        if opts == ["normalem"] then
-          discard s!"\\{name}[normalem]\{{p}}"
-            "strikeout is native and normal emphasis remains in force"
-            s!"{name}:{p}:normalem" pos
-        else
-          say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
-            pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
-            (refused := some p)
-      else if nativePackages.contains p then
-        discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
-      else if boundaryPkgs.contains p && (← get).boundaryOpen then
-        -- A picture package's load is the boundary's: `boundaryDecls`
-        -- carried it, with its options, into every wrapped standalone,
-        -- where the real TeX reads it — W0103 would misname a load the
-        -- engine consumes. A declared refusal (`tool = none`) restores
-        -- the named loss.
-        became s!"\\{name}\{{p}}"
-          "the boundary standalone's preamble; each picture outside the \
-rendered subset is drawn whole at the boundary" pos
-      else if let some (slot, _, nm) := themeSlotOfPackage? p then
-        -- beamer's own identity, read backwards: `beamerthemeX` **is**
-        -- `\usetheme{X}` (beamerbasethemes.sty defines the family through
-        -- the package loader), and a theme inheriting another writes that
-        -- file name. W0103 answered it as a CTAN support question, so a
-        -- bundle the engine ships was refused under the one spelling an
-        -- inheriting theme uses. The candidate scan has already offered
-        -- `p.sty`; reaching here means no file answered, so what is left
-        -- is the slot's own meaning.
-        if slot == "usetheme" then
-          let nm := themeAlias nm
-          let native := s!"\\theme\{{nm}}"
-          became s!"\\{name}\{{p}}" native pos
-          if (Theme.find? nm).isSome then
-            write fun st => { st with themed := true }
-          out := out ++ (← synthAt native pos)
-        else
-          -- The four sub-theme slots have no bundle of their own here: a
-          -- token bundle is whole. Their file name gets the slot's named
-          -- configuration warning, which is what the slot spelling gets —
-          -- never a claim about package support.
-          sayOnce ("beamer:" ++ slot) .W0104
-            s!"'\\{slot}' is beamer configuration the engine does not have; skipped" pos
-            (help := (beamerNative.lookup slot).getD
-              "a theme is a token bundle here: \\theme selects one, and \\palette \
-and \\tokens declare the design directly")
-      else
-        say .W0103 s!"package '{p}' is not supported; skipped" pos
-          (refused := some p)
+    let out ← rewritePackages name pkgs opt pos
     return some (out, k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
@@ -8818,6 +9306,121 @@ private def boxRowRaw : Raw → M Raw
 
 end
 
+/-- A completion with no pending declaration or hook interpreter. The box
+pass may still translate any number of nested rows and report their losses. -/
+private def QuietTail (st : St) : Prop :=
+  st.head = #[] ∧ st.foot = #[] ∧ st.runFrom ≤ 1 ∧
+    st.listResets = #[] ∧ st.listDefs = #[] ∧
+    st.deferred = #[] ∧ st.beamerFootline = none
+
+private def TailDiag (d : Diag) (st : St) : Prop :=
+  QuietTail st ∧ d ∈ st.diags
+
+private theorem state_bind_inv {α β : Type} (P : St → Prop)
+    (act : M α) (next : α → M β) (st : St)
+    (ha : P (act st).2) (hn : ∀ a s, P s → P (next a s).2) :
+    P ((act >>= next) st).2 :=
+  hn (act st).1 (act st).2 ha
+
+private theorem state_bind_apply {α β : Type} (act : M α)
+    (next : α → M β) (st : St) :
+    (act >>= next) st = next (act st).1 (act st).2 := rfl
+
+private theorem state_forIn_inv {α β : Type} (P : St → Prop)
+    (step : α → β → M (ForInStep β)) :
+    ∀ (xs : List α) (init : β) (st : St), P st →
+      (∀ a ∈ xs, ∀ b s, P s → P (step a b s).2) →
+      P ((forIn xs init step : M β) st).2 := by
+  intro xs
+  induction xs with
+  | nil => intro init st h _; exact h
+  | cons a rest ih =>
+    intro init st h hs
+    have ha := hs a (by simp) init st h
+    rw [List.forIn_cons]
+    apply state_bind_inv P _ _ st ha
+    intro result s hp
+    cases result with
+    | done b => exact hp
+    | yield b =>
+      exact ih b s hp (fun x hx => hs x (by simp [hx]))
+
+private theorem state_array_forIn_inv {α β : Type} (P : St → Prop)
+    (step : α → β → M (ForInStep β)) (xs : Array α)
+    (init : β) (st : St) (h : P st)
+    (hs : ∀ a ∈ xs, ∀ b s, P s → P (step a b s).2) :
+    P ((forIn xs init step : M β) st).2 := by
+  rw [← Array.forIn_toList]
+  exact state_forIn_inv P step xs.toList init st h
+    (fun a ha => hs a (by simpa using ha))
+
+private theorem say_tailDiag (d : Diag) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote : Bool)
+    (subject refused : Option String) (st : St) (h : TailDiag d st) :
+    TailDiag d (say code msg pos help demote subject refused st).2 :=
+  ⟨h.1, Array.mem_push.mpr (Or.inl h.2)⟩
+
+private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
+    (msg : String) (pos : Pos) (help : Option String) (demote : Bool)
+    (st : St) (h : TailDiag d st) :
+    TailDiag d (sayOnce "env:minipage-row-options" code msg pos help demote st).2 := by
+  unfold sayOnce
+  apply state_bind_inv (TailDiag d) _ _ st h
+  intro observed s hs
+  dsimp only
+  split <;> apply state_bind_inv (TailDiag d)
+  all_goals
+    first
+    | exact hs
+    | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ hs'
+
+private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
+    (h : TailDiag d st) : TailDiag d (boxRowEmit rs st).2 := by
+  unfold boxRowEmit
+  generalize boxRows rs = result
+  rcases result with ⟨out, rows⟩
+  apply state_bind_inv (TailDiag d)
+  · apply state_array_forIn_inv (TailDiag d) _ rows () st h
+    intro entry _ init s hs
+    rcases entry with ⟨p, opts, pic⟩
+    cases pic <;> dsimp only
+    all_goals
+      apply state_bind_inv (TailDiag d)
+      · exact say_tailDiag d _ _ _ _ _ _ _ _ hs
+      · intro _ s' hs'
+        cases opts
+        · exact hs'
+        · exact state_bind_inv (TailDiag d) _ _ s'
+            (sayOnce_minipage_tailDiag d _ _ _ _ _ _ hs') (fun _ _ hp => hp)
+  · intro _ s hs; exact hs
+
+mutual
+
+private theorem boxRowList_tailDiag (acc : Array Raw) (rs : List Raw)
+    (d : Diag) (st : St) (h : TailDiag d st) :
+    TailDiag d (boxRowList acc rs st).2 := by
+  cases rs with
+  | nil => exact h
+  | cons r rest =>
+    rw [boxRowList]
+    exact state_bind_inv (TailDiag d) _ _ st
+      (boxRowRaw_tailDiag r d st h)
+      (fun r' s hs => boxRowList_tailDiag (acc.push r') rest d s hs)
+
+private theorem boxRowRaw_tailDiag (r : Raw) (d : Diag) (st : St)
+    (h : TailDiag d st) : TailDiag d (boxRowRaw r st).2 := by
+  cases r with
+  | group body p | env n body p =>
+    rw [boxRowRaw]
+    apply state_bind_inv (TailDiag d) _ _ st
+      (boxRowList_tailDiag #[] body.toList d st h)
+    intro kids s hs
+    exact state_bind_inv (TailDiag d) _ _ s
+      (boxRowEmit_tailDiag _ d s hs) (fun _ _ hp => hp)
+  | math | word | space | par | ctrl | sym | verb => exact h
+
+end
+
 /-- Is this raw an overlay spec token? Shape alone, because an item's
 boundary is a lexical question: `\onslide<...>` starts an item whatever its
 spec says. Whether that spec names a step — and so whether the item can be
@@ -9354,9 +9957,10 @@ steps come from its body" p
 
 end
 
-private theorem rewriteCtrlAt_named_exact (name : String) (pos : Pos)
+private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) (s : St)
-    (hd : St.inDoc s = true) (hl : St.inList s = false)
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false)
+    (hl : St.inList s = false)
     (hLit : literalReplace.lookup name = none)
     (hCite : (name == "cite") = false)
     (hAppendix : (name == "appendix") = false)
@@ -9380,6 +9984,82 @@ private theorem rewriteCtrlAt_named_exact (name : String) (pos : Pos)
     simp only [hKernel, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
     dsimp only [bind, StateT.bind, StateT.get, pure]
     simp only [hSettings]
+
+private theorem rewriteCtrlAt_named_exact (name : String) (pos : Pos)
+    (raws : Array Raw) (start : Nat) (s : St)
+    (hd : St.inDoc s = true) (hl : St.inList s = false)
+    (hLit : literalReplace.lookup name = none)
+    (hCite : (name == "cite") = false)
+    (hAppendix : (name == "appendix") = false)
+    (hKernel : kernelSkip (name ++ "amount") = none)
+    (hSimple : simpleNative.lookup name = none)
+    (hHooks : deferredHooks.lookup name = none)
+    (hAssign : plainAssign? name raws start = none) :
+    rewriteCtrl.rewriteCtrlAt name pos raws start s =
+      rewriteCtrlNamed name pos raws start s :=
+  rewriteCtrlAt_named_scope name pos raws start s (by simp [hd]) hl
+    hLit hCite hAppendix hKernel hSimple hHooks hAssign
+
+private theorem rewriteCtrl_package_named (command names : String) (pos gp np : Pos)
+    (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.wholeDoc = false) (hl : st.inList = false) :
+    rewriteCtrl.rewriteCtrlAt command pos (packageCall command names pos gp np) 1 st =
+      rewriteCtrlNamed command pos (packageCall command names pos gp np) 1 st := by
+  apply rewriteCtrlAt_named_scope _ _ _ _ _ (by simp [hd]) hl
+  all_goals rcases hc with rfl | rfl <;> rfl
+
+private theorem rewriteCtrlNamed_package_external_exact
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.inDoc = false)
+    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      nativePackages.contains p = false)
+    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      themeSlotOfPackage? p = none) :
+    rewriteCtrlNamed command pos (packageCall command names pos gp np) 1 st =
+      (some (#[], 2), { st with diags := st.diags ++
+        ((names.trimAscii.toString.splitOn ",").map fun p =>
+          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
+  have hread := packageCall_readers command names pos gp np
+  have hempty : (#[#[Raw.word names np]] : Array (Array Raw)).isEmpty = false := rfl
+  have hsrc : rawSrc ((#[#[Raw.word names np]] : Array (Array Raw)).getD 0 #[]) =
+      names.trimAscii.toString := by simp [rawSrc, rawSrcList, rawSrcOne]
+  have hpkgs := rewritePackages_external_exact command
+    ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st hn hb ht
+  rcases hc with rfl | rfl <;>
+    simp only [rewriteCtrlNamed, bind, StateT.bind, get, getThe,
+      MonadStateOf.get, StateT.get, hd, Bool.false_eq_true, ↓reduceIte,
+      hread.2.1, hread.2.2, hempty, hsrc, hpkgs, pure, StateT.pure, List.map_map,
+      Function.comp_def]
+
+private theorem rewriteCtrl_package_external_exact
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.inDoc = false) (hw : st.wholeDoc = false) (hl : st.inList = false)
+    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      nativePackages.contains p = false)
+    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      themeSlotOfPackage? p = none)
+    (part : String) (hp : part ∈ names.trimAscii.toString.splitOn ",") :
+    rewriteCtrl command pos (packageCall command names pos gp np) 1 st =
+      (some (#[], 1), { st with diags := st.diags ++
+        ((names.trimAscii.toString.splitOn ",").map fun p =>
+          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
+  have hlen := List.length_pos_of_mem hp
+  have hsize : (st.diags ++
+      ((names.trimAscii.toString.splitOn ",").map fun p =>
+        atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray).size >
+      st.diags.size := by
+    simp only [Array.size_append, List.size_toArray, List.length_map]
+    omega
+  simp only [rewriteCtrl, rewriteCtrl_package_named command names pos gp np st hc hw hl,
+    rewriteCtrlNamed_package_external_exact command names pos gp np st hc hd hn hb ht,
+    Array.isEmpty_empty, ↓reduceIte, account]
+  rw [ite_eq_left (Or.inl hsize)]
 
 private theorem rewriteCtrl_value_exact (name : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) (s : St) :
@@ -9587,6 +10267,32 @@ private theorem rewriteList_control_exact (inBody : Bool) (raws out : Array Raw)
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
     pure, hpic, Bool.false_eq_true, ↓reduceIte, hstep, Array.append_empty]
   rw [rewriteList_skip_exact]
+
+private theorem rewriteList_package_external_exact
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.inDoc = false) (hw : st.wholeDoc = false)
+    (hl : st.inList = false) (hpic : st.inPicture = false)
+    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      nativePackages.contains p = false)
+    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      themeSlotOfPackage? p = none)
+    (part : String) (hp : part ∈ names.trimAscii.toString.splitOn ",") :
+    rewriteList false (packageCall command names pos gp np) #[]
+      (packageCall command names pos gp np).toList 0 0 st =
+      (#[], { st with diags := st.diags ++
+        ((names.trimAscii.toString.splitOn ",").map fun p =>
+          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
+  have hdef : command ≠ "define" := by rcases hc with rfl | rfl <;> simp
+  have ho : overlayName command = command := by rcases hc with rfl | rfl <;> rfl
+  have hstep := rewriteCtrl_package_external_exact command names pos gp np st
+    hc hd hw hl hn hb ht part hp
+  have h := rewriteList_control_exact false (packageCall command names pos gp np) #[]
+    command pos [.group #[.word names np] gp] [] 0 st _ hdef hpic
+    (by simpa only [ho, Nat.zero_add, List.length_cons, List.length_nil] using hstep)
+  exact h
 
 private theorem rewriteList_meaningFree_exact (inBody : Bool) (raws out : Array Raw)
     (name : String) (n : Nat) (note : Option String) (pos : Pos)
@@ -9911,6 +10617,30 @@ private def flushRunning : M (Array Raw) := do
     out := out ++ (← synthAt s!"\\runningfoot[from = {st.runFrom}]\{}" st.runPos)
   return out
 
+private theorem flushRunning_quiet (st : St) (h : QuietTail st) :
+    flushRunning st = (#[], st) := by
+  simp only [flushRunning, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get, pure, h.1, h.2.1, Array.isEmpty_empty,
+    Bool.false_eq_true, ↓reduceIte, Nat.not_lt.mpr h.2.2.1, decide_false,
+    Bool.false_and]
+  rfl
+
+private theorem flushListLevels_quiet (st : St) (h : QuietTail st) :
+    flushListLevels st = (#[], { st with writes := st.writes + 1 }) := by
+  simp only [flushListLevels, bind, StateT.bind, get, getThe, MonadStateOf.get,
+    StateT.get, h.2.2.2.1, h.2.2.2.2.1, state_array_forIn_empty, pure,
+    Array.isEmpty_empty, ↓reduceIte]
+  simp only [StateT.pure, write_eq]
+  change (#[], { st with writes := st.writes + 1 }) =
+    (#[], { st with listDefs := #[], listResets := #[], writes := st.writes + 1 })
+  simp only [← h.2.2.2.1, ← h.2.2.2.2.1]
+
+private theorem flushBeamerFootline_quiet (st : St) (h : QuietTail st) :
+    flushBeamerFootline st = ((#[], #[]), st) := by
+  simp only [flushBeamerFootline, bind, StateT.bind, get, getThe,
+    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2]
+  rfl
+
 /-- Split the raws of a replayed hook body across the seam
 `\begin{document}` is: the native declarations the preamble reads
 (`hookPreambleSide`, with their optional argument and complete groups) to the
@@ -9986,6 +10716,13 @@ def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
 def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
 
+private def executionState (reading : Bool) (file : String) (raws : Array Raw)
+    (provideKeeps : List String) (warned : Array String) (diags : Array Diag) : St :=
+  { file := file, provideKeeps := provideKeeps, warned := warned, diags := diags
+    sourceTriggers := sourceTriggers file {} raws.toList
+    fileTop := reading, boundaryOpen := !boundaryRefused raws
+    wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
+
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)
     (warned : Array String) (inherited : List String) (diags : Array Diag) :
@@ -10000,11 +10737,7 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
     for n in inherited do setBind n none
     condDocument reader raws
   let (raws, state) ← go.run
-    { file := file, provideKeeps := provideKeeps, warned := warned, diags := diags,
-      sourceTriggers := sourceTriggers file {} raws.toList,
-      fileTop := reader.isSome,
-      boundaryOpen := !boundaryRefused raws,
-      wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
+    (executionState reader.isSome file raws provideKeeps warned diags)
   return { raws := raws, state := state }
 
 /-- Execute a file-free surface once, retaining the same source evidence as
@@ -10021,6 +10754,93 @@ def executeInputs [Monad m] (reader : InputReader m) (file : String)
     (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[]) :
     m Executed :=
   executeBy (some reader) file raws provideKeeps #[] [] diags
+
+private theorem executeInputs_condDocument_exact (reader : InputReader Id)
+    (file : String) (raws : Array Raw) (keeps : List String) (ds : Array Diag) :
+    executeInputs reader file raws keeps ds =
+      let result := condDocument (some reader) raws
+        (withSpaceBinding (executionState true file raws keeps #[] ds))
+      { raws := result.1, state := result.2 } := by
+  simp only [executeInputs, executeBy, Option.isSome_some, StateT.run,
+    evalLift_id, bind, StateT.bind, recordValue_space_exact]
+  rfl
+
+private def packageInitialState (file command names : String) (pos gp np : Pos)
+    (keeps : List String) (ds : Array Diag) : St :=
+  withSpaceBinding (executionState true file (packageCall command names pos gp np) keeps #[] ds)
+
+private def packageExecutedState (file command names : String) (pos gp np : Pos)
+    (keeps : List String) (ds : Array Diag) : St :=
+  let st := packageInitialState file command names pos gp np keeps ds
+  { packageFailed command names pos gp np st with writes := st.writes + 10 }
+
+private theorem executeInputs_package_failed_exact (reader : InputReader Id)
+    (file command names : String) (pos gp np : Pos) (keeps : List String) (ds : Array Diag)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hr : ∀ request context, reader request context = (none, context)) :
+    executeInputs reader file (packageCall command names pos gp np) keeps ds =
+      { raws := packageCall command names pos gp np
+        state := packageExecutedState file command names pos gp np keeps ds } := by
+  have hn : command ≠ "space" := by rcases hc with rfl | rfl <;> decide
+  have hv : condValueOf
+      (packageInitialState file command names pos gp np keeps ds).binds command = none := by
+    simp [packageInitialState, withSpaceBinding, executionState, condValueOf, Ne.symm hn]
+  rw [executeInputs_condDocument_exact]
+  have heq := condDocument_package_failed_exact reader command names pos gp np
+    (packageInitialState file command names pos gp np keeps ds)
+    hc rfl rfl rfl rfl rfl rfl hv hr
+  change condDocument (some reader) (packageCall command names pos gp np)
+    (withSpaceBinding (executionState true file
+      (packageCall command names pos gp np) keeps #[] ds)) = _ at heq
+  simp only [heq]
+  rfl
+
+private theorem pairGroupLevel_word_exact (names : String) (np : Pos) :
+    pairGroupLevel #[.word names np] = #[.word names np] := by
+  simp [pairGroupLevel]
+
+private theorem overlayInputs_package_exact (command names : String) (pos gp np : Pos)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") :
+    overlayInputs (packageCall command names pos gp np) =
+      packageCall command names pos gp np := by
+  have ha : overlayArity? command = none := by rcases hc with rfl | rfl <;> rfl
+  simp [overlayInputs, packageCall, overlayInputsList, overlayInputsRaw,
+    overlayVariant, overlayNext, overlayNext.advance, ha]
+
+private theorem pairGroups_package_exact (command names : String) (pos gp np : Pos) :
+    pairGroupsList true #[] (packageCall command names pos gp np).toList =
+      packageCall command names pos gp np := by
+  simp [packageCall, pairGroupsList, pairGroupsRaw, pairGroupLevel_word_exact]
+
+private theorem delimDocument_package_exact (command names : String) (pos gp np : Pos)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") (st : St)
+    (hd : st.deferred = #[]) :
+    delimDocument (packageCall command names pos gp np) st =
+      (packageCall command names pos gp np,
+        { st with deferred := #[], writes := st.writes + 1 }) := by
+  have hs : (packageCall command names pos gp np).findIdx?
+      (· matches .env "document" _ _) = none := by simp [packageCall]
+  have ht : (packageCall command names pos gp np).extract
+      (packageCall command names pos gp np).size
+      (packageCall command names pos gp np).size = #[] :=
+    Array.extract_empty_of_stop_le_start (Nat.le_refl _)
+  simp only [delimDocument, hs, Option.getD_none, Array.extract_size, ht]
+  rcases hc with rfl | rfl <;>
+    simp [packageCall, delimCallsList, delimCallsRaw, delimClose,
+      redefiners, bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+      hd, write_eq, pure, StateT.pure]
+
+private theorem splitColumns_package_exact (command names : String) (pos gp np : Pos) :
+    (splitColumnsList (packageCall command names pos gp np).toList).toArray =
+      packageCall command names pos gp np := by rfl
+
+private theorem overprint_package_exact (command names : String) (pos gp np : Pos)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") (st : St) :
+    overprintList (packageCall command names pos gp np).toList #[] 0 st =
+      (packageCall command names pos gp np, st) := by
+  have hn : command ≠ "apptocmd" := by rcases hc with rfl | rfl <;> decide
+  simp [packageCall, overprintList, overprintRaw, hn, bind, StateT.bind,
+    pure, StateT.pure]
 
 /-- The production passes before the compatibility walk: overlay inputs,
 live groups, delimiters, columns and overprints. Execution and file effects
@@ -10040,66 +10860,139 @@ def beginRewrite (executed : Executed) : RewriteCursor :=
   let (raws, st) := go.run st0
   { inBody := false, raws := raws, state := st }
 
+private def packageRewriteState (st : St) (command names : String) (pos gp np : Pos) : St :=
+  { st with
+    boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
+    wholeDoc := false, deferred := #[], writes := st.writes + 1 }
+
+private theorem beginRewrite_package_exact (command names : String) (pos gp np : Pos)
+    (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hd : st.deferred = #[]) :
+    beginRewrite { raws := packageCall command names pos gp np, state := st } =
+      { inBody := false
+        raws := packageCall command names pos gp np
+        state := packageRewriteState st command names pos gp np } := by
+  simp only [beginRewrite, overlayInputs_package_exact _ _ _ _ _ hc]
+  have hw : (packageCall command names pos gp np).any
+      (· matches .env "document" _ _) = false := by simp [packageCall]
+  have hdelim := delimDocument_package_exact command names pos gp np hc
+    { st with
+      boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
+      wholeDoc := false } hd
+  have hcols : splitColumnsList (packageCall command names pos gp np).toList =
+      (packageCall command names pos gp np).toList := rfl
+  simp only [hw, StateT.run, bind, StateT.bind,
+    pairGroups_package_exact, hdelim,
+    hcols, overprint_package_exact _ _ _ _ _ hc,
+    packageRewriteState]
+
+/-- Interpret the gathered declarations and deferred bodies after row
+lowering. This is the same final continuation for a whole document and a
+resumed rewrite checkpoint. -/
+private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
+  let running ← flushRunning
+  let running := running ++ (← flushListLevels)
+  let running ← rewriteList false running #[] running.toList 0 0
+  -- Replay. Each body is rewritten as the preamble material it was
+  -- declared as (`inDoc` restored to false for the pass), then routed
+  -- across the seam by `seamSplit`. `endPreamble` bodies are all
+  -- preamble side by their point's definition.
+  let saved := (← get).inDoc
+  let savedFile := (← get).file
+  write fun st => { st with inDoc := false }
+  let mut preSide : Array Raw := #[]
+  let mut bodySide : Array Raw := #[]
+  for (pt, file, pos, body) in (← get).deferred do
+    write fun st => { st with file := file, seam := pt == .beginDocument }
+    let body := overlayInputs body
+    let body ← rewriteList false body #[] body.toList 0 0
+    -- A hook declared inside an `\input`'ed file replays inside that
+    -- file's wrapper, so what the engine refuses in it is still named at
+    -- the file that wrote it — the wrapper is how a position names its
+    -- file (a `Raw` carries only a line and a column).
+    let wrap (rs : Array Raw) : Array Raw :=
+      if rs.isEmpty || file == savedFile then rs
+      else #[Raw.env (Parse.inputEnv file) rs pos]
+    match pt with
+    | .endPreamble => preSide := preSide ++ wrap body
+    | .beginDocument =>
+      let (p, b) := seamSplit body body.toList 0 0 (#[], #[])
+      preSide := preSide ++ wrap p
+      bodySide := bodySide ++ wrap b
+  let (footerPre, footerBody) ← flushBeamerFootline
+  preSide := preSide ++ footerPre
+  let footerBody ← rewriteList false footerBody #[] footerBody.toList 0 0
+  bodySide := footerBody ++ bodySide
+  write fun st => { st with inDoc := saved, file := savedFile, seam := false }
+  let counters := (← get).preCounters
+  let isBody : Raw → Bool
+    | .env "document" _ _ => true
+    | _ => false
+  return match out.findIdx? isBody with
+    | some i =>
+      let tail := match out[i]? with
+        | some (.env n dbody p) =>
+          #[Raw.env n (counters ++ bodySide ++ dbody) p]
+        | some r => #[r]
+        | none => #[]
+      out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
+    | none => out ++ running ++ preSide ++ bodySide
+
+private theorem finishDeclarations_diags (out : Array Raw) (st : St)
+    (h : QuietTail st) :
+    (finishDeclarations out st).2.diags = st.diags := by
+  unfold finishDeclarations
+  rw [state_bind_apply, flushRunning_quiet st h]
+  dsimp only
+  rw [state_bind_apply, flushListLevels_quiet st h]
+  dsimp only
+  simp only [Array.empty_append, Array.toList_empty, rewriteList]
+  simp only [bind, StateT.bind, pure, StateT.pure, get, getThe,
+    MonadStateOf.get, StateT.get, write_eq, h.2.2.2.2.2.1,
+    state_array_forIn_empty, flushBeamerFootline]
+  simp only [h.2.2.2.2.2.2, Array.empty_append]
+  rfl
+
+/-- State returned by the production tail. Keeping the record before its
+output projection makes diagnostic preservation independent of the final
+raw array's shape. -/
+private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
+  let go : M (Array Raw) := do
+    -- After the idiom rewrite, so a `\parbox` is the box it became.
+    let out ← boxRowList #[] result.1.toList
+    let out ← boxRowEmit out
+    finishDeclarations out
+  go.run result.2
+
 /-- The production tail after the compatibility walk, shared by whole
 documents and checkpoint completion. -/
 private def finishRewritten (result : Array Raw × St) :
     Array Raw × Array Diag × Array String :=
-  let go : M (Array Raw) := do
-    let out := result.1
-    -- After the idiom rewrite, so a `\parbox` is the box it became.
-    let out ← boxRowList #[] out.toList
-    let out ← boxRowEmit out
-    let running ← flushRunning
-    let running := running ++ (← flushListLevels)
-    let running ← rewriteList false running #[] running.toList 0 0
-    -- Replay. Each body is rewritten as the preamble material it was
-    -- declared as (`inDoc` restored to false for the pass), then routed
-    -- across the seam by `seamSplit`. `endPreamble` bodies are all
-    -- preamble side by their point's definition.
-    let saved := (← get).inDoc
-    let savedFile := (← get).file
-    write fun st => { st with inDoc := false }
-    let mut preSide : Array Raw := #[]
-    let mut bodySide : Array Raw := #[]
-    for (pt, file, pos, body) in (← get).deferred do
-      write fun st => { st with file := file, seam := pt == .beginDocument }
-      let body := overlayInputs body
-      let body ← rewriteList false body #[] body.toList 0 0
-      -- A hook declared inside an `\input`'ed file replays inside that
-      -- file's wrapper, so what the engine refuses in it is still named at
-      -- the file that wrote it — the wrapper is how a position names its
-      -- file (a `Raw` carries only a line and a column).
-      let wrap (rs : Array Raw) : Array Raw :=
-        if rs.isEmpty || file == savedFile then rs
-        else #[Raw.env (Parse.inputEnv file) rs pos]
-      match pt with
-      | .endPreamble => preSide := preSide ++ wrap body
-      | .beginDocument =>
-        let (p, b) := seamSplit body body.toList 0 0 (#[], #[])
-        preSide := preSide ++ wrap p
-        bodySide := bodySide ++ wrap b
-    let (footerPre, footerBody) ← flushBeamerFootline
-    preSide := preSide ++ footerPre
-    let footerBody ← rewriteList false footerBody #[] footerBody.toList 0 0
-    bodySide := footerBody ++ bodySide
-    write fun st => { st with inDoc := saved, file := savedFile, seam := false }
-    let counters := (← get).preCounters
-    let isBody : Raw → Bool
-      | .env "document" _ _ => true
-      | _ => false
-    return match out.findIdx? isBody with
-      | some i =>
-        let tail := match out[i]? with
-          | some (.env n dbody p) =>
-            #[Raw.env n (counters ++ bodySide ++ dbody) p]
-          | some r => #[r]
-          | none => #[]
-        out.extract 0 i ++ running ++ preSide ++ tail ++ out.extract (i + 1) out.size
-      | none => out ++ running ++ preSide ++ bodySide
-  let (out, st) := go.run result.2
+  let (out, st) := finishRewrittenState result
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   (out, st.diags, st.warned)
+
+attribute [local irreducible] boxRowList boxRowEmit finishDeclarations
+  finishRewrittenState in
+private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
+    (h : TailDiag d result.2) : d ∈ (finishRewritten result).2.1 := by
+  have hbox := boxRowList_tailDiag #[] result.1.toList d result.2 h
+  have hemit := boxRowEmit_tailDiag (boxRowList #[] result.1.toList result.2).1
+    d (boxRowList #[] result.1.toList result.2).2 hbox
+  have hfinish := finishDeclarations_diags
+    (boxRowEmit (boxRowList #[] result.1.toList result.2).1
+      (boxRowList #[] result.1.toList result.2).2).1
+    (boxRowEmit (boxRowList #[] result.1.toList result.2).1
+      (boxRowList #[] result.1.toList result.2).2).2 hemit.1
+  simp only [finishRewritten, finishRewrittenState, StateT.run, bind, StateT.bind]
+  generalize hb : boxRowList #[] result.1.toList result.2 = boxed at *
+  rcases boxed with ⟨out, st⟩
+  generalize he : boxRowEmit out st = emitted at *
+  rcases emitted with ⟨out', st'⟩
+  dsimp only at hfinish hemit ⊢
+  rw [he, hfinish]
+  exact hemit.2
 
 /-- Complete a production rewrite checkpoint, including boxes, running
 content, deferred hooks, counters and block hooks. -/
@@ -10111,6 +11004,85 @@ The gathered running content lands just before the document, and deferred
 text is translated at its recorded seam without executing it again. -/
 def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
   finishRewrite (beginRewrite executed)
+
+/-- Names for which the package dispatcher has no native, external-picture
+or installed-theme interpretation. The condition is on the loading call's
+operands, before execution or diagnostics. Empty comma fields do not name
+files and are deliberately excluded. -/
+def ExternalPackageNames (names : String) : Prop :=
+  ∀ part ∈ names.trimAscii.toString.splitOn ",",
+    part.trimAscii.toString.isEmpty = false ∧
+    nativePackages.contains part.trimAscii.toString = false ∧
+    boundaryPkgs.contains part.trimAscii.toString = false ∧
+    themeSlotOfPackage? part.trimAscii.toString = none
+
+attribute [local irreducible] finishRewritten in
+/-- A failed reader answer to a live package declaration is both recorded
+and named by the actual compatibility producer. This crosses execution,
+the compatibility prepasses, command dispatch and declaration completion;
+diagnostic membership is a conclusion, never a premise.
+
+The domain is a live literal loading call, with arbitrary comma-separated
+external names and source positions. Dormant definitions and calls inside
+consumed control operands do not satisfy this execution domain. -/
+theorem executeInputs_package_refusal_contract (reader : InputReader Id)
+    (file command names : String) (pos groupPos namePos : Pos)
+    (keeps : List String) (ds : Array Diag)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hnames : ExternalPackageNames names)
+    (hr : ∀ request context, reader request context = (none, context)) :
+    let executed := executeInputs reader file
+      (packageCall command names pos groupPos namePos) keeps ds
+    executed.inputAttempts =
+        #[⟨⟨command, file, pos, pos, #[.group #[.word names namePos] groupPos]⟩, false⟩] ∧
+      ∀ part ∈ names.trimAscii.toString.splitOn ",",
+        executed.sourceTriggers.attribute
+          (packageRefusal file pos part.trimAscii.toString) ∈
+            (rewriteExecuted executed).2.1 := by
+  rw [executeInputs_package_failed_exact reader file command names pos groupPos namePos
+    keeps ds hc hr]
+  let initial := packageExecutedState file command names pos groupPos namePos keeps ds
+  let st := packageRewriteState initial command names pos groupPos namePos
+  constructor
+  · rfl
+  · intro part hpart
+    have hn : ∀ p ∈ (names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString),
+        nativePackages.contains p = false := by
+      intro p hp
+      obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
+      exact (hnames q hq).2.1
+    have hb : ∀ p ∈ (names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString),
+        (boundaryPkgs.contains p && st.boundaryOpen) = false := by
+      intro p hp
+      obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
+      simp only [(hnames q hq).2.2.1, Bool.false_and]
+    have ht : ∀ p ∈ (names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString),
+        themeSlotOfPackage? p = none := by
+      intro p hp
+      obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
+      exact (hnames q hq).2.2.2
+    have hstep := rewriteList_package_external_exact command names pos groupPos namePos st
+      hc rfl rfl rfl rfl hn hb ht part hpart
+    let reports := ((names.trimAscii.toString.splitOn ",").map fun p =>
+      atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
+    let after := { st with diags := st.diags ++ reports }
+    have hquiet : QuietTail after := by
+      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl⟩
+    have hmem : atSource st pos (packageRefusal st.file pos part.trimAscii.toString) ∈
+        after.diags := by
+      apply Array.mem_append.mpr
+      apply Or.inr
+      exact List.mem_toArray.mpr (List.mem_map.mpr ⟨part, hpart, rfl⟩)
+    have hfinish := finishRewritten_named (#[], after)
+      (atSource st pos (packageRefusal st.file pos part.trimAscii.toString)) ⟨hquiet, hmem⟩
+    unfold rewriteExecuted finishRewrite
+    rw [beginRewrite_package_exact command names pos groupPos namePos initial hc rfl]
+    simp only [rewriteCursor, List.drop_zero, id_eq]
+    rw [hstep]
+    change st.sourceTriggers.attribute (packageRefusal st.file pos part.trimAscii.toString) ∈
+      (finishRewritten (#[], after)).2.1
+    rw [← atSource_package_exact st pos part.trimAscii.toString]
+    exact hfinish
 
 /-- The checkpoint and completion are the actual whole-document path. -/
 theorem rewriteExecuted_cursor_exact (executed : Executed) :

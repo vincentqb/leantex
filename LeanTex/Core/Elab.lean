@@ -17189,6 +17189,15 @@ end
 def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   settleList file 0 #[] #[] raws.toList
 
+/-- A live literal package declaration contains no split definer bodies.
+The public execution door therefore passes the same call and positions to
+the shared evaluator, without adding a parse-recovery diagnostic. -/
+theorem settleSplits_package_exact (file command names : String)
+    (pos groupPos namePos : Pos) :
+    settleSplits file (Compat.packageCall command names pos groupPos namePos) =
+      (Compat.packageCall command names pos groupPos namePos, #[]) := by
+  simp [settleSplits, Compat.packageCall, settleList, settleOne]
+
 /-- Execute input-bearing macros with the driver's reader. Parse recovery
 is settled before the shared evaluator; selector boundaries follow expansion, just
 as they are on the file-free preparation path. -/

@@ -53,6 +53,16 @@ def frontendInputRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "expanded requests need not occur in the raw-source candidate census"
     (!(Compat.localStyCandidates original).contains "Expanded" &&
       inputObservations generated == #[("usepackage", "Expanded", "", #["Expanded"])])
+  let hidden := "\\PackageWarning{\\usepackage{HiddenProbe}}{message}"
+  let dormant := "\\def\\later{\\usepackage{DormantProbe}}"
+  let finalOf (preamble : String) : Array Diag :=
+    (Elab.run "requests.tex" (preamble ++ "\\begin{document}body\\end{document}")).2
+  t "a request inside consumed log operands need not become a refusal"
+    (inputObservations hidden == #[("usepackage", "HiddenProbe", "", #["HiddenProbe"])] &&
+      !(finalOf hidden).any (fun d => d.kind == .W0103 && d.refused == some "HiddenProbe"))
+  t "a dormant definition can be rewritten without executing a reader request"
+    ((inputObservations dormant).isEmpty &&
+      (finalOf dormant).any (fun d => d.kind == .W0103 && d.refused == some "DormantProbe"))
   for row in Compat.themeAsking do
     let actual ← pure (inputObservations ("\\" ++ row.1 ++ "[choice]{Invented}"))
     t s!"expanded {row.1} asks for its registry prefix"
@@ -84,3 +94,21 @@ def frontendInputRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a refused expanded package retains its source site"
     (refused.size == 1 && refused.all fun d =>
       d.span == requests[0]?.map (fun request => ⟨request.file, request.pos⟩))
+  for command in ["usepackage", "RequirePackage"] do
+    let pos : Pos := { line := 7, col := 3, command := some command }
+    let groupPos : Pos := { line := 7, col := 18 }
+    let namePos : Pos := { line := 7, col := 19 }
+    let names := " MissingAlpha, MissingBeta,MissingAlpha "
+    let request : Compat.InputRequest :=
+      ⟨command, file, pos, pos, #[.group #[.word names namePos] groupPos]⟩
+    let missing : Compat.InputReader Id := fun _ context => (none, context)
+    let executed := Elab.executeInputs missing file
+      (Compat.packageCall command names pos groupPos namePos)
+    let final := Elab.runExecuted file executed
+    t "live package completion keeps the exact failed reader receipt"
+      (executed.inputAttempts == #[⟨request, false⟩])
+    for name in ["MissingAlpha", "MissingBeta"] do
+      let producer := executed.sourceTriggers.attribute (Compat.packageRefusal file pos name)
+      t "live package completion reports the actual requested name and producer record"
+        ((Compat.localStyCandidates request.call).contains name &&
+          final.2.any (fun actual => { actual with sites := producer.sites } == producer))

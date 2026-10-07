@@ -117,4 +117,92 @@ theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
   · exact reported_tally _ d (reported_append _ _ d
       (runPrepared_reports_contract file p earlier metric _ d h))
 
+attribute [local irreducible] Compat.rewriteText in
+/-- Preparation retains every compatibility producer record verbatim. The
+text pass can add reports, but cannot replace the package producer's span,
+refused spelling, code or source trigger. -/
+theorem prepareRewritten_diags_covers (file : String)
+    (scan : Compat.BoundaryScan) (macros : Array (String × String))
+    (triggers : Compat.SourceTriggers) (prior : Array Diag)
+    (rewritten : Array Parse.Raw × Array Diag × Array String)
+    (attempts : Array Compat.InputAttempt) (d : Diag)
+    (h : d ∈ rewritten.2.1) :
+    d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts).compatDiags := by
+  rcases rewritten with ⟨raws, diags, warned⟩
+  unfold prepareRewritten
+  cases Compat.rewriteText file raws warned
+  exact Array.mem_append.mpr (Or.inl (Array.mem_append.mpr (Or.inr h)))
+
+attribute [local irreducible] prepareRewritten Compat.rewriteExecuted
+  Compat.boundaryScan macroScan in
+theorem prepareExecuted_diags_covers (file : String)
+    (executed : Compat.Executed) (d : Diag)
+    (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
+    d ∈ (prepareExecuted file executed).compatDiags :=
+  prepareRewritten_diags_covers file _ _ _ _ _ _ d h
+
+/-- A compatibility refusal reaches the final executed-document result,
+through text rewriting, body interpretation, recovery and both tallies.
+The caller still owes the producer-to-request connection; this lemma
+preserves the actual record rather than inventing a matching report. -/
+theorem runExecuted_reports_contract (file : String)
+    (executed : Compat.Executed) (earlier : Array Diag)
+    (metric : Ir.Pic.LabelMetric) (d : Diag)
+    (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
+    Reported (runExecuted file executed earlier metric).2 d :=
+  runPreparedFinal_reports_contract file _ earlier metric d
+    (Array.mem_append.mpr (Or.inr (prepareExecuted_diags_covers file executed d h)))
+
+attribute [local irreducible] executeInputs Compat.executeInputs
+  Compat.rewriteExecuted runExecuted in
+/-- A live external-package declaration whose reader returns no input has
+an actual failed-call receipt, the requested style-file candidate for each
+name, and its producer's full source-located refusal in the final result.
+The only permitted diagnostic change is the tally's site count.
+
+The domain is stated on the source call and the external reader before
+execution: either package-loading spelling, arbitrary nonempty external
+comma-separated names and arbitrary positions. It excludes native-package
+option refusals, native theme selection, dormant definitions and calls
+inside consumed control operands. Those cases cannot justify a global
+equivalence between requests and refusal codes. -/
+theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
+    (file command names : String) (pos groupPos namePos : Pos)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hnames : Compat.ExternalPackageNames names)
+    (hr : ∀ request context, reader request context = (none, context)) :
+    let executed := executeInputs reader file
+      (Compat.packageCall command names pos groupPos namePos)
+    let request : Compat.InputRequest :=
+      ⟨command, file, pos, pos, #[.group #[.word names namePos] groupPos]⟩
+    executed.inputAttempts = #[⟨request, false⟩] ∧
+      ∀ part ∈ names.trimAscii.toString.splitOn ",",
+        (Compat.localStyCandidates request.call).contains part.trimAscii.toString = true ∧
+        Reported (runExecuted file executed earlier metric).2
+          (executed.sourceTriggers.attribute
+            (Compat.packageRefusal file pos part.trimAscii.toString)) := by
+  let request : Compat.InputRequest :=
+    ⟨command, file, pos, pos, #[.group #[.word names namePos] groupPos]⟩
+  have hproducer :
+      let executed := executeInputs reader file
+        (Compat.packageCall command names pos groupPos namePos)
+      executed.inputAttempts = #[⟨request, false⟩] ∧
+        ∀ part ∈ names.trimAscii.toString.splitOn ",",
+          executed.sourceTriggers.attribute
+            (Compat.packageRefusal file pos part.trimAscii.toString) ∈
+              (Compat.rewriteExecuted executed).2.1 := by
+    unfold executeInputs
+    rw [settleSplits_package_exact file command names pos groupPos namePos]
+    exact Compat.executeInputs_package_refusal_contract reader file command names
+      pos groupPos namePos _ #[] hc hnames hr
+  refine ⟨hproducer.1, ?_⟩
+  intro part hpart
+  have hname : request.name = names.trimAscii.toString :=
+    Compat.InputRequest.package_name_exact file command names pos groupPos namePos
+  refine ⟨?_, runExecuted_reports_contract file _ earlier metric _
+    (hproducer.2 part hpart)⟩
+  exact (CompatContract.inputRequest_names_asked request).1 hc part
+    (by simpa only [hname] using hpart) (hnames part hpart).1 (hnames part hpart).2.1
+
 end LeanTex.Core.Elab
