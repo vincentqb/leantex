@@ -10708,6 +10708,11 @@ structure Executed where
   raws : Array Raw
   private state : St
 
+/-- Replace the already-executed surface after resolving data requests while
+retaining its compatibility state and input receipts. -/
+def Executed.withRaws (executed : Executed) (raws : Array Raw) : Executed :=
+  { executed with raws := raws }
+
 /-- The original source index survives execution and included-file fulfilment. -/
 def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
   executed.state.sourceTriggers
@@ -10715,6 +10720,14 @@ def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
 /-- Exact reader receipts retained by the production evaluator. -/
 def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
+
+/-- Resolving other requests changes the surface alone. The original source
+index and actual input-reader receipts remain available to the continuation. -/
+theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
+    (executed.withRaws raws).raws = raws ∧
+      (executed.withRaws raws).sourceTriggers = executed.sourceTriggers ∧
+      (executed.withRaws raws).inputAttempts = executed.inputAttempts := by
+  exact ⟨rfl, rfl, rfl⟩
 
 private def executionState (reading : Bool) (file : String) (raws : Array Raw)
     (provideKeeps : List String) (warned : Array String) (diags : Array Diag) : St :=
