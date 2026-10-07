@@ -18594,6 +18594,300 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
     all_goals exact ho
   · exact ⟨by simp, by simp, rfl, rfl, rfl⟩
 
+private def StagedOp.Prose : StagedOp → Prop
+  | StagedOp.para j t => j.Prose ∧ t.get =
+    kpTwoPass (ParaJob.items j) (ParaJob.target j)
+      (ParaJob.protrude j && ParaJob.justify j && !ParaJob.center j)
+      (ParaJob.expand j && ParaJob.justify j && !ParaJob.center j)
+  | StagedOp.skip _ | StagedOp.skipAlt .. | StagedOp.anchorRule _ | StagedOp.anchor _ => True
+  | _ => False
+
+private def StagedOp.census (pick : Option Nat → Bool → Bool) : StagedOp → List Char
+  | StagedOp.para j _ => (Op.para j).census pick
+  | _ => []
+
+private def StagedOp.Clean : StagedOp → Prop
+  | StagedOp.para j _ => GlyphClean (ParaJob.diags j)
+  | _ => True
+
+private theorem census_keepHeading {n : Nat} (pick : Option Nat → Bool → Bool)
+    (b : B) (j : ParaJob) (lines : Nat) (hb : b.SourceBound n) :
+    B.census pick (b.keepHeading j lines) = B.census pick b := by
+  unfold B.keepHeading
+  split
+  · exact census_spillPage pick b 0 hb
+  · rfl
+
+private theorem placePara_diags (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) :
+    ∀ d ∈ B.diags b ++ ParaJob.diags j, d ∈ B.diags (placePara fs b j breaks) := by
+  intro d hd
+  simp only [placePara]
+  apply (reflowStep_paraLines fs j breaks _).2 d
+  exact (reflowStep_warnReflow _ _ _ _).2 d hd
+
+private theorem clean_placePara (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) (hd : GlyphClean (B.diags (placePara fs b j breaks))) :
+    GlyphClean (B.diags b) ∧ GlyphClean (ParaJob.diags j) := by
+  constructor
+  · intro d hm
+    exact hd d (placePara_diags fs b j breaks d (Array.mem_append.mpr (Or.inl hm)))
+  · intro d hm
+    exact hd d (placePara_diags fs b j breaks d (Array.mem_append.mpr (Or.inr hm)))
+
+private theorem census_stepStaged {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (imgs : Image.Store) (st : StepSt) (op : StagedOp)
+    (hb : (StepSt.b st).SourceBound n) (ho : op.SourceBound n) (hp : op.Prose) :
+    B.census pick (StepSt.b (stepStaged fs imgs st op)) =
+      B.census pick (StepSt.b st) ++ op.census pick := by
+  cases op <;> simp only [StagedOp.SourceBound] at ho
+  all_goals try contradiction
+  case para j t =>
+    obtain ⟨hj, ht⟩ := hp
+    obtain ⟨hh, items, hi, he⟩ := hj
+    simp only [stepStaged, Id.run, Id, pure]
+    split
+    all_goals
+      rw [ht, census_placePara_prose pick fs _ j items _ _ ho
+        (sourceBound_keepHeading (StepSt.b st) j _ hb) hh hi he,
+        census_keepHeading pick _ j _ hb]
+      rfl
+  all_goals
+    simp only [stepStaged, Id.run, Id, pure, StagedOp.census, List.append_nil]
+    repeat' split
+    all_goals exact census_of_eq pick _ _ rfl rfl
+
+private theorem clean_stepStaged (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (op : StagedOp) (hp : op.Prose)
+    (hd : GlyphClean (B.diags (StepSt.b (stepStaged fs imgs st op)))) :
+    GlyphClean (B.diags (StepSt.b st)) ∧ op.Clean := by
+  cases op <;> simp only [StagedOp.Prose] at hp
+  all_goals try contradiction
+  case para j t =>
+    simp only [stepStaged, Id.run, Id, pure] at hd
+    split at hd
+    all_goals
+      obtain ⟨hbefore, hj⟩ := clean_placePara fs _ j t.get hd
+      exact ⟨fun d hm => hbefore d ((reflowStep_keepHeading (StepSt.b st) j _).2 d hm), hj⟩
+  all_goals
+    simp only [stepStaged, Id.run, Id, pure] at hd
+    repeat' split at hd
+    all_goals exact ⟨hd, trivial⟩
+
+private theorem prose_keepAt (b : B) (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (si : Nat) (op : StagedOp) (hp : op.Prose) :
+    (keepAt b fs imgs staged si op).Prose := by
+  cases op with
+  | para j t =>
+    simp only [keepAt]
+    split <;> exact hp
+  | _ => exact hp
+
+private theorem census_keepAt (pick : Option Nat → Bool → Bool) (b : B)
+    (fs : FontSet) (imgs : Image.Store) (staged : Array StagedOp)
+    (si : Nat) (op : StagedOp) :
+    (keepAt b fs imgs staged si op).census pick = op.census pick := by
+  cases op <;> simp only [keepAt]
+  all_goals first | rfl | (split <;> rfl)
+
+private theorem clean_keepAt (b : B) (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (si : Nat) (op : StagedOp) :
+    (keepAt b fs imgs staged si op).Clean = op.Clean := by
+  cases op <;> simp only [keepAt]
+  all_goals first | rfl | (split <;> rfl)
+
+private theorem census_stepFlow {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (imgs : Image.Store) (st : FlowSt) (op : StagedOp)
+    (hb : (StepSt.b (FlowSt.placed st)).SourceBound n)
+    (ho : op.SourceBound n) (hp : op.Prose) :
+    B.census pick (StepSt.b (FlowSt.placed (stepFlow fs imgs st op))) =
+      B.census pick (StepSt.b (FlowSt.placed st)) ++ op.census pick := by
+  cases op <;> simp only [StagedOp.Prose] at hp
+  all_goals try contradiction
+  all_goals exact census_stepStaged pick fs imgs (FlowSt.placed st) _ hb ho hp
+
+private theorem clean_stepFlow (fs : FontSet) (imgs : Image.Store)
+    (st : FlowSt) (op : StagedOp) (hp : op.Prose)
+    (hd : GlyphClean (B.diags (StepSt.b (FlowSt.placed (stepFlow fs imgs st op))))) :
+    GlyphClean (B.diags (StepSt.b (FlowSt.placed st))) ∧ op.Clean := by
+  cases op <;> simp only [StagedOp.Prose] at hp
+  all_goals try contradiction
+  all_goals exact clean_stepStaged fs imgs (FlowSt.placed st) _ hp hd
+
+private theorem census_placeFlowFrom {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (imgs : Image.Store) (staged : Array StagedOp)
+    (st : FlowSt) (si : Nat)
+    (ho : ∀ op ∈ staged, op.SourceBound n)
+    (hp : ∀ op ∈ staged, op.Prose)
+    (hb : (StepSt.b (FlowSt.placed st)).SourceBound n) :
+    let out := placeFlowFrom fs imgs staged st si
+    B.census pick (StepSt.b (FlowSt.placed out)) =
+        B.census pick (StepSt.b (FlowSt.placed st)) ++
+          (staged.toList.drop si).flatMap (StagedOp.census pick) ∧
+      (GlyphClean (B.diags (StepSt.b (FlowSt.placed out))) →
+        GlyphClean (B.diags (StepSt.b (FlowSt.placed st))) ∧
+          ∀ op ∈ staged.toList.drop si, op.Clean) := by
+  rw [placeFlowFrom]
+  split
+  · rename_i hi
+    have hso := ho _ (Array.getElem_mem hi)
+    have hsp := hp _ (Array.getElem_mem hi)
+    have hd : staged.toList.drop si = staged[si] :: staged.toList.drop (si + 1) := by
+      simpa only [← Array.getElem_toList] using
+        List.drop_eq_getElem_cons (l := staged.toList) (i := si) (by simpa)
+    split
+    · rename_i he
+      simp only [he, StagedOp.SourceBound] at hso
+    · have hk := sourceBound_keepAt (StepSt.b (FlowSt.placed st)) fs imgs staged si _ hso
+      have hkp := prose_keepAt (StepSt.b (FlowSt.placed st)) fs imgs staged si _ hsp
+      have hnext := sourceBound_stepFlow fs imgs st _ hb hk
+      obtain ⟨hc, hclean⟩ := census_placeFlowFrom pick fs imgs staged _ (si + 1) ho hp hnext
+      constructor
+      · rw [hc, census_stepFlow pick fs imgs st _ hb hk hkp,
+          census_keepAt, hd, List.flatMap_cons, List.append_assoc]
+      · intro hgood
+        obtain ⟨hn, ht⟩ := hclean hgood
+        obtain ⟨hs, hj⟩ := clean_stepFlow fs imgs st _ hkp hn
+        rw [clean_keepAt] at hj
+        refine ⟨hs, ?_⟩
+        rw [hd]
+        intro op hm
+        rcases List.mem_cons.mp hm with rfl | hm
+        · exact hj
+        · exact ht op hm
+  · rename_i hi
+    have hd : staged.toList.drop si = [] := List.drop_eq_nil_iff.mpr (by simpa using Nat.le_of_not_lt hi)
+    simp only [hd, List.flatMap_nil, List.append_nil, List.not_mem_nil, false_implies,
+      implies_true, and_true, true_and]
+    exact fun h => h
+termination_by staged.size - si
+decreasing_by omega
+
+private theorem census_placeFrom {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (imgs : Image.Store) (staged : Array StagedOp) (st : StepSt)
+    (ho : ∀ op ∈ staged, op.SourceBound n)
+    (hp : ∀ op ∈ staged, op.Prose) (hb : (StepSt.b st).SourceBound n) :
+    B.census pick (StepSt.b (placeFrom fs imgs staged st 0)) =
+        B.census pick (StepSt.b st) ++ staged.toList.flatMap (StagedOp.census pick) ∧
+      (GlyphClean (B.diags (StepSt.b (placeFrom fs imgs staged st 0))) →
+        GlyphClean (B.diags (StepSt.b st)) ∧ ∀ op ∈ staged, op.Clean) := by
+  simpa only [placeFrom, List.drop_zero, Array.mem_toList_iff] using
+    census_placeFlowFrom pick fs imgs staged (FlowSt.mk st []) 0 ho hp hb
+
+private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
+    (b : B) (hb : b.SourceBound n) :
+    let out := if !(B.cur b).lines.isEmpty || !(B.cur b).fills.isEmpty || (B.pages b).isEmpty
+      then b.finishPage b.closingOwed else b
+    (B.pages out).toList.flatMap (pageCensus pick) = B.census pick b := by
+  dsimp only
+  split
+  · have hc := census_finishPage pick b b.closingOwed false hb
+    change _ ++ [] = _ at hc
+    simpa only [List.append_nil] using hc
+  · rename_i hn
+    have he : (B.cur b).lines = #[] := by
+      simpa using (Bool.or_eq_false_iff.mp (Bool.or_eq_false_iff.mp
+        (Bool.eq_false_iff.mpr hn)).1).1
+    simp only [B.census, pageCensus, he, Array.toList_empty, List.flatMap_nil, List.append_nil]
+
+private theorem clean_close (b : B) :
+    let out := if !(B.cur b).lines.isEmpty || !(B.cur b).fills.isEmpty || (B.pages b).isEmpty
+      then b.finishPage b.closingOwed else b
+    GlyphClean (B.diags out) → GlyphClean (B.diags b) := by
+  dsimp only
+  split
+  · intro hd d hm
+    exact hd d ((reflowStep_finishPage b b.closingOwed false).2 d hm)
+  · exact fun h => h
+
+private theorem clean_measured (a b c : Prop) [Decidable a] [Decidable b] [Decidable c]
+    (ds : Array Diag) (d : Diag)
+    (h : GlyphClean (if a then if b then if c then ds.push d else ds else ds else ds)) :
+    GlyphClean ds := by
+  repeat' split at h
+  all_goals first | exact h | exact fun e he => h e (Array.mem_push.mpr (Or.inl he))
+
+private theorem shipCore_census (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (pick : Option Nat → Bool → Bool)
+    (hp : ∀ b ∈ (pdfView doc).body, ∃ xs, b = .para xs ∧ PlainInlines xs)
+    (hh : geom.hyphenate = false ∨ pats = none) :
+    GlyphClean (shipCore geom fs pats doc imgs frameSpans).diags →
+      inkCensus ((shipCore geom fs pats doc imgs frameSpans).pages.toList.flatMap
+        (pageCensus pick)) =
+      sourceInkPrefix pick (pdfView doc).body 0 true (pdfView doc).body.size := by
+  unfold shipCore withLayoutOps
+  dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
+  extract_lets d ps font scale footAllowed plainFoot footSize runInk corr xHeight
+    tokenLen headsep footskip gapTop gapBot latexFoot headFurn footFurn g1 g2 g
+    design cover footGap rd acc0 acc accF staged preDiags1 preDiags2 preDiags b0
+    alphabet l45 l65 cpl10 dir post
+  have hacc := collectDocBody_census rd d cover frameSpans acc0 hp
+    (by rcases hh with hh | hh <;>
+      simp only [rd, ps, hh, Bool.false_eq_true, ↓reduceIte, ite_self])
+    (by intro op ho; simp [acc0] at ho) pick
+  have htrail : acc.GapAppend accF := by
+    dsimp only [accF]
+    split
+    · exact ⟨#[Op.skip ((Acc.owed acc).foldl Glue.add {})], by simp, by simp [Op.Gap]⟩
+    · exact ⟨#[], by simp, by simp⟩
+  have hprose : ∀ op ∈ staged, op.Prose := by
+    intro sop hs
+    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
+    have h := htrail.prose hacc.1 op hop
+    cases op <;> simp only [Op.Prose] at h
+    all_goals first | contradiction | exact h | exact ⟨h, rfl⟩
+  have hbound : ∀ op ∈ staged, op.SourceBound (Struct.ofDoc d).leaves.size := by
+    intro sop hs
+    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
+    have ho := sourceBound_trailing acc
+      (sourceBound_collected rd d cover frameSpans acc0 hp rfl rfl (Nat.le_refl _)) op hop
+    cases op <;> simp only [StagedOp.SourceBound, Op.SourceBound] at ho ⊢
+    all_goals exact ho
+  have hb0 : b0.SourceBound (Struct.ofDoc d).leaves.size :=
+    B.SourceBound.mk (by simp [b0]) (by simp [b0]) rfl rfl rfl
+  have hplaced := census_placeFrom pick fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) hbound hprose hb0
+  have hbp := sourceBound_placeFrom fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) 0 hbound hb0
+  have hstage : staged.toList.flatMap (StagedOp.census pick) = accF.census pick := by
+    simp only [staged, Array.toList_map, List.flatMap_map, Acc.census]
+    congr 1
+    funext op
+    cases op <;> rfl
+  intro hd
+  have hc : GlyphClean (B.diags (StepSt.b (placeFrom fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) 0))) := by
+    apply clean_close
+    exact clean_measured _ _ _ _ _ hd
+  have hac : acc.Clean := by
+    apply htrail.clean
+    intro op ho
+    have hs := (hplaced.2 hc).2 _ (Array.mem_map.mpr ⟨op, ho, rfl⟩)
+    cases op <;> exact hs
+  have he := (hacc.2 hac).2
+  change inkCensus (acc.census pick) = [] ++
+    sourceInkPrefix pick d.body 0 true d.body.size at he
+  change inkCensus ((B.pages (if _ then _ else _)).toList.flatMap _) = _
+  rw [census_close pick _ hbp, hplaced.1, hstage, htrail.census]
+  simpa only [B.census, pageCensus, b0, acc0, Acc.census, Array.toList_empty,
+    List.flatMap_nil, List.append_nil, List.nil_append, inkCensus, List.filter_nil] using he
+
+private theorem sourceInkPrefix_body (body : Array Block)
+    (hp : ∀ b ∈ body, ∃ xs, b = .para xs ∧ PlainInlines xs)
+    (n : Nat) (hn : n ≤ body.size) :
+    sourceInkPrefix (fun _ counted => counted) body 0 true n =
+      inkCensus (Ir.blockTextList "" (body.toList.take n)).toList := by
+  induction n with
+  | zero => simp [sourceInkPrefix, Ir.blockTextList, inkCensus]
+  | succ n ih =>
+    have hi : n < body.size := by omega
+    obtain ⟨xs, hx, hp⟩ := hp body[n] (Array.getElem_mem hi)
+    rw [sourceInkPrefix_succ, ih (by omega),
+      sourceInkAt_para _ _ _ _ _ hi xs hx hp,
+      List.take_succ_eq_append_getElem (by simpa using hi),
+      Ir.blockTextList_append]
+    simp only [↓reduceIte, Array.getElem_toList, hx,
+      Ir.blockTextList, Ir.blockTextOne, String.toList_append,
+      inkCensus, List.filter_append]
+
 private def frameOpeningsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) : Array FrameOpening :=
   withLayoutOps geom fs pats doc imgs (fun staged _ _ =>
@@ -18727,6 +19021,81 @@ def LineOut.glyphChars (line : LineOut) : List Char :=
 is a paragraph whose inlines are literal text. Furniture is unrestricted. -/
 def PlainParagraphs (body : Array Block) : Prop :=
   ∀ b ∈ body, ∃ xs, b = .para xs ∧ (∀ x ∈ xs, ∃ s, x = .text s)
+
+private theorem pageCensus_filter (pick : Option Nat → Bool → Bool) (p : PageOut) :
+    pageCensus pick p =
+      (p.lines.filter fun l => pick l.leaf l.counted).toList.flatMap LineOut.glyphChars := by
+  simp only [pageCensus, Array.toList_filter]
+  generalize p.lines.toList = ls
+  induction ls with
+  | nil => rfl
+  | cons l ls ih =>
+    cases h : pick l.leaf l.counted <;>
+      simp [List.flatMap_cons, lineCensus, LineOut.glyphChars, h, ih]
+
+private theorem pageCensus_filter_fun (pick : Option Nat → Bool → Bool) :
+    pageCensus pick = fun p =>
+      (p.lines.filter fun l => pick l.leaf l.counted).toList.flatMap LineOut.glyphChars :=
+  funext (pageCensus_filter pick)
+
+private theorem ship_census (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (pick : Option Nat → Bool → Bool)
+    (hplain : PlainParagraphs doc.body) (hh : geom.hyphenate = false ∨ pats = none)
+    (hd : GlyphClean (ship geom fs pats doc imgs frameSpans).diags) :
+    inkCensus ((ship geom fs pats doc imgs frameSpans).pages.toList.flatMap
+      (pageCensus pick)) = sourceInkPrefix pick doc.body 0 true doc.body.size := by
+  have hm : (resolveDocMath fs doc).1.body = doc.body :=
+    resolveMathAlphas_plain_body _ _ doc hplain
+  have hb : (pdfView (resolveDocMath fs doc).1).body = doc.body := by
+    change Ir.keepFor "pdf" (resolveDocMath fs doc).1.body = doc.body
+    rw [hm, keepFor_plain_body _ _ hplain]
+  have h := shipCore_census geom fs pats (resolveDocMath fs doc).1 imgs frameSpans pick
+    (by rw [hb]; exact hplain) hh hd
+  simpa only [ship, hb] using h
+
+/-- The literal text owned by an opening paragraph leaf. The source alone
+chooses ownership: each nonempty paragraph opens at the sum of preceding
+structural leaf counts and owns all of its inlines. Empty paragraphs own no
+leaf. Whitespace and fixed spaces contribute spacing, not glyph scalars. -/
+def paragraphSourceInk (body : Array Block) (k : Nat) : List Char :=
+  sourceInkPrefix (fun leaf _ => leaf == some k) body 0 true body.size
+
+/-- The actual source-to-shipment body census. Plain paragraphs are collected,
+broken, set and placed by the production pipeline; final page closure keeps
+all their glyphs. The source census excludes nonpainting spacing. No bound on
+paragraph length, line count, page count or furniture is required. -/
+theorem ship_paras_body_exact (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
+    (hh : geom.hyphenate = false ∨ pats = none)
+    (hd : ∀ d ∈ (ship geom fs pats doc imgs frameSpans).diags,
+      d.code ≠ "E0405" ∧ d.code ≠ "W0009") :
+    inkCensus ((ship geom fs pats doc imgs frameSpans).pages.toList.flatMap fun p =>
+      (p.lines.filter (·.counted)).toList.flatMap LineOut.glyphChars) =
+      inkCensus (Ir.blocksText doc.body).toList := by
+  have h := ship_census geom fs pats doc imgs frameSpans
+    (fun _ counted => counted) hplain hh hd
+  have hs := sourceInkPrefix_body doc.body hplain doc.body.size (Nat.le_refl _)
+  rw [← Array.length_toList, List.take_length] at hs
+  simpa only [pageCensus_filter_fun, Ir.blocksText] using h.trans hs
+
+/-- Every source paragraph's own glyph sequence survives actual shipment,
+indexed by its independently computed opening structural leaf. This is an
+ordered equality, so neither duplication nor a lost suffix can satisfy it. -/
+theorem ship_paras_leaf_exact (geom : Geom) (fs : FontSet)
+    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
+    (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
+    (hh : geom.hyphenate = false ∨ pats = none)
+    (hd : ∀ d ∈ (ship geom fs pats doc imgs frameSpans).diags,
+      d.code ≠ "E0405" ∧ d.code ≠ "W0009") (k : Nat) :
+    inkCensus ((ship geom fs pats doc imgs frameSpans).pages.toList.flatMap fun p =>
+      (p.lines.filter fun l => l.leaf == some k).toList.flatMap LineOut.glyphChars) =
+      paragraphSourceInk doc.body k := by
+  simpa only [pageCensus_filter_fun, paragraphSourceInk] using
+    ship_census geom fs pats doc imgs frameSpans
+      (fun leaf _ => leaf == some k) hplain hh hd
+
 
 private theorem noGlyph_glyphChars (line : LineOut)
     (h : ∀ s ∈ line.segs, s.NoGlyph) : line.glyphChars = [] := by
