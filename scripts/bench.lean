@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import LeanTex.Cli.ConvCache
+import LeanTex.Core.Image
 
 /-
 Benchmark leantex against lualatex on the bench corpus. Run from the
@@ -15,6 +16,18 @@ over the same inputs, environment and benchmark driver.
 warm content cache, after warming font discovery.
 `--concurrency-only` measures PDF compression and HTML image conversion
 with private cold/warm caches, identical output bytes and diagnostic order.
+`--slides-only` measures whole PDF and HTML builds of invented 8/32-slide
+decks with repeated assets (N must be at least 3). Each pair starts with
+empty private content AND font caches; the repeat is a new process over the same source and output
+path. Cold means application caches, not the OS page cache. Phases and
+image work counts come from verbose porcelain records. Cache inventories
+are not hit counters for operations the compiler does not instrument.
+Its gates are equivalence, invalidation and work counts, never milliseconds.
+`--slides-selftest` tests those judges without compiling any documents.
+The slide run also needs sha256sum, pdftocairo and xmllint.
+For before/after runs use this same driver, N, font/tool environment and an
+otherwise idle host; shared-host timings are provisional. Redirect stdout
+to retain every sample, phase median and input/binary fingerprint.
 -/
 
 def compiler : IO String := do
@@ -179,39 +192,70 @@ def benchPictures (n requests : Nat) : IO Unit := do
     for (label, times) in [("cold", cold), ("warm", warm)] do
       IO.println s!"{padRight s!"leantex  {requests} picture requests ({label})" 42} {padLeft (toString (median times)) 6} ms (median of {n})"
 
+structure Phase where
+  name : String
+  detail : String
+  ms : Nat
+
 /-- Keep timing out of the equivalence check; diagnostics retain their exact
 structured fields and source order. The page count comes from the completed
 compiler run, so a spilling fixture cannot silently change the workload. -/
 structure Sample where
-  ms : Nat
+  ms : Nat := 0
+  compilerMs : Nat
   diagnostics : Array String
   pages : Nat
+  phases : Array Phase
 
-def sample (binary input output cache : System.FilePath) : IO Sample := do
+def Sample.phase? (r : Sample) (name : String) : Option Phase :=
+  r.phases.find? (·.name == name)
+
+/-- A missing, duplicate or unsuccessful summary cannot certify a run.
+Diagnostics are compared with all structured fields, in emission order. -/
+def parseSample (log : String) : Except String Sample := do
+  let mut diagnostics := #[]
+  let mut phases : Array Phase := #[]
+  let mut summary : Option (Nat × Nat) := none
+  for line in log.splitOn "\n" do
+    if line.trimAscii.isEmpty then continue
+    let j ← Lean.Json.parse line
+    match ← j.getObjValAs? String "event" with
+    | "diagnostic" =>
+      unless (← j.getObjValAs? String "severity") == "note" do
+        throw s!"fixture has a rendering loss: {j.compress}"
+      diagnostics := diagnostics.push j.compress
+    | "phase" =>
+      let name ← j.getObjValAs? String "name"
+      if name.isEmpty || phases.any (·.name == name) then
+        throw s!"empty or duplicate phase: {name}"
+      phases := phases.push {
+        name, detail := ← j.getObjValAs? String "detail", ms := ← j.getObjValAs? Nat "ms" }
+    | "summary" =>
+      if summary.isSome then throw "more than one output summary"
+      unless (← j.getObjValAs? Bool "ok") && (← j.getObjValAs? Nat "errors") == 0 do
+        throw "unsuccessful output summary"
+      if (← j.getObjValAs? String "output").isEmpty then throw "summary names no output"
+      let pages ← j.getObjValAs? Nat "pages"
+      if pages == 0 then throw "summary has no pages"
+      summary := some (pages, ← j.getObjValAs? Nat "ms")
+    | event => throw s!"unexpected porcelain event: {event}"
+  let some (pages, compilerMs) := summary | throw "no output summary"
+  return { pages, compilerMs, diagnostics, phases }
+
+def sample (binary input output cache : System.FilePath) (verbose : Bool := false) : IO Sample := do
   let start ← IO.monoMsNow
   let out ← IO.Process.output {
     cmd := binary.toString
-    args := #["build", input.toString, "-o", output.toString, "--porcelain"]
-    env := #[("XDG_CACHE_HOME", some cache.toString)] }
+    args := #["build", input.toString, "-o", output.toString, "--porcelain"] ++
+      (if verbose then #["-v"] else #[])
+    env := #[("XDG_CACHE_HOME", some cache.toString), ("LC_ALL", some "C"), ("TZ", some "UTC")] }
   let ms := (← IO.monoMsNow) - start
-  if out.exitCode != 0 then die s!"benchmark compile failed:\n{out.stdout}{out.stderr}"
-  let mut diagnostics := #[]
-  let mut pages := none
-  for line in (out.stdout ++ out.stderr).splitOn "\n" do
-    if line.isEmpty then continue
-    let record ← match Lean.Json.parse line with
-      | .ok record => pure record
-      | .error reason => die s!"benchmark needs JSON diagnostics: {reason}"
-    match (record.getObjValAs? String "event").toOption with
-    | some "diagnostic" =>
-      if (record.getObjValAs? String "severity").toOption != some "note" then
-        die s!"benchmark fixture has a rendering loss: {record.compress}"
-      diagnostics := diagnostics.push record.compress
-    | some "summary" =>
-      if let .ok count := record.getObjValAs? Nat "pages" then pages := some count
-    | _ => pure ()
-  let some pageCount := pages | die "benchmark compile reported no output pages"
-  return { ms, diagnostics, pages := pageCount }
+  if out.exitCode != 0 then
+    throw (IO.userError s!"benchmark compile failed:\n{out.stdout}{out.stderr}")
+  let report ← match parseSample (out.stdout ++ out.stderr) with
+    | .ok report => pure report
+    | .error reason => throw (IO.userError s!"benchmark needs a complete porcelain report: {reason}")
+  return { report with ms }
 
 /-- Each cache is owned by this benchmark's temporary directory. Font discovery
 is warmed first; only the operation being measured is evicted between runs. -/
@@ -272,10 +316,392 @@ def benchConcurrent (n requests : Nat) (images : Bool) : IO Unit := do
       (if images then s!"{requests} PDF images (HTML)" else s!"{requests} page streams (PDF)")
       binary input output cache (if images then "convs" else "flate")
 
+namespace Slides
+
+open LeanTex.Core
+
+/-- This is the existing images phase's detail protocol, not a guessed
+count from cache filenames. The fixture has one cacheable alpha PNG. -/
+def imageCounts (r : Sample) : Except String (Nat × Nat) := do
+  let some p := r.phase? "images" | throw "no images phase (use --porcelain -v)"
+  let number := fun s : String => match s.toNat? with
+    | some n => Except.ok n
+    | none => Except.error s!"bad image count: {s}"
+  let words := p.detail.splitOn " "
+  let (files, hits) ← match words with
+    | [n, "files"] => pure (← number n, 0)
+    | [n, "files,", h, "cached"] =>
+      pure (← number n, ← number h)
+    | _ => throw s!"unrecognized images detail: {p.detail}"
+  if hits > files then throw "more image hits than requests"
+  return (files, hits)
+
+/-- The same source/cache replay owes the same nonempty artifact, page
+count, diagnostic order and resolved font environment. Timing is excluded. -/
+def equivalent (pages : Nat) (a b : Sample) (x y : ByteArray) : Bool :=
+  !x.isEmpty && x == y && a.pages == pages && b.pages == pages &&
+    a.diagnostics == b.diagnostics &&
+    a.phases.map (·.name) == b.phases.map (·.name) &&
+    (a.phase? "font").map (·.detail) == (b.phase? "font").map (·.detail) &&
+    (a.phase? "fontdb").map (·.detail) == (b.phase? "fontdb").map (·.detail)
+
+/-- The fixture must resolve only copied, unchanged fonts. Discovery still
+visits host roots, so its cost remains dependent on the host font installation. -/
+def fixtureFonts (root : String) (r : Sample) : Bool :=
+  match (r.phase? "font").map (·.detail.splitOn " (") with
+  | some [_, paths] =>
+    if !paths.endsWith ")" then false else
+    let paths := (paths.dropEnd 1).toString.splitOn ", "
+    !paths.isEmpty && paths.all (·.startsWith (root ++ "/fonts/"))
+  | _ => false
+
+/-- A changed input owes changed bytes AND the fresh-cache answer. Merely
+noticing a new cache file would also pass a stale artifact. -/
+def invalidated (pages : Nat) (old changed fresh : ByteArray)
+    (a b : Sample) : Bool :=
+  old != changed && equivalent pages a b changed fresh
+
+/-- Content answers must remain unchanged. Font-discovery TSVs are mutable
+metadata (including hash-map row order); they are not content-cache entries.
+Their resolved environment is checked by `equivalent` instead. -/
+def answers (files : Array (String × String)) : Array (String × String) :=
+  files.filter fun (name, _) =>
+    name.startsWith "imgs/" || name.startsWith "flate/" || name.startsWith "convs/"
+
+def require (ok : Bool) (why : String) : IO Unit := do
+  unless ok do throw (IO.userError s!"slides benchmark: {why}")
+
+def checked (answer : Except String α) : IO α :=
+  match answer with
+  | .ok value => pure value
+  | .error why => throw (IO.userError s!"slides benchmark: {why}")
+
+def say (text : String) : IO Unit := do
+  IO.println text
+  (← IO.getStdout).flush
+
+/-- Hash the executable outside timing. A native checksum avoids interpreting
+two byte-by-byte fingerprint passes over a large debug executable. -/
+def binaryHash (binary : System.FilePath) : IO String := do
+  let result ← IO.Process.output { cmd := "sha256sum", args := #["--", binary.toString] }
+  let key := (result.stdout.splitOn " ").headD ""
+  require (result.exitCode == 0 && key.length == 64 &&
+    key.toList.all fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) "could not SHA-256 the compiler"
+  return key
+
+def toolVersions : IO (Array (String × String)) := do
+  let mut versions := #[]
+  for (tool, args) in [("pdftocairo", #["-v"]), ("xmllint", #["--version"])] do
+    let result ← IO.Process.output { cmd := tool, args }
+    let version := (result.stdout ++ result.stderr).trimAscii.toString
+    require (result.exitCode == 0 && !version.isEmpty) s!"could not read {tool}'s version"
+    versions := versions.push (tool, version)
+  return versions
+
+def be32 (n : Nat) : ByteArray :=
+  ⟨#[UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
+    UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]⟩
+
+-- PNG CRC-32 (ISO/IEC 15948 Annex D). The browser must accept the fixture
+-- too; a header-only probe with dummy checksums would not establish that.
+def crc32 (bytes : ByteArray) : UInt32 := Id.run do
+  let mut crc : UInt32 := 0xffffffff
+  for byte in bytes do
+    crc := crc ^^^ byte.toUInt32
+    for _ in [:8] do
+      crc := (crc >>> 1) ^^^ (if crc &&& 1 == 1 then 0xedb88320 else 0)
+  return crc ^^^ 0xffffffff
+
+def pngChunk (tag : String) (data : ByteArray) : ByteArray :=
+  let payload := tag.toUTF8 ++ data
+  be32 data.size ++ payload ++ be32 (crc32 payload).toNat
+
+/-- Two same-sized RGBA fixtures, one filename. Changing the colour must
+invalidate alpha decoding by content even when the dimensions are identical. -/
+def raster (edited : Bool) : ByteArray := Id.run do
+  let mut raw := ByteArray.empty
+  for y in [:80] do
+    raw := raw.push 0
+    for x in [:128] do
+      raw := raw ++ ⟨#[if edited then 200 else 40, UInt8.ofNat (x + y),
+        if edited then 40 else 200, if x % 16 < 8 then 255 else 128]⟩
+  return ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩ ++
+    pngChunk "IHDR" (be32 128 ++ be32 80 ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
+    pngChunk "IDAT" (Flate.deflateStored raw) ++ pngChunk "IEND" ByteArray.empty
+
+/-- A font-free vector asset, generated outside timing. Its conversion
+has no dependency on a host font substitution. -/
+def vector (edited : Bool := false) : ByteArray := Id.run do
+  let colour := if edited then "0.7 0.4 0.1" else "0.1 0.4 0.7"
+  let content := colour ++ " rg 0 0 100 64 re f\n1 0.7 0.1 rg 12 12 40 40 re f"
+  let objs := #[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 64] >>",
+    "<< /Type /Page /Parent 2 0 R /Resources << >> /Contents 4 0 R >>",
+    s!"<< /Length {content.utf8ByteSize} >>\nstream\n{content}\nendstream"]
+  let mut out := "%PDF-1.7\n"
+  let mut offsets := #[]
+  for (obj, i) in objs.zipIdx do
+    offsets := offsets.push out.utf8ByteSize
+    out := out ++ s!"{i + 1} 0 obj\n{obj}\nendobj\n"
+  let xref := out.utf8ByteSize
+  out := out ++ s!"xref\n0 {objs.size + 1}\n0000000000 65535 f \n"
+  for offset in offsets do
+    let digits := toString offset
+    out := out ++ String.ofList (List.replicate (10 - digits.length) '0') ++ digits ++ " 00000 n \n"
+  return (out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").toUTF8
+
+def deck (frames : Nat) (edited : Bool := false) : String := Id.run do
+  let mut src := "\\documentclass[aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
+    "\\usepackage{graphicx}\n" ++
+    "\\fonts{dir=\"fonts\",body=\"Open Sans\"}\n" ++
+    "\\begin{document}\n"
+  for i in [:frames] do
+    let word := if edited && i == 0 then "Comet" else "Orbit"
+    src := src ++ s!"\\begin\{frame}\{Invented slide {i + 1}}\n{word} samples travel through a small model.\n" ++
+      "\\begin{itemize}\n\\item A stable observation and its label.\n" ++
+      "\\item \\alert{Repeated assets} retain their colours.\n\\end{itemize}\n" ++
+      "\\includegraphics[width=0.18\\textwidth,alt={Invented alpha grid}]{grid.png}\n" ++
+      "\\includegraphics[width=0.18\\textwidth,alt={The same alpha grid}]{grid.png}\n" ++
+      "\\includegraphics[width=0.18\\textwidth,alt={Invented vector blocks}]{blocks.pdf}\n" ++
+      "\\end{frame}\n"
+  return src ++ "\\end{document}\n"
+
+def selftest : IO Unit := do
+  require (median #[9, 1, 5] == 5 && median #[8, 3, 5, 1, 7] == 5) "median"
+  let a := "{\"event\":\"diagnostic\",\"severity\":\"note\",\"message\":\"first\"}"
+  let b := "{\"event\":\"diagnostic\",\"severity\":\"note\",\"message\":\"second\"}"
+  let ph := "{\"event\":\"phase\",\"name\":\"images\",\"detail\":\"2 files\",\"ms\":7}"
+  let done := "{\"event\":\"summary\",\"ok\":true,\"errors\":0,\"output\":\"deck.pdf\",\"pages\":8,\"ms\":20}"
+  let log := String.intercalate "\n" [a, b, ph, done]
+  let r ← checked (parseSample log)
+  require (r.compilerMs == 20 && (r.phase? "images").map (·.ms) == some 7 &&
+    (imageCounts r).toOption == some (2, 0)) "phase parser lost data"
+  let warm ← checked (parseSample (log.replace "2 files" "2 files, 1 cached"))
+  require ((imageCounts warm).toOption == some (2, 1)) "image hit parser"
+  let bytes := "invented artifact".toUTF8
+  require (equivalent 8 r warm bytes bytes) "timing/cache detail affected equivalence"
+  for (name, bad) in [
+      ("missing summary", String.intercalate "\n" [a, ph]),
+      ("duplicate summary", log ++ "\n" ++ done),
+      ("duplicate phase", log ++ "\n" ++ ph),
+      ("failed summary", log.replace "\"ok\":true" "\"ok\":false"),
+      ("summary errors", log.replace "\"errors\":0" "\"errors\":1"),
+      ("empty pages", log.replace "\"pages\":8" "\"pages\":0"),
+      ("negative timing", log.replace "\"ms\":7" "\"ms\":-1"),
+      ("loss diagnostic", log.replace "\"note\"" "\"warning\""),
+      ("non-JSON", log ++ "\ncompiler crashed")] do
+    require (!(parseSample bad).isOk) s!"parser accepted {name}"
+  for detail in ["two files", "2 files, 3 cached", "2 files, 1 cached extra"] do
+    let bad ← checked (parseSample (log.replace "2 files" detail))
+    require (!(imageCounts bad).isOk) s!"parser accepted {detail}"
+  let swapped ← checked (parseSample (String.intercalate "\n" [b, a, ph, done]))
+  require (!equivalent 8 r swapped bytes bytes) "diagnostic reordering was hidden"
+  let font : Phase := { name := "font", detail := "OpenSans (/fixture/fonts/face.ttf)", ms := 9 }
+  let withFont := { r with phases := r.phases.push font }
+  let otherFont := { r with phases := r.phases.push { font with detail := "Other (/host/font.ttf)" } }
+  require (fixtureFonts "/fixture" withFont && !fixtureFonts "/fixture" otherFont)
+    "fixture font guard accepted host substitution"
+  require (!fixtureFonts "/fixture"
+    { r with phases := #[{ font with detail := "OpenSans (/fixture/fonts/face.ttf" }] })
+    "fixture font guard accepted a truncated record"
+  require (!equivalent 8 withFont otherFont bytes bytes)
+    "different font environment was hidden"
+  require (!equivalent 8 withFont { withFont with phases := withFont.phases.reverse } bytes bytes)
+    "different phase order was hidden"
+  require (!equivalent 9 r r bytes bytes) "wrong page count was hidden"
+  require (!equivalent 8 r r ByteArray.empty ByteArray.empty) "empty artifact passed"
+  let edited := "edited artifact".toUTF8
+  require (!equivalent 8 r r bytes edited) "different artifact passed"
+  require (invalidated 8 bytes edited edited r r) "valid invalidation failed"
+  require (!invalidated 8 bytes bytes bytes r r) "unchanged artifact passed invalidation"
+  require (!invalidated 8 bytes edited bytes r r) "stale cache passed invalidation"
+  let files := #[("fontdb-2.tsv", "old metadata"), ("imgs/grid.img", "answer")]
+  let metadataEdit := #[("fontdb-2.tsv", "new metadata"), ("imgs/grid.img", "answer")]
+  require (files != metadataEdit && answers files == answers metadataEdit)
+    "answer judge must ignore only metadata changes"
+  require (answers files != answers #[("imgs/grid.img", "changed answer")] &&
+    answers files != answers #[("imgs/grid.img", "answer"), ("convs/new.answer", "new")])
+    "answer judge hid changed or added content answers"
+  require (crc32 "123456789".toUTF8 == 0xcbf43926) "PNG CRC test vector"
+  for edit in [false, true] do
+    let png ← checked (Image.decode (raster edit))
+    require (png.pxW == 128 && png.pxH == 80 && png.losses.isEmpty) "RGBA fixture dimensions/losses"
+    require (match png.alpha with | .soft _ 8 => true | _ => false) "fixture lost alpha"
+  require ((raster false).size == (raster true).size && raster false != raster true)
+    "asset edit must preserve size, change content"
+  require ((vector false).size == (vector true).size && vector false != vector true)
+    "vector edit must preserve size, change content"
+  require (deck 8 != deck 8 true) "source edit must change content"
+  say "slides benchmark selftest: parser, equivalence, invalidation and fixtures passed"
+
+/-- Inventories witness published answers, not hits or tool invocations.
+All current cache files are at the root or one directory below it. Refuse
+a deeper layout rather than silently omit answers from the comparison. -/
+def inventory (root : System.FilePath) : IO (Array (String × String)) := do
+  if !(← root.pathExists) then return #[]
+  let mut out := #[]
+  for entry in ← root.readDir do
+    if ← entry.path.isDir then
+      for child in ← entry.path.readDir do
+        require (!(← child.path.isDir)) "cache inventory needs a deeper traversal"
+        out := out.push (entry.fileName ++ "/" ++ child.fileName,
+          Flate.contentKey (← IO.FS.readBinFile child.path))
+    else
+      out := out.push (entry.fileName, Flate.contentKey (← IO.FS.readBinFile entry.path))
+  return out.qsort (fun a b => a.1 < b.1)
+
+def entries (files : Array (String × String)) (dir ext : String) : Nat :=
+  files.filter (fun (name, _) => name.startsWith (dir ++ "/") && name.endsWith ext) |>.size
+
+def fingerprint (files : Array (String × String)) : String :=
+  Flate.contentKey (String.intercalate "\n" (files.toList.map fun (p, k) => p ++ "\t" ++ k)).toUTF8
+
+structure Run where
+  report : Sample
+  bytes : ByteArray
+  cache : Array (String × String)
+
+/-- Only the child compiler is timed. Fixture generation, verification,
+inventory hashing, and Lean/Lake compilation are outside the measurement. -/
+def compile (binary dir cache : System.FilePath) (format : String) : IO Run := do
+  let output := dir / ("deck." ++ format)
+  if ← output.pathExists then IO.FS.removeFile output
+  let report ← sample binary (dir / "deck.tex") output cache true
+  for name in ["read", "prepare", "elab", "fontdb", "font", "images", "layout", format] do
+    require ((report.phase? name).isSome) s!"missing phase {name}"
+  require (!report.diagnostics.isEmpty) "fixture must exercise diagnostic replay"
+  require (fixtureFonts dir.toString report) "fixture resolved a font outside its private copy"
+  let bytes ← IO.FS.readBinFile output
+  require (!bytes.isEmpty) "no output bytes"
+  return { report, bytes, cache := ← inventory (cache / "leantex") }
+
+def replay (pages : Nat) (a b : Run) : IO Unit := do
+  require (equivalent pages a.report b.report a.bytes b.bytes)
+    "replay changed artifact, page count, diagnostic order or font environment"
+  let before := answers a.cache
+  let after := answers b.cache
+  let removed := before.filter fun entry => !after.contains entry
+  let added := after.filter fun entry => !before.contains entry
+  require (before == after)
+    s!"repeat changed cache entries: before={removed.map (·.1)}, after={added.map (·.1)}"
+
+def work (r : Run) (hits : Nat) : IO Unit := do
+  let counts ← checked (imageCounts r.report)
+  require (counts == (2, hits)) s!"expected 2 unique images / {hits} hits, got {counts}"
+
+def printSample (label : String) (r : Run) : IO Unit := do
+  let phases := r.report.phases.toList.map fun p => s!"{p.name}={p.ms}"
+  say s!"  {label}: wall={r.report.ms} compiler={r.report.compilerMs} ms; {String.intercalate " " phases}"
+
+/-- The edited input's cached build must agree with an empty-cache oracle,
+then repeat without new answers. Invalidation checks are not timed samples. -/
+def checkEdit (binary dir cache : System.FilePath) (format label : String)
+    (pages hits : Nat) (old : Run) : IO Run := do
+  let changed ← compile binary dir cache format
+  work changed hits
+  IO.FS.withTempDir fun freshCache => do
+    let fresh ← compile binary dir freshCache format
+    work fresh 0
+    require (invalidated pages old.bytes changed.bytes fresh.bytes changed.report fresh.report)
+      s!"{label}: changed-input cache answer disagrees with a fresh build, or output did not change"
+  let repeated ← compile binary dir cache format
+  work repeated 1
+  replay pages changed repeated
+  say s!"  {label}: changed bytes = fresh-cache oracle; repeat identical (not in medians)"
+  return changed
+
+def bench (binary dir : System.FilePath) (n frames : Nat) (format : String) : IO Unit := do
+  IO.FS.writeFile (dir / "deck.tex") (deck frames)
+  IO.FS.writeBinFile (dir / "grid.png") (raster false)
+  IO.FS.writeBinFile (dir / "blocks.pdf") (vector false)
+  let cache := dir / "cache"
+  let mut cold : Array Run := #[]
+  let mut warm : Array Run := #[]
+  say s!"slides {frames} {format}: source={Flate.contentKey (deck frames).toUTF8}; {3 * frames} image uses / 2 sources"
+  for i in [:n] do
+    if ← cache.pathExists then IO.FS.removeDirAll cache
+    let first ← compile binary dir cache format
+    let second ← compile binary dir cache format
+    work first 0
+    work second 1
+    replay frames first second
+    if let some earlier := cold[0]? then
+      require (equivalent frames earlier.report first.report earlier.bytes first.bytes)
+        "cold runs changed the workload or artifact"
+    require (entries first.cache "imgs" ".img" == 1) "expected one alpha decode answer"
+    require (first.cache.any fun (name, _) => name.startsWith "fontdb-" && name.endsWith ".tsv")
+      "font discovery populated no private cache"
+    let operation := if format == "pdf" then "flate" else "convs"
+    require (entries first.cache operation ".answer" > 0) s!"no {operation} cache answers"
+    printSample s!"pair {i + 1} cold" first
+    printSample s!"pair {i + 1} repeat" second
+    cold := cold.push first
+    warm := warm.push second
+  let some first := cold[0]? | die "slides benchmark needs at least one pair"
+  for (label, samples) in [("cold", cold), ("repeat", warm)] do
+    say s!"  median {label}: wall={median (samples.map (·.report.ms))} compiler={median (samples.map (·.report.compilerMs))} ms (N={n})"
+  for p in first.report.phases do
+    let time := fun r : Run => ((r.report.phase? p.name).map (·.ms)).getD 0
+    say s!"  phase {padRight p.name 12} cold={median (cold.map time)} repeat={median (warm.map time)} ms"
+  let coldMs := median (cold.map (·.report.ms))
+  if coldMs > 0 then
+    say s!"  repeat/cold wall={median (warm.map (·.report.ms)) * 100 / coldMs}% (descriptive, no threshold)"
+  say s!"  work: alpha decodes 1 -> 0, image hits 0 -> 1; unique requests 2 -> 2"
+  say s!"  inventory: imgs={entries first.cache "imgs" ".img"} flate={entries first.cache "flate" ".answer"} convs={entries first.cache "convs" ".answer"} (published answers; identical on repeat)"
+  say s!"  artifact={Flate.contentKey first.bytes} bytes={first.bytes.size} pages={first.report.pages} diagnostics={first.report.diagnostics.size}"
+  say s!"  font environment: {((first.report.phase? "fontdb").map (·.detail)).getD ""}; {((first.report.phase? "font").map (·.detail)).getD ""}"
+  IO.FS.writeBinFile (dir / "grid.png") (raster true)
+  let changed ← checkEdit binary dir cache format "same-path asset edit" frames 0 first
+  require (entries changed.cache "imgs" ".img" == 2) "asset edit reused the old alpha answer"
+  IO.FS.writeBinFile (dir / "blocks.pdf") (vector true)
+  let vectorEdit ← checkEdit binary dir cache format "same-path vector edit" frames 1 changed
+  IO.FS.writeFile (dir / "deck.tex") (deck frames true)
+  let sourceEdit ← checkEdit binary dir cache format "same-path source edit" frames 1 vectorEdit
+  require (entries sourceEdit.cache "imgs" ".img" == 2) "source edit repeated unchanged alpha work"
+
+def load : IO String := do
+  return ((← (IO.FS.readFile "/proc/loadavg").toBaseIO).toOption.getD "unavailable").trimAscii.toString
+
+def run (n : Nat) : IO Unit := do
+  require (n ≥ 3) "N must be at least 3 for slide medians"
+  selftest
+  let versions ← toolVersions
+  let binary ← IO.FS.realPath (← compiler)
+  let binaryKey ← binaryHash binary
+  say s!"slides runtime benchmark v1; N={n}; binary={binary}; sha256={binaryKey}"
+  for (tool, version) in versions do
+    say s!"tool {tool}: {(Lean.Json.str version).compress}"
+  say "Application-cache cold; OS caches uncontrolled. Shared-host timings are provisional; rerun on a quiet host for before/after claims."
+  say "Phases overlap: font includes fontdb. Do not sum phase medians. Tool invocations and conversion/compression hits are uninstrumented."
+  say s!"host load before: {← load}"
+  IO.FS.withTempDir fun dir => do
+    IO.FS.createDirAll (dir / "fonts")
+    for file in ← (System.FilePath.mk "testdata/corpus/fonts").readDir do
+      if file.path.extension == some "otf" || file.path.extension == some "ttf" then
+        IO.FS.writeBinFile (dir / "fonts" / file.fileName) (← IO.FS.readBinFile file.path)
+    let fonts ← inventory (dir / "fonts")
+    say s!"inputs: fonts={fingerprint fonts} ({fonts.size} files) png={Flate.contentKey (raster false)} pdf={Flate.contentKey (vector false)}; LC_ALL=C TZ=UTC"
+    for frames in [8, 32] do
+      for format in ["pdf", "html"] do bench binary dir n frames format
+    require ((← inventory (dir / "fonts")) == fonts) "font bytes changed during the benchmark"
+  require ((← binaryHash binary) == binaryKey) "compiler changed during the benchmark"
+  require ((← toolVersions) == versions) "external tool versions changed during the benchmark"
+  say s!"host load after: {← load}"
+  say "slides sanity passed: deterministic artifacts/diagnostics, bounded repeated image work, source/asset invalidation."
+
+end Slides
+
 def main (args : List String) : IO UInt32 := do
+  if args == ["--slides-selftest"] then
+    Slides.selftest
+    return 0
   let leantex ← compiler
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5
   if n == 0 then die "N must be positive"
+  if args == ["--slides-only"] then
+    Slides.run n
+    return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
     benchPictures n 8
