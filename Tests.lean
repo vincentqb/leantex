@@ -38,6 +38,7 @@ import Tests.FrontendPictureContracts
 import Tests.FrontendControlContracts
 import Tests.ElabFrameSources
 import Tests.LayoutSources
+import Tests.LayoutTextConservation
 import Tests.ElementSpacing
 import Tests.ContrastContracts
 import Tests.FlateInterface
@@ -262,6 +263,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"layout footer: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.partitionChecks oneFace do
     check ref s!"layout partition: {name}" ok
+  for (name, ok) in LeanTex.Tests.LayoutTextConservation.textConservationChecks oneFace do
+    check ref s!"layout text conservation: {name}" ok
   for (name, ok) in LeanTex.Tests.ElementSpacing.elementSpacingChecks oneFace do
     check ref s!"element spacing: {name}" ok
   htmlContainedChecks ref oneFace

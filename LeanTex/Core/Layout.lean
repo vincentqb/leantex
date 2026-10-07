@@ -18833,15 +18833,20 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
     · exact ⟨#[], by simp, by simp⟩
   have hprose : ∀ op ∈ staged, op.Prose := by
     intro sop hs
-    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
-    have h := htrail.prose hacc.1 op hop
+    obtain ⟨i, hi, he⟩ := Array.mem_mapIdx.mp hs
+    rw [← he]
+    have h := htrail.prose hacc.1 _ (Array.getElem_mem hi)
+    generalize hop : accF.ops[i]'hi = op at h ⊢
     cases op <;> simp only [Op.Prose] at h
     all_goals first | contradiction | exact h | exact ⟨h, rfl⟩
   have hbound : ∀ op ∈ staged, op.SourceBound (Struct.ofDoc d).leaves.size := by
     intro sop hs
-    obtain ⟨op, hop, rfl⟩ := Array.mem_map.mp hs
+    obtain ⟨i, hi, he⟩ := Array.mem_mapIdx.mp hs
+    rw [← he]
     have ho := sourceBound_trailing acc
-      (sourceBound_collected rd d cover frameSpans acc0 hp rfl rfl (Nat.le_refl _)) op hop
+      (sourceBound_collected rd d cover frameSpans acc0 hp rfl rfl (Nat.le_refl _))
+      _ (Array.getElem_mem hi)
+    generalize hop : accF.ops[i]'hi = op at ho ⊢
     cases op <;> simp only [StagedOp.SourceBound, Op.SourceBound] at ho ⊢
     all_goals exact ho
   have hb0 : b0.SourceBound (Struct.ofDoc d).leaves.size :=
@@ -18849,10 +18854,15 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have hplaced := census_placeFrom pick fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) hbound hprose hb0
   have hbp := sourceBound_placeFrom fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) 0 hbound hb0
   have hstage : staged.toList.flatMap (StagedOp.census pick) = accF.census pick := by
-    simp only [staged, Array.toList_map, List.flatMap_map, Acc.census]
+    change (staged.toList.map (StagedOp.census pick)).flatten =
+      (accF.ops.toList.map (Op.census pick)).flatten
     congr 1
-    funext op
-    cases op <;> rfl
+    apply List.ext_getElem
+    · simp [staged]
+    · intro i hi hj
+      have hidx : i < accF.ops.size := by simpa only [List.length_map, Array.length_toList] using hj
+      simp only [List.getElem_map, Array.getElem_toList, staged, Array.getElem_mapIdx]
+      cases accF.ops[i]'hidx <;> rfl
   intro hd
   have hc : GlyphClean (B.diags (StepSt.b (placeFrom fs imgs staged (StepSt.mk b0 #[] #[] #[] 0) 0))) := by
     apply clean_close
@@ -18860,7 +18870,9 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have hac : acc.Clean := by
     apply htrail.clean
     intro op ho
-    have hs := (hplaced.2 hc).2 _ (Array.mem_map.mpr ⟨op, ho, rfl⟩)
+    obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp ho
+    have hs := (hplaced.2 hc).2 _ (Array.mem_mapIdx.mpr ⟨i, hi, rfl⟩)
+    rw [he] at hs
     cases op <;> exact hs
   have he := (hacc.2 hac).2
   change inkCensus (acc.census pick) = [] ++
