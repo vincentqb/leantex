@@ -16,6 +16,11 @@ public def bindingName (name : String) : String := "tcolorbox " ++ name
 public def boundName? (name : String) : Option String :=
   name.dropPrefix? "tcolorbox " |>.map (·.toString)
 
+/-- The reserved binding lookup reads only its declared prefix. -/
+public theorem boundName?_exact (name : String) :
+    boundName? name = (name.dropPrefix? "tcolorbox ").map (·.toString) := by
+  rfl
+
 /-- A tcolorbox use expressed through the native block surface. Declaration
 arguments are bound by the compatibility reader before this function runs.
 Keys with unsupported paint or layout effects remain explicitly accounted,

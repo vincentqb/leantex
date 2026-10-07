@@ -1728,6 +1728,14 @@ public theorem Palette.declare_last_wins (p : Palette) (k : String) (c : Color) 
   rw [declare_find_eq]
   rfl
 
+/-- Declaring a colour resolves to that colour for either decorative flag. -/
+public theorem Palette.declare_find_exact (p : Palette) (key : String)
+    (color : Color) (decorative : Bool) :
+    (p.declare key color decorative).find? key = some color := by
+  unfold Palette.declare Palette.find?
+  rw [declare_find_eq]
+  rfl
+
 /-- Redeclaring a colour overwrites without residue (T2) — the door theme
 bundles and documents share, so "override the theme's entry" is exact, not
 approximate. -/
@@ -5930,6 +5938,11 @@ body to, once, before any backend reads it. -/
 public def numberFloats (xs : Array Block) : Array Block :=
   (numberFloatList {} #[] xs.toList).2
 
+/-- Numbering leaves a lone paragraph and all of its inline content unchanged. -/
+public theorem numberFloats_para_exact (xs : Array Inline) :
+    numberFloats #[.para xs] = #[.para xs] := by
+  rfl
+
 mutual
 
 /-- The numbers the walk assigned to captioned floats of kind `k`, in
@@ -6648,6 +6661,16 @@ public def TitleDatum.name : TitleDatum → String
   | .author => "author"
   | .institute => "institute"
   | .date => "date"
+
+/-- The literal spelling of each declared title datum. -/
+public theorem TitleDatum.name_exact (datum : TitleDatum) :
+    datum.name = (match datum with
+      | .title => "title"
+      | .subtitle => "subtitle"
+      | .author => "author"
+      | .institute => "institute"
+      | .date => "date") := by
+  cases datum <;> rfl
 
 public def TitleDatum.ofName? : String → Option TitleDatum
   | "title" => some .title
@@ -11144,6 +11167,11 @@ public theorem located_text (span : Span) :
 `\selectlanguage`, and `otherlanguage` become. -/
 public def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
   #[.styled (.lang tag) xs]
+
+/-- Language markup has one declared wrapper around its unchanged content. -/
+public theorem langWrap_exact (tag : String) (xs : Array Inline) :
+    langWrap tag xs = #[.styled (.lang tag) xs] := by
+  rfl
 
 /-- The language attribute is pure markup: tagging content ships exactly
 the text census the content already had — `langWrap_text` below, an
@@ -16342,11 +16370,25 @@ public def Decl.wrap : Decl → Array Inline → Array Inline
   | .style s, xs => #[.styled s xs]
   | .color c n, xs => #[.colored c n xs]
 
+/-- The constructor selected by each declaration around a content region. -/
+public theorem Decl.wrap_exact (d : Decl) (xs : Array Inline) :
+    d.wrap xs = (match d with
+      | .style s => #[.styled s xs]
+      | .color c name => #[.colored c name xs]) := by
+  cases d <;> rfl
+
 /-- The open declarations around a region, outermost first. -/
 public def wrapDecls (ds : List Decl) (xs : Array Inline) : Array Inline :=
   match ds with
   | [] => xs
   | d :: rest => d.wrap (wrapDecls rest xs)
+
+/-- The declaration list is applied from its innermost wrapper outwards. -/
+public theorem wrapDecls_exact (ds : List Decl) (xs : Array Inline) :
+    wrapDecls ds xs = (match ds with
+      | [] => xs
+      | d :: rest => d.wrap (wrapDecls rest xs)) := by
+  cases ds <;> rfl
 
 public theorem Decl.wrap_text (d : Decl) (xs : Array Inline) :
     plainText (d.wrap xs) = plainText xs := by

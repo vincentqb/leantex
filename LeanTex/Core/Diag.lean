@@ -710,6 +710,16 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     recovery := recovery
     output := output }
 
+/-- The diagnostic constructor retains every supplied evidence field. -/
+public theorem Diag.of_record_exact (c : DiagCode) (message : String)
+    (span : Option Span) (help subject refused trigger : Option String)
+    (recovery : Option Diag.Recovery) (output : Option Diag.Output) :
+    Diag.of c message span help subject refused trigger recovery output =
+      { kind := c, message := message, span := span, help := help,
+        subject := subject, refused := refused, trigger := trigger,
+        recovery := recovery, output := output } := by
+  rfl
+
 /-- The diagnostic names exactly the supplied subject, independently of its
 message and optional recovery metadata. Effect-boundary accounting reads
 this projection without opening the constructor's implementation. -/
@@ -812,7 +822,7 @@ public def Diag.sameLoss (a b : Diag) : Bool :=
   (decide (a.kind = b.kind) && decide (a.output = b.output)) &&
     decide (a.subject = b.subject) && a.subject.isSome
 
-private theorem Diag.sameLoss_iff (a b : Diag) :
+public theorem Diag.sameLoss_iff (a b : Diag) :
     Diag.sameLoss a b = true ↔
       (a.kind = b.kind ∧ a.output = b.output) ∧
         a.subject = b.subject ∧ a.subject.isSome = true := by

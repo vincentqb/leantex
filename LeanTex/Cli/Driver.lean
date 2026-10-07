@@ -566,7 +566,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     -- one document must read one source, or their agreement would be about
     -- two (`Elab.prepareExecuted`).
     let t ← IO.monoMsNow
-    let prepared := Elab.prepareExecuted file { executed with raws := raws }
+    let prepared := Elab.prepareExecuted file (executed.withRaws raws)
     ui.phase "prepare" s!"{prepared.raws.size} top-level nodes" (← since t)
     let cache ← FontEnv.Cache.mk'
     -- Nothing is asked of a face until something might measure against it,

@@ -1,12 +1,14 @@
-import LeanTex.Core.Lex
-import LeanTex.Core.Parse
+module
+
+public import LeanTex.Core.Lex
+public import LeanTex.Core.Parse
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
-import LeanTex.Core.Ir
+public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
-import LeanTex.Core.Tcolorbox
+public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.Compat
@@ -38,7 +40,7 @@ judged at `\captionsetup` (honoured or W0354, never silent). `animate`
 lowers only whole multipage PDF requests with authored SVG companions;
 playback loss is W0110 at every use, unsupported source selection W0307,
 and package-wide defaults are named rather than silently discarded. -/
-def nativePackages : List String :=
+public def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
    "beamerposter", "paracol", "tabularx",
    "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
@@ -81,7 +83,7 @@ ink. `background canvas` has a ground and no ink: beamer's default canvas
 template reads only its `bg`, painting it as a full-page rule
 (beamerouterthemedefault.sty, `\defbeamertemplate*{background canvas}`), so
 it is the page's `bg`, and in the body the ground of the frames after it. -/
-def beamerColorRoles : List (String × String × String) :=
+private def beamerColorRoles : List (String × String × String) :=
   BeamerColor.roles
 
 /-- Beamer's font elements, mapped onto the engine's styleable element and
@@ -101,7 +103,7 @@ beamer's list elements name a marker font where the engine's list style
 names the item's, so mapping them would restyle the wrong thing; and
 `block title`, `footline`, `headline`, `caption`, `date`, `institute`,
 `subtitle` and `framesubtitle` have no styleable element here at all. -/
-def beamerFontElements : List (String × String × String) :=
+private def beamerFontElements : List (String × String × String) :=
   [("frametitle", "frametitle", "font"),
    ("standout", "standout", "font"),
    ("section title", "sectionpage", "font"),
@@ -113,16 +115,16 @@ def beamerFontElements : List (String × String × String) :=
 `\beamer@usebeamerfont`): each declaration replaces its named fields, and
 selection runs size, shape, series, family regardless of declaration order.
 `parent` is inheritance the engine does not model and names where it stands. -/
-def beamerFontKeys : List String := ["size", "shape", "series", "family"]
+private def beamerFontKeys : List String := ["size", "shape", "series", "family"]
 
 /-- Classes that are an `article` with different defaults. -/
-def articleClasses : List String :=
+private def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
 
 /-- Résumé classes: the same flow model with the résumé genre's contract —
 `moderncv` and `res` map onto the native `resume` class, as `beamer` maps
 onto `slides`. -/
-def resumeClasses : List String :=
+private def resumeClasses : List String :=
   ["moderncv", "res"]
 
 /-- Font-selection packages: each package's whole documented effect is
@@ -135,7 +137,7 @@ land as their TeX Gyre successors (tex-gyre README: Termes for Times,
 Heros for Helvetica, Cursor for Courier, Pagella for Palatino) — the
 OpenType faces a TeX Live tree actually carries — and the math packages
 take the matching TeX Gyre math face. -/
-def fontPackages : List (String × String) :=
+private def fontPackages : List (String × String) :=
   [("times", "body = \"TeX Gyre Termes\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
    ("mathptmx", "body = \"TeX Gyre Termes\", math = \"TeX Gyre Termes Math\""),
    ("palatino", "body = \"TeX Gyre Pagella\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
@@ -176,7 +178,7 @@ warning rows fixed), but an error is a signal and not a no-op, so the
 drop is named rather than earned silence. Table rules
 (`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
 vocabulary and must reach it. -/
-def meaningFree : List (String × Nat × Option String) :=
+public def meaningFree : List (String × Nat × Option String) :=
   [("makeatletter", 0, some "@-names are always readable here"),
    ("makeatother", 0, some "@-names are always readable here"),
    ("relax", 0, some "it means do nothing"),
@@ -240,7 +242,7 @@ hyphenation language, page furniture — skipped with a warning that names
 what changed, never silently: they used to sit in the silent list under a
 comment claiming they say nothing about the document, and they do. Each
 entry: arguments consumed, the message, the help. -/
-def configSkip : List (String × Nat × String × Option String) :=
+public def configSkip : List (String × Nat × String × Option String) :=
   [-- The four ragged-setting declarations are not here: the block walk gives
    -- the rest of the scope the setting it declares, on the side it declares
    -- (Ir.Block.ragged carries the flush side).
@@ -250,7 +252,7 @@ its own and an overfull line warns by itself", none)]
 
 /-- Where a LaTeX length parameter's value goes, decided by what LaTeX's
 own code does with it and by which engine site reads it. -/
-inductive ParamSite where
+public inductive ParamSite where
   /-- A page property: `\page{ key = ... }`. -/
   | page (key : String)
   /-- A token an engine site reads under this name. -/
@@ -271,10 +273,10 @@ inductive ParamSite where
 
 /-- The kernel's list environments, each a `\list` whose own settings
 follow its level's parameters (ltlists.dtx). -/
-def listEnvs : List String := ["itemize", "enumerate", "description"]
+private def listEnvs : List String := ["itemize", "enumerate", "description"]
 
 /-- Environments whose bodies the elaborator reads as table cells. -/
-def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
+public def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
 
 /-- Math-mode entry environments (latex.ltx, amsmath.sty). Their bodies
 belong to the math parser, just as a `Raw.math` body does.
@@ -284,7 +286,7 @@ private def mathEnvs : List String :=
 
 /-- The kernel and booktabs length parameters, each with its site. A name
 not here is a length of the document's own: a token of its name. -/
-def paramSites : List (String × ParamSite) :=
+public def paramSites : List (String × ParamSite) :=
   [("parskip", .page "parskip"),
    ("textwidth", .page "textwidth"),
    ("headsep", .page "headsep"),
@@ -331,7 +333,7 @@ def paramSites : List (String × ParamSite) :=
    ("unitlength", .unmodelled "scales a picture environment, which no site here reads")]
 
 /-- Is `n` a parameter `\normalsize` sets again (`ParamSite.sizeReset`)? -/
-def sizeReset (n : String) : Bool :=
+private def sizeReset (n : String) : Bool :=
   match paramSites.lookup n with
   | some (.sizeReset _) => true
   | _ => false
@@ -349,7 +351,7 @@ the one argument each that asks for what the engine already does. And
 neither are `\setbeamercolor` and `\setbeamerfont`: each element beamer
 names is a `\palette` entry or a `\style` key, and each has its own
 translating arm. -/
-def beamerConfig : List (String × Nat) :=
+private def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("useinnertheme", 1),
    ("useoutertheme", 1),
@@ -358,7 +360,7 @@ def beamerConfig : List (String × Nat) :=
 
 /-- The native spelling a skipped beamer construct now has, named in its
 warning's help: a warning the author can act on beats a dead end. -/
-def beamerNative : List (String × String) :=
+public def beamerNative : List (String × String) :=
   [("usecolortheme", "\\theme{name} selects a token bundle; \\palette overrides its entries"),
    ("usefonttheme", "\\fonts selects families; \\style{element}{ font = {...} } styles one element"),
    ("setbeamercolor", "declare the colour with \\palette{ name = #RRGGBB }"),
@@ -373,7 +375,7 @@ styles elements; \\runningfoot sets a document footer"),
 /-- Classes that produce a presentation: `beamer` (which rewrites to
 `slides`) and `slides` itself. What a beamer mode specification is read
 against — beamer's article mode keeps a frame the presentation omits. -/
-def presentationClasses : List String := ["beamer", "slides"]
+public def presentationClasses : List String := ["beamer", "slides"]
 
 /-- beamer's theme-loading family, and the file each member asks the input
 path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
@@ -385,7 +387,7 @@ both honour and neither can drift from the other
 `themeSlotOfPackage?`: the identity runs in both directions, so the file
 name a theme writes to inherit another resolves to the slot it names
 (`themeSpellingChecks`). -/
-def themeAsking : List (String × String) :=
+@[expose] public def themeAsking : List (String × String) :=
   [("usetheme", "beamertheme"),
    ("usecolortheme", "beamercolortheme"),
    ("usefonttheme", "beamerfonttheme"),
@@ -398,7 +400,7 @@ bundle the engine ships. One function because three spellings reach the
 same bundle and two surfaces ask — the `\usetheme` slot and the
 `beamertheme<name>` package name — and an alias honoured on one surface
 only is the drift this closes. -/
-def themeAlias (nm : String) : String :=
+private def themeAlias (nm : String) : String :=
   if nm == "metropolis" || nm == "m" then "moloch" else nm
 
 /-- beamer's file-name spelling of a theme-family member, resolved to the
@@ -408,7 +410,7 @@ slot. `themeAsking` read backwards — the same identity, so neither spelling
 can mean something the other does not. The prefixes are mutually exclusive
 (they differ at the character after `beamer`), so the first match is the
 only match. -/
-def themeSlotOfPackage? (p : String) : Option (String × String × String) :=
+public def themeSlotOfPackage? (p : String) : Option (String × String × String) :=
   themeAsking.findSome? fun (slot, pre) =>
     if p.startsWith pre && p.length > pre.length then
       some (slot, pre, (p.drop pre.length).toString)
@@ -423,7 +425,7 @@ always (latex.ltx, `\\@iiiparbox`), and its width is a *dimension in a brace
 group* — which is why the unknown-command recovery, whose rule is "keep the
 braced arguments as text", set a width as prose beside a label. A further box
 command is a row here, never an arm of its own. -/
-def boxShape : List (String × Nat × Nat) :=
+public def boxShape : List (String × Nat × Nat) :=
   [("mbox", 0, 0), ("makebox", 2, 0), ("parbox", 3, 1)]
 
 /-- Where a deferred declaration replays. A hook is a deferred declaration,
@@ -435,7 +437,7 @@ its own.
 instant `\\begin{document}` opens — the seam, whose two sides this engine
 realizes structurally: declarations before the `document` environment,
 content inside it. -/
-inductive DeferPoint where
+private inductive DeferPoint where
   | endPreamble
   | beginDocument
 deriving BEq, Repr
@@ -444,7 +446,7 @@ deriving BEq, Repr
 the begindocument hook) replays at `\\begin{document}`;
 `\\AtEndPreamble` (etoolbox manual §3) replays at the end of the preamble.
 A further hook costs a row here and nothing else. -/
-def deferredHooks : List (String × DeferPoint) :=
+private def deferredHooks : List (String × DeferPoint) :=
   [("AtBeginDocument", .beginDocument), ("AtEndPreamble", .endPreamble)]
 
 /-- The native declarations the *preamble* reads and the body refuses, so a
@@ -453,7 +455,7 @@ being named misplaced. It restates `Elab.declCtrl ++ Elab.runningCtrl`,
 which sits above this module and cannot be imported here; the restatement is
 not allowed to drift — `hookSeamChecks` fails the moment the two disagree,
 in either direction. -/
-def hookPreambleSide : List String :=
+public def hookPreambleSide : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
    "theme", "chrome", "pictures", "allow", "runninghead", "runningfoot"]
 
@@ -465,7 +467,7 @@ per-frame footer `\setbeamertemplate{frame footer}` translates into. The
 sweep requires every help text to name something in here
 (`translationOwedChecks`), so a help naming a declaration this list does not
 carry fails rather than being skipped. -/
-def nativeDeclarations : List String := hookPreambleSide ++ ["framefoot"]
+public def nativeDeclarations : List String := hookPreambleSide ++ ["framefoot"]
 
 /-- **Constructs whose help text names an engine declaration and which the
 engine nevertheless does not translate, each with the reason it cannot.**
@@ -483,7 +485,7 @@ declaration cannot receive this construct. `translationOwedChecks` closes the
 list against `beamerNative` in both directions — a help text that names a
 declaration either translates, with a witness, or lands here with its
 reason — so the next seventeen cannot accumulate unnoticed. -/
-def translationRefused : List (String × String) :=
+public def translationRefused : List (String × String) :=
   [("usecolortheme", "a token bundle is whole here: the engine installs a \
 palette, tokens and styles together, so it has nothing that receives a \
 colour-only sub-theme. The bundle of that name, where one is shipped, \
@@ -556,7 +558,7 @@ kernel's clash check aside (latex.ltx, `\@onefilewithoptions`) — and `none`
 for a local style file, whose passed options the splice resolves inside the
 file and does not carry. `passed` holds every `\PassOptionsToPackage` list
 per package, and the class half mirrors the package half. -/
-structure LoadSet where
+private structure LoadSet where
   pkgs : Array (String × Option (Array String)) := #[]
   passed : Array (String × Array String) := #[]
   cls : Option (String × Array String) := none
@@ -566,7 +568,7 @@ structure LoadSet where
 /-- One TeX parameter assignment, as TeX scans it (TeXbook ch. 24:
 ⟨variable⟩[=]⟨value⟩, and `\advance`⟨variable⟩[by]⟨value⟩): the parameter,
 whether the value adds to it, and the raws of the value. -/
-structure TexAssign where
+private structure TexAssign where
   name : String
   add : Bool
   value : Array Raw
@@ -607,18 +609,18 @@ private def LinkSetup.native (l : LinkSetup) : String :=
 
 /-- Written commands indexed before execution; generated commands inherit the
 written call's coordinates and therefore its spelling. -/
-abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
+public abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
 
 /-- Restore a downstream diagnostic's written trigger from lexical evidence,
 retaining an explicit trigger when no source command owns its span. -/
-def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
+@[expose] public def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
   { d with trigger := (d.span.bind fun s =>
       sources[(s.file, s.pos.line, s.pos.col)]?).orElse (fun _ => d.trigger) }
 
 /-- Attribution changes presentation only, including for accepted or scoped
 records; every other diagnostic field is exactly the input field. -/
-theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Diag) :
-    { sources.attribute d with trigger := d.trigger } = d := rfl
+public theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Diag) :
+    { sources.attribute d with trigger := d.trigger } = d := by rfl
 
 mutual
 
@@ -654,7 +656,7 @@ end
 /-- A file read reached by the bounded macro evaluator. The filename is
 already bound by the call's arguments; stored definitions and unselected
 branches produce no request. The driver supplies parsed surface tokens. -/
-structure InputRequest where
+public structure InputRequest where
   command : String
   file : String
   pos : Pos
@@ -667,7 +669,7 @@ structure InputRequest where
 
 /-- An actual reader call and whether it supplied parsed input. This does
 not infer filesystem success from a diagnostic or from a source scan. -/
-structure InputAttempt where
+public structure InputAttempt where
   request : InputRequest
   answered : Bool
   deriving Repr, BEq
@@ -924,29 +926,29 @@ private abbrev M := StateM St
 
 /-- The actual call offered to the driver's existing candidate and splice
 readers. Its command is the request's command; operands stay parsed syntax. -/
-def InputRequest.call (request : InputRequest) : Array Raw :=
+@[expose] public def InputRequest.call (request : InputRequest) : Array Raw :=
   #[.ctrl request.command request.callPos] ++ request.operands
 
 /-- The execution state at a file read. Only `resumeInput` can run a
 fragment against it; the driver carries it without inspecting meanings. -/
-structure InputContext where
+public structure InputContext where
   private state : St
 
 /-- Completed reads, including reads made while an answer was resumed.
 An enclosing call is recorded after those nested reads return. -/
-def InputContext.inputAttempts (context : InputContext) : Array InputAttempt :=
+public def InputContext.inputAttempts (context : InputContext) : Array InputAttempt :=
   context.state.inputAttempts
 
 /-- File effects cross the core boundary as requests and parsed answers.
 The answer runs in the requesting context, so its definitions and flag
 changes are visible to the caller's next token. `none` leaves the original
 call for ordinary compatibility dispatch, as when no local style exists. -/
-abbrev InputReader (m : Type → Type) :=
+public abbrev InputReader (m : Type → Type) :=
   InputRequest → InputContext → m (Option (Array Raw) × InputContext)
 
 /-- Accept the reader's answer without changing its syntax or diagnostic
 state. The receipt records the exact call, after any reads inside it. -/
-def finishInput (request : InputRequest)
+public def finishInput (request : InputRequest)
     (response : Option (Array Raw) × InputContext) :
     Option (Array Raw) × InputContext :=
   (response.1, { state := { response.2.state with
@@ -954,26 +956,26 @@ def finishInput (request : InputRequest)
 
 /-- The evaluator's file-effect door. Every recorded receipt is made here
 from the request passed to the reader and the answer it actually returned. -/
-def dispatchInput [Monad m] (reader : InputReader m) (request : InputRequest)
+public def dispatchInput [Monad m] (reader : InputReader m) (request : InputRequest)
     (context : InputContext) : m (Option (Array Raw) × InputContext) := do
   return finishInput request (← reader request context)
 
-theorem finishInput_answer_exact (request : InputRequest)
+public theorem finishInput_answer_exact (request : InputRequest)
     (response : Option (Array Raw) × InputContext) :
-    (finishInput request response).1 = response.1 := rfl
+    (finishInput request response).1 = response.1 := by rfl
 
-theorem finishInput_attempts_exact (request : InputRequest)
+public theorem finishInput_attempts_exact (request : InputRequest)
     (response : Option (Array Raw) × InputContext) :
     (finishInput request response).2.inputAttempts =
-      response.2.inputAttempts.push ⟨request, response.1.isSome⟩ := rfl
+      response.2.inputAttempts.push ⟨request, response.1.isSome⟩ := by rfl
 
 /-- The effectful production door calls the supplied reader exactly once.
 There is no second candidate scan, replay or guessed answer in its receipt. -/
-theorem dispatchInput_reader_exact [Monad m] (reader : InputReader m)
+public theorem dispatchInput_reader_exact [Monad m] (reader : InputReader m)
     (request : InputRequest) (context : InputContext) :
     dispatchInput reader request context = (do
       let response ← reader request context
-      pure (finishInput request response)) := rfl
+      pure (finishInput request response)) := by rfl
 
 private abbrev EvalM (m : Type → Type) := StateT St m
 
@@ -981,7 +983,7 @@ private instance [Monad m] : MonadLift M (EvalM m) where
   monadLift act := fun st => pure (act st)
 
 private theorem evalLift_id {α : Type} (act : M α) :
-    (liftM act : EvalM Id α) = act := rfl
+    (liftM act : EvalM Id α) = act := by rfl
 
 private theorem state_array_forIn_empty {α β : Type} (init : β)
     (step : α → β → M (ForInStep β)) :
@@ -997,7 +999,7 @@ private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
 
 private theorem write_eq (f : St → St) :
-    write f = fun st => ((), { f st with writes := st.writes + 1 }) := rfl
+    write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
 
 /-- Beamer's font and template definitions are local TeX assignments.
 Input wrappers do not introduce a scope; groups and environments do. -/
@@ -1031,7 +1033,7 @@ private def rewriteDocumentBody (body : M (Array Raw)) (pos : Pos) : M Raw := fu
 The TeXbook, Appendix I marks each primitive in its index; canonically the
 `primitive` initialisations in tex.web). One half of the `texInternal`
 boundary; the `@`-name convention is the other. -/
-def texPrimitives : Array String := #[
+public def texPrimitives : Array String := #[
   "above", "abovedisplayshortskip", "abovedisplayskip", "abovewithdelims",
   "accent", "adjdemerits", "advance", "afterassignment", "aftergroup",
   "atop", "atopwithdelims", "badness", "baselineskip", "batchmode",
@@ -1098,7 +1100,7 @@ demotion? The union of the `@`-names (LaTeX's internal-name convention:
 and the TeX82 primitives. A package or venue macro (`\NewEnviron`) is
 neither: the author might know it, so its refusal stays a per-line
 warning. -/
-def texInternal (name : String) : Bool :=
+public def texInternal (name : String) : Bool :=
   name.contains '@' || texPrimitives.contains name
 
 /-- Is this control word a LaTeX internal whose `{...}` arguments are code —
@@ -1114,7 +1116,7 @@ internal that sets an operand, the kernel's `\@firstofone` and its kin, is
 the exception, and it is not read yet. The TeX82 primitives, `texInternal`'s
 other half, are not in it: `\hbox`, `\uppercase` and `\discretionary` set
 their groups. -/
-def codeInternal (name : String) : Bool :=
+public def codeInternal (name : String) : Bool :=
   name.contains '@'
 
 /-- Is a site in `file` package code — a style or class file the document
@@ -1122,7 +1124,7 @@ loads — rather than the document's own text? The splice names every span of
 a local `.sty` by its file (the input wrapper), and a hook such a file
 registers replays inside that wrapper (`rewrite`), so the file a site stands
 in is the boundary. A class file would be `.cls`; none is read today. -/
-def packageFile (file : String) : Bool :=
+public def packageFile (file : String) : Bool :=
   file.endsWith ".sty" || file.endsWith ".cls"
 
 /-- A refusal of `name` at a site in `file` demotes exactly when the site is
@@ -1130,17 +1132,22 @@ inside package code — the only door a `.sty` span enters by is the splice
 (`\input` reads `.tex`) — and the name is a TeX internal. The author can act
 on a per-line warning in their own files; in a venue's style file they
 cannot, and N0020 already names that file once. -/
-def styInternal (file name : String) : Bool :=
+public def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
 
 /-- Attribute a diagnostic by its source site, preserving an explicit trigger. -/
+public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
+    (pos : Pos) (d : Diag) : Diag :=
+  { d with trigger := d.trigger.orElse fun _ => sources[(file, pos.line, pos.col)]? }
+
 private def atSource (st : St) (pos : Pos) (d : Diag) : Diag :=
-  { d with trigger := d.trigger.orElse fun _ => st.sourceTriggers[(st.file, pos.line, pos.col)]? }
+  st.sourceTriggers.atSource st.file pos d
 
 /-- Source attribution changes only the trigger, for every diagnostic;
 the loss, acceptance policy, census and output scope retain their record. -/
-theorem atSource_record_exact (st : St) (pos : Pos) (d : Diag) :
-    { atSource st pos d with trigger := d.trigger } = d := rfl
+public theorem atSource_record_exact (sources : SourceTriggers) (file : String)
+    (pos : Pos) (d : Diag) :
+    { sources.atSource file pos d with trigger := d.trigger } = d := by rfl
 
 /-- The one door a diagnostic lands through here: a push, never a write —
 the silence guard reads `diags.size` growth on its own. `subject` is the
@@ -1178,11 +1185,11 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
 /-- The one line a `\multicolumn` that does not open a tabular cell prints,
 from either door that meets one (this walk, the tabular arm): every shape
 loses the same thing. -/
-def multicolumnMisplaced : String :=
+public def multicolumnMisplaced : String :=
   "'\\multicolumn' opens no tabular cell here: its text stays in place, without its \
 span or alignment"
 
-def multicolumnMisplacedHelp : String :=
+public def multicolumnMisplacedHelp : String :=
   "write \\multicolumn first in a tabular cell"
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
@@ -1369,7 +1376,7 @@ mutual
 /-- Relocate token sites without changing their spelling. Group delimiters
 can retain the distinct identities that `condPatchRaw` matches; they emit
 no compatibility diagnostic. An input wrapper owns another file's sites. -/
-private def rebase (mapPos : Pos → Pos) (groups : Bool) : Raw → Raw
+public def rebase (mapPos : Pos → Pos) (groups : Bool) : Raw → Raw
   | .word s p => .word s (mapPos p)
   | .space => .space
   | .par p => .par (mapPos p)
@@ -1402,11 +1409,11 @@ private theorem rebaseList_source (mapPos : Pos → Pos) (groups : Bool) (rs : L
   | nil => rfl
   | cons r rest =>
     simp only [rebaseList, rawSrcList]
-    rw [rebase_source_exact, rebaseList_source]
+    rw [rebase_source, rebaseList_source]
 
 /-- Source relocation preserves every token's spelling and boundary,
 including nested groups, math and file wrappers. -/
-theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
+private theorem rebase_source (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r := by
   cases r with
   | env n body p =>
@@ -1415,6 +1422,12 @@ theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
   | _ => simp only [rebase, rawSrcOne, rebaseArray_source]
 
 end
+
+/-- Source relocation preserves the written token spelling, including nested
+groups and file wrappers. The relocation implementation stays opaque. -/
+public theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
+    rawSrcOne (rebase mapPos groups r) = rawSrcOne r :=
+  rebase_source mapPos groups r
 
 private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
   return (← synth s).map (rebase (fun _ => pos) true)
@@ -1464,7 +1477,7 @@ private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat 
   | _ => (none, i)
 
 /-- One optional `[...]` argument, as source text for configuration keys. -/
-def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
+public def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
   let (arg, stop) := takeRawOpt raws i
   (arg.map rawSrc, stop)
 
@@ -1492,7 +1505,7 @@ private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
 before an argument. Contents are arbitrary and never inspected. This is a
 progress contract: each constructor consumes one argument, and its endpoint
 is the next raw index, not a count of loop iterations. -/
-inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → Nat → Prop
+public inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → Nat → Prop
   | nil {i} : GroupPrefix raws i [] i
   | group {i body p args stop} :
       raws[skipSpaces raws i]? = some (.group body p) →
@@ -1517,7 +1530,7 @@ private def takeGroupsStep (raws : Array Raw) (s : Array (Array Raw) × Nat) :
 /-- Up to `n` brace groups or bare control words (`\newcommand\x`).
 Other raws stop the reader without consuming them or their leading spaces.
 Character-token arguments use `takeRawArgs` instead. -/
-def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
+public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
   let mut out : Array (Array Raw) := #[]
   let mut j := i
   for _ in [0:n] do
@@ -1529,15 +1542,15 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
   return (out, j)
 
 /-- Filename read from the same executed call the local-style reader sees. -/
-def InputRequest.name (request : InputRequest) : String :=
+@[expose] public def InputRequest.name (request : InputRequest) : String :=
   rawSrc ((takeGroups request.call (takeOpt request.call 1).2 1).1.getD 0 #[])
 
 /-- Options read from the same executed call as the filename. -/
-def InputRequest.options (request : InputRequest) : String :=
+@[expose] public def InputRequest.options (request : InputRequest) : String :=
   ((takeOpt request.call 1).1.getD "").trimAscii.toString
 
 private theorem takeGroups_loop_exact (raws : Array Raw) (i n : Nat) :
-    takeGroups raws i n = (forIn [0:n] (#[], i) (fun _ => takeGroupsStep raws)).run := rfl
+    takeGroups raws i n = (forIn [0:n] (#[], i) (fun _ => takeGroupsStep raws)).run := by rfl
 
 private theorem GroupPrefix.yields {raws : Array Raw} {i args stop}
     (h : GroupPrefix raws i args stop) (out : Array (Array Raw)) :
@@ -1556,7 +1569,7 @@ private theorem GroupPrefix.yields {raws : Array Raw} {i args stop}
 /-- The actual loop consumes exactly the declared number of consecutive
 arguments, for arbitrary source contents, starting index and suffix. The
 premise describes source raws, not the result of the reader under proof. -/
-theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
+public theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
     (h : GroupPrefix raws i args stop) :
     takeGroups raws i args.length = (args.toArray, stop) := by
   rw [takeGroups_loop_exact, Std.Legacy.Range.forIn_eq_forIn_range']
@@ -1566,7 +1579,7 @@ theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
 /-- When a non-argument follows a shorter prefix, breaking leaves the
 cursor before that boundary's whitespace and preserves every remaining raw.
 This covers arbitrary budgets, including malformed and truncated input. -/
-theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
+public theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
     (h : GroupPrefix raws i args stop) (hn : args.length < n)
     (hstop : ∀ body p, raws[skipSpaces raws stop]? ≠ some (.group body p))
     (hctrl : ∀ name p, raws[skipSpaces raws stop]? ≠ some (.ctrl name p)) :
@@ -1673,7 +1686,7 @@ first `;` a top-level word carries — where TikZ's path parser ends the
 command (pgfmanual §12.2.2) — with the rest of that word handed back as
 text, and the index after it. Nothing when no `;` closes the command before
 the paragraph ends: the form is then not one this reader can bound. -/
-def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw × Nat) := Id.run do
+private def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw × Nat) := Id.run do
   let mut out : Array Raw := #[]
   for k in [i:raws.size] do
     match raws[k]? with
@@ -1693,7 +1706,7 @@ def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw ×
 execution. Decoding happens only at native dispatch, after document-name
 lookup: TeX's \let copies the meaning, so a later definition of the source
 name cannot change it (TeXbook ch. 20). A control word cannot contain a space. -/
-def overlayName (name : String) : String :=
+public def overlayName (name : String) : String :=
   if name.startsWith "overlay native " then (name.drop "overlay native ".length).toString
   else name
 
@@ -1725,7 +1738,7 @@ private def overlayArity? (name : String) : Option (Nat × Bool) :=
 last word remains caller text in `tail`. Only whitespace is normalized here:
 Ir.overlayRange remains the sole numbered-membership parser, and unsupported
 mode, relative and action spellings still reach its W0105 caller. -/
-structure OverlaySelector where
+private structure OverlaySelector where
   word : Raw
   stop : Nat
   tail : Array Raw := #[]
@@ -1736,7 +1749,7 @@ beamer@masterdecode); no argument group or paragraph can be consumed here.
 Before an ordinary argument, newcommand<> accepts repeated selectors and the
 last one wins (beamer@foundspec). `many` reads that slot without consuming any
 text after its last complete selector. -/
-def overlaySelector? (raws : Array Raw) (start : Nat)
+private def overlaySelector? (raws : Array Raw) (start : Nat)
     (many : Bool := false) : Option OverlaySelector := Id.run do
   let some (.word first pos) := raws[start]? | return none
   unless first.startsWith "<" do return none
@@ -1778,7 +1791,7 @@ def overlaySelector? (raws : Array Raw) (start : Nat)
 
 /-- Read the canonical word produced by overlaySelector?, including refused
 selectors. Recognizing the boundary never certifies numbered membership. -/
-def overlayWord? : Raw → Option String
+public def overlayWord? : Raw → Option String
   | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
   | _ => none
 
@@ -1894,7 +1907,7 @@ end
 
 /-- The shared source boundary, before compatibility routing and the one
 elaborator. Macro execution must precede this pass. -/
-def overlayInputs (raws : Array Raw) : Array Raw :=
+public def overlayInputs (raws : Array Raw) : Array Raw :=
   overlayInputsList raws none #[] raws.toList 0 0
 
 private structure OverlayScan where
@@ -1958,7 +1971,7 @@ itself colours only; the divergence is deliberate); unthemed there is no
 alert colour and bold stands in. The bold is a declaration, as beamer's
 `alerted text` font is: `\textbf` would also set a text command's italic
 corrections at the run's edges, which beamer's `\alert` does not. -/
-def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
+public def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
   if themed then
     #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos,
       .group (#[.ctrl "bfseries" pos] ++ body) pos]
@@ -1966,7 +1979,7 @@ def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
 
 /-- An unforgeable command name: a control word cannot contain a space.
 The marker asks Elab for a conditional style over one elaborated body. -/
-def alertMark (themed : Bool) : String :=
+public def alertMark (themed : Bool) : String :=
   if themed then "alert themed" else "alert plain"
 
 /-- A conditional alert carries its body once. The compatibility walk leaves
@@ -1974,28 +1987,28 @@ the body group in its original stream, so its own commands are rewritten once
 as well. Tests.overlayInputChecks observes the note numbers and label effects
 on shipped pages and the full typed HTML, rather than inferring conservation
 from two raw alternatives. -/
-def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
+public def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
   #[.ctrl (alertMark themed) pos, spec, .group body pos]
 
 /-- The raw boundary carries one body group; effect conservation is checked
 at elaboration's artifacts, where footnotes and labels have meanings. -/
-theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
+public theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     alertOverlay themed spec body pos =
-      #[.ctrl (alertMark themed) pos, spec, .group body pos] := rfl
+      #[.ctrl (alertMark themed) pos, spec, .group body pos] := by rfl
 
 /-- The style is requested by one marker, without a second raw body. -/
-theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
+public theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
-    (alertOverlay themed spec body pos)[0]? = some (.ctrl (alertMark themed) pos) := rfl
+    (alertOverlay themed spec body pos)[0]? = some (.ctrl (alertMark themed) pos) := by rfl
 
 /-- The single body stays untouched until its one elaboration. -/
-theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
+public theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
-    (alertOverlay themed spec body pos)[2]? = some (.group body pos) := rfl
+    (alertOverlay themed spec body pos)[2]? = some (.group body pos) := by rfl
 
 /-- Numbered membership is decided by the elaborator's common reader. -/
-theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
-    (alertOverlay themed spec body pos)[1]? = some spec := rfl
+public theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
+    (alertOverlay themed spec body pos)[1]? = some spec := by rfl
 
 /-- The boundary's set-line vocabulary: with the boundary open (the
 default) these preamble lines are the standalone's, collected as written
@@ -2006,7 +2019,7 @@ the palette, and the palette is the one resolving site — the request
 carries the roles a picture mentions with their resolved values
 (`Ir.paletteDecls`), so a `\definecolor` and its `\palette` spelling
 state one request (the conservation oracle holds them equal). -/
-def boundaryCtrls : List String :=
+public def boundaryCtrls : List String :=
   ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset"]
 
 /-- The set lines the engine reads *itself*: their key lists address the
@@ -2017,7 +2030,7 @@ unknown command, whichever renderer ends up drawing — it still rides to
 the boundary as well (`boundaryCtrls` keeps it), because a picture the
 subset draws nothing of is drawn there and needs the same definitions.
 A subset of `boundaryCtrls`. -/
-def nativeSetCtrls : List String := ["tikzset"]
+public def nativeSetCtrls : List String := ["tikzset"]
 
 /-- Picture packages, whose whole meaning is drawing: with the boundary
 open (the default), their loads belong to the boundary standalone's
@@ -2025,7 +2038,7 @@ preamble (`boundaryDecls` carries each with its options) rather than being
 W0103's named loss — the real TeX at the edge is what reads them. A closed
 list, extended when a document brings the next one; a package with body
 commands outside pictures does not belong here. -/
-def boundaryPkgs : List String := ["genealogytree", "pgfplots", "circuitikz"]
+public def boundaryPkgs : List String := ["genealogytree", "pgfplots", "circuitikz"]
 
 /-- The document refused the boundary: a `\pictures` block declaring
 `tool = none`. Read over the unrewritten preamble exactly as
@@ -2033,7 +2046,7 @@ def boundaryPkgs : List String := ["genealogytree", "pgfplots", "circuitikz"]
 the one consumer is the `\usepackage` dispatch, which must know whether a
 picture package's load rides to the boundary or is W0103's named loss.
 The elaborator reads the same declaration through `scanDecls`. -/
-def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
+private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
   let mut raws := raws0
   let mut i := 0
   repeat
@@ -2062,13 +2075,13 @@ def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
 A set line written *inside* one is already that standalone's, so the
 collector does not hoist it: hoisting would scope one picture's styling to
 every other picture in the document. -/
-def pictureEnvs : List String := ["tikzpicture", "external"]
+public def pictureEnvs : List String := ["tikzpicture", "external"]
 
 /-- The control words the picture walk gives a meaning of its own — its
 statement heads, `\else` and `\fi` (`Picture.walkCtrls`, which a test holds
 equal to this list). The conditional pass puts no document macro of such a
 name into a picture: the walk names it where it stands. -/
-def picWalkCtrls : List String :=
+public def picWalkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "else", "fi"]
 
@@ -2078,7 +2091,7 @@ is the same collection read natively — one entry per `nativeSetCtrls`
 line, its key list beside the position of the line that wrote it. One
 accumulator, so the two readings cannot disagree about which definitions
 reached a picture. -/
-structure BoundaryScan where
+public structure BoundaryScan where
   pre : String := ""
   sets : Array (Pos × Array Raw) := #[]
 
@@ -2150,7 +2163,7 @@ preamble text the boundary standalone needs, and the key lists the engine
 reads itself, each with the position of the line it came from (a
 diagnostic about a key belongs to the line that wrote it, not to whichever
 picture first met it). -/
-def boundaryScan (raws : Array Raw) : BoundaryScan :=
+public def boundaryScan (raws : Array Raw) : BoundaryScan :=
   boundaryLevel raws {} raws.toList 0 0
 
 /-- The preamble declarations a boundary standalone needs, collected from
@@ -2169,7 +2182,7 @@ so the boundary failed and the page shipped an empty box. The walk
 therefore descends the whole tree; only a picture environment is left
 closed (`pictureEnvs`), its body being its own standalone's already. Pure
 and total; `\input` wrappers open as any other environment does. -/
-def boundaryDecls (raws : Array Raw) : String :=
+public def boundaryDecls (raws : Array Raw) : String :=
   (boundaryScan raws).pre
 
 /-- The key lists the engine reads itself, in source order, each with the
@@ -2179,7 +2192,7 @@ same reason: where the author wrote a definition says nothing about which
 pictures need it. The one consumer is the elaborator, which folds the
 `/.style` entries into every picture's bundles (`Picture.readStyleList`)
 and names what it could not read at the line above. -/
-def tikzsetKeys (raws : Array Raw) : Array (Pos × Array Raw) :=
+public def tikzsetKeys (raws : Array Raw) : Array (Pos × Array Raw) :=
   (boundaryScan raws).sets
 
 /-- **A set line reaches the boundary wherever it stands.** Wrapping a run
@@ -2189,7 +2202,7 @@ the preamble-only walk returned nothing for this tree, so a `\tikzset`
 written beside its picture (a figure kept in its own file) never reached
 pgf, the boundary failed on an arrow tip or a shape it had no definition
 for, and the page shipped an empty box. -/
-theorem boundaryDecls_covers (raws : Array Raw) (p : Pos) :
+public theorem boundaryDecls_covers (raws : Array Raw) (p : Pos) :
     boundaryDecls #[.env "document" raws p] = boundaryDecls raws := by
   simp [boundaryDecls, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
 
@@ -2198,7 +2211,7 @@ is the same claim for the native reading: a style defined beside its
 picture, inside the document body, is the style that picture draws with.
 Stated over the same walk the boundary's copy comes from, so neither
 reading can gain a definition the other lost. -/
-theorem tikzsetKeys_covers (raws : Array Raw) (p : Pos) :
+public theorem tikzsetKeys_covers (raws : Array Raw) (p : Pos) :
     tikzsetKeys #[.env "document" raws p] = tikzsetKeys raws := by
   simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
 
@@ -2382,14 +2395,14 @@ line numbers here always run from 1" pos
 /-- The kernel's point-size macros at the values size10.clo–size12.clo and
 ltplain give them, in milli-points: `\@xpt` is 10 pt, `\@xipt` 10.95 —
 what `\@setfontsize` is called with. -/
-def ptMacros : List (String × Nat) :=
+private def ptMacros : List (String × Nat) :=
   [("@vpt", 5000), ("@vipt", 6000), ("@viipt", 7000), ("@viiipt", 8000),
    ("@ixpt", 9000), ("@xpt", 10000), ("@xipt", 10950), ("@xiipt", 12000),
    ("@xivpt", 14400), ("@xviipt", 17280), ("@xxpt", 20740), ("@xxvpt", 24880)]
 
 /-- One `\@setfontsize` argument in milli-points: a kernel size macro, or
 a literal number (`{14}`, `{10.95}`). -/
-def ptMacroArg (r : Array Raw) : Option Nat :=
+public def ptMacroArg (r : Array Raw) : Option Nat :=
   match r.toList with
   | [.ctrl n _] => ptMacros.lookup n
   | _ =>
@@ -2398,7 +2411,7 @@ def ptMacroArg (r : Array Raw) : Option Nat :=
 
 /-- A milli value as its shortest decimal spelling: 10000 is "10",
 10950 "10.95", 913 "0.913". -/
-def milliStr (m : Nat) : String :=
+public def milliStr (m : Nat) : String :=
   let i := m / 1000
   let f := m % 1000
   if f == 0 then toString i else
@@ -2438,7 +2451,7 @@ is left whole. -/
 /-- The conditional heads TeX defines: every `\if…` primitive of TeX82's
 table (`texPrimitives`) and e-TeX's three. The one list the pass tracks and
 the accounting check ranges over. -/
-def condHeads : List String :=
+private def condHeads : List String :=
   (texPrimitives.toList.filter (·.startsWith "if")) ++ ["ifdefined", "ifcsname", "iffontchar"]
 
 /-- Definers that bind the control word standing after them, directly or
@@ -2866,7 +2879,7 @@ can select a different branch after its definitions or flag changes ran. -/
 /-- The branches a loaded test carries after its name and option list: both,
 the true one only, or the false one only (latex.ltx defines the `T` and `F`
 forms over the `TF` one with `\@firstofone\@gobble` and `{}`). -/
-inductive LoadedBranches where
+private inductive LoadedBranches where
   | tf
   | t
   | f
@@ -2874,7 +2887,7 @@ inductive LoadedBranches where
 
 /-- One spelling of the loaded-test family: whether it reads the class or the
 packages, whether an option list follows the name, and its branches. -/
-structure LoadedTest where
+private structure LoadedTest where
   ctrl : String
   cls : Bool
   withOpts : Bool
@@ -2883,7 +2896,7 @@ structure LoadedTest where
 
 /-- The family as latex.ltx defines it: the `\@if…` internals, and the
 `\If…Loaded…` interface `\let` to them or wrapped around them. -/
-def loadedTests : List LoadedTest :=
+private def loadedTests : List LoadedTest :=
   [⟨"@ifpackageloaded", false, false, .tf⟩, ⟨"IfPackageLoadedTF", false, false, .tf⟩,
    ⟨"IfPackageLoadedT", false, false, .t⟩, ⟨"IfPackageLoadedF", false, false, .f⟩,
    ⟨"@ifclassloaded", true, false, .tf⟩, ⟨"IfClassLoadedTF", true, false, .tf⟩,
@@ -2897,7 +2910,7 @@ def loadedTests : List LoadedTest :=
 
 /-- What one test asks: the class or the packages, the name, and the options
 it wants (`none` for a load test). -/
-structure LoadQuery where
+private structure LoadQuery where
   cls : Bool
   name : String
   want : Option (Array String)
@@ -2905,21 +2918,21 @@ structure LoadQuery where
 
 /-- An option list as the kernel compares it: comma-separated, spaces zapped
 (`\zap@space`), empty items skipped. -/
-def optionItems (s : String) : Array String :=
+private def optionItems (s : String) : Array String :=
   ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
     |>.filter (!·.isEmpty) |>.toArray
 
 /-- One package load: the first load of a name stands, and a later one of the
 same name passes nothing new. -/
-def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
+private def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
   if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
 
 /-- The class line: the first `\documentclass` is the class. -/
-def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
+private def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
   if s.cls.isSome then s else { s with cls := some (c, os) }
 
 /-- Option passes, onto the class half or the package half. -/
-def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
+private def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
     LoadSet :=
   if toClass then { s with clsPassed := s.clsPassed ++ ps }
   else { s with passed := s.passed ++ ps }
@@ -2927,7 +2940,7 @@ def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array Str
 /-- The answer the loads read so far give a test: `some true` when it holds,
 `some false` when it fails, `none` when what it reads is not carried — a
 local style file's passed options, where only a positive answer is sound. -/
-def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
+private def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
   let passes (ps : Array (String × Array String)) : Array String :=
     (ps.filter (·.1 == q.name)).foldl (fun acc e => acc ++ e.2) #[]
   match q.cls, q.want with
@@ -3043,7 +3056,7 @@ private def stringTestAt (raws : Array Raw) (i : Nat) : Option Bool := do
 /-- Which of the groups after a resolved test are kept, unbraced, and which go
 with it: the name and the option list go, and the branch the answer picks
 stays. -/
-def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
+private def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
   let lead := if test.withOpts then [false, false] else [false]
   let branches := match test.branches with
     | .tf => [ans, !ans]
@@ -3118,7 +3131,7 @@ private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
 /-- The group primitives, opener to closer: `\begingroup … \endgroup`
 scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
 and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
-def groupPrimitives : List (String × String) :=
+public def groupPrimitives : List (String × String) :=
   [("begingroup", "endgroup"), ("bgroup", "egroup")]
 
 /-- A flat preamble scope closes before the document starts. Unmatched
@@ -4502,8 +4515,15 @@ private theorem condList_package_read_step
 /-- One live package call with a literal comma-separated name argument.
 All names and positions are parameters; execution still uses the normal
 conditional dispatcher and the supplied input reader. -/
-def packageCall (command names : String) (pos groupPos namePos : Pos) : Array Raw :=
+public def packageCall (command names : String) (pos groupPos namePos : Pos) : Array Raw :=
   #[.ctrl command pos, .group #[.word names namePos] groupPos]
+
+/-- The literal package-call surface exchanged with the elaborator. -/
+public theorem packageCall_exact (command names : String)
+    (pos groupPos namePos : Pos) :
+    packageCall command names pos groupPos namePos =
+      #[.ctrl command pos, .group #[.word names namePos] groupPos] := by
+  rfl
 
 private theorem packageCall_readers (command names : String)
     (pos groupPos namePos : Pos) :
@@ -4522,7 +4542,7 @@ private theorem packageCall_readers (command names : String)
 
 /-- The actual request's filename projection reads the package operand,
 including the same outer whitespace normalization as the producer. -/
-theorem InputRequest.package_name_exact (file command names : String)
+public theorem InputRequest.package_name_exact (file command names : String)
     (pos groupPos namePos : Pos) :
     (InputRequest.mk command file pos pos
       #[.group #[.word names namePos] groupPos]).name = names.trimAscii.toString := by
@@ -4588,7 +4608,7 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
       ({ raws := packageCall command names pos gp np, stop := 2 },
         packageFailed command names pos gp np st) := by
   have hb : Tcolorbox.boundName? command = none := by
-    unfold Tcolorbox.boundName?
+    rw [Tcolorbox.boundName?_exact]
     have h : command.toSlice.dropPrefix? "tcolorbox " = none := by
       rw [String.Slice.dropPrefix?_eq_none_iff,
         String.Slice.startsWith_string_eq_false_iff, String.copy_toSlice]
@@ -4622,7 +4642,7 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
 /-- Execute a parsed file answer in the state of its request, before
 continuing the caller. The input wrapper carries its filename and opens
 no TeX group; definitions therefore obey the caller's existing scope. -/
-def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
+public def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
     (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
   let (run, state) ←
     (condList (condTopExpand (some reader)) [] raws #[] (OverlayPrefix.ofArray #[]) [] raws.toList 0 0).run
@@ -4792,7 +4812,7 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
 `\relax` vanishes. Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
-def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
+public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
     Option String := Id.run do
   let mut s := ""
   let mut prevNumber := false
@@ -4864,7 +4884,7 @@ private def nameParam (n why : String) (pos : Pos) : M Unit := do
 
 /-- The kernel's three vertical skip amounts, the same in every class
 (ltspace.dtx, as plain.tex sets them). -/
-def kernelSkip : String → Option String
+public def kernelSkip : String → Option String
   | "smallskipamount" => some "3pt plus 1pt minus 1pt"
   | "medskipamount" => some "6pt plus 2pt minus 2pt"
   | "bigskipamount" => some "12pt plus 4pt minus 4pt"
@@ -4960,14 +4980,14 @@ private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "pa
 `\leftmargin` and `\rightmargin` into the measure, `\listparindent` into
 `\parindent`): set in the list's body, it reaches nothing of the list, and
 its group ends it. -/
-def listSpent : List String :=
+public def listSpent : List String :=
   ["leftmargin", "rightmargin", "listparindent", "parsep", "topsep", "partopsep"]
 
 /-- What a list's items read as they set (ltlists.dtx: `\@item`'s
 `\itemsep` and label box, `\itemindent`, `\labelsep`, `\labelwidth`; and
 `\parskip` between paragraphs): set in the list's body, it spaces that one
 list. -/
-def listPerItem : List String := ["itemsep", "itemindent", "labelsep", "labelwidth", "parskip"]
+public def listPerItem : List String := ["itemsep", "itemindent", "labelsep", "labelwidth", "parskip"]
 
 /-- Does a body assignment of `n` reach the lists after it in LaTeX? Only
 where the document's `\@listi` stands (`listiKept`) and leaves `n` be: a
@@ -5282,7 +5302,7 @@ private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
 
 /-- The list depth a class's parameter macro sets up: `\@listi` to
 `\@listvi` (size10.clo), the one `\list` calls for its depth (ltlists.dtx). -/
-def listLevelOf : String → Option Nat
+private def listLevelOf : String → Option Nat
   | "@listi" => some 1
   | "@listii" => some 2
   | "@listiii" => some 3
@@ -5912,7 +5932,7 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
   if (mode == 0 || mode == 13) && stack.size == 1 then return some rules else return none
 
 /-- Internal marker prefix for xcolor's page-ground epoch. -/
-def pageColorMarkPrefix : String := "@pagecolor:"
+public def pageColorMarkPrefix : String := "@pagecolor:"
 
 /-- `\pagecolor[model]{colour}` sets the page background from here on
 (xcolor manual §2.6). The source rides intact to the typed resolver; keeping
@@ -5929,7 +5949,7 @@ private def modeledColorSource (model : Option String) (value : String) : String
 
 /-- Internal marker for xcolor's global page-ground reset. `@` is not a
 surface control-word character, so a document cannot forge the transition. -/
-def pageColorResetMark : String := "@pagecolor-reset"
+public def pageColorResetMark : String := "@pagecolor-reset"
 
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
 idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
@@ -5993,13 +6013,14 @@ decreasing_by
   all_goals simp_wf
   all_goals try omega
   all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+    (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
+     omega)
 
 /-- environ's `\BODY` placed once at the top level of a definition's code:
 the code before it and the code after it, an environment's begin and end
 code with the body standing between them. `none` when `\BODY` is absent,
 stands inside a group, or stands twice. -/
-def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
+public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
   (code.findIdx? (· matches .ctrl "BODY" _)).bind fun i =>
     let before := code.extract 0 i
     let after := code.extract (i + 1) code.size
@@ -6015,7 +6036,7 @@ in a kernel definition is the document's own macro; in a begin half it says
 the body's edge spaces are trimmed (environ.sty `\env@save`:
 `\trim@spaces`). `:` is no letter (`Lex.nameChar`), so no document spells
 the name. -/
-def environBodyMark : String := "@environ:BODY"
+public def environBodyMark : String := "@environ:BODY"
 
 /-- The declarations standing in front of a float's kernel core when they
 are the whole begin body: each a `\setlength` of one of the two caption
@@ -6191,7 +6212,7 @@ private def literalReplace : List (String × (Pos → Raw)) :=
 puts a zero rule there, which keeps the space at a page's top
 (`Ir.pageAnchorRole`, the block Elab makes of it). A space is in no control
 word, so no document spells the mark, as `frameRestartMark`'s is. -/
-def vspaceAnchorMark : String := "vspace anchor"
+public def vspaceAnchorMark : String := "vspace anchor"
 
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
@@ -6354,8 +6375,8 @@ private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
 /-- Unforgeable prefix for a parsed `\fontsize` declaration. The two
 source dimensions follow, separated by NUL; source names cannot contain it,
 and elaboration removes the spelling before any IR value exists. -/
-def fontSizeMark : String := "@fontsize:"
-def fontSizeSep : String := "\u0000"
+public def fontSizeMark : String := "@fontsize:"
+public def fontSizeSep : String := "\u0000"
 
 /-- Beamer's three marker templates select the corresponding list depth
 (beamerbaseauxtemplates.sty). Their bodies remain inline templates. -/
@@ -7577,13 +7598,13 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
 loaded: the frame count starts over there (`appendixnumberbeamer.sty`: its `\appendix`
 keeps the main part's last number as the total and sets `framenumber` to 0). A space is
 in no control word, so no document spells the mark. -/
-def frameRestartMark : String := "appendix restart"
+public def frameRestartMark : String := "appendix restart"
 
 /-- The mark a cancel package load leaves in the preamble, its option list in
 the group after it: the elaborator's preamble reads it into the context every
 formula's marks read (`Ctx.cancel`). A space is in no control word, so no
 document spells the mark. -/
-def cancelOptionsMark : String := "cancel options"
+public def cancelOptionsMark : String := "cancel options"
 
 /-- Interpret one package in the loading call's declared order. The caller
 owns the option and group readers; this producer owns each package's exact
@@ -7822,14 +7843,15 @@ and \\tokens declare the design directly")
 /-- The external-package refusal's whole record, before the source index
 adds its trigger. Native package options are judged by their own producer;
 sharing W0103 does not make them failed file requests. -/
-def packageRefusal (file : String) (pos : Pos) (p : String) : Diag :=
+public def packageRefusal (file : String) (pos : Pos) (p : String) : Diag :=
   Diag.of .W0103 s!"package '{p}' is not supported; skipped"
     (some ⟨file, pos⟩) (refused := some p)
 
 private theorem atSource_package_exact (st : St) (pos : Pos) (p : String) :
     atSource st pos (packageRefusal st.file pos p) =
       st.sourceTriggers.attribute (packageRefusal st.file pos p) := by
-  simp [atSource, SourceTriggers.attribute, packageRefusal, Diag.of]
+  simp [atSource, SourceTriggers.atSource, SourceTriggers.attribute,
+    packageRefusal, Diag.of_record_exact]
 
 private theorem rewritePackage_external_exact (name p : String)
     (opt : Option String) (pos : Pos) (st : St)
@@ -8511,7 +8533,7 @@ declare the furniture directly")
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. An empty replacement passes the silence guard
 (`account`): the arms need not hand-account their no-ops, and a silent
-drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so the
+drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so its
 theorem unfolds it directly. -/
 private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := fun s0 =>
@@ -8585,7 +8607,7 @@ unfolding the dispatcher's tail and the guard (`account`) alone; the arms
 can break the statement. `_accounts` is the registered shape (AGENTS.md,
 the suffix registry): an empty result is paid for by a diagnostic or a
 write. -/
-theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
+private theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) (s s' : St) (k : Nat)
     (h : (rewriteCtrl name pos raws start).run s = (some (#[], k), s')) :
     s'.diags.size > s.diags.size ∨ s'.writes > s.writes := by
@@ -9150,7 +9172,7 @@ private def boxAt (rs : Array Raw) (i : Nat) :
 names. Keep the original calls beside the proposed row: an overriding
 macro owns its arguments, including boxes it discards. The space makes
 this internal environment unspellable as a document environment name. -/
-def linkedBoxRowMark : String := " linked box row"
+public def linkedBoxRowMark : String := " linked box row"
 
 /-- Each run of minipages at one level whose separators are row glue holding
 a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
@@ -9324,7 +9346,7 @@ private theorem state_bind_inv {α β : Type} (P : St → Prop)
 
 private theorem state_bind_apply {α β : Type} (act : M α)
     (next : α → M β) (st : St) :
-    (act >>= next) st = next (act st).1 (act st).2 := rfl
+    (act >>= next) st = next (act st).1 (act st).2 := by rfl
 
 private theorem state_forIn_inv {α β : Type} (P : St → Prop)
     (step : α → β → M (ForInStep β)) :
@@ -9446,7 +9468,7 @@ non-article modes, `beamer` the slide presentation itself, and `all` every
 mode (beamer manual §21.1, "Overview of Modes"); `handout`, `trans`,
 `second` and `article` each address an artifact this engine is not
 producing, so a count declared for one of those decides nothing here. -/
-def presentationModes : List String := ["presentation", "beamer", "all"]
+private def presentationModes : List String := ["presentation", "beamer", "all"]
 
 /-- Does this specification declare that the presentation has *no* slides
 here? Beamer's mode specification pairs a mode with an overlay
@@ -9470,7 +9492,7 @@ entry's specification and never separates entries, which is why it is not
 split on: reading `0` out of `0,2` silenced a frame beamer shows. Any range
 other than zero is a restriction the step model does not carry, and that
 loss is named where the specification is stripped rather than guessed at. -/
-def modeSilencesPresentation (w : String) : Bool :=
+public def modeSilencesPresentation (w : String) : Bool :=
   if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
     let inner := ((w.drop 1).dropEnd 1).toString
     let decided := (inner.splitOn "|").foldl (init := none) fun acc e =>
@@ -9548,30 +9570,30 @@ private def overprintAlt (p : Pos) (tail : Array Raw) : List (Raw × Array Raw) 
     #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p]
 
 /-- The head of a nesting is one alternation node and no fifth raw. -/
-theorem overprintAlt_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
+private theorem overprintAlt_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
     overprintAlt p tail ((sp, content) :: rest) =
-      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p] := rfl
+      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p] := by rfl
 
 /-- The item is carried whole as the alternation's first alternative: what
 the steps its own spec names show, and the only copy of it. -/
-theorem overprintAlt_item_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
+private theorem overprintAlt_item_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
-    (overprintAlt p tail ((sp, content) :: rest))[2]? = some (.group content p) := rfl
+    (overprintAlt p tail ((sp, content) :: rest))[2]? = some (.group content p) := by rfl
 
 /-- The spec reaches the elaborator as written, at the index its `\alt` arm
 reads: a spec the step model cannot number is judged there, never here. -/
-theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
+private theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
-    (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := rfl
+    (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := by rfl
 
 /-- The last item's other alternative is the tail and nothing else: the
 overlay no item names shows what stands last, never a second item beside the
 first. With no tail — `#[]`, the shape a body of numbered items alone
 plans — it shows nothing. -/
-theorem overprintAlt_last_exact (p : Pos) (tail : Array Raw) (sp : Raw)
+private theorem overprintAlt_last_exact (p : Pos) (tail : Array Raw) (sp : Raw)
     (content : Array Raw) :
-    (overprintAlt p tail [(sp, content)])[3]? = some (.group tail p) := rfl
+    (overprintAlt p tail [(sp, content)])[3]? = some (.group tail p) := by rfl
 
 /-- The items that can be alternatives, in the order the body wrote them. -/
 private def overprintNumbered (items : Array (Raw × Array Raw)) :
@@ -9586,12 +9608,12 @@ private def overprintLoose (items : Array (Raw × Array Raw)) :
 /-- `_mem`: an alternative of the plan is an item the body wrote. Refusing a
 spec drops items from the nesting; it never invents, reorders or merges one,
 so the reading on a page is always some item's, whole. -/
-theorem overprintNumbered_mem (items : Array (Raw × Array Raw))
+private theorem overprintNumbered_mem (items : Array (Raw × Array Raw))
     (it : Raw × Array Raw) (h : it ∈ overprintNumbered items) : it ∈ items :=
   (Array.mem_filter.mp h).1
 
 /-- `_mem`: the last-resort item is one the body wrote too. -/
-theorem overprintLoose_mem (items : Array (Raw × Array Raw))
+private theorem overprintLoose_mem (items : Array (Raw × Array Raw))
     (it : Raw × Array Raw) (h : it ∈ overprintLoose items) : it ∈ items :=
   (Array.mem_filter.mp h).1
 
@@ -9644,7 +9666,7 @@ every item the body wrote is an alternative of the nesting. So an item this
 pass could not number is never absent from the caller's count, and the one
 caller says W0105 for it (`overprintRaw`): a refused item cannot reach the
 artifact wordlessly. -/
-theorem overprintPlan_accounts (body : Array Raw) (p : Pos) (repl : Array Raw)
+private theorem overprintPlan_accounts (body : Array Raw) (p : Pos) (repl : Array Raw)
     (h : overprintPlan body p = some (repl, 0)) :
     overprintNumbered (overprintScan body.toList #[] none #[]).2.1
       = (overprintScan body.toList #[] none #[]).2.1 := by
@@ -9723,7 +9745,7 @@ end
 /-- A scope's trailing length metadata. A space cannot occur in a control
 word, so a document cannot spell this internal handoff. The keys identify
 token sites; only the elaborator knows their resolved opening values. -/
-def lengthRestoreKeys? (name : String) : Option (Array String) :=
+public def lengthRestoreKeys? (name : String) : Option (Array String) :=
   let mark := "length restore "
   if name.startsWith mark then
     some ((name.drop mark.length).toString.splitOn ",").toArray
@@ -10023,7 +10045,7 @@ private theorem rewriteCtrlNamed_package_external_exact
         ((names.trimAscii.toString.splitOn ",").map fun p =>
           atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
   have hread := packageCall_readers command names pos gp np
-  have hempty : (#[#[Raw.word names np]] : Array (Array Raw)).isEmpty = false := rfl
+  have hempty : (#[#[Raw.word names np]] : Array (Array Raw)).isEmpty = false := by rfl
   have hsrc : rawSrc ((#[#[Raw.word names np]] : Array (Array Raw)).getD 0 #[]) =
       names.trimAscii.toString := by simp [rawSrc, rawSrcList, rawSrcOne]
   have hpkgs := rewritePackages_external_exact command
@@ -10219,7 +10241,7 @@ private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
 arbitrary; there is no command reader whose operands could cross the hole.
 The raw syntax, rather than a test of the rewritten result, states this
 boundary. -/
-inductive LiteralRaws : List Raw → Prop where
+public inductive LiteralRaws : List Raw → Prop where
   | nil : LiteralRaws []
   | word (text : String) (pos : Pos) : LiteralRaws rest →
       LiteralRaws (.word text pos :: rest)
@@ -10286,7 +10308,8 @@ private theorem rewriteList_package_external_exact
         ((names.trimAscii.toString.splitOn ",").map fun p =>
           atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
   have hdef : command ≠ "define" := by rcases hc with rfl | rfl <;> simp
-  have ho : overlayName command = command := by rcases hc with rfl | rfl <;> rfl
+  have ho : overlayName command = command := by
+    rcases hc with rfl | rfl <;> simp [overlayName, String.startsWith_string_iff]
   have hstep := rewriteCtrl_package_external_exact command names pos gp np st
     hc hd hw hl hn hb ht part hp
   have h := rewriteList_control_exact false (packageCall command names pos gp np) #[]
@@ -10323,7 +10346,8 @@ private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
   case x_3 => simp
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
     pure, hp, Bool.false_eq_true, ↓reduceIte]
-  have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := rfl
+  have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := by
+    simp [overlayName, String.startsWith_string_iff]
   rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl]
   rfl
 
@@ -10346,7 +10370,7 @@ private theorem rewriteList_configSkip_exact (inBody : Bool) (raws out : Array R
     simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
       Prod.mk.injEq] at hm
     obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
-    exact ⟨by simp, rfl⟩
+    exact ⟨by simp, by simp [overlayName, String.startsWith_string_iff]⟩
   apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hnames.1 hp
   rw [hnames.2]
   exact Prod.ext hvalue rfl
@@ -10390,7 +10414,7 @@ post-state, and that dispatch adds a diagnostic or records a write.
 
 This is a contract of the compatibility stream, before elaboration. The body
 state excludes list-parameter dispatch and picture pass-through. -/
-def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
+public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
     (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St),
     St.inDoc s = true → St.inList s = false → St.inPicture s = false →
@@ -10406,7 +10430,7 @@ def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
 
 /-- The actual dispatcher leaves a command and every following raw available
 to elaboration. This does not assert what elaboration's recovery emits. -/
-def UnknownControlPreserved (name : String) : Prop :=
+public def UnknownControlPreserved (name : String) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
     (rest : List Raw) (i : Nat) (s : St),
     St.inDoc s = true → St.inList s = false → St.inPicture s = false →
@@ -10415,7 +10439,7 @@ def UnknownControlPreserved (name : String) : Prop :=
     rewriteList inBody raws out (raws.toList.drop i) i 0 s =
       rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0 s
 
-theorem meaningFree_control_contract (row : String × Nat × Option String)
+public theorem meaningFree_control_contract (row : String × Nat × Option String)
     (hm : row ∈ meaningFree) : ControlGroupsConsumed row.1 row.2.1 := by
   rcases row with ⟨name, n, note⟩
   intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
@@ -10432,7 +10456,7 @@ theorem meaningFree_control_contract (row : String × Nat × Option String)
   · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
       (Prod.ext hvalue rfl)
 
-theorem configSkip_control_contract (row : String × Nat × String × Option String)
+public theorem configSkip_control_contract (row : String × Nat × String × Option String)
     (hm : row ∈ configSkip) : ControlGroupsConsumed row.1 row.2.1 := by
   rcases row with ⟨name, n, msg, help⟩
   intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
@@ -10449,7 +10473,7 @@ theorem configSkip_control_contract (row : String × Nat × String × Option Str
   · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
       (Prod.ext hvalue rfl)
 
-theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
+public theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
   intro inBody raws out pos rest i s hd hl hp hsource
   refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl, ?_⟩
   rw [hsource]
@@ -10459,7 +10483,7 @@ theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
 kept intact because command readers address it by index. `out` is the
 already rewritten prefix; the remaining input is exactly `raws.drop index`.
 The execution state is opaque outside its owner module. -/
-structure RewriteCursor where
+public structure RewriteCursor where
   inBody : Bool
   raws : Array Raw
   out : Array Raw := #[]
@@ -10469,23 +10493,23 @@ structure RewriteCursor where
 
 /-- The ordinary document-body dispatch, excluding the list-parameter and
 picture interpreters which give the same token a different meaning. -/
-def RewriteCursor.inDocument (cursor : RewriteCursor) : Prop :=
+public def RewriteCursor.inDocument (cursor : RewriteCursor) : Prop :=
   cursor.state.inDoc = true ∧ cursor.state.inList = false ∧
     cursor.state.inPicture = false
 
 /-- The scope permits entry into an ordinary document environment. -/
-def RewriteCursor.outsidePicture (cursor : RewriteCursor) : Prop :=
+public def RewriteCursor.outsidePicture (cursor : RewriteCursor) : Prop :=
   cursor.state.inPicture = false
 
 /-- The ordinary document entry does not inherit a list-parameter scope. -/
-def RewriteCursor.outsideList (cursor : RewriteCursor) : Prop :=
+public def RewriteCursor.outsideList (cursor : RewriteCursor) : Prop :=
   cursor.state.inList = false
 
 /-- Replace the unread final document at a checkpoint while retaining its
 already executed state, output prefix and enclosing continuation. This
 boundary is after macro/input execution: operands may themselves have had
 effects before reaching it. -/
-def RewriteCursor.withDocument (cursor : RewriteCursor) (body : Array Raw)
+public def RewriteCursor.withDocument (cursor : RewriteCursor) (body : Array Raw)
     (pos : Pos) : RewriteCursor :=
   { cursor with raws := #[.env "document" body pos], index := 0 }
 
@@ -10498,7 +10522,7 @@ private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
 /-- The continuation after an accounted control has consumed its groups.
 Only the command dispatch runs: no raw from the consumed prefix is rewritten
 or appended to the output. -/
-def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
+public def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
     (pos : Pos) (consumed : Nat) : RewriteCursor :=
   { cursor with
     index := cursor.index + 1 + consumed
@@ -10508,7 +10532,7 @@ def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
 continuation restores the real enclosing scope and resumes the containing
 walk. In particular the document's consumed groups do not become a separate
 top-level compatibility run. -/
-def RewriteCursor.enterDocument (cursor : RewriteCursor)
+public def RewriteCursor.enterDocument (cursor : RewriteCursor)
     (body : Array Raw) (pos : Pos) : RewriteCursor :=
   { inBody := cursor.inBody
     raws := body
@@ -10704,26 +10728,26 @@ end
 /-- The executed surface and the state its compatibility rewrite must
 continue from. Keeping them together prevents a second execution of flags,
 hooks or file effects while the driver resolves other document requests. -/
-structure Executed where
+public structure Executed where
   raws : Array Raw
   private state : St
 
 /-- Replace the already-executed surface after resolving data requests while
 retaining its compatibility state and input receipts. -/
-def Executed.withRaws (executed : Executed) (raws : Array Raw) : Executed :=
+public def Executed.withRaws (executed : Executed) (raws : Array Raw) : Executed :=
   { executed with raws := raws }
 
 /-- The original source index survives execution and included-file fulfilment. -/
-def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
+public def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
   executed.state.sourceTriggers
 
 /-- Exact reader receipts retained by the production evaluator. -/
-def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
+public def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
 
 /-- Resolving other requests changes the surface alone. The original source
 index and actual input-reader receipts remain available to the continuation. -/
-theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
+public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧
       (executed.withRaws raws).sourceTriggers = executed.sourceTriggers ∧
       (executed.withRaws raws).inputAttempts = executed.inputAttempts := by
@@ -10755,7 +10779,7 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
 
 /-- Execute a file-free surface once, retaining the same source evidence as
 the input-fulfilling path. Compatibility and elaboration can share it. -/
-def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
+public def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) : Executed :=
   executeBy (m := Id) none file raws provideKeeps warned inherited #[]
 
@@ -10763,7 +10787,7 @@ def execute (file : String) (raws : Array Raw) (provideKeeps : List String := []
 uses. All macro recursion retains its existing binding-order bound; the
 driver owns the input stack and returns parsed fragments through
 `resumeInput`. -/
-def executeInputs [Monad m] (reader : InputReader m) (file : String)
+public def executeInputs [Monad m] (reader : InputReader m) (file : String)
     (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[]) :
     m Executed :=
   executeBy (some reader) file raws provideKeeps #[] [] diags
@@ -10816,7 +10840,9 @@ private theorem overlayInputs_package_exact (command names : String) (pos gp np 
     (hc : command = "usepackage" ∨ command = "RequirePackage") :
     overlayInputs (packageCall command names pos gp np) =
       packageCall command names pos gp np := by
-  have ha : overlayArity? command = none := by rcases hc with rfl | rfl <;> rfl
+  have ha : overlayArity? command = none := by
+    rcases hc with rfl | rfl <;>
+      simp [overlayArity?, overlayName, String.startsWith_string_iff]
   simp [overlayInputs, packageCall, overlayInputsList, overlayInputsRaw,
     overlayVariant, overlayNext, overlayNext.advance, ha]
 
@@ -10858,7 +10884,7 @@ private theorem overprint_package_exact (command names : String) (pos gp np : Po
 /-- The production passes before the compatibility walk: overlay inputs,
 live groups, delimiters, columns and overprints. Execution and file effects
 have already happened and are not replayed when this cursor resumes. -/
-def beginRewrite (executed : Executed) : RewriteCursor :=
+public def beginRewrite (executed : Executed) : RewriteCursor :=
   let raws := overlayInputs executed.raws
   let go : M (Array Raw) := do
     -- After the conditionals: only a live pair is a group.
@@ -10893,7 +10919,7 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
       wholeDoc := false } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
-      (packageCall command names pos gp np).toList := rfl
+      (packageCall command names pos gp np).toList := by rfl
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim,
     hcols, overprint_package_exact _ _ _ _ _ hc,
@@ -11009,20 +11035,20 @@ private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
 
 /-- Complete a production rewrite checkpoint, including boxes, running
 content, deferred hooks, counters and block hooks. -/
-def finishRewrite (cursor : RewriteCursor) : Array Raw × Array Diag × Array String :=
+public def finishRewrite (cursor : RewriteCursor) : Array Raw × Array Diag × Array String :=
   finishRewritten (rewriteCursor cursor)
 
 /-- Finish the compatibility rewrite after execution and file fulfilment.
 The gathered running content lands just before the document, and deferred
 text is translated at its recorded seam without executing it again. -/
-def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
+@[expose] public def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
   finishRewrite (beginRewrite executed)
 
 /-- Names for which the package dispatcher has no native, external-picture
 or installed-theme interpretation. The condition is on the loading call's
 operands, before execution or diagnostics. Empty comma fields do not name
 files and are deliberately excluded. -/
-def ExternalPackageNames (names : String) : Prop :=
+@[expose] public def ExternalPackageNames (names : String) : Prop :=
   ∀ part ∈ names.trimAscii.toString.splitOn ",",
     part.trimAscii.toString.isEmpty = false ∧
     nativePackages.contains part.trimAscii.toString = false ∧
@@ -11038,7 +11064,7 @@ diagnostic membership is a conclusion, never a premise.
 The domain is a live literal loading call, with arbitrary comma-separated
 external names and source positions. Dormant definitions and calls inside
 consumed control operands do not satisfy this execution domain. -/
-theorem executeInputs_package_refusal_contract (reader : InputReader Id)
+public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (keeps : List String) (ds : Array Diag)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
@@ -11098,12 +11124,12 @@ theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     exact hfinish
 
 /-- The checkpoint and completion are the actual whole-document path. -/
-theorem rewriteExecuted_cursor_exact (executed : Executed) :
-    rewriteExecuted executed = finishRewrite (beginRewrite executed) := rfl
+public theorem rewriteExecuted_cursor_exact (executed : Executed) :
+    rewriteExecuted executed = finishRewrite (beginRewrite executed) := by rfl
 
 /-- Entering the actual document body preserves the whole compatibility
 result, including its enclosing continuation and final diagnostics. -/
-theorem finishRewrite_document_exact (cursor : RewriteCursor)
+public theorem finishRewrite_document_exact (cursor : RewriteCursor)
     (body : Array Raw) (pos : Pos) (rest : List Raw)
     (hp : cursor.outsidePicture)
     (hs : cursor.raws.toList.drop cursor.index = .env "document" body pos :: rest) :
@@ -11113,7 +11139,7 @@ theorem finishRewrite_document_exact (cursor : RewriteCursor)
 /-- Consumed groups cannot reach any later compatibility pass. The entire
 completed result agrees with the continuation after the accounted dispatch,
 including deferred material and the returned diagnostics. -/
-theorem finishRewrite_control_exact (cursor : RewriteCursor)
+public theorem finishRewrite_control_exact (cursor : RewriteCursor)
     (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
     (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
     (hd : cursor.inDocument)
@@ -11128,13 +11154,13 @@ theorem finishRewrite_control_exact (cursor : RewriteCursor)
 /-- Complete a consumed control's document using only the retained body
 and its registered reporting effect. No operand or operand position is
 read by this completion. The enclosing scope and deferred hooks still run. -/
-def finishMeaningFreeDocument (cursor : RewriteCursor) (name : String)
+public def finishMeaningFreeDocument (cursor : RewriteCursor) (name : String)
     (note : Option String) (pos docPos : Pos) (kept : Array Raw) :
     Array Raw × Array Diag × Array String :=
   finishRewritten (closeLastDocument cursor docPos
     (kept, meaningFreeState (openDocumentBody cursor.state).2 name pos note))
 
-def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
+public def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
     (help : Option String) (pos docPos : Pos) (kept : Array Raw) :
     Array Raw × Array Diag × Array String :=
   finishRewritten (closeLastDocument cursor docPos
@@ -11143,22 +11169,22 @@ def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
 /-- The consumed operands cannot be read indirectly through the cursor's
 source field either. The final-document completion reads only the saved
 state, retained output prefix and enclosing continuation. -/
-theorem finishMeaningFreeDocument_source_exact (cursor : RewriteCursor)
+public theorem finishMeaningFreeDocument_source_exact (cursor : RewriteCursor)
     (body kept : Array Raw) (name : String) (note : Option String) (pos docPos : Pos) :
     finishMeaningFreeDocument (cursor.withDocument body docPos) name note pos docPos kept =
-      finishMeaningFreeDocument cursor name note pos docPos kept := rfl
+      finishMeaningFreeDocument cursor name note pos docPos kept := by rfl
 
-theorem finishConfigSkipDocument_source_exact (cursor : RewriteCursor)
+public theorem finishConfigSkipDocument_source_exact (cursor : RewriteCursor)
     (body kept : Array Raw) (name msg : String) (help : Option String) (pos docPos : Pos) :
     finishConfigSkipDocument (cursor.withDocument body docPos) name msg help pos docPos kept =
-      finishConfigSkipDocument cursor name msg help pos docPos kept := rfl
+      finishConfigSkipDocument cursor name msg help pos docPos kept := by rfl
 
 /-- Exact completed document for every consuming row. The surrounding
 literal material is arbitrary, as are the consumed groups and their nested
 syntax. Execution has already run; this is the compatibility-to-elaboration
 boundary. The complete result depends only on `pre ++ post` and the
 descriptor's report, including every later hook and diagnostic. -/
-theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
+public theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
     (body : Array Raw) (name : String) (n : Nat) (note : Option String)
     (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
     (hm : (name, n, note) ∈ meaningFree)
@@ -11177,7 +11203,7 @@ theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
   rw [hbody]
   simp only [Array.empty_append, finishMeaningFreeDocument]
 
-theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
+public theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
     (body : Array Raw) (name : String) (n : Nat) (msg : String) (help : Option String)
     (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
     (hm : (name, n, msg, help) ∈ configSkip)
@@ -11215,7 +11241,7 @@ place it lives. It travels as a value the caller chains
 `inherited` names are already defined by a fragment's caller. Their
 replacement texts are unread here and remain for that caller to expand;
 definitions inside the fragment still replace and restore them normally. -/
-def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
+public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) :
     Array Raw × Array Diag × Array String :=
   rewriteExecuted (execute file raws provideKeeps warned inherited)
@@ -11236,7 +11262,7 @@ by `nameRefusalRegistryChecks`. A code alone does not identify a file-loading
 door: native `\theme` also emits W0319, and `ulem` options emit W0103.
 The loading-call contract is `CompatContract.nameRefusals_asked`, over the
 expanded call inspected by the input reader. -/
-def nameRefusalAsk : List (DiagCode × String) :=
+public def nameRefusalAsk : List (DiagCode × String) :=
   [(.W0103, ""), (.W0319, "beamertheme")]
 
 mutual
@@ -11293,7 +11319,7 @@ on each expanded loading request's `call`; the original, unexpanded document
 need not contain a macro-produced name. Native packages do not ask for files.
 `CompatContract.nameRefusals_asked` states the loading-call contract, including
 options, comma-separated package names, and every theme-family prefix. -/
-def localStyCandidates (raws : Array Raw) : Array String :=
+public def localStyCandidates (raws : Array Raw) : Array String :=
   styCandList raws #[] raws.toList 0 0
 
 private theorem packageStep_mem (out : Array String) (p nm : String) :
@@ -11397,7 +11423,7 @@ private theorem styCandRaw_monotone (out : Array String) (r : Raw) (nm : String)
   | env name body pos =>
     simp only [styCandRaw]
     split
-    · have hb : sizeOf body = 1 + sizeOf body.toList := rfl
+    · have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
       exact styCandList_monotone body out body.toList 0 0 nm hm
     · exact hm
   | word w pos | ctrl cn pos | sym c pos | group body pos | math display body pos | verb name body pos | par pos | space => exact hm
@@ -11406,7 +11432,7 @@ end
 
 /-- Every nonempty, non-native package name read at this expanded loading
 call remains a candidate after scanning arbitrary trailing input. -/
-theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
+public theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
     (tail : Array Raw) (nm : String)
     (hcn : cn = "usepackage" ∨ cn = "RequirePackage")
     (hname : ∃ p ∈ (rawSrc ((takeGroups (#[.ctrl cn pos] ++ tail)
@@ -11425,7 +11451,7 @@ theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
 
 /-- Every nonempty theme name read at this expanded loading call remains
 its registry-prefixed candidate after scanning arbitrary trailing input. -/
-theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
+public theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
     (tail : Array Raw) (nm : String)
     (hup : cn ≠ "usepackage") (hrp : cn ≠ "RequirePackage")
     (hpre : themeAsking.lookup cn = some pre)
@@ -11485,7 +11511,7 @@ Quantified over the registry the candidate scan and the splice both read
 (`themeAsking`), so adding a slot is entering the contract rather than
 adding a case. `themeAskingChecks` keeps the rows as an executable floor
 over the fixtures. -/
-theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toString = nm)
+public theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toString = nm)
     (hnz : nm ≠ "") :
     ∀ p ∈ themeAsking,
       localStyCandidates #[.ctrl p.1 pos, .group #[.word nm pos] pos]
@@ -11500,7 +11526,7 @@ theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toS
 order. Requests must cross conditional selection with that content: reporting
 while reading the file would warn about an unselected load.
 `processed` also distinguishes a live, empty process from no process at all. -/
-inductive StyOptionStep where
+private inductive StyOptionStep where
   | raw (value : Raw)
   | processed (pos : Pos)
   | unhandled (option : String) (pos : Pos)
@@ -11535,7 +11561,7 @@ not global class options or forwarded options. An unknown caller option
 without a catch-all emits an explicit request, settled as W0110 only when
 its site is live. `\\ProvidesPackage` and `\\NeedsTeXFormat` identify the
 file and produce nothing. -/
-def resolveStyOptions (passed : List String) (raws : Array Raw) : Array StyOptionStep := Id.run do
+private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array StyOptionStep := Id.run do
   let mut out : Array StyOptionStep := #[]
   let mut declared : Array (String × Option (Array Raw)) := #[]
   let mut fallback : Option (Array Raw) := none
@@ -11763,15 +11789,15 @@ document goes through — no second rule set. Returns the splice records
 (file, enclosing file when not the document itself, position); the read
 is named once per record (N0020), built after elaboration (`styRead`),
 when the honoured/named counts exist. -/
-def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
+public def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
     Array Raw × Array (String × Option String × Pos) :=
   applyStyList stys raws #[] #[] raws.toList 0 0
 
 private theorem spliceUse_empty (raws : Array Raw) (cn : String) (pos : Pos) (i : Nat) :
-    spliceUse #[] raws cn pos i = none := rfl
+    spliceUse #[] raws cn pos i = none := by rfl
 
 private theorem spliceTheme_empty (raws : Array Raw) (pre : String) (pos : Pos) (i : Nat) :
-    spliceTheme #[] raws pre pos i = none := rfl
+    spliceTheme #[] raws pre pos i = none := by rfl
 
 mutual
 
@@ -11823,7 +11849,7 @@ suffix registry's `_id`. The full substitution — each preamble-position
 `applyLocalSty`'s own definition; downstream, elaboration equality with a
 hand-spliced document is definitional because the preamble fold treats
 every input wrapper uniformly (`Elab.elabDoc`'s `@file:` markers). -/
-theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[]) := by
+public theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[]) := by
   rw [applyLocalSty, applyStyList_empty]
   simp
 
@@ -11833,7 +11859,7 @@ when a warning does, and a TeX internal refused when a demoted refusal
 does — a note that kept its W0301/W0357/W0391 code is the demotion's
 signature, and at this point in the run nothing else makes one (`\allow`
 acceptance resolves later, in the driver). -/
-def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
+public def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
   let mine := diags.filter fun d => d.span.any (·.file == sty)
   ((mine.filter (·.code == "N0100")).size,
    (mine.filter (·.severity == .warning)).size,
@@ -11850,7 +11876,7 @@ message-length lint.
 A theme file that shadows a shipped bundle says so instead: the two compose
 (`spliceTheme`), and a note that named only one of them would leave the
 other silent. -/
-def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
+public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
   let (honoured, named, refused) := styCounts sty diags
   let counts := s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}"
   let over := if sty.startsWith "beamertheme" && sty.endsWith ".sty" then
@@ -11888,7 +11914,7 @@ manual's unit tables: SI base and derived units, and the accepted
 non-SI units). Ω is spelled U+03A9: the input path NFC-normalizes, so
 one spelling reaches the fonts. `\kilogram` and `\decibel` carry their
 composed symbols. -/
-def siUnits : List (String × String) :=
+private def siUnits : List (String × String) :=
   [("kilogram", "kg"), ("metre", "m"), ("meter", "m"), ("mole", "mol"),
    ("second", "s"), ("ampere", "A"), ("kelvin", "K"), ("candela", "cd"),
    ("gram", "g"),
@@ -11908,7 +11934,7 @@ def siUnits : List (String × String) :=
 /-- The SI prefixes, from the same declarations
 (`\siunitx_declare_prefix:Nnn`, siunitx.sty v3): quecto through quetta.
 µ is U+03BC, siunitx's own scalar for `\micro`. -/
-def siPrefixes : List (String × String) :=
+private def siPrefixes : List (String × String) :=
   [("quecto", "q"), ("ronto", "r"), ("yocto", "y"), ("zepto", "z"),
    ("atto", "a"), ("femto", "f"), ("pico", "p"), ("nano", "n"),
    ("micro", "\u03BC"), ("milli", "m"), ("centi", "c"), ("deci", "d"),
@@ -12264,7 +12290,7 @@ spelled text under the document's own locale. Third in the document's
 warn-once chain (`rewrite`'s docstring carries why the set travels): the
 keys it receives are the ones `rewrite` fired, the keys it returns go on to
 the elaborator. -/
-def rewriteText (file : String) (raws : Array Raw) (warned : Array String := #[]) :
+public def rewriteText (file : String) (raws : Array Raw) (warned : Array String := #[]) :
     Array Raw × Array Diag × Array String :=
   if !textNeededList raws.toList then (raws, #[], warned) else
   let loc := ((declaredTagList raws.toList).bind Locale.forTag).getD Locale.en

@@ -1,4 +1,6 @@
-import LeanTex.Core.Compat
+module
+
+public import LeanTex.Core.Compat
 
 namespace LeanTex.Core.CompatContract
 
@@ -15,7 +17,7 @@ and the remaining state are quantified by `ControlGroupsConsumed`. The
 unknown probe from the original obligation instead leaves its entire tail
 for elaboration. No fact about Elab recovery, its diagnostics, or shipped ink
 is assumed or concluded here. -/
-theorem ctrl_groups_consumed_contract :
+public theorem ctrl_groups_consumed_contract :
     (∀ row ∈ Compat.meaningFree,
       Compat.ControlGroupsConsumed row.1 row.2.1) ∧
     (∀ row ∈ Compat.configSkip,
@@ -26,7 +28,7 @@ theorem ctrl_groups_consumed_contract :
 
 /-- The operand the style-file scanner reads from an expanded loading call.
 Options and missing arguments follow the production readers exactly. -/
-def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
+@[expose] public def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
   let call := #[Raw.ctrl command pos] ++ tail
   rawSrc ((Compat.takeGroups call (Compat.takeOpt call 1).2 1).1.getD 0 #[])
 
@@ -39,7 +41,7 @@ A W0319 from native `\theme` does not identify a style-file request; W0103
 can instead refuse a native package's options. Neither a diagnostic code nor
 the unexpanded document determines this contract's loading call. The driver
 applies `localStyCandidates` to `InputRequest.call` at the expanded stage. -/
-theorem nameRefusals_asked (pos : Pos) (tail : Array Raw) :
+public theorem nameRefusals_asked (pos : Pos) (tail : Array Raw) :
     (∀ command, command = "usepackage" ∨ command = "RequirePackage" →
       ∀ part ∈ (loadArgument command pos tail).splitOn ",",
         part.trimAscii.toString.isEmpty = false →
