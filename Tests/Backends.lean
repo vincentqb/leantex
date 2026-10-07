@@ -1,4 +1,5 @@
 import Tests.Support
+import scripts.Gate
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -1288,6 +1289,38 @@ or is named on the allowlist with its reason (`themeCss`'s deck progress
 bar ships only under the theme's own stylesheet, whose global reduce
 block covers it). Doc comments are stripped first so prose spelling
 "animation:" cannot satisfy or trip the census. -/
+private def unguardedAnimations (src : String) : Array String := Id.run do
+  let ownGated := ["themeCss"]
+  let stripped := match src.splitOn "/--" with
+    | [] => ""
+    | first :: rest => first ++ String.join (rest.map fun (seg : String) =>
+        String.intercalate "-/" ((seg.splitOn "-/").drop 1))
+  let mut name := ""
+  let mut body := ""
+  let mut blocks : Array (String × String) := #[]
+  for line in stripped.splitOn "\n" do
+    let head := (declarationHead line).2
+    let starter := ["def ", "theorem ", "abbrev ", "opaque ", "axiom ",
+      "structure ", "inductive ", "instance ", "mutual", "end "].any (head.startsWith ·)
+    if starter then
+      blocks := blocks.push (name, body)
+      name := if head.startsWith "def " then
+          (((head.splitOn "def ").getD 1 "").splitOn " ").headD ""
+        else ""
+      body := line
+    else
+      body := body ++ "\n" ++ line
+  blocks := blocks.push (name, body)
+  let mut faults := #[]
+  for (n, b) in blocks do
+    if !n.isEmpty && (b.splitOn "animation:").length > 1 then
+      let lastToken := (((b.trimAscii.toString.splitOn "\n").getLast?.getD ""
+        ).trimAscii.toString.splitOn " ").getLast?.getD ""
+      unless (b.splitOn "prefers-reduced-motion").length > 1 ||
+          lastToken.endsWith "Guard" || ownGated.contains n do
+        faults := faults.push n
+  return faults
+
 def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut files := (← System.FilePath.walkDir "LeanTex").filter
     (·.toString.endsWith ".lean")
@@ -1300,34 +1333,18 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     if (src.splitOn "animation:").length > 1 then
       check ref s!"animation is spelled only in HtmlDoc ({f})"
         (f.toString.endsWith "HtmlDoc.lean")
-  let ownGated := ["themeCss"]
-  let src ← IO.FS.readFile "LeanTex/Core/HtmlDoc.lean"
-  let stripped := match src.splitOn "/--" with
-    | [] => ""
-    | first :: rest => first ++ String.join (rest.map fun (seg : String) =>
-        String.intercalate "-/" ((seg.splitOn "-/").drop 1))
-  let mut name := ""
-  let mut body := ""
-  let mut blocks : Array (String × String) := #[]
-  for line in stripped.splitOn "\n" do
-    let starter := ["def ", "private def ", "theorem ", "private theorem ",
-      "structure ", "instance ", "mutual", "end "].any (line.startsWith ·)
-    if starter then
-      blocks := blocks.push (name, body)
-      name := if line.startsWith "def " || line.startsWith "private def " then
-          (((line.splitOn "def ").getD 1 "").splitOn " ").headD ""
-        else ""
-      body := line
-    else
-      body := body ++ "\n" ++ line
-  blocks := blocks.push (name, body)
-  for (n, b) in blocks do
-    if !n.isEmpty && (b.splitOn "animation:").length > 1 then
-      let lastToken := (((b.trimAscii.toString.splitOn "\n").getLast?.getD ""
-        ).trimAscii.toString.splitOn " ").getLast?.getD ""
-      check ref s!"animation-emitting def carries its guard ({n})"
-        ((b.splitOn "prefers-reduced-motion").length > 1 ||
-         lastToken.endsWith "Guard" || ownGated.contains n)
+  for declPrefix in ["", "private ", "public ", "@[inline] public ",
+      "noncomputable public "] do
+    let safe := declPrefix ++ "def safe := \"animation: none;\" ++ reducedMotionGuard\n"
+    let unsafe_ := declPrefix ++ "def unguarded := \"animation: pulse 1s;\"\n"
+    check ref s!"motion scan accepts guarded {declPrefix}declarations"
+      (unguardedAnimations safe == #[])
+    check ref s!"motion scan rejects unguarded {declPrefix}declarations"
+      (unguardedAnimations (safe ++ unsafe_) == #["unguarded"])
+    check ref s!"motion scan attributes guards to their own {declPrefix}declaration"
+      (unguardedAnimations (unsafe_ ++ safe) == #["unguarded"])
+  for n in unguardedAnimations (← IO.FS.readFile "LeanTex/Core/HtmlDoc.lean") do
+    check ref s!"animation-emitting def carries its guard ({n})" false
 
 /-- The paged deck's stylesheet is the slides class's own: snap paging on
 screen, the handout card in print, and no other class ships a deck rule —

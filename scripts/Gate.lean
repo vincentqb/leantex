@@ -46,6 +46,32 @@ truncates the code after it — strip strings first when both apply. -/
 def stripLineComment (l : String) : String :=
   (l.splitOn "--").headD l
 
+/-- Normalize a line-leading declaration's modifiers and attributes for source
+conventions, retaining whether it is private. Nested declarations do not
+count. Attributes must finish on this line; comment and string state remain
+the caller's responsibility. This is a lexical aid, not the Lean parser. -/
+def declarationHead (line : String) : Bool × String := Id.run do
+  if (line.toList.head?.map Char.isWhitespace).getD false then return (false, "")
+  let mut hidden := false
+  let mut brackets := 0
+  let mut started := false
+  let mut words : List String := []
+  for part in (stripLineComment line).split Char.isWhitespace do
+    let word := part.toString
+    if word.isEmpty then continue
+    if started then words := word :: words
+    else if brackets > 0 || word.startsWith "@[" then
+      for c in word.toList do
+        if c == '[' then brackets := brackets + 1
+        else if c == ']' then brackets := brackets - 1
+    else if ["public", "private", "protected", "noncomputable", "unsafe",
+        "partial", "meta"].contains word then
+      hidden := hidden || word == "private"
+    else
+      started := true
+      words := [word]
+  return (hidden, String.intercalate " " words.reverse)
+
 /-- Composed so no gate script's own staged diff contains the banned word
 as a word-delimited token — the hook scans every .lean file, these
 included. -/

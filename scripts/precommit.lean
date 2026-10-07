@@ -490,7 +490,8 @@ whose census fact the obligation table's walk row owes. Returns the def's
 name. A signature split across lines is not seen — the same line-scanner
 limitation as `ioInCore`, stated, not claimed away. -/
 def walkEntry (l : String) : Option String := Id.run do
-  let t := stripLineComment l
+  let (hidden, t) := declarationHead l
+  if hidden then return none
   unless t.startsWith "def " do return none
   let name := String.ofList (((t.drop 4).toString).toList.takeWhile isWordChar)
   if name.isEmpty then return none
@@ -1217,18 +1218,42 @@ def selftestFrameDebt : List (String × String) :=
    ("scripts/parity.lean", "its assertions push to a local array; each becomes a `no` call")]
 
 /-- The top-level `def` name a line binds, dots included, for the
-gates that need to know which definition a line stands inside: only
-unindented `def`/`private def`, so a nested helper or a prose mention never
-counts. The name is the whole declared one — truncating it at the first dot
+gates that need to know which definition a line stands inside. Visibility,
+attributes and declaration modifiers do not change ownership; a nested helper
+or a prose mention never counts. The name is the whole declared one — truncating it at the first dot
 made every `Foo.bar` in the tree read as `Foo`, so two files declaring
 different members of one namespace read as one helper declared twice. -/
 def topLevelDefName (l : String) : Option String :=
-  let t := stripLineComment l
-  if t.startsWith "def " || t.startsWith "private def " then
-    let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
-    let n := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
+  let t := (declarationHead l).2
+  if t.startsWith "def " then
+    let rest := (t.drop 4).toString
+    let n := (rest.takeWhile (fun c => isWordChar c || c == '.' || c == '\'')).toString
     if n.isEmpty then none else some n
   else none
+
+/-- Resolve line-leading definition names through namespace and section scopes.
+This shares `declarationHead`'s lexical limits; it does not elaborate aliases.
+Two modules may both define `checks` in distinct namespaces without defining
+the same helper. Sections change scope lifetime, not the namespace. -/
+def scopedDefNames (lines : Array String) : Array String := Id.run do
+  let qualify (space name : String) :=
+    if name.startsWith "_root_." then (name.drop 7).toString
+    else if space.isEmpty then name else space ++ "." ++ name
+  let mut scopes : List String := []
+  let mut out := #[]
+  for line in lines do
+    let head := (declarationHead line).2
+    let space := scopes.headD ""
+    if head.startsWith "namespace " then
+      let name := ((head.drop 10).toString.splitOn " ").headD ""
+      scopes := qualify space name :: scopes
+    else if head == "section" || head.startsWith "section " then
+      scopes := space :: scopes
+    else if head == "end" || head.startsWith "end " then
+      scopes := scopes.tail
+    else if let some name := topLevelDefName line then
+      out := out.push (qualify space name)
+  return out
 
 /-- CLI terminal output has a small, audited boundary. Document diagnostics
 remain Diag values until Ui.diag calls Render; other writers carry status,
@@ -1326,8 +1351,7 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     let stream := ns.any fun n =>
       ["IO.getStdout", "IO.getStderr", "getStdout", "getStderr"].contains n ||
       n.endsWith ".outStream" || n.endsWith ".errStream"
-    -- The shared def-name reader stops before the apostrophe in Ui.mk'.
-    if (terminal && !writer) || (stream && !writer && !(driver && owner == "Ui.mk")) then
+    if (terminal && !writer) || (stream && !writer && !(driver && owner == "Ui.mk'")) then
       out := out.push (row + 1, "terminal write or stream outside a UI/command handler")
     if rendered && !sink && file != "LeanTex/Cli/Render.lean" then
       out := out.push (row + 1, "diagnostic rendered before the typed sink")
@@ -1621,6 +1645,11 @@ def selftest : IO UInt32 := do
     -- the Support-rule gate: only a top-level def counts
     ("def deckBuilder (body : String) : String := body", true),
     ("private def helper2 : IO Unit := pure ()", true),
+    ("public def exposed : IO Unit := pure ()", true),
+    ("@[inline] public def exposed : IO Unit := pure ()", true),
+    ("@[simp, inline] private def helper := 1", true),
+    ("noncomputable public def choice := Classical.choose h", true),
+    ("public unsafe def unsafeHelper := 1", true),
     ("  def nested := 1", false),
     ("-- def commented := 1", false),
     ("definition prose speaking of def forms", false),
@@ -1632,7 +1661,22 @@ def selftest : IO UInt32 := do
   expect "topLevelDefName keeps the namespace"
     (fun l => topLevelDefName l == some "ArtRun.isArtifact") [
     ("def ArtRun.isArtifact (r : ArtRun) : Bool := r.marks.any ArtMark.isArtifact", true),
+    ("@[inline] public def ArtRun.isArtifact (r : ArtRun) : Bool := true", true),
     ("def ArtRun (r : ArtRun) : Bool := true", false)]
+  expect "topLevelDefName keeps primes" (fun l => topLevelDefName l == some "Ui.mk'") [
+    ("public def Ui.mk' := 1", true), ("def Ui.mk := 1", false)]
+  let scopedNames := scopedDefNames #[
+    "namespace First", "public def checks := 1", "section Local",
+    "@[inline] public def checks' := 2", "end Local", "namespace Nested",
+    "def checks := 3", "def _root_.Root.checks := 4", "end Nested", "end First",
+    "namespace Second", "private def checks := 5", "end Second", "def checks := 6"]
+  unless scopedNames == #["First.checks", "First.checks'", "First.Nested.checks",
+      "Root.checks", "Second.checks", "checks"] do
+    fails.modify ("scopedDefNames: namespace or section ownership was lost" :: ·)
+  unless scopedDefNames #["namespace First", "def checks := 1", "end First",
+      "namespace First", "public def checks := 2", "end First"] ==
+      #["First.checks", "First.checks"] do
+    fails.modify ("scopedDefNames: reopening a namespace hid a duplicate" :: ·)
 
   expect "quadraticPrepend" quadraticPrepend [
     -- the walks this tree has produced, all of which must fire
@@ -1949,6 +1993,13 @@ def selftest : IO UInt32 := do
     ("def fillTemplate (template content : Array Inline) : Array Inline :=", true),
     -- a body on the definition line does not evade the scan
     ("def sneakyWalk (xs : Array Block) : Array Block := xs", true),
+    ("public def visibleWalk (xs : Array Block) : Array Block := xs", true),
+    ("@[inline] public def visibleWalk (xs : Array Inline) : Array Inline := xs", true),
+    ("noncomputable public def visibleWalk (xs : Array Block) : Array Block := xs", true),
+    ("@[simp, inline] public def visibleWalk (xs : Array Inline) : Array Inline := xs", true),
+    ("private def helperWalk (xs : Array Block) : Array Block := xs", false),
+    ("@[inline] private def helperWalk (xs : Array Block) : Array Block := xs", false),
+    ("  def nestedWalk (xs : Array Block) : Array Block := xs", false),
     -- a List companion is scaffolding, not the public entry
     ("def unwrapItemStepList (out : Array Block) : List Block → Array Block", false),
     -- a rendering makes its output from another type: not IR-to-IR
@@ -2198,8 +2249,16 @@ def selftest : IO UInt32 := do
         ["def Ui.diag (d : Diag) :=",
          "  IO.eprintln (Render.human false d ++ reprStr d." ++ field ++ ")"], true)]
   for (what, file, lines, bad) in diagCases do
-    let got := !(diagnosticOutputBypasses file lines.toArray).isEmpty
-    if got != bad then fails.modify (s!"diagnosticOutputBypasses {what}: got {got}, want {bad}" :: ·)
+    for declPrefix in ["", "public ", "private ", "@[inline] public "] do
+      let source := lines.map fun line =>
+        if line.startsWith "def " then s!"{declPrefix}{line}" else line
+      let got := !(diagnosticOutputBypasses file source.toArray).isEmpty
+      if got != bad then
+        fails.modify (s!"diagnosticOutputBypasses {declPrefix}{what}: got {got}, want {bad}" :: ·)
+  let escapedWriter := #["public def Ui.phase := IO.println \"finished\"",
+    "public def report := IO.eprintln msg"]
+  unless (diagnosticOutputBypasses "LeanTex/Cli/Driver.lean" escapedWriter).map (·.1) == #[2] do
+    fails.modify ("diagnosticOutputBypasses: public helper inherited an allowed writer" :: ·)
 
   let failed := (← fails.get).reverse
   if failed.isEmpty then
@@ -2641,9 +2700,8 @@ def main (args : List String) : IO UInt32 := do
   let mut defSites : Array (String × String) := #[]
   for f in testFiles do
     let txt ← IO.FS.readFile f
-    for l in txt.splitOn "\n" do
-      if let some name := topLevelDefName l then
-        defSites := defSites.push (name, f)
+    for name in scopedDefNames (txt.splitOn "\n").toArray do
+      defSites := defSites.push (name, f)
   for (name, f) in defSites do
     for (name2, f2) in defSites do
       if name == name2 && f < f2 then
