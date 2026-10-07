@@ -717,9 +717,29 @@ public structure Decorations (U : Type := Bool) [Inhabited U] where
   lineThrough : Option DecorationRule := none
   deriving Repr, BEq, Inhabited
 
+/-- An inline formula shares the surrounding text's rhythm, but reserves
+its own measured reach. The ambient metrics are already scaled to `size`;
+`top` and `bottom` are signed outline bounds before the run's raise.
+They are carried separately from glyphs so a phantom keeps its geometry. -/
+public structure MathLineMetrics where
+  size : Sp
+  ascent : Sp
+  descent : Sp
+  top : Sp
+  bottom : Sp
+  deriving Repr, BEq, Inhabited
+
+/-- Text uses its face's leaded box. Math uses the ambient text box and
+its measured construction bounds, never a second text box derived from
+the math face's ascender/descender or its optically matched em. -/
+public structure RunMetrics where
+  leading : Option Sp := none
+  math : Option MathLineMetrics := none
+  deriving Repr, BEq, Inhabited
+
 public inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (metrics : RunMetrics)
       (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
       (attr : Attribution)
   | glue (g : Glue)
@@ -762,7 +782,7 @@ public inductive Seg where
   run at script size. `attr` names the structure leaf (or the generated
   kind) the ink stands for. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (metrics : RunMetrics)
       (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
       (attr : Attribution)
   /-- Horizontal space. `word` is true exactly for glue that came from
@@ -2284,7 +2304,7 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
   if box.isEmpty then return (items, offsets, sources)
   let first := boxOwners[0]?.getD attr
   if boxOwners.all (· == first) then
-    return (items.push (.box w fontIdx color link box size leading decorations 0 ground first),
+    return (items.push (.box w fontIdx color link box size {leading} decorations 0 ground first),
       offsets, sources ++ boxSources.map (·, items.size))
   let mut items := items
   let mut offsets := offsets
@@ -2297,7 +2317,7 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     let next := boxOwners[k]?.getD attr
     if next != owner then
       if offset != 0 then offsets := offsets.insert items.size offset
-      items := items.push (.box runW fontIdx color link run size leading decorations 0 ground owner)
+      items := items.push (.box runW fontIdx color link run size {leading} decorations 0 ground owner)
       offset := offset + runW
       run := #[]
       runW := 0
@@ -2306,7 +2326,7 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     runW := runW + g.2.2
     sources := sources.push (boxSources[k]!, items.size)
   if offset != 0 then offsets := offsets.insert items.size offset
-  return (items.push (.box runW fontIdx color link run size leading decorations 0 ground owner),
+  return (items.push (.box runW fontIdx color link run size {leading} decorations 0 ground owner),
     offsets, sources)
 
 private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
@@ -2587,7 +2607,7 @@ private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option Stri
     | some (fb, g) =>
       let st := st.flush fontIdx color link size leading decorations ground attr
       let st := { st with sources := st.sources.push (sourceId, st.items.size),
-                           items := st.items.push (.box g.2.2 fb color link #[g] size leading
+                           items := st.items.push (.box g.2.2 fb color link #[g] size {leading}
                              decorations 0 ground owner) }
       if st.substs.any (fun e => e.1 == fontIdx && e.2.1 == c) then st
       else { st with substs := st.substs.push (fontIdx, c, fb)
@@ -2750,7 +2770,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           st := st.flush fontIdx color link size leading decorations ground attr
           st := { st with
             sources := st.sources.push (i, st.items.size)
-            items := st.items.push (.box (size * num / den) fontIdx color link #[] size leading
+            items := st.items.push (.box (size * num / den) fontIdx color link #[] size {leading}
               decorations 0 ground (owners[i]?.getD attr)) }
           i := i + 1
         | none =>
@@ -2759,7 +2779,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             st := st.flush fontIdx color link size leading decorations ground attr
             st := { st with
               sources := st.sources.push (i, st.items.size)
-              items := st.items.push (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size leading
+              items := st.items.push (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size {leading}
                   decorations 0 ground (owners[i]?.getD attr)) }
             i := i + 1
           else
@@ -3384,6 +3404,10 @@ private structure MathEnv where
   base : Sp
   /-- Ambient text size, before matching the math face's x-height. -/
   textBase : Sp
+  /-- The surrounding text's scaled vertical metrics. Formula runs keep
+  this common strut even when their individual glyphs are scripts. -/
+  textAscent : Sp
+  textDescent : Sp
   ground : Option Ir.Color := none
   /-- The formula's attribution: its one `Struct` leaf (the source), on
   every box the assembly builds. No default: the one construction site
@@ -3398,6 +3422,8 @@ private def MathEnv.forRun (fs : FontSet) (idx : Nat) (font : Font)
   { idx, font, consts, fs, color := Ir.Color.black, link := none
     decorations := {}, leading := none, attr := .unattributed
     textBase := runSize
+    textAscent := scaledAt runSize around around.ascent.toNat
+    textDescent := scaledAt runSize around (-around.descent).toNat
     base := (Math.mathSize runSize.toNat around.xHeightOptical
       around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
 
@@ -3426,9 +3452,33 @@ private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :
     (hi * size / (e.font.unitsPerEm : Int), lo * size / (e.font.unitsPerEm : Int))
   | none => (e.font.capHeight * size / (e.font.unitsPerEm : Int), 0)
 
+/-- Reserve a formula's reach against its ambient font-relative strut.
+The signed bounds are independent of the run's subsequent raise. -/
+private def MathEnv.metrics (e : MathEnv) (top bottom : Sp) : RunMetrics :=
+  { leading := e.leading, math := some {
+      size := e.textBase, ascent := e.textAscent, descent := e.textDescent,
+      top, bottom } }
+
+/-- A math run's vertical hull is measured in its actual face, including
+text alphabets and per-scalar fallbacks. An undecodable outline retains
+the face's ascent/descent, as `segsInk` does; that fallback is not a proof
+of painted containment. -/
+private def mathBox (e : MathEnv) (idx : Nat) (w : Sp)
+    (glyphs : Array (Nat × Char × Sp)) (size raise : Sp) : Item :=
+  let font := e.fs.get idx
+  let (top, bottom) := glyphs.foldl (fun (top, bottom) (g, _, _) =>
+    let (hi, lo) := match font.yExtent g with
+      | some (lo, hi) =>
+        (hi * size / (font.unitsPerEm : Int), lo * size / (font.unitsPerEm : Int))
+      | none => (font.ascent * size / (font.unitsPerEm : Int),
+          font.descent * size / (font.unitsPerEm : Int))
+    (max top hi, min bottom lo)) (0, 0)
+  .box w idx e.color e.link glyphs size (e.metrics top bottom)
+    e.decorations raise e.ground e.attr
+
 /-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
-  .box w e.idx e.color e.link #[] size e.leading e.decorations 0 e.ground e.attr
+  .box w e.idx e.color e.link #[] size (e.metrics 0 0) e.decorations 0 e.ground e.attr
 
 /-- Width of assembled math items: glyph boxes, kerns and rules advance
 the pen. Include a nested construction's rule before its rewind kern,
@@ -3462,7 +3512,10 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
     some (bounds.map (·.union b) |>.getD b)
   for it in items do
     match it with
-    | .box w fi _ _ glyphs size _ _ raise _ _ =>
+    | .box w fi _ _ glyphs size metrics _ raise _ _ =>
+      if !paintOnly then
+        if let some m := metrics.math then
+          bounds := add bounds ⟨pen, raise + m.bottom, pen + w, raise + m.top⟩
       let font := fs.get fi
       let upem : Int := font.unitsPerEm
       let mut gx := pen
@@ -3518,14 +3571,11 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
     | .pen w c f i col g => .pen w c f i col g
     | .img s w h => .img s w h
 
-/-- TeX's strut: an invisible box whose only effect is the line's height or
-depth. `placeLine` reads a run's height as its cap height (at the run's
-size) plus its raise, so a 1 sp box raised to `top` (and one sunk to `bot`)
-tells the line builder exactly the room an assembled construction needs —
-the fraction hanging above and below, the grown delimiter's reach. -/
+/-- An invisible construction box reserves the declared reach directly.
+No one-sp font run or inherited leading is added to those bounds. -/
 private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
-  #[.box 0 e.idx e.color e.link #[] 1 e.leading {} (max 0 top) e.ground e.attr,
-    .box 0 e.idx e.color e.link #[] 1 e.leading {} (min 0 bot) e.ground e.attr]
+  #[.box 0 e.idx e.color e.link #[] 1 (e.metrics (max 0 top) (min 0 bot))
+    {} 0 e.ground e.attr]
 
 /-- The size ladder a glyph grows through: its vertical variants, or just
 itself when the face grows it no further. -/
@@ -3559,7 +3609,7 @@ private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
       let (vTop, vBot) := e.glyphExtent size gv
       let w := scaledAt size e.font (e.font.widths[gv]?.getD 0)
       let dRaise := raise + axis - (vTop + vBot) / 2
-      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.leading e.decorations dRaise e.ground e.attr),
+      (items.push (mathBox e e.idx w #[(gv, c, w)] size dRaise),
        missing, dRaise - raise + vTop, dRaise - raise + vBot)
     | none =>
       (items, if missing.contains (e.idx, c) then missing else missing.push (e.idx, c),
@@ -3778,7 +3828,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
         return (#[mathKern e size kernB] ++ raiseItems degRaise degItems).push
           (mathKern e size kernA)
     let items := (degPrefix.push
-        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.leading e.decorations surdRaise e.ground e.attr)
+        (mathBox e e.idx surdW #[(gv, '\u221A', surdW)] size surdRaise)
       |>.push (Item.rule bodyW θ (raise + ruleBot) e.color)
       |>.push (mathKern e size (-bodyW)))
       ++ raisedBody
@@ -3839,7 +3889,7 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
       max 0 (bTop - e.constAt size e.consts.accentBaseHeight)
     let (mTop, mBot) := e.glyphExtent size gv
     let items := ((raisedBody.push (mathKern e size (-baseW + shift))).push
-        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.leading e.decorations accRaise e.ground e.attr)
+        (mathBox e e.idx wAcc #[(gv, mark, wAcc)] size accRaise)
       |>.push (mathKern e size (baseW - shift - wAcc)))
       ++ struts e (max (raise + bTop) (accRaise + mTop))
         (min (raise + bBot) (accRaise + mBot))
@@ -3980,7 +4030,7 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           let (vTop, vBot) := e.glyphExtent size gv
           let axis := e.constAt size e.consts.axisHeight
           let vRaise := raise + axis - (vTop + vBot) / 2
-          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.leading e.decorations vRaise e.ground e.attr)]
+          (#[mathBox e e.idx w #[(gv, c, w)] size vRaise]
             ++ struts e (vRaise + vTop) (vRaise + vBot), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then (#[], acc.2)
@@ -4050,7 +4100,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let size := e.sizeAt st
     match glyphOf size e.font c with
     | some g =>
-      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.leading e.decorations raise e.ground e.attr)), acc.2)
+      (acc.1.push (mathBox e e.idx g.2.2 #[g] size raise), acc.2)
     | none =>
       -- A scalar the math face lacks goes through the per-scalar chain the
       -- driver precomputed for text (`FontSet.fallback`) — one mechanism,
@@ -4058,7 +4108,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match e.fs.fallbackFor c |>.bind fun fb =>
           (glyphOf size (e.fs.get fb) c).map (fb, ·) with
       | some (fb, g) =>
-        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.leading e.decorations raise e.ground e.attr)), acc.2)
+        (acc.1.push (mathBox e fb g.2.2 #[g] size raise), acc.2)
       | none =>
         -- A math alphabet's scalar uncovered everywhere: the base letter
         -- stands in — bold/italic from the text face where that is the
@@ -4073,7 +4123,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           return (fi, g)
         match synth with
         | some (fi, g) =>
-          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.leading e.decorations raise e.ground e.attr)), acc.2)
+          (acc.1.push (mathBox e fi g.2.2 #[g] size raise), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then acc
           else (acc.1, acc.2.push (e.idx, c))
@@ -4088,7 +4138,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let fi := e.fs.lookup style.slot.toNat style.weight style.italic
     match glyphOf size (e.fs.get fi) c with
     | some g =>
-      ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.leading e.decorations raise e.ground e.attr)), acc.2)
+      (acc.1.push (mathBox e fi g.2.2 #[g] size raise), acc.2)
     | none =>
       if acc.2.contains (fi, c) then acc
       else (acc.1, acc.2.push (fi, c))
@@ -4109,7 +4159,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match hit with
       | some (fi, g) =>
         if fi != cur && !glyphs.isEmpty then
-          items := items.push (.box w cur e.color e.link glyphs size e.leading e.decorations raise e.ground e.attr)
+          items := items.push (mathBox e cur w glyphs size raise)
           glyphs := #[]
           w := 0
         cur := fi
@@ -4118,7 +4168,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | none =>
         unless missing.contains (e.idx, c) do
           missing := missing.push (e.idx, c)
-    return (items.push (.box w cur e.color e.link glyphs size e.leading e.decorations raise e.ground e.attr), missing)
+    return (items.push (mathBox e cur w glyphs size raise), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .alpha _ _ body =>
@@ -4279,7 +4329,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
       gs := gs.push g
       w := w + g.2.2
     | none => miss := miss.push (idx, c)
-  return (.box w idx sty.color sty.link gs markSize none decorations raise sty.ground attr, miss)
+  return (.box w idx sty.color sty.link gs markSize {} decorations raise sty.ground attr, miss)
 
 /-- The token fold's state: what the walk has built, and what it has
 lost beside it. `dropped` is the never-silent ledger — a (face, char)
@@ -4619,7 +4669,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (glyphOf sz (fs.get fb) c).map (fb, ·)
     match hit with
     | some (fb, g) =>
-      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz leading decorations 0
+      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz {leading} decorations 0
         sty.ground attr
       { acc with items := acc.items.push box }
     | none =>
@@ -6782,7 +6832,7 @@ where that local rounding would differ from the original shaping origin;
 each piece retains its glyph advances, paint and structure owner. -/
 private def setWordBox (segs : Array Seg) (f offset w : Sp)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution) : Array Seg := Id.run do
   let width := expandSpan f offset w
@@ -6809,7 +6859,7 @@ private def setWordBox (segs : Array Seg) (f offset w : Sp)
 
 private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution) :
     (setWordBox segs f offset w fontIdx color link glyphs size leading decorations raise ground attr).toList.flatMap
@@ -7017,7 +7067,7 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
         | .run _ _ _ _ _ sz ld decorations _ gr _ =>
           if sz != 0 then (sz, ld, decorations, gr) else acc
         | _ => acc)
-        ((0 : Sp), (none : Option Sp), ({} : Decorations), (none : Option Ir.Color))
+        ((0 : Sp), ({} : RunMetrics), ({} : Decorations), (none : Option Ir.Color))
       segs := segs.push
         (.run fontIdx color none w glyphs inherited.1 inherited.2.1
           inherited.2.2.1 0 inherited.2.2.2 .hyphen)
@@ -7085,7 +7135,7 @@ private theorem noGlyph_getD (items : Array Item)
 
 private theorem setWordBox_noGlyph (segs : Array Seg) (f offset w : Sp)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution) (hg : glyphs = #[]) (hs : ∀ s ∈ segs, s.NoGlyph) :
     ∀ s ∈ setWordBox segs f offset w fontIdx color link glyphs size leading
@@ -8544,11 +8594,25 @@ public def Seg.stripGlyphs : Seg → Seg
   | .image s w h => .image s w h
   | .poly pts c => .poly pts c
 
-/-- What a line's box measures: the leaded metric extent above and below
-the baseline (CSS 2.1 §10.8.1 — the interline rule's terms), and the ink
-extent (cap height up, descent down) the convention's two sanctioned ink
-uses read: clearing (page area, furniture bands, flush stacking under a
-table rule) never spacing. -/
+/-- Whether a segment contributes a text strut. -/
+public def Seg.isRun : Seg → Bool
+  | .run .. => true
+  | _ => false
+
+/-- Whether a segment carries an explicit line height. -/
+public def Seg.hasLeading : Seg → Bool
+  | .run _ _ _ _ _ _ metrics _ _ _ _ => metrics.leading.isSome
+  | _ => false
+
+/-- Math geometry is retained even on glyph-free construction struts. -/
+public def Seg.isMath : Seg → Bool
+  | .run _ _ _ _ _ _ metrics _ _ _ _ => metrics.math.isSome
+  | _ => false
+
+/-- A line's font-relative extent above and below the baseline (CSS 2.1
+§10.8.1), enlarged by math construction bounds. The clearing extent uses
+text ink-ascent/descent and the math construction's measured reach.
+Actual neighbouring outlines are read separately by `segsInk`. -/
 public structure LineBox where
   /-- Box top above the baseline: leaded metric ascent, the interline
   term a line contributes when it is the lower neighbour. -/
@@ -8596,9 +8660,8 @@ private theorem reserveLineBox_covers (box : LineBox) (extent : Sp × Sp) :
 triple: the leading less the metric extent, split into integer halves
 that sum back exactly, half above the ascent and half below the descent.
 Negative half-leading is legal and real — ascent plus descent exceeds
-the 6⁄5 leading for three of the four shipped families — so line boxes
-may overlap, which is precisely why TeX's collision test cannot survive
-under ascender metrics. -/
+the 6⁄5 leading for three of the four shipped families. Font metrics
+therefore cannot stand in for actual ink in a collision test. -/
 public def leadedBox (ascent descent leading : Sp) : Sp × Sp :=
   (ascent + (leading - (ascent + descent)) / 2,
    leading - ascent - (leading - (ascent + descent)) / 2)
@@ -8626,15 +8689,23 @@ private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox
 
 private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
     (acc : Option LineBox) : Seg → Option LineBox
-  | .run idx _ _ _ _ sz leading _ raise _ _ =>
-    let font := fs.get idx
-    let sz := if sz == 0 then nominal else sz
-    let lineHeight := leading.getD (Ir.leadingFor sz leadFactor)
-    let box := leadedBox (scaledAt sz font font.ascent.toNat)
-      (scaledAt sz font (-font.descent).toNat) lineHeight
-    mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
-      scaledAt sz font font.inkAscent.toNat + max 0 raise,
-      scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
+  | .run idx _ _ _ _ sz metrics _ raise _ _ =>
+    match metrics.math with
+    | some m =>
+      let lineHeight := metrics.leading.getD (Ir.leadingFor m.size leadFactor)
+      let strut := leadedBox m.ascent m.descent lineHeight
+      let top := max 0 (m.top + raise)
+      let below := max 0 (-m.bottom - raise)
+      mergeLineBox acc ⟨max strut.1 top, max strut.2 below, top, below⟩
+    | none =>
+      let font := fs.get idx
+      let sz := if sz == 0 then nominal else sz
+      let lineHeight := metrics.leading.getD (Ir.leadingFor sz leadFactor)
+      let box := leadedBox (scaledAt sz font font.ascent.toNat)
+        (scaledAt sz font (-font.descent).toNat) lineHeight
+      mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
+        scaledAt sz font font.inkAscent.toNat + max 0 raise,
+        scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
   | .image _ _ h => mergeLineBox acc ⟨h, 0, h, 0⟩
   | .rule _ t r _ | .decoration _ _ t r _ =>
     mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
@@ -8646,9 +8717,9 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
 
 /-- A line's vertical extent, measured seg by seg, each run its own
 leaded metric box (`leadedBox` of the font's ascent and descent at the
-run's size, plus `raise`) — a sans title is as tall as the sans says,
-not as the body face would be at that size, and glyphs are never
-consulted (`line_box_glyph_free`). An image stands `h` above the
+run's size, plus `raise`). Math uses its ambient text strut and its
+premeasured construction bounds. The glyph payload is not read again
+(`line_box_glyph_free`), so phantoms retain those bounds. An image stands `h` above the
 baseline with no depth and no half-leading (CSS 2.1 §10.8.1's
 replaced-element rule): it raises the box, and the leading after it is
 the text's own. A math rule (a fraction bar) reaches from `raise` to
@@ -8664,12 +8735,10 @@ which a phantom body ascent above a 1 pt rule would falsify. -/
 public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
     (leadFactor : Nat) (size : Sp) (segs : Array Seg) : LineBox :=
   let nominal := if size == 0 then fontSize else size
-  let customLeading := segs.any fun s => match s with
-    | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
-    | _ => false
+  let customLeading := segs.any Seg.hasLeading
   let init : Option LineBox :=
     if customLeading then none
-    else if segs.isEmpty || segs.any (· matches .run ..) then
+    else if segs.isEmpty || segs.any Seg.isRun then
       let strut := leadedBox (bodyAscent * nominal / fontSize)
         (bodyDescent * nominal / fontSize) (Ir.leadingFor nominal leadFactor)
       some ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
@@ -8678,22 +8747,12 @@ public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : 
   let measured := segs.foldl (lineBoxStep fs nominal leadFactor) init
   measured.getD ⟨0, 0, 0, 0⟩
 
-/-- The line-box convention's guard: a line's box is the metric extent of
-the (font, size, raise) triples present on it — the fonts' declared
-vertical metrics at each run's size — and never consults a glyph (CSS 2.1
-§10.8.1's model: layout bounds come from font metrics; ink may overflow
-the box). Emptying every run's glyph array changes no component, by fold
-congruence: no arm reads the payload. Everything placed against a line
-measures from these metric lines at the run's own size; ink is read only
-to interrupt (the underline band), to clear (math minimum gaps, furniture
-bands), or where a page stands on TeX's box (`segsInk`: its first line and
-its content's end), never to space one line from the next — but where the
-document declared `\nointerlineskip`, which asks TeX to stand a box on the
-last one with no interline glue (`Spacing.Page.ignoreDepth`). The accepted
-cost is stated here once: a descender-less title keeps its full metric
-depth, so its optical gap to the next line is larger than its ink suggests
-— furniture that moved with the letters would make the artifact
-content-dependent. -/
+/-- Emptying a line's glyph payload while retaining its font metrics and
+premeasured math bounds changes no component of its box. This is also the
+phantom contract. It does not claim that all placement is glyph-free:
+`inlineMathGap` separately reads neighbouring outlines to avoid collisions
+at tight leading. Ordinary text still retains its full metric depth,
+including a descender-less title. -/
 public theorem line_box_glyph_free (fs : FontSet)
     (fontSize bodyAscent bodyCap bodyDescent : Sp) (leadFactor : Nat)
     (size : Sp) (segs : Array Seg) :
@@ -8701,18 +8760,14 @@ public theorem line_box_glyph_free (fs : FontSet)
         (segs.map Seg.stripGlyphs) =
       lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size segs := by
   unfold lineExtent
-  have hrun : (segs.map Seg.stripGlyphs).any (· matches Seg.run ..)
-      = segs.any (· matches Seg.run ..) := by
+  have hrun : (segs.map Seg.stripGlyphs).any Seg.isRun
+      = segs.any Seg.isRun := by
     rw [Array.any_map]
     congr 1
     funext s
     cases s <;> rfl
-  have hlead : (segs.map Seg.stripGlyphs).any (fun s => match s with
-      | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
-      | _ => false) =
-      segs.any (fun s => match s with
-        | .run _ _ _ _ _ _ leading _ _ _ _ => leading.isSome
-        | _ => false) := by
+  have hlead : (segs.map Seg.stripGlyphs).any Seg.hasLeading =
+      segs.any Seg.hasLeading := by
     rw [Array.any_map]
     congr 1
     funext s
@@ -8733,10 +8788,9 @@ public theorem line_box_glyph_free (fs : FontSet)
 /-- The box TeX builds around a set line, read from the glyphs' own
 outlines: the tallest glyph above the baseline and the deepest below it,
 each run at its own size and raise; an image stands on the baseline, a
-rule spans its extent, and a glyph whose outline does not decode answers
-its face's metric ascent and descent. The line-box convention spaces no
-line against its neighbour from ink (`line_box_glyph_free`); this is read
-where TeX's box is what the page places or clears — the first line of a
+rule or polygon spans its extent, and a glyph whose outline does not decode
+answers its face's metric ascent and descent. This is read by the math
+collision guard, and where TeX's box is what the page places or clears — the first line of a
 TeX page and the one below an anchor (`Spacing.Page.firstRise`, `anchorRise`), a line
 after `\nointerlineskip` (`Spacing.Page.ignoreDepth`), the content's end a TeX page's
 distribution measures (`placeLine_boxDepth_exact`), and the footline band a
@@ -8753,7 +8807,10 @@ public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
     | .image _ _ h => (max acc.1 h, acc.2)
     | .rule _ t r _ | .decoration _ _ t r _ =>
       (max acc.1 (r + t), max acc.2 (-r))
-    | _ => acc) (0, 0)
+    | .poly pts _ =>
+      pts.foldl (fun (above, below) (_, y) =>
+        (max above y, max below (-y))) acc
+    | .gap .. | .decoratedGap .. => acc) (0, 0)
 
 /-- A line that is bare rule ink: at least one segment, every segment a
 rule. The interline convention measures to its edges (`interlineFor`),
@@ -8792,6 +8849,31 @@ public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
   | .text, false | .box, false => prevBelow + box.above
   | .text, true => box.inkAbove
   | .rule, _ | .box, true => prevDepth + box.inkAbove
+
+/-- Inline math keeps the font-relative leading whenever the two measured
+outline intervals fit. Otherwise it reserves their combined reach, as
+TeX's interline collision test does (tex.web §679). Unlike TeX's separate
+`\lineskip` glue this adds only the needed room: zero is the exact
+non-overlap boundary in scaled points. No arbitrary font strut or clipping
+is imposed. The decoder's bounds and the page's unshrunk coordinates are
+the measurement boundary. -/
+public def inlineMathGap (math : Bool) (normal depth height : Sp) : Sp :=
+  if math then max normal (depth + height) else normal
+
+private def Spacing.Page.previousMath (b : B) : Bool :=
+  b.cur.lines.back?.any fun l => l.segs.any Seg.isMath
+
+/-- Ordinary text retains its metric rhythm. At a text boundary touching
+inline math, the actual neighbouring ink also has to clear. -/
+private def Spacing.Page.textGap (b : B) (box : LineBox)
+    (math : Bool) (height : Sp) : Sp :=
+  inlineMathGap (math || b.previousMath) (b.prevBelow + box.above) b.boxDepth height
+
+private def Spacing.Page.peerGap (b : B) (box : LineBox)
+    (ruleLine math : Bool) (height : Sp) : Sp :=
+  match b.prevBand, ruleLine with
+  | .text, false => b.textGap box math height
+  | _, _ => interlineFor b.prevBand b.prevDepth b.prevBelow ruleLine box
 
 /-- A placement-coordinate bound for a titled, ordinary frame's padded
 first line: normal interline placement reserves the whole painted reach,
@@ -9053,13 +9135,13 @@ private def Spacing.Page.firstRise (b : B) (ink : Sp) (box : LineBox) (lead : Sp
 not the paragraph's nominal size: a line carrying `\Huge` needs room above
 its baseline and below it.
 
-The baseline distance is the metric interline rule (CSS 2.1 §10.8.1): the
-previous line's leaded below plus this line's leaded above — for uniform
-text exactly the leading, unconditionally (`baselines_on_grid`); a size
-change displaces by the larger leaded extent, deterministically,
-glyph-free, with no collision term at all. The HTML backend already ships
-this convention (`line-height`); this is what unifies the backends'
-baselines. Against a rule-only line the terms are ink-referenced
+The baseline distance starts with the metric interline rule (CSS 2.1
+§10.8.1): the previous line's leaded below plus this line's leaded above.
+Uniform ordinary text keeps exactly the leading (`baselines_on_grid`).
+Inline math keeps that ambient rhythm while its construction fits; taller
+math expands the box, and `inlineMathGap` also checks the actual neighbouring
+ink. HTML's `line-height` supplies the same ordinary rhythm; its math
+layout is the browser's boundary. Against a rule-only line the terms are ink-referenced
 (`interlineFor`): a full-measure rule stands its gap from the type's
 body — the cap line above the text, the baseline below it.
 
@@ -9091,6 +9173,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let ink := match paintPadding with
     | some _ => extent
     | none => ink
+  let peer (b : B) := b.peerGap box (ruleOnly segs) (segs.any Seg.isMath) ink.1
   -- A display's box is TeX's too (tex.web §1199), and a display
   -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
   -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`).
@@ -9123,7 +9206,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       else texBaselineGap bs b.boxDepth h
     | _, _ =>
       if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth h
-      else interlineFor b.prevBand b.prevDepth b.prevBelow rl box
+      else peer b
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
   -- and the pending skip an anchor keeps (`Spacing.Page.topKept`). The line's box
@@ -9140,7 +9223,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
          else gap b))
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
-    (fun b => b.y + interlineFor b.prevBand b.prevDepth b.prevBelow rl box)
+    (fun b => b.y + peer b)
     box.inkBelow box.below rl box.inkBelow bottom notes).keepInk d).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
@@ -9223,9 +9306,9 @@ bare rule ink — a rule's realized gap is
 `title_bars_symmetric`'s statement), lands exactly the pending skip's
 natural width plus the
 metric interline — the previous line's leaded below plus this line's
-leaded above — below the previous baseline, with no collision
-side-condition: the realized peer gap for uniform-size text is the leading
-plus the declared skip, unconditionally (`baselines_on_grid`). The
+leaded above — below the previous baseline, enlarged by `inlineMathGap`
+when measured neighbouring math ink requires it. Uniform ordinary text
+keeps the leading plus the declared skip (`baselines_on_grid`). The
 declared gap reaches the page 1:1 — no scaling, no second emission;
 `finishPage_shift_uniform` says page close keeps these deltas, so together
 they carry the declared gap into `Layout.Out`. Rubber is the one
@@ -9242,8 +9325,8 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
     (hfit : b.y + b.skip.width
         + firstBaseline.getD
-          (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
-            b.descent b.geom.leading size segs).above)
+          (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight
+            b.descent b.geom.leading size segs) (segs.any Seg.isMath) (segsInk fs segs).1)
         + b.surfaceTop
         + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
             b.geom.leading size segs).inkBelow + b.surfaceBottom - b.bottom
@@ -9251,8 +9334,8 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (b.placeLine fs x size segs w hang ex #[] false none firstBaseline).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
         + firstBaseline.getD
-          (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
-            b.descent b.geom.leading size segs).above) + b.surfaceTop) := by
+          (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight
+            b.descent b.geom.leading size segs) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   rw [hle] at hfit
@@ -9261,7 +9344,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [displayState_cur, keepInk_cur]
-  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, interlineFor, hnn, noteFloor,
+  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
     htx, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, Spacing.Page.commit, Spacing.Page.attachNotes,
@@ -10341,7 +10424,7 @@ private def collectPara (r : Rd) (a : Acc)
   -- with them.
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
     if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
-    else (#[Item.box (-hangIndent) 0 a.fg none #[] size none {} 0 a.ground .unattributed] ++ items,
+    else (#[Item.box (-hangIndent) 0 a.fg none #[] size {} {} 0 a.ground .unattributed] ++ items,
       extras.fold (fun m k v => m.insert (k + 1) v) {},
       noteBlocks.map (fun (i, nb) => (i + 1, nb)),
       wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
@@ -11049,7 +11132,7 @@ own face and resolved size. This is a measurement theorem, not a claim
 that a font's cap-height bounds arbitrary outlines. -/
 public theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array Seg)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
@@ -11241,7 +11324,7 @@ public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom
     (ink : Ir.Pic.LabelInk)
     (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
     (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
@@ -11687,7 +11770,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   -- the mirror box is a glyphless kern: generated, the equation's
   let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
   let mut items : Array Item :=
-    #[.box numW 0 a.fg none #[] r.geom.fontSize none {} 0 a.ground mirrorAttr,
+    #[.box numW 0 a.fg none #[] r.geom.fontSize {} {} 0 a.ground mirrorAttr,
       .glue { fil := true }]
   items := items ++ citems
   items := items.push (.glue { fil := true })
@@ -20447,7 +20530,7 @@ public structure LineInput where
 public def input (r : Context) (b : Page) (size : Sp) (segs : Array Seg) : LineInput :=
   let box := lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
-  ⟨b.y + b.prevBelow + box.above + b.surfaceTop, box.inkBelow,
+  ⟨b.y + b.textGap box (segs.any Seg.isMath) (segsInk r.fs segs).1 + b.surfaceTop, box.inkBelow,
     Spacing.Page.bottom b - b.surfaceBottom, b.skip, b.pageShrink⟩
 
 /-- Fixed prior layout: an existing non-rule line on the current page,
@@ -20493,16 +20576,16 @@ private theorem skip_steps (r : Context) (b : B) (gs : Array Glue)
 private theorem line_placement (r : Context) (b : Page) (x size : Sp)
     (segs : Array Seg) (width : Sp) (h : Ready b segs)
     (hfit : b.y + b.skip.width +
-      (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs).above) + b.surfaceTop +
+      (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop +
       (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
         b.geom.leading size segs).inkBelow + b.surfaceBottom -
       Spacing.Page.bottom b ≤ b.pageShrink + b.skip.shrink) :
     shipped (Spacing.Page.placeLine r.fs b x size segs width) = shipped b ∧
     baselines (Spacing.Page.placeLine r.fs b x size segs width) =
       (baselines b).push (b.y + b.skip.width +
-        (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs).above) + b.surfaceTop) := by
+        (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+          b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop) := by
   rcases h with ⟨hcur, hfresh, hpr, hrl, hnn, hid, htx⟩
   rcases hle : lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
@@ -20512,7 +20595,7 @@ private theorem line_placement (r : Context) (b : Page) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [displayState_cur, keepInk_cur, displayState_pages, keepInk_pages]
-  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, interlineFor, hnn,
+  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn,
     noteFloor, htx, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true,
     Option.getD_none]
@@ -20535,8 +20618,8 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
   have hr : Ready { b with skip := g } segs := h
   have hp := line_placement r { b with skip := g } x size segs width hr (by
     change b.y + g.width +
-      (b.prevBelow + (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs).above) + b.surfaceTop +
+      (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
+        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop +
       (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
         b.geom.leading size segs).inkBelow + b.surfaceBottom -
       Spacing.Page.bottom b ≤ b.pageShrink + g.shrink
@@ -20550,6 +20633,7 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
   · exact hp.1
   · rw [hp.2]
     simp only [baselines, input, g, Spacing.Page.surfaceTop,
+      Spacing.Page.textGap, Spacing.Page.previousMath, Spacing.Page.boxDepth,
       Int.add_assoc, Int.add_comm, Int.add_left_comm]
 
 end LeanTex.Core.Layout.Spacing
@@ -20632,6 +20716,8 @@ private structure PageRise (a b : B) : Prop where
   descent : a.descent = b.descent
   xHeight : a.xHeight = b.xHeight
   below : a.prevBelow = b.prevBelow
+  depth : a.boxDepth = b.boxDepth
+  math : a.previousMath = b.previousMath
   cursor : a.y + a.skip.width ≤ b.y + b.skip.width
   lines : LinesRise a.cur.lines.toList b.cur.lines.toList
   pages : a.pages = b.pages
@@ -20640,8 +20726,8 @@ private structure PageRise (a b : B) : Prop where
 private def nextBaseline (fs : FontSet) (b : B) (size : Sp)
     (segs : Array Seg) (first : Option Sp) : Sp :=
   b.y + b.skip.width + first.getD
-    (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-      b.geom.leading size segs).above) + b.surfaceTop
+    (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+      b.geom.leading size segs) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop
 
 /-- Numeric fit at the next call to the real placer, before it branches. -/
 private def LineFits (fs : FontSet) (b : B) (size : Sp)
@@ -20678,7 +20764,7 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
   rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit
   dsimp only
-  simp only [Spacing.Page.fresh, hc, hs, Bool.false_and, hp, hr, hi, interlineFor, hn,
+  simp only [Spacing.Page.fresh, hc, hs, Bool.false_and, hp, hr, hi, Spacing.Page.peerGap, hn,
     noteFloor, ht, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true]
   simp only [LineFits, nextBaseline] at hf
@@ -20695,7 +20781,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
       (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab) := by
   have hy : nextBaseline fs a size segs first ≤ nextBaseline fs b size segs first := by
     simp only [nextBaseline, Spacing.Page.surfaceTop, h.regions, h.geom, h.ascent,
-      h.capHeight, h.descent, h.below]
+      h.capHeight, h.descent, Spacing.Page.textGap, h.below, h.depth, h.math]
     exact Int.add_le_add_right (Int.add_le_add_right h.cursor _) _
   rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa ha hfa,
       ordinary_line fs b x size segs w hang expand counted leaf first opens ab hb hfb]
@@ -20706,6 +20792,9 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   · exact h.descent
   · exact h.xHeight
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, h.geom, h.ascent, h.capHeight, h.descent]
+  · simp only [displayState_boxDepth, keepInk_boxDepth_exact]
+  · simp only [Spacing.Page.previousMath, displayState_cur, keepInk_cur,
+      Spacing.Page.commit, Array.back?_push, Option.any_some]
   · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Int.add_zero] using hy
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Array.toList_push]
     exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, hy⟩ .nil)
@@ -21145,7 +21234,7 @@ public theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir
     ((inkBaselines (run geom fs none before)).getLast?.getD 0 : Int) ≤
       (inkBaselines (run geom fs none after)).getLast?.getD 0 := by
   have hb : PageRise (boundaryStart b gs) (boundaryStart b gs') :=
-    ⟨rfl, rfl, rfl, rfl, rfl, rfl, Int.add_le_add_left hw _,
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, Int.add_le_add_left hw _,
       LinesRise.refl _, rfl, rfl⟩
   have hp := paragraph_rise fs j breaks _ _ hs.2.2.1 hs.2.2.2.1 hb
     hs.2.2.2.2.1 hs'.2.2.2.2.1
@@ -21168,7 +21257,8 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 -- the display-oriented BEq instances intentionally omit.
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
-deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations
+deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations,
+  MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
 deriving instance DecidableEq for NoteBlock, DisplayJob
 

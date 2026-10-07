@@ -3094,7 +3094,7 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size none {}
+  .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size {} {}
     raise none (.leaf 0)
 
 /-- The widths the synthetic pages' faces declare, in millionths of the

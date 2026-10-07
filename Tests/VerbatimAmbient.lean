@@ -46,8 +46,8 @@ private def runOf (out : Layout.Out) (needle : String) :
   (bodyLines out).findSome? fun l =>
     if hasStr (lineText l) needle then
       l.segs.findSome? fun s => match s with
-        | .run idx _ _ _ glyphs size leading _ _ _ _ =>
-          if glyphs.isEmpty then none else some (idx, size, leading)
+        | .run idx _ _ _ glyphs size metrics _ _ _ _ =>
+          if glyphs.isEmpty then none else some (idx, size, metrics.leading)
         | _ => none
     else none
 

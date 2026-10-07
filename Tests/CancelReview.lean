@@ -140,18 +140,21 @@ private def targetAgrees (w : Witness) : Bool := (do
     near w.em placement.y (w.baseline - first.y) &&
     near w.em placement.advance 0).getD false
 
-/-- Read the native zero-width, one-sp strut runs actually shipped.
-These cases have a plain x body, so the only two struts are cancellation's
-own reservation; neither geometry constructors nor target ink predict it. -/
+/-- Read the explicit bounds on the native zero-width construction actually
+shipped. These cases have a plain x body, so the only construction carrier
+is cancellation's own reservation; neither geometry constructors nor
+target ink predict it. -/
 private def reservation (w : Witness) : Option (Int × Int) := do
   let struts := w.line.segs.filterMap fun seg => match seg with
-    | .run _ _ _ width glyphs size _ _ raise _ _ =>
+    | .run _ _ _ width glyphs size metrics _ raise _ _ =>
       if width == 0 && glyphs.isEmpty && size == 1 then
-        some (raise - (w.line.y - w.baseline))
+        metrics.math.map fun m =>
+          let delta := raise - (w.line.y - w.baseline)
+          (m.top + delta, m.bottom + delta)
       else none
     | _ => none
-  let #[top, bot] := struts | none
-  return (top, bot)
+  let #[bounds] := struts | none
+  return bounds
 
 private def htmlReservation (w : Witness) : Option (Int × Int) := do
   let h ← readEm w.em (rootAttribute "height" w.node)

@@ -1216,14 +1216,14 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
       let mut x := line.x
       for seg in line.segs do
         match seg with
-        | .run face color link width gs size leading decorations raise ground _ =>
+        | .run face color link width gs size metrics decorations raise ground _ =>
           let mut dx := 0
           for (glyph, scalar, advance) in gs do
             acc := acc.push {
               page := p, line := l, face, glyph, scalar
               x := x + dx * (1000 + line.expand) / 1000
               y := line.y - raise, advance, size, expand := line.expand
-              color, link, leading, decorations, ground }
+              color, link, leading := metrics.leading, decorations, ground }
             dx := dx + advance
           x := x + width
         | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _

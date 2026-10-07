@@ -14,7 +14,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) none {} 0 none (.leaf 0))
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) {} {} 0 none (.leaf 0))
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>

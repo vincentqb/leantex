@@ -29,13 +29,17 @@ def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
       | .rule _ _ _ _ | .image _ _ _ | .poly _ _ => pure ()
   return acc
 
-/-- A shipped line's reach above and below its baseline, as the line builder
-reads it: every run's ink, and every glyphless run (a strut) at its raise. -/
+/-- A shipped line's reach above and below its baseline: every run's ink,
+and each glyph-free construction's explicit bounds at its raise. -/
 def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp × Dim.Sp :=
   l.segs.foldl (init := (0, 0)) fun (top, bot) s =>
     match s with
-    | .run fi _ _ _ glyphs size _ _ raise _ _ =>
-      if glyphs.isEmpty then (max top raise, min bot raise) else
+    | .run fi _ _ _ glyphs size metrics _ raise _ _ =>
+      if glyphs.isEmpty then
+        match metrics.math with
+        | some m => (max top (raise + m.top), min bot (raise + m.bottom))
+        | none => (max top raise, min bot raise)
+      else
       glyphs.foldl (init := (top, bot)) fun (top, bot) (g, _, _) =>
         match fs.fonts[fi]? with
         | some f =>

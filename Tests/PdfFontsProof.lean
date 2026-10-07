@@ -10,8 +10,8 @@ private def syntheticFace (name : String) (cff : Bool) : Font.Font :=
 private def twoFacePage : Layout.PageOut :=
   { lines := #[{ (default : Layout.LineOut) with
       segs := #[
-        .run 0 .black none 0 #[(1, 'A', 0)] 0 none {} 0 none default,
-        .run 1 .black none 0 #[(1, 'B', 0)] 0 none {} 0 none default] }] }
+        .run 0 .black none 0 #[(1, 'A', 0)] 0 {} {} 0 none default,
+        .run 1 .black none 0 #[(1, 'B', 0)] 0 {} {} 0 none default] }] }
 
 /-- Exercise the actual checked producer and its structural census with
 both font-program dictionary shapes, both PDF versions, and full/subset

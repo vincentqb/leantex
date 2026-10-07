@@ -27,7 +27,7 @@ public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geo
     (ink : Ir.Pic.LabelInk)
     (h : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
     (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
@@ -50,7 +50,7 @@ public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geo
 larger known outline in another run cannot hide an unresolved glyph. -/
 public theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Array Seg)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
@@ -67,7 +67,7 @@ painted glyph. This is derived from the check, never assumed of the font. -/
 public theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Array Seg)
     (h : labelGlyphUnknown fs size segs = false)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
@@ -85,7 +85,7 @@ Each glyph is read in its own face, size and raise. Non-glyph segments do
 not assert a font-outline fact. -/
 public def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) : Prop :=
   ∀ (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution),
     Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ line.segs →
@@ -505,7 +505,7 @@ public theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.St
     (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
     (hl : labelInk fs imgs geom xHeight leaf content color scale = some (segs, size, ink))
     (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
+    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)

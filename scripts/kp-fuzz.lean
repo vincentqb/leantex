@@ -61,7 +61,7 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
     let (ci, g'') := g.next pool.size
     g := g''
     items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black none
-      #[(0, pool[ci]!, Dim.pt (w + 10))] (Dim.pt 10) none {} 0 none (.leaf 0))
+      #[(0, pool[ci]!, Dim.pt (w + 10))] (Dim.pt 10) {} {} 0 none (.leaf 0))
   items := items.push (.glue { fil := true })
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
