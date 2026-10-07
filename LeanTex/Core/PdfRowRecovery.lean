@@ -24,7 +24,7 @@ theorem WritePlan.direct_suffix_exact (p : WritePlan) :
   simp only [ByteArray.append_assoc]
   exact ⟨_, rfl⟩
 
-theorem serializeList_row_span_exact (head : ByteArray)
+private theorem serializeList_row_span_exact (head : ByteArray)
     (before after : List Row) (r : Row) :
     PdfLex.Span (serializeList head #[] (before ++ r::after)).1
       (serializeList head #[] before).1.size
@@ -46,7 +46,7 @@ private theorem span_append {b : ByteArray} {off : Nat} {cs : List Nat}
 
 theorem WritePlan.direct_span_exact (p : WritePlan) (before after : List Row)
     (r : Row) (hs : p.direct.toList = before ++ r::after) :
-    PdfLex.Span p.bytes (serializeList p.head #[] before).1.size
+    PdfLex.Span p.bytes (serialize p.head before.toArray).1.size
       (octets (rowInto ByteArray.empty r.id r.body)) := by
   obtain ⟨tail, ht⟩ := p.direct_suffix_exact
   rw [ht]
@@ -59,7 +59,7 @@ theorem WritePlan.direct_offset_exact (p : WritePlan) (before after : List Row)
     (r : Row) (hs : p.direct.toList = before ++ r::after)
     (hi : r.id < p.table.size) (hn : (p.rows.toList.map Row.id).Nodup) :
     ((indexObjects p.table.size p.serialized.2.toList)[r.id]?).join =
-      some (serializeList p.head #[] before).1.size := by
+      some (serialize p.head before.toArray).1.size := by
   apply indexObjects_unique_exact _ _ _ _ hi
   · have hrows : p.rows.toList = before ++ r ::
         (after ++ [flateRow p.table.objStmId
@@ -91,7 +91,7 @@ theorem WritePlan.direct_location_exact (p : WritePlan) (h : p.WithinBounds)
     (hc : r.id ∉ p.compressed.map Prod.fst)
     (hn : (p.rows.toList.map Row.id).Nodup) :
     p.readback.locs.get? r.id =
-      some (.direct (serializeList p.head #[] before).1.size) := by
+      some (.direct (serialize p.head before.toArray).1.size) := by
   rw [p.readback_locations_exact h (p.entries_size_exact ht (by omega)),
     p.entry_index_exact ht _ hi.2.1]
   simp only [show r.id ≠ 0 by omega, ↓reduceIte, Option.bind_some,
@@ -112,7 +112,7 @@ theorem WritePlan.native_readback_exact (p : WritePlan) (h : p.WithinBounds)
     (hn : (p.rows.toList.map Row.id).Nodup)
     (pref : StreamPrefix) (filtered : Bool) (raw : ByteArray)
     (hb : r.body = .stream (pref.fragment filtered) raw) :
-    let off := (serializeList p.head #[] before).1.size
+    let off := (serialize p.head before.toArray).1.size
     let dict := pref.dict filtered raw.size
     ({num := r.id, header := r.id, loc := .direct off, val := dict,
       stream := some raw} : Entry).Reads p.bytes p.readback.locs

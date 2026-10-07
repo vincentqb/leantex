@@ -1,4 +1,5 @@
 import LeanTex.Core.PdfStruct
+import LeanTex.Core.PdfRowRecovery
 
 /-! Ordinary consumers use typed content operations and structure
 projections without depending on rendering, allocation, or traversal helpers. -/
@@ -38,6 +39,12 @@ example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
       Pdf.contentOpsPlain geom remap widths images tags page :=
   Pdf.mark_ink_exact geom remap widths images tags page
 
+example (plan : Pdf.WritePlan) (before after : List Pdf.Row) (row : Pdf.Row)
+    (h : plan.direct.toList = before ++ row :: after) :
+    PdfLex.Span plan.bytes (Pdf.serialize plan.head before.toArray).1.size
+      (PdfLex.octets (Pdf.rowInto ByteArray.empty row.id row.body)) :=
+  plan.direct_span_exact before after row h
+
 example : Repr Pdf.StructKid := inferInstance
 example : Repr Pdf.StructElem := inferInstance
 example : Struct.Tree → Array Pdf.StructElem := Pdf.skeleton
@@ -60,6 +67,7 @@ example (elements : Array Pdf.StructElem) (parent leaf : Nat) (alternative : Ir.
   Pdf.altElem_size_exact elements parent leaf alternative
 
 example : True := by
+  fail_if_success have := Pdf.serializeList_row_span_exact
   fail_if_success have := Pdf.pushGid
   fail_if_success have := Pdf.dashOp
   fail_if_success have := Pdf.paintOp
