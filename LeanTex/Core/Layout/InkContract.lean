@@ -1,5 +1,8 @@
-import LeanTex.Core.Layout
-import LeanTex.Core.Layout.GlyphBounds
+module
+
+public import LeanTex.Core.Layout
+import all LeanTex.Core.Layout
+public import LeanTex.Core.Layout.GlyphBounds
 
 namespace LeanTex.Core.Layout
 
@@ -8,7 +11,7 @@ open Dim Font
 /-- Pairing an extent with its outline status preserves the actual
 producer's placement arithmetic, including the nominal fallback. This
 equation does not turn that fallback into containment evidence. -/
-theorem glyphBounds_agree (font : Font) (size raise : Sp) (gid : Nat) :
+public theorem glyphBounds_agree (font : Font) (size raise : Sp) (gid : Nat) :
     (GlyphBounds.glyph font size raise gid).extent = glyphVExtent font size raise gid := by
   unfold GlyphBounds.glyph glyphVExtent
   cases font.yExtent gid <;> rfl
@@ -18,7 +21,7 @@ contained vertically after the real label placement. The metric belongs
 to those produced segments; the formula reads the painted run's own face,
 size and raise. Missing outlines are deliberately outside this conditional
 geometry lemma and require a diagnostic from the producer. -/
-theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
@@ -45,7 +48,7 @@ theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geom : Geo
 
 /-- The missing-evidence check sees every glyph of every actual run. A
 larger known outline in another run cannot hide an unresolved glyph. -/
-theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Array Seg)
+public theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Array Seg)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
@@ -61,7 +64,7 @@ theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Array Seg)
 
 /-- Passing the producer's check supplies real outline evidence for each
 painted glyph. This is derived from the check, never assumed of the font. -/
-theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Array Seg)
+public theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Array Seg)
     (h : labelGlyphUnknown fs size segs = false)
     (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
@@ -80,7 +83,7 @@ theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Array Seg)
 /-- Vertical outline containment over the runs a line actually paints.
 Each glyph is read in its own face, size and raise. Non-glyph segments do
 not assert a font-outline fact. -/
-def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) : Prop :=
+public def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) : Prop :=
   ∀ (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
     (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : Option Sp)
     (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
@@ -94,7 +97,7 @@ def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) : Prop 
       top ≤ line.y - above ∧ line.y + below ≤ bottom
 
 /-- Containment survives enlarging the reserved interval. -/
-theorem LineOut.OutlinesIn.mono (line : LineOut) (fs : FontSet)
+public theorem LineOut.OutlinesIn.mono (line : LineOut) (fs : FontSet)
     (top bottom top' bottom' : Sp) (h : line.OutlinesIn fs top bottom)
     (htop : top' ≤ top) (hbottom : bottom ≤ bottom') :
     line.OutlinesIn fs top' bottom' := by
@@ -105,7 +108,7 @@ theorem LineOut.OutlinesIn.mono (line : LineOut) (fs : FontSet)
 
 /-- With complete outline evidence, the actual placed producer result
 satisfies containment for every run, including mixed faces and raises. -/
-theorem labelLine_outlines_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem labelLine_outlines_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
@@ -127,18 +130,18 @@ theorem labelLine_outlines_covers (fs : FontSet) (imgs : Image.Store) (geom : Ge
 /-- Losses introduced by the picture-label boundary carry the source
 label's structured key. Existing producer diagnostics retain their own
 subjects and are accounted separately. -/
-def LabelLossNamed (content : Array Ir.Inline) (diags : Array Diag) : Prop :=
+public def LabelLossNamed (content : Array Ir.Inline) (diags : Array Diag) : Prop :=
   ∃ d ∈ diags, d.subject = some (Ir.plainText content) ∧
     (d.kind ∈ ([.W0328, .W0394, .E0395, .W0396] : List DiagCode) ∨
       (d.kind.loss == .dropped || d.kind.loss == .pending) = true)
 
-theorem labelFailureNamed_accounts (content : Array Ir.Inline) (diags : Array Diag)
+public theorem labelFailureNamed_accounts (content : Array Ir.Inline) (diags : Array Diag)
     (h : labelFailureNamed content diags = true) : LabelLossNamed content diags := by
   obtain ⟨d, hd, hs⟩ := Array.any_eq_true'.mp h
   simp only [Bool.and_eq_true, beq_iff_eq] at hs
   exact ⟨d, hd, hs.1, Or.inr hs.2⟩
 
-theorem LabelLossNamed.mono (content : Array Ir.Inline) (before after : Array Diag)
+public theorem LabelLossNamed.mono (content : Array Ir.Inline) (before after : Array Diag)
     (h : LabelLossNamed content before)
     (keep : ∀ d ∈ before, d ∈ after) : LabelLossNamed content after := by
   obtain ⟨d, hd, hs, hk⟩ := h
@@ -147,7 +150,7 @@ theorem LabelLossNamed.mono (content : Array Ir.Inline) (before after : Array Di
 /-- The complete producer line, with real outline evidence, fits the box
 that picture layout actually reserves. The premise is the decidable
 comparison that `emitLabel` executes on the two actual measurements. -/
-theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
     (ink : Ir.Pic.LabelInk)
@@ -171,7 +174,7 @@ theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (geom : Ge
 /-- A source label contributes the exact line selected by its
 producer, contains every chosen line, and bounds every painted glyph
 inside its canonical reserve. Textually blank content may produce no line. -/
-def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (lines : Array LineOut) : Prop :=
@@ -185,7 +188,7 @@ def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
       (labelLine place x y align ink segs size leaf).OutlinesIn fs
         (place.toPage box.2).2 (place.toPage box.1).2
 
-theorem LabelCovered.mono (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem LabelCovered.mono (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (before after : Array LineOut)
@@ -200,7 +203,7 @@ theorem LabelCovered.mono (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 complete, measured line within the canonical reserve, or names the precise
 loss in a diagnostic keyed by the label. No premise asserts correctness of
 shaping, font outlines, or the metric consumer. -/
-theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) :
@@ -272,7 +275,7 @@ theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom
 
 /-- The label boundary preserves every producer diagnostic, supplying the
 label key only when the producer supplied none. -/
-theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
+public theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (d : Diag)
@@ -287,13 +290,13 @@ theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
   all_goals simp [hm]
 
 /-- Adding a label subject does not replace a producer's source location. -/
-theorem nameLabelDiag_source_exact (key : String) (d : Diag) :
-    (nameLabelDiag key d).span = d.span := rfl
+public theorem nameLabelDiag_source_exact (key : String) (d : Diag) :
+    (nameLabelDiag key d).span = d.span := by rfl
 
 /-- Missing outline evidence always emits its own keyed diagnostic, even
 when the same label also wraps or exceeds its reserve. The nominal extent
 used for placement is never substituted for this evidence. -/
-theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
+public theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
@@ -314,7 +317,7 @@ theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
 
 /-- The missing-outline account uses the source of the line actually
 selected by the producer, including after a later line is truncated. -/
-theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.Store)
+public theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
@@ -335,7 +338,7 @@ theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.Store)
   all_goals simp
 
 /-- A shape step preserves every line emitted by an earlier shape. -/
-theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape) (line : LineOut)
     (h : line ∈ out.lines) :
@@ -346,7 +349,7 @@ theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     | (split <;> simp [h])
 
 /-- A shape step preserves every diagnostic emitted by an earlier shape. -/
-theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape) (d : Diag)
     (h : d ∈ out.diags) :
@@ -358,7 +361,7 @@ theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 
 /-- The actual shape emitter appends the selected line; a label cannot be
 certified by a line present only in an unused producer result. -/
-theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (line : LineOut)
@@ -373,19 +376,19 @@ theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) (geom :
     simp [h]
 
 /-- The actual shape emitter appends the label's entire diagnostic account. -/
-theorem emitPictureShape_label_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem emitPictureShape_label_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (d : Diag)
     (h : d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags) :
     d ∈ (emitPictureShape fs imgs geom xHeight leaf place out
-      (.label x y content color scale align)).diags :=
-  Array.mem_append_right _ h
+      (.label x y content color scale align)).diags := by
+  exact Array.mem_append_right _ h
 
 /-- Each label step of the real shape emitter either appends a complete
 covered line or a keyed loss. This includes failed production, unknown
 outlines, extra chosen lines, and differences from the reserved metric. -/
-theorem emitPictureShape_label_ink_covered_or_named (fs : FontSet) (imgs : Image.Store)
+public theorem emitPictureShape_label_ink_covered_or_named (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (x y : Sp) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign) :
@@ -411,7 +414,7 @@ This replaces a claim about plain text in the body face and the cap-height
 alignment band with actual shaped runs and their reserved glyph box. It is
 the producer contract consumed by picture placement, not a claim that an
 author's explicit bounding box encloses all of a picture's ink. -/
-theorem ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
+public theorem ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (pic : Ir.Pic.Picture)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign)
@@ -448,7 +451,7 @@ theorem ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 
 /-- Every label diagnostic survives the actual picture fold. The index
 tracks the source label's visit; later shapes can only append diagnostics. -/
-theorem emitPicture_label_diags_accounts (fs : FontSet) (imgs : Image.Store)
+public theorem emitPicture_label_diags_accounts (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
@@ -478,7 +481,7 @@ theorem emitPicture_label_diags_accounts (fs : FontSet) (imgs : Image.Store)
 /-- Diagnostics from actual inline production reach the picture account,
 including failures that prevented a glyph or an entire line from being
 produced. Existing subjects are preserved. -/
-theorem emitPicture_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
+public theorem emitPicture_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
@@ -494,7 +497,7 @@ theorem emitPicture_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
 /-- A glyph with missing outline evidence in any actual label run is
 named by the picture that emits it. This conclusion holds independently
 of line wrapping, the other glyphs' extents, or subsequent shapes. -/
-theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.Store)
+public theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.Store)
     (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
@@ -520,7 +523,7 @@ theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.Store)
 /-- The former alignment-band bound is precisely a cap-height bound,
 regardless of alignment or position. Actual outlines above that height
 falsify it while remaining inside the separately reserved glyph box. -/
-theorem label_alignment_covers_exact (x y : Sp) (align : Ir.Pic.LabelAlign)
+public theorem label_alignment_covers_exact (x y : Sp) (align : Ir.Pic.LabelAlign)
     (ink : Ir.Pic.LabelInk) (reach : Sp) :
     Ir.Pic.labelBaseline y align ink + reach ≤ (Ir.Pic.labelInkBox x y align ink).2.2 ↔
       reach ≤ ink.height := by

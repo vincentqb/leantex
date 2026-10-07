@@ -1,4 +1,9 @@
-import LeanTex.Core.Layout.InkContract
+module
+
+public import LeanTex.Core.Layout.InkContract
+import all LeanTex.Core.Layout
+import all LeanTex.Core.Layout.InkContract
+import all LeanTex.Core.Layout.LabelAudit
 
 namespace LeanTex.Core.Layout
 
@@ -6,7 +11,7 @@ open Dim Font
 
 /-- The successful check supplies actual font-outline answers and bounds
 every glyph of every painted run, in that run's own face, size and raise. -/
-theorem observeLabel_outlines_covers (fs : FontSet) (line : LineOut)
+public theorem observeLabel_outlines_covers (fs : FontSet) (line : LineOut)
     (stamp : LabelAudit.Stamp)
     (hk : (observeLabel fs line stamp).known = true)
     (hb : (observeLabel fs line stamp).bounded = true) :
@@ -25,7 +30,7 @@ theorem observeLabel_outlines_covers (fs : FontSet) (line : LineOut)
 
 /-- An audit observation is the reading of a line on an actual page.
 Producer results that disappeared before shipping cannot enter this census. -/
-theorem labelObservations_mem (fs : FontSet) (pages : Array PageOut)
+public theorem labelObservations_mem (fs : FontSet) (pages : Array PageOut)
     (o : LabelAudit.Observation) (ho : o ∈ labelObservations fs pages) :
     ∃ page ∈ pages, ∃ line ∈ page.lines, ∃ stamp,
       line.pictureLabel = some stamp ∧ o = observeLabel fs line stamp := by
@@ -38,7 +43,7 @@ theorem labelObservations_mem (fs : FontSet) (pages : Array PageOut)
     exact ⟨page, hp, line, hl, stamp, hs, ho.symm⟩
 
 /-- Every stamped line on a final page enters the outline audit. -/
-theorem labelObservations_contains (fs : FontSet) (pages : Array PageOut)
+public theorem labelObservations_contains (fs : FontSet) (pages : Array PageOut)
     (page : PageOut) (hp : page ∈ pages) (line : LineOut) (hl : line ∈ page.lines)
     (stamp : LabelAudit.Stamp) (hs : line.pictureLabel = some stamp) :
     observeLabel fs line stamp ∈ labelObservations fs pages := by
@@ -48,14 +53,14 @@ theorem labelObservations_contains (fs : FontSet) (pages : Array PageOut)
 
 /-- Occurrence identity comes from collection's operation and shape
 indices; identical text at another site is not a substitute. -/
-def LineOut.CarriesLabel (line : LineOut) (r : LabelAudit.Request) : Prop :=
+public def LineOut.CarriesLabel (line : LineOut) (r : LabelAudit.Request) : Prop :=
   ∃ stamp, line.pictureLabel = some stamp ∧
     stamp.origin = r.origin ∧ stamp.key = r.key
 
 /-- A selected occurrence either has no painted line and no text, or
 ships a complete line whose actual run outlines fit its measured reserve.
 The reserve travels with the baseline through vertical placement. -/
-def Out.LabelInkCovered (out : Out) (fs : FontSet) (r : LabelAudit.Request) : Prop :=
+public def Out.LabelInkCovered (out : Out) (fs : FontSet) (r : LabelAudit.Request) : Prop :=
   (r.blank = true ∧
     ¬ ∃ page ∈ out.pages, ∃ line ∈ page.lines, line.CarriesLabel r) ∨
   ∃ page ∈ out.pages, ∃ line ∈ page.lines, ∃ stamp,
@@ -66,7 +71,7 @@ def Out.LabelInkCovered (out : Out) (fs : FontSet) (r : LabelAudit.Request) : Pr
 /-- A loss names both the selected label's key and its full source.
 For a line that shipped, provenance may be the producer's first actual
 line; for a missing occurrence it is collection's source. -/
-def Out.LabelLossNamed (out : Out) (r : LabelAudit.Request) : Prop :=
+public def Out.LabelLossNamed (out : Out) (r : LabelAudit.Request) : Prop :=
   ∃ d ∈ out.diags, d.subject = some r.key ∧
     (d.kind ∈ ([.W0328, .W0394, .E0395, .W0396] : List DiagCode) ∨
       (d.kind.loss == .dropped || d.kind.loss == .pending) = true) ∧
@@ -107,18 +112,18 @@ reads the final page's runs, not plaintext shaped in a nominal body face.
 
 This replaces the false cap-height alignment-box claim. Alignment remains
 glyph-blind; the independently measured reserve supplies containment. -/
-theorem run_ink_covered_or_named (geom : Geom) (fs : FontSet)
+public theorem run_ink_covered_or_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Ir.Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (r : LabelAudit.Request)
     (hr : r ∈ labelRequests geom fs pats doc imgs frameSpans) :
     (run geom fs pats doc imgs frameSpans).LabelInkCovered fs r ∨
-      (run geom fs pats doc imgs frameSpans).LabelLossNamed r :=
-  labelAccounted_covers fs _ r (run_label_accounts geom fs pats doc imgs frameSpans r hr)
+      (run geom fs pats doc imgs frameSpans).LabelLossNamed r := by
+  exact labelAccounted_covers fs _ r (run_label_accounts geom fs pats doc imgs frameSpans r hr)
 
 /-- The complementary output-wide guarantee: every final stamped line has
 complete measured glyph containment or its own source-preserving account.
 This includes repeated and textually blank occurrences. -/
-theorem run_shipped_ink_covered_or_named (geom : Geom) (fs : FontSet)
+public theorem run_shipped_ink_covered_or_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Ir.Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span))
     (page : PageOut) (hp : page ∈ (run geom fs pats doc imgs frameSpans).pages)
@@ -139,7 +144,7 @@ theorem run_shipped_ink_covered_or_named (geom : Geom) (fs : FontSet)
 /-- A missing outline answer on any actual shipped label always has its
 own W0394 account, including full provenance. Truncation or a bounds loss
 cannot silence this check. -/
-theorem run_missing_outline_named (geom : Geom) (fs : FontSet)
+public theorem run_missing_outline_named (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Ir.Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span))
     (page : PageOut) (hp : page ∈ (run geom fs pats doc imgs frameSpans).pages)

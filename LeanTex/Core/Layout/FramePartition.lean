@@ -1,10 +1,13 @@
-import LeanTex.Core.Layout
+module
+
+public import LeanTex.Core.Layout
+import all LeanTex.Core.Layout
 
 namespace LeanTex.Core.Layout
 
 open Font Ir
 
-instance : LawfulBEq FrameOrigin where
+public instance : LawfulBEq FrameOrigin where
   eq_of_beq := by
     intro a b h
     cases a with | mk sa ta =>
@@ -23,20 +26,20 @@ namespace FramePartition
 deduplicated: repeated, equal physical pages still contribute separately
 to the counts below. This reads collector openings, never displayed
 counters or a predicted number of overlay pages. -/
-def origins (openings : Array FrameOpening) : List FrameOrigin :=
+public def origins (openings : Array FrameOpening) : List FrameOrigin :=
   (openings.toList.filterMap (·.origin)).eraseDups
 
 /-- All physical pages carrying one opening's source and overlay step.
 `none` selects the unowned flow pages. -/
-def pages (out : Out) (owner : Option FrameOrigin) : Array PageOut :=
+public def pages (out : Out) (owner : Option FrameOrigin) : Array PageOut :=
   out.pages.filter (fun p => p.frameOrigin == owner)
 
 /-- Actual physical pages of one source, including every overlay and spill. -/
-def sourcePages (out : Out) (source : Nat) : Array PageOut :=
+public def sourcePages (out : Out) (source : Nat) : Array PageOut :=
   out.pages.filter (fun p => p.frameOrigin.any (fun o => o.source == source))
 
 /-- The actual collected overlay keys of one source. -/
-def steps (openings : Array FrameOpening) (source : Nat) : List FrameOrigin :=
+public def steps (openings : Array FrameOpening) (source : Nat) : List FrameOrigin :=
   (origins openings).filter (fun o => o.source == source)
 
 private theorem eraseDups_nodup {α : Type} [BEq α] [LawfulBEq α]
@@ -52,21 +55,21 @@ decreasing_by
   simp only [List.length_cons]
   exact Nat.lt_succ_of_le (List.length_filter_le ..)
 
-theorem origins_nodup (openings : Array FrameOpening) :
-    (origins openings).Nodup :=
-  eraseDups_nodup _
+public theorem origins_nodup (openings : Array FrameOpening) :
+    (origins openings).Nodup := by
+  exact eraseDups_nodup _
 
-theorem origins_mem (openings : Array FrameOpening) (origin : FrameOrigin) :
+public theorem origins_mem (openings : Array FrameOpening) (origin : FrameOrigin) :
     origin ∈ origins openings ↔ ∃ f ∈ openings, f.origin = some origin := by
   simp [origins, List.mem_filterMap]
 
-theorem pages_mem (out : Out) (owner : Option FrameOrigin) (p : PageOut) :
+public theorem pages_mem (out : Out) (owner : Option FrameOrigin) (p : PageOut) :
     p ∈ pages out owner ↔ p ∈ out.pages ∧ p.frameOrigin = owner := by
   simp [pages]
 
 /-- Distinct source/step keys cannot own the same page. Displayed numbers,
 footer presence and equality of page contents play no role. -/
-theorem pages_disjoint (out : Out) (a b : Option FrameOrigin) (hne : a ≠ b)
+public theorem pages_disjoint (out : Out) (a b : Option FrameOrigin) (hne : a ≠ b)
     (p : PageOut) (ha : p ∈ pages out a) : p ∉ pages out b := by
   intro hb
   exact hne ((pages_mem ..).mp ha |>.2 |>.symm.trans ((pages_mem ..).mp hb).2)
@@ -119,17 +122,17 @@ private theorem pages_size_count (out : Out) (owner : Option FrameOrigin) :
 
 /-- The finite set of partition keys includes the flow bucket, even when
 that bucket is empty. -/
-def keys (openings : Array FrameOpening) : List (Option FrameOrigin) :=
+public def keys (openings : Array FrameOpening) : List (Option FrameOrigin) :=
   none :: (origins openings).map some
 
-theorem keys_nodup (openings : Array FrameOpening) :
+public theorem keys_nodup (openings : Array FrameOpening) :
     (keys openings).Nodup := by
   simp only [keys, List.nodup_cons, List.mem_map,
     Option.some_ne_none, and_false, exists_false, not_false_eq_true, true_and]
   simpa only [List.Nodup, List.pairwise_map, ne_eq, Option.some.injEq] using
     origins_nodup openings
 
-theorem run_owner_mem (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+public theorem run_owner_mem (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span))
     (p : PageOut) (hp : p ∈ (run geom fs pats doc imgs frameSpans).pages) :
     p.frameOrigin ∈ keys (frameOpenings geom fs pats doc imgs frameSpans) := by
@@ -145,7 +148,7 @@ theorem run_owner_mem (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Pattern
 source/step keys and the unowned flow bucket, equal the public run's page
 count. The coverage premise of the counting algebra is discharged by the
 actual collector/placement invariant, including spills and float replay. -/
-theorem run_count_exact (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+public theorem run_count_exact (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans : Array (Nat × Span)) :
     let out := run geom fs pats doc imgs frameSpans
     let openings := frameOpenings geom fs pats doc imgs frameSpans
@@ -179,7 +182,7 @@ private theorem source_pages_owner (out : Out) (source : Nat) (origin : FrameOri
 counts. In particular an overflowing overlay contributes every page it
 ships, and repeated displayed numbers cannot transfer pages between
 source indices. -/
-theorem run_source_count_exact (geom : Geom) (fs : FontSet)
+public theorem run_source_count_exact (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (source : Nat) :
     let out := run geom fs pats doc imgs frameSpans
@@ -227,7 +230,7 @@ these buckets account for every physical page, with multiplicity. A spill
 adds a page to its source/step bucket, and a restarted display counter does
 not merge distinct sources. The original overlay-count claim is refuted
 by `LayoutContracts.counterexamples`. -/
-theorem pages_partition_frames (geom : Geom) (fs : FontSet)
+public theorem pages_partition_frames (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store := {})
     (frameSpans : Array (Nat × Span) := #[]) :
     let out := run geom fs pats doc imgs frameSpans

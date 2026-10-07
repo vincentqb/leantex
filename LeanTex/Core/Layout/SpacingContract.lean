@@ -1,4 +1,7 @@
-import LeanTex.Core.Layout
+module
+
+public import LeanTex.Core.Layout
+import all LeanTex.Core.Layout
 
 namespace LeanTex.Core.Layout.Spacing
 
@@ -18,7 +21,7 @@ private def selectedDefault (p : PendingView) (peer tex : Glue) : Glue :=
 boundary can owe the peer default. A zero-width tail causes `addvspace` to
 append and clear `declaredSkip`, so its old stacked default must be covered.
 A nonzero tail keeps that flag and pays the larger tail width instead. -/
-def replacementFloor (a : Pending) (r : Context) : Sp :=
+public def replacementFloor (a : Pending) (r : Context) : Sp :=
   let p := pending a
   match p.owed.back? with
   | none =>
@@ -33,7 +36,7 @@ def replacementFloor (a : Pending) (r : Context) : Sp :=
 
 /-- Input condition in resolved scaled points. Nonnegative width alone does
 not cover a positive peer default that the element's convention removes. -/
-def CoversDefault (a : Pending) (r : Context) (g : Glue) : Prop :=
+public def CoversDefault (a : Pending) (r : Context) (g : Glue) : Prop :=
   (0 : Int) ≤ g.width ∧ replacementFloor a r ≤ g.width
 
 private def boundaryWidth (p : PendingView) (peer tex : Glue) : Sp :=
@@ -74,7 +77,7 @@ private theorem sum_width_from (gs : Array Glue) (g : Glue) :
 /-- The actual `addvOwed` selection never reduces the sum of pending widths
 when the inserted width is nonnegative. Empty, zero-tail append, replacement
 and retained-tail arms are all quantified, including signed prior glue. -/
-theorem merge_width_monotone (gs : Array Glue) (g : Glue)
+public theorem merge_width_monotone (gs : Array Glue) (g : Glue)
     (hg : (0 : Int) ≤ g.width) :
     (gs.foldl Glue.add {}).width ≤ ((merge gs g).foldl Glue.add {}).width := by
   cases hb : gs.back? with
@@ -99,7 +102,7 @@ theorem merge_width_monotone (gs : Array Glue) (g : Glue)
 
 /-- The resolved compensation condition suffices for the emitted boundary,
 including the empty-boundary default that `gapGlue` alone does not count. -/
-theorem flushed_width_monotone (a : Pending) (r : Context) (g : Glue)
+public theorem flushed_width_monotone (a : Pending) (r : Context) (g : Glue)
     (h : Ordinary a) (hc : CoversDefault a r g) :
     ((flushed a r).foldl Glue.add {}).width ≤
       ((flushed (add a g) r).foldl Glue.add {}).width := by
@@ -138,7 +141,7 @@ theorem flushed_width_monotone (a : Pending) (r : Context) (g : Glue)
 the fixed line's measured extent, and the resolved glue about to be consumed.
 This does not assert that a line stayed on a page: `place_exact` proves that
 the production `fitCommit` takes its checked commit arm from this bound. -/
-def Fits (a : Pending) (r : Context) (b : Page) (size : Sp)
+public def Fits (a : Pending) (r : Context) (b : Page) (size : Sp)
     (segs : Array Seg) : Prop :=
   let i := input r b size segs
   let g := (flushed a r).foldl Glue.add i.skip
@@ -154,7 +157,7 @@ fit inequalities. They assume no glue-selection or line-movement result.
 This is a contract at the production placement boundary, before page-close
 stretch/shrink distribution. It does not compare unconstrained whole-document
 runs or infer rendered ink from font metadata. -/
-theorem elementSpace_placement_monotone (a : Pending) (r : Context) (b : Page)
+public theorem elementSpace_placement_monotone (a : Pending) (r : Context) (b : Page)
     (x size : Sp) (segs : Array Seg) (width : Sp) (g : Glue)
     (ha : Ordinary a) (hb : Ready b segs) (hg : CoversDefault a r g)
     (hfit : Fits a r b size segs) (hfit' : Fits (add a g) r b size segs) :
@@ -191,7 +194,7 @@ a new page can move the last local baseline upward. Tests/ElementSpacing
 retains both counterexamples and the signed relative-length counterexample.
 The final projection reads text ink, excluding notes and furniture, exactly
 as the original whole-run obligation did. -/
-theorem elementSpace_monotone (geom : Geom) (fs : Font.FontSet)
+public theorem elementSpace_monotone (geom : Geom) (fs : Font.FontSet)
     (before after : Ir.Doc) (a : Pending) (r : Context) (b : Page)
     (j : Paragraph) (breaks : Array Nat) (g : Glue)
     (ha : Ordinary a) (hg : CoversDefault a r g)
@@ -210,7 +213,7 @@ theorem elementSpace_monotone (geom : Geom) (fs : Font.FontSet)
 /-- A certificate discharges the staging and fit premises of the whole-run
 contract. The remaining inequality compares resolved input glue, before
 placement; the common queued glue cancels. -/
-theorem TailPair.run_monotone {geom : Geom} {fs : Font.FontSet}
+public theorem TailPair.run_monotone {geom : Geom} {fs : Font.FontSet}
     {before after : Ir.Doc} (c : TailPair geom fs before after)
     (hw : (c.beforeSkips.foldl Glue.add {}).width ≤
       (c.afterSkips.foldl Glue.add {}).width) :
@@ -228,7 +231,7 @@ two-paragraph certificate checks common preparation and numeric fit; this
 last check compares only the resolved intervening glue. `false` can mean an
 unsupported document shape, changed preparation, failed fit bounds, or decreasing
 glue. It is not a completeness claim about all monotone document changes. -/
-def twoParagraphIncreasing (geom : Geom) (fs : Font.FontSet)
+public def twoParagraphIncreasing (geom : Geom) (fs : Font.FontSet)
     (before after : Ir.Doc) : Bool :=
   match twoParagraphPair? geom fs before after with
   | none => false
@@ -238,7 +241,7 @@ def twoParagraphIncreasing (geom : Geom) (fs : Font.FontSet)
 /-- An accepted input check proves the real `Layout.run` comparison for
 every supplied font environment and document pair. Callers need neither
 private staging identities nor an assumed output-page comparison. -/
-theorem twoParagraphIncreasing_contract (geom : Geom) (fs : Font.FontSet)
+public theorem twoParagraphIncreasing_contract (geom : Geom) (fs : Font.FontSet)
     (before after : Ir.Doc) (h : twoParagraphIncreasing geom fs before after = true) :
     ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
       (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by

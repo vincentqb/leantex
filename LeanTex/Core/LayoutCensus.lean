@@ -1,14 +1,16 @@
-import LeanTex.Core.Layout
+module
+
+public import LeanTex.Core.Layout
 
 namespace LeanTex.Core.Layout.Census
 
 /-- Raw glyphs for one source leaf, retaining whitespace and page order. -/
-def leafPages (pages : Array PageOut) (k : Nat) : List Char :=
+public def leafPages (pages : Array PageOut) (k : Nat) : List Char :=
   pages.toList.flatMap fun p =>
     (p.lines.filter fun l => l.leaf == some k).toList.flatMap LineOut.glyphChars
 
 /-- Raw glyphs of counted body lines, retaining whitespace and page order. -/
-def bodyPages (pages : Array PageOut) : List Char :=
+public def bodyPages (pages : Array PageOut) : List Char :=
   pages.toList.flatMap fun p =>
     (p.lines.filter (·.counted)).toList.flatMap LineOut.glyphChars
 
@@ -20,7 +22,7 @@ private theorem attributed_leaf_filter_exact (lines : Array LineOut) (k : Nat) :
   funext l
   cases l.leaf <;> simp
 
-theorem runPost_leaf_exact (sh : Shipped) (k : Nat) :
+public theorem runPost_leaf_exact (sh : Shipped) (k : Nat) :
     leafPages (runPost sh).pages k = leafPages sh.pages k := by
   have h := congrArg
     (fun pages : Array (Array LineOut) =>
@@ -30,7 +32,7 @@ theorem runPost_leaf_exact (sh : Shipped) (k : Nat) :
   simpa only [leafPages, Array.toList_map, List.flatMap_map,
     attributed_leaf_filter_exact] using h
 
-theorem runPost_body_exact (sh : Shipped) :
+public theorem runPost_body_exact (sh : Shipped) :
     bodyPages (runPost sh).pages = bodyPages sh.pages := by
   have h := congrArg
     (fun pages : Array (Array LineOut) =>

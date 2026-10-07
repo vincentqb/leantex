@@ -1,4 +1,7 @@
-import LeanTex.Core.LayoutCensus
+module
+
+public import LeanTex.Core.LayoutCensus
+import all LeanTex.Core.LayoutCensus
 
 namespace LeanTex.Core.Layout
 
@@ -53,7 +56,7 @@ font choices, pagination, and running furniture are unrestricted. Automatic
 hyphen insertion is disabled, and missing glyphs must be absent from the
 run's diagnostics. Nonpainting spaces are omitted on both sides. Counted
 body lines exclude generated page numbers and authored running furniture. -/
-theorem run_paras_body_exact (geom : Geom) (fs : FontSet)
+public theorem run_paras_body_exact (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
     (hh : geom.hyphenate = false ∨ pats = none)
@@ -72,7 +75,7 @@ opening structural leaf. Other leaf indices have an empty owned census.
 The premises concern literal source paragraphs, hyphen insertion, and
 observable missing-glyph diagnostics; no collector or placement invariant
 is assumed. Furniture and print marks preserve this source census. -/
-theorem run_paras_leaf_exact (geom : Geom) (fs : FontSet)
+public theorem run_paras_leaf_exact (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (hplain : PlainParagraphs doc.body)
     (hh : geom.hyphenate = false ∨ pats = none)
