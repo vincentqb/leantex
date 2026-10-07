@@ -1,7 +1,9 @@
-import LeanTex.Core.Diag
-import LeanTex.Core.Ir
-import LeanTex.Core.Layout
-import LeanTex.Core.ContrastPaint
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Ir
+public import LeanTex.Core.Layout
+public import LeanTex.Core.ContrastPaint
 
 namespace LeanTex.Core.Check
 
@@ -9,7 +11,7 @@ open LeanTex.Core LeanTex.Core.Ir LeanTex.Core.Layout LeanTex.Core.Dim
 
 /-- What the engine actually shipped, which is what assertions are judged
 against — never the intent, always the result. -/
-structure Shipped where
+public structure Shipped where
   pages : Nat
   fontsEmbedded : Bool
   /-- Every piece of ink inside the margins, judged from the shipped lines
@@ -60,7 +62,7 @@ its reserved band by construction (`furnitureBand`, W0328's single-line
 rule), so judging it against the text-area margins would fail every page
 whose furniture works as declared. Its glyphs still feed the x-height
 floor: margin text must stay legible too. -/
-def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
+public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     (fontsEmbedded : Bool) : Shipped := Id.run do
   let mut worstAt : Sp × String := (0, "")
   let mut minX : Option Sp := none
@@ -132,7 +134,7 @@ title), and images with no text alternative (SC 1.1.1: N0376). Motion has
 no row: every emitted animation carries its reduced-motion guard by
 construction (`motionCss_guarded` and its siblings), so the fact cannot
 fail. -/
-def a11yCodes : List DiagCode :=
+private def a11yCodes : List DiagCode :=
   [.W0315, .W0330, .W0345, .W0320, .W0321, .N0376]
 
 /-- The failing AA rows of a document: each judged accessibility code that
@@ -144,7 +146,7 @@ document's declaration). Read from the diagnostics before `\allow`
 resolution, independently of severity: advice and accepted warnings remain
 facts. The deliberate escapes (a decorative declaration, an alt) remove the
 fact itself, at the judge. -/
-def a11ySummary (doc : Doc) (diags : Array Diag) : Array String := Id.run do
+public def a11ySummary (doc : Doc) (diags : Array Diag) : Array String := Id.run do
   let mut out : Array String := #[]
   for c in a11yCodes do
     let n := (diags.filter (·.kind == c)).size
@@ -159,7 +161,7 @@ def a11ySummary (doc : Doc) (diags : Array Diag) : Array String := Id.run do
 /-- Accessibility observations for a PDF, including every placed text
 run. A background or exemption that has not been established cannot turn
 an assertion green merely because no earlier warning fired. -/
-def pdfA11ySummary (doc : Doc) (diags : Array Diag) (geom : Geom)
+public def pdfA11ySummary (doc : Doc) (diags : Array Diag) (geom : Geom)
     (fs : Font.FontSet) (out : Out) : Array String :=
   a11ySummary doc diags ++ (Contrast.shippedContrastIssues geom fs out).map fun j =>
     let site := s!"page {j.paint.page + 1}, line {j.paint.line + 1}, run {j.paint.segment + 1}"
@@ -175,7 +177,7 @@ def pdfA11ySummary (doc : Doc) (diags : Array Diag) (geom : Geom)
 source observations are clear and every actual text occurrence satisfies
 the placed-paint judge. An unresolved occurrence contributes a message
 just as a measured failure does. -/
-theorem pdfA11ySummary_clear_contract (doc : Doc) (diags : Array Diag)
+public theorem pdfA11ySummary_clear_contract (doc : Doc) (diags : Array Diag)
     (geom : Geom) (fs : Font.FontSet) (out : Out) :
     pdfA11ySummary doc diags geom fs out = #[] ↔
       a11ySummary doc diags = #[] ∧
@@ -185,7 +187,7 @@ theorem pdfA11ySummary_clear_contract (doc : Doc) (diags : Array Diag)
     Contrast.shippedContrast_clear_contract]
 
 /-- Check one assertion, returning a diagnostic when it does not hold. -/
-def one (shipped : Shipped) (a : Assertion) : Option Diag :=
+public def one (shipped : Shipped) (a : Assertion) : Option Diag :=
   match a.kind with
   | .pages op n =>
     if op.holds shipped.pages n then none
@@ -210,7 +212,7 @@ def one (shipped : Shipped) (a : Assertion) : Option Diag :=
     else some (failure a (String.intercalate "; " shipped.pdfViolations.toList))
 
 /-- Check every assertion. Empty result means the document satisfied them. -/
-def all (shipped : Shipped) (asserts : Array Assertion) : Array Diag :=
+public def all (shipped : Shipped) (asserts : Array Assertion) : Array Diag :=
   asserts.filterMap (one shipped)
 
 end LeanTex.Core.Check

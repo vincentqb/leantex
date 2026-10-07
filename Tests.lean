@@ -1,6 +1,7 @@
 import Tests.PdfInterfaces
 import Tests.DocumentContractInterfaces
 import Tests.ColourInterface
+import Tests.ContrastInterface
 import Tests.PresentationInterfaces
 import Tests.Support
 import Tests.CliFoundationInterface
@@ -16,6 +17,7 @@ import Tests.FontPipelineInterface
 import Tests.StructureInterface
 import Tests.FontSubsetInterface
 import Tests.GlyphBoundsInterface
+import Tests.LayoutInterface
 import Tests.IrInterface
 import Tests.MathParseInterface
 import Tests.MdParseInterface

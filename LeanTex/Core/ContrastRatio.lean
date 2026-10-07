@@ -63,6 +63,12 @@ public def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information: 3:1. -/
 public def aaNonText : Nat := 3000
 
+/-- A pair that clears the normal-text requirement also clears the
+large-scale text requirement. Consumers need this ordering, not the
+implementation of either threshold. -/
+public theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
+  decide
+
 /-- WCAG 2.2's large-scale text boundary, in the same point units as layout.
 The document planner and placed-glyph judge share this decision. -/
 public def largeText (size : Dim.Sp) (bold : Bool) : Bool :=

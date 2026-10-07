@@ -1,7 +1,11 @@
-import LeanTex.Core.ContrastRatio
-import LeanTex.Core.ContrastPaint
-import LeanTex.Core.Theme
+module
+
+public import LeanTex.Core.ContrastRatio
+public import LeanTex.Core.ContrastPaint
+public import LeanTex.Core.Theme
 import LeanTex.Core.Layout
+import LeanTex.Core.Listing
+import LeanTex.Core.Oklab
 import Std.Data.HashMap
 import Std.Data.HashSet
 
@@ -54,7 +58,7 @@ namespace LeanTex.Core.Contrast
 open LeanTex.Core.Ir LeanTex.Core.Dim
 
 /-- `4.62:1` from 4627: the human spelling of a milli ratio, for messages. -/
-def ratioString (milli : Nat) : String :=
+public def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
 
@@ -62,7 +66,7 @@ def ratioString (milli : Nat) : String :=
 text inks over the two backgrounds it paints, and the focus indicator. A
 new token that gets paired with another belongs here, so the contract below
 covers it. -/
-structure ThemeColors where
+public structure ThemeColors where
   ink : Color
   surface : Color
   muted : Color
@@ -76,14 +80,14 @@ its role: body and marker text on the page (SC 1.4.3, 4.5:1), code text on
 its tint (SC 1.4.3), and the focus indicator on the page (SC 1.4.11, 3:1).
 `rule` is pure decoration — a hairline under a heading conveys nothing the
 heading does not — and pure decoration is exempt by both criteria. -/
-def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
+public def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
   contrastMilli t.ink t.surface ≥ aaText
     && contrastMilli t.muted t.surface ≥ aaText
     && contrastMilli t.ink t.tint ≥ aaText
     && contrastMilli t.accent t.surface ≥ aaNonText
 
 /-- The light token set `HtmlDoc.baseCss` ships. -/
-def light : ThemeColors := {
+public def light : ThemeColors := {
   ink := { r := 0x18, g := 0x18, b := 0x1B }
   surface := { r := 0xFA, g := 0xFA, b := 0xF9 }
   muted := { r := 0x71, g := 0x71, b := 0x7A }
@@ -97,7 +101,7 @@ of `light`: the accent is the same hue two tints lighter, because the light
 accent reads at 2.64:1 on this surface — under the 3:1 the focus indicator
 needs (SC 1.4.11) — and inverting ink/surface does nothing for a colour that
 was chosen against a light page. -/
-def dark : ThemeColors := {
+public def dark : ThemeColors := {
   ink := { r := 0xFA, g := 0xFA, b := 0xF9 }
   surface := { r := 0x18, g := 0x18, b := 0x1B }
   muted := { r := 0xA1, g := 0xA1, b := 0xAA }
@@ -201,40 +205,40 @@ pairing warning fires, naming the repair a document can write itself. -/
 /-- ΔEOK², squared so the bound compares with no root: the Euclidean
 distance between two colours' `labOf` coordinates, at its 10¹⁸ scale
 (10³⁶ per unit²). -/
-def deltaEOkSq (c c' : Color) : Nat :=
+public def deltaEOkSq (c c' : Color) : Nat :=
   let p := Oklab.labOf c
   let q := Oklab.labOf c'
   ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) +
     (p.b - q.b) * (p.b - q.b)).toNat
 
-theorem deltaEOkSq_self (c : Color) : deltaEOkSq c c = 0 := by
+public theorem deltaEOkSq_self (c : Color) : deltaEOkSq c c = 0 := by
   simp [deltaEOkSq]
 
 /-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS
 Color 4 §14.2.1). -/
-def okJnd : Nat := 2 * 10 ^ 16
+public def okJnd : Nat := 2 * 10 ^ 16
 
 /-- How far a repair may move a declared colour, in JNDs: four, ΔEOK 0.08 —
 a difference a reader sees only beside the original, with the colour still
 the one its name says. A declared reading of "barely different", not a
 measurement: a smaller count repairs less and warns more. -/
-def inkBoundJnds : Nat := 4
+public def inkBoundJnds : Nat := 4
 
 /-- The bound on `deltaEOkSq`'s scale. -/
-def inkBoundSq : Nat := (inkBoundJnds * okJnd) * (inkBoundJnds * okJnd)
+public def inkBoundSq : Nat := (inkBoundJnds * okJnd) * (inkBoundJnds * okJnd)
 
 /-- The bound in thousandths of ΔEOK, for messages. -/
-def inkBoundMilli : Nat := inkBoundJnds * okJnd / 10 ^ 15
+public def inkBoundMilli : Nat := inkBoundJnds * okJnd / 10 ^ 15
 
 /-- A repair stays within the bound of the colour it repairs. -/
-def withinInkBound (declared shipped : Color) : Bool :=
+public def withinInkBound (declared shipped : Color) : Bool :=
   decide (deltaEOkSq declared shipped ≤ inkBoundSq)
 
 /-- ΔEOK in thousandths, truncated: what a message prints. -/
-def deltaEOkMilli (c c' : Color) : Nat := Nat.sqrt (deltaEOkSq c c') / 10 ^ 15
+public def deltaEOkMilli (c c' : Color) : Nat := Nat.sqrt (deltaEOkSq c c') / 10 ^ 15
 
 /-- `0.078` from 78: thousandths spelled for a message. -/
-def milliString (m : Nat) : String :=
+public def milliString (m : Nat) : String :=
   let f := toString (m % 1000)
   s!"{m / 1000}.{"".pushn '0' (3 - f.length)}{f}"
 
@@ -244,7 +248,7 @@ colour itself when the pair already meets `req` (milli-ratio,
 hue and chroma that does, reducing chroma toward the neutral axis when the
 full-chroma axis never reaches it; `none` when nothing does. The solver
 `realize` bounds, and what a warning past the bound offers the author. -/
-def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
+public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
   -- A colour carrying a print model is declared in DeviceCMYK: realizing
   -- it would repaint the declaration in sRGB and silently drop the
@@ -259,7 +263,7 @@ def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
 `req`; otherwise the nearest legible colour (`realizeNearest`) when it lies
 within the ink bound of the declared one; `none` otherwise — the declared
 colour then stands and the pairing diagnostic fires as before. -/
-def realize (req : Nat) (ground c : Color) : Option Color :=
+public def realize (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
   else (realizeNearest req ground c).bind fun cand =>
     if withinInkBound c cand then some cand else none
@@ -267,7 +271,7 @@ def realize (req : Nat) (ground c : Color) : Option Color :=
 /-- The unbounded solver's answer meets the requirement: every return is
 guarded by the judged quantity itself, so no monotonicity or search
 argument is load-bearing. -/
-theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
+public theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
     (h : realizeNearest req ground c = some c') : req ≤ contrastMilli c' ground := by
   unfold realizeNearest at h
   split at h
@@ -289,7 +293,7 @@ theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
 rule every departure from LaTeX answers to, as the two bounds the shipped
 colour sits between: it meets the pair's requirement, and it lies within
 the ink bound of the colour the document declared. -/
-theorem realize_between {req : Nat} {ground c c' : Color}
+public theorem realize_between {req : Nat} {ground c c' : Color}
     (h : realize req ground c = some c') :
     req ≤ contrastMilli c' ground ∧ deltaEOkSq c c' ≤ inkBoundSq := by
   unfold realize at h
@@ -308,13 +312,13 @@ theorem realize_between {req : Nat} {ground c c' : Color}
 
 /-- The realized colour passes the pair's requirement whenever the solver
 returns one — the postcondition by construction. -/
-theorem realize_meets_contract {req : Nat} {ground c c' : Color}
+public theorem realize_meets_contract {req : Nat} {ground c c' : Color}
     (h : realize req ground c = some c') : req ≤ contrastMilli c' ground :=
   (realize_between h).1
 
 /-- A pair that already passes is unchanged: realization is the identity
 on every legible pairing, so a passing document's artifact cannot move. -/
-theorem realize_id_of_passing {req : Nat} {ground c : Color}
+public theorem realize_id_of_passing {req : Nat} {ground c : Color}
     (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
   simp [realize, h]
 
@@ -345,7 +349,7 @@ private theorem nearestWeight_mem {pass : Nat → Bool} {pct q : Nat}
 /-- The weight nearest the declared one whose mix meets `req` on `ground`,
 however far it moves the colour: what the warning offers the author when a
 repair would pass the bound. -/
-def remixNearest (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
+public def remixNearest (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
   if a.cmyk.isSome then none
   else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground)) pct).map
     fun q => (q, a.mix q b)
@@ -358,7 +362,7 @@ relation between two colours the author named (`a!P!b`: P% of `a` over
 when no weight within the bound reaches the ratio — the mix then keeps its
 warning — and for a mix in the print model, whose declared components the
 press reads, as `realize` refuses a print colour. -/
-def remix (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
+public def remix (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
   if a.cmyk.isSome then none
   else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground) &&
       withinInkBound (a.mix pct b) (a.mix q b)) pct).map fun q => (q, a.mix q b)
@@ -383,7 +387,7 @@ the declared operands at that weight — drawn from the segment between the
 two named colours, never a colour of the engine's own — and the pair it
 makes meets the requirement, by construction: every return is guarded by
 the judged quantity. -/
-theorem remix_mem {req pct q : Nat} {ground a b c : Color}
+public theorem remix_mem {req pct q : Nat} {ground a b c : Color}
     (h : remix req ground a b pct = some (q, c)) :
     q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground :=
   let p := remix_parts h
@@ -393,7 +397,7 @@ theorem remix_mem {req pct q : Nat} {ground a b c : Color}
 rule every departure from LaTeX answers to, as the two bounds the shipped
 mix sits between: it meets the requirement on its ground, and it lies
 within the ink bound of xcolor's value of the mix the author wrote. -/
-theorem remix_between {req pct q : Nat} {ground a b c : Color}
+public theorem remix_between {req pct q : Nat} {ground a b c : Color}
     (h : remix req ground a b pct = some (q, c)) :
     req ≤ contrastMilli c ground ∧ deltaEOkSq (a.mix pct b) c ≤ inkBoundSq :=
   let p := remix_parts h
@@ -662,7 +666,7 @@ derivation cannot drift back: the old 14 pt / 12 pt absolutes passed a
 9 pt-base section (12.96 pt on the page, not large-scale) as a phantom
 14 pt bold, which is — the judge passing text the page fails, the exact
 defect class it exists to catch. -/
-theorem contrast_judges_what_layout_sets (base : Sp) :
+private theorem contrast_judges_what_layout_sets (base : Sp) :
     ∀ l : Nat, 0 < l →
       (headingCx base l).size = Layout.sectionSize { fontSize := base } l
   | _ + 1, _ => rfl
@@ -933,7 +937,7 @@ the declared page when there is one, the shipped light surface otherwise
 (WCAG's contrast-ratio Note 3 assumes white when nothing is specified; the
 shipped surface is the marginally darker of the two, so passing here passes
 on the PDF's white page too). -/
-def effectivePair (doc : Doc) : ColorPair :=
+public def effectivePair (doc : Doc) : ColorPair :=
   let d := Design.ofDoc doc
   { fg := d.fg, bg := if d.bgDeclared then d.bg else light.surface }
 
@@ -944,7 +948,7 @@ pair realizes first (N0022) and keeps W0315's spelling where realization
 cannot reach, with the decorative escape before either; a defaulted ink on
 a declared page is its own code (W0330), because its remedy is different:
 declare the ink, not the intent. -/
-def effectivePairJudged (doc : Doc) : Judged :=
+private def effectivePairJudged (doc : Doc) : Judged :=
   if doc.palette.decorative.contains "fg" then {}
   else
     let p := effectivePair doc
@@ -1284,7 +1288,7 @@ private structure UseJudgeState where
 /-- Where a coloured use came from, as the elaboration saw it: the
 expression it was written as and its first span, by the role it carries or,
 for an anonymous colour, by its value. -/
-abbrev ColorSite := Option String → Color → Option (String × Span)
+public abbrev ColorSite := Option String → Color → Option (String × Span)
 
 /-- A pairing warning at one coloured run: the warning, with its help and
 the pairing's first span, at the first run; a note at each later run, under
@@ -1440,7 +1444,7 @@ private def realizePlan (doc : Doc) (site : ColorSite := fun _ _ => none) : Judg
     mixWrites := jU.mixWrites }
 
 /-- The document-level contrast diagnostics: `realizePlan`'s message half. -/
-def docDiags (doc : Doc) : Array Diag := (realizePlan doc).diags
+public def docDiags (doc : Doc) : Array Diag := (realizePlan doc).diags
 
 /-- The plan's ink for one role-named pairing: the value its (role,
 declared colour, ground) realized to, when it failed and the solver met
@@ -1487,7 +1491,7 @@ private def Judged.recolor (j : Judged) : RoleRecolor := fun pal ground nm c =>
   | none => (j.mixOf c (ground.getD (surfaceOf pal))).getD c
 
 /-- The run rewrite `realizeDoc` applies, as a value a statement can name. -/
-def realizeRecolor (doc : Doc) (site : ColorSite := fun _ _ => none) : RoleRecolor :=
+public def realizeRecolor (doc : Doc) (site : ColorSite := fun _ _ => none) : RoleRecolor :=
   (realizePlan doc site).recolor
 
 /-- The realization pass: judge every (role, ground) pair the document
@@ -1501,7 +1505,7 @@ local ground. A document whose pairs all pass is returned untouched —
 own plan, not inferred from the single-pair `realize_id_of_passing` — so a
 legible document's artifact cannot move. Diagnostics are the judges' own:
 N0022 where a pair realized, the pairing warnings where none could. -/
-def realizeDoc (doc : Doc) (site : ColorSite := fun _ _ => none) : Doc × Array Diag :=
+public def realizeDoc (doc : Doc) (site : ColorSite := fun _ _ => none) : Doc × Array Diag :=
   let j := realizePlan doc site
   if j.palWrites.isEmpty && j.runWrites.isEmpty && j.inkSites.isEmpty &&
       j.mixWrites.isEmpty then (doc, j.diags)
@@ -1522,7 +1526,7 @@ and colour on that ground: the record and the rewrite read the plan's one
 lookup (`Judged.inkOf`), so what the HTML declares from the record and what
 the PDF paints from the rewritten run are one value. A document as
 elaborated records no inks; realization is what writes them. -/
-theorem realized_projects (doc : Doc) (site : ColorSite) (h0 : doc.palette.inks = #[])
+public theorem realized_projects (doc : Doc) (site : ColorSite) (h0 : doc.palette.inks = #[])
     (e : GroundInk) (he : e ∈ (realizeDoc doc site).1.palette.inks) :
     realizeRecolor doc site doc.palette (some e.ground) (some e.role) e.declared = e.ink := by
   have hpal : (realizeDoc doc site).1.palette = doc.palette ∨
@@ -1549,7 +1553,7 @@ surface — the fill `Layout.run` paints the page with. Definitional by
 construction (`effectivePair` reads `Design.ofDoc`, the one resolving
 site), and stated so the construction cannot drift: a defaulted colour
 cannot escape the contract by never being spelled. -/
-theorem judged_pair_is_shipped (doc : Doc) :
+public theorem judged_pair_is_shipped (doc : Doc) :
     (effectivePair doc).fg = (Design.ofDoc doc).fg ∧
     ((Design.ofDoc doc).bgDeclared = true →
       (effectivePair doc).bg = (Design.ofDoc doc).bg) :=
@@ -1566,7 +1570,7 @@ Stated because the two drifted: the judge read an unbarred title's page as
 `HtmlDoc.baseCss` ships under a `none` ground), and white is the lighter
 ground — so a title between the two ratios was judged passing and shipped
 failing, with no test, theorem or diagnostic to say so. -/
-theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKind)
+private theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKind)
     (nm : Option String) (c : Color) :
     ((acc.use { cx with ground := (titledLook acc.pal kind).bar } nm c).uses.back?).map
         Use.surface = some (titledGround acc.pal kind) := by
@@ -1577,7 +1581,7 @@ pair fails the AA text threshold and the ink is not declared decorative,
 `docDiags` reports — declared ink or defaulted, because
 `effectivePairDiags` judges the pair before the declared-use walk runs.
 The missing special case is now an impossibility, not a covered branch. -/
-theorem defaulted_ink_cannot_escape (doc : Doc)
+public theorem defaulted_ink_cannot_escape (doc : Doc)
     (hdec : doc.palette.decorative.contains "fg" = false)
     (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg < aaText) :
     0 < (docDiags doc).size := by
@@ -1606,7 +1610,7 @@ title already carries, outside SC 1.4.11's "required to understand the
 content"; `covered` is exempt as inactive — a declared design decision,
 pinned by this judge's own skip rather than by a theorem, and
 `coveredContract` below holds it to visibly-covered. -/
-def designContract (d : Design) : Bool :=
+public def designContract (d : Design) : Bool :=
   contrastMilli d.fg d.bg ≥ aaText
     && contrastMilli d.muted d.bg ≥ aaText
     && (match d.frametitle with
@@ -1628,7 +1632,7 @@ def designContract (d : Design) : Bool :=
 and every semantic pairing (`muted` included) is the resolved design's,
 judged with its defaults applied rather than passed vacuously when a key is
 absent. -/
-def paletteContract (pal : Palette) : Bool :=
+public def paletteContract (pal : Palette) : Bool :=
   let bg := (pal.find? "bg").getD Color.white
   let text (k : String) : Bool :=
     match pal.find? k with
@@ -1641,7 +1645,7 @@ def paletteContract (pal : Palette) : Bool :=
 the page, its standout inversion, and its title page when declared. The
 shared painter chooses undeclared defaults on that ground; declared colours
 are judged by `usesBlock`, through the usual bounded realization policy. -/
-def listingContract (pal : Palette) : Bool :=
+public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
   ([ListingStyle.default, .friendly] : List ListingStyle).all fun style =>
     Listing.contract pal none style && Listing.contract pal (some d.standout.bg) style
@@ -1649,7 +1653,7 @@ def listingContract (pal : Palette) : Bool :=
           | some p => Listing.contract pal (some p.bg) style
           | none => true)
 
-def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
+public def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
   paletteContract th.palette
 
 /-- Covered reads as covered on the design's own page, per colour — the
@@ -1666,7 +1670,7 @@ asks of visual information that identifies a state. The plain cover
 against `fg`. Judged from `Design.cover`, the one resolving site. If a
 bundle needs a smaller fraction to close, that is a finding about the
 bundle — moloch's 31% — never a reason to weaken this contract. -/
-def coveredContract (pal : Palette) : Bool :=
+public def coveredContract (pal : Palette) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
   let visiblyCovered (c : Color) : Bool :=
@@ -1685,7 +1689,7 @@ says. The general integer statement needs luminance monotonicity through
 the whole pipeline (a refactor, tracked in PLAN, not claimed here); this
 is its per-bundle kernel check, with a property test over random colours
 in `Tests.lean` beside it. -/
-def coverMonotone (pal : Palette) : Bool :=
+public def coverMonotone (pal : Palette) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
   let quieter (c : Color) : Bool :=
@@ -1710,7 +1714,7 @@ One family per operand, each the same array the matching judge iterates
 (`docWalk`, `docUses`, the one resolving sites) — declarative rather than
 accumulated so a statement can read a family's membership off it, which is
 what `realizeDoc_id` needs to carry a passing pair into each judge. -/
-def judgedPairs (doc : Doc) : Array (Color × Color) :=
+public def judgedPairs (doc : Doc) : Array (Color × Color) :=
   let walk := docWalk doc
   let d0 := Design.ofDoc doc
   let bg0 := (effectivePair doc).bg
@@ -1832,12 +1836,6 @@ private theorem resolvedPairJudged_no_pal_writes (doc : Doc)
         titlePageStep_no_pal_writes doc j pal (hp pal (Array.mem_toList_iff.mp hmem)) hj
   simp [resolvedPairJudged, eB, eT, eS, eP]
 
-/-- The large-scale threshold is the weaker of the two: a pair that clears
-the text requirement clears it wherever the judge asks for 3:1. -/
-private theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
-  unfold aaLargeText aaText
-  omega
-
 private theorem useStep_no_writes (site : ColorSite) (large : Std.HashMap UseKey Bool)
     (s : UseJudgeState) (u : Use)
     (hpass : aaText ≤ contrastMilli u.color u.surface)
@@ -1891,7 +1889,7 @@ judge, each a fold invariant over that judge's own step, so the dedup state
 the plan is built through (`useStep`'s `done`/`palSeen`/`solved`) cannot
 manufacture a write the pair did not ask for. The large-scale pairs are
 covered by the text threshold, which is the stricter of the two. -/
-theorem realizeDoc_id (doc : Doc) (site : ColorSite)
+public theorem realizeDoc_id (doc : Doc) (site : ColorSite)
     (h : ∀ p ∈ judgedPairs doc, aaText ≤ contrastMilli p.1 p.2) :
     (realizeDoc doc site).1 = doc := by
   have hE : aaText ≤ contrastMilli (effectivePair doc).fg (effectivePair doc).bg := by
@@ -1962,7 +1960,7 @@ arithmetic assessment with its recorded paint and address. The only
 premises locate the run and say it is nonempty. An absent ground uses the
 effective document page; this does not certify overlapping picture fills
 or infer exemptions from a colour value. -/
-theorem layoutAudit_covers (geom : Layout.Geom) (fs : Font.FontSet)
+public theorem layoutAudit_covers (geom : Layout.Geom) (fs : Font.FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store) (required : Nat)
     (hp : (Layout.run geom fs pats doc imgs).pages[p]? = some page)
     (hl : page.lines[l]? = some line)

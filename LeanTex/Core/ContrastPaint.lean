@@ -1,5 +1,7 @@
-import LeanTex.Core.ContrastRatio
-import LeanTex.Core.Layout
+module
+
+public import LeanTex.Core.ContrastRatio
+public import LeanTex.Core.Layout
 
 /-!
 Contrast observations over placed glyphs. The document realization plan
@@ -20,7 +22,7 @@ open Ir Layout
 /-- A nonempty glyph run's paint at its zero-based address in the output.
 `ground` retains `none`: resolving a fallback must not erase the evidence
 that a painter did not record a local ground. -/
-structure RunPaint where
+public structure RunPaint where
   page : Nat
   line : Nat
   segment : Nat
@@ -30,7 +32,7 @@ structure RunPaint where
 
 /-- Read exactly the paint a glyph run carries. Spacing, rules, decoration,
 images and polygons are outside this text census. -/
-def runPaint? (page line segment : Nat) : Seg → Option RunPaint
+public def runPaint? (page line segment : Nat) : Seg → Option RunPaint
   | .run _ ink _ _ glyphs _ _ _ _ ground _ =>
     if glyphs.isEmpty then none else some { page, line, segment, ink, ground }
   | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => none
@@ -46,13 +48,13 @@ private theorem runPaint?_address
 
 /-- The actual ordered census, with duplicates retained. It is read from
 placed output, not reconstructed from source or from a palette plan. -/
-def shippedPaints (out : Out) : Array RunPaint :=
+public def shippedPaints (out : Out) : Array RunPaint :=
   out.pages.zipIdx.flatMap fun (page, p) =>
     page.lines.zipIdx.flatMap fun (line, l) =>
       line.segs.zipIdx.filterMap fun (seg, s) => runPaint? p l s seg
 
 /-- Independent address-based specification of one census entry. -/
-def PaintOccurs (out : Out) (paint : RunPaint) : Prop :=
+public def PaintOccurs (out : Out) (paint : RunPaint) : Prop :=
   ∃ page line seg,
     out.pages[paint.page]? = some page ∧
     page.lines[paint.line]? = some line ∧
@@ -61,7 +63,7 @@ def PaintOccurs (out : Out) (paint : RunPaint) : Prop :=
 
 /-- Both directions: every census entry has an actual nonempty glyph run
 at its reported address, and every such run is present. -/
-theorem shippedPaints_exact (out : Out) (paint : RunPaint) :
+public theorem shippedPaints_exact (out : Out) (paint : RunPaint) :
     paint ∈ shippedPaints out ↔ PaintOccurs out paint := by
   constructor
   · intro h
@@ -87,7 +89,7 @@ theorem shippedPaints_exact (out : Out) (paint : RunPaint) :
 
 /-- No assumption about the layout algorithm: a nonempty run in the output
 is always in the actual census, including computed overlay/furniture ink. -/
-theorem shippedPaints_covers (out : Out)
+public theorem shippedPaints_covers (out : Out)
     (hp : out.pages[p]? = some page) (hl : page.lines[l]? = some line)
     (hs : line.segs[s]? =
       some (.run font ink link width glyphs size leading decorations raise ground attr))
@@ -99,23 +101,23 @@ theorem shippedPaints_covers (out : Out)
 
 /-- The observation and its assessment travel together; equal colours at
 different addresses must not consume one another's exemption decisions. -/
-structure RunAssessment where
+public structure RunAssessment where
   paint : RunPaint
   assessment : PairAssessment
   deriving Repr, BEq
 
-def assessRun (defaultGround : Color) (required : Nat) (paint : RunPaint) :
+public def assessRun (defaultGround : Color) (required : Nat) (paint : RunPaint) :
     RunAssessment :=
   { paint, assessment := assessPair required paint.ink (paint.ground.getD defaultGround) }
 
 /-- Arithmetic for every nonempty placed glyph run. Call with the effective
 page ground for the document that produced `out`. This does not resolve a
 picture's unrecorded local fill or recover exemption provenance. -/
-def shippedAudit (defaultGround : Color) (required : Nat) (out : Out) :
+public def shippedAudit (defaultGround : Color) (required : Nat) (out : Out) :
     Array RunAssessment :=
   (shippedPaints out).map (assessRun defaultGround required)
 
-theorem shippedAudit_exact (defaultGround : Color) (required : Nat)
+public theorem shippedAudit_exact (defaultGround : Color) (required : Nat)
     (out : Out) (a : RunAssessment) :
     a ∈ shippedAudit defaultGround required out ↔
       ∃ paint, PaintOccurs out paint ∧ assessRun defaultGround required paint = a := by
@@ -123,7 +125,7 @@ theorem shippedAudit_exact (defaultGround : Color) (required : Nat)
 
 /-- The audit never silently drops a run. The retained entry includes the
 actual colours and the implemented contrast decision. -/
-theorem shippedAudit_covers (defaultGround : Color) (required : Nat) (out : Out)
+public theorem shippedAudit_covers (defaultGround : Color) (required : Nat) (out : Out)
     (hp : out.pages[p]? = some page) (hl : page.lines[l]? = some line)
     (hs : line.segs[s]? =
       some (.run font ink link width glyphs size leading decorations raise ground attr))
@@ -135,12 +137,12 @@ theorem shippedAudit_covers (defaultGround : Color) (required : Nat) (out : Out)
 
 /-- Arithmetic below the supplied threshold; this deliberately does not
 classify a run as covered, decorative, or eligible for a diagnostic. -/
-def shippedFailures (defaultGround : Color) (required : Nat) (out : Out) :
+public def shippedFailures (defaultGround : Color) (required : Nat) (out : Out) :
     Array RunAssessment :=
   (shippedAudit defaultGround required out).filter fun a => !a.assessment.passes
 
 /-- A failure is exactly an actual run below the supplied threshold. -/
-theorem shippedFailures_exact (defaultGround : Color) (required : Nat)
+public theorem shippedFailures_exact (defaultGround : Color) (required : Nat)
     (out : Out) (a : RunAssessment) :
     a ∈ shippedFailures defaultGround required out ↔
       ∃ paint, PaintOccurs out paint ∧
@@ -166,7 +168,7 @@ theorem shippedFailures_exact (defaultGround : Color) (required : Nat)
 
 /-- Empty failure output certifies all recorded pairs at the supplied
 threshold, in both directions. No premise assumes the judge's correctness. -/
-theorem shippedFailures_clear_contract (defaultGround : Color) (required : Nat)
+public theorem shippedFailures_clear_contract (defaultGround : Color) (required : Nat)
     (out : Out) :
     shippedFailures defaultGround required out = #[] ↔
       ∀ paint, PaintOccurs out paint →
@@ -197,7 +199,7 @@ and no later non-text segment can obscure the text. The last rectangle
 wins; an unpainted PDF page uses white paper. This certifies the uniform
 substrate only, not absence of overlapping text or full WCAG conformance.
 PDF painting order is `fills`, `paths`, text, then inline graphics. -/
-def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
+public def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
   if page.paths.any (fun path => path.fill.isSome || path.stroke.isSome) ||
       !(page.lines.all fun line => line.segs.all textOnly) ||
       !(page.fills.all fun fill =>
@@ -208,10 +210,10 @@ def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
 
 /-- Cache each page's background decision once; assessing many runs must
 not rescan every page's paint for each glyph run. -/
-def shippedGrounds (geom : Geom) (out : Out) : Array (Option Color) :=
+public def shippedGrounds (geom : Geom) (out : Out) : Array (Option Color) :=
   out.pages.map (uniformTextGround? geom)
 
-theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page : PageOut}
+public theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page : PageOut}
     (h : out.pages[p]? = some page) :
     (shippedGrounds geom out)[p]? = some (uniformTextGround? geom page) := by
   simp [shippedGrounds, Array.getElem?_map, h]
@@ -219,7 +221,7 @@ theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page : Page
 /-- Actual point size and OpenType weight, including the PDF writer's
 fallback to the body face. An absent font is unresolved, never bold by
 assumption. No source colour spelling is used as an exemption. -/
-def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
+public def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
     Option (Dim.Sp × Nat) := do
   let page ← out.pages[paint.page]?
   let line ← page.lines[paint.line]?
@@ -227,7 +229,7 @@ def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
   let font ← fs.fonts[idx]?.orElse fun _ => fs.fonts[0]?
   return (if size == 0 then line.size else size, font.weight)
 
-inductive ContrastUnknown where
+public inductive ContrastUnknown where
   | metrics
   | nonpositiveSize
   | ground
@@ -236,21 +238,21 @@ inductive ContrastUnknown where
 /-- An arithmetic verdict or the precise evidence the judge lacks.
 Below-threshold paint is retained even when it might be deliberately
 covered: declaring an exemption requires provenance, not colour equality. -/
-inductive TextVerdict where
+public inductive TextVerdict where
   | measured (ground : Color) (size : Dim.Sp) (weight : Nat) (pair : PairAssessment)
   | unverified (reason : ContrastUnknown)
   deriving Repr, BEq
 
-def TextVerdict.passes : TextVerdict → Bool
+public def TextVerdict.passes : TextVerdict → Bool
   | .measured _ _ _ pair => pair.passes
   | .unverified _ => false
 
-structure JudgedPaint where
+public structure JudgedPaint where
   paint : RunPaint
   verdict : TextVerdict
   deriving Repr, BEq
 
-def judgePaint (grounds : Array (Option Color)) (fs : Font.FontSet)
+public def judgePaint (grounds : Array (Option Color)) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) : JudgedPaint :=
   { paint, verdict :=
     match runMetrics? fs out paint with
@@ -265,14 +267,14 @@ def judgePaint (grounds : Array (Option Color)) (fs : Font.FontSet)
 /-- Independent acceptance condition: actual font metrics, a positive
 size, a supported background and the implemented integer contrast bound.
 There is no premise assuming that an earlier diagnostic judge was complete. -/
-def TextVerified (grounds : Array (Option Color)) (fs : Font.FontSet)
+public def TextVerified (grounds : Array (Option Color)) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) : Prop :=
   ∃ size weight ground,
     runMetrics? fs out paint = some (size, weight) ∧
     0 < size ∧ grounds[paint.page]?.join = some ground ∧
     textRequired size (weight ≥ 700) ≤ contrastMilli paint.ink ground
 
-theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.FontSet)
+public theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) :
     (judgePaint grounds fs out paint).verdict.passes = true ↔
       TextVerified grounds fs out paint := by
@@ -286,12 +288,13 @@ theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.FontSet)
       | none => simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified]
       | some ground =>
         simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified,
-          and_assoc, Int.lt_of_not_ge hs, assessPair, PairAssessment.passes]
+          and_assoc, Int.lt_of_not_ge hs,
+          (assessPair_contract (textRequired size (weight ≥ 700)) paint.ink ground).2]
 
 /-- One result for every actual nonempty run, with background scans shared.
 Unknown grounds and missing metrics remain in the same census as measured
 ink. This runs only when a PDF accessibility assertion requests it. -/
-def shippedJudgments (geom : Geom) (fs : Font.FontSet) (out : Out) :
+public def shippedJudgments (geom : Geom) (fs : Font.FontSet) (out : Out) :
     Array JudgedPaint :=
   let grounds := shippedGrounds geom out
   (shippedPaints out).map (judgePaint grounds fs out)
@@ -299,16 +302,16 @@ def shippedJudgments (geom : Geom) (fs : Font.FontSet) (out : Out) :
 /-- Completeness over the placed artifact, replacing the false claim that
 the source colour plan enumerates all paint. Every occurrence has its own
 verdict, including unresolved cases; repeated colours do not merge sites. -/
-theorem contrast_judged_complete (geom : Geom) (fs : Font.FontSet)
+public theorem contrast_judged_complete (geom : Geom) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) (h : PaintOccurs out paint) :
     judgePaint (shippedGrounds geom out) fs out paint ∈ shippedJudgments geom fs out := by
   exact Array.mem_map.mpr ⟨paint, (shippedPaints_exact ..).mpr h, rfl⟩
 
-def shippedContrastIssues (geom : Geom) (fs : Font.FontSet) (out : Out) :
+public def shippedContrastIssues (geom : Geom) (fs : Font.FontSet) (out : Out) :
     Array JudgedPaint :=
   (shippedJudgments geom fs out).filter fun j => !j.verdict.passes
 
-theorem shippedContrastIssues_exact (geom : Geom) (fs : Font.FontSet)
+public theorem shippedContrastIssues_exact (geom : Geom) (fs : Font.FontSet)
     (out : Out) (j : JudgedPaint) :
     j ∈ shippedContrastIssues geom fs out ↔
       ∃ paint, PaintOccurs out paint ∧
@@ -329,7 +332,7 @@ theorem shippedContrastIssues_exact (geom : Geom) (fs : Font.FontSet)
 a supported background and sufficient integer contrast. An unresolved
 case cannot silently pass. This is the implemented PDF text-contrast
 contract, not a certification of all WCAG criteria or browser paint. -/
-theorem shippedContrast_clear_contract (geom : Geom) (fs : Font.FontSet)
+public theorem shippedContrast_clear_contract (geom : Geom) (fs : Font.FontSet)
     (out : Out) :
     shippedContrastIssues geom fs out = #[] ↔
       ∀ paint, PaintOccurs out paint →

@@ -1,22 +1,17 @@
-import LeanTex.Core.Contrast
+module
+
+public import LeanTex.Core.Contrast
+import all LeanTex.Core.Contrast
+import all LeanTex.Core.Theme
+import all LeanTex.Core.Ir
+import all LeanTex.Core.ContrastRatio
+import all LeanTex.Core.Oklab
+import all LeanTex.Core.Listing
 
 /-!
-# The kernel-checked contracts over shipped constants
-
-Every contract here is a `decide +kernel` over values fixed at definition
-time: the two `ThemeColors` records, the unpainted PDF page, the default
-surface, and `Theme.builtin`. The kernel evaluates each one, and that
-evaluation was the whole cost of elaborating `Contrast.lean`.
-
-They live in a leaf because nothing reads them. `Elab` imports `Contrast` for
-one name, `realizeDoc`, and `Contrast` sat sixth on the seven-module chain
-that dominates a clean build, so every kernel second here delayed the chain's
-longest job. Only `LeanTex.lean` imports this module: the statements are still
-built and still gate under the default target, they are simply no longer
-between `Layout` and `Elab`.
-
-The namespace is unchanged, so the names — and every comment across the tree
-that cites one — survive the move.
+Kernel-checked contrast contracts for the shipped design constants and
+built-in themes. Kept downstream of the colour solver so consumers of its
+API need not depend on these finite evaluations.
 -/
 
 namespace LeanTex.Core.Contrast
@@ -24,17 +19,17 @@ namespace LeanTex.Core.Contrast
 open LeanTex.Core.Ir LeanTex.Core.Dim
 
 /-- No shipped light bundle regresses into an illegible pair. -/
-theorem light_contract : light.contractHolds = true := by decide +kernel
+public theorem light_contract : light.contractHolds = true := by decide +kernel
 
 /-- The dark variant is held to the same contract, not assumed from the
 light one. -/
-theorem dark_contract : dark.contractHolds = true := by decide +kernel
+public theorem dark_contract : dark.contractHolds = true := by decide +kernel
 
 /-- The PDF default — black ink on the unpainted (white) page — clears the
 AA text threshold; 21:1 is the definition's own maximum. (Named `_aa`,
 not `_text`: `_text` is the registered census-conservation suffix, and a
 registry is only a registry if a suffix has one meaning.) -/
-theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
+public theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
   decide +kernel
 
 -- The theorems range over the bundles the engine installs: `Theme.builtin`
@@ -50,27 +45,27 @@ content colours (`alert`, `example`) and the resolved design's semantic
 pairings, defaults applied — clears its WCAG 2.2 threshold. Moloch's alert
 is the corrected one: the lineage's own #EB811B read at 2.61:1 on this
 page, under SC 1.4.3. -/
-theorem builtin_palettes_contract :
+public theorem builtin_palettes_contract :
     Theme.builtin.all (fun th => paletteContract th.palette) = true := by decide +kernel
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
 (the Material disabled-state opacity, applied as the opacity it is). `{}`
 is not in `Theme.builtin`, so the default keeps its own statement. -/
-theorem default_covered : coveredContract {} = true := by decide +kernel
+public theorem default_covered : coveredContract {} = true := by decide +kernel
 
-theorem default_cover_monotone : coverMonotone {} = true := by decide +kernel
+public theorem default_cover_monotone : coverMonotone {} = true := by decide +kernel
 
 /-- Cover monotonicity, quantified over the shipped list: covering twice
 quiets further for every built-in bundle's text roles. -/
-theorem builtin_covers_monotone :
+public theorem builtin_covers_monotone :
     Theme.builtin.all (fun th => coverMonotone th.palette) = true := by decide +kernel
 
 /-- Quantified over the shipped list itself, so a third bundle enters the
 contract by being added, not by someone remembering a theorem: every
 built-in bundle's resolved design — the values `\theme` installs, with
 every default applied — satisfies the contrast contract. -/
-theorem builtin_designs_legible :
+public theorem builtin_designs_legible :
     Theme.builtin.all (fun th =>
       designContract (Design.ofDoc { palette := th.palette
                                      tokens := th.tokens
@@ -78,7 +73,7 @@ theorem builtin_designs_legible :
 
 /-- The covered contract, quantified the same way: every built-in
 bundle's palette is visibly covered when dimmed, per colour. -/
-theorem builtin_designs_covered :
+public theorem builtin_designs_covered :
     Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide +kernel
 
 /-- Both contracts over what `\theme` installs, for every shipped bundle
@@ -89,7 +84,7 @@ remaining link, that `\theme` reaches this install through `Elab.run`,
 is the per-bundle "`\theme` installs the bundle's own values" pin in
 `Tests.lean`: `Elab.run`'s tracked non-total functions keep the
 elaborator itself outside the kernel's reach. -/
-theorem builtin_palette_contract_engine :
+public theorem builtin_palette_contract_engine :
     (Theme.builtin.all fun t =>
       paletteContract (Theme.apply t {}).palette &&
       coveredContract (Theme.apply t {}).palette) = true := by
@@ -108,7 +103,7 @@ the contract. The cross-ground pairs a document's own content creates
 their use sites and are pinned executably in Tests.lean
 (realizedCrossChecks): the search there is not the identity, and the
 kernel does not evaluate it cheaply. -/
-theorem realized_builtin_contract :
+public theorem realized_builtin_contract :
     (Theme.builtin.all fun th =>
       let pal := th.palette
       let d := Design.ofDoc { palette := pal }
