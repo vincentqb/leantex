@@ -1,5 +1,7 @@
-import LeanTex.Core.Bib
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Bib
+public import LeanTex.Core.Ir
 import LeanTex.Core.MathParse
 import Std.Data.HashSet
 
@@ -25,7 +27,7 @@ open LeanTex.Core
 value, and the load's `sort` and `compress` (`\NAT@sort`, `\NAT@cmprs`),
 which order a citation's keys and join its runs of numbers — options no
 `\bibpunct` or style row touches. -/
-structure CitePunct where
+public structure CitePunct where
   numbers : Bool := false
   «open» : String := "("
   close : String := ")"
@@ -51,12 +53,12 @@ structure CitePunct where
 /-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`
 share (natbib.sty: `\bibpunct{[}{]}{,}{a}{,}{,}`): author-year, square
 brackets, a comma between citations. -/
-def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
+public def natPunct : CitePunct := { «open» := "[", close := "]", sep := "," }
 
 /-- natbib's `\bibstyle@plain` row, which `abbrv` and `unsrt` share
 (`\bibpunct{[}{]}{,}{n}{}{,}`): numbers in square brackets, LaTeX's own
 `\cite` too (latex.ltx `\@cite`, `[1, 2]`). -/
-def latexPunct : CitePunct :=
+public def latexPunct : CitePunct :=
   { numbers := true, «open» := "[", close := "]", sep := ",", aysep := "" }
 
 /-- natbib's `\bibstyle@<name>` rows (natbib.sty:206–234, and the `\let`
@@ -70,7 +72,7 @@ Each row is the six values its `\bibpunct` sets, the note separator at
 sets (its `\unskip` takes the tie). natbib's `nature` row, superscript
 numbers, has no entry: the engine sets no superscript citation, as it
 refuses natbib's `super` option. -/
-def natbibRows : List (String × CitePunct) :=
+public def natbibRows : List (String × CitePunct) :=
   let ay (o c sep aysep : String) : CitePunct :=
     { «open» := o, close := c, sep, aysep, yysep := "," }
   let num (o c : String) (yysep : String := ",") : CitePunct :=
@@ -132,7 +134,7 @@ private def keyValue? (d : String) : Option (String × String) :=
 /-- Does natbib read this declaration — a keyword, a key it knows, or a
 door word? Exactly as written: natbib compares whole items, so ` round`
 after a comma and a space is a word it does not know. -/
-def CitePunct.reads (d : String) : Bool :=
+public def CitePunct.reads (d : String) : Bool :=
   d == "nobibstyle" || d == "bibstyle" || (citeKeywords.lookup d).isSome ||
     ((keyValue? d).bind fun (k, _) => citeKeys.lookup k).isSome
 
@@ -166,7 +168,7 @@ private def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × 
 
 /-- The items of a `\setcitestyle` list, split where natbib's `\@for` splits
 them — at commas outside braces — and kept exactly as written. -/
-def citeItems (src : String) : Array String := Id.run do
+public def citeItems (src : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut cur := ""
   let mut depth : Int := 0
@@ -186,7 +188,7 @@ order a load lists them in), each as the declarations it executes in
 `\setcitestyle`'s vocabulary: `numbers` is `numbers` with `square`, `comma`
 and `nobibstyle` there. `sort`, `compress` and `sort&compress` set the two
 citation options only a load declares (`CitePunct.step`). -/
-def natbibOptions : List (String × List String) :=
+public def natbibOptions : List (String × List String) :=
   [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
    ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
    ("round", ["round", "nobibstyle"]), ("square", ["square", "nobibstyle"]),
@@ -203,7 +205,7 @@ two entries share authors and year; `nty` and `nyt` are biblatex's
 default sorting schemes (biblatex manual §3.1.2.1: name, title, year for
 the numeric styles; name, year, title for the author-year ones), a name
 sorted by its family name first. -/
-inductive SortOrder where
+public inductive SortOrder where
   | citation
   | authorYear
   | nty
@@ -216,7 +218,7 @@ the `In` before a booktitle, the `pages` word, the `12(3):45–67` join — so
 an entry type contributes only its sequence of pieces and boundaries
 (`Step`). `field` outputs a stored value as written: a publisher, an
 address, a school, an institution, an organization, a note. -/
-inductive Field where
+public inductive Field where
   | authors
   /-- `Sam Roe, editor`, or `…, editors` for more than one (FUNCTION
   {format.editors}). -/
@@ -265,7 +267,7 @@ inductive Field where
 /-- One step of an entry type's function: a piece's `output`, or a block or
 sentence boundary — the conditional ones (`new.block.checka`, `checkb`,
 `new.sentence.checkb`) taken when any of the named fields is present. -/
-inductive Step where
+public inductive Step where
   | out (f : Field)
   | newBlock
   | newSentence
@@ -278,7 +280,7 @@ entry format alike. plainnat prints full first-first names in the list
 (`{ff~}{vv~}{ll}{, jj}`, plainnat.bst FUNCTION {format.names}) and last
 names inline; `initials` is the axis the abbrv styles set, `lastFirst`
 the one alpha-shaped styles would. -/
-structure NameFormat where
+public structure NameFormat where
   lastFirst : Bool := false
   /-- Abbreviate first names to initials — plain.bst's `{f.~}` designator,
   the one axis `abbrv`/`abbrvnat` set. -/
@@ -291,7 +293,7 @@ structure NameFormat where
 /-- A bibliography style: four independent choices composed. `unsrtnat` and
 `plainnat` are records of this type; so is the fallback an unknown
 `\bibliographystyle` gets (W0353) — a record, not a code path. -/
-structure Style where
+public structure Style where
   /-- Whether the style's `\bibitem`s carry natbib's author-year labels
   (plainnat's family does, plain's does not): a style that writes none puts
   natbib in numbers mode whatever was declared. The punctuation is natbib's
@@ -305,7 +307,7 @@ structure Style where
 
 /-- One name as the format writes it. Initials abbreviate each first-name
 token to its first letter and a period (plain.bst's `{f.~}` designator). -/
-def NameFormat.render (nf : NameFormat) (n : Name) : String :=
+public def NameFormat.render (nf : NameFormat) (n : Name) : String :=
   let first :=
     if nf.initials then
       String.intercalate " " (((n.first.splitOn " ").filter (!·.isEmpty)).map
@@ -321,7 +323,7 @@ def NameFormat.render (nf : NameFormat) (n : Name) : String :=
 /-- An author value as the reference list prints it: each name through the
 format, the list through plain.bst's join (`andJoin`), a long list elided
 at `etAlAfter`. -/
-def NameFormat.renderList (nf : NameFormat) (v : String) : String :=
+public def NameFormat.renderList (nf : NameFormat) (v : String) : String :=
   let ns := (splitNames v).toList
   let ns := match nf.etAlAfter with
     | some k => if ns.length > k then ns.take 1 ++ ["others"] else ns
@@ -351,14 +353,14 @@ link to: `Ir.bibAnchor`, the one naming site, `#`-prefixed for the href.
 The key is author text from the `.bib`; the typed HTML tree escapes it on
 the way into the attribute (`escapeAttr`), so no spelling of a key can
 break out of the `href`. -/
-def anchorOf (key : String) : String :=
+public def anchorOf (key : String) : String :=
   let a := Ir.bibAnchor key
   "#" ++ a
 
 /-- One resolved citation, ready to render: the entry with its 1-based
 position in the reference list, and the letter that tells it from entries
 sharing its label (`extraLabels`), empty when its label is its own. -/
-structure Resolved where
+public structure Resolved where
   key : String
   position : Nat
   entry : Entry
@@ -577,7 +579,7 @@ list order; under `compress` a numbered citation that wraps its keys
 textual one keeps every number, as natbib's textual branch does. The output
 is text and links over text only — no `.cite`, no `.ref` — which is
 `renderCite_plain`, the leaf fact `apply_no_cite` rests on. -/
-def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
+public def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
   if let .bracket o := f.cmd then emit #[] (if o then p.open else p.close)
   else if f.cmd == .text then emit #[] (p.open ++ f.pre ++ p.close)
@@ -638,7 +640,7 @@ private def formulaOf (src : String) : Ir.Inline :=
 LaTeX, so the body's rules: the plain text `text` reads, then the body's
 typographic punctuation (`Ir.smartPunct`: TeX's quote and dash ligatures),
 each `$…$` span a formula. -/
-def fieldInlines (v : String) : Array Ir.Inline := Id.run do
+public def fieldInlines (v : String) : Array Ir.Inline := Id.run do
   let spans := mathSpans v
   let mut out : Array Ir.Inline := #[]
   let mut pending := ""
@@ -787,7 +789,7 @@ verbatim — FUNCTION {article}, {book}, {booklet}, {inbook},
 sequence per type, the entry deciding the branch `inproceedings` takes
 on its address. An unknown type is `misc` (FUNCTION {default.type}); a
 type's cross-reference branch is not taken (no `crossref` is read). -/
-def plainnatSteps (e : Entry) : Array Step :=
+public def plainnatSteps (e : Entry) : Array Step :=
   let url : Array Step := #[.newBlockIf ["url"], .out .url]
   let note : Array Step := #[.newBlock, .out (.field "note")]
   let tail : Array Step := #[.newBlockIf ["doi"], .out .doi] ++ url ++ note
@@ -869,7 +871,7 @@ entry closes with its period (`fin.entry`). natbib's `\newblock` adds
 `\hskip .11em plus .33em minus .07em` at a block boundary, which no IR
 node spells: the boundary is one word space. `extra` is the entry's letter
 among those sharing its label, which its date carries (`extraLabels`). -/
-def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : String := "") :
+public def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : String := "") :
     Array Ir.Inline := Id.run do
   let mut out : Array Ir.Inline := #[]
   let mut st := OutState.beforeAll
@@ -893,7 +895,7 @@ def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : Stri
 /-- `unsrtnat`: the reference list in first-citation order (the "unsrt"),
 the standard field orders, full names, author-year labels in its
 `\bibitem`s — what `unsrtnat.bst` is, as one record. -/
-def Style.unsrtnat : Style where
+public def Style.unsrtnat : Style where
   labels := true
   sort := .citation
   steps := plainnatSteps
@@ -901,7 +903,7 @@ def Style.unsrtnat : Style where
 
 /-- `plainnat`: the same fields and names, the list sorted by author then
 year (natbib manual §4: plainnat is the author-year companion of plain). -/
-def Style.plainnat : Style where
+public def Style.plainnat : Style where
   labels := true
   sort := .authorYear
   steps := plainnatSteps
@@ -909,14 +911,14 @@ def Style.plainnat : Style where
 
 /-- `plain`: what the record model buys — plain.bst is numbers over an
 author-sorted list, zero new code, only another pairing of the axes. -/
-def Style.plain : Style where
+public def Style.plain : Style where
   labels := false
   sort := .authorYear
   steps := plainnatSteps
   names := {}
 
 /-- `unsrt`: `plain` in first-citation order, as unsrt.bst is. -/
-def Style.unsrt : Style :=
+public def Style.unsrt : Style :=
   { Style.plain with sort := .citation }
 
 /-- The name format the abbrv-shaped styles share: first names abbreviate
@@ -924,17 +926,17 @@ to initials, first-first order — `{f.~}{vv~}{ll}{, jj}` in both abbrv.bst
 and abbrvnat.bst FUNCTION {format.names}, so "J. Smith", never
 "Smith, J.". The one axis the abbrv pair sets; everything else is
 `plain`/`plainnat` verbatim. -/
-def abbrvNames : NameFormat := { initials := true }
+public def abbrvNames : NameFormat := { initials := true }
 
 /-- `abbrvnat`: `plainnat` with abbreviated first names — natbib ships
 abbrvnat.bst as plainnat.bst minus only the name designator (natbib
 manual §4 lists the three companion styles as one family). -/
-def Style.abbrvnat : Style :=
+public def Style.abbrvnat : Style :=
   { Style.plainnat with names := abbrvNames }
 
 /-- `abbrv`: `plain` with abbreviated first names, the same relation
 abbrv.bst has to plain.bst. -/
-def Style.abbrv : Style :=
+public def Style.abbrv : Style :=
   { Style.plain with names := abbrvNames }
 
 /-- The punctuation a document's citations draw with — natbib's rule. No
@@ -946,7 +948,7 @@ with no row leaves them standing — and a style whose `\bibitem`s carry no
 author-year label (`labels`) puts natbib in numbers mode whatever was
 declared (natbib.sty reading a `\bibitem` without one). A document that
 declares no style has no row to apply. -/
-def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
+public def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
     (labels : Bool) : CitePunct :=
   match natbib with
   | none => latexPunct
@@ -959,7 +961,7 @@ def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
 the caller falls back to `unsrtnat` — a record, so the fallback loses the
 name, never the machinery. -/
-def Style.named (name : String) : Option Style :=
+public def Style.named (name : String) : Option Style :=
   match name with
   | "unsrtnat" => some .unsrtnat
   | "unsrt" => some .unsrt
@@ -1038,7 +1040,7 @@ distinct by construction; author-year compares the label names, then the
 year, then — the tiebreak totality forces — the key, so two entries by the
 same authors in the same year still have one order; biblatex's schemes
 compare their keys (`biblatexKey`). -/
-def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
+public def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
   match so with
   | .citation => Ord.compare a.position b.position
   | .authorYear => ayCompare (ayKey a) (ayKey b)
@@ -1054,7 +1056,7 @@ private def sortByKey {κ : Type} (key : Resolved → κ) (cmp : κ → κ → O
 sort (stable), over keys computed once per entry rather than once per
 comparison — a thesis-sized list is thousands of entries, and the
 insertion sort this replaces was quadratic in them. -/
-def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
+public def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
   match so with
   | .citation => xs.mergeSort fun a b => decide (a.position ≤ b.position)
   | .authorYear => sortByKey ayKey ayCompare xs
@@ -1063,7 +1065,7 @@ def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
 
 /-- What one key renders as, everywhere it is cited: its entry at its
 1-based position in the reference list. -/
-def Resolver := String → Option Resolved
+@[expose] public def Resolver := String → Option Resolved
 
 /-- The label plainnat.bst's `calc.label` builds and its `forward.pass`
 compares between entries: the label names a citation prints and the
@@ -1093,7 +1095,7 @@ private def extraLabels (rs : Array Resolved) (biblatex : Bool := false) : Array
 the style's order, positions assigned by list index — so the numeric
 marker IS the sort position, the fact `\cite` marks rest on — and each
 entry's letter among those sharing its label (`extraLabels`). -/
-def resolveEntries (style : Style) (cited : Array String)
+public def resolveEntries (style : Style) (cited : Array String)
     (find : String → Option Entry) (biblatex : Bool := false) : Array Resolved :=
   -- First-citation positions (1-based, in cited order) feed the sort;
   -- the final position is the index in the sorted list.
@@ -1110,7 +1112,7 @@ author-year mode — natbib's `\@biblabel` is the number there and an
 empty hanging label here. The date carries the entry's letter in
 author-year mode (FUNCTION {format.date}); numbers mode's `\natexlab`
 prints nothing. -/
-def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
+public def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) :
     Array Ir.BibItem :=
   resolved.map fun r =>
     { key := r.key
@@ -1133,7 +1135,7 @@ but over a different data shape (a counter threaded through a tree walk,
 not a `mapIdx` over a sorted list). Deliberately not unified: a shared
 "consecutive assignment" lemma would leave each proof's hard part — here a
 one-line `simp`, there the tree induction — untouched. -/
-theorem bibItems_marker_exact (p : CitePunct) (style : Style) (resolved : Array Resolved)
+public theorem bibItems_marker_exact (p : CitePunct) (style : Style) (resolved : Array Resolved)
     (h : p.numbers = true) (i : Nat) (hi : i < resolved.size) :
     (bibItems p style resolved)[i]?.bind (·.marker) =
       some (toString (resolved[i].position)) := by
@@ -1143,7 +1145,7 @@ theorem bibItems_marker_exact (p : CitePunct) (style : Style) (resolved : Array 
 of the sorted list: position `i + 1` at index `i`, whatever the sort
 order did. Together with `bibItems_marker_exact`, the numeric marker at
 index `i` is `i + 1`. -/
-theorem positions_exact (style : Style) (cited : Array String)
+public theorem positions_exact (style : Style) (cited : Array String)
     (find : String → Option Entry) (i : Nat)
     (hi : i < (resolveEntries style cited find).size) :
     (resolveEntries style cited find)[i].position = i + 1 := by
@@ -1151,13 +1153,13 @@ theorem positions_exact (style : Style) (cited : Array String)
 
 /-- The sorted list holds exactly the input's elements — the membership
 half of "the emitted list is a permutation of the cited set". -/
-theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
+public theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
     z ∈ sortResolved so xs ↔ z ∈ xs := by
   cases so <;> simp [sortResolved, sortByKey]
 
 /-- The sorted list is exactly as long as the input: with `sortResolved_mem`
 this is the counting half of the permutation claim. -/
-theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
+public theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
     (sortResolved so xs).length = xs.length := by
   cases so <;> simp [sortResolved, sortByKey]
 
@@ -1166,7 +1168,7 @@ always compare, one way or the other — `gt` one way implies not-`gt` the
 other for citation order, whose comparison is over the distinct
 first-citation positions. Author-year's chained string comparison owes the
 same statement; it is the recorded remainder of this slice. -/
-theorem compare_citation_asymm (a b : Resolved)
+public theorem compare_citation_asymm (a b : Resolved)
     (h : SortOrder.citation.compare a b = .gt) :
     SortOrder.citation.compare b a ≠ .gt := by
   simp [SortOrder.compare, Nat.compare_eq_gt] at h ⊢
@@ -1175,7 +1177,7 @@ theorem compare_citation_asymm (a b : Resolved)
 /-- The sorted list is sorted: no element compares `gt` against a later
 one, for citation order. (`Pairwise` over the comparison; author-year is
 the recorded remainder beside `compare_citation_asymm`.) -/
-theorem sortResolved_sorted_citation (xs : List Resolved) :
+public theorem sortResolved_sorted_citation (xs : List Resolved) :
     (sortResolved .citation xs).Pairwise
       (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
   have h := List.pairwise_mergeSort (le := fun (a b : Resolved) => decide (a.position ≤ b.position))
@@ -1450,7 +1452,7 @@ end
 `resolveBlocks`, every furniture region through `resolveArr` — `Ir.mapDoc`
 hands both the regions the pending census (`Ir.foldDoc`) reads, so a
 `\cite` in a running head resolves as one in the body does. -/
-def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
+public def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) : Ir.Doc :=
   Ir.mapDoc (resolveArr p find)
     (fun bs => resolveBlocks p find items #[] bs.toList) doc
@@ -1458,7 +1460,7 @@ def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
 /-- Bibliography resolution emits one block per input block except a
 paragraph consisting only of nonprinting citations. Source metadata follows
 this decision, independently of the citation style or external entries. -/
-def keepsBlock : Ir.Block → Bool
+public def keepsBlock : Ir.Block → Bool
   | .para content => !nociteOnly content
   | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
   | .center .. | .ragged .. | .quote .. | .titled .. | .role .. | .link ..
@@ -1487,7 +1489,7 @@ private theorem resolveBlocks_size_exact (p : CitePunct) (find : Resolver)
 /-- Preserve metadata attached to surviving top-level blocks. Indices refer
 to the input document; values, including expansion origins, pass unchanged.
 Invalid indices and the removed nonprinting paragraphs have no output site. -/
-def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
+public def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
     Array (Nat × α) :=
   sites.filterMap fun (i, source) =>
     if doc.body[i]?.any keepsBlock then
@@ -1496,7 +1498,7 @@ def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
 
 /-- Each surviving source's new offset is the size of its prefix after the
 actual bibliography rewrite, for every style, resolver and reference list. -/
-theorem remapSources_projects {α : Type} (doc : Ir.Doc)
+public theorem remapSources_projects {α : Type} (doc : Ir.Doc)
     (sites : Array (Nat × α)) (i : Nat) (source : α) (b : Ir.Block)
     (hs : (i, source) ∈ sites) (hb : doc.body[i]? = some b)
     (hk : keepsBlock b = true)
@@ -1646,7 +1648,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) :
       rendered yet; the formula sets as its text content" (subject := some ("math:" ++ src)))
   return (p, find, items, diags)
 
-def apply (sources : Array (String × String)) (doc : Ir.Doc) : Ir.Doc × Array Diag :=
+public def apply (sources : Array (String × String)) (doc : Ir.Doc) : Ir.Doc × Array Diag :=
   match analyse sources doc with
   | (p, find, items, diags) => (resolveDoc p find items doc, diags)
 
@@ -2066,7 +2068,7 @@ private theorem regions_pending (p : CitePunct) (find : Resolver) :
 
 /-- **Resolution leaves no citation**: the pending census of a resolved
 document names no `.cite`, in any region `foldDoc` reads. -/
-theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
+public theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) :
     ∀ u ∈ Ir.pendingNodes (resolveDoc p find items doc), u.isCite = false := by
   intro u hu
@@ -2088,7 +2090,7 @@ leaves no `.cite` node in any region, so the backends' `.cite` arms —
 kept explicit, as every walk's arms are — are dead by this theorem; a
 citation's rendering is the style's inlines and nothing else. The
 citation half of the resolution gate (`pending_named`). -/
-theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc) :
+public theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc) :
     ∀ u ∈ Ir.pendingNodes (apply sources doc).1, u.isCite = false := by
   intro u hu
   unfold apply at hu

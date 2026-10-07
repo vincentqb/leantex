@@ -1,4 +1,7 @@
-import LeanTex.Core.BibStyle
+module
+
+public import LeanTex.Core.BibStyle
+import all LeanTex.Core.Ir
 
 /-! # The resolution gate
 
@@ -29,7 +32,7 @@ open Ir
 (`Bib.apply`'s output) and the store they read (`Image.fulfilRequests`'s), every
 element of the pending census has a diagnostic in the run's output whose
 structured subject is its key. -/
-theorem pending_named (table : RefTable) (spanOf : String → Option Span)
+public theorem pending_named (table : RefTable) (spanOf : String → Option Span)
     (sources : Array (String × String)) (doc : Doc)
     (fetched : Array (Image.Request × Image.Fetch))
     (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc).1) :

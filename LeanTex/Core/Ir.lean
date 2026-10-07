@@ -16829,7 +16829,7 @@ public inductive Unresolved where
   | cite (key : String)
   deriving Repr, BEq, DecidableEq
 
-public def Unresolved.isCite : Unresolved → Bool
+@[expose] public def Unresolved.isCite : Unresolved → Bool
   | .cite _ => true
   | .ref _ => false
 

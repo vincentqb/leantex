@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.BibStyle
 import LeanTex.Core.Pending
 
@@ -9,6 +11,14 @@ resolver step lemmas belong to their implementation modules. -/
 open LeanTex.Core
 
 namespace Tests.BibPendingInterface
+
+example (key : String) : Ir.Unresolved.isCite (.ref key) = false := rfl
+example (key : String) : Ir.Unresolved.isCite (.cite key) = true := rfl
+
+example : True := by
+  fail_if_success
+    have : Bib.anchorOf "key" = "#" ++ Ir.bibAnchor "key" := by rfl
+  trivial
 
 example : Repr Bib.CitePunct := inferInstance
 example : BEq Bib.CitePunct := inferInstance
