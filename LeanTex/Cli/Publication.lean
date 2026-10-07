@@ -1,4 +1,10 @@
-import LeanTex.Core.HtmlDoc
+module
+
+public import LeanTex.Core.HtmlDoc
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Ir
+import LeanTex.Core.HtmlResource
+import LeanTex.Core.Image
 import LeanTex.Cli.ImageAssets
 
 /-! Capture the resources a checked HTML page owns and publish accepted artifacts.
@@ -19,7 +25,7 @@ private def htmlLocalBytes (file name : String) : IO (Except String ByteArray) :
 
 /-- Capture declared local resources once. The hermetic browser freshness key
 uses this same snapshot; XML validation remains the publication boundary's job. -/
-def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
+public def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
     IO (Except String HtmlDoc.Config) := do
   let mut cfg := cfg
   if let some name := doc.output.stylesheet then
@@ -44,17 +50,17 @@ def captureHtmlResources (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
 /-- The bytes measured and published are one serialization of the checked
 tree. The erased witness retains resource closure without retaining the tree
 or its captured resource buffers at runtime. -/
-structure HtmlArtifact where
+public structure HtmlArtifact where
   render : String
   render_exact : ∃ page : HtmlDoc.ClosedPage, render = page.render
 
-def HtmlArtifact.ofPage (page : HtmlDoc.ClosedPage) : HtmlArtifact :=
+public def HtmlArtifact.ofPage (page : HtmlDoc.ClosedPage) : HtmlArtifact :=
   { render := page.render, render_exact := ⟨page, rfl⟩ }
 
 /-- Capture local head resources, attest exact SVG bytes through the existing
 parsed-XML/converter boundary, then check the tree that publication will render.
 No URL is fetched and no output directory exists at this point. -/
-def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
+public def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
     IO (Except String HtmlArtifact × Array Diag) := do
   let cfg ← match ← captureHtmlResources file cfg doc with
     | .ok cfg => pure cfg
@@ -71,7 +77,7 @@ def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
 /-- The only artifact write site, after acceptance. An HTML publication
 requires a checked tree and writes its own serialization, with no sidecars
 or rereads of resources captured before the gate. -/
-def publish (outDir : Option String) (html : Option (String × HtmlArtifact))
+public def publish (outDir : Option String) (html : Option (String × HtmlArtifact))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String) := do
   let mut written : Array String := #[]

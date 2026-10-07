@@ -1,5 +1,9 @@
-import LeanTex.Core.ListingReply
+module
+
+public import LeanTex.Core.ListingReply
+public import LeanTex.Core.Diag
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 
 /-!
@@ -102,7 +106,7 @@ process. Its elapsed time and captured bytes are limited by `RunBounded`; source
 request and token ceilings are shared with the pure protocol validator. An empty
 batch starts no tool. No external output becomes diagnostic prose or authored
 code, and no answer is returned before exact reconstruction is checked. -/
-def fulfil (_file : String) (requests : Array ListingReply.Request) :
+public def fulfil (_file : String) (requests : Array ListingReply.Request) :
     IO (Array ListingReply.Answer × Array Diag) := do
   if requests.isEmpty then return (#[], #[])
   if !ListingReply.withinBudget requests then return failed requests .budget

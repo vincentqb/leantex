@@ -1,5 +1,8 @@
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Cli.PicCache
 import LeanTex.Cli.DriverDiag
-import LeanTex.Cli.PicCache
 import LeanTex.Cli.PictureAssets
 import LeanTex.Core.Ir
 
@@ -22,7 +25,7 @@ open LeanTex.Core
 /-- With no tool, a complete checked drawing of the same request can serve.
 Otherwise W0379 names the missing drawing at its source span. Refusals are
 not replayed here: without the tool, its identity cannot be established. -/
-def coldPicture (picDir : System.FilePath) (tool key : String)
+public def coldPicture (picDir : System.FilePath) (tool key : String)
     (span : Option Span := none) : IO (Except Diag ByteArray) := do
   match ← PictureAssets.previous picDir key with
   | some bytes => return .ok bytes
@@ -32,7 +35,7 @@ def coldPicture (picDir : System.FilePath) (tool key : String)
 has been asked to stand in: the picture ids whose requests are withdrawn,
 the refusals that still stand, and the notes that say why each withdrawn
 picture is drawn by the subset. -/
-structure Withdrawal where
+public structure Withdrawal where
   ids : Array String := #[]
   standing : Array (String × Diag) := #[]
   notes : Array Diag := #[]
@@ -44,7 +47,7 @@ answer the withdrawal may act on: no tool looked at the request (W0379,
 an attempt that never reached an answer — a budget kill, a spawn that
 raised, a nonzero exit that left no log (`PicCache.outcome`): a fact about
 the machine, not the request. -/
-inductive Undrawn where
+public inductive Undrawn where
   | answered (why : Diag) (said : Option String)
   | unfinished (why : Diag)
   deriving Repr
@@ -57,7 +60,7 @@ def Undrawn.why : Undrawn → Diag
 /-- One attempt's ending as the withdrawal reads it: a drawing is nothing to
 withdraw, the tool's own no is an answer in its words, and an attempt that
 never finished is no answer at all. -/
-def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) : Option Undrawn :=
+public def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) : Option Undrawn :=
   match o with
   | .drawn => none
   | .refused says => some (.answered (DriverDiag.boundaryFailed tool says span) (some says))
@@ -66,7 +69,7 @@ def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) : Opti
 /-- One undrawn request folded into the withdrawal: an answered one whose
 picture the subset draws in part is withdrawn, with its note; everything
 else stands. -/
-def withdrawStep (tool : String) (fallbacks : Array String) (spans : Array (String × Span))
+public def withdrawStep (tool : String) (fallbacks : Array String) (spans : Array (String × Span))
     (w : Withdrawal) (r : String × Undrawn) : Withdrawal :=
   match r.2, fallbacks.find? (Ir.picSrcPrefix ++ · == r.1) with
   | .answered _ said, some id =>
@@ -82,7 +85,7 @@ stays as loud as a failed render — the artifact never changes on a fact
 about the machine. The defect withdrew it like the tool's own verdict: a
 killed or crashed tool shipped the subset's drawing with exit 0, its cause
 a note printed only under `-v`. -/
-theorem withdrawStep_unfinished_exact (tool : String) (fallbacks : Array String)
+public theorem withdrawStep_unfinished_exact (tool : String) (fallbacks : Array String)
     (spans : Array (String × Span)) (w : Withdrawal) (src : String) (d : Diag) :
     withdrawStep tool fallbacks spans w (src, .unfinished d) =
       { w with standing := w.standing.push (src, d) } := by
@@ -100,7 +103,7 @@ stands: a picture the subset draws nothing of keeps W0379's placeholder, or
 E0382's failed run, and an attempt that never finished keeps its E0382
 (`withdrawStep_unfinished_exact`). Pure, so the decision is a value a test
 runs rather than a sentence about the driver. -/
-def withdraw (tool : String) (fallbacks : Array String)
+public def withdraw (tool : String) (fallbacks : Array String)
     (undrawn : Array (String × Undrawn)) (spans : Array (String × Span)) : Withdrawal :=
   undrawn.foldl (withdrawStep tool fallbacks spans) {}
 
@@ -112,7 +115,7 @@ show but a request key, so a picture the rendered subset draws in part —
 alone, which the driver elaborates again with it drawn by the subset; the
 PDF keeps the boundary's drawing. The ids, by picture: those among the
 fallbacks whose image source converted to no SVG (`unconverted`). -/
-def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
+public def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
   fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
 
 end LeanTex.Cli.Boundary
