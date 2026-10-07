@@ -1,5 +1,10 @@
-import LeanTex.Core.CompatContract
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.CompatContract
+public import LeanTex.Core.Elab
+
+import all LeanTex.Core.Elab
+import all LeanTex.Core.Compat
 
 namespace LeanTex.Core.CompatContract
 
@@ -13,7 +18,7 @@ This is the request boundary contract. It does not infer a file attempt
 from a refusal code: native `\theme` and native-package option refusals
 remain outside the loading door. Nor does it claim that the filesystem
 contained or successfully supplied any candidate. -/
-theorem inputRequest_names_asked (request : Compat.InputRequest) :
+public theorem inputRequest_names_asked (request : Compat.InputRequest) :
     (request.command = "usepackage" ∨ request.command = "RequirePackage" →
       ∀ part ∈ request.name.splitOn ",",
         part.trimAscii.toString.isEmpty = false →
@@ -43,14 +48,14 @@ namespace LeanTex.Core.Elab
 the producer's whole diagnostic record. In particular the refused name and
 source span cannot be reconstructed from the message or from another code
 at the same site. -/
-def Reported (ds : Array Diag) (producer : Diag) : Prop :=
+@[expose] public def Reported (ds : Array Diag) (producer : Diag) : Prop :=
   ∃ actual ∈ ds, { actual with sites := producer.sites } = producer
 
-theorem reported_of_mem (ds : Array Diag) (d : Diag) (h : d ∈ ds) :
+public theorem reported_of_mem (ds : Array Diag) (d : Diag) (h : d ∈ ds) :
     Reported ds d :=
   ⟨d, h, rfl⟩
 
-theorem reported_tally (ds : Array Diag) (d : Diag) (h : Reported ds d) :
+public theorem reported_tally (ds : Array Diag) (d : Diag) (h : Reported ds d) :
     Reported (Diag.tallySites ds) d := by
   obtain ⟨before, hb, heq⟩ := h
   obtain ⟨i, hi, hget⟩ := Array.mem_iff_getElem.mp hb
@@ -64,7 +69,7 @@ theorem reported_tally (ds : Array Diag) (d : Diag) (h : Reported ds d) :
     have := congrArg (fun report : Diag => { report with sites := d.sites }) ht
     exact this.trans heq
 
-theorem reported_append (left right : Array Diag) (d : Diag) (h : Reported left d) :
+public theorem reported_append (left right : Array Diag) (d : Diag) (h : Reported left d) :
     Reported (left ++ right) d := by
   obtain ⟨actual, ha, heq⟩ := h
   exact ⟨actual, Array.mem_append.mpr (Or.inl ha), heq⟩
@@ -73,7 +78,7 @@ theorem reported_append (left right : Array Diag) (d : Diag) (h : Reported left 
 compatibility, including their original refused names, codes and spans.
 Colour realization, recovered-content accounting and the first tally
 cannot change any of those fields. -/
-theorem completePrepared_reports_contract (file : String) (p : Prepared)
+public theorem completePrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (d : Diag)
     (h : d ∈ earlier ++ p.compatDiags) :
@@ -92,7 +97,7 @@ theorem completePrepared_reports_contract (file : String) (p : Prepared)
 
 /-- The production preamble and body interpreter reach the same diagnostic
 completion for every picture-withdrawal environment. -/
-theorem runPrepared_reports_contract (file : String) (p : Prepared)
+public theorem runPrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (d : Diag) (h : d ∈ earlier ++ p.compatDiags) :
     Reported (runPrepared file p earlier metric withdrawn).2.1 d := by
@@ -105,7 +110,7 @@ attribute [local irreducible] runPrepared
 
 /-- Whichever production pass withdrawal selects, source erasure and the
 reference judge preserve its producer records through the final tally. -/
-theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
+public theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (d : Diag)
     (h : d ∈ earlier ++ p.compatDiags) :
     Reported (runPreparedFinal file p earlier metric).2 d := by
@@ -121,7 +126,7 @@ attribute [local irreducible] Compat.rewriteText in
 /-- Preparation retains every compatibility producer record verbatim. The
 text pass can add reports, but cannot replace the package producer's span,
 refused spelling, code or source trigger. -/
-theorem prepareRewritten_diags_covers (file : String)
+public theorem prepareRewritten_diags_covers (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Parse.Raw × Array Diag × Array String)
@@ -135,7 +140,7 @@ theorem prepareRewritten_diags_covers (file : String)
 
 attribute [local irreducible] prepareRewritten Compat.rewriteExecuted
   Compat.boundaryScan macroScan in
-theorem prepareExecuted_diags_covers (file : String)
+public theorem prepareExecuted_diags_covers (file : String)
     (executed : Compat.Executed) (d : Diag)
     (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
     d ∈ (prepareExecuted file executed).compatDiags :=
@@ -145,7 +150,7 @@ theorem prepareExecuted_diags_covers (file : String)
 through text rewriting, body interpretation, recovery and both tallies.
 The caller still owes the producer-to-request connection; this lemma
 preserves the actual record rather than inventing a matching report. -/
-theorem runExecuted_reports_contract (file : String)
+public theorem runExecuted_reports_contract (file : String)
     (executed : Compat.Executed) (earlier : Array Diag)
     (metric : Ir.Pic.LabelMetric) (d : Diag)
     (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
@@ -166,7 +171,7 @@ comma-separated names and arbitrary positions. It excludes native-package
 option refusals, native theme selection, dormant definitions and calls
 inside consumed control operands. Those cases cannot justify a global
 equivalence between requests and refusal codes. -/
-theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
+public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (hc : command = "usepackage" ∨ command = "RequirePackage")

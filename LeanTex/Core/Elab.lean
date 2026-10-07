@@ -1,30 +1,35 @@
-import LeanTex.Core.Lex
-import LeanTex.Core.Parse
+module
+
+public import Std.Data.HashSet
+public import LeanTex.Core.Lex
+public import LeanTex.Core.Parse
 import LeanTex.Core.MathParse
-import LeanTex.Core.Ir
+import LeanTex.Core.TextSymData
+public import LeanTex.Core.Ir
 import LeanTex.Core.ListMark
-import LeanTex.Core.Dim
+public import LeanTex.Core.Dim
 import LeanTex.Core.Decl
-import LeanTex.Core.Theme
-import LeanTex.Core.Compat
+public import LeanTex.Core.Theme
+public import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
-import LeanTex.Core.Picture
+public import LeanTex.Core.Picture
 import LeanTex.Core.PictureCensus
 import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
 import LeanTex.Core.PdfContract
-import LeanTex.Core.ListingReply
+public import LeanTex.Core.ListingReply
+public import LeanTex.Core.BeamerColor
 
 namespace LeanTex.Core.Elab
 
 open LeanTex.Core LeanTex.Core.Parse LeanTex.Core.Ir LeanTex.Core.Dim
 
-inductive ParamType where
+public inductive ParamType where
   | text
   | content
   deriving Repr, BEq
 
-structure Param where
+public structure Param where
   name : String
   type : ParamType
   optional : Bool
@@ -34,7 +39,7 @@ structure Param where
   referenced : Bool := true
   deriving Repr, BEq
 
-structure UserCmd where
+public structure UserCmd where
   name : String
   params : Array Param
   body : Array Raw
@@ -48,7 +53,7 @@ structure UserCmd where
 and its parameters bind from the groups after `\begin{name}`. The three
 flags are the space rules TeX's own commands state at its seams
 (`envOfHalves`). -/
-structure UserEnv where
+public structure UserEnv where
   name : String
   params : Array Param
   beginBody : Array Raw
@@ -72,7 +77,7 @@ structure UserEnv where
 loaded, else amsthm's three (amsthm.sty `\th@plain`, `\th@definition`,
 `\th@remark`: a bold head over an italic or upright body, and an italic
 head over an upright one). -/
-inductive ThmStyle where
+public inductive ThmStyle where
   | kernel
   | plain
   | definition
@@ -81,7 +86,7 @@ inductive ThmStyle where
 
 /-- The space a style's theorems open (`Ir.thmSkips`): the kernel's
 trivlist, amsthm's `\thm@preskip` and `\thm@postskip`, remark's halves. -/
-def ThmStyle.space : ThmStyle → Ir.ThmSpace
+private def ThmStyle.space : ThmStyle → Ir.ThmSpace
   | .kernel => .kernel
   | .plain | .definition => .ams
   | .remark => .amsHalf
@@ -89,7 +94,7 @@ def ThmStyle.space : ThmStyle → Ir.ThmSpace
 /-- One `\newtheorem`: the environment, its heading, the counter it steps
 (`none` is amsthm's unnumbered `\newtheorem*`) and the style in force where
 it was declared (amsthm.sty: `\newtheorem` captures `\thm@style`). -/
-structure ThmDef where
+public structure ThmDef where
   env : String
   heading : Array Inline
   counter : Option String
@@ -106,7 +111,7 @@ in flow order, each counter with the heading number it last stepped under
 heading moved restarts at 1, `\@addtoreset`'s effect read where the number
 is used. One field on `ESt`, the `AlgSt` shape: the knots' state stays
 narrow. -/
-structure ThmDecls where
+public structure ThmDecls where
   defs : Array ThmDef := #[]
   counters : Array (String × Option Nat) := #[]
   style : ThmStyle := .kernel
@@ -120,13 +125,13 @@ structure ThmDecls where
   deriving Repr, BEq
 
 /-- amsthm is loaded: some `\theoremstyle` has been declared. -/
-def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
+private def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
 
 /-- What the picture arm reads, as one field of `Ctx`: the block knot copies
 every `Ctx` field at each `{ ctx with … }`, and its compilation is at its
 budget (AGENTS.md), so the picture context travels as one value — the
 `SpanRecords` shape. -/
-structure PicCtx where
+public structure PicCtx where
   /-- The boundary tool in force: the external TeX that draws pictures
   outside the rendered subset. Open by default — the tool belongs to the
   build environment exactly as fonts do, and the driver alone decides
@@ -179,11 +184,13 @@ private structure MacroRun where
 /-- Semantic names carried by the compatibility pass's executed tokens.
 Each fresh content scope masks identities already owned by its caller;
 distinct occurrences of the same command remain distinct. -/
-private structure MacroRoles where
-  inherited : List MacroOrigin := []
-  inlines : Array MacroRun := #[]
-  blocks : Array MacroRun := #[]
-  blockKinds : List (MacroOrigin × Bool) := []
+public structure MacroRoles where
+  private inherited : List MacroOrigin := []
+  private inlines : Array MacroRun := #[]
+  private blocks : Array MacroRun := #[]
+  private blockKinds : List (MacroOrigin × Bool) := []
+
+public def MacroRoles.empty : MacroRoles := {}
 
 private def MacroRoles.enter (roles : MacroRoles) : MacroRoles :=
   { inherited := roles.inherited ++ roles.blocks.toList.map (·.origin)
@@ -223,7 +230,7 @@ private def moveMacroRuns (wrap : String → Array α → α)
 
 /-- A user command sees only commands defined before it: `limit` bounds the
 visible prefix of `user`. That rule is what makes expansion terminate. -/
-structure Ctx where
+public structure Ctx where
   file : String
   /-- Stored replacement code is attributed to the outer written call.
   Arguments are bound before entering this scope; input wrappers clear it. -/
@@ -313,12 +320,12 @@ structure Ctx where
   atUse : Bool := false
   /-- The semantic ancestry of executed compatibility macros, independent
   of command visibility and of the token scanner's argument boundaries. -/
-  macroRoles : MacroRoles := {}
+  macroRoles : MacroRoles := .empty
 
 /-- The source of replacement code is its call; ordinary tokens retain
 their own file and position. Diagnostics and content-source collectors share
 this projection. -/
-def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
+public def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
   (ctx.callSite.map (·.1)).getD ⟨ctx.file, pos⟩
 
 /-- Enter stored replacement code without losing an enclosing written call. -/
@@ -328,14 +335,14 @@ private def Ctx.atCall (ctx : Ctx) (name : String) (pos : Pos) : Ctx :=
 
 /-- Source collectors share the written call's span for every replacement
 position. This changes attribution, not content or its styling. -/
-theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : String) (pos : Pos) :
-    ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := rfl
+public theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : String) (pos : Pos) :
+    ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := by rfl
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
 rendering reuses the `ListMark` encoders, so a format's digits and the
 list markers' cannot drift. -/
-inductive SecNumStyle where
+public inductive SecNumStyle where
   | arabic
   | alph
   | uAlph
@@ -348,7 +355,7 @@ inductive SecNumStyle where
 §Sectioning: `\the<counter>` is the counter's printed format, not a
 macro): literal text, a numeral over a section counter, or another
 level's own format (`\thesection` inside a subsection format). -/
-inductive SecPart where
+public inductive SecPart where
   | lit (s : String)
   | num (style : SecNumStyle) (level : Nat)
   | the (level : Nat)
@@ -360,7 +367,7 @@ what the defined control sequence means when it is met inside an
 algorithm. The word/function/data payloads stay raws so accents in the
 declared text still elaborate; an io label is rendered text, the line
 kind's own word. -/
-inductive AlgKwDef where
+public inductive AlgKwDef where
   | word (body : Array Raw)
   | io (label : String)
   | func (name : Array Raw)
@@ -372,7 +379,7 @@ inductive AlgKwDef where
 the display defaults every algorithm starts from (`\DontPrintSemicolon`,
 `\LinesNumbered`). One field on `ESt`, so the elaboration knot's state
 stays narrow. -/
-structure AlgSt where
+public structure AlgSt where
   kws : Array (String × AlgKwDef) := #[]
   semis : Bool := true
   numbered : Bool := false
@@ -382,7 +389,7 @@ structure AlgSt where
 `base = some n` means its blocks will be spliced into the document at `n`;
 `none` means a retained wrapper owns them. The sites name actual frame
 emissions, including empty frames, rather than searching their content. -/
-structure FrameSources where
+public structure FrameSources where
   base : Option Nat := none
   sites : Array (Nat × Span) := #[]
   /-- The next fresh accumulator's absolute offset. A splice sets it;
@@ -390,31 +397,31 @@ structure FrameSources where
   nextBase : Option Nat := none
   deriving Repr, BEq
 
-def FrameSources.offset (s : FrameSources) (n : Nat) : Option Nat :=
+public def FrameSources.offset (s : FrameSources) (n : Nat) : Option Nat :=
   s.base.map (· + n)
 
-def FrameSources.record (s : FrameSources) (n : Nat) (source : Span) : FrameSources :=
+public def FrameSources.record (s : FrameSources) (n : Nat) (source : Span) : FrameSources :=
   match s.offset n with
   | some i => { s with sites := s.sites.push (i, source) }
   | none => s
 
 /-- A suffix that becomes one retained wrapper no longer contributes
 top-level frames. Its earlier prefix keeps the same indices and spans. -/
-def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :=
+public def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :=
   match s.offset n with
   | some i => { s with sites := s.sites.filter (·.1 < i) }
   | none => s
 
-theorem FrameSources.record_spliced_exact (sites : Array (Nat × Span))
+public theorem FrameSources.record_spliced_exact (sites : Array (Nat × Span))
     (base n : Nat) (source : Span) :
     (FrameSources.record { base := some base, sites } n source).sites =
-      sites.push (base + n, source) := rfl
+      sites.push (base + n, source) := by rfl
 
-theorem FrameSources.record_wrapped_exact (sites : Array (Nat × Span))
+public theorem FrameSources.record_wrapped_exact (sites : Array (Nat × Span))
     (n : Nat) (source : Span) :
-    FrameSources.record { sites } n source = { sites } := rfl
+    FrameSources.record { sites } n source = { sites } := by rfl
 
-theorem FrameSources.keepPrefix_exact (sites : Array (Nat × Span))
+public theorem FrameSources.keepPrefix_exact (sites : Array (Nat × Span))
     (base n i : Nat) (source : Span) :
     (i, source) ∈ (FrameSources.keepPrefix { base := some base, sites } n).sites ↔
       (i, source) ∈ sites ∧ i < base + n := by
@@ -429,7 +436,7 @@ the driver's per-picture diagnostics);
 `cites` each citation key's first `\cite` (the no-bibliography judge:
 with no `\bibliography` anywhere, `Bib.apply` never runs and nothing else
 explains the '?' the mark ships). -/
-structure SpanRecords where
+public structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
   cites : Array (String × Span) := #[]
@@ -451,7 +458,7 @@ structure SpanRecords where
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
 body alike, and the gemini lineage's `\logoleft`/`\logoright` — the
 headline band's corner slots; the last of each wins, as in beamer. -/
-structure Logos where
+public structure Logos where
   main : Option (Array Inline) := none
   left : Option (Array Inline) := none
   right : Option (Array Inline) := none
@@ -471,7 +478,7 @@ makes the accumulation order-blind: each is an `Array.any` over the sites'
 bits, so permuting the document's calls cannot change the wording
 (`runShape_fold_exact`). `{}` is the empty group — no site yet — and is
 never a wording. -/
-structure RunShape where
+public structure RunShape where
   /-- Some site of this group led with a `[...]` run. -/
   withRun : Bool := false
   /-- Some site of this group led with no `[...]` run. -/
@@ -479,7 +486,7 @@ structure RunShape where
   deriving Repr, BEq, DecidableEq
 
 /-- One more site, folded in. -/
-def RunShape.add (s : RunShape) (optionRun : Bool) : RunShape :=
+public def RunShape.add (s : RunShape) (optionRun : Bool) : RunShape :=
   if optionRun then { s with withRun := true } else { s with withoutRun := true }
 
 /-- **The accumulated shape is exactly the pair of `any`s over the sites.**
@@ -488,7 +495,7 @@ visible line carries is a function of the *set* of its sites' shapes and
 never of their order: the same document with its two calls swapped reports
 the same sentence. This is the statement behind the mixed-shape test that
 runs both orders. -/
-theorem runShape_fold_exact (bs : List Bool) :
+public theorem runShape_fold_exact (bs : List Bool) :
     bs.foldl RunShape.add {} =
       { withRun := bs.any id, withoutRun := bs.any (!·) } := by
   suffices h : ∀ (s : RunShape) (bs : List Bool), bs.foldl RunShape.add s =
@@ -503,13 +510,13 @@ theorem runShape_fold_exact (bs : List Bool) :
 /-- Folding a site in only ever adds shapes: a group's wording widens and
 never narrows, which is why one rewrite of the visible line per new shape is
 enough (there are two shapes, so at most one rewrite per group). -/
-theorem runShape_add_monotone (s : RunShape) (b : Bool) :
+public theorem runShape_add_monotone (s : RunShape) (b : Bool) :
     (s.withRun → (s.add b).withRun) ∧ (s.withoutRun → (s.add b).withoutRun) := by
   cases b <;> simp [RunShape.add]
 
 /-- The counters the flow keeps (ltcounts.dtx), in document order, and
 the heading-number state they render through. -/
-structure Counters where
+public structure Counters where
   /-- The section counters in flow order, levels 1–3: elaboration is one
   pass in document order, so stepping them here is exactly LaTeX's
   \refstepcounter sequence. -/
@@ -553,7 +560,7 @@ structure Counters where
   their counters in flow order. -/
   thm : ThmDecls := {}
 
-structure ESt where
+public structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
   not forty. Keys are namespaced (`env:`, `ctrl:`, `palette:`) so an
@@ -710,7 +717,7 @@ structure ESt where
 
 /-- The declared title datum, shared by ordinary Beamer inserts and the
 short form's fallback. An undeclared datum contributes no content. -/
-def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
+public def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
   | .title => st.title.getD #[]
   | .subtitle => st.subtitle.getD #[]
   | .author => st.author.getD #[]
@@ -719,7 +726,7 @@ def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
 
 /-- Read the Beamer insert family from the metadata already elaborated at
 its declaration. This does not reparse or re-expand the author's text. -/
-def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
+public def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
   if name.startsWith "insertshort" then
     let datum ← TitleDatum.ofName? (name.drop "insertshort".length).copy
     return (st.shortTitles.lookup datum).getD (st.titlePart datum)
@@ -730,14 +737,17 @@ def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
 
 /-- Every full insert is exactly the declared datum; backend layout never
 has to recover metadata from a command spelling. -/
-theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
+public theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
     st.titleInsert? ("insert" ++ datum.name) = some (st.titlePart datum) := by
   have hdrop : (("insert" ++ datum.name).drop "insert".length).copy = datum.name := by
     apply String.toList_injective
     simp [← String.length_toList]
   dsimp only [ESt.titleInsert?]
   rw [hdrop]
-  cases datum <;> simp +decide [TitleDatum.name, TitleDatum.ofName?]
+  rw [TitleDatum.ofName_name]
+  have hshort : ("insert" ++ datum.name).startsWith "insertshort" = false := by
+    cases datum <;> simp +decide [TitleDatum.name_exact]
+  simp [hshort]
 
 /-- **The reporting state a trial elaboration starts from.** A trial swaps
 `diags` for an empty array, and every field that indexes that array or
@@ -746,7 +756,7 @@ trial that kept it while emptying `diags` let `bumpRunShape` reword whatever
 the trial had pushed at a recorded position — a diagnostic another construct
 emitted — and W0361 then quoted that construct. One helper, so a field of
 this kind is reset at the one place a trial begins, never field by field. -/
-def ESt.freshReport (e : ESt) : ESt :=
+public def ESt.freshReport (e : ESt) : ESt :=
   { e with
     diags := #[]
     warnedUnknown := #[]
@@ -769,7 +779,7 @@ private def listingVal (v : String) : String :=
     ((v.drop 1).dropEnd 1).toString.trimAscii.toString
   else v
 
-abbrev EM := StateM ESt
+public abbrev EM := StateM ESt
 
 private def setFrameSourceBase (base : Option Nat) : EM Unit :=
   modify fun st => { st with spans := { st.spans with
@@ -814,7 +824,7 @@ so the value half of a step is a pure function a theorem can range over.
 marks a key document-declared (W0348's store). Every constructor writes
 only the reporting fields of `ESt` — the ones `ESt.sem` erases — which is
 the whole point: an apply step's effect on the compared state is nothing. -/
-inductive PEvent where
+private inductive PEvent where
   | say (d : Diag)
   | scalar (decl key value : String) (pos : Pos)
   | declared (decl key : String)
@@ -870,25 +880,46 @@ private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : Str
     (trigger := trigger) (recovery := recovery) (output := output)
   if demote || !first then d.demote else d
 
+private theorem demote_kind (d : Diag) : d.demote.kind = d.kind := by
+  have h := congrArg Diag.kind (Diag.demote_record_exact d)
+  exact h
+
+private theorem demote_subject (d : Diag) : d.demote.subject = d.subject := by
+  have h := congrArg Diag.subject (Diag.demote_record_exact d)
+  exact h
+
+private theorem demote_output (d : Diag) : d.demote.output = d.output := by
+  have h := congrArg Diag.output (Diag.demote_record_exact d)
+  exact h
+
 /-- **One keyed warning, one diagnostic, carrying its code and its key as
 subject.** Typed presentation and output scope never replace census identity. -/
-theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+private theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) :
     (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).kind = code := by
-  unfold warnOnceDiag diagOf Diag.of Diag.demote
+  unfold warnOnceDiag diagOf
   dsimp only
-  split <;> rfl
+  split <;> simp only [demote_kind, Diag.of_record_exact]
 
-theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+private theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) :
     (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).subject = some key := by
-  unfold warnOnceDiag diagOf Diag.of Diag.demote
+  unfold warnOnceDiag diagOf
   dsimp only
-  split <;> rfl
+  split <;> simp only [demote_subject, Diag.of_record_exact]
+
+private theorem warnOnceDiag_output_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+    (pos : Pos) (help : Option String) (demote first : Bool)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).output = output := by
+  unfold warnOnceDiag diagOf
+  dsimp only
+  split <;> simp only [demote_output, Diag.of_record_exact]
 
 /-- A scoped loss has its own first site. The subject stays the construct's
 key; only the once-per-output bookkeeping distinguishes the two backends. -/
@@ -898,7 +929,7 @@ private def warnOnceKey (key : String) : Option Diag.Output → String
   | some .html => key ++ "\nhtml"
 
 /-- Record one loss site. Repetition changes presentation, never accounting. -/
-def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+public def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) : ESt :=
@@ -909,20 +940,20 @@ def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first
       trigger recovery output) }
 
-theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+private theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) :
     (warnOnceState ctx key code msg pos help demote st trigger recovery output).diags =
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
-        (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output) := rfl
+        (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output) := by rfl
 
 /-- Each call adds exactly one site to its own loss group and none to any
 other group. The law ranges over the actual reporting operation, not over
 repeated source text: declarations and stateful bodies need not execute the
 same sites twice. Output scope, code and subject are the census identity;
 message wording, location, help and demotion cannot change the count. -/
-theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
+public theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) (d : Diag)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) :
@@ -934,13 +965,16 @@ theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg :
       Diag.sameLoss d (warnOnceDiag ctx key code msg pos help demote first
         trigger recovery output) =
         decide (d.kind = code ∧ d.output = output ∧ d.subject = some key) := by
-    unfold warnOnceDiag diagOf Diag.of Diag.demote
-    dsimp only
-    split <;> simp only [Diag.sameLoss]
-    all_goals
-      by_cases hs : d.subject = some key
-      · simp [hs]
-      · simp [hs]
+    apply Bool.eq_iff_iff.mpr
+    rw [Diag.sameLoss_iff, decide_eq_true_eq,
+      warnOnceDiag_kind_exact ctx key code msg pos help demote first trigger recovery output,
+      warnOnceDiag_output_exact ctx key code msg pos help demote first trigger recovery output,
+      warnOnceDiag_subject_exact ctx key code msg pos help demote first trigger recovery output]
+    constructor
+    · rintro ⟨⟨hc, ho⟩, hs, _⟩
+      exact ⟨hc, ho, hs⟩
+    · rintro ⟨hc, ho, hs⟩
+      exact ⟨⟨hc, ho⟩, hs, by rw [hs]; rfl⟩
   rw [warnOnceState_diags_exact ctx key code msg pos help demote st trigger recovery output,
     Array.filter_push, hid]
   split <;> simp_all
@@ -996,7 +1030,7 @@ private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
 
 /-- Where a coloured use came from, for the contrast judge: a role's first
 use, or the first expression that resolved to an anonymous colour. -/
-def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
+public def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
     Option String → Color → Option (String × Span)
   | some r, _ => (colors.find? (·.1 == r)).map fun (e, _, _, sp) => (e, sp)
   | none, c => (colors.find? fun (_, v, role, _) => !role && v.sameSource c).map
@@ -1012,7 +1046,7 @@ and `sf` name the mono, roman and sans families; `same` asks for the face in
 force, which is no family style at all rather than a fourth family — hence
 the nested `Option`. Anything else is not a url.sty value (url.sty header,
 `\urlstyle`). -/
-def urlStyleFamily? : String → Option (Option Ir.Style)
+private def urlStyleFamily? : String → Option (Option Ir.Style)
   | "tt" => some (some .mono)
   | "rm" => some (some .roman)
   | "sf" => some (some .sans)
@@ -1022,25 +1056,25 @@ def urlStyleFamily? : String → Option (Option Ir.Style)
 /-- Reserved control words, and the code each skip earns — W0307 (pending,
 a warning: a milestone owns the construct) when the skipped arguments carry
 content, W0329 (config) when only layout or selection is lost. -/
-def reservedCtrl : List (String × DiagCode) :=
+private def reservedCtrl : List (String × DiagCode) :=
   [("vspace", .W0329), ("noindent", .W0329),
    ("fontfallback", .W0329), ("figure", .W0307), ("pageref", .W0307)]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
-def declCtrl : List String :=
+public def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
    "theme", "chrome", "pictures", "allow"]
 
 /-- The boundary tools the engine will run. A document declares *which* of
 these draws its pictures, never an arbitrary binary: the driver executes
 the named tool, so an open value would be a document running commands. -/
-def picTools : List String := ["lualatex"]
+private def picTools : List String := ["lualatex"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
-def runningCtrl : List String := ["runninghead", "runningfoot"]
+public def runningCtrl : List String := ["runninghead", "runningfoot"]
 
-def pageKeys : List String :=
+private def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
@@ -1052,22 +1086,22 @@ claim the page as declared (`sawPage` in `elabDoc`), keeping every value
 named; a rhythm or policy key (`parskip`, `leading`, `fontsize`, `measure`,
 `hyphenate`, `justify`) speaks to the text and must not silently forfeit
 the Bringhurst text-block margin the undeclared page is owed. -/
-def pageGeometryKeys : List String :=
+private def pageGeometryKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "bleed"]
 
-def metaKeys : List String :=
+private def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon",
    "language", "version"]
 
-def fontKeys : List String :=
+private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
    "mathrm", "mathit", "mathbf", "mathsf", "mathtt"]
 
 /-- Named page sizes, in sp: the ISO 216 A-series at TeX's big-point
 rounding (A4 595 × 842 pt, A5 420 × 595 pt) and the ANSI/US office sizes
 (letter 8.5 × 11 in, legal 8.5 × 14 in = 612 × 792 / 612 × 1008 pt). -/
-def pageSizes : List (String × (Sp × Sp)) :=
+private def pageSizes : List (String × (Sp × Sp)) :=
   [("letter", (pt 612, pt 792)),
    ("legal", (pt 612, pt 1008)),
    ("a4", (Dim.pt 595, Dim.pt 842)),
@@ -1076,33 +1110,33 @@ def pageSizes : List (String × (Sp × Sp)) :=
 /-- The slides stage a class-option list selects: beamer's `aspectratio=`
 option read through `Ir.slidesStages`; absent — or naming a ratio beamer
 does not — the 4:3 stage, beamer's documented default (user guide §8.1). -/
-def slidesStageOf (opts : List String) : Sp × Sp :=
+private def slidesStageOf (opts : List String) : Sp × Sp :=
   (opts.findSome? fun o =>
     if o.startsWith "aspectratio=" then
       Ir.slidesStageNamed ((o.drop "aspectratio=".length).toString)
     else none).getD Ir.slidesStage43
 
-def reservedEnv : List String :=
+private def reservedEnv : List String :=
   ["external", "tikzpicture"]
 
 /-- The alignment environments this slice renders as grids: the column
 model, and whether LaTeX numbers the rows (numbers are owed, W0014).
 `array` is not here — it lives inside math and the math parser owns it. -/
-def alignEnvs : List (String × Math.GridKind × Bool) :=
+public def alignEnvs : List (String × Math.GridKind × Bool) :=
   [("align", .align, true), ("align*", .align, false),
    ("gather", .gather, true), ("gather*", .gather, false)]
 
 /-- The display-math environments rendered as one centred formula, and
 whether LaTeX numbers them (`equation` renders unnumbered under W0014). -/
-def displayMathEnvs : List (String × Bool) :=
+public def displayMathEnvs : List (String × Bool) :=
   [("equation*", false), ("displaymath", false), ("equation", true)]
 
 /-- Is this environment display mathematics — its own centred block? -/
-def isMathEnv (name : String) : Bool :=
+private def isMathEnv (name : String) : Bool :=
   (displayMathEnvs.lookup name).isSome || (alignEnvs.lookup name).isSome
 
 /-- Title-page declarations, storable from the preamble or the body. -/
-def titleCtrls : List String :=
+private def titleCtrls : List String :=
   ["title", "subtitle", "author", "institute", "date"]
 
 /-- Preamble file markers, spliced around an `\input`'s declarations so the
@@ -1124,7 +1158,7 @@ spellings cannot disagree; they once did as two hand lists (`\scshape` in,
 `\textsc` out). The slanted shape sets italic: the engine's face model
 carries upright and italic variants, the substitution NFSS itself makes
 when a face has no slanted shape. -/
-def fontAxes : List (String × String × Style) :=
+public def fontAxes : List (String × String × Style) :=
   [("rmfamily", "textrm", .roman), ("sffamily", "textsf", .sans),
    ("ttfamily", "texttt", .mono),
    ("mdseries", "textmd", .medium), ("bfseries", "textbf", .bold),
@@ -1132,10 +1166,10 @@ def fontAxes : List (String × String × Style) :=
    ("slshape", "textsl", .italic), ("scshape", "textsc", .smallcaps),
    ("normalfont", "textnormal", .normal), ("em", "emph", .emph)]
 
-def argStyles : List (String × Style) :=
+public def argStyles : List (String × Style) :=
   fontAxes.map fun (_, arg, s) => (arg, s)
 
-def declStyles : List (String × Style) :=
+public def declStyles : List (String × Style) :=
   (fontAxes.map fun (decl, _, s) => (decl, s)) ++
   [("sans", .sans)] ++
   (["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large",
@@ -1149,11 +1183,11 @@ before when the argument opens with `\nocorr`, none after when a `\nocorr`
 follows its first token (`\check@nocorr@`), and none where the token
 `\maybe@ic` reads next — the argument's first, or the one after the
 group — is `,` or `.` (`\nocorrlist`). -/
-def fontCmdNocorr : Raw → Bool
+private def fontCmdNocorr : Raw → Bool
   | .ctrl "nocorr" _ => true
   | _ => false
 
-def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
+private def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
   Ir.fontCmdEdges (· == .space) fontCmdNocorr
     (fun
       | some (.word s _) => !(s.startsWith "," || s.startsWith ".")
@@ -1164,10 +1198,10 @@ def fontCmdEdges (body : List Raw) (next? : Option Raw) : Bool × Bool :=
 markers. A marker inside a nested group is not one `fontCmdEdges` reads, so
 it stays for that group's own elaboration rather than becoming a global
 no-op command. -/
-def fontCmdContent (body : Array Raw) : Array Raw :=
+private def fontCmdContent (body : Array Raw) : Array Raw :=
   body.filter fun r => !fontCmdNocorr r
 
-def escapes : List (String × String) :=
+public def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
    ("_", "_"), ("~", "~"), (" ", " "),
    -- Control-symbol spaces, TeX's spelling. Fixed widths, so they are text.
@@ -1187,19 +1221,19 @@ def escapes : List (String × String) :=
    -- set them (lualatex sets U+2018 and U+2019 for the two).
    ("lq", "‘"), ("rq", "’")]
 
-def blockOnly : List String :=
+private def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block", "framefoot", "pagebreak"]
 
 /-- The overlay commands, dim-not-hide (PLAN M5). `\alt` is not here: it
 takes two groups and is handled beside them. -/
-def overlayCtrls : List String :=
+private def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
 
-def decorationCtrls : List (String × Ir.Decoration) :=
+private def decorationCtrls : List (String × Ir.Decoration) :=
   [("underline", .underline), ("uline", .underline), ("sout", .lineThrough)]
 
-def builtinNames : List String :=
+public def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
    -- `ul` and `varul` rewrite through the native decoration family.
    "ul", "varul"] ++ (decorationCtrls.map (·.1)) ++ [
@@ -1220,7 +1254,7 @@ refusal is the recorded divergence (`builtinNames`' comment). Redefining one wou
 (the dispatch reads these before any user definition), so refusing loudly
 (W0303) is the honest answer. Every other protected name is in
 `renderedBuiltins`, where rule (b) judges the body instead. -/
-def structuralNames : List String :=
+public def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
    "ul", "varul", "tabularxcolumn",
    "item", "defineenv", "block", "framefoot", "pagebreak"] ++
@@ -1235,7 +1269,7 @@ wins only if its body, expanded once at the definition, is non-empty and
 loses nothing; a body the engine cannot run would otherwise silently erase
 the built-in's output (W0361), which is how a venue's `\renewcommand
 {\maketitle}` of kernel internals erased a paper's title. -/
-def renderedBuiltins : List String :=
+public def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
@@ -1249,52 +1283,6 @@ def renderedBuiltins : List String :=
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
-/-- One verdict per name: no built-in is both unconditionally protected
-and rule-(b) gated — a name in both would fire W0303 at `takeDefine` and
-never reach the gate, making the registry's promise (a clean body wins) a
-lie for exactly that name. -/
-theorem structural_rendered_disjoint :
-    (structuralNames.all fun n => !renderedBuiltins.contains n) = true := by
-  decide +kernel
-
-/-- The ratchet: every name W0303 used to protect still has a verdict —
-unconditional refusal or the rule-(b) gate. Narrowing the structural core
-cannot silently strip a built-in of both protections. -/
-theorem builtin_verdict_total :
-    (builtinNames.all fun n =>
-      structuralNames.contains n || renderedBuiltins.contains n) = true := by
-  decide +kernel
-
-/-- The invariant the phantom defect wanted, registry half: a command whose
-whole meaning is *size without ink* is a name this dispatch gives a meaning
-of its own. The family (`Picture.phantomCtrl`, where the label salvage reads
-it) and the two registries are written out apart on purpose — a registry
-spliced from the family would read `xs ⊆ A ++ xs ++ B` and could not witness
-a member missing from it, which is the shape this statement had on its first
-attempt and the reason it is spelled this way now.
-
-What it does *not* reach is the arm: a name can be registered here and still
-fall through to the unknown-command recovery, whose rule is "keep the braced
-arguments as text" and which is how `\vphantom{y}`'s letter reached the page.
-The arm's own gate is `phantomReservesWidth`, held to the family by
-`phantom_axes_set_eq`; the page is `phantomChecks`, over `Layout.Out`. Three
-statements, because no one of them can see the other two's failure. -/
-theorem phantom_rendered_covers :
-    (Picture.phantomCtrl.all fun n =>
-      renderedBuiltins.contains n && builtinNames.contains n) = true := by
-  decide +kernel
-
-/-- The same family against the *salvage* tables: every member's group is a
-naming argument (`Ir.floorNamedArgs`), so a recovery path that keeps content
-groups — the math floor, a picture label — drops a phantom's group instead
-of setting it. This one held before the fix as well: it is the reason
-`$a\phantom{=}b$` never shipped an `=`, and it stays here as drift
-insurance, not as the defect's witness. -/
-theorem phantom_named_covers :
-    (Picture.phantomCtrl.all fun n =>
-      (Ir.floorNamedArgs.lookup n) == some 1) = true := by
-  decide +kernel
-
 /-- Which axes each member of the family reserves, which is the whole of
 what tells them apart (plain.tex ll. 1024-1031): `\vphantom{x}` takes x's
 height and depth and no width, `\hphantom{x}` takes its width and no height
@@ -1307,7 +1295,7 @@ shows plainly.
 This table is also the *arm's gate*: the dispatch fires on a key of this
 list, not on the family list, so `phantom_axes_set_eq` below is what ties
 the arm to the family. -/
-structure PhantomAxes where
+public structure PhantomAxes where
   /-- Reserves the argument's width. No width this engine sets was
   undeclared, so this axis has no carrier and is a named loss. -/
   width : Bool
@@ -1318,45 +1306,29 @@ structure PhantomAxes where
   extent : Bool
   deriving Repr, BEq, Inhabited
 
-def phantomAxes : List (String × PhantomAxes) :=
+public def phantomAxes : List (String × PhantomAxes) :=
   [("vphantom", ⟨false, true⟩), ("hphantom", ⟨true, false⟩),
    ("phantom", ⟨true, true⟩)]
-
-/-- Family and axes, exactly each other's keys, and one row per key. This is
-the statement that reaches the arm: the dispatch fires on this table, so a
-member added to `Picture.phantomCtrl` and not here does not merely lose a
-default — it is not dispatched at all, and falls to the unknown-command
-recovery that shipped the letter. The no-duplicates conjunct pins the value
-too: `lookup` takes the first row, so two rows for one name would leave the
-axes decided by list order rather than by the table. The last conjunct is
-the family's defining property — no member inks, so none of them is a
-content wrapper that wandered in. -/
-theorem phantom_axes_set_eq :
-    ((Picture.phantomCtrl.all fun n => (phantomAxes.lookup n).isSome) &&
-      (phantomAxes.all fun e => Picture.phantomCtrl.contains e.1) &&
-      (phantomAxes.map (·.1)).Nodup &&
-      (phantomAxes.all fun e => e.2.width || e.2.extent)) = true := by
-  decide +kernel
 
 /-- TU's accent and symbol tables as maps: the inline dispatch asks them of
 every control word the hand tables before them do not answer, and a list
 walk there cost `bench/underline.tex` 7 ms of 515. -/
-def accentMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.accents
+private def accentMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.accents
 
-def textSymbolMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.symbols
+private def textSymbolMap : Std.HashMap String Char := Std.HashMap.ofList TextSymData.symbols
 
 /-- TeX's accent commands the engine composes to NFC: the combining mark
 each adds to its base, from TU's accent table (`TextSymData.accents`) —
 one table with .bib values (`Bib.accentOf`), so a name renders identically
 in text and in a bibliography entry. -/
-def accentMarkOf (name : String) : Option Char :=
+private def accentMarkOf (name : String) : Option Char :=
   accentMap[name]?
 
 /-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
 `.bib` values read (`Bib.charCommands`), and TU's text symbols
 (`TextSymData.symbols`: `\S`, `\dag`, `\textbullet`, `\OE`…), folded into
 one lookup with the escape table: all splice literal text. -/
-def escapeOf (name : String) : Option String :=
+public def escapeOf (name : String) : Option String :=
   match escapes.lookup name with
   | some lit => some lit
   | none =>
@@ -1368,7 +1340,7 @@ def escapeOf (name : String) : Option String :=
 the dotted letters (tuenc.def composes `\'\i` as í: the dotless letter
 exists only to carry an accent), and a one-character command is its
 character (`\'\AE` is Ǽ). -/
-def accentBase (d : String) : Option Char :=
+public def accentBase (d : String) : Option Char :=
   if d == "i" then some 'i' else if d == "j" then some 'j'
   else match (escapeOf d).map (·.toList) with
     | some [c] => some c
@@ -1380,7 +1352,7 @@ first letter of an adjacent word (`\'elair` → "élair"), a one-letter group
 "^", TU's empty-base composite). `none` — a shape or a pair with no
 precomposed scalar — falls through to the ordinary dispatch, so nothing new
 is dropped and an unknown pair still warns by name. -/
-def accentCompose (name : String) (r : Parse.Raw) : Option String := do
+public def accentCompose (name : String) (r : Parse.Raw) : Option String := do
   let mark ← accentMarkOf name
   let one (b : Char) : Option String := (Bib.composeAccent mark b).map (String.ofList [·])
   match r with
@@ -1420,7 +1392,7 @@ Conservative in the safe direction — an unknown control word answers
 `false`, so a construct this engine gains later is named until someone
 decides it borrows. The cost is a name where nothing was lost; the
 alternative is silence where something was. -/
-def phantomBorrowsOne : Raw → Bool
+private def phantomBorrowsOne : Raw → Bool
   | .word _ _ | .space | .sym _ _ => true
   | .group body _ => phantomBorrowsList body.toList
   | .ctrl n _ =>
@@ -1431,14 +1403,14 @@ def phantomBorrowsOne : Raw → Bool
 /-- The `List` companion: the tail drives the recursion, the group's body is
 a field of its head, so the walk is structural and owes no measure —
 `Compat.boxShape`'s neighbour `boundaryLevel`/`boundaryRaw` is the shape. -/
-def phantomBorrowsList : List Raw → Bool
+private def phantomBorrowsList : List Raw → Bool
   | [] => true
   | r :: rest => phantomBorrowsOne r && phantomBorrowsList rest
 
 end
 
 /-- A phantom's whole argument, as the predicate above judges it. -/
-def phantomBorrows (raws : Array Raw) : Bool := phantomBorrowsList raws.toList
+private def phantomBorrows (raws : Array Raw) : Bool := phantomBorrowsList raws.toList
 
 /-- The declaration styles by name, plus two unforgeable markers (`@` never
 lexes into a control word): `@lang:fr` → `Style.lang "fr"` (Compat's
@@ -1446,7 +1418,7 @@ rewrite of `\selectlanguage`) and `@series:l` → `Style.series .l`
 (Compat's rewrite of `\fontseries`, already validated there — an
 unparsable code never becomes a marker). All apply to the rest of the
 scope, so one dispatch arm serves them all. -/
-def declStyleOf (name : String) : Option Ir.Style :=
+private def declStyleOf (name : String) : Option Ir.Style :=
   if name.startsWith "@lang:" then
     some (.lang ((name.drop "@lang:".length).toString))
   else if name.startsWith "@series:" then
@@ -1457,31 +1429,16 @@ def declStyleOf (name : String) : Option Ir.Style :=
 /-- The block form of the language switch: the flow state update, outside
 the block-walk knot so the arm inside costs it one call. A switch back to
 the main language clears the attribute rather than tagging redundantly. -/
-def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
+private def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
   let tag := (marker.drop "@lang:".length).toString
   { st with flowLang := if tag == ctx.locale.tag then none else some tag }
 
 /-- A paragraph under the flow language carries the attribute
 (`langWrap_text`: the census is untouched). -/
-def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Block :=
+private def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Block :=
   match lang with
   | some tag => .para (Ir.langWrap tag inlines)
   | none => .para inlines
-
-/-- Every palette role is invocable: a role is *defined by the palette* —
-`\muted{Alex}` works with no `\newcommand`, because the palette arm of the
-inline elaborator resolves any entry name — so no role can exist without
-its command. The document door (`applyPalette`) already refuses a key that
-collides with a built-in (E0303) and validates its characters; a theme's
-bundle installs without that door, so the shipped bundles enter the
-contract here: every key lexes as one control word (`Lex.nameChar`) and
-collides with no registered built-in. Resolution *order* lives in
-`elabInlines`, whose sanctioned recursion is opaque to proof — that every key
-really reaches the palette arm is the paired executable check in
-Tests.lean (`roleInvocationChecks`), an oracle, not a theorem. -/
-theorem every_role_is_invocable :
-    (Theme.builtin.all fun t => t.palette.entries.toList.all fun e =>
-      e.1.toList.all Lex.nameChar && !builtinNames.contains e.1) = true := by decide
 
 private def lookupUserGo (user : Array UserCmd) (name : String) :
     Nat → Option (Nat × UserCmd)
@@ -2012,7 +1969,7 @@ private def unskipText (acc : Array Inline) (sb : String) : Array Inline :=
 /-- The key a text-mode `\qedhere` mark stands under until its proof sets it
 (`thmClose`): no document can spell a NUL, so no `\label` collides, and the
 proof replaces every one it holds before a backend sees it. -/
-def qedHereKey : String := "\u0000qedhere"
+private def qedHereKey : String := "\u0000qedhere"
 
 /-- amsthm.sty's `\qed` in text, `\hbox{}\nobreak\hfill\quad\hbox{\qedsymbol}`,
 with the mark's place (`qedHereKey`) for the symbol. -/
@@ -2032,7 +1989,7 @@ private def mergeText (xs : Array Inline) : Array Inline := Id.run do
   return out
 
 /-- What one `[...]` argument scan found. -/
-inductive ArgScan where
+private inductive ArgScan where
   | took (next : Nat)
   | unclosed (bpos : Pos)
   | content
@@ -3655,13 +3612,13 @@ replacing the arabic form classes.dtx §Sectioning defines, and the deeper
 levels keep prefixing it — the class numbering contract continues under
 `\appendix` with the letter base, gapless because the counter stepping is
 untouched by the mark. -/
-theorem defaultSecNum_appendix_exact (n1 n2 n3 : Nat) :
-    defaultSecNum (n1, n2, n3) true 1 = ListMark.AlphN n1 := rfl
+private theorem defaultSecNum_appendix_exact (n1 n2 n3 : Nat) :
+    defaultSecNum (n1, n2, n3) true 1 = ListMark.AlphN n1 := by rfl
 
 /-- Distinct appendix sections render distinct letters: the letter
 assignment is injective on the counter, so the gapless counter is gapless
 in its rendered form too. -/
-theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
+private theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
     (h : defaultSecNum m true 1 = defaultSecNum n true 1) : m.1 = n.1 :=
   match m, n with
   | (_, _, _), (_, _, _) => ListMark.letterN_inj (.inr rfl) h
@@ -3932,10 +3889,6 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
 -- arms is data to that process, never proof material, and unfolding it is
 -- what blew the elaboration budget (measured: String.Slice.skipPrefixWhile
 -- alone at 184k reductions). Sealed for the knot, unsealed right after.
-seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
-seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
-seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
-seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
 /-- The bracketed number of `\footnote[num]{...}`: the raws between the
 brackets as text, read as a number. `none` when no bracket argument stands
@@ -4052,7 +4005,7 @@ The one named exception is still the `\footnotemark`/`\footnotetext` pair,
 which is pending (W0370, cross-command state — a minipage's notes too) and
 never "unknown". The retired code called it an unknown command at its own
 span, which was false; with one diagnostic there is nothing left to say it. -/
-private def unknownCmdDiag (name : String) (shape : RunShape) :
+public def unknownCmdDiag (name : String) (shape : RunShape) :
     DiagCode × String × String :=
   if name == "footnotemark" || name == "footnotetext" then
     let kept := shape.clause "its text is kept in place"
@@ -4085,7 +4038,7 @@ private def runShapeReword (name : String) (new : RunShape) (idx : Nat)
 
 /-- Rewording preserves the count: no site is added or removed by making the
 visible line honest. -/
-theorem runShapeReword_size_exact (name : String) (new : RunShape) (idx : Nat)
+private theorem runShapeReword_size_exact (name : String) (new : RunShape) (idx : Nat)
     (ds : Array Diag) : (runShapeReword name new idx ds).size = ds.size := by
   unfold runShapeReword
   dsimp only
@@ -4101,7 +4054,7 @@ private def bumpRunShape (name key : String) (optionRun : Bool) (st : ESt) : ESt
       runShapes := (st.runShapes.filter (·.1 != key)).push (key, new, idx)
       diags := if new == old then st.diags else runShapeReword name new idx st.diags }
 
-theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (st : ESt) :
+private theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (st : ESt) :
     (bumpRunShape name key optionRun st).diags.size = st.diags.size := by
   unfold bumpRunShape
   split
@@ -4125,15 +4078,15 @@ private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
 
 /-- Recovery retains the emitted records themselves, including earlier
 sites reworded by the emitter to describe a mixture of argument shapes. -/
-theorem warnUnknownCmd_recovery_exact (ctx : Ctx) (name : String) (optionRun : Bool)
+private theorem warnUnknownCmd_recovery_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) (st : ESt) :
     ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags =
-      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags := rfl
+      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags := by rfl
 
 /-- The index past an unknown command's `{...}` groups: up to `n` of them,
 each after any spaces. Spaces after the last group stay where they stand, as
 TeX leaves them after a macro's arguments. -/
-def argGroupsEnd (raws : Array Raw) (j : Nat) : Nat → Nat
+private def argGroupsEnd (raws : Array Raw) (j : Nat) : Nat → Nat
   | 0 => j
   | n + 1 =>
     let k := skipSpaces raws j
@@ -4141,7 +4094,7 @@ def argGroupsEnd (raws : Array Raw) (j : Nat) : Nat → Nat
     | some (.group _ _) => argGroupsEnd raws (k + 1) n
     | _ => j
 
-theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws j n := by
+private theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws j n := by
   induction n generalizing j with
   | zero => simp [argGroupsEnd]
   | succ n ih =>
@@ -4153,24 +4106,24 @@ theorem argGroupsEnd_ge (raws : Array Raw) (j n : Nat) : j ≤ argGroupsEnd raws
     · omega
 
 /-- Is the raw at `m` a `{...}` group? -/
-def groupAt (raws : Array Raw) (m : Nat) : Bool :=
+public def groupAt (raws : Array Raw) (m : Nat) : Bool :=
   match raws[m]? with
   | some (.group _ _) => true
   | _ => false
 
 /-- Is the raw at `m` a space or a `{...}` group, the two things an argument
 list holds between a command and its last group? -/
-def spaceOrGroupAt (raws : Array Raw) (m : Nat) : Bool :=
+public def spaceOrGroupAt (raws : Array Raw) (m : Nat) : Bool :=
   match raws[m]? with
   | some .space | some (.group _ _) => true
   | _ => false
 
 /-- How many `{...}` groups stand among the `len` raws from `j`. -/
-def groupsIn (raws : Array Raw) (j : Nat) : Nat → Nat
+public def groupsIn (raws : Array Raw) (j : Nat) : Nat → Nat
   | 0 => 0
   | len + 1 => (if groupAt raws j then 1 else 0) + groupsIn raws (j + 1) len
 
-theorem skipSpaces_spaces (raws : Array Raw) (i : Nat) :
+private theorem skipSpaces_spaces (raws : Array Raw) (i : Nat) :
     ∀ m, i ≤ m → m < skipSpaces raws i → raws[m]? = some .space := by
   fun_induction skipSpaces raws i with
   | case1 i h hs ih =>
@@ -4184,7 +4137,7 @@ theorem skipSpaces_spaces (raws : Array Raw) (i : Nat) :
   | case2 => intro m h1 h2; omega
   | case3 => intro m h1 h2; omega
 
-theorem groupsIn_add (raws : Array Raw) (j a b : Nat) :
+private theorem groupsIn_add (raws : Array Raw) (j a b : Nat) :
     groupsIn raws j (a + b) = groupsIn raws j a + groupsIn raws (j + a) b := by
   induction a generalizing j with
   | zero => simp [groupsIn]
@@ -4194,7 +4147,7 @@ theorem groupsIn_add (raws : Array Raw) (j a b : Nat) :
     rw [this]
     omega
 
-theorem groupsIn_spaces (raws : Array Raw) (j len : Nat)
+private theorem groupsIn_spaces (raws : Array Raw) (j len : Nat)
     (h : ∀ m, j ≤ m → m < j + len → raws[m]? = some .space) : groupsIn raws j len = 0 := by
   induction len generalizing j with
   | zero => rfl
@@ -4205,8 +4158,8 @@ theorem groupsIn_spaces (raws : Array Raw) (j len : Nat)
     rw [groupsIn, hj, ih (j + 1) (fun m h1 h2 => h m (by omega) (by omega))]
     rfl
 
-theorem groupsIn_one (raws : Array Raw) (j : Nat) :
-    groupsIn raws j 1 = if groupAt raws j then 1 else 0 := rfl
+private theorem groupsIn_one (raws : Array Raw) (j : Nat) :
+    groupsIn raws j 1 = if groupAt raws j then 1 else 0 := by rfl
 
 /-- **The index covers the argument list, and only it.** What
 `argGroupsEnd` passes over is spaces and `{...}` groups and nothing else, at
@@ -4214,7 +4167,7 @@ most `n` groups; and it stops short of a further group only at the bound —
 otherwise the next raw after any spaces is no group. So every group that
 could be one of the command's arguments lies behind the index, and nothing
 that could not be is consumed. -/
-theorem argGroupsEnd_covers (raws : Array Raw) (j n : Nat) :
+private theorem argGroupsEnd_covers (raws : Array Raw) (j n : Nat) :
     (∀ m, j ≤ m → m < argGroupsEnd raws j n → spaceOrGroupAt raws m = true) ∧
       groupsIn raws j (argGroupsEnd raws j n - j) ≤ n ∧
       (groupsIn raws j (argGroupsEnd raws j n - j) = n ∨
@@ -4266,7 +4219,7 @@ own, never the document's `ctrl:` one. The two sites have different fates —
 a document's arguments stand as text, package code's go — so a shared key
 would put one fate's words on the other's line and ride the second as a
 note under the first. -/
-def pkgCodeKey (name : String) : String := "pkgcode:" ++ name
+public def pkgCodeKey (name : String) : String := "pkgcode:" ++ name
 
 /-- The words a LaTeX internal in package code is refused in. They name what
 went and nothing more: a word run after the command is no `{...}` group and
@@ -4290,7 +4243,7 @@ Any other unknown command in package code keeps the document's recovery:
 `\fbox` or `\hbox` there sets its group in LaTeX. The rule's one known cost
 is an internal that sets an operand, the kernel's `\@firstofone`: its
 operand goes too. -/
-private def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
+public def recoverPackageCmd (ctx : Ctx) (name : String) (raws : Array Raw) (j : Nat)
     (pos : Pos) : EM { k : Nat // j ≤ k } := do
   modify (warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name)
     pos (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name))
@@ -4436,7 +4389,7 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
 
 /-- The forms whose rendering needs the target's kind — a kindless
 binding under one of these is W0380's case. -/
-def refFormNeedsKind : Ir.RefForm → Bool
+private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
   | .plain | .paren | .labelOnly => false
 
@@ -4585,7 +4538,7 @@ paragraph of its own, the rendered subset draws it")
 
 seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
-seal theCounterLevel? sectionLevel String.toInt? String.toNat?
+seal theCounterLevel? sectionLevel
 
 mutual
 /-- A pure declaration chain: an inline that is nothing but nested style
@@ -4630,7 +4583,7 @@ measure can read it: each parameter either consumes tokens (the slice from
 the scan position lightens strictly) or binds nothing (the parameter index
 advances). The final index returns with its progress fact, which is what
 lets a caller's own termination argument continue from it. -/
-def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
+private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos)
     (bindings : Array (String × Option (Array Inline))) :
     EM (Array (String × Option (Array Inline)) × { j : Nat // start ≤ j }) := do
@@ -4649,7 +4602,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
               < sliceWeight raws start :=
             extract_lt_slice c (by omega) (by omega)
           let v ← if p.referenced then
-            elabInlines { ctx with argBody := true } (raws.extract (j + 1) c)
+            elabInlinesCore { ctx with argBody := true } (raws.extract (j + 1) c)
             else pure #[]
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
@@ -4664,7 +4617,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
               < sliceWeight raws start :=
             extract_lt_slice raws.size (by omega) (by omega)
           let v ← if p.referenced then
-            elabInlines { ctx with argBody := true } (raws.extract (j + 1) raws.size)
+            elabInlinesCore { ctx with argBody := true } (raws.extract (j + 1) raws.size)
             else pure #[]
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
@@ -4685,7 +4638,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
         have hw : rawWeightList body.toList < sliceWeight raws start :=
           body_lt_slice hj (by simp only [rawWeight]; omega) hjge
         let v ← if p.referenced then
-          elabInlines { ctx with argBody := true } body
+          elabInlinesCore { ctx with argBody := true } body
           else pure #[]
         if p.type == .text && !allText v then
           diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
@@ -4715,7 +4668,7 @@ own argument limit) are kept as content, a space standing in where the
 consumed separators were. Returns the accumulator and pending text, the
 index past the run with its progress fact, how many groups were kept, and
 whether whitespace followed the last one. -/
-def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Nat)
+private def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Nat)
     (acc : Array Inline) (sb : String) (spaceAfter : Bool) :
     EM (Array Inline × String × { j' : Nat // j ≤ j' } × Nat × Bool) := do
   if 9 ≤ count then
@@ -4731,7 +4684,7 @@ def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Nat)
       let acc := flushText acc (if count > 0 then " " else "")
       have hw : rawWeightList body.toList < sliceWeight raws j :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (Nat.le_refl j)
-      let inner ← elabInlines ctx body
+      let inner ← elabInlinesCore ctx body
       let j2 := skipSpaces raws (j + 1)
       have hj2ge := skipSpaces_ge raws (j + 1)
       have hadv : sliceWeight raws j2 < sliceWeight raws j :=
@@ -4745,7 +4698,7 @@ decreasing_by all_goals knot_dec
 
 
 /-- Elaborate raw items as inline content. -/
-def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
+private def elabInlinesCore (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
   let out ← elabInlinesFrom { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] ""
   return if ctx.literalText then out else out.map (mapSmartText ctx.literalWhen)
 termination_by (ctx.envLimit, ctx.limit, rawWeightList raws.toList, 4)
@@ -4757,7 +4710,7 @@ is lexicographic — user environments, then user commands, then the weight
 of the slice from `i` — so every step either consumes tokens, descends
 into a strictly lighter body, or expands under a strictly smaller
 visibility limit. -/
-def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) : EM (Array Inline) := do
   let (roles, acc, sb) := inlineMacroAt ctx.macroRoles raws i acc sb
   let ctx := { ctx with macroRoles := roles }
@@ -4805,18 +4758,18 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
       let acc := flushText acc sb
-      let inner ← elabInlines ctx body
+      let inner ← elabInlinesCore ctx body
       elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
     | .env name body pos =>
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
       if name == Parse.scopeEnv then
         let acc := flushText acc sb
-        let inner ← elabInlines ctx body
+        let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
-        let inner ← elabInlines { ctx with file := f, callSite := none } body
+        let inner ← elabInlinesCore { ctx with file := f, callSite := none } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -4872,9 +4825,9 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             else ⟨i + 1, Nat.le_refl _⟩
           have hadvN : sliceWeight raws next < sliceWeight raws i :=
             Nat.lt_of_le_of_lt (sliceWeight_le raws hnext) hadv1
-          let a1 ← elabInlines envCtx env.beginBody
-          let a2 ← elabInlines ctx inner
-          let a3 ← elabInlines envCtx env.endBody
+          let a1 ← elabInlinesCore envCtx env.beginBody
+          let a2 ← elabInlinesCore ctx inner
+          let a3 ← elabInlinesCore envCtx env.endBody
           elabInlinesFrom ctx raws next (acc ++ a1 ++ a2 ++ a3) ""
         | none =>
         if reservedEnv.contains name then
@@ -4939,7 +4892,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let acc := flushText acc sb
           let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
           let callCtx : Ctx := { ctx.atCall name pos with limit := k, args := bindings }
-          let expanded ← elabInlines callCtx cmd.body
+          let expanded ← elabInlinesCore callCtx cmd.body
           -- A parameterized command is a classifier of its argument — a
           -- semantic role — and its name survives into the artifact as an
           -- addressable annotation (Inline.role, the class hook). A 0-ary
@@ -4962,7 +4915,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
                 extract_lt_slice raws.size h (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) hj)
               let (roles, acc, _) := inlineMacroStep ctx.macroRoles none acc ""
               let ctx := { ctx with macroRoles := roles }
-              let rest ← elabInlines ctx (raws.extract j raws.size)
+              let rest ← elabInlinesCore ctx (raws.extract j raws.size)
               let acc := acc ++ decls.foldr (fun st inner => #[Ir.Inline.styled st inner]) rest
               have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
                 sliceWeight_lt raws h h
@@ -5092,7 +5045,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               exact Nat.lt_of_le_of_lt (by
                 simpa [fontCmdContent] using
                   rawWeightList_filter_monotone (fun r => !fontCmdNocorr r) body.toList) hw
-            let inner ← elabInlines argCtx (fontCmdContent body)
+            let inner ← elabInlinesCore argCtx (fontCmdContent body)
             have hadv : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             let active ← modifierInlines ctx name style (edges body.toList raws[next]?) inner pos
@@ -5118,7 +5071,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
-            let inner ← elabInlines ctx body
+            let inner ← elabInlinesCore ctx body
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
@@ -5248,7 +5201,7 @@ no extent is reserved for it" pos
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
-            let inner ← elabInlines ctx body
+            let inner ← elabInlinesCore ctx body
             let acc := acc.push (← runInHead ctx name (j1 != j0) inner)
             -- The run-in gap: classes.dtx's 1 em, as the em quad U+2003
             -- (a fixed-width space, kerned in layout like the \, family).
@@ -5277,7 +5230,7 @@ no extent is reserved for it" pos
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
             let key := argText ctx keyRaw
-            let inner ← elabInlines ctx body
+            let inner ← elabInlinesCore ctx body
             let acc := flushText acc sb
             let wrapped ← targetInlines ctx name key spec inner pos
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
@@ -5298,7 +5251,7 @@ no extent is reserved for it" pos
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
-            let inner ← elabInlines ctx body
+            let inner ← elabInlinesCore ctx body
             have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j2 + 1)
@@ -5375,7 +5328,7 @@ no extent is reserved for it" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if let some base := Ir.natbibCites.lookup name then
           let (nodes, ⟨j, hj⟩) ← citeArm ctx raws i name base pos
-            fun sub _hsub => elabInlines ctx sub
+            fun sub _hsub => elabInlinesCore ctx sub
           have hadv : sliceWeight raws j < sliceWeight raws i :=
             sliceWeight_lt raws h hj
           elabInlinesFrom ctx raws j (flushText acc sb ++ nodes) ""
@@ -5389,7 +5342,7 @@ decreasing_by all_goals knot_dec
 /-- The rest of the control-word chain — graphics, icons, colour, overlay,
 recovery — split from `elabInlinesFrom` only so each half stays within the
 elaborator's budget for one definition. Same measure, same step shape. -/
-def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
     (hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
@@ -5486,17 +5439,17 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
       | .resolved c cssName =>
         recordColorSpan ctx label c cssName.isSome pos
         let acc := flushText acc sb
-        let inner ← elabInlines ctx body
+        let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (j2 + 1)
           (pushModifier acc spec #[.colored c cssName inner] inner) ""
       | .missing =>
         warnPaletteMiss ctx source pos
         let acc := flushText acc sb
-        let inner ← elabInlines ctx body
+        let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (j2 + 1) (pushModifier acc spec inner inner) ""
       | .rejected =>
         let acc := flushText acc sb
-        let inner ← elabInlines ctx body
+        let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (j2 + 1) (pushModifier acc spec inner inner) ""
     | _, _ =>
       diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
@@ -5508,7 +5461,7 @@ decreasing_by all_goals knot_dec
 
 /-- The chain's tail: colour declarations, overlays, notes, and the
 recovery arms. Same measure, same step shape. -/
-def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
     -- Load-bearing despite the underscore (judged by deletion+rebuild):
@@ -5539,7 +5492,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
       let acc := flushText acc sb
-      let inner ← elabInlines ctx body
+      let inner ← elabInlinesCore ctx body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       elabInlinesFrom ctx raws (j + 1) (acc.push (.colored c cssName inner)) ""
@@ -5549,7 +5502,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         extract_lt_slice raws.size h (Nat.lt_succ_self i)
       let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
       let ctx := { ctx with macroRoles := roles }
-      let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
+      let rest ← elabInlinesCore ctx (raws.extract (i + 1) raws.size)
       let acc := acc.push (.colored c cssName rest)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
@@ -5566,7 +5519,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       extract_lt_slice raws.size h (Nat.lt_succ_self i)
     let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
     let ctx := { ctx with macroRoles := roles }
-    let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
+    let rest ← elabInlinesCore ctx (raws.extract (i + 1) raws.size)
     let acc := match style with
       | some s => acc.push (.styled s rest)
       | none => acc ++ rest
@@ -5581,7 +5534,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
         < sliceWeight raws i :=
       extract_lt_slice raws.size h (Nat.lt_succ_self i)
-    let rest ← elabInlines declCtx (raws.extract (i + 1) raws.size)
+    let rest ← elabInlinesCore declCtx (raws.extract (i + 1) raws.size)
     let acc := acc.push (.styled style rest)
     have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
       sliceWeight_lt raws h h
@@ -5603,7 +5556,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       | [.ctrl pname _] =>
         match ctx.args.find? (·.1 == pname) with
         | some (_, some _) =>
-          let inner ← elabInlines ctx tmpl
+          let inner ← elabInlinesCore ctx tmpl
           elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) sb
         | some (_, none) =>
           elabInlinesFrom ctx raws (j2 + 1) acc sb
@@ -5636,7 +5589,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           have hw : rawWeightList gbody.toList < sliceWeight raws i :=
             body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
           let acc := flushText acc sb
-          let inner ← elabInlines ctx gbody
+          let inner ← elabInlinesCore ctx gbody
           have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           elabInlinesFrom ctx raws (j2 + 1) (acc.push (.onSteps spec inner)) ""
@@ -5646,7 +5599,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
             extract_lt_slice raws.size h (by omega)
           let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
           let ctx := { ctx with macroRoles := roles }
-          let inner ← elabInlines ctx (raws.extract (j + 1) raws.size)
+          let inner ← elabInlinesCore ctx (raws.extract (j + 1) raws.size)
           have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
             sliceWeight_lt raws h h
           elabInlinesFrom ctx raws raws.size (acc.push (.onSteps spec inner)) ""
@@ -5684,8 +5637,8 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let acc := flushText acc sb
         match spec with
         | some spec =>
-          let ia ← elabInlines ctx ga
-          let ib ← elabInlines ctx gb
+          let ia ← elabInlinesCore ctx ga
+          let ib ← elabInlinesCore ctx gb
           -- Page order, not spec order (`Ir.Inline.alt`): step 1 ships the
           -- in-range group only when the range already covers it.
           elabInlinesFrom ctx raws (j3 + 1) (acc.push (.alternate spec ia ib)) ""
@@ -5695,7 +5648,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- under `\alert<spec>{body}`, as beamer reads an alert with a
           -- spec — stands on every step, and the other is never inked.
           warnAltSpec ctx pos
-          let ia ← elabInlines ctx ga
+          let ia ← elabInlinesCore ctx ga
           elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
@@ -5715,7 +5668,7 @@ when it is empty — '{}'")
           sliceWeight_lt raws h (by omega)
         let acc := flushText acc sb
         warnAltSpec ctx pos
-        let ia ← elabInlines ctx ga
+        let ia ← elabInlinesCore ctx ga
         elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia) ""
       | _, _ =>
         diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
@@ -5802,7 +5755,7 @@ a side channel, never slide content" pos
       if hasParRaw body then
         footnoteWarnPar ctx pos
       let acc := flushText acc sb
-      let inner ← elabInlines ctx body
+      let inner ← elabInlinesCore ctx body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       if ctx.face then
@@ -5824,7 +5777,7 @@ a side channel, never slide content" pos
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
       let acc := flushText acc sb
-      let inner ← elabInlines ctx body
+      let inner ← elabInlinesCore ctx body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
@@ -5907,7 +5860,7 @@ decreasing_by all_goals knot_dec
 exposes its actual consumption and content contract without repeating the
 control-word registry in proofs. The caller has already ruled out native
 commands, definitions, symbols, colours and package-code recovery. -/
-def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size) : EM (Array Inline) := do
   -- Best effort: the {...} arguments are content, and content is
@@ -5952,8 +5905,10 @@ decreasing_by all_goals knot_dec
 
 end
 
-unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
-unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+/-- The inline interpreter with its recursive machinery kept private. -/
+public def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) :=
+  elabInlinesCore ctx raws
+
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
@@ -5964,14 +5919,12 @@ unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
-unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
-unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
-unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+unseal theCounterLevel? sectionLevel
 
 /-- Input-side resolver misses for the ordinary recovery arm. This checks
 registries and declared context, never the result of elaborating the call.
 Pending footnote spellings also take this recovery arm, with their own code. -/
-def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
+public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   Compat.overlayName name == name &&
   (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
   !["hfill", "qedhere", "ensuremath", "\\", "par", "label", "paragraph",
@@ -6053,7 +6006,7 @@ private theorem elabInlinesCtrl_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat)
 
 /-- Ordinary recovery runs after exactly the macro-origin transition of the
 inline spine. The equation preserves both the inlines and reporting state. -/
-theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb name : String) (pos : Pos) (h : i < raws.size)
     (hr : raws[i] = .ctrl name pos) (hn : recoversInlineName ctx name = true) :
     elabInlinesFrom ctx raws i acc sb =
@@ -6085,15 +6038,17 @@ theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
 
 /-- The empty-context entry point dispatches a source command to recovery,
 including smart punctuation, without dropping its reporting state. -/
-theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw)
+private theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw)
     (pos : Pos) (h : 0 < raws.size) (hr : raws[0] = .ctrl name pos)
     (hp : pos.origins = []) (hn : recoversInlineName {file} name = true) :
     elabInlines {file} raws = (do
       let out ← elabUnknownCtrl {file} raws 0 #[] "" name pos h
       pure (out.map (mapSmartText none))) := by
-  rw [elabInlines]
-  simp only [MacroRoles.enter, List.map_nil, List.append_nil]
-  rw [elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn]
+  rw [elabInlines, elabInlinesCore]
+  simp only [MacroRoles.enter, MacroRoles.empty, List.map_nil, List.append_nil]
+  have hn' : recoversInlineName {file, macroRoles := {}} name = true := by
+    simpa only [MacroRoles.empty] using hn
+  rw [elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn']
   have hr' : raws[0]? = some (.ctrl name pos) := by
     rw [Array.getElem?_eq_getElem h, hr]
   simp only [inlineMacroAt, hr', inlineMacroStep, Raw.origins?, hp,
@@ -6101,7 +6056,7 @@ theorem elabInlines_unknown_exact (file name : String) (raws : Array Raw)
   rfl
 
 /-- At the end of the inline input, close the active macro scope and flush text. -/
-theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
+private theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (h : raws.size ≤ i) :
     elabInlinesFrom ctx raws i acc sb =
       let (_, acc', sb') := inlineMacroAt ctx.macroRoles raws i acc sb
@@ -6110,17 +6065,17 @@ theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : Nat)
   simp only [show ¬ i < raws.size from Nat.not_lt_of_ge h, dite_false]
 
 /-- A positioned word under the empty context is independent of elaboration state. -/
-theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origins = []) :
+private theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origins = []) :
     elabInlines {file} #[.word w p] =
       pure (#[sourceInline {file} p (.text w)].map (mapSmartText none)) := by
-  rw [elabInlines, elabInlinesFrom]
-  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, Raw.origins?,
+  rw [elabInlines, elabInlinesCore, elabInlinesFrom]
+  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, MacroRoles.empty, Raw.origins?,
     relativeOrigins, hp, flushText]
   rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
   simp [inlineMacroAt, inlineMacroStep, flushText, mergeText]
 
 /-- Recovery beyond the input keeps the accumulated content and state. -/
-theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
+private theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
     (j count : Nat) (acc : Array Inline) (sb : String) (spaceAfter : Bool)
     (h : raws.size ≤ j) :
     elabUnknownArgs ctx raws j count acc sb spaceAfter =
@@ -6137,7 +6092,7 @@ theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
 
 /-- A final argument group runs its own elaboration exactly once, retaining
 its returned content and state. No assumption about that child run is needed. -/
-theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
+private theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
     (j : Nat) (body : Array Raw) (pos : Pos) (acc : Array Inline) (sb : String)
     (spaceAfter : Bool) (hg : raws[j]? = some (.group body pos))
     (hend : raws.size ≤ j + 1) :
@@ -6156,12 +6111,12 @@ theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
     show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl]
   simp only [elabUnknownArgs_end_exact _ _ _ _ _ _ _
     (Nat.le_trans hend (skipSpaces_ge raws (j + 1))), pure_bind]
-  simp only [hs, bne_self_eq_false]
+  simp only [elabInlines, hs, bne_self_eq_false]
 
 /-- Once dispatch has selected unknown recovery, a closed option contributes
 no inline; the braced word retains the same positioned content for every
 option, content string, accumulator and initial state. -/
-theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
+private theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
     (acc : Array Inline) (sb : String) (st : ESt) :
     ((elabUnknownCtrl {file}
         #[.ctrl name {line := 1, col := 1}, .sym '[' {line := 1, col := 5},
@@ -6211,8 +6166,8 @@ theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
       rw [sy1]
       rfl
     rw [scan]
-  have starx : skipStar xs 1 = 1 := rfl
-  have stary : skipStar ys 1 = 1 := rfl
+  have starx : skipStar xs 1 = 1 := by rfl
+  have stary : skipStar ys 1 = 1 := by rfl
   have ax : elabUnknownArgs {file} xs 4 0 acc sb false =
       pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
         "", ⟨5, by omega⟩, 1, false) := by
@@ -6262,7 +6217,7 @@ theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
 /-- A closed leading option of an unregistered command contributes no
 inline content. The command's grouped content keeps its exact source
 annotation; the diagnostic may describe the dropped option. -/
-theorem elabInlines_option_run_exact (file name w kept : String) (st : ESt)
+public theorem elabInlines_option_run_exact (file name w kept : String) (st : ESt)
     (hn : recoversInlineName {file} name = true) :
     ((elabInlines {file}
         #[.ctrl name {line := 1, col := 1}, .sym '[' {line := 1, col := 5},
@@ -6295,7 +6250,7 @@ The retired W0341 is why the code matters on its own: it named a fragment of
 the argument list this diagnostic already covers, at the same span, and for
 the pending pair it called a construct the engine knows an unknown command.
 With one code at the span there is nothing left to make that claim. -/
-theorem unknownCmdDiag_code_exact (name : String) (shape : RunShape) :
+public theorem unknownCmdDiag_code_exact (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 =
       (if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
   unfold unknownCmdDiag
@@ -6306,7 +6261,7 @@ same whatever shapes its sites carried, so the run is accounted for inside
 that diagnostic and never beside it. Message and help differ by design —
 the run's fate is a clause of them — and this says only that the choice of
 code is shape-blind. -/
-theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
+private theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 = (unknownCmdDiag name {}).1 := by
   rw [unknownCmdDiag_code_exact, unknownCmdDiag_code_exact]
 
@@ -6323,7 +6278,7 @@ assumes `subject.isSome`, so it was *vacuous* on exactly the class that
 miscounted. Here it is discharged by construction for every refused command.
 `subjectCensusChecks` and `siteAccountingChecks` hold the surface-wide
 gates. -/
-theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
+private theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
     (pos : Pos) (st : ESt) :
     ∃ d, ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.size
           = st.diags.size + 1 ∧
@@ -6337,7 +6292,7 @@ theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
         (unknownCmdDiag name (RunShape.one optionRun)).2.2
         ((unknownCmdDiag name (RunShape.one optionRun)).1 == .W0301 &&
           Compat.styInternal ctx.file name)
-        (bumpRunShape name ("ctrl:" ++ name) optionRun st)).diags := rfl
+        (bumpRunShape name ("ctrl:" ++ name) optionRun st)).diags := by rfl
   refine ⟨warnOnceDiag ctx ("ctrl:" ++ name)
       (unknownCmdDiag name (RunShape.one optionRun)).1
       (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
@@ -6364,7 +6319,7 @@ salvage, so the census can attribute no ink to it. What it does push is one
 diagnostic at the end, W0391, under the construct's own key: the loss named
 once per site, as every counted refusal is (`Diag.tallySites_exact` reads
 that subject). -/
-theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw)
+public theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw)
     (j : Nat) (pos : Pos) (st : ESt) :
     ((recoverPackageCmd ctx name raws j pos).run st).2.salvage = st.salvage ∧
       (∃ d, ((recoverPackageCmd ctx name raws j pos).run st).2.diags = st.diags.push d ∧
@@ -6378,7 +6333,7 @@ theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw
   have hrun : (recoverPackageCmd ctx name raws j pos).run st =
       (⟨argGroupsEnd raws j 9, argGroupsEnd_ge raws j 9⟩,
         warnOnceState ctx (pkgCodeKey name) .W0391 (pkgCodeMsg name) pos
-          (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name) st) := rfl
+          (some (unknownCmdHelp name false)) (Compat.styInternal ctx.file name) st) := by rfl
   rw [hrun]
   obtain ⟨h1, h2, h3⟩ := argGroupsEnd_covers raws j 9
   exact ⟨rfl, ⟨_, warnOnceState_diags_exact .., warnOnceDiag_kind_exact ..,
@@ -6388,7 +6343,7 @@ theorem recoverPackageCmd_accounts (ctx : Ctx) (name : String) (raws : Array Raw
 user environment's from the groups after its `\begin`. Returns the bindings
 and the index just past the consumed arguments. Shared by inline and block
 expansion so both bind identically. -/
-def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
+private def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos) :
     EM (Array (String × Option (Array Inline)) × Nat) := do
   let (bs, ⟨j, _⟩) ← takeArgsFrom ctx params 0 name raws start pos #[]
@@ -6398,7 +6353,7 @@ def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
 is never before the one it was given — the progress half of the
 elaborator's termination measure (arch-provable I6), discharged by the
 subtype `takeArgsFrom` carries its progress in. -/
-theorem take_args_consumes_forward
+private theorem take_args_consumes_forward
     (ctx : Ctx) (params : Array Param) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos) (st : ESt) :
     start ≤ ((takeArgs ctx params name raws start pos).run st).1.2 := by
@@ -6410,7 +6365,7 @@ theorem take_args_consumes_forward
   exact hj
 
 /-- Block environments: those whose content is a block sequence. -/
-def blockEnvs : List String :=
+private def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
    "columns", "tabularx", "figure",
    "figure*", "table", "table*", "quote", "quotation", "verse", "description",
@@ -6419,7 +6374,7 @@ def blockEnvs : List String :=
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
-def builtinEnvNames : List String :=
+public def builtinEnvNames : List String :=
   blockEnvs ++ (alignEnvs.map (·.1)) ++ (displayMathEnvs.map (·.1)) ++
   ["verbatim", "tabular", "tabular*", "column", "array",
    "algorithm", "algorithm*", "algorithm2e", "algorithmic"] ++
@@ -6540,7 +6495,7 @@ first-class block on this branch — and descend into scope groups and
 environment bodies: block content one group deeper is still block content.
 A body that ends its own paragraph (`...\par`, the LaTeX habit for a
 one-line entry) produces one, so it is a block too. -/
-def bodyIsBlockOne : Raw → Bool
+private def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
@@ -6564,7 +6519,7 @@ def bodyIsBlockOne : Raw → Bool
   | .group body _ => bodyIsBlockList body.toList
   | _ => false
 
-def bodyIsBlockList : List Raw → Bool
+private def bodyIsBlockList : List Raw → Bool
   | [] => false
   | r :: rest => bodyIsBlockOne r || bodyIsBlockList rest
 
@@ -6574,7 +6529,7 @@ end
 called between paragraphs expands as blocks or as inline content. A purely
 inline macro must stay inline, or `\role{Ada} and more text` would split the
 paragraph. -/
-def bodyIsBlock (raws : Array Raw) : Bool :=
+public def bodyIsBlock (raws : Array Raw) : Bool :=
   bodyIsBlockList raws.toList
 
 /-- Does an overlay command standing at `i` take the block path? Grouped
@@ -6708,7 +6663,7 @@ private def leaveBlockDecl (saved : List Ir.Decl) : EM Unit :=
 /-- Elaborate under additional declarations, then restore the caller's
 declarations while retaining every other effect. `Ir.wrapDecls_text` is the
 IR conservation law; this operation supplies its scoped declaration input. -/
-def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
+public def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
   fun st =>
     let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
     (value, { done with blockDecls := st.blockDecls })
@@ -6716,14 +6671,14 @@ def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
 /-- Declaration scope restores exactly that field for every elaboration
 action, including an action that changes declarations itself. Its result
 and all other state effects are preserved. -/
-theorem withBlockDecls_exact (decls : List Ir.Decl) (action : EM α) (st : ESt) :
+public theorem withBlockDecls_exact (decls : List Ir.Decl) (action : EM α) (st : ESt) :
     withBlockDecls decls action st =
       let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
-      (value, { done with blockDecls := st.blockDecls }) := rfl
+      (value, { done with blockDecls := st.blockDecls }) := by rfl
 
 /-- Nested declaration scopes compose in source order for every action;
 restoration cannot discard effects outside the declaration field. -/
-theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action : EM α) :
+public theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action : EM α) :
     withBlockDecls outer (withBlockDecls inner action) =
       withBlockDecls (outer ++ inner) action := by
   funext st
@@ -7685,10 +7640,10 @@ private theorem slicePars_end (raws : Array Raw) {j : Nat}
   rw [slicePars_eq]; exact sliceMeas_end nestedPars raws h
 
 private theorem sliceWeight_zero (a : Array Raw) :
-    sliceWeight a 0 = rawWeightList a.toList := rfl
+    sliceWeight a 0 = rawWeightList a.toList := by rfl
 
 private theorem slicePars_zero (a : Array Raw) :
-    slicePars a 0 = nestedParsList a.toList := rfl
+    slicePars a 0 = nestedParsList a.toList := by rfl
 
 /-- Trimming a body's whitespace edges never adds weight or pars. -/
 private theorem trimRaws_weight_le (raws : Array Raw) :
@@ -7842,7 +7797,7 @@ learn one alias and not another (`barScan_alias_agree`). A datum with no
 event of its own (`\insertdate`, the institute, a frame number) aliases to
 `\@date`, which is what the scan already spells "ink that is not the
 title". -/
-def beamerInsertAlias : List (String × String) :=
+public def beamerInsertAlias : List (String × String) :=
   [("inserttitle", "@title"),
    ("insertshorttitle", "@title"),
    ("insertauthor", "@author"),
@@ -7855,7 +7810,7 @@ def beamerInsertAlias : List (String × String) :=
 
 /-- The name a refused body's scans read: beamer's insert resolved to the
 internal it aliases, every other control word itself. -/
-def barCtrlName (n : String) : String := (beamerInsertAlias.lookup n).getD n
+public def barCtrlName (n : String) : String := (beamerInsertAlias.lookup n).getD n
 
 /-- The zero-width `\rule` strut that props an author's line — the
 NeurIPS-lineage author `tabular`
@@ -8079,7 +8034,7 @@ Two spellings that resolve alike scan alike, at the head of a run and
 therefore — the scan being a fold that reads no other name — at any
 occurrence. `barCtrlName_alias_resolves` supplies both hypotheses for every
 row of the table, so the property is the table's, not one name's. -/
-theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
+private theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
     (events : Array BarEvent) (post : List Raw) (p q : Pos) (b l : String)
     (hb : barCtrlName b = l) (hl : barCtrlName l = l) :
     barScanList user bound st events (.ctrl b p :: post)
@@ -8090,7 +8045,7 @@ theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
 internal, and the internal to itself: the two hypotheses
 `barScan_alias_agree` asks for, discharged for the whole vocabulary at
 once. -/
-theorem barCtrlName_alias_resolves :
+public theorem barCtrlName_alias_resolves :
     (beamerInsertAlias.all fun r =>
       barCtrlName r.1 == r.2 && barCtrlName r.2 == r.2) = true := by
   decide +kernel
@@ -8156,7 +8111,7 @@ Normalize only here, after execution has selected the body: a conditional
 or a definition elsewhere must still see the spelling the author wrote.
 This is a raw-tree walk, before IR; its list companion preserves positions,
 grouping and order. Math and verbatim are opaque to the title reader. -/
-def declarativeTitleRaw : Raw → Raw
+public def declarativeTitleRaw : Raw → Raw
   | .ctrl n p => .ctrl (barCtrlName n) p
   | .group body p => .group (declarativeTitleList #[] body.toList) p
   | .env n body p => .env n (declarativeTitleList #[] body.toList) p
@@ -8167,13 +8122,13 @@ def declarativeTitleRaw : Raw → Raw
   | .math d body p => .math d body p
   | .verb n s p => .verb n s p
 
-def declarativeTitleList (acc : Array Raw) : List Raw → Array Raw
+public def declarativeTitleList (acc : Array Raw) : List Raw → Array Raw
   | [] => acc
   | r :: rest => declarativeTitleList (acc.push (declarativeTitleRaw r)) rest
 
 end
 
-theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
+public theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
     (declarativeTitleList acc rs).toList =
       acc.toList ++ rs.map declarativeTitleRaw := by
   induction rs generalizing acc with
@@ -8183,7 +8138,7 @@ theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
 /-- The complete declarative readout, including event interpretation. Both
 the production preamble finalizer and the spelling contract read this
 value; neither exposes the scanner's private event or state types. -/
-def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
+public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
     Option Ir.ElementStyle :=
   barInterpret (barScanList user bound {} #[]
     (declarativeTitleList #[] body.toList).toList)
@@ -9913,10 +9868,6 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
 -- it assembles the fixpoint and its equations; everything the arms call is
 -- data to that process, never proof material, and unfolding it is what
 -- blows the elaboration budget. Sealed for the knot, unsealed right after.
-seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
-seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
-seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
-seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 seal takeArgs mkPara finishPara flushPara stripMathMeta
 seal blockMacroStep
 seal closeBlockMacros blockControlContext
@@ -9924,8 +9875,8 @@ seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefi
 seal declAlignOf
 seal flowStyleCtrl flowStyleArm
 seal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
-seal titleBlocks Picture.elabPicture MathParse.parseMath
-seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
+seal titleBlocks
+seal skipOptArg takeTitleDecl
 seal sectionNumber columnWidth cmidRange trimRawEdges
 seal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
 /-- Enter appendix.sty's `{appendices}` scope when `b` (the environment's
@@ -9960,7 +9911,7 @@ article's unnumbered titled block, and `{appendices}` wraps nothing — its
 meaning is the numbering scope `enterAppendicesIf` carries, so its blocks
 splice. One def outside the knot: the environments share one branch and
 one recursion site there. -/
-def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
+private def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
   if n == "abstract" then blocks.push (.abstract inner)
   else if n == "appendices" then blocks ++ inner
   else blocks.push (.quote inner)
@@ -9969,7 +9920,7 @@ def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
 `{abstract}` are body-transparent constructors (`blockTextOne` reads
 straight through both) and the `{appendices}` splice is the identity, so
 the shared environment arm conserves the text whatever the name. -/
-theorem wrapScopedEnv_text (n : String) :
+private theorem wrapScopedEnv_text (n : String) :
     Ir.Conserves Ir.blocksText (wrapScopedEnv n #[]) := fun inner => by
   unfold wrapScopedEnv
   split
@@ -9985,7 +9936,7 @@ private def thmOf? (thm : ThmDecls) (n : String) : Option ThmDef :=
 /-- `n` opens a theorem-like scope: an environment a `\newtheorem` declared,
 or amsthm's `proof` once amsthm is loaded (amsthm.sty defines it; the kernel
 does not, so without amsthm it stays unknown, as LaTeX has it). -/
-def thmEnv (thm : ThmDecls) (n : String) : Bool :=
+private def thmEnv (thm : ThmDecls) (n : String) : Bool :=
   (thmOf? thm n).isSome || (n == "proof" && thm.ams)
 
 /-- `\labelsep`, .5 em (article.cls, `\setlength\labelsep{.5em}`): what a
@@ -9998,7 +9949,7 @@ amsthm's theorem head closes with `\thm@headsep`, `5pt plus 1pt minus 1pt`
 and 1 pt at 12 pt, its ±1 pt rubber not carried — the IR has no
 fixed-length inline glue, and the en space (U+2002, `\enspace`, a kern of
 half the em) stands for both. -/
-def labelSep : String := "\u2002"
+private def labelSep : String := "\u2002"
 
 /-- `\@addpunct{.}` (amsthm.sty): a period after a head, unless the head
 already ends in one of the punctuation marks it tests for. -/
@@ -10013,7 +9964,7 @@ name, number and `(note)`, bold. amsthm's (amsthm.sty `\thmhead@plain`,
 under `remark` — the number `\@upn` upright, the note parenthesised in the
 note font (`\fontseries\mddefault\upshape`), then the head punctuation `.`
 in the head font. -/
-def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
+private def thmHead (style : ThmStyle) (name : Array Inline) (num : Option String)
     (note : Option (Array Inline)) : Array Inline :=
   match style with
   | .kernel =>
@@ -10042,7 +9993,7 @@ a QED closes it (amsthm's `proof`) and the `\qedsymbol` its own body
 redefines, and the label target and block declarations to restore at its
 `\end` — `\refstepcounter` and the body font are local to the environment's
 group. -/
-structure ThmOpen where
+private structure ThmOpen where
   head : Array Inline
   space : Ir.ThmSpace
   qed : Bool
@@ -10274,17 +10225,16 @@ private def ownBibList (ctx : Ctx) (body : Array Raw) : EM (Array Block) := do
 seal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
-seal theCounterLevel? String.toInt? String.toNat?
-seal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
+seal theCounterLevel?
 seal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 seal withBlockDecls wrapDeclAlign
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
-seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
+seal renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 seal isColumnStray
-seal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBlock
+seal parFollows displayAtBlock
 
 -- ===== Pseudocode environments: algorithm2e and algorithmicx ============
 --
@@ -10889,7 +10839,7 @@ line is numbered" apos
   return blocks.push (.float .algorithm none true #[blk] caption)
 
 
-seal scanBracketArg Parse.inputEnvFile?
+seal scanBracketArg
 
 /-- A proposed linked row is native only while every wrapper retains its
 native meaning. This reads the elaborator's accepted, visible definitions,
@@ -11045,7 +10995,7 @@ continues (beamer user guide §8.1; the layout's spill account reads it), and
 `t`/`c`/`b`, which say how the frame distributes its leftover vertical space
 (`c` is beamer's default). Outside the elaboration knot on purpose: its loop
 state is what pushed the knot's compile over the heartbeat wall. -/
-structure FrameOpts where
+private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
   valign : VAlign := .center
@@ -12890,7 +12840,7 @@ decreasing_by all_goals blocks_dec
 end
 
 /-- Elaborate raw items as a block sequence. -/
-def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+public def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   modify fun st => { st with spans := { st.spans with frames :=
     { st.spans.frames with nextBase := some 0 } } }
   elabBlockScope ctx raws
@@ -12908,39 +12858,34 @@ defined — because the guarantee's force lives in the definitions the
 checker verified and in the pre-commit gate that keeps the escape-keyword
 allowance at none; the name exists so the plan's claim has a checker to
 cite. -/
-theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
+public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     ∃ r, (elabBlocks ctx raws).run st = r :=
   ⟨_, rfl⟩
 
-unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal blockMacroStep
 unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
 unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
 unseal declAlignOf
 unseal flowStyleCtrl flowStyleArm
-unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
-unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
-unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 unseal takeArgs mkPara finishPara flushPara stripMathMeta
 unseal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
-unseal titleBlocks Picture.elabPicture MathParse.parseMath
-unseal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
+unseal titleBlocks
+unseal skipOptArg takeTitleDecl
 unseal sectionNumber columnWidth cmidRange trimRawEdges
 unseal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
 unseal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
-unseal theCounterLevel? String.toInt? String.toNat?
-unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText Ir.overlayRange
+unseal theCounterLevel?
 unseal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 unseal withBlockDecls wrapDeclAlign
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
-unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
+unseal renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
-unseal Ir.markInParagraph Ir.flushedText Ir.markDisplay parFollows displayAtBlock
-unseal scanBracketArg Parse.inputEnvFile?
+unseal parFollows displayAtBlock
+unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
@@ -12954,8 +12899,8 @@ private theorem elabInlines_word (ctx : Ctx) (w : String) (p : Pos)
     elabInlines ctx #[.word w p] =
       pure (if ctx.literalText then #[sourceInline ctx p (.text w)]
         else #[sourceInline ctx p (.text w)].map (mapSmartText ctx.literalWhen)) := by
-  rw [elabInlines, elabInlinesFrom]
-  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, Raw.origins?,
+  rw [elabInlines, elabInlinesCore, elabInlinesFrom]
+  simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, MacroRoles.empty, Raw.origins?,
     relativeOrigins, hp, hm, flushText]
   rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
   simp [inlineMacroAt, inlineMacroStep, flushText, mergeText, pure_bind, sourceInline,
@@ -12973,9 +12918,9 @@ private theorem elabInlines_recovered_head (ctx : Ctx) (name : String) (raws : A
     rw [Array.getElem?_eq_getElem h, hr]
   have hi : inlineMacroAt ctx.macroRoles raws 0 #[] "" = (ctx.macroRoles, #[], "") := by
     simp only [inlineMacroAt, hr', inlineMacroStep, Raw.origins?, hp, hm,
-      relativeOrigins, List.map_nil]
+      MacroRoles.empty, relativeOrigins, List.map_nil]
     rfl
-  rw [elabInlines, he, elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn, hi]
+  rw [elabInlines, elabInlinesCore, he, elabInlinesFrom_unknown_exact _ _ _ _ _ _ _ h hr hn, hi]
 
 private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
@@ -12988,15 +12933,15 @@ private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
       (ctx.macroRoles, #[], "") := by
     simp only [inlineMacroAt, show (#[Raw.group body p])[0]? =
       some (.group body p) from rfl, inlineMacroStep, Raw.origins?, hp, hm,
-      relativeOrigins, List.map_nil]
+      MacroRoles.empty, relativeOrigins, List.map_nil]
     rfl
   have hd (inner : Array Inline) :
       elabInlinesFrom ctx #[.group body p] 1 inner "" = pure (mergeText inner) := by
     rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
-    simp [inlineMacroAt, inlineMacroStep, flushText, hm]
-  rw [elabInlines, he, elabInlinesFrom]
+    simp [inlineMacroAt, inlineMacroStep, flushText, hm, MacroRoles.empty]
+  rw [elabInlines, elabInlinesCore, he, elabInlinesFrom]
   simp only [hi]
-  simp [flushText, hd]
+  simp [flushText, hd, elabInlines]
 
 private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
     (body : Array Raw) (p gp : Pos)
@@ -13012,7 +12957,7 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
   change elabInlines ctx xs = _
   rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
   have hs : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
-  have hstar : skipStar xs 1 = 1 := rfl
+  have hstar : skipStar xs 1 = 1 := by rfl
   have ho : skipOptionRuns xs 1 p = (1, none) := by
     rw [skipOptionRuns]
     have hc : scanBracketArg xs 1 p = .content := by
@@ -13041,7 +12986,7 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
   have hd (inner : Array Inline) :
       elabInlinesFrom ctx xs 2 inner "" = pure (mergeText inner) := by
     rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp [xs])]
-    simp [inlineMacroAt, inlineMacroStep, xs, flushText, hm]
+    simp [inlineMacroAt, inlineMacroStep, xs, flushText, hm, MacroRoles.empty]
   simp [hd, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne,
     unknownCmdDiag_shape_id]
 
@@ -13060,7 +13005,7 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
   change elabInlines ctx xs = _
   rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
   have hs : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
-  have hstar : skipStar xs 1 = 1 := rfl
+  have hstar : skipStar xs 1 = 1 := by rfl
   have ho : skipOptionRuns xs 1 p = (1, none) := by
     rw [skipOptionRuns]
     have hc : scanBracketArg xs 1 p = .content := by
@@ -13089,7 +13034,8 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
   rw [elabInlinesFrom_done_exact _ xs 2 _ _ (by simp [xs])]
   have ms (x : Inline) : mergeText #[x] = #[x] := by cases x <;> rfl
   simp only [inlineMacroAt, inlineMacroStep, show xs[2]? = none from rfl,
-    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm]
+    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm,
+    MacroRoles.empty]
   cases hl : ctx.literalText <;>
     simp [ms, flushText, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne, unknownCmdDiag_shape_id]
 
@@ -13193,9 +13139,9 @@ private theorem blockMacroStep_idle (ctx : Ctx) (st : ESt) (raws : Array Raw)
     blockMacroStep ctx st st.flowGen raws i blocks cur =
       pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, cur) := by
   simp only [blockMacroStep, flowMCtx_idle,
-    blockMacroKinds, Array.getElem?_eq_getElem hi, hp, hm]
+    blockMacroKinds, Array.getElem?_eq_getElem hi, hp, hm, MacroRoles.empty]
   simp [relativeOrigins, show ¬ i ≥ raws.size by omega,
-    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, hm]
+    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, hm, MacroRoles.empty]
   cases ctx
   cases hm
   rfl
@@ -13203,7 +13149,7 @@ private theorem blockMacroStep_idle (ctx : Ctx) (st : ESt) (raws : Array Raw)
 private theorem flushPara_empty (ctx : Ctx) (blocks : Array Block)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) :
     flushPara ctx blocks #[] = pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks) := by
-  simp [flushPara, hm]
+  simp [flushPara, hm, MacroRoles.empty]
   cases ctx
   cases hm
   rfl
@@ -13234,14 +13180,16 @@ private theorem blockMacroStep_done (ctx : Ctx) (st : ESt) (raws : Array Raw)
   · have hz : cur = #[] := Array.isEmpty_iff.mp he
     subst cur
     rw [flushPara_empty ctx blocks hm]
-    simp [hm, closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns]
+    simp [hm, MacroRoles.empty, closeBlockFrameSources, commonOrigins,
+      moveMacroRuns, closeMacroRuns]
     cases ctx
     cases hm
     rfl
   · have hf : cur.isEmpty = false := Bool.eq_false_iff.mpr he
     rw [flushPara_pending ctx blocks cur hm hf]
     simp only [bind_assoc, pure_bind]
-    simp [hm, closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns]
+    simp [hm, MacroRoles.empty, closeBlockFrameSources, commonOrigins,
+      moveMacroRuns, closeMacroRuns]
     cases ctx
     cases hm
     rfl
@@ -13273,7 +13221,7 @@ private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i :
     simp only [flushPara_empty ctx _ hm, pure_bind]
 
 private theorem run_get (k : ESt → EM α) (st : ESt) :
-    ((do let x ← get; k x) : EM α).run st = (k st).run st := rfl
+    ((do let x ← get; k x) : EM α).run st = (k st).run st := by rfl
 
 private theorem elabBlocksGo_recovery_ctrl (ctx : Ctx) (st : ESt) (name : String)
     (body : Array Raw) (p gp : Pos) (blocks : Array Block)
@@ -13411,7 +13359,7 @@ private theorem closeBlockScope_note (ctx : Ctx) (base : Option Nat) (blocks : A
 /-- Keep the producer's warning and recovery record around an otherwise
 ordinary content interpretation. The warning uses the command's actual
 source position and code; recovery uses its exact operand spelling. -/
-def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands : Array Raw)
+public def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands : Array Raw)
     (content : EM α) : EM α := do
   warnUnknownCmd ctx name false pos
   let value ← content
@@ -13424,7 +13372,7 @@ attribute [local irreducible] elabBlocks mkPara closeBlockScope
 block entrypoint as an ordinary braced group. Only its warning and recovery
 record surround that interpretation. The conditions concern syntax and
 dispatch, never the result or diagnostics of elaborating the content. -/
-theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
+private theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
     (body : Array Raw) (pos groupPos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
     (hp : pos.origins = []) (hgp : groupPos.origins = [])
@@ -13603,24 +13551,29 @@ private theorem mapInlines_wrapDecls (f : Inline → Inline) (ds : List Ir.Decl)
     (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
     Ir.mapInlines f (Ir.wrapDecls ds xs) = Ir.wrapDecls ds xs := by
   induction ds with
-  | nil => exact h
+  | nil => simpa only [Ir.wrapDecls_exact] using h
   | cons d ds ih =>
+    rw [Ir.wrapDecls_exact]
+    change Ir.mapInlines f (d.wrap (Ir.wrapDecls ds xs)) = d.wrap (Ir.wrapDecls ds xs)
     cases d with
     | style st =>
+      rw [Ir.Decl.wrap_exact]
       change #[Inline.styled st (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
       rw [ih]
-      rfl
     | color c name =>
+      rw [Ir.Decl.wrap_exact]
       change #[Inline.colored c name (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
       rw [ih]
-      rfl
 
 private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option String)
     (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
     Ir.mapBlocks f #[paraUnder lang xs] = #[paraUnder lang xs] := by
   cases lang with
   | none => change #[Block.para (Ir.mapInlines f xs)] = _; rw [h]; rfl
-  | some tag => change #[Block.para #[.styled (.lang tag) (Ir.mapInlines f xs)]] = _; rw [h]; rfl
+  | some tag =>
+    simp only [paraUnder, Ir.langWrap_exact]
+    change #[Block.para #[.styled (.lang tag) (Ir.mapInlines f xs)]] = _
+    rw [h]
 
 private theorem resolve_recovered_para (ctx : Ctx) (wp : Pos) (w : String)
     (lang : Option String) (ds : List Ir.Decl) (loc : Locale) (table : Ir.RefTable) :
@@ -13648,7 +13601,7 @@ private theorem recovered_para_census (ctx : Ctx) (wp : Pos) (w : String)
 
 private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) :
     Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
-  cases lang <;> rfl
+  cases lang <;> exact Ir.numberFloats_para_exact _
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
@@ -14016,7 +13969,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
         evs := evs.push (.scalar "fonts" canonical (renderValue e.value) pos)
   return (spec, evs)
 
-def styleKeys : List String :=
+private def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
@@ -14025,12 +13978,12 @@ def styleKeys : List String :=
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. A
 slot owns its box; repeated `part` entries own independently styled data.
 The legacy part keys remain accepted and translate to one or more parts. -/
-def titleSlotKeys : List String :=
+private def titleSlotKeys : List String :=
   ["part", "set", "content", "font", "align", "width", "size", "anchor", "at",
    "xshift", "yshift", "inner-sep"]
 
 /-- The keys of one independently styled part in a title slot. -/
-def titlePartKeys : List String :=
+private def titlePartKeys : List String :=
   ["set", "content", "font", "align", "size", "leading", "new-line", "before"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
@@ -14635,7 +14588,7 @@ the declaration stands after, because reference→referent order is real and
 stays sequential. Malformation facts met while finding extents (an unclosed
 `[`, a missing group) ride as data, so `applyDecl` owns every diagnostic
 and emits it in scan order. -/
-inductive PDecl where
+public inductive PDecl where
   | docclass (options : Option String) (cls : Option String) (pos : Pos)
   | pictures (src : Option String) (pos : Pos)
   | defineCmd (decl : Array Raw) (pos : Pos)
@@ -14710,7 +14663,7 @@ the E0313 once-latch — reporting machinery, beside ESt's diags,
 `warnedUnknown`, `seenScalars`, and `declaredKeys`: the commutation
 statement's projection excludes these four and nothing else, because their
 only readers are diagnostic sites. -/
-structure PreState where
+public structure PreState where
   ctx : Ctx
   docClass : Ir.DocClass := .article
   sawClass : Bool := false
@@ -14759,7 +14712,7 @@ quirks — a declaration whose group never materialises consumes only what
 the loop consumed, and the tokens it looked past rescan as their own units,
 exactly as they always did. `\input` wrappers splice open in place between
 file markers, so a value's diagnostics name the file that holds it. -/
-def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
+public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
   let mut out : Array PDecl := #[]
@@ -15238,7 +15191,7 @@ bodies over a value, one arm per constructor, no wildcard. Every diagnostic
 the loop emitted is emitted here, in the same order — the scan owns extents
 only. The preamble IS `foldlM applyDecl` over `scanDecls`' values; the
 commutation statement ranges over exactly this function. -/
-def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
+public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   match d with
   | .docclass options cls pos =>
     let s := { s with sawClass := true }
@@ -15882,16 +15835,16 @@ watch), the warn-once memo (read only by `warnOnce`), the W0343 scalar
 store (read only by `applyEvent`'s `.scalar` arm), and the W0348
 declared-key store (read only by the `\theme` site). Everything a backend
 or the body elaboration reads survives the projection. -/
-def ESt.sem (e : ESt) : ESt :=
+public def ESt.sem (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[] }
 
 /-- The fold state with its one piece of reporting machinery erased, the
 E0313 once-latch. -/
-def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
+public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
 
 /-- The heads in T1's proved tier: the keyed block declarations whose whole
 apply step is a pure value plus reporting events. -/
-def PDecl.keyedHead? : PDecl → Option String
+public def PDecl.keyedHead? : PDecl → Option String
   | .page _ _ => some "page"
   | .pdfmeta _ _ => some "pdfmeta"
   | .fonts _ _ => some "fonts"
@@ -15911,13 +15864,13 @@ last-wins is the one essential order), and the inline-content heads
 content through `elabInlines` — one of the three tracked exemptions from
 the termination checker, opaque to the kernel, which no theorem can range
 over — so those heads stay with the oracle. -/
-def PDecl.Independent (d₁ d₂ : PDecl) : Prop :=
+public def PDecl.Independent (d₁ d₂ : PDecl) : Prop :=
   match d₁.keyedHead?, d₂.keyedHead? with
   | some h₁, some h₂ => h₁ ≠ h₂
   | _, _ => False
 
 private theorem EM.run_bind (m : EM α) (f : α → EM β) (e : ESt) :
-    (m >>= f).run e = (f (m.run e).1).run (m.run e).2 := rfl
+    (m >>= f).run e = (f (m.run e).1).run (m.run e).2 := by rfl
 
 private theorem applyEvent_sem (ctx : Ctx) (st : ESt) (ev : PEvent) :
     (applyEvent ctx st ev).sem = st.sem := by
@@ -15946,46 +15899,46 @@ private theorem foldArr_sem (ctx : Ctx) (evs : Array PEvent) (e : ESt) :
   exact foldEvents_sem ctx evs.toList e
 
 private theorem EM.run_stepDone_fst (ctx : Ctx) (r : PreState × Array PEvent) (e : ESt) :
-    ((stepDone ctx r).run e).1 = r.1 := rfl
+    ((stepDone ctx r).run e).1 = r.1 := by rfl
 
 private theorem EM.run_stepDone_snd (ctx : Ctx) (r : PreState × Array PEvent) (e : ESt) :
-    ((stepDone ctx r).run e).2 = r.2.foldl (applyEvent ctx) e := rfl
+    ((stepDone ctx r).run e).2 = r.2.foldl (applyEvent ctx) e := by rfl
 
 private theorem applyDecl_page_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.page (some src) pos) = stepDone s.ctx (stepPage s src pos) := rfl
+    applyDecl s (.page (some src) pos) = stepDone s.ctx (stepPage s src pos) := by rfl
 private theorem applyDecl_page_none (s : PreState) (pos : Pos) :
     applyDecl s (.page none pos)
-      = stepDone s.ctx (stepMissing s "page" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "page" "a {...} block" pos) := by rfl
 private theorem applyDecl_fonts_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.fonts (some src) pos) = stepDone s.ctx (stepFonts s src pos) := rfl
+    applyDecl s (.fonts (some src) pos) = stepDone s.ctx (stepFonts s src pos) := by rfl
 private theorem applyDecl_fonts_none (s : PreState) (pos : Pos) :
     applyDecl s (.fonts none pos)
-      = stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos) := by rfl
 private theorem applyDecl_pdfmeta_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.pdfmeta (some src) pos) = stepDone s.ctx (stepPdfmeta s src pos) := rfl
+    applyDecl s (.pdfmeta (some src) pos) = stepDone s.ctx (stepPdfmeta s src pos) := by rfl
 private theorem applyDecl_pdfmeta_none (s : PreState) (pos : Pos) :
     applyDecl s (.pdfmeta none pos)
-      = stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos) := by rfl
 private theorem applyDecl_output_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.output (some src) pos) = stepDone s.ctx (stepOutput s src pos) := rfl
+    applyDecl s (.output (some src) pos) = stepDone s.ctx (stepOutput s src pos) := by rfl
 private theorem applyDecl_output_none (s : PreState) (pos : Pos) :
     applyDecl s (.output none pos)
-      = stepDone s.ctx (stepMissing s "output" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "output" "a {...} block" pos) := by rfl
 private theorem applyDecl_chrome_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.chrome (some src) pos) = stepDone s.ctx (stepChrome s src pos) := rfl
+    applyDecl s (.chrome (some src) pos) = stepDone s.ctx (stepChrome s src pos) := by rfl
 private theorem applyDecl_chrome_none (s : PreState) (pos : Pos) :
     applyDecl s (.chrome none pos)
-      = stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos) := by rfl
 private theorem applyDecl_assert_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.assert (some src) pos) = stepDone s.ctx (stepAssert s src pos) := rfl
+    applyDecl s (.assert (some src) pos) = stepDone s.ctx (stepAssert s src pos) := by rfl
 private theorem applyDecl_assert_none (s : PreState) (pos : Pos) :
     applyDecl s (.assert none pos)
-      = stepDone s.ctx (stepMissing s "assert" "a {...} block" pos) := rfl
+      = stepDone s.ctx (stepMissing s "assert" "a {...} block" pos) := by rfl
 private theorem applyDecl_allow_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.allow (some src) pos) = stepDone s.ctx (stepAllow s src pos) := rfl
+    applyDecl s (.allow (some src) pos) = stepDone s.ctx (stepAllow s src pos) := by rfl
 private theorem applyDecl_allow_none (s : PreState) (pos : Pos) :
     applyDecl s (.allow none pos)
-      = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := rfl
+      = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := by rfl
 
 set_option maxHeartbeats 1000000 in
 /-- T1 over `applyDecl`, the proved tier (audit-compose; the statement the
@@ -15997,7 +15950,7 @@ oracle `scripts/compose-fuzz.lean` keeps watching what this tier does not
 reach: the inline-content heads, same-head field-disjoint swaps, and the
 diagnostic-code multiset. A commutation is a new theorem shape beside the
 registered suffixes; `_comm` names it. -/
-theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
+public theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
     (h : PDecl.Independent d₁ d₂) :
     (((applyDecl s d₁ >>= fun s' => applyDecl s' d₂).run e).1.sem
       = ((applyDecl s d₂ >>= fun s' => applyDecl s' d₁).run e).1.sem)
@@ -16036,16 +15989,16 @@ by the `.sty`, exactly as in LaTeX. Layering (the audit's q3): a `.sty`
 is document-layer text at its splice position — after class defaults,
 before everything later in the preamble — not a new layer; `\theme`
 stays the visual layer and `Theme.apply`'s theorems are untouched. -/
-theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
+public theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
     ((t.declare k sty).declare k doc).find? k = some doc :=
   Tokens.declare_last_wins _ k doc
 
 /-- `sty_is_defaults_palette`, the `\palette` half: the same corollary through the
-same one install door (`Palette.declare_last_wins`). -/
-theorem sty_is_defaults_palette (p : Palette) (k : String) (sty doc : Color)
+same one install door (`Palette.declare_find_exact`). -/
+public theorem sty_is_defaults_palette (p : Palette) (k : String) (sty doc : Color)
     (d d' : Bool) :
     ((p.declare k sty d).declare k doc d').find? k = some doc :=
-  Palette.declare_last_wins _ k doc
+  Palette.declare_find_exact _ k doc d'
 
 
 /-- Rule (b)'s remainder, honoured: a `\renewcommand{\maketitle}` the gate
@@ -16059,7 +16012,7 @@ extracted keys merge *under* anything the document declared itself
 the body gains the clause naming what survived. A redefinition that later
 won (the built-in will not render) extracts nothing; a body-walk
 redefinition keeps plain rule (b) — the venue's site is the preamble. -/
-def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
+public def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
     Option Ir.ElementStyle := do
   let body ← body
   if (lookupUser s.ctx "maketitle").isSome then none
@@ -16067,7 +16020,7 @@ def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
 
 /-- The production merge, over the preamble fold's complete result. Explicit
 document styles retain their precedence over a refused body's readout. -/
-def titleStyleMerge (s : PreState) (fragment : Option Ir.ElementStyle) : PreState :=
+public def titleStyleMerge (s : PreState) (fragment : Option Ir.ElementStyle) : PreState :=
   match fragment with
   | none => s
   | some est =>
@@ -16075,7 +16028,7 @@ def titleStyleMerge (s : PreState) (fragment : Option Ir.ElementStyle) : PreStat
       (Theme.styleMerge ((s.styles.find? "titlepage").getD {}) est)
     { s with styles := styles }
 
-def titleStyleApply (s : PreState) (body : Option (Array Raw)) : PreState :=
+public def titleStyleApply (s : PreState) (body : Option (Array Raw)) : PreState :=
   titleStyleMerge s (refusedTitleFragment s body)
 
 private def titleStyleDiagState (st : ESt) : ESt := Id.run do
@@ -16094,13 +16047,13 @@ private def titleStyleDiagState (st : ESt) : ESt := Id.run do
 /-- Apply the readout and retain the original refusal's site and provenance.
 The pure result equation is exported so contracts cross the diagnostic
 loop without depending on its private iteration state. -/
-def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
+public def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
   let fragment := refusedTitleFragment s st.refusedTitleBody
   let st := { st with refusedTitleBody := none }
   (titleStyleMerge s fragment, if fragment.isSome then titleStyleDiagState st else st)
 
-theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
-    ((applyRefusedTitleStyle s).run st).1 = titleStyleApply s st.refusedTitleBody := rfl
+public theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
+    ((applyRefusedTitleStyle s).run st).1 = titleStyleApply s st.refusedTitleBody := by rfl
 
 /-- Rule (b)'s remainder for the size ladder: a refused size-command
 redefinition whose body opens with `\@setfontsize\X<size><leading>`
@@ -16186,19 +16139,19 @@ order, so it is not read" }
 `\renewcommand`: each declares one command with an arity and an optional
 default, so one re-emission serves them all (usrguide, "Defining
 commands"). -/
-def latexDefiners : List String :=
+private def latexDefiners : List String :=
   ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand"]
 
 /-- xparse's family. `\DeclareDocumentCommand` defines irrespective of
 whether the name already exists (usrguide3, "Creating document commands"),
 so the re-emission needs no guard of its own. -/
-def xparseDefiners : List String :=
+private def xparseDefiners : List String :=
   ["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand",
    "ProvideDocumentCommand"]
 
 /-- TeX's own definers, already total: each binds whatever the name held
 (TeXbook ch. 20), so they ride in their own spelling. -/
-def texDefiners : List String := ["def", "gdef", "edef", "xdef"]
+private def texDefiners : List String := ["def", "gdef", "edef", "xdef"]
 
 /-- A definer's name argument: `\newcommand{\x}` and `\newcommand\x` both
 spell it — the braced form is what LaTeX documents, the bare one what TeX
@@ -16373,7 +16326,7 @@ Read over the *unrewritten* tree, as the boundary preamble's collector is
 spell an optional argument's default back, so the declaration the
 standalone reads is captured as the document wrote it rather than
 reconstructed from a `UserCmd`. -/
-def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
+public def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
   let all := macroScanLevel raws #[] raws.toList 0 0
   let mut last : Std.HashMap String Nat := {}
   let mut text : Std.HashMap String String := {}
@@ -16392,19 +16345,19 @@ def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
 
 /-- The style table before the next picture setting. This is the same
 one-pass interpretation used by the drawing's `Picture.documentStyles`. -/
-def pictureSettingStyles (styles : List (String × Array Picture.Tok))
+public def pictureSettingStyles (styles : List (String × Array Picture.Tok))
     (setting : Pos × Array Raw) : List (String × Array Picture.Tok) :=
   (Picture.readStyleList styles (Picture.ofRaws setting.2)).1
 
 /-- Account for a key at the setting that declares it. -/
-def pictureKeyState (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) : ESt :=
+private def pictureKeyState (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) : ESt :=
   warnOnceState ctx ("picture:set:" ++ key) .W0334
     s!"picture key {key} is outside the rendered picture subset; the key is dropped"
     pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
 
 /-- One real reporting loop, over the keys this setting leaves unread.
 The style table is advanced only after the setting has been interpreted. -/
-def pictureSettingState (ctx : Ctx)
+private def pictureSettingState (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt)
     (setting : Pos × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
   let mut st := acc.2
@@ -16414,7 +16367,7 @@ def pictureSettingState (ctx : Ctx)
 
 /-- Interpret and report every prepared picture setting, in declaration
 order, carrying the earlier style definitions into each later setting. -/
-def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+public def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
   Id.run do
     let mut acc := (([] : List (String × Array Picture.Tok)), st)
     for setting in sets do
@@ -16424,14 +16377,14 @@ def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) :
 /-- Where picture losses belong in the document's diagnostic sequence.
 The body determines whether there is a loss; the context determines its
 source span, independently of the later document judges. -/
-structure PictureReportContext where
+public structure PictureReportContext where
   ctx : Ctx
   offset : Nat
 
 /-- Name settings against the body actually returned by the frontend.
 Later document judges keep their diagnostic order: picture losses are
 inserted at the position captured immediately after body elaboration. -/
-def finishPictureKeys (report : PictureReportContext) (doc : Doc)
+public def finishPictureKeys (report : PictureReportContext) (doc : Doc)
     (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
   -- premise: pictureKeyGateChecks — only an engine-rendered picture loses
   -- these keys; a configured boundary alone cannot silence that loss.
@@ -16444,7 +16397,7 @@ def finishPictureKeys (report : PictureReportContext) (doc : Doc)
 /-- The declaration fold's output and the raw regions its continuation
 will read. Execution and declaration binding have finished; selected
 refused bodies are interpreted declaratively at this boundary. -/
-structure DocPreamble where
+public structure DocPreamble where
   state : PreState
   decls : Array PDecl
   body : Array Raw
@@ -16453,7 +16406,7 @@ structure DocPreamble where
 /-- Everything decided after the body has elaborated, apart from the body
 itself. Reference resolution is the only remaining pass that can replace
 its inlines; metadata and diagnostic collection cannot substitute content. -/
-structure BodyCompletion where
+public structure BodyCompletion where
   doc : Doc
   table : Ir.RefTable
   pictureReport : PictureReportContext
@@ -16462,14 +16415,14 @@ structure BodyCompletion where
 
 /-- Attach the actual numbered body before resolving references in every
 document region. This is the single assembly site used by `runDocBody`. -/
-def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
+public def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
   let doc := { completion.doc with body := blocks }
   if completion.resolve then
     Ir.mapDoc (Ir.resolveRefInlines completion.locale completion.table)
       (Ir.resolveRefs completion.locale completion.table) doc
   else doc
 
-theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
+public theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
     (blocks : Array Block) :
     (completion.attach blocks).body =
       if completion.resolve then Ir.resolveRefs completion.locale completion.table blocks
@@ -16480,7 +16433,7 @@ theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
 /-- The real body interpreter's inputs and its metadata continuation.
 Class defaults and preamble declarations have already supplied the context.
 The continuation observes the numbered blocks but does not own their slot. -/
-structure DocBodyPlan where
+public structure DocBodyPlan where
   ctx : Ctx
   raws : Array Raw
   finish : Array Block → EM BodyCompletion
@@ -16488,35 +16441,35 @@ structure DocBodyPlan where
 /-- Complete the actual body through numbering, metadata and reference
 resolution. Both the production entrypoint and its braced-content contract
 use this one continuation. -/
-def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
+public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let blocks := Ir.numberFloats blocks
   let completion ← plan.finish blocks
   return (completion.attach blocks, completion.table, completion.pictureReport)
 
 /-- Run the production block interpreter and its document continuation. -/
-def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
+public def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
   finishDocBody plan (← elabBlocks plan.ctx plan.raws)
 
 /-- One unhandled control and its grouped content, at the executed body
 boundary. The group can contain arbitrary inline syntax. -/
-structure RecoveryGroup where
+public structure RecoveryGroup where
   name : String
   body : Array Raw
   pos : Pos
   groupPos : Pos
 
-def RecoveryGroup.call (group : RecoveryGroup) : Array Raw :=
+public def RecoveryGroup.call (group : RecoveryGroup) : Array Raw :=
   #[.ctrl group.name group.pos, .group group.body group.groupPos]
 
-def RecoveryGroup.braced (group : RecoveryGroup) : Array Raw :=
+public def RecoveryGroup.braced (group : RecoveryGroup) : Array Raw :=
   #[.group group.body group.groupPos]
 
 /-- The dispatch domain where a group's ordinary braced spelling is an
 inline paragraph. Execution is already complete; no macro-origin run is
 open. These are syntax and context conditions, with no premise about the
 result of elaborating the group. -/
-def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGroup) : Prop :=
+public def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGroup) : Prop :=
   raws = group.call ∧
   ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧
   group.pos.origins = [] ∧ group.groupPos.origins = [] ∧
@@ -16528,7 +16481,7 @@ def RecoveryGroupInput (ctx : Ctx) (raws : Array Raw) (group : RecoveryGroup) : 
 /-- Interpret the ordinary braced content with the original warning and
 recovery attribution, then run the actual document continuation. This
 exposes what content recovery means without copying either interpreter. -/
-def runBracedRecovery (plan : DocBodyPlan) (group : RecoveryGroup) :
+public def runBracedRecovery (plan : DocBodyPlan) (group : RecoveryGroup) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let blocks ← withControlRecovery plan.ctx group.name group.pos group.braced
     (elabBlocks plan.ctx group.braced)
@@ -16539,7 +16492,7 @@ attribute [local irreducible] elabBlocks finishDocBody in
 ordinary braced interpreter and the same numbering, metadata and reference
 resolution as production. The entire document, log and continuation state
 agree, not only a selected text census. -/
-theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : RecoveryGroup)
+public theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : RecoveryGroup)
     (h : RecoveryGroupInput plan.ctx plan.raws group) :
     runDocBody plan = runBracedRecovery plan group := by
   obtain ⟨hraw, hm, hp, hgp, hn, hb, hpar, hblock⟩ := h
@@ -16556,7 +16509,7 @@ theorem runDocBody_recovery_group_exact (plan : DocBodyPlan) (group : RecoveryGr
 body-entry boundary. No macro-origin run is open; the dispatch classifiers
 select inline recovery, and paragraph trimming and smart punctuation leave
 the word fixed. These are input conditions, independent of any result. -/
-def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Prop :=
+public def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Prop :=
   ∃ name pos groupPos wordPos,
     raws = #[.ctrl name pos, .group #[.word word wordPos] groupPos] ∧
     ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧
@@ -16572,7 +16525,7 @@ def RecoveryWordInput (ctx : Ctx) (raws : Array Raw) (word : String) : Prop :=
 interpreter, numbering, the metadata continuation and reference resolution.
 The complete body census is the argument, for every state and continuation
 supplied by preamble and class preparation. -/
-theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (word : String)
+public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (word : String)
     (h : RecoveryWordInput plan.ctx plan.raws word) :
     Ir.blocksText ((runDocBody plan).run st).1.1.body = word := by
   obtain ⟨name, pos, groupPos, wordPos, hraw, hm, hp, hgp, hwp, hn, hs,
@@ -17015,18 +16968,18 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
 /-- Resolve declarative title and size bodies and class defaults before
 entering the block interpreter. The returned plan is the one
 `finishPreamble` executes, including class-supplied opening material. -/
-def prepareDocBody (file : String) (preamble : DocPreamble) : EM DocBodyPlan := do
+public def prepareDocBody (file : String) (preamble : DocPreamble) : EM DocBodyPlan := do
   let s ← applyRefusedTitleStyle preamble.state
   prepareStyledBody file preamble.decls preamble.body preamble.trailing s
 
 /-- The production continuation from a completed declaration fold through
 class defaults, body elaboration, numbering, and reference resolution.
 The title body is read once before this continuation consumes its style. -/
-def finishPreamble (file : String) (preamble : DocPreamble) :
+public def finishPreamble (file : String) (preamble : DocPreamble) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   runDocBody (← prepareDocBody file preamble)
 
-theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
+public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
     (left right : ESt)
     (h : (applyRefusedTitleStyle preamble.state).run left =
       (applyRefusedTitleStyle preamble.state).run right) :
@@ -17052,7 +17005,7 @@ private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "
 
 /-- Elaborate a document and account for every unread setting of its
 engine pictures. The output gate is read from the completed body. -/
-def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
+public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picSets : Array (Pos × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
@@ -17068,7 +17021,7 @@ the driver reads to place its missing-file diagnostics. Delivered beside
 the `Doc`, never in it: two spellings of one document elaborate to one
 `Doc` (the compat conservation oracle holds them equal), while their
 marker positions differ. -/
-structure ReqSpans where
+public structure ReqSpans where
   /-- The exact input-reader calls that produced the prepared surface.
   Measurement and withdrawal passes carry these receipts, never repeat I/O. -/
   inputAttempts : Array Compat.InputAttempt := #[]
@@ -17101,7 +17054,7 @@ rewrite already spent. Held as a value because a metric-carrying pass and
 the pass that discovers the metric must read the *same* rewritten tree —
 rewriting twice would make the two passes' documents functions of two
 sources, and nothing would state they agree. -/
-structure Prepared where
+public structure Prepared where
   raws : Array Raw
   picPre : String
   picSets : Array (Pos × Array Raw)
@@ -17186,22 +17139,22 @@ private def settleOne (file : String) (ds : Array Diag) : Raw → Array Raw × A
 end
 
 /-- Settle every definer body's halves in a parsed tree (`settleList`). -/
-def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
+public def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   settleList file 0 #[] #[] raws.toList
 
 /-- A live literal package declaration contains no split definer bodies.
 The public execution door therefore passes the same call and positions to
 the shared evaluator, without adding a parse-recovery diagnostic. -/
-theorem settleSplits_package_exact (file command names : String)
+public theorem settleSplits_package_exact (file command names : String)
     (pos groupPos namePos : Pos) :
     settleSplits file (Compat.packageCall command names pos groupPos namePos) =
       (Compat.packageCall command names pos groupPos namePos, #[]) := by
-  simp [settleSplits, Compat.packageCall, settleList, settleOne]
+  simp [settleSplits, Compat.packageCall_exact, settleList, settleOne]
 
 /-- Execute input-bearing macros with the driver's reader. Parse recovery
 is settled before the shared evaluator; selector boundaries follow expansion, just
 as they are on the file-free preparation path. -/
-def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
+public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.executeInputs reader file raws
@@ -17211,7 +17164,7 @@ def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
 /-- A file answer enters the same execution state after its own parse
 recovery. Its source wrapper remains intact, so requests and diagnostics
 inside it keep the file that owns their positions. -/
-def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
+public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.resumeInput reader context raws splitDiags
@@ -17219,7 +17172,7 @@ def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.Inpu
 /-- The production preparation tail. Picture and macro metadata come from
 the caller's specified scan stage; the completed compatibility walk supplies
 the only source sent to text rewriting and then body elaboration. -/
-def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
+public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String)
@@ -17234,16 +17187,15 @@ def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
 /-- Prepare a document whose macro and input execution already ran. Scans
 see the fulfilled surface, and compatibility translation continues from
 that execution's state rather than replaying any effects. -/
-def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
+public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let picScan := Compat.boundaryScan executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
     (Compat.rewriteExecuted executed) executed.inputAttempts
 
-attribute [local irreducible] Compat.rewriteText in
 /-- Input receipts are independent of text rewriting. Exposing this
 projection keeps preparation proofs out of the compatibility state. -/
-theorem prepareRewritten_inputAttempts_exact (file : String)
+public theorem prepareRewritten_inputAttempts_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String)
@@ -17255,9 +17207,8 @@ theorem prepareRewritten_inputAttempts_exact (file : String)
   cases Compat.rewriteText file raws warned
   rfl
 
-attribute [local irreducible] prepareRewritten Compat.rewriteExecuted
-  Compat.boundaryScan macroScan in
-theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
+attribute [local irreducible] prepareRewritten macroScan in
+public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).inputAttempts = executed.inputAttempts := by
   unfold prepareExecuted
   exact prepareRewritten_inputAttempts_exact file _ _ _ _ _ _
@@ -17266,7 +17217,7 @@ theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.E
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
 option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
-def prepare (file : String) (raws : Array Raw) : Prepared :=
+public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
   let picScan := Compat.boundaryScan raws
   let picMacros := macroScan raws
@@ -17280,7 +17231,7 @@ def prepare (file : String) (raws : Array Raw) : Prepared :=
 environment the native subset draws stands anywhere in the rewritten tree;
 `math` is whether any of those bodies sets a formula, which decides whether
 a face resolved before elaboration needs a math slot. -/
-structure PicWants where
+public structure PicWants where
   draws : Bool := false
   math : Bool := false
 
@@ -17322,7 +17273,7 @@ to elaborate. A positive answer promises nothing — a picture may still
 refuse whole to the boundary, and a label may take its formula from a macro
 this walk cannot see — which is why it only buys a *provisional* face, and
 why the driver checks that face against the settled one. -/
-def picWants (raws : Array Raw) : PicWants :=
+public def picWants (raws : Array Raw) : PicWants :=
   picWantsLevel false {} raws.toList
 
 /-- **The preamble as its own document.** What the font environment is a
@@ -17334,7 +17285,7 @@ rewrites included — rather than a second reading of the same lines.
 
 Diagnostics are the full pass's; this one's are discarded, so nothing a
 reader sees is said twice. -/
-def preambleDoc (file : String) (p : Prepared) : Doc :=
+public def preambleDoc (file : String) (p : Prepared) : Doc :=
   let docIdx := p.raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -17349,17 +17300,17 @@ def preambleDoc (file : String) (p : Prepared) : Doc :=
 its supplied code and command without claiming a source, option shape, or
 advice that was never observed. Production recovery retains its real records
 in `SpanRecords.recoveryDiags` and completion replays those instead. -/
-def recoveryDiagnostic (item : Ir.Recovered) : Diag :=
+public def recoveryDiagnostic (item : Ir.Recovered) : Diag :=
   Diag.of item.code
     s!"{item.code.meaning}; content from '\\{item.command}' was kept"
     none (subject := some item.subject)
 
 /-- Accounting requires the code as well as the command identity: a
 configuration warning for a name cannot discharge that name's content loss. -/
-def recoveryMatches (item : Ir.Recovered) (d : Diag) : Bool :=
+public def recoveryMatches (item : Ir.Recovered) (d : Diag) : Bool :=
   decide (d.kind = item.code) && d.subject == some item.subject
 
-def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered)
+public def accountRecoveredItem (diags : Array Diag) (item : Ir.Recovered)
     (observed : Array Diag := #[]) : Array Diag :=
   if diags.any (recoveryMatches item) then diags
   else
@@ -17372,27 +17323,30 @@ IR, including resumed completions. A missing report replays every matching
 producer record verbatim, preserving all sites, source spans and wording.
 A synthetic recovery with no producer evidence gets an explicitly unlocated
 report that makes no claim about its argument shape. -/
-def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag)
+public def accountRecovered (items : Array Ir.Recovered) (diags : Array Diag)
     (observed : Array Diag := #[]) : Array Diag := Id.run do
   let mut diags := diags
   for item in items do
     diags := accountRecoveredItem diags item observed
   return diags
 
-theorem recoveryDiagnostic_subject_exact (item : Ir.Recovered) :
-    (recoveryDiagnostic item).subject = some item.subject := rfl
+public theorem recoveryDiagnostic_subject_exact (item : Ir.Recovered) :
+    (recoveryDiagnostic item).subject = some item.subject := by
+  simp only [recoveryDiagnostic, Diag.of_record_exact]
 
-theorem recoveryDiagnostic_code_exact (item : Ir.Recovered) :
-    (recoveryDiagnostic item).kind = item.code := rfl
+public theorem recoveryDiagnostic_code_exact (item : Ir.Recovered) :
+    (recoveryDiagnostic item).kind = item.code := by
+  simp only [recoveryDiagnostic, Diag.of_record_exact]
 
 /-- The fallback cannot pretend to carry source evidence. -/
-theorem recoveryDiagnostic_unlocated_exact (item : Ir.Recovered) :
+public theorem recoveryDiagnostic_unlocated_exact (item : Ir.Recovered) :
     (recoveryDiagnostic item).span = none ∧
-      (recoveryDiagnostic item).help = none := ⟨rfl, rfl⟩
+      (recoveryDiagnostic item).help = none := by
+  simp [recoveryDiagnostic, Diag.of_record_exact]
 
 /-- When the producer evidence exists, accounting is exact replay. Every
 field is retained, including any additional fields the diagnostic gains. -/
-theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
+public theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
     (item : Ir.Recovered)
     (hmissing : diags.any (recoveryMatches item) = false)
     (hevidence : (observed.filter (recoveryMatches item)).isEmpty = false) :
@@ -17403,7 +17357,7 @@ theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
 /-- The production command emitter always supplies the evidence needed
 for exact replay, for any source position, prior state and argument shape.
 This path cannot take the synthetic fallback. -/
-theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
+private theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
     (optionRun : Bool) (pos : Pos) (st : ESt) (diags : Array Diag)
     (hmissing : diags.any (recoveryMatches
       { code := (unknownCmdDiag name {}).1, command := name, text }) = false) :
@@ -17420,12 +17374,12 @@ theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
   have hc := hk.trans (unknownCmdDiag_shape_id name (RunShape.one optionRun))
   simp [recoveryMatches, hc, hs, Ir.Recovered.subject]
 
-theorem accountRecovered_run_exact (items : Array Ir.Recovered) (diags observed : Array Diag) :
+public theorem accountRecovered_run_exact (items : Array Ir.Recovered) (diags observed : Array Diag) :
     accountRecovered items diags observed =
       items.foldl (fun ds item => accountRecoveredItem ds item observed) diags := by
   simp [accountRecovered, Array.forIn_pure_yield_eq_foldl]
 
-theorem accountRecoveredItem_mem (diags : Array Diag) (item : Ir.Recovered)
+public theorem accountRecoveredItem_mem (diags : Array Diag) (item : Ir.Recovered)
     (observed : Array Diag) (d : Diag) (h : d ∈ diags) :
     d ∈ accountRecoveredItem diags item observed := by
   unfold accountRecoveredItem
@@ -17443,7 +17397,7 @@ private theorem accountRecoveredFold_mem (items : List Ir.Recovered)
   | nil => exact h
   | cons item rest ih => exact ih _ (accountRecoveredItem_mem diags item observed d h)
 
-theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed : Array Diag)
+public theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed : Array Diag)
     (d : Diag) (h : d ∈ diags) :
     d ∈ accountRecovered items diags observed := by
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
@@ -17451,7 +17405,7 @@ theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed : Arra
 
 /-- The actual prepared-frontend tail, factored so its contract can name
 the returned document and log without unfolding the body elaborator. -/
-def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
+public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
     (doc : Doc) (table : Ir.RefTable) (report : PictureReportContext) (st : ESt) :
     Doc × Array Diag × ReqSpans :=
   -- The realization pass rewrites the document where a (role, ground)
@@ -17481,15 +17435,15 @@ def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table })
 
-theorem completePrepared_inputAttempts_exact (file : String) (p : Prepared)
+public theorem completePrepared_inputAttempts_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) :
     (completePrepared file p earlier doc table report st).2.2.inputAttempts =
-      p.inputAttempts := rfl
+      p.inputAttempts := by rfl
 
 /-- Run the production declaration fold, retaining its continuation state.
 Boundary withdrawal reruns this fold with the new picture environment. -/
-def preparedPreamble (file : String) (p : Prepared)
+public def preparedPreamble (file : String) (p : Prepared)
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
   -- One warn-once key set for the document, not one per pass: the rewrite
@@ -17501,7 +17455,7 @@ def preparedPreamble (file : String) (p : Prepared)
 /-- The actual block-entry state, after execution, the declaration fold,
 refused declarative bodies and class defaults. Withdrawal prepares this
 same boundary again with its changed picture environment. -/
-def preparedBody (file : String) (p : Prepared)
+public def preparedBody (file : String) (p : Prepared)
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : DocBodyPlan × ESt :=
   let (preamble, initial) := preparedPreamble file p picMetric picWithdrawn
@@ -17510,14 +17464,14 @@ def preparedBody (file : String) (p : Prepared)
 /-- Finish a production preamble and run all prepared-document judges.
 This is the continuation used by `runPrepared`, including diagnostic
 attribution, picture accounting, contrast realization and request spans. -/
-def runPreamble (file : String) (p : Prepared) (earlier : Array Diag)
+public def runPreamble (file : String) (p : Prepared) (earlier : Array Diag)
     (preamble : DocPreamble) (initial : ESt) : Doc × Array Diag × ReqSpans :=
   let ((doc, table, report), st) := (finishPreamble file preamble).run initial
   completePrepared file p earlier doc table report st
 
 /-- Elaborate prepared input against a measurement, with the boundary
 requests fulfilment withdrew (`picWithdrawn`; empty on a first pass). -/
-def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
+public def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : Doc × Array Diag × ReqSpans :=
   let (preamble, st) := preparedPreamble file p picMetric picWithdrawn
@@ -17526,18 +17480,18 @@ def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
 attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared in
 /-- The prepared frontend executes its real block-entry plan and hands
 that run's document and state to the shared judges. -/
-theorem runPrepared_body_exact (file : String) (p : Prepared)
+public theorem runPrepared_body_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     runPrepared file p earlier metric withdrawn =
       let (plan, initial) := preparedBody file p metric withdrawn
       let ((doc, table, report), st) := (runDocBody plan).run initial
-      completePrepared file p earlier doc table report st := rfl
+      completePrepared file p earlier doc table report st := by rfl
 
 attribute [local irreducible] preparedPreamble finishPreamble completePrepared in
 /-- The private body interpreter reaches the public document completion
 boundary. Proofs about that boundary need no unfolding of its recursive
 state machine. -/
-theorem runPrepared_complete_exact (file : String) (p : Prepared)
+public theorem runPrepared_complete_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     ∃ doc table report st,
       runPrepared file p earlier metric withdrawn =
@@ -17552,7 +17506,7 @@ theorem runPrepared_complete_exact (file : String) (p : Prepared)
 
 /-- Input evidence is carried from the actual execution snapshot through
 every full elaboration and final diagnostic judge. -/
-theorem runPrepared_inputAttempts_exact (file : String) (p : Prepared)
+public theorem runPrepared_inputAttempts_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     (runPrepared file p earlier metric withdrawn).2.2.inputAttempts = p.inputAttempts := by
   obtain ⟨doc, table, report, st, h⟩ :=
@@ -17569,13 +17523,13 @@ the resolution gate (`pending_named`) is one statement over that tail;
 
 The prepare-and-run face, for every caller that reads a document once: the
 driver splits the two so a provisional face can be resolved between them. -/
-def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+public def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) :
     Doc × Array Diag × ReqSpans :=
   runPrepared file (prepare file raws) earlier picMetric
 
 /-- The span a reporting record holds for a key, for the judges. -/
-def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :=
+public def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :=
   (rs.find? (·.1 == key)).map (·.2)
 
 /-- The span-free face: what every caller that fulfils no file requests
@@ -17587,39 +17541,39 @@ again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
 ships, the subset's drawing with its refusals named. The first pass — the
 requests, stated from the document alone — is `runRawsSpanned`'s. -/
-def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
+public def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
     Doc × Array Diag :=
   let first := pass #[]
   let (doc, diags, rs) := if first.2.2.fallbacks.isEmpty then first
     else pass first.2.2.fallbacks
   (Ir.eraseLocations doc, Diag.tallySites (diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc))
 
-def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
+public def runPreparedFinal (file : String) (p : Prepared) (earlier : Array Diag)
     (picMetric : Ir.Pic.LabelMetric) : Doc × Array Diag :=
   finishPreparedRuns (fun withdrawn => runPrepared file p earlier picMetric withdrawn)
 
 /-- The actual frontend's declaration folds and complete continuation,
 once for each boundary-withdrawal environment. -/
-theorem runPreparedFinal_preamble_exact (file : String) (p : Prepared)
+public theorem runPreparedFinal_preamble_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runPreparedFinal file p earlier metric =
       finishPreparedRuns (fun withdrawn =>
         let phase := preparedPreamble file p metric withdrawn
-        runPreamble file p earlier phase.1 phase.2) := rfl
+        runPreamble file p earlier phase.1 phase.2) := by rfl
 
 /-- Elaborate parsed input on the span-free, file-free path. -/
-def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+public def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runPreparedFinal file (prepare file raws) earlier picMetric
 
 /-- The same finalization for a surface whose file requests were fulfilled
 during execution. Both paths share boundary withdrawal and reference
 diagnostics over the document they return. -/
-def runExecuted (file : String) (executed : Compat.Executed) (earlier : Array Diag := #[])
+public def runExecuted (file : String) (executed : Compat.Executed) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runPreparedFinal file (prepareExecuted file executed) earlier picMetric
 
-def run (file input : String) : Doc × Array Diag :=
+public def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input
   let (raws, parseDiags) := Parse.parse file toks
   runRaws file raws (lexDiags ++ parseDiags)

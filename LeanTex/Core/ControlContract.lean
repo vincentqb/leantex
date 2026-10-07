@@ -1,4 +1,11 @@
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.Elab
+
+import all LeanTex.Core.Elab
+import all LeanTex.Core.Compat
+import all LeanTex.Core.Ir
+import all LeanTex.Core.Contrast
 
 namespace LeanTex.Core.Elab
 
@@ -8,7 +15,7 @@ open Parse
 text rewrite, declaration/body interpreter, document judges, boundary
 withdrawal and reference diagnostics. The earlier picture/macro scans and
 source attribution are held at their actual preparation boundary. -/
-def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
+public def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor)
@@ -21,19 +28,19 @@ def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
 /-- The input-fulfilling frontend calls this exact completion with its real
 executed state and real scan metadata. No second interpreter is introduced
 for the contract. -/
-theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Executed)
+public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runExecuted file executed earlier metric =
       runRewriteFinal file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
         executed.sourceTriggers #[] earlier metric (Compat.beginRewrite executed)
-        executed.inputAttempts := rfl
+        executed.inputAttempts := by rfl
 
 /-- A consuming control's complete returned document and diagnostics are
 computed from the retained body and its registered report. Consumed groups
 never enter text rewriting, body elaboration, the withdrawal retry or any
 final judge. The syntax premises describe the actual unread document, not
 an assumed equality of outputs. -/
-theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
+public theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (body : Array Raw)
@@ -56,7 +63,7 @@ theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
   rw [Compat.finishRewrite_meaningFree_document_exact cursor body name arity note pos docPos
     pre taken post args hm hp hl hs hb hpre hpost hn hg]
 
-theorem configSkip_document_exact (file : String) (scan : Compat.BoundaryScan)
+public theorem configSkip_document_exact (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (body : Array Raw)
@@ -84,7 +91,7 @@ document and diagnostic array equal. Earlier execution and metadata are
 fixed; each side then runs the actual compatibility and Elab continuations.
 This is stronger than absence of one chosen keyword and does not depend on
 how either backend paints the common returned IR. -/
-theorem meaningFree_operands_agree (file : String) (scan : Compat.BoundaryScan)
+public theorem meaningFree_operands_agree (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (left right : Array Raw)
@@ -114,7 +121,7 @@ theorem meaningFree_operands_agree (file : String) (scan : Compat.BoundaryScan)
     Compat.finishMeaningFreeDocument_source_exact,
     Compat.finishMeaningFreeDocument_source_exact]
 
-theorem configSkip_operands_agree (file : String) (scan : Compat.BoundaryScan)
+public theorem configSkip_operands_agree (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (left right : Array Raw)
@@ -147,10 +154,10 @@ theorem configSkip_operands_agree (file : String) (scan : Compat.BoundaryScan)
 /-- A recovery is accounted by both its producer's diagnostic code and
 its structured command identity. A report about a different loss at the
 same command cannot discharge the kept content. -/
-def RecoveryNamed (ds : Array Diag) (item : Ir.Recovered) : Prop :=
+@[expose] public def RecoveryNamed (ds : Array Diag) (item : Ir.Recovered) : Prop :=
   ∃ d ∈ ds, d.kind = item.code ∧ d.subject = some item.subject
 
-theorem accountRecoveredItem_named (ds : Array Diag) (item : Ir.Recovered)
+public theorem accountRecoveredItem_named (ds : Array Diag) (item : Ir.Recovered)
     (observed : Array Diag) :
     RecoveryNamed (accountRecoveredItem ds item observed) item := by
   unfold accountRecoveredItem
@@ -161,7 +168,8 @@ theorem accountRecoveredItem_named (ds : Array Diag) (item : Ir.Recovered)
       simpa only [recoveryMatches, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] using hs⟩
   · dsimp only
     split
-    · exact ⟨_, Array.mem_push_self, rfl, rfl⟩
+    · exact ⟨_, Array.mem_push_self, recoveryDiagnostic_code_exact item,
+        recoveryDiagnostic_subject_exact item⟩
     · rename_i h
       have hnonempty : (observed.filter (recoveryMatches item)).isEmpty = false :=
         Bool.eq_false_iff.mpr h
@@ -194,7 +202,7 @@ private theorem recoveryFold_names (items : List Ir.Recovered)
 
 /-- Each recovery in the returned IR has its own code and command named,
 even when completion resumes without the earlier ordinary log. -/
-theorem accountRecovered_named (items : Array Ir.Recovered) (ds observed : Array Diag)
+public theorem accountRecovered_named (items : Array Ir.Recovered) (ds observed : Array Diag)
     (item : Ir.Recovered) (h : item ∈ items) :
     RecoveryNamed (accountRecovered items ds observed) item := by
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
@@ -211,7 +219,7 @@ private theorem recoveryFold_existing (items : List Ir.Recovered) (observed ds :
 
 /-- The final accounting leaves a fully reported run byte-for-byte equal
 before the shared tally. It cannot add a site or replace an existing span. -/
-theorem accountRecovered_fixed_point (items : Array Ir.Recovered) (ds observed : Array Diag)
+public theorem accountRecovered_fixed_point (items : Array Ir.Recovered) (ds observed : Array Diag)
     (h : ∀ item ∈ items, ds.any (recoveryMatches item) = true) :
     accountRecovered items ds observed = ds := by
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
@@ -228,7 +236,7 @@ private theorem recovery_tally (ds : Array Diag) (item : Ir.Recovered)
 
 /-- The actual document completion names the recovery census of the
 document it returns, after colour realization and all document judges. -/
-theorem completePrepared_recovery_named (file : String) (p : Prepared)
+public theorem completePrepared_recovery_named (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (item : Ir.Recovered)
     (h : item ∈ (completePrepared file p earlier doc table report st).1.salvage) :
@@ -240,7 +248,7 @@ theorem completePrepared_recovery_named (file : String) (p : Prepared)
 /-- Every production declaration/body run reaches the accounting boundary.
 No premise about the body's commands or its earlier diagnostic log is
 needed. -/
-theorem runPrepared_recovery_named (file : String) (p : Prepared)
+public theorem runPrepared_recovery_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (item : Ir.Recovered)
     (h : item ∈ (runPrepared file p earlier metric withdrawn).1.salvage) :
@@ -255,7 +263,7 @@ attribute [local irreducible] runPrepared prepare prepareExecuted
 /-- Withdrawal selects a complete run; source erasure and reference
 diagnostics preserve its recovery identities. This is the final public
 frontend result, not the local warning helper's log. -/
-theorem runPreparedFinal_recovery_named (file : String) (p : Prepared)
+public theorem runPreparedFinal_recovery_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
     (h : item ∈ (runPreparedFinal file p earlier metric).1.salvage) :
     RecoveryNamed (runPreparedFinal file p earlier metric).2 item := by
@@ -278,7 +286,7 @@ theorem runPreparedFinal_recovery_named (file : String) (p : Prepared)
 
 /-- Every recovery record in the file-free frontend's returned document is
 named in its final diagnostic array, for arbitrary parsed input. -/
-theorem runRaws_recovery_named (file : String) (raws : Array Raw)
+public theorem runRaws_recovery_named (file : String) (raws : Array Raw)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
     (h : item ∈ (runRaws file raws earlier metric).1.salvage) :
     (runRaws file raws earlier metric).2.any (·.subject == some item.subject) = true := by
@@ -287,7 +295,7 @@ theorem runRaws_recovery_named (file : String) (raws : Array Raw)
   exact Array.any_eq_true'.mpr ⟨d, hd, by simp only [hs, BEq.rfl]⟩
 
 /-- The fulfilled-input frontend returns the same recovery guarantee. -/
-theorem runExecuted_recovery_named (file : String) (executed : Compat.Executed)
+public theorem runExecuted_recovery_named (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (item : Ir.Recovered)
     (h : item ∈ (runExecuted file executed earlier metric).1.salvage) :
     RecoveryNamed (runExecuted file executed earlier metric).2 item :=
@@ -295,14 +303,14 @@ theorem runExecuted_recovery_named (file : String) (executed : Compat.Executed)
 
 /-- Lexing and parsing feed the same production frontend; its final
 recovery census is named for every source string, including malformed ones. -/
-theorem run_recovery_named (file input : String) (item : Ir.Recovered)
+public theorem run_recovery_named (file input : String) (item : Ir.Recovered)
     (h : item ∈ (run file input).1.salvage) :
     (run file input).2.any (·.subject == some item.subject) = true :=
   runRaws_recovery_named file _ _ _ item h
 
 /-- The final document judges can realize colours but conserve the body's
 text census. This is the document returned by the production completion. -/
-theorem completePrepared_body_text (file : String) (p : Prepared)
+public theorem completePrepared_body_text (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) :
     Ir.blocksText (completePrepared file p earlier doc table report st).1.body =
@@ -317,7 +325,7 @@ theorem completePrepared_body_text (file : String) (p : Prepared)
 /-- The input condition is checked on the context and body produced by
 the real declaration/class preparation, for each withdrawal environment.
 It assumes neither an elaborated paragraph nor a final text census. -/
-def PreparedRecoveryWord (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
+@[expose] public def PreparedRecoveryWord (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
     (word : String) : Prop :=
   ∀ withdrawn,
     let entry := preparedBody file p metric withdrawn
@@ -326,7 +334,7 @@ def PreparedRecoveryWord (file : String) (p : Prepared) (metric : Ir.Pic.LabelMe
 /-- Unknown-command content reaches the returned document through the
 actual prepared frontend: class preparation, the recursive body interpreter,
 numbering, reference resolution and every final document judge. -/
-theorem runPrepared_recovered_word_exact (file : String) (p : Prepared)
+public theorem runPrepared_recovered_word_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (word : String)
     (h : RecoveryWordInput (preparedBody file p metric withdrawn).1.ctx
@@ -346,7 +354,7 @@ theorem runPrepared_recovered_word_exact (file : String) (p : Prepared)
 
 /-- Withdrawal chooses one complete production run. Source erasure then
 preserves its census, so the final file-free document contains the word. -/
-theorem runPreparedFinal_recovered_word_exact (file : String) (p : Prepared)
+public theorem runPreparedFinal_recovered_word_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
     (h : PreparedRecoveryWord file p metric word) :
     Ir.blocksText (runPreparedFinal file p earlier metric).1.body = word := by
@@ -367,7 +375,7 @@ actual final document retains its literal argument, and every recovery in
 that document is named by its own code and subject in the final log.
 Together with the consuming-control continuation equations above,
 this distinguishes consumed controls from content recovery. -/
-theorem runExecuted_recovered_word_contract (file : String) (executed : Compat.Executed)
+public theorem runExecuted_recovered_word_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
     (h : PreparedRecoveryWord file (prepareExecuted file executed) metric word) :
     Ir.blocksText (runExecuted file executed earlier metric).1.body = word ∧
@@ -377,7 +385,7 @@ theorem runExecuted_recovered_word_contract (file : String) (executed : Compat.E
     fun item hi => runExecuted_recovery_named file executed earlier metric item hi⟩
 
 /-- The parsed, file-free entrypoint has the same complete contract. -/
-theorem runRaws_recovered_word_contract (file : String) (raws : Array Raw)
+public theorem runRaws_recovered_word_contract (file : String) (raws : Array Raw)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (word : String)
     (h : PreparedRecoveryWord file (prepare file raws) metric word) :
     Ir.blocksText (runRaws file raws earlier metric).1.body = word ∧
@@ -389,7 +397,7 @@ theorem runRaws_recovered_word_contract (file : String) (raws : Array Raw)
 /-- The group belongs to the inline recovery domain in the real body plan,
 including every withdrawal retry. Neither body output nor diagnostic
 membership is a premise. -/
-def PreparedRecoveryGroup (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
+@[expose] public def PreparedRecoveryGroup (file : String) (p : Prepared) (metric : Ir.Pic.LabelMetric)
     (group : RecoveryGroup) : Prop :=
   ∀ withdrawn,
     let entry := preparedBody file p metric withdrawn
@@ -398,7 +406,7 @@ def PreparedRecoveryGroup (file : String) (p : Prepared) (metric : Ir.Pic.LabelM
 /-- Complete the braced-content interpretation from the real prepared
 context and state. This shares production's document continuation and final
 judges; only the already-proved body equation changes its input. -/
-def completeBracedRecovery (file : String) (p : Prepared) (earlier : Array Diag)
+public def completeBracedRecovery (file : String) (p : Prepared) (earlier : Array Diag)
     (metric : Ir.Pic.LabelMetric) (withdrawn : Array String) (group : RecoveryGroup) :
     Ir.Doc × Array Diag × ReqSpans :=
   let (plan, initial) := preparedBody file p metric withdrawn
@@ -408,7 +416,7 @@ def completeBracedRecovery (file : String) (p : Prepared) (earlier : Array Diag)
 /-- The actual prepared frontend agrees with ordinary braced interpretation
 of arbitrary inline group content, with the original control's warning and
 recovery attribution. All final document judges see that same result. -/
-theorem runPrepared_recovery_group_exact (file : String) (p : Prepared)
+public theorem runPrepared_recovery_group_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (group : RecoveryGroup)
     (h : RecoveryGroupInput (preparedBody file p metric withdrawn).1.ctx
@@ -424,7 +432,7 @@ theorem runPrepared_recovery_group_exact (file : String) (p : Prepared)
 /-- Withdrawal and source erasure preserve the complete braced-content
 equation. In particular both the returned IR and final diagnostic sequence
 are fixed by that interpretation. -/
-theorem runPreparedFinal_recovery_group_exact (file : String) (p : Prepared)
+public theorem runPreparedFinal_recovery_group_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
     (h : PreparedRecoveryGroup file p metric group) :
     runPreparedFinal file p earlier metric =
@@ -440,7 +448,7 @@ control keeps the interpretation of its arbitrary inline group, and every
 recovered item in the final document is named by its producer's code and
 subject. The consuming-control equations earlier in this module give the
 other half: registered control operands never reach that interpreter. -/
-theorem runExecuted_recovery_group_contract (file : String) (executed : Compat.Executed)
+public theorem runExecuted_recovery_group_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
     (h : PreparedRecoveryGroup file (prepareExecuted file executed) metric group) :
     runExecuted file executed earlier metric =
@@ -453,7 +461,7 @@ theorem runExecuted_recovery_group_contract (file : String) (executed : Compat.E
 
 /-- The parsed file-free entrypoint carries the identical complete contract,
 after actual compatibility execution and declaration/class preparation. -/
-theorem runRaws_recovery_group_contract (file : String) (raws : Array Raw)
+public theorem runRaws_recovery_group_contract (file : String) (raws : Array Raw)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (group : RecoveryGroup)
     (h : PreparedRecoveryGroup file (prepare file raws) metric group) :
     runRaws file raws earlier metric =
@@ -472,7 +480,7 @@ the compatibility context, never on elaborated ink or diagnostics.
 The boundary must follow execution: a definition inside a group may
 already have affected later expansion. `frontendControlContractChecks`
 retains that source-level counterexample. -/
-structure ControlDocument (executed : Compat.Executed) (name : String)
+public structure ControlDocument (executed : Compat.Executed) (name : String)
     (arity : Nat) where
   body : Array Raw
   pos : Pos
@@ -497,7 +505,7 @@ operands before text rewriting or body interpretation. Its complete
 returned document and log equal the production continuation given only
 the retained neighbours and the row's registered report. The equation
 covers withdrawal, recovery accounting and the final diagnostic tally. -/
-theorem runExecuted_meaningFree_contract (file : String) (executed : Compat.Executed)
+public theorem runExecuted_meaningFree_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (name : String) (arity : Nat) (note : Option String)
     (hm : (name, arity, note) ∈ Compat.meaningFree)
@@ -518,7 +526,7 @@ theorem runExecuted_meaningFree_contract (file : String) (executed : Compat.Exec
 
 /-- Configuration-only controls have the same whole-entrypoint guarantee,
 quantified over the production registry and arbitrary owned operands. -/
-theorem runExecuted_configSkip_contract (file : String) (executed : Compat.Executed)
+public theorem runExecuted_configSkip_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (name : String) (arity : Nat) (msg : String) (help : Option String)
     (hm : (name, arity, msg, help) ∈ Compat.configSkip)
@@ -555,7 +563,7 @@ whose definition changes later expansion. The literal-neighbour and
 ordinary-inline-group domains are syntax/context conditions, not premises
 about the returned document. The final equations include preparation,
 body interpretation, withdrawal, source erasure and both diagnostic tallies. -/
-theorem control_completion_contract (file : String) (executed : Compat.Executed)
+public theorem control_completion_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     (∀ row ∈ Compat.meaningFree,
       ∀ input : ControlDocument executed row.1 row.2.1,

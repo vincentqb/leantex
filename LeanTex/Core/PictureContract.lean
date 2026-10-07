@@ -1,4 +1,10 @@
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.Elab
+public import LeanTex.Core.Picture
+public import LeanTex.Core.PictureCensus
+import all LeanTex.Core.Elab
+import all LeanTex.Core.Diag
 
 namespace LeanTex.Core.Elab
 
@@ -7,19 +13,19 @@ open LeanTex.Core Parse Ir
 /-- An unread setting from the actual prepared configuration, with all
 earlier definitions in force. The prefix is input provenance, not a list
 of reporting events. Empty, repeated and shadowed definitions are allowed. -/
-def UnreadPictureSetting (sets : Array (Pos × Array Raw)) (key : String) : Prop :=
+@[expose] public def UnreadPictureSetting (sets : Array (Pos × Array Raw)) (key : String) : Prop :=
   ∃ before setting after,
     sets.toList = before ++ setting :: after ∧
     key ∈ Picture.unreadKeys (before.foldl pictureSettingStyles [])
       (Picture.ofRaws setting.2)
 
 /-- The diagnostic identity the picture loss census reads. -/
-def PictureKeyNamed (ds : Array Diag) (key : String) : Prop :=
+@[expose] public def PictureKeyNamed (ds : Array Diag) (key : String) : Prop :=
   ∃ d ∈ ds, d.kind = .W0334 ∧ d.subject = some ("picture:set:" ++ key)
 
 /-- Reading the actual loop as a fold is a proof equation; the production
 operation remains the loop over the setting's unread keys. -/
-theorem pictureSettingState_run_exact (ctx : Ctx)
+private theorem pictureSettingState_run_exact (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt) (setting : Pos × Array Raw) :
     pictureSettingState ctx acc setting =
       (pictureSettingStyles acc.1 setting,
@@ -27,14 +33,14 @@ theorem pictureSettingState_run_exact (ctx : Ctx)
          (pictureKeyState ctx setting.1) acc.2) := by
   simp [pictureSettingState, Array.forIn_pure_yield_eq_foldl]
 
-theorem reportPictureKeys_run_exact (ctx : Ctx) (sets : Array (Pos × Array Raw))
+private theorem reportPictureKeys_run_exact (ctx : Ctx) (sets : Array (Pos × Array Raw))
     (st : ESt) :
     reportPictureKeys ctx sets st = (sets.foldl (pictureSettingState ctx) ([], st)).2 := by
   simp [reportPictureKeys, Array.forIn_pure_yield_eq_foldl]
 
 /-- The reporting prefix interprets exactly the style table the drawing
 starts from; it does not approximate or reset earlier definitions. -/
-theorem pictureSettingStyles_drawer_agree (before : List (Pos × Array Raw)) :
+private theorem pictureSettingStyles_drawer_agree (before : List (Pos × Array Raw)) :
     before.foldl pictureSettingStyles [] =
       Picture.documentStyles (before.toArray.map (fun setting => Picture.ofRaws setting.2)) := by
   simp [Picture.documentStyles, Array.forIn_pure_yield_eq_foldl, List.foldl_map]
@@ -109,7 +115,7 @@ private theorem settingFold_styles (ctx : Ctx) (sets : List (Pos × Array Raw))
 /-- Every unread key from every prepared setting is named, with the same
 earlier style environment the renderer uses. Repetition only demotes a
 site; it never removes the site's structured identity. -/
-theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Pos × Array Raw))
+public theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Pos × Array Raw))
     (st : ESt) (key : String) (h : UnreadPictureSetting sets key) :
     PictureKeyNamed (reportPictureKeys ctx sets st).diags key := by
   rcases h with ⟨before, setting, after, hsets, hkey⟩
@@ -119,7 +125,7 @@ theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Pos × Array Raw))
   apply settingState_names
   simpa only [settingFold_styles] using hkey
 
-theorem finishPictureKeys_named (report : PictureReportContext) (doc : Doc)
+public theorem finishPictureKeys_named (report : PictureReportContext) (doc : Doc)
     (sets : Array (Pos × Array Raw)) (st : ESt) (key : String)
     (hdrew : 0 < enginePictures doc.body) (h : UnreadPictureSetting sets key) :
     PictureKeyNamed (finishPictureKeys report doc sets st).diags key := by
@@ -140,7 +146,7 @@ private theorem named_tally (ds : Array Diag) (key : String)
 
 /-- The public prepared-frontend tail preserves the setting's code and
 subject through attribution, document judges and site tallying. -/
-theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
+public theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (key : String)
     (hdrew : 0 < enginePictures (completePrepared file p earlier doc table report st).1.body)
@@ -160,7 +166,7 @@ theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
 
 /-- The actual prepared run: an engine picture in the returned document
 forces accounting for every unread key of its prepared configuration. -/
-theorem runPrepared_pictureKeys_named (file : String) (p : Prepared)
+public theorem runPrepared_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String)
     (key : String)
     (hdrew : 0 < enginePictures (runPrepared file p earlier metric withdrawn).1.body)
@@ -178,7 +184,7 @@ attribute [local irreducible] runPrepared prepare prepareExecuted
 
 /-- Source erasure and the final reference judge preserve the diagnostic
 identity of the prepared run selected by boundary withdrawal. -/
-theorem runPreparedFinal_pictureKeys_named (file : String) (p : Prepared)
+public theorem runPreparedFinal_pictureKeys_named (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runPreparedFinal file p earlier metric).1.body)
     (h : UnreadPictureSetting p.picSets key) :
@@ -205,7 +211,7 @@ theorem runPreparedFinal_pictureKeys_named (file : String) (p : Prepared)
 over the configuration actually prepared for this run, including any
 number of earlier style definitions, rather than assuming the source
 census survives expansion unchanged. -/
-theorem pictureKeys_named (file : String) (raws : Array Raw)
+public theorem pictureKeys_named (file : String) (raws : Array Raw)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runRaws file raws earlier metric).1.body)
     (h : UnreadPictureSetting (prepare file raws).picSets key) :
@@ -217,7 +223,7 @@ theorem pictureKeys_named (file : String) (raws : Array Raw)
 
 /-- The same guarantee for the production path whose inputs were fulfilled
 through `executeInputs`. Both public paths use the same prepared runner. -/
-theorem runExecuted_pictureKeys_named (file : String) (executed : Compat.Executed)
+public theorem runExecuted_pictureKeys_named (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (key : String)
     (hdrew : 0 < enginePictures (runExecuted file executed earlier metric).1.body)
     (h : UnreadPictureSetting (prepareExecuted file executed).picSets key) :
