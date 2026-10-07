@@ -301,7 +301,15 @@ public theorem dependentBoundary : False := exportedBoundary
     ("macro-mutual", "macro \"mutual_proof\" : command => `(mutual\nexample : True := True.intro\nend)\nmutual_proof\n",
       false, "give it a theorem or definition name"),
     ("guarded", s!"set_option {warning} false\n#guard_msgs in\nexample : False := by admit\n",
-      false, "depends on [sorryAx]")]
+      false, "depends on [sorryAx]"),
+    ("guarded-drop", s!"set_option {warning} false\n#guard_msgs (drop all) in\nexample : False := by admit\n",
+      false, "anonymous proof audit failed"),
+    ("guarded-missing-snapshot", "#guard_msgs (drop all) in\nmutual\nexample : True := True.intro\nend\n",
+      false, "anonymous proof audit failed"),
+    ("guarded-nonproof-error", "#guard_msgs (drop all) in\n#check Missing\nexample : True := True.intro\n",
+      true, "1 anonymous examples checked before discard"),
+    ("early-exit", "example : True := True.intro\n#exit\nexample : False := by admit\n",
+      false, "compiler audit receipt is missing")]
   for modern in [false, true] do
     for (label, body, okay, diagnostic) in anonymousCases do
       let source := dir / "Anonymous.lean"

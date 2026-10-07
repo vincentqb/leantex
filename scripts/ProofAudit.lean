@@ -81,7 +81,7 @@ meta def auditExamples (command : Syntax) : CommandElabM Nat := do
           { fileName := path, fileMap } { env := snapshot }
         let unexpected := unexpectedAxioms axioms
         unless unexpected.isEmpty do
-          logError m!"proof audit: {path}:{pos.line}:{pos.column}: anonymous example {decl} depends on {unexpected}"
+          throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example {decl} depends on {unexpected}"
       count := count + 1
   for stx in expected do
     unless observed.any (·.eqWithInfo stx) do
@@ -90,15 +90,25 @@ meta def auditExamples (command : Syntax) : CommandElabM Nat := do
   return count
 
 /-- Loading this module as a native compiler plugin registers the audit without
-adding its imports to the source's environment. Lean sequences the count across
-asynchronous commands; the terminal receipt also witnesses that the plugin ran. -/
+adding its imports to the source's environment. Lean sequences the state across
+asynchronous commands. A failed audit stays failed even when a diagnostic guard
+drops its messages; only real end-of-file can issue a success receipt. -/
 meta initialize
-  discard <| registerStatefulLinter (τ := Unit) (0 : Nat)
-    (post := fun stx count _ _ _ => do
-      let count := count + (← auditExamples stx)
-      if Parser.isTerminalCommand stx then
-        logInfo m!"proof audit: {← getFileName}: {count} anonymous examples checked before discard"
-      return count)
+  discard <| registerStatefulLinter (τ := Unit) (some 0 : Option Nat)
+    (post := fun stx previous _ _ _ => do
+      let current ← try
+          pure (some (← auditExamples stx))
+        catch ex =>
+          logException ex
+          pure none
+      let checked := previous.bind fun count => current.map (count + ·)
+      if stx.isOfKind ``Parser.Command.eoi then
+        match checked with
+        | some count =>
+          logInfo m!"proof audit: {← getFileName}: {count} anonymous examples checked before discard"
+        | none =>
+          logError m!"proof audit: {← getFileName}: anonymous proof audit failed"
+      return checked)
 
 /-- Audit the compiled declarations of an explicit source manifest, including
 private and unused declarations. The compiler loads the complete environment;
