@@ -80,7 +80,7 @@ same way. A `.title` is the title of a region, PDF 2.0's block-level
 `NonStruct`, a grouping of no structural significance whose leaves the
 page never attributes. A `.nav` ships no ink on the page (its links are
 the outline) and stands as a `Sect` so the census sees through it. -/
-def structTypeOf : Struct.Kind → String
+private def structTypeOf : Struct.Kind → String
   | .document => "Document"
   | .section => "Sect"
   | .title => "Title"
@@ -110,7 +110,7 @@ def structTypeOf : Struct.Kind → String
 /-- Is the kind's type in the PDF 2.0 namespace? PDF 2.0 dropped `Code`,
 `BlockQuote` and `Reference` from its standard set (ISO 32000-2 §14.8.4,
 Table 366 note on deprecated 1.7 types); those stand in the 1.7 namespace. -/
-def inPdf2Namespace : Struct.Kind → Bool
+private def inPdf2Namespace : Struct.Kind → Bool
   | .code => false
   | .quote => false
   | .reference _ => false
@@ -119,7 +119,7 @@ def inPdf2Namespace : Struct.Kind → Bool
   | .link _ | .span _ | .artifact => true
 
 /-- The heading level a kind carries, for the census. -/
-def headingLevelOf : Struct.Kind → Option Nat
+private def headingLevelOf : Struct.Kind → Option Nat
   | .heading level => some level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body | .table
   | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .aside | .nav
@@ -130,7 +130,7 @@ leaves under it? Block-level kinds do; inline kinds (link, span,
 reference) pass their leaves to the enclosing holder; a formula holds only
 when it stands as a block (`inline = false`), an inline formula is part of
 its paragraph. -/
-def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
+private def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   match kind with
   | .paragraph | .title | .heading _ | .caption | .cell | .code | .label | .body | .note
   | .bibEntry | .figure | .artifact => true
@@ -139,22 +139,22 @@ def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   | .link _ | .span _ | .reference _ => false
 
 /-- The element a node kind projects to, before its kids. -/
-def elemOf (kind : Struct.Kind) : StructElem :=
+private def elemOf (kind : Struct.Kind) : StructElem :=
   { s := structTypeOf kind, ns20 := inPdf2Namespace kind, heading := headingLevelOf kind }
 
 /-- Append `e` as the last child of `parent`: its index is the next slot. -/
-def pushElem (es : Array StructElem) (parent : Nat) (e : StructElem) : Array StructElem × Nat :=
+private def pushElem (es : Array StructElem) (parent : Nat) (e : StructElem) : Array StructElem × Nat :=
   let idx := es.size
   let es := es.modify parent fun p => { p with kids := p.kids.push (.elem idx) }
   (es.push { e with parent := some parent }, idx)
 
 /-- Append a marked-content placeholder to the element holding it. -/
-def addKid (es : Array StructElem) (holder : Nat) (k : StructKid) : Array StructElem :=
+private def addKid (es : Array StructElem) (holder : Nat) (k : StructKid) : Array StructElem :=
   es.modify holder fun p => { p with kids := p.kids.push k }
 
 /-- A reference-list entry as `LI`/`LBody` under the open `L`, opening one
 under `parent` when none is: consecutive entries share a list. -/
-def bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
+private def bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
     Array StructElem × Nat × Nat :=
   let (es, l) := match openList with
     | some l => (es, l)
@@ -178,12 +178,20 @@ def altElem (es : Array StructElem) (parent k : Nat) : Ir.Alt → Array StructEl
   | .undeclared => (pushElem es parent (figureElem k none)).1
   | .decorative => es
 
+/-- Only decorative alternatives omit a structure element. -/
+theorem altElem_size_exact (es : Array StructElem) (parent k : Nat) (a : Ir.Alt) :
+    (altElem es parent k a).size =
+      es.size + match a with
+        | .decorative => 0
+        | .undeclared | .described _ => 1 := by
+  cases a <;> simp [altElem, pushElem]
+
 mutual
 
 /-- The elements of a node list under `parent`, text leaves landing in
 `holder`; `inline` says the walk is inside a holder (so a formula is
 inline); `openList` is the `L` consecutive reference entries share. -/
-def skelList (es : Array StructElem) (parent holder : Nat) (inline : Bool)
+private def skelList (es : Array StructElem) (parent holder : Nat) (inline : Bool)
     (openList : Option Nat) : List Struct.Node → Array StructElem
   | [] => es
   | n :: rest =>
@@ -201,7 +209,7 @@ layout has not said (the list slice adds both together); a reference entry
 joins the open `L` (or opens one) as `LI`/`LBody`; every other node is one
 element over its kids, holding their leaves when its kind holds, and closes
 any open list. -/
-def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Bool)
+private def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Bool)
     (openList : Option Nat) : Struct.Node → Array StructElem × Option Nat
   | .leaf k l =>
     match l with
@@ -227,6 +235,15 @@ end
 
 /-- The `Document` root, its parent the structure tree root. -/
 def rootElem : StructElem := { s := structTypeOf .document }
+
+/-- The rooted figure emission carries the IR alternative, including the
+absence of a decorative element. -/
+theorem altElem_root_alt_exact (a : Ir.Alt) :
+    (altElem #[rootElem] 0 0 a).back?.bind (·.alt) =
+      match a with
+      | .described text => some text
+      | .undeclared | .decorative => none := by
+  cases a <;> simp [altElem, pushElem, figureElem, rootElem]
 
 /-- The structure elements of a tree, in preorder, the root at index 0,
 leaf placeholders in place of marked content. -/

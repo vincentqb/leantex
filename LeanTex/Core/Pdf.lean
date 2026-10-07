@@ -292,13 +292,14 @@ theorem alt_text_agree (floor : String) (a : Ir.Alt) (t : String)
     (h : (altElem #[rootElem] 0 0 a).back?.bind (·.alt) = some t) :
     HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-label" = some t ∧
       HtmlDoc.attrOf? (HtmlDoc.imgAltAttrs a) "alt" = some t := by
+  rw [altElem_root_alt_exact] at h
   cases a with
   | described s =>
-    simp [altElem, pushElem, figureElem] at h
+    simp only [Option.some.injEq] at h
     subst h
     simp [HtmlDoc.pictureAltAttrs, HtmlDoc.imgAltAttrs, HtmlDoc.attrOf?, HtmlDoc.firstNonBlank, ht]
-  | undeclared => simp [altElem, pushElem, figureElem] at h
-  | decorative => simp [altElem, rootElem] at h
+  | undeclared => contradiction
+  | decorative => contradiction
 
 /-- **The two artifacts hide the same objects** (`_agree`): the PDF adds no
 element for a non-text object — its ink an artifact — exactly when the HTML
@@ -306,7 +307,8 @@ takes its svg out of the accessibility tree. -/
 theorem alt_hidden_agree (floor : String) (a : Ir.Alt) :
     (altElem #[rootElem] 0 0 a).size = 1 ↔
       HtmlDoc.attrOf? (HtmlDoc.pictureAltAttrs floor a) "aria-hidden" = some "true" := by
-  cases a <;> simp [altElem, pushElem, HtmlDoc.pictureAltAttrs, HtmlDoc.attrOf?]
+  rw [altElem_size_exact]
+  cases a <;> simp [HtmlDoc.pictureAltAttrs, HtmlDoc.attrOf?]
 
 /-- **Both artifacts' font decisions are projections of one policy value**
 (`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
