@@ -28,14 +28,15 @@ document settles — and `Font.parse` of a face is the cost the second
 assembly would otherwise repeat. It caches the *parse* and never the set,
 because the order faces enter a set is what its index means. -/
 structure Cache where
-  ref : IO.Ref (Array (String × Font.Font))
+  private mk ::
+  private ref : IO.Ref (Array (String × Font.Font))
   /-- Face *resolution* answers, keyed by the question. `FontDb.resolveWeight`
   is a linear search of the scan — a thousand families on a host with TeX
   Live — and one assembly asks it once per slot per corner for families that
   are usually the same family: a document with no separate sans or mono asks
   four distinct questions twelve times. Deterministic in the scan, which is
   fixed for a run, so the answer may be remembered. -/
-  weights : IO.Ref (Array ((String × Option String × Nat × Bool) ×
+  private weights : IO.Ref (Array ((String × Option String × Nat × Bool) ×
     Option (FontDb.Face × Option FontDb.Substituted)))
 
 def Cache.mk' : IO Cache := do
@@ -66,7 +67,7 @@ def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
 /-- Parse through a cache where the caller holds one. The cache is an
 optimisation and never an input: a caller with none gets the same answer
 from the same bytes, which is the property that lets it be optional. -/
-def parseFace (cache : Option Cache) (path : String) :
+private def parseFace (cache : Option Cache) (path : String) :
     IO (Except String Font.Font) := do
   match cache with
   | some c => c.parse path

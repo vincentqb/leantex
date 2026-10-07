@@ -10,13 +10,13 @@ namespace LeanTex.Cli.FontAssembly
 open LeanTex.Core
 
 /-- Every slot and variant mapped to one face: the shape of a single-font set. -/
-def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
+private def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
   ((List.range 3).flatMap fun slot =>
     [((slot, 400, false), 0), ((slot, 700, false), 0),
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 
 /-- The scan produced nothing usable at all. -/
-def noFontDiag : Diag := DriverDiag.noFont
+private def noFontDiag : Diag := DriverDiag.noFont
 
 /-- The scan is the host's answer and the parses are the filesystem's, so
 both are taken once and handed to every assembly that needs them. Two
