@@ -17967,6 +17967,314 @@ private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc) (cover : I
     exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
+/- Paragraph text through the actual collector. The invariant tracks the
+source prefix and its structural leaf counter; only actual paragraph
+diagnostics can discharge the glyph-census premise. Gap ops add no ink. -/
+private def GlyphClean (ds : Array Diag) : Prop :=
+  ∀ d ∈ ds, d.code ≠ "E0405" ∧ d.code ≠ "W0009"
+
+private def ParaJob.Prose (j : ParaJob) : Prop :=
+  (ParaJob.hangIndent j) = 0 ∧ ∃ items, ItemsProse items ∧ (ParaJob.items j) = paraItems items
+
+private def Op.Prose : Op → Prop
+  | Op.para j => j.Prose
+  | Op.skip _ | Op.skipAlt .. | Op.anchorRule _ | Op.anchor _ => True
+  | _ => False
+
+private def Op.census (pick : Option Nat → Bool → Bool) : Op → List Char
+  | Op.para j =>
+    if pick (ParaJob.leaf j) (!(ParaJob.inFloat j)) then (ParaJob.items j).toList.flatMap Item.boxChars else []
+  | _ => []
+
+private def Op.Clean : Op → Prop
+  | Op.para j => GlyphClean (ParaJob.diags j)
+  | _ => True
+
+private theorem raggedItems_chars (items : Array Item) :
+    (raggedItems items).toList.flatMap Item.boxChars = items.toList.flatMap Item.boxChars := by
+  simp only [raggedItems, Array.toList_map, List.flatMap_map]
+  congr 1
+  funext it
+  cases it <;> dsimp only [Function.comp_def]
+  all_goals first | rfl | (split <;> rfl)
+
+private theorem collectPara_prose (r : Rd) (a : Acc)
+    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (hp : PlainInlines xs) (hr : (Rd.pats r) = none) :
+    ∃ j : ParaJob, Acc.ops (collectPara r a xs indent false (Rd.geom r).fontSize
+        (leaf := leaf) (span := span)) = (Acc.ops (a.flushGap r)).push (Op.para j) ∧
+      j.Prose ∧ (ParaJob.leaf j) = leaf ∧ (ParaJob.inFloat j) = (Rd.inFloat r) ∧
+      (GlyphClean (ParaJob.diags j) →
+        inkCensus ((ParaJob.items j).toList.flatMap Item.boxChars) =
+          inkCensus (Ir.plainText xs).toList) := by
+  let style : TextStyle := { color := (Acc.fg (a.flushGap r)), ground := (Acc.ground (a.flushGap r)) }
+  have hn := itemsOfInlines_plainNotes (Rd.pats r) (Rd.geom r).fontSize (Rd.xHeight r) (Rd.fs r)
+    style xs (Acc.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Rd.imgs r)
+    ((Acc.measure (a.flushGap r)).getD (Rd.geom r).textWidth - (indent + 0))
+    (Rd.geom r).textHeight true (Rd.geom r).scale (Rd.step r) (Rd.roleMetrics r) hp
+  have hi := itemsOfInlines_none_prose (Rd.geom r).fontSize (Rd.xHeight r) (Rd.fs r)
+    style xs (Acc.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Rd.imgs r)
+    ((Acc.measure (a.flushGap r)).getD (Rd.geom r).textWidth - (indent + 0))
+    (Rd.geom r).textHeight true (Rd.geom r).scale (Rd.step r) (Rd.roleMetrics r) hp rfl
+  have hc := itemsOfInlines_none_chars (Rd.geom r).fontSize (Rd.xHeight r) (Rd.fs r) (Rd.imgs r)
+    ((Acc.measure (a.flushGap r)).getD (Rd.geom r).textWidth - (indent + 0))
+    (Rd.geom r).textHeight (Acc.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs)
+    style xs true (Rd.geom r).scale (Rd.step r) (Rd.roleMetrics r) hp rfl
+  simp only [collectPara, show (Color.black == Color.black) = true from rfl,
+    BEq.rfl, Bool.false_eq_true, ↓reduceIte]
+  rw [hn]
+  simp only [Array.isEmpty_empty, ↓reduceIte]
+  refine ⟨_, rfl, ?_, rfl, rfl, ?_⟩
+  · refine ⟨rfl, ?_⟩
+    rcases hi with ⟨items, hi, he⟩
+    split
+    · exact ⟨items, hi, by simpa only [hr] using he⟩
+    · exact ⟨raggedItems items, raggedItems_prose items hi, by
+        simpa only [hr] using
+          (congrArg raggedItems he).trans (raggedItems_paraItems items)⟩
+  · intro hd
+    change inkCensus ((if (Rd.geom r).justify then _ else raggedItems _).toList.flatMap _) = _
+    split
+    · simpa only [hr] using hc (by simpa only [hr, GlyphClean, Id.run, pure, Id] using hd)
+    · rw [raggedItems_chars]
+      simpa only [hr] using hc (by simpa only [hr, GlyphClean, Id.run, pure, Id] using hd)
+
+private def Op.Gap : Op → Prop
+  | Op.skip _ | Op.skipAlt .. | Op.anchorRule _ | Op.anchor _ => True
+  | _ => False
+
+private def Acc.GapAppend (a b : Acc) : Prop :=
+  ∃ tail : Array Op, Acc.ops b = Acc.ops a ++ tail ∧ ∀ op ∈ tail, op.Gap
+
+private theorem gap_owedOp (a : Acc) (g : Glue) : (a.owedOp g).Gap := by
+  cases h : Acc.dispAlt a <;> simp [Acc.owedOp, h, Op.Gap]
+
+private theorem flushAnchored_gapAppend (a : Acc) (r : Rd) (k : Nat) :
+    a.GapAppend (a.flushAnchored r k) := by
+  let par := if Acc.trivOwed a then r.resolve (Rd.geom r).texParskip else r.parskip
+  let lead := if Acc.wantDefault a && Acc.declaredSkip a then #[Op.skip par] else #[]
+  refine ⟨lead ++ #[Op.skip ((Acc.owed a).extract 0 k |>.foldl Glue.add {}),
+    Op.anchorRule (r.resolve (Rd.geom r).texParskip),
+    Op.skip ((Acc.owed a).extract k (Acc.owed a).size |>.foldl Glue.add {})], ?_, ?_⟩
+  · simp only [Acc.flushAnchored, par, lead, Array.append_assoc]
+  · intro op ho
+    simp only [Array.mem_append] at ho
+    rcases ho with ho | ho
+    · dsimp only [lead] at ho
+      split at ho <;> simp_all [Op.Gap]
+    · simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at ho
+      rcases ho with rfl | rfl | rfl <;> trivial
+
+private theorem flushGap_gapAppend (a : Acc) (r : Rd) :
+    a.GapAppend (a.flushGap r) := by
+  cases hk : Acc.anchorAt a with
+  | some k =>
+    simpa only [Acc.GapAppend, Acc.flushGap, hk] using flushAnchored_gapAppend a r k
+  | none =>
+    simp only [Acc.GapAppend, Acc.flushGap, hk]
+    split
+    · split
+      · exact ⟨#[Op.skip (r.parskip)], by simp, by simp [Op.Gap]⟩
+      · exact ⟨#[], by simp, by simp⟩
+    · split
+      · refine ⟨#[Op.skip (if Acc.trivOwed a then r.resolve (Rd.geom r).texParskip
+          else r.parskip), a.owedOp ((Acc.owed a).foldl Glue.add {})],
+          by apply Array.toList_inj.mp; simp [List.append_assoc], ?_⟩
+        intro op ho
+        simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at ho
+        rcases ho with rfl | rfl
+        · trivial
+        · exact gap_owedOp a _
+      · refine ⟨#[a.owedOp (a.gapGlue r)], by apply Array.toList_inj.mp; simp, ?_⟩
+        intro op ho
+        simp only [Array.mem_singleton] at ho
+        subst op
+        exact gap_owedOp a _
+
+private def Acc.Prose (a : Acc) : Prop := ∀ op ∈ Acc.ops a, op.Prose
+private def Acc.Clean (a : Acc) : Prop := ∀ op ∈ Acc.ops a, op.Clean
+private def Acc.census (pick : Option Nat → Bool → Bool) (a : Acc) : List Char :=
+  (Acc.ops a).toList.flatMap (Op.census pick)
+
+private theorem Op.Gap.prose {op : Op} (h : op.Gap) : op.Prose := by
+  cases op <;> simp only [Op.Gap, Op.Prose] at h ⊢ <;> trivial
+
+private theorem Op.Gap.clean {op : Op} (h : op.Gap) : op.Clean := by
+  cases op <;> simp only [Op.Gap, Op.Clean] at h ⊢ <;> trivial
+
+private theorem Op.Gap.census {op : Op} (h : op.Gap) (pick : Option Nat → Bool → Bool) :
+    op.census pick = [] := by
+  cases op <;> simp only [Op.Gap, Op.census] at h ⊢ <;> trivial
+
+private theorem Acc.GapAppend.prose {a b : Acc} (h : a.GapAppend b)
+    (ha : a.Prose) : b.Prose := by
+  obtain ⟨tail, he, ht⟩ := h
+  intro op ho
+  rw [he] at ho
+  rcases Array.mem_append.mp ho with ho | ho
+  · exact ha op ho
+  · exact (ht op ho).prose
+
+private theorem Acc.GapAppend.clean {a b : Acc} (h : a.GapAppend b)
+    (hb : b.Clean) : a.Clean := by
+  obtain ⟨tail, he, _⟩ := h
+  exact fun op ho => hb op (he ▸ Array.mem_append_left tail ho)
+
+private theorem Acc.GapAppend.census {a b : Acc} (h : a.GapAppend b)
+    (pick : Option Nat → Bool → Bool) : b.census pick = a.census pick := by
+  obtain ⟨tail, he, ht⟩ := h
+  simp only [Acc.census, he, Array.toList_append, List.flatMap_append]
+  have hn : tail.toList.flatMap (Op.census pick) = [] := by
+    apply List.flatMap_eq_nil_iff.mpr
+    intro op ho
+    exact (ht op (by simpa using ho)).census pick
+  rw [hn, List.append_nil]
+
+
+private theorem collectPara_census (r : Rd) (a : Acc)
+    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (hp : PlainInlines xs) (hr : (Rd.pats r) = none) (ha : a.Prose)
+    (pick : Option Nat → Bool → Bool) :
+    let out := collectPara r a xs indent false (Rd.geom r).fontSize
+      (leaf := leaf) (span := span)
+    out.Prose ∧ (out.Clean → a.Clean ∧
+      inkCensus (out.census pick) = inkCensus (a.census pick) ++
+        if pick leaf (!(Rd.inFloat r)) then inkCensus (Ir.plainText xs).toList else []) := by
+  dsimp only
+  obtain ⟨j, he, hj, hl, hf, hc⟩ := collectPara_prose r a xs indent leaf span hp hr
+  have hg := flushGap_gapAppend a r
+  constructor
+  · intro op ho
+    rw [he] at ho
+    rcases Array.mem_push.mp ho with ho | rfl
+    · exact hg.prose ha op ho
+    · exact hj
+  · intro hd
+    have hbefore : (a.flushGap r).Clean := fun op ho => hd op (he ▸ Array.mem_push.mpr (Or.inl ho))
+    have hjob : GlyphClean (ParaJob.diags j) := hd (Op.para j) (he ▸ Array.mem_push_self)
+    refine ⟨hg.clean hbefore, ?_⟩
+    change inkCensus ((Acc.ops _).toList.flatMap (Op.census pick)) = _
+    rw [he]
+    simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
+      List.flatMap_nil, List.append_nil]
+    change inkCensus ((a.flushGap r).census pick ++ (Op.para j).census pick) = _
+    rw [hg.census pick]
+    simp only [inkCensus, List.filter_append, Op.census, hl, hf]
+    split
+    · exact congrArg (inkCensus (a.census pick) ++ ·) (hc hjob)
+    · rfl
+
+private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
+    (indent : Sp) (hp : PlainInlines xs) (hr : (Rd.pats r) = none) (ha : a.Prose)
+    (pick : Option Nat → Bool → Bool) :
+    let out := collectParaBlock r a xs indent
+    out.Prose ∧ (out.Clean → a.Clean ∧
+      inkCensus (out.census pick) = inkCensus (a.census pick) ++
+        if pick (if xs.size == 0 then none else some (Acc.leafNext a)) (!(Rd.inFloat r))
+        then inkCensus (Ir.plainText xs).toList else []) := by
+  dsimp only
+  rw [collectParaBlock_plain r a xs indent hp]
+  simpa only [Acc.leafRange, leafCount, plainInlines_leafCount xs hp,
+    Acc.Prose, Acc.Clean, Acc.census] using
+    collectPara_census r (a.leafRange (leafCount xs)).1 xs indent
+      (a.leafRange (leafCount xs)).2 (leafCount xs) hp hr ha pick
+
+private theorem collectDocBlock_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
+    (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
+    (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
+    (hr : (Rd.pats rd) = none) (ha : st.1.Prose) (pick : Option Nat → Bool → Bool) :
+    let out := (collectDocBlock rd doc cover frameSpans nums i hi st).1
+    out.Prose ∧ (out.Clean → st.1.Clean ∧
+      inkCensus (out.census pick) = inkCensus (st.1.census pick) ++
+        if pick (if xs.size == 0 then none else some (Acc.leafNext st.1)) (!(Rd.inFloat rd))
+        then inkCensus (Ir.plainText xs).toList else []) := by
+  simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+  dsimp only [pure, Id]
+  rw [collectBlock]
+  split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick <;> exact ha
+
+private def sourceInkAt (pick : Option Nat → Bool → Bool) (body : Array Block)
+    (start : Nat) (counted : Bool) (i : Nat) : List Char :=
+  match body[i]? with
+  | none => []
+  | some b =>
+    if pick (if Struct.leafCountBlocks #[b] == 0 then none
+        else some (start + sourceLeafSum (body.toList.take i))) counted
+    then inkCensus (Ir.blocksText #[b]).toList else []
+
+private def sourceInkPrefix (pick : Option Nat → Bool → Bool) (body : Array Block)
+    (start : Nat) (counted : Bool) (n : Nat) : List Char :=
+  (List.range n).flatMap (sourceInkAt pick body start counted)
+
+private theorem sourceInkPrefix_succ (pick : Option Nat → Bool → Bool)
+    (body : Array Block) (start : Nat) (counted : Bool) (n : Nat) :
+    sourceInkPrefix pick body start counted (n + 1) =
+      sourceInkPrefix pick body start counted n ++ sourceInkAt pick body start counted n := by
+  simp [sourceInkPrefix, List.range_succ]
+
+private theorem sourceInkAt_para (pick : Option Nat → Bool → Bool)
+    (body : Array Block) (start : Nat) (counted : Bool)
+    (i : Nat) (hi : i < body.size) (xs : Array Inline)
+    (hb : body[i] = .para xs) (hp : PlainInlines xs) :
+    sourceInkAt pick body start counted i =
+      if pick (if xs.size == 0 then none
+        else some (start + sourceLeafSum (body.toList.take i))) counted
+      then inkCensus (Ir.plainText xs).toList else [] := by
+  simp only [sourceInkAt, Array.getElem?_eq_getElem hi, hb,
+    sourceLeafSum_para, plainInlines_leafCount xs hp]
+  simp only [Ir.blocksText, Ir.blockTextList,
+    Ir.blockTextOne, String.empty_append]
+
+private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+    (frameSpans : Array (Nat × Span)) (acc0 : Acc)
+    (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
+    (hr : (Rd.pats rd) = none) (ha : acc0.Prose)
+    (pick : Option Nat → Bool → Bool) :
+    let out := collectDocBody rd doc cover frameSpans acc0
+    out.Prose ∧ (out.Clean → acc0.Clean ∧
+      inkCensus (out.census pick) = inkCensus (acc0.census pick) ++
+        sourceInkPrefix pick doc.body (Acc.leafNext acc0) (!(Rd.inFloat rd)) doc.body.size) := by
+  let P := fun i (st : Acc × Bool) => st.1.Prose ∧
+    Acc.leafNext st.1 = Acc.leafNext acc0 + sourceLeafSum (doc.body.toList.take i) ∧
+    (st.1.Clean → acc0.Clean ∧
+      inkCensus (st.1.census pick) = inkCensus (acc0.census pick) ++
+        sourceInkPrefix pick doc.body (Acc.leafNext acc0) (!(Rd.inFloat rd)) i)
+  have h0 : P 0 (acc0, true) := by
+    simp [P, sourceLeafSum, sourceInkPrefix, ha]
+  have step (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (hs : P i st) :
+      P (i + 1) (collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st) := by
+    obtain ⟨xs, hb, hx⟩ := hp doc.body[i] (Array.getElem_mem hi)
+    have hprefix : sourceLeafSum (doc.body.toList.take (i + 1)) =
+        sourceLeafSum (doc.body.toList.take i) + Struct.leafCountBlocks #[doc.body[i]] := by
+      rw [List.take_succ_eq_append_getElem (by simpa using hi), sourceLeafSum_append]
+      simp only [sourceLeafSum, List.map_singleton, List.sum_cons, List.sum_nil, Nat.add_zero,
+        Array.getElem_toList]
+    have hc := collectDocBlock_census rd doc cover frameSpans doc.frameNumbers i hi st
+      xs hb hx hr hs.1 pick
+    refine ⟨hc.1, ?_, ?_⟩
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ _ hb hx, hs.2.1, hprefix]
+      omega
+    · intro hd
+      obtain ⟨hprev, hstep⟩ := hc.2 hd
+      obtain ⟨hinit, he⟩ := hs.2.2 hprev
+      refine ⟨hinit, ?_⟩
+      rw [hstep, he, sourceInkPrefix_succ, sourceInkAt_para _ _ _ _ _ hi xs hb hx,
+        hs.2.1, List.append_assoc]
+  unfold collectDocBody
+  simp only [Std.Legacy.Range.forIn'_eq_forIn'_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+  dsimp only [Id.run, bind, pure, Id]
+  have hresult := sourceRange_progress P 0 doc.body.size
+    (fun i hi st => .yield (collectDocBlock rd doc cover frameSpans doc.frameNumbers
+      i (by simpa using (List.mem_range'_1.mp hi).2) st)) (acc0, true) h0 ?_
+  · simpa only [Nat.zero_add, Id.run] using And.intro hresult.1 hresult.2.2
+  · intro i hi st hs
+    have hib : i < doc.body.size := (by simpa using (List.mem_range'_1.mp hi).2)
+    exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
+      step i hib st hs⟩
+
 /-- The existing collection/staging seam, with its postlude. The continuation
 lets the background contract inspect the exact ops placement consumes, without
 re-running another IR walk or adding background state to the runtime builder. -/
