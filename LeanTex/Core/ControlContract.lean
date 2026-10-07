@@ -537,4 +537,62 @@ theorem runExecuted_configSkip_contract (file : String) (executed : Compat.Execu
     input.document input.source input.before input.after input.arity_exact input.operands
     executed.inputAttempts
 
+/-- The complete consuming-control contract at the executed frontend.
+
+Every row of both production registries consumes its arbitrary owned
+groups in an ordinary document between literal neighbours. The returned
+document **and** final log are those of the retained neighbours and the
+row's reporting effect; neither continuation receives the operand syntax.
+For an unhandled control in the independently specified inline-group
+domain, the same entrypoint instead interprets its braced content. Every
+recovery in the final document is accounted by its own code and subject,
+without a restriction on the document or its earlier log.
+
+The consumption boundary follows macro and input execution, with their
+actual state and scan metadata retained. It is not an erasure law for
+unexecuted source: `frontendControlContractChecks` retains a consumed group
+whose definition changes later expansion. The literal-neighbour and
+ordinary-inline-group domains are syntax/context conditions, not premises
+about the returned document. The final equations include preparation,
+body interpretation, withdrawal, source erasure and both diagnostic tallies. -/
+theorem control_completion_contract (file : String) (executed : Compat.Executed)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
+    (∀ row ∈ Compat.meaningFree,
+      ∀ input : ControlDocument executed row.1 row.2.1,
+        runExecuted file executed earlier metric =
+          runPreparedFinal file
+            (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+              executed.sourceTriggers #[]
+              (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
+                row.1 row.2.2 input.pos input.docPos
+                (input.pre.toArray ++ input.post.toArray))
+              executed.inputAttempts) earlier metric) ∧
+    (∀ row ∈ Compat.configSkip,
+      ∀ input : ControlDocument executed row.1 row.2.1,
+        runExecuted file executed earlier metric =
+          runPreparedFinal file
+            (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+              executed.sourceTriggers #[]
+              (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
+                row.1 row.2.2.1 row.2.2.2 input.pos input.docPos
+                (input.pre.toArray ++ input.post.toArray))
+              executed.inputAttempts) earlier metric) ∧
+    (∀ group : RecoveryGroup,
+      PreparedRecoveryGroup file (prepareExecuted file executed) metric group →
+        runExecuted file executed earlier metric =
+          finishPreparedRuns (fun withdrawn => completeBracedRecovery file
+            (prepareExecuted file executed) earlier metric withdrawn group)) ∧
+    (∀ item ∈ (runExecuted file executed earlier metric).1.salvage,
+      RecoveryNamed (runExecuted file executed earlier metric).2 item) := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro row hrow input
+    exact runExecuted_meaningFree_contract file executed earlier metric
+      row.1 row.2.1 row.2.2 hrow input
+  · intro row hrow input
+    exact runExecuted_configSkip_contract file executed earlier metric
+      row.1 row.2.1 row.2.2.1 row.2.2.2 hrow input
+  · intro group hgroup
+    exact (runExecuted_recovery_group_contract file executed earlier metric group hgroup).1
+  · exact runExecuted_recovery_named file executed earlier metric
+
 end LeanTex.Core.Elab
