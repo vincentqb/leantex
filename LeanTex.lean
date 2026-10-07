@@ -1,88 +1,91 @@
-import LeanTex.Version
-import LeanTex.Core.Loop
-import LeanTex.Core.Diag
-import LeanTex.Core.Utf8
-import LeanTex.Core.Flate
-import LeanTex.Core.Flate.BitWriterProof
-import LeanTex.Core.Flate.CodeLengthsCodecProof
-import LeanTex.Core.Flate.TokenCodecProof
-import LeanTex.Core.Flate.DynamicHeaderProof
-import LeanTex.Core.Flate.RoundtripProof
-import LeanTex.Core.PdfRead
-import LeanTex.Core.PdfReadProof
-import LeanTex.Core.PdfCensus
-import LeanTex.Core.PdfContract
-import LeanTex.Core.Image
-import LeanTex.Core.NfcData
-import LeanTex.Core.Nfc
-import LeanTex.Core.Lex
-import LeanTex.Core.Parse
-import LeanTex.Core.MdParse
-import LeanTex.Core.MdDesugar
-import LeanTex.Core.Color
-import LeanTex.Core.Math
-import LeanTex.Core.MathSymData
-import LeanTex.Core.MathParse
-import LeanTex.Core.Ir
-import LeanTex.Core.ColorContract
-import LeanTex.Core.TextSymData
-import LeanTex.Core.Bib
-import LeanTex.Core.BibStyle
-import LeanTex.Core.BibContract
-import LeanTex.Core.Pending
-import LeanTex.Core.Struct
-import LeanTex.Core.Data
-import LeanTex.Core.ListMark
-import LeanTex.Core.Theme
-import LeanTex.Core.Oklab
-import LeanTex.Core.Contrast
-import LeanTex.Core.ContrastContract
-import LeanTex.Core.SeedPalette
-import LeanTex.Core.Locale
-import LeanTex.Core.LocaleData
-import LeanTex.Core.LocaleContract
-import LeanTex.Core.Compat
-import LeanTex.Core.CompatContract
-import LeanTex.Core.InputContract
-import LeanTex.Core.Elab
-import LeanTex.Core.TitleContract
-import LeanTex.Core.ControlContract
-import LeanTex.Core.PictureContract
-import LeanTex.Core.Dim
-import LeanTex.Core.Font
-import LeanTex.Core.FontDb
-import LeanTex.Core.HyphenData
-import LeanTex.Core.Hyphen
-import LeanTex.Core.Decl
-import LeanTex.Core.Html
-import LeanTex.Core.MathMl
-import LeanTex.Core.HtmlDoc
-import LeanTex.Core.MarkdownDoc
-import LeanTex.Core.Layout
-import LeanTex.Core.LayoutCensus
-import LeanTex.Core.Layout.TextConservation
-import LeanTex.Core.Layout.FramePartition
-import LeanTex.Core.Layout.SpacingContract
-import LeanTex.Core.Layout.InkContract
-import LeanTex.Core.Layout.InkOutput
-import LeanTex.Core.Check
-import LeanTex.Core.PdfContent
-import LeanTex.Core.PdfStruct
-import LeanTex.Core.Pdf
-import LeanTex.Core.PdfWriteContract
-import LeanTex.Core.PdfObjectStreamProof
-import LeanTex.Core.PdfObjectHeaderProof
-import LeanTex.Core.PdfFontContract
-import LeanTex.Core.PdfProducerProof
-import LeanTex.Core.PdfFontsProof
-import LeanTex.Cli.Args
-import LeanTex.Cli.Render
-import LeanTex.Cli.DriverDiag
-import LeanTex.Cli.Input
-import LeanTex.Cli.FontEnv
-import LeanTex.Cli.FontFix
-import LeanTex.Cli.SlotLoss
-import LeanTex.Cli.Boundary
-import LeanTex.Cli.PicCache
-import LeanTex.Cli.ToolProbe
-import LeanTex.Cli.ConvCache
+module
+
+public import LeanTex.Version
+public import LeanTex.Core.Loop
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Utf8
+public import LeanTex.Core.Flate
+public import LeanTex.Core.Flate.BitWriterProof
+public import LeanTex.Core.Flate.CodeLengthsCodecProof
+public import LeanTex.Core.Flate.TokenCodecProof
+public import LeanTex.Core.Flate.DynamicHeaderProof
+public import LeanTex.Core.Flate.RoundtripProof
+public import LeanTex.Core.PdfRead
+public import LeanTex.Core.PdfReadProof
+public import LeanTex.Core.PdfCensus
+public import LeanTex.Core.PdfContract
+public import LeanTex.Core.Image
+public import LeanTex.Core.NfcData
+public import LeanTex.Core.Nfc
+public import LeanTex.Core.Lex
+public import LeanTex.Core.Parse
+public import LeanTex.Core.MdParse
+public import LeanTex.Core.MdDesugar
+public import LeanTex.Core.Color
+public import LeanTex.Core.Math
+public import LeanTex.Core.MathSymData
+public import LeanTex.Core.MathParse
+public import LeanTex.Core.Ir
+public import LeanTex.Core.ColorContract
+public import LeanTex.Core.TextSymData
+public import LeanTex.Core.Bib
+public import LeanTex.Core.BibStyle
+public import LeanTex.Core.BibContract
+public import LeanTex.Core.Pending
+public import LeanTex.Core.Struct
+public import LeanTex.Core.Data
+public import LeanTex.Core.ListMark
+public import LeanTex.Core.Theme
+public import LeanTex.Core.Oklab
+public import LeanTex.Core.Contrast
+public import LeanTex.Core.ContrastContract
+public import LeanTex.Core.SeedPalette
+public import LeanTex.Core.Locale
+public import LeanTex.Core.LocaleData
+public import LeanTex.Core.LocaleContract
+public import LeanTex.Core.Compat
+public import LeanTex.Core.CompatContract
+public import LeanTex.Core.InputContract
+public import LeanTex.Core.Elab
+public import LeanTex.Core.ElabRegistryContract
+public import LeanTex.Core.TitleContract
+public import LeanTex.Core.ControlContract
+public import LeanTex.Core.PictureContract
+public import LeanTex.Core.Dim
+public import LeanTex.Core.Font
+public import LeanTex.Core.FontDb
+public import LeanTex.Core.HyphenData
+public import LeanTex.Core.Hyphen
+public import LeanTex.Core.Decl
+public import LeanTex.Core.Html
+public import LeanTex.Core.MathMl
+public import LeanTex.Core.HtmlDoc
+public import LeanTex.Core.MarkdownDoc
+public import LeanTex.Core.Layout
+public import LeanTex.Core.LayoutCensus
+public import LeanTex.Core.Layout.TextConservation
+public import LeanTex.Core.Layout.FramePartition
+public import LeanTex.Core.Layout.SpacingContract
+public import LeanTex.Core.Layout.InkContract
+public import LeanTex.Core.Layout.InkOutput
+public import LeanTex.Core.Check
+public import LeanTex.Core.PdfContent
+public import LeanTex.Core.PdfStruct
+public import LeanTex.Core.Pdf
+public import LeanTex.Core.PdfWriteContract
+public import LeanTex.Core.PdfObjectStreamProof
+public import LeanTex.Core.PdfObjectHeaderProof
+public import LeanTex.Core.PdfFontContract
+public import LeanTex.Core.PdfProducerProof
+public import LeanTex.Core.PdfFontsProof
+public import LeanTex.Cli.Args
+public import LeanTex.Cli.Render
+public import LeanTex.Cli.DriverDiag
+public import LeanTex.Cli.Input
+public import LeanTex.Cli.FontEnv
+public import LeanTex.Cli.FontFix
+public import LeanTex.Cli.SlotLoss
+public import LeanTex.Cli.Boundary
+public import LeanTex.Cli.PicCache
+public import LeanTex.Cli.ToolProbe
+public import LeanTex.Cli.ConvCache
