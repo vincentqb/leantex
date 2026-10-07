@@ -20,6 +20,8 @@ import Tests.IrInterface
 import Tests.MathParseInterface
 import Tests.MdParseInterface
 import Tests.PictureInterface
+import Tests.TitleTemplateInterface
+import Tests.TitleTemplateScan
 import Tests.ParseInterface
 import Tests.DataInterface
 import Tests.TcolorboxInterface

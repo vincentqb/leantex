@@ -1,5 +1,6 @@
 import Tests.Support
 import scripts.Rung
+import Tests.TitleTemplateScan
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -5551,6 +5552,7 @@ and the title slide off the typed HTML tree, never the IR dump. -/
 def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
+  Tests.TitleTemplateScan.checks t
   let overlay (titleNode authorNode : String) : String :=
     "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeLeaf}{HTML}{9AD1A0}" ++
     "\\definecolor{probeGold}{HTML}{F2CC60}\\definecolor{probeSnow}{HTML}{F4F4F0}" ++
@@ -5588,20 +5590,6 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let key (x : String) : Option String := some ("beamer:setbeamertemplate:title page:" ++ x)
   let shows (c : Array CensusPage) (html needle : String) : Bool :=
     pageHas c 0 needle && hasStr html needle
-  let micro (src : String) : List Picture.Tok :=
-    let (raws, _) := Parse.parse "title-part-unit" (Lex.lex "title-part-unit" src).1
-    (Picture.ofRaws raws).toList
-  let scanOptional := TitleTemplate.scanList [] {} {}
-    (micro ("{\\bfseries\\inserttitle\\par}" ++
-      "\\ifx\\insertsubtitle\\@empty\\else\\vskip0.5cm" ++
-      "{\\large\\insertsubtitle\\par}\\fi"))
-  t "unit: an empty-check conditional scans each datum once and no literal ink"
-    (scanOptional.data.map (·.datum) == #["title", "subtitle"] && !scanOptional.words)
-  let readCompound := TitleTemplate.nodeStmt [] {}
-    (micro "[anchor=west] at (current page.west) {\\insertauthor\\\\\\small\\insertinstitute}")
-  t "unit: one source node stays one pinned reader node across style changes"
-    (readCompound.nodes.size == 1 &&
-      readCompound.nodes[0]?.any fun node => node.pinned && node.parts.size == 2)
   -- The control: the reader's own shape, read whole.
   let (docK, dsK, cK, hK) := ship (overlay (pinnedTitle "\\inserttitle")
     (pinnedAuthor "\\insertauthor"))
