@@ -1,4 +1,5 @@
 import LeanTex.Cli.Compression
+import LeanTex.Cli.ConvCache
 import Tests.Support
 
 open LeanTex.Core LeanTex.Cli

@@ -19,6 +19,7 @@ import Tests.TcolorboxInterface
 import Tests.PdfReaderInterface
 import Tests.PdfBoundaryInterface
 import Tests.Batch
+import Tests.CacheInterface
 import Tests.Compression
 import Tests.BrowserFaceBatch
 import Tests.CacheIO

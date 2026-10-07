@@ -1,4 +1,6 @@
 import LeanTex.Cli.ConvCache
+import LeanTex.Cli.ToolProbe
+import LeanTex.Cli.AtomicFile
 import Tests.Support
 
 open LeanTex.Cli

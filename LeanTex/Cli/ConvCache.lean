@@ -1,8 +1,10 @@
+module
+
+public import LeanTex.Cli.PicCache
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
-import LeanTex.Core.FontDb
 import LeanTex.Core.Flate
 import LeanTex.Version
 
@@ -10,40 +12,40 @@ namespace LeanTex.Cli.ConvCache
 
 open LeanTex.Core
 
-structure Result where
+public structure Result where
   outcome : PicCache.Outcome
   bytes : ByteArray := ByteArray.empty
 
-def Result.answer (r : Result) : Except String ByteArray :=
+public def Result.answer (r : Result) : Except String ByteArray :=
   match r.outcome with
   | .drawn => if r.bytes.isEmpty then .error "no usable output was produced" else .ok r.bytes
   | .refused why | .inconclusive why => .error why
 
-def Result.record? (r : Result) : Option (Except String ByteArray) :=
+public def Result.record? (r : Result) : Option (Except String ByteArray) :=
   match r.outcome with
   | .drawn => if r.bytes.isEmpty then none else some (.ok r.bytes)
   | .refused why => if why.isEmpty then none else some (.error why)
   | .inconclusive _ => none
 
-theorem inconclusive_retried_exact (why : String) (bytes : ByteArray) :
-    Result.record? ⟨.inconclusive why, bytes⟩ = none := rfl
+public theorem inconclusive_retried_exact (why : String) (bytes : ByteArray) :
+    Result.record? ⟨.inconclusive why, bytes⟩ = none := by rfl
 
-theorem empty_retried_exact :
-    Result.record? ⟨.drawn, ByteArray.empty⟩ = none := rfl
+public theorem empty_retried_exact :
+    Result.record? ⟨.drawn, ByteArray.empty⟩ = none := by rfl
 
-theorem refusal_replays_exact (why : String) (h : why.isEmpty = false) (bytes : ByteArray) :
+public theorem refusal_replays_exact (why : String) (h : why.isEmpty = false) (bytes : ByteArray) :
     Result.record? ⟨.refused why, bytes⟩ = some (.error why) := by
   simp [Result.record?, h]
 
 -- One checked envelope holds either answer. Separate success/refusal files
 -- allow racing writers to leave two contradictory verdicts for one slot.
-def encode (answer : Except String ByteArray) : ByteArray :=
+public def encode (answer : Except String ByteArray) : ByteArray :=
   let (tag, payload) := match answer with
     | .ok bytes => ("O", bytes)
     | .error why => ("E", why.toUTF8)
   (tag ++ Flate.contentKey payload ++ "\n").toUTF8 ++ payload
 
-def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
+public def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
   if bytes.size ≤ 34 then none else do
     let header ← String.fromUTF8? (bytes.extract 0 34)
     let payload := bytes.extract 34 bytes.size
@@ -52,19 +54,19 @@ def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
     else if header == "E" ++ key then some (.error (← String.fromUTF8? payload))
     else none
 
-def slotName (source : ByteArray) (recipe identity : String) : String :=
+public def slotName (source : ByteArray) (recipe identity : String) : String :=
   -- v1 could remember an interrupted process as a refusal.
   let variant := Flate.contentKey (String.intercalate "\u0000"
     ["vector-cache-v2", LeanTex.version, recipe, identity]).toUTF8
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
 
-def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=
+public def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=
   AtomicFile.write target bytes
 
 -- Version queries get a smaller operational budget than conversions.
-def versionBudgetMs : Nat := 2000
+private def versionBudgetMs : Nat := 2000
 
-def probeVersion (tool : String) : IO PicCache.Tool := do
+private def probeVersion (tool : String) : IO PicCache.Tool := do
   let args := if tool == "pdftocairo" then #["-v"] else #["--version"]
   let got ← RunBounded.runBounded tool args (← IO.currentDir) versionBudgetMs 100
   let line := ((got.out ++ "\n" ++ got.err).splitOn "\n").find?
@@ -105,7 +107,7 @@ private def cacheDir : IO (Option System.FilePath) := do
     return some dir
   catch _ => return none
 
-def cached (source : ByteArray) (recipe : String) (tools : Array String)
+public def cached (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO (Except String ByteArray) := do
   let slot ← if eligible then do
       let some dir ← cacheDir | pure none
