@@ -1502,10 +1502,10 @@ private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) 
   | some c => return .ok c
   | none => return .error s!"colour '{s}' does not resolve against the palette"
 
-/-- Read `(x, y)` at index `i`: the two expression slices and the index
-past the closing paren. Parens nest (`max(...)` inside a coordinate). -/
-private def readCoord (toks : Array Tok) (i : Nat) :
-    Except String ((Array Tok × Array Tok) × Nat) := Id.run do
+/-- The balanced contents of one coordinate, shared by numeric, named and
+calc endpoints. Arithmetic function calls may nest inside it. -/
+private def readCoordBody (toks : Array Tok) (i : Nat) :
+    Except String (Array Tok × Nat) := Id.run do
   unless toks[i]? == some (.sym '(') do
     return .error s!"expected a '(x, y)' coordinate, found \
 {((toks[i]?).map tokText).getD "the end"}"
@@ -1525,9 +1525,14 @@ private def readCoord (toks : Array Tok) (i : Nat) :
     else break
   unless depth == 0 do
     return .error "a coordinate misses its ')'"
+  return .ok (inner, j + 1)
+
+private def readCoord (toks : Array Tok) (i : Nat) :
+    Except String ((Array Tok × Array Tok) × Nat) := do
+  let (inner, next) ← readCoordBody toks i
   match (splitTop inner ',').toList with
-  | [xs, ys] => return .ok ((xs, ys), j + 1)
-  | _ => return .error "a coordinate needs exactly 'x, y'"
+  | [xs, ys] => return ((xs, ys), next)
+  | _ => throw "a coordinate needs exactly 'x, y'"
 
 -- Border anchoring: where an edge meets a node's outline — pgf's
 -- `\pgfpointshapeborder`, in closed form per shape.
@@ -4277,6 +4282,134 @@ private def Anchor.center : Anchor → Sp × Sp
   | .node g => (g.x, g.y)
   | .point x y => (x, y)
 
+public inductive CoordMode where
+  | absolute
+  | offset
+  | advance
+  deriving BEq
+
+/-- TikZ §13.4.3: `+` leaves the relative reference unchanged; `++`
+updates it. Inputs already have the picture's scale, so addition does not
+scale a named anchor a second time. The result is endpoint, then reference. -/
+public def coordStep (mode : CoordMode) (base p : Int × Int) :
+    (Int × Int) × (Int × Int) :=
+  match mode with
+  | .absolute => (p, p)
+  | .offset => ((base.1 + p.1, base.2 + p.2), base)
+  | .advance =>
+    let q := (base.1 + p.1, base.2 + p.2)
+    (q, q)
+
+public theorem coordStep_offset_exact (base p : Int × Int) :
+    (coordStep .offset base p).1 = (base.1 + p.1, base.2 + p.2) ∧
+    (coordStep .offset base p).2 = base := by
+  simp [coordStep]
+
+/-- Chained advances consume each displacement exactly once, independently
+of how the parser grouped the chain. -/
+public theorem coordStep_advance_exact (base p q : Int × Int) :
+    coordStep .advance (coordStep .advance base p).2 q =
+      coordStep .advance base (p.1 + q.1, p.2 + q.2) := by
+  simp [coordStep, Int.add_assoc]
+
+/-- TikZ §14.2: `|-` takes x from its start and y from its end;
+`-|` takes the other pair. This is the corner the segment writer reads. -/
+public def orthogonalCorner (verticalFirst : Bool) (p q : Int × Int) : Int × Int :=
+  if verticalFirst then (p.1, q.2) else (q.1, p.2)
+
+public theorem orthogonalCorner_exact (verticalFirst : Bool) (p q : Int × Int) :
+    let c := orthogonalCorner verticalFirst p q
+    if verticalFirst then c.1 = p.1 ∧ c.2 = q.2
+    else c.1 = q.1 ∧ c.2 = p.2 := by
+  cases verticalFirst <;> simp [orthogonalCorner]
+
+private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (inner : Array Tok) : Except PDiag Anchor := do
+  match (splitTop inner ',').toList with
+  | [xs, ys] =>
+    let x ← (evalNum env xs).mapError fun e =>
+      (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+    let y ← (evalNum env ys).mapError fun e =>
+      (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+    return .point (cx.toSp x) (cx.toSp y)
+  | _ =>
+    let mut expanded : Array Tok := #[]
+    for t in inner do
+      match t with
+      | .ctrl n =>
+        match env.lookup n with
+        | some v => expanded := expanded.push (.ident v.text)
+        | none =>
+          throw (.E0333, s!"in '\\draw', unknown macro '\\{n}' in a node name; \
+the edge is not drawn")
+      | .ident _ | .num _ | .sym _ | .space => expanded := expanded.push t
+      | .math _ _ | .group _ | .other _ =>
+        throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
+picture subset; the edge is not drawn")
+    let nm := (nameOfToks expanded.toList).getD ""
+    match ev.nodes.lookup nm with
+    | some g => return .node g
+    | none =>
+      match splitAnchor nm with
+      | some (base, an) =>
+        match ev.nodes.lookup base with
+        | none => throw (unreachedName (ev.gapped || cx.parseGap) base)
+        | some g =>
+          match nodeAnchorOf an with
+          | some a =>
+            let (x, y) := g.anchorPoint a
+            return .point x y
+          | none =>
+            throw (.W0334, s!"node anchor '{an}' is outside the rendered \
+picture subset; the edge is not drawn")
+      | none => throw (unreachedName (ev.gapped || cx.parseGap) nm)
+
+/-- Additive calc (§13.5): each term uses the same coordinate and anchor
+reader. The token count bounds the walk; no general pgfmath parser or
+interpolation is implied by accepting this subset. -/
+private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (raw : List Parse.Raw) : Except PDiag Anchor := do
+  let ts := (ofRaws raw.toArray).filter (· != .space)
+  let mut i := 0
+  let mut point : Int × Int := (0, 0)
+  let mut subtract := false
+  let unsupported : PDiag := (.W0334, "this calc coordinate is outside the \
+rendered picture subset; use sums or differences of '(...)' coordinates")
+  for _ in [0:ts.size + 1] do
+    unless ts[i]? == some (.sym '(') do throw unsupported
+    let (inner, next) ← (readCoordBody ts i).mapError fun e =>
+      (.E0333, s!"in a calc coordinate, {e}; the edge is not drawn")
+    let a ← anchorBody cx env ev inner
+    let p := a.center
+    point := (coordStep .advance point (if subtract then (-p.1, -p.2) else p)).1
+    i := next
+    if i == ts.size then return .point point.1 point.2
+    match ts[i]? with
+    | some (.sym '+') => subtract := false
+    | some (.sym '-') => subtract := true
+    | _ => throw unsupported
+    i := i + 1
+  throw unsupported
+
+private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (ts : Array Tok) (start : Nat) (base : Int × Int) :
+    Except PDiag (Anchor × Nat × (Int × Int)) := do
+  let mut i := start
+  let mut mode := CoordMode.absolute
+  if ts[i]? == some (.sym '+') then
+    i := i + 1
+    mode := .offset
+    if ts[i]? == some (.sym '+') then
+      i := i + 1
+      mode := .advance
+  let (inner, next) ← (readCoordBody ts i).mapError fun e =>
+    (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+  let a ← match inner.toList with
+    | [.math false raw] => calcAnchor cx env ev raw
+    | _ => anchorBody cx env ev inner
+  let (point, reference) := coordStep mode base a.center
+  return (if mode == .absolute then a else .point point.1 point.2, next, reference)
+
 /-- Where a segment toward `q` leaves this anchor: the border for a node
 with extents (`circleBorder`/`rectBorder`), the point itself otherwise. -/
 private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
@@ -4441,6 +4574,7 @@ points 0.3915·‖d‖·looseness along the departure and arrival tangents (the
 To-Path library's own factor), absolute or against the chord. -/
 private inductive DrawOp where
   | straight
+  | orthogonal (verticalFirst : Bool)
   | curve (spec : ToSpec)
   /-- `rectangle`: the box the current point and the next corner span, a
   closed subpath of its own (pgf manual §14.4). -/
@@ -4461,6 +4595,9 @@ private structure EdgeLabel where
   align : Ir.Pic.LabelAlign
   inner : Sp × Sp
   outer : Option Sp × Option Sp
+  /-- A node written after its endpoint stands there unless `midway`
+  declares a position on the preceding segment (pgf manual §17.8). -/
+  atEnd : Bool
 
 /-- Move an already measured label without changing its text or baseline
 rule. Other shapes are unchanged: this is the final step of path-label
@@ -4509,6 +4646,133 @@ private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
                   label.inner.2 + label.outer.2.getD (width / 2))
       box.attachOffset anchor (dir.offset (1, 1)) gap
   lines.map (translateLabel offset)
+
+private def readEdgeLabel (cx : Cx) (env : List (String × Val))
+    (ts : Array Tok) (start : Nat) (before : Ev) (autoOn autoLeft : Bool)
+    (trailing : Bool := false) :
+    Except Ev (Option EdgeLabel × Nat × Ev) := Id.run do
+  let mut i := start
+  let mut ev := before
+  let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
+  -- an in-path `node[...] {...}`: an edge label at the segment's
+  -- midpoint; placement attaches the whole text box there
+  let mut mid : Option EdgeLabel := none
+  if ts[i]? == some (.ident "node") then
+    i := i + 1
+    -- An edge label reads its own bracket alone: neither the picture's
+    -- entries nor an `every node` style reaches it, so a declared one
+    -- is named here rather than dropped in silence.
+    unless cx.everyNode.isEmpty do
+      ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
+the rendered picture subset; the keys are dropped")
+    let mut mcolor := Ir.Color.black
+    let mut mscale : Nat := factor
+    let mut mstyles : Array Ir.Style := #[]
+    -- `none` is "this label declared no placement": it then takes the
+    -- side `auto` computes from the path's direction, or the path's
+    -- midpoint where no `auto` is in force.
+    let mut malign : Option Dir := none
+    let mut mAuto := autoOn
+    let mut mLeft := autoLeft
+    let mut atEnd := trailing
+    -- Keep dimension keys separate from text-font keys. PGF's `font=`
+    -- and body switches change the text box, not its dimension font.
+    let mut mseps : Array (String × List Tok) := #[]
+    -- `align=`: the side the label's lines stand flush to.
+    let mut mtext : Ir.Pic.LabelAlign := .center
+    -- An edge label is a node: what `every text node part` declared
+    -- reaches its text, and its own bracket follows.
+    let mut mopts : Array (Array Tok) := cx.everyText
+    if ts[i]? == some (.sym '[') then
+      let mut j := i + 1
+      let mut inner : Array Tok := #[]
+      for _ in [i+1:ts.size + 1] do
+        if h2 : j < ts.size then
+          if ts[j] == .sym ']' then break
+          inner := inner.push ts[j]
+          j := j + 1
+        else break
+      unless ts[j]? == some (.sym ']') do
+        return .error (ev.diag (.E0333, "an edge node's options miss their ']'; the \
+edge is not drawn"))
+      i := j + 1
+      mopts := mopts ++ expandOpts cx.styles inner
+    for opt in mopts do
+      match opt.toList with
+      | .ident "font" :: .sym '=' :: rest =>
+        let (sz, sts, unread) := readFont cx rest
+        mscale := (sz.map fun k => k * factor / 1000).getD factor
+        mstyles := sts
+        for w in unread do
+          ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
+the rendered picture subset; the switch is dropped")
+      | .ident "text" :: .sym '=' :: rest =>
+        match evalColor cx env rest.toArray with
+        | .ok c => mcolor := c
+        | .error e =>
+          ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
+dropped")
+      | .ident "align" :: .sym '=' :: rest =>
+        match textAlignOf rest with
+        | some a => mtext := a
+        | none =>
+          ev := ev.diag (.W0334, s!"edge node option 'align={String.join (rest.map tokText)}' \
+is outside the rendered picture subset; the lines stay centred")
+      | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("inner sep", rest)
+      | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("inner xsep", rest)
+      | .ident "inner" :: .ident "ysep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("inner ysep", rest)
+      | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("outer sep", rest)
+      | .ident "outer" :: .ident "xsep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("outer xsep", rest)
+      | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
+        mseps := mseps.push ("outer ysep", rest)
+      -- The label's own side, on top of whatever the path set.
+      | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
+      | [.ident "auto"] => mAuto := true
+      | [.ident "auto", .sym '=', .ident "left"] => mAuto := true; mLeft := true
+      | [.ident "auto", .sym '=', .ident "right"] => mAuto := true; mLeft := false
+      | [.ident "auto", .sym '=', .ident "false"] => mAuto := false
+      | [.ident "midway"] => atEnd := false
+      | [] => pure ()
+      | o :: rest =>
+        match (keyName (o :: rest)).bind dirOf with
+        | some d => malign := some d
+        | none =>
+          ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
+the rendered picture subset; the option is dropped")
+    match ts[i]? with
+    | some (.group body) =>
+      let (lines, mdiags) := nodeLabel cx env body
+      ev := mdiags.foldl Ev.diag ev
+      let lines := fontLines mstyles lines
+      let em := cx.bodySize * (factor : Int) / 1000
+      let ex := (cx.metric #[.text "x"] factor).ex
+      let mut inner := (innerSep em, innerSep em)
+      let mut outer : Option Sp × Option Sp := (none, none)
+      for (key, value) in mseps do
+        match readNodeDim em ex value with
+        | .error e =>
+          ev := ev.diag (.W0334, s!"in edge node '{key}', {e}; the option is dropped")
+        | .ok v =>
+          match key with
+          | "inner sep" => inner := (v, v)
+          | "inner xsep" => inner := (v, inner.2)
+          | "inner ysep" => inner := (inner.1, v)
+          | "outer sep" => outer := (some v, some v)
+          | "outer xsep" => outer := (some v, outer.2)
+          | _ => outer := (outer.1, some v)
+      mid := some { lines, color := mcolor, scale := mscale, placement := malign
+                    autoLeft := if mAuto then some mLeft else none
+                    align := mtext, inner, outer, atEnd }
+      i := i + 1
+    | _ =>
+      return .error (ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
+edge is not drawn"))
+  return .ok (mid, i, ev)
 
 /-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
 chain between named nodes and coordinates, border-anchored at named
@@ -4618,71 +4882,15 @@ the edge is not drawn")
       | .error _ =>
         ev := ev.diag (.W0334, s!"draw option {optName (o :: rest)} is outside the \
 rendered picture subset; the option is dropped")
-  -- The endpoint chain: `(name|x,y)` separated by `--`.
-  let readAnchor (i : Nat) : Except PDiag (Anchor × Nat) := Id.run do
-    unless ts[i]? == some (.sym '(') do
-      return .error (.E0333, s!"in '\\draw', expected a '(...)' endpoint, found \
-{((ts[i]?).map tokText).getD "the end"}; the edge is not drawn")
-    let mut depth := 1
-    let mut j := i + 1
-    let mut inner : Array Tok := #[]
-    for _ in [i+1:ts.size + 1] do
-      if h : j < ts.size then
-        match ts[j] with
-        | .sym '(' => depth := depth + 1; inner := inner.push ts[j]; j := j + 1
-        | .sym ')' =>
-          depth := depth - 1
-          if depth == 0 then break
-          inner := inner.push ts[j]
-          j := j + 1
-        | t => inner := inner.push t; j := j + 1
-      else break
-    unless depth == 0 do
-      return .error (.E0333, "in '\\draw', an endpoint misses its ')'; the edge \
-is not drawn")
-    match (splitTop inner ',').toList with
-    | [xs, ys] =>
-      match evalNum env xs, evalNum env ys with
-      | .ok xm, .ok ym => return .ok (.point (cx.toSp xm) (cx.toSp ym), j + 1)
-      | .error e, _ | _, .error e =>
-        return .error (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
-    | _ =>
-      let mut nm := ""
-      for t in inner do
-        nm := nm ++ (match t with
-          | .ident s => s
-          | .num m => milliString m
-          | .sym c => String.singleton c
-          | _ => "")
-      match ev.nodes.lookup nm with
-      | some g => return .ok (.node g, j + 1)
-      | none =>
-      -- `(n.west)`: an anchor on a named node, which is a point rather than
-      -- a border — pgf uses the named anchor exactly, with no shortening
-      -- toward the other endpoint.
-      match splitAnchor nm with
-      | some (base, an) =>
-        match ev.nodes.lookup base with
-        | none =>
-          return .error (unreachedName (ev.gapped || cx.parseGap) base)
-        | some g =>
-          match nodeAnchorOf an with
-          | some a =>
-            let (px, py) := g.anchorPoint a
-            return .ok (.point px py, j + 1)
-          | none =>
-            return .error (.W0334, s!"node anchor '{an}' is outside the rendered \
-picture subset; the edge is not drawn")
-      | none =>
-        return .error (unreachedName (ev.gapped || cx.parseGap) nm)
   let mut pts : Array Anchor := #[]
   let mut ops : Array (DrawOp × Option EdgeLabel) := #[]
-  match readAnchor i with
+  let mut reference : Sp × Sp := (0, 0)
+  match readAnchor cx env ev ts i reference with
   | .error d => return ev.diag d
-  | .ok (a, i2) =>
+  | .ok (a, i2, base) =>
     pts := pts.push a
     i := i2
-  let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
+    reference := base
   for _ in [0:ts.size + 1] do
     if h : i < ts.size then
       -- the path operation: `--` (closing with `cycle`), `rectangle`, or
@@ -4693,6 +4901,12 @@ picture subset; the edge is not drawn")
         if ts[i]? == some (.ident "cycle") then
           op := .cycle
           i := i + 1
+      else if ts[i]? == some (.sym '|') && ts[i+1]? == some (.sym '-') then
+        op := .orthogonal true
+        i := i + 2
+      else if ts[i]? == some (.sym '-') && ts[i+1]? == some (.sym '|') then
+        op := .orthogonal false
+        i := i + 2
       else if ts[i]? == some (.ident "rectangle") then
         op := .rect
         i := i + 1
@@ -4776,135 +4990,40 @@ rendered picture subset; the option is dropped")
       else
         return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
 outside the rendered picture subset; the edge is not drawn")
-      -- an in-path `node[...] {...}`: an edge label at the segment's
-      -- midpoint; placement attaches the whole text box there
       let mut mid : Option EdgeLabel := none
-      if ts[i]? == some (.ident "node") then
-        i := i + 1
-        -- An edge label reads its own bracket alone: neither the picture's
-        -- entries nor an `every node` style reaches it, so a declared one
-        -- is named here rather than dropped in silence.
-        unless cx.everyNode.isEmpty do
-          ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
-the rendered picture subset; the keys are dropped")
-        let mut mcolor := Ir.Color.black
-        let mut mscale : Nat := factor
-        let mut mstyles : Array Ir.Style := #[]
-        -- `none` is "this label declared no placement": it then takes the
-        -- side `auto` computes from the path's direction, or the path's
-        -- midpoint where no `auto` is in force.
-        let mut malign : Option Dir := none
-        let mut mAuto := autoOn
-        let mut mLeft := autoLeft
-        -- Keep dimension keys separate from text-font keys. PGF's `font=`
-        -- and body switches change the text box, not its dimension font.
-        let mut mseps : Array (String × List Tok) := #[]
-        -- `align=`: the side the label's lines stand flush to.
-        let mut mtext : Ir.Pic.LabelAlign := .center
-        -- An edge label is a node: what `every text node part` declared
-        -- reaches its text, and its own bracket follows.
-        let mut mopts : Array (Array Tok) := cx.everyText
-        if ts[i]? == some (.sym '[') then
-          let mut j := i + 1
-          let mut inner : Array Tok := #[]
-          for _ in [i+1:ts.size + 1] do
-            if h2 : j < ts.size then
-              if ts[j] == .sym ']' then break
-              inner := inner.push ts[j]
-              j := j + 1
-            else break
-          unless ts[j]? == some (.sym ']') do
-            return ev.diag (.E0333, "an edge node's options miss their ']'; the \
-edge is not drawn")
-          i := j + 1
-          mopts := mopts ++ expandOpts cx.styles inner
-        for opt in mopts do
-          match opt.toList with
-          | .ident "font" :: .sym '=' :: rest =>
-            let (sz, sts, unread) := readFont cx rest
-            mscale := (sz.map fun k => k * factor / 1000).getD factor
-            mstyles := sts
-            for w in unread do
-              ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
-the rendered picture subset; the switch is dropped")
-          | .ident "text" :: .sym '=' :: rest =>
-            match evalColor cx env rest.toArray with
-            | .ok c => mcolor := c
-            | .error e =>
-              ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
-dropped")
-          | .ident "align" :: .sym '=' :: rest =>
-            match textAlignOf rest with
-            | some a => mtext := a
-            | none =>
-              ev := ev.diag (.W0334, s!"edge node option 'align={String.join (rest.map tokText)}' \
-is outside the rendered picture subset; the lines stay centred")
-          | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("inner sep", rest)
-          | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("inner xsep", rest)
-          | .ident "inner" :: .ident "ysep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("inner ysep", rest)
-          | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("outer sep", rest)
-          | .ident "outer" :: .ident "xsep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("outer xsep", rest)
-          | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
-            mseps := mseps.push ("outer ysep", rest)
-          -- The label's own side, on top of whatever the path set.
-          | [.ident "swap"] | [.sym '\''] => mLeft := !mLeft
-          | [.ident "auto"] => mAuto := true
-          | [.ident "auto", .sym '=', .ident "left"] => mAuto := true; mLeft := true
-          | [.ident "auto", .sym '=', .ident "right"] => mAuto := true; mLeft := false
-          | [.ident "auto", .sym '=', .ident "false"] => mAuto := false
-          | [] => pure ()
-          | o :: rest =>
-            match (keyName (o :: rest)).bind dirOf with
-            | some d => malign := some d
-            | none =>
-              ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
-the rendered picture subset; the option is dropped")
-        match ts[i]? with
-        | some (.group body) =>
-          let (lines, mdiags) := nodeLabel cx env body
-          ev := mdiags.foldl Ev.diag ev
-          let lines := fontLines mstyles lines
-          let em := cx.bodySize * (factor : Int) / 1000
-          let ex := (cx.metric #[.text "x"] factor).ex
-          let mut inner := (innerSep em, innerSep em)
-          let mut outer : Option Sp × Option Sp := (none, none)
-          for (key, value) in mseps do
-            match readNodeDim em ex value with
-            | .error e =>
-              ev := ev.diag (.W0334, s!"in edge node '{key}', {e}; the option is dropped")
-            | .ok v =>
-              match key with
-              | "inner sep" => inner := (v, v)
-              | "inner xsep" => inner := (v, inner.2)
-              | "inner ysep" => inner := (inner.1, v)
-              | "outer sep" => outer := (some v, some v)
-              | "outer xsep" => outer := (some v, outer.2)
-              | _ => outer := (outer.1, some v)
-          mid := some { lines, color := mcolor, scale := mscale, placement := malign
-                        autoLeft := if mAuto then some mLeft else none
-                        align := mtext, inner, outer }
-          i := i + 1
-        | _ =>
-          return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
-edge is not drawn")
+      match readEdgeLabel cx env ts i ev autoOn autoLeft with
+      | .error failed => return failed
+      | .ok (label, next, after) =>
+        mid := label
+        i := next
+        ev := after
       -- `cycle` names no endpoint: its segment ends where the subpath began,
       -- which the segment walk below knows; the chain's first point stands
       -- in its slot.
       if op matches .cycle then
-        pts := pts.push (pts[0]?.getD (.point 0 0))
+        let first := pts[0]?.getD (.point 0 0)
+        pts := pts.push first
+        reference := first.center
         ops := ops.push (op, mid)
       else
-        match readAnchor i with
+        match readAnchor cx env ev ts i reference with
         | .error d => return ev.diag d
-        | .ok (a, i2) =>
+        | .ok (a, i2, base) =>
           pts := pts.push a
-          ops := ops.push (op, mid)
           i := i2
+          reference := base
+          -- TikZ accepts a path node on either side of the endpoint.
+          -- Both spellings use one option reader and one attachment.
+          match readEdgeLabel cx env ts i ev autoOn autoLeft true with
+          | .error failed => return failed
+          | .ok (label, next, after) =>
+            ev := after
+            if mid.isSome && label.isSome then
+              return ev.diag (.W0334, "multiple nodes on one path segment are outside \
+the rendered picture subset; the edge is not drawn")
+            mid := mid.or label
+            i := next
+          ops := ops.push (op, mid)
     else break
   unless pts.size ≥ 2 do
     return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
@@ -4936,7 +5055,8 @@ edge is not drawn")
         -- A node on a rectangle stands on its diagonal, as on a straight side.
         if let some label := mid then
           labels := labels ++ label.place cx width
-            ((x1 + x2) / 2, (y1 + y2) / 2) (x2 - x1, y2 - y1)
+            (if label.atEnd then (x2, y2) else ((x1 + x2) / 2, (y1 + y2) / 2))
+            (x2 - x1, y2 - y1)
         subStart := none
         cur := some (x2, y2)
       | .cycle =>
@@ -4957,24 +5077,39 @@ edge is not drawn")
           subStart := none
           cur := some (sx, sy)
         | _, _ => pure ()
-      | .straight =>
-        let p1 := a.toward c.center
-        let p2 := c.toward a.center
+      | .straight | .orthogonal _ =>
+        let labelCorner := match op with
+          | .orthogonal vertical => some (orthogonalCorner vertical a.center c.center)
+          | .straight | .curve _ | .rect | .cycle => none
+        -- An axis-aligned elbow is one straight segment. In particular,
+        -- its zero final leg cannot swallow the arrival arrow or cause
+        -- a named node to be approached from its own centre.
+        -- PGF's halfway timer still names the corner when a leg is zero
+        -- (tikz@timer@vhline/hvline, §17.8); keep that attachment separately.
+        let corner := labelCorner.filter fun q => q != a.center && q != c.center
+        let p1 := a.toward (corner.getD c.center)
+        let p2 := c.toward (corner.getD a.center)
+        let first := segs.size
+        if let some q := corner then
+          segs := segs.push (.line p1.1 p1.2 q.1 q.2)
+        let departure := corner.getD p1
         if last && arrow then
-          match tipAt p2.1 p2.2 (p2.1 - p1.1) (p2.2 - p1.2) stroke.width with
+          match tipAt p2.1 p2.2 (p2.1 - departure.1) (p2.2 - departure.2) stroke.width with
           | some (t, bx, byy) =>
-            segs := segs.push (.line p1.1 p1.2 bx byy)
+            segs := segs.push (.line departure.1 departure.2 bx byy)
             tip := some t
-          | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+          | none => segs := segs.push (.line departure.1 departure.2 p2.1 p2.2)
         else
-          segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+          segs := segs.push (.line departure.1 departure.2 p2.1 p2.2)
         -- A side that does not start where the last ended opens a subpath,
         -- as pgf moves to a node's border toward the next point.
-        if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
+        if subStart.isNone || cur != some p1 then subStart := some (first, p1.1, p1.2)
         cur := some p2
         if let some label := mid then
           labels := labels ++ label.place cx width
-            ((p1.1 + p2.1) / 2, (p1.2 + p2.2) / 2) (p2.1 - p1.1, p2.2 - p1.2)
+            (if label.atEnd then p2 else
+              labelCorner.getD ((p1.1 + p2.1) / 2, (p1.2 + p2.2) / 2))
+            (p2.1 - departure.1, p2.2 - departure.2)
       | .curve spec =>
         -- Absolute tangents anchor each end on its border along its own
         -- angle and aim the controls along those angles. Relative ones
@@ -5008,9 +5143,11 @@ edge is not drawn")
           -- B(½) and its local tangent B′(½), with the common positive
           -- factor 3/4 omitted: the chord can point to a different side.
           labels := labels ++ label.place cx width
-            ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8,
-             (p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8)
-            (-p1.1 - c1.1 + c2.1 + p2.1, -p1.2 - c1.2 + c2.2 + p2.2)
+            (if label.atEnd then p2 else
+              ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8,
+               (p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8))
+            (if label.atEnd then (p2.1 - c2.1, p2.2 - c2.2) else
+              (-p1.1 - c1.1 + c2.1 + p2.1, -p1.2 - c1.2 + c2.2 + p2.2))
     | _, _, _ => pure ()
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them. A chain of
@@ -5027,7 +5164,8 @@ private inductive Item where
   deriving Repr, BEq
 
 /-- Read the literal list: items split on `,`, `...` recognised, `/` the
-pair form; a non-numeric single word rides as text. -/
+tuple form. Numeric expressions keep their evaluator; literal node names
+(including digits, hyphens and anchor suffixes) ride as text. -/
 private def readItems (env : List (String × Val)) (toks : Array Tok) :
     Except String (Array Item) := Id.run do
   let mut out : Array Item := #[]
@@ -5044,7 +5182,12 @@ private def readItems (env : List (String × Val)) (toks : Array Tok) :
         | .ok v => vs := vs.push v
         | .error e =>
           match sub.toList.filter (· != .space) with
-          | [.ident w] => vs := vs.push (.str w)
+          | name@(.ident _ :: rest) =>
+            if rest.all (fun t => match t with
+                | .ident _ | .num _ | .sym '.' | .sym '-' | .sym '_' => true
+                | _ => false) then
+              vs := vs.push (.str ((nameOfToks name).getD ""))
+            else return .error e
           | _ => return .error e
       out := out.push (.vals vs)
   return .ok out
