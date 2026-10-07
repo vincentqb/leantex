@@ -8,7 +8,7 @@ public inductive Emit where
   | html
   /-- Markdown: the llms.txt convention's plain-text twin of the page. -/
   | md
-  deriving Repr, BEq
+  deriving Repr, @[expose] BEq
 
 /-- Which stylesheet the HTML backend writes. -/
 public inductive CssChoice where

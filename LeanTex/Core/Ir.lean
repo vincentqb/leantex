@@ -2178,7 +2178,7 @@ site's stylesheet. -/
 public inductive FontPolicy where
   | embedded
   | none
-  deriving Repr, BEq, DecidableEq, Inhabited
+  deriving Repr, @[expose] BEq, DecidableEq, Inhabited
 
 /-- The semantic output contract: facts about the artifact the reader must
 get, declared once in `\output` and read by every backend against its own

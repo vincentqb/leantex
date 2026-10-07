@@ -1,5 +1,6 @@
 import Tests.NfcBoundary
 import LeanTex.Cli.FontDiscovery
+import Tests.SlotLossWording
 import Tests.Support
 import Tests.Artifact
 
@@ -2810,10 +2811,12 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
       if want then
         let word := if r.slot == "mono" then SlotLoss.monoWord else SlotLoss.sansWord
         let served := if o.textFace then SlotLoss.Served.bodyFace else .bodyFamily
-        let only := if r.art == .pdfHtmlOwn then some (SlotLoss.artifactWord .pdf) else none
+        let only := if r.art == .pdfHtmlOwn then
+          some (Tests.SlotLossWording.artifactWord .pdf) else none
         let expect := Render.porcelainDiag
-          (DriverDiag.slotCollapsed word.key word.runs served.words word.note only)
-        t s!"slot matrix {r.label}: the report says {served.words}{if only.isSome then " in the PDF" else ""}: \
+          (DriverDiag.slotCollapsed word.key word.runs
+            (Tests.SlotLossWording.servedWords served) word.note only)
+        t s!"slot matrix {r.label}: the report says {Tests.SlotLossWording.servedWords served}{if only.isSome then " in the PDF" else ""}: \
 {o.reports}" (o.reports.map (·.trimAscii.toString) == #[expect])
     | some (.error e) => t s!"slot matrix {r.label}: the row runs: {e}" false
     | none => t s!"slot matrix {r.label}: the row ran" false
@@ -2995,9 +2998,10 @@ which is not fixed-pitch"])
   -- and names none.
   let mixed := SlotLoss.carries #[.pdf, .html] .none
   t "slot loss: a PDF beside an unfaced page is the one artifact named"
-    (mixed.only == some "the PDF")
+    (Tests.SlotLossWording.carryOnly mixed == some "the PDF")
   t "slot loss: a build whose every artifact carries the face names none"
-    ((SlotLoss.carries #[.pdf, .html, .md] .embedded).only == none && pdf.only == none)
+    (Tests.SlotLossWording.carryOnly (SlotLoss.carries #[.pdf, .html, .md] .embedded) == none &&
+      Tests.SlotLossWording.carryOnly pdf == none)
   t "slot loss: the mixed build's report says the PDF lost"
     (((SlotLoss.diags {} collapsed usesMono mixed).map (·.message)) ==
       #["nothing declares a 'mono' family; in the PDF, typewriter runs set in the body face, \
