@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.ListMark
 
 /-! Ordinary clients can build markers and use their numbering and text
