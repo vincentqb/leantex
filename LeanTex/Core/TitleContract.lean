@@ -1,4 +1,7 @@
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.Elab
+import all LeanTex.Core.Elab
 
 namespace LeanTex.Core.Elab
 
@@ -7,13 +10,13 @@ open Parse
 /-- One hole in declarative title syntax. Prefixes, suffixes, nested groups,
 and environments are arbitrary. This is deliberately a context inside a
 selected refused body, not an executable preamble context. -/
-inductive TitleBodyContext where
+public inductive TitleBodyContext where
   | hole
   | around (pre post : Array Raw) (inner : TitleBodyContext)
   | group (inner : TitleBodyContext) (pos : Pos)
   | env (name : String) (inner : TitleBodyContext) (pos : Pos)
 
-def TitleBodyContext.fill : TitleBodyContext → Raw → Array Raw
+@[expose] public def TitleBodyContext.fill : TitleBodyContext → Raw → Array Raw
   | .hole, raw => #[raw]
   | .around pre post inner, raw => pre ++ inner.fill raw ++ post
   | .group inner pos, raw => #[.group (inner.fill raw) pos]
@@ -41,7 +44,7 @@ private theorem TitleBodyContext.spellingView (context : TitleBodyContext)
 /-- Every alias at every declarative occurrence preserves the complete
 interpreted style fragment. The conclusion includes rule weights, author
 furniture, font, spacing, and alignment, not merely the scanner's events. -/
-theorem refusedTitleReadout_spelling_agree (user : Array UserCmd) (bound : Nat)
+public theorem refusedTitleReadout_spelling_agree (user : Array UserCmd) (bound : Nat)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
     refusedTitleReadout user bound (context.fill (.ctrl row.1 pos)) =
@@ -57,7 +60,7 @@ entire `PreState`. In particular the document's `titlepage` entry is equal
 after `Theme.styleMerge` and `Styles.declare`, with explicit declarations
 retaining their precedence. This replaces global source-spelling equality:
 execution may legitimately inspect a control word's spelling. -/
-theorem titleStyleMerge_spelling_agree (s : PreState) (st : ESt)
+public theorem titleStyleMerge_spelling_agree (s : PreState) (st : ESt)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
     ((applyRefusedTitleStyle s).run
@@ -71,7 +74,7 @@ theorem titleStyleMerge_spelling_agree (s : PreState) (st : ESt)
 /-- Reading the selected body retires its syntax in every branch, including
 an empty readout or a user definition taking precedence. The entire state,
 with the original refusal's provenance, agrees after this operation. -/
-theorem applyRefusedTitleStyle_spelling_agree (s : PreState) (st : ESt)
+public theorem applyRefusedTitleStyle_spelling_agree (s : PreState) (st : ESt)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
     (applyRefusedTitleStyle s).run
@@ -90,7 +93,7 @@ theorem applyRefusedTitleStyle_spelling_agree (s : PreState) (st : ESt)
 /-- The complete production prepared pass agrees, including its body,
 styles, diagnostics, picture requests and request spans. No assumption on
 the continuation's class, declarations, body or diagnostics is needed. -/
-theorem runPreamble_spelling_agree (file : String) (p : Prepared)
+public theorem runPreamble_spelling_agree (file : String) (p : Prepared)
     (earlier : Array Diag) (preamble : DocPreamble) (st : ESt)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
@@ -113,7 +116,7 @@ The equality is of the whole returned document and diagnostic array, so
 both backend artifacts agree for any fixed font environment. It does not
 normalize executable source: `elabTitleBoundaryChecks` retains the
 conditional that distinguishes the original spellings. -/
-theorem titleStylePhases_spelling_agree (file : String) (p : Prepared)
+public theorem titleStylePhases_spelling_agree (file : String) (p : Prepared)
     (earlier : Array Diag) (phases : Array String → DocPreamble × ESt)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
@@ -136,7 +139,7 @@ has already decided which body and bindings are in force. Only the chosen
 occurrence changes; every other field comes from `preparedPreamble`.
 `runPreparedFinal_preamble_exact` identifies this completion with the one
 used by `runRaws` and `runExecuted`. -/
-theorem titleStyle_spelling_agree (file : String) (p : Prepared)
+public theorem titleStyle_spelling_agree (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
