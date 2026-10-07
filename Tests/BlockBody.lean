@@ -4,6 +4,8 @@ public import LeanTex.Core.Font
 import LeanTex.Core.Layout
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.BeamerColor
+import LeanTex.Core.Elab
+import LeanTex.Core.SeedPalette
 
 open LeanTex.Core
 
@@ -60,6 +62,50 @@ private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
 private def html (doc : Ir.Doc) : Array HtmlInk :=
   let (_, nodes, _) := HtmlDoc.emitTree {} doc
   htmlInks "" #[] nodes.toList
+
+/-- Exercise the exported source through the real front end and both
+artifacts. A correct palette or an isolated IR renderer cannot stand in
+for the bindings between them. Footer ink is declared too: changing the
+page polarity must not inherit the opening theme's small-text colour. -/
+private def generatedSourceChecks (ref : IO.Ref (List String))
+    (fonts : Font.FontSet) : IO Unit := do
+  let dark : Ir.Color := { r := 25, g := 42, b := 61 }
+  let accent : Ir.Color := { r := 196, g := 106, b := 119 }
+  for (foreground, paper) in [(dark, Ir.Color.white), (Ir.Color.white, dark)] do
+    let seeds : SeedPalette.Seeds := ⟨foreground, paper, accent⟩
+    let some palette := SeedPalette.generate seeds
+      | check ref "generated block source: palette exists" false
+        continue
+    for env in ["block", "alertblock", "exampleblock"] do
+      for title in ["", "TITLE"] do
+        let source := "\\documentclass{beamer}" ++
+          SeedPalette.beamerDeclarations "sample" seeds palette ++
+          "\\setbeamercolor{normal text}{fg=sampleInk,bg=samplePaper}" ++
+          "\\setbeamercolor{footline}{fg=sampleMuted,bg=samplePaper}" ++
+          "\\begin{document}\\begin{frame}" ++
+          "\\begin{" ++ env ++ "}{" ++ title ++ "}BODY\\end{" ++ env ++ "}" ++
+          "\\end{frame}\\end{document}"
+        let (doc, diags) := Elab.run "generated.tex" source
+        let label := s!"generated block {paper.css}/{env}/{title}"
+        check ref (label ++ ": clean source") (diags.all (·.severity == .note))
+        let out := layout fonts doc
+        let body := out.pages.flatMap (·.lines) |>.filter (lineText · == "BODY")
+        check ref (label ++ ": content survives once") (body.size == 1)
+        check ref (label ++ ": PDF ink and ground")
+          (body.any fun line => line.segs.any fun
+            | .run _ c _ _ _ _ _ _ _ g _ =>
+              c == seeds.ink && g == some palette.colors.surface
+            | _ => false)
+        check ref (label ++ ": PDF enclosing surface")
+          (out.pages.any fun page => page.lines.any fun line =>
+            lineText line == "BODY" && page.fills.any fun fill =>
+              fill.color == palette.colors.surface && fill.x ≤ line.x &&
+              line.x + line.setWidth ≤ fill.x + fill.w &&
+              fill.y < line.y && line.y < fill.y + fill.h)
+        check ref (label ++ ": HTML ink and surface")
+          ((html doc).any fun leaf => leaf.text == "BODY" &&
+            cssProperty leaf.styles "color" == some seeds.ink.css &&
+            cssProperty leaf.styles "background" == some palette.colors.surface.css)
 
 /-- These four small documents hold the reviewed artifact counterexamples:
 epochs must replace inherited concrete ink, nesting owes every inset, empty
@@ -164,6 +210,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         (leaves.any fun leaf => leaf.text == "BODY" &&
           cssProperty leaf.styles "color" == some ink.css &&
           cssProperty leaf.styles "background" == some ground.css)
+  generatedSourceChecks ref fonts
   regionChecks ref fonts
 
 end Tests.BlockBody

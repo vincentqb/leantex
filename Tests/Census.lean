@@ -264,8 +264,12 @@ def censusTable :
     -- no fill.
     ("the one declared title bar ships as a fill",
       (c[0]?.map (·.fills)).getD 0 == 1),
-    ("a title stands on the measure",
-      lineXOf c 0 "A Plain Statement" == some geom.hmargin)]),
+    ("a filled title uses the shared surface inset",
+      lineXOf c 0 "A Plain Statement" ==
+        some (geom.hmargin + Ir.titledPadding.resolve geom.fontSize 0)),
+    ("unfilled titles stand on the measure",
+      lineXOf c 0 "A Loud Statement" == some geom.hmargin &&
+      lineXOf c 0 "A Worked Instance" == some geom.hmargin)]),
   ("poster", fun geom c => [
     -- The class's implied faces bound: the one declared frame is one
     -- face, and every glyph ships on it.

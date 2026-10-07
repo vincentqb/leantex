@@ -42,6 +42,9 @@ import Tests.ListDeclarations
 import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
+import Tests.BlockBody
+import Tests.PaletteTextEpoch
+import Tests.ThemePalette
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
@@ -728,7 +731,24 @@ def reports : List Report := [
     accept := ["365 assertions fail against the previous renderer, across scripts, fractions, roots, five anchor directions and three font scales; native first-letter and script checks already pass",
       "the repaired labels preserve their mathematical leaves and native PDF ink; passive HTML carriers retain the declared baseline and keep resource validation recursive",
       "a reference presentation renders intact labels and native scripts in Chromium and Firefox on screen and in print"]
-    state := .guarded "f373a48c" .before .audit }
+    state := .guarded "f373a48c" .before .audit },
+  { id := "R92", date := "2026-10-07"
+    what := "block body colours were ignored, leaving filled headings above unpainted bodies and losing the shared theme palette across output formats"
+    pins := [check% Tests.BlockBody.checks, check% Tests.ThemePalette.checks,
+      thm% Ir.Design.titledBody_projects, thm% HtmlDoc.titledBodyPaint_agree,
+      thm% SeedPalette.generated_beamer_contract]
+    accept := ["eighteen artifact assertions and forty-eight generated-palette assertions failed before the body renderer, covering normal, alert and example blocks with and without titles",
+      "independent rendered review checks local colour changes, nested insets, empty filled bodies and page continuations against native ink and computed browser styles",
+      "reference presentations use six title and body colour pairs derived from their common theme palette in both renderers"]
+    state := .guarded "a77aeab8" .before .reviewer },
+  { id := "R93", date := "2026-10-07"
+    what := "changing or clearing the foreground left HTML text and listings in the previous colour, including after a filled block"
+    pins := [check% Tests.PaletteTextEpoch.paletteTextEpochChecks,
+      thm% HtmlDoc.Config.advancePalette_ink_projects]
+    accept := ["fifteen typed artifact comparisons fail before the correction in ordinary flow and after leaving a filled body",
+      "eighteen browser text colour checks agree with native layout after the correction, including plain text, mathematics, listings and foreground erasure",
+      "both native documents remain byte-identical while the HTML foreground is repaired"]
+    state := .guarded "4f9dc31d" .before .reviewer }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

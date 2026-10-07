@@ -79,6 +79,8 @@ import Tests.ListDeclarations
 import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
+import Tests.BlockBody
+import Tests.PaletteTextEpoch
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
@@ -310,6 +312,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tcolorboxSourceChecks ref oneFace
   tcolorboxColorChecks ref oneFace
   blockBarChecks ref oneFace
+  Tests.BlockBody.checks ref oneFace
+  Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
   stringConditionalChecks ref oneFace
   seedPaletteChecks ref oneFace
   titleTemplateOptionalChecks ref oneFace

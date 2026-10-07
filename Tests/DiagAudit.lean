@@ -172,13 +172,19 @@ def suiteText : IO String := do
       text := text ++ stripNonCode (← IO.FS.readFile f)
   return text
 
-/-- Does the pin hold anything? A theorem pin always does — it is a proof.
-A check pin does while the suite both defines and calls the block, each as
-the whole name (`wordCount`). A tier pin does while the tier's committed
-baseline has a row for the item. -/
+/-- Does the pin hold anything? A theorem pin carries its proof. A check pin
+elaborates its declaration and needs a reference outside the registries:
+declaring, importing or opening a name alone cannot hold it. The declaration
+may use an enclosing namespace while the call spells the qualified name.
+This is a source-reference check, not a proof of runtime reachability.
+A tier pin binds while the committed baseline has a row for its item. -/
 def Pin.resolves (suite : String) : Pin → IO Bool
   | .thm .. => pure true
-  | .check n _ => pure (wordCount suite n.toString ≥ 2)
+  | .check n _ => pure (wordCountWhere suite n.toString (fun before =>
+      let previous := (before.trimAsciiEnd.takeEndWhile fun c : Char =>
+        c.isAlphanum || c == '_').toString
+      !["def", "abbrev", "opaque", "theorem", "lemma", "axiom", "constant",
+        "namespace", "end", "import", "open", "export"].contains previous) > 0)
   | .tier t item => do
     let path : System.FilePath := s!"testdata/scoreboard/{t}.tsv"
     if !(← path.pathExists) then return false
@@ -232,6 +238,15 @@ def diagAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "diag audit: a name inside a longer name does not resolve"
     (hasStr suite "StreamChecks" && wordCount suite "pdfStreamChecks" ≥ 2 &&
       !(← (Pin.check `StreamChecks ()).resolves suite))
+  for (source, expected) in [
+      ("namespace Sample\ndef checks := ()\nend Sample\nSample.checks ref", true),
+      ("def Sample.checks := ()\nSample.checks ref", true),
+      ("public def\n Sample.checks := ()", false),
+      ("namespace Sample.checks\nend Sample.checks", false),
+      ("public import Sample.checks\nopen Sample.checks", false),
+      ("def Sample.checksMore := ()\nSample.checksMore ref", false)] do
+    t "diag audit: qualification preserves calls and excludes declarations"
+      ((← (Pin.check `Sample.checks ()).resolves source) == expected)
   t "diag audit: a committed tier item resolves"
     (← (Pin.tier "compat" "cancel.impl").resolves suite)
   t "diag audit: an item no baseline holds does not"
