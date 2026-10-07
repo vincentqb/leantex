@@ -1,6 +1,10 @@
+module
+
+public import LeanTex.Core.Diag
+public import LeanTex.Core.Parse
+public import LeanTex.Core.Compat
+public import LeanTex.Core.Ir
 import LeanTex.Core.Lex
-import LeanTex.Core.Parse
-import LeanTex.Core.Compat
 import LeanTex.Core.Elab
 import LeanTex.Core.MdDesugar
 import LeanTex.Core.Utf8
@@ -43,7 +47,7 @@ private def reasonLine (s : String) : String :=
 /-- The document's own bytes, or the diagnostic naming why they could not
 be read (E0001). The read is the driver's first effect and its refusal is
 the driver's first decision, so it is returned rather than printed. -/
-def readSource (file : String) : IO (Except Diag ByteArray) := do
+public def readSource (file : String) : IO (Except Diag ByteArray) := do
   match ← (IO.FS.readBinFile file).toBaseIO with
   | .ok bytes => return .ok bytes
   | .error e => return .error (DriverDiag.unreadableInput file (reasonLine (toString e)))
@@ -82,7 +86,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command
     return (#[], #[d])
 
-def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
+public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
     IO (Array Parse.Raw × Array Diag) :=
   -- TeX's input scanner tries the default `.tex` suffix before the literal
   -- spelling, unless that spelling already ends in `.tex` (inputFileChecks).
@@ -102,7 +106,7 @@ input fragment so every diagnostic names the `.sty` and its line. Where
 no such file exists, the CTAN dispatch (W0103) applies unchanged. The
 style file's own lexer and parser diagnostics are dropped: the file is
 not the engine's to lint, and the splice carries its own positions. -/
-def expandLocalSty (dir : System.FilePath) (raws : Array Parse.Raw) :
+public def expandLocalSty (dir : System.FilePath) (raws : Array Parse.Raw) :
     IO (Array Parse.Raw × Array (String × Option String × Pos)) := do
   let candidates := Compat.localStyCandidates raws
   if candidates.isEmpty then return (raws, #[])
@@ -167,7 +171,7 @@ force at the caller's next token. The returned execution must continue
 through `Elab.prepareExecuted` or `Elab.runExecuted`, without a second macro
 pass. The other results are read diagnostics and the local-style records
 whose N0020 counts become available after elaboration. -/
-def expandInputs (file : String) (raws : Array Parse.Raw) :
+public def expandInputs (file : String) (raws : Array Parse.Raw) :
     IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let (executed, log) ← (Elab.executeInputs (readAt dir file 8) file raws).run {}
@@ -180,7 +184,7 @@ formatting, and the citation rewrite all happen there, on every document
 (`Bib.apply_no_cite`: no `.cite` node reaches a backend). A missing file is
 E0503 naming the path; the marker stays empty and the citations' `?`
 marks say so on the page. -/
-def resolveBibliography (file : String) (doc : Ir.Doc)
+public def resolveBibliography (file : String) (doc : Ir.Doc)
     (bibSpans : Array (String × Span) := #[]) :
     IO (Ir.Doc × Array Diag) := do
   let requested := Ir.bibRefs doc
@@ -205,7 +209,7 @@ before elaboration — the expansion needs the records where
 ahead of `Elab.runRaws`. Each named `.bib` resolves beside the document,
 like `\input`; a missing file is E0365 naming the path, and the reads that
 wanted its records say what stayed unresolved. -/
-def resolveData (file : String) (raws : Array Parse.Raw) :
+public def resolveData (file : String) (raws : Array Parse.Raw) :
     IO (Array Parse.Raw × Array Diag) := do
   unless Data.hasData raws do return (raws, #[])
   let requested := Data.fileRefsAt file raws
