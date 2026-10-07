@@ -8,6 +8,7 @@ import Tests.BibPendingInterface
 import Tests.InkInterface
 import Tests.FontInterface
 import Tests.FontDiscoveryInterface
+import Tests.FontPipelineInterface
 import Tests.FontSubsetInterface
 import Tests.GlyphBoundsInterface
 import Tests.IrInterface
