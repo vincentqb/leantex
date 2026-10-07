@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Core.Picture
 
 /-! Ordinary picture clients can pass source, styles, measurement callbacks,
@@ -48,6 +50,15 @@ example (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     Array LabelLine × Array PDiag :=
   nodeLabel cx env toks
 
+example (lines : Array LabelLine) (named : Bool) (h : named) :
+    (0 < (labelFloor lines named).foldl (fun n l => n + l.1.size) 0 : Bool) :=
+  labelFloor_accounts lines named h
+
+example (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    ¬ (nodeLabel cx env toks).2.isEmpty →
+      (0 < (nodeLabel cx env toks).1.foldl (fun n l => n + l.1.size) 0 : Bool) :=
+  nodeLabel_accounts cx env toks
+
 example (name : String) (value : Val) : LabelInput := .substitution name value
 example (input : LabelInput) : LabelOrigin := .source input
 example : LabelOrigin := .generated .nodeFloor
@@ -94,7 +105,17 @@ example (pal : Ir.Palette) (raws : Array Parse.Raw)
 
 example : String → Ir.Pic.Picture := placeholder
 
+example (gapped : Bool) (what : String)
+    (h : (unreachedName gapped what).1 = .W0334) : gapped = true :=
+  unreachedName_accounts gapped what h
+
 example : True := by
+  fail_if_success
+    have : (unreachedName false "").1 = .E0333 := by rfl
+  trivial
+
+example : True := by
+  fail_if_success have := Picture.styleName_agree
   fail_if_success have := Picture.ofRawList
   fail_if_success have := Picture.ofRawOne
   fail_if_success have := Picture.evalExpr

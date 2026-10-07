@@ -3529,7 +3529,7 @@ public def Box.join (a b : Box) : Box :=
   ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
 
 /-- `a` is inside `b`, componentwise. -/
-public def Box.le (a b : Box) : Prop :=
+@[expose] public def Box.le (a b : Box) : Prop :=
   b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
 
 /-- Translate a measured interval beside an anchor. A positive direction
@@ -3709,7 +3709,7 @@ anchor it hangs from. This, not the band, is the ink a picture's box holds:
 the band is a placement reference, deeper than a word with no descender
 sets anything, and pgf's natural box holds a node's text box, not its
 font's. -/
-public def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+@[expose] public def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
   let box := labelTextBox x y align m
   ((box.1.1, min y box.1.2), (box.2.1, max y box.2.2))
 
@@ -3911,7 +3911,7 @@ public def Picture.labelContents (p : Picture) : Array (Array Inline) :=
 the label's is the declared box: a fill, an outline and a stroked edge are
 their own geometry, and only text has an extent the IR cannot compute — the
 glyphs' own box on the baseline the band places (`labelGlyphBox`). -/
-public def Shape.inkBox (m : LabelMetric) : Shape → Box
+@[expose] public def Shape.inkBox (m : LabelMetric) : Shape → Box
   | .label x y content _ scale align => labelGlyphBox x y align (m content scale)
   | s@(.rect _ _ _ _ _) => s.box
   | s@(.circle _ _ _ _ _) => s.box
@@ -3953,7 +3953,7 @@ public def labelHalfExtent (align : LabelAlign) (w tall : Sp) : Sp × Sp :=
 
 /-- The box a node of these half-extents occupies: the centred extent a
 relative placement leaves `node distance` between, border to border. -/
-public def nodeExtentBox (x y a b : Sp) : Box := ((x - a, y - b), (x + a, y + b))
+@[expose] public def nodeExtentBox (x y a b : Sp) : Box := ((x - a, y - b), (x + a, y + b))
 
 /-- A label's ink is inside the extent its own reach asks for. The
 arithmetic is spelled over bare `Int` binders and applied, because `omega`

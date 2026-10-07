@@ -1,5 +1,7 @@
-import LeanTex.Core.Parse
-import LeanTex.Core.Ir
+module
+
+public import LeanTex.Core.Parse
+public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 
@@ -35,7 +37,7 @@ open LeanTex.Core LeanTex.Core.Dim
 
 /-- A diagnostic the picture walk raises: code and message; the elaborator
 adds the environment's position. -/
-abbrev PDiag := DiagCode × String
+public abbrev PDiag := DiagCode × String
 
 /-- **Does the native drawing lose something the document declared?** A
 content loss is one whose floor is not inert (`Loss.floor`): `dropped`,
@@ -44,14 +46,14 @@ would draw. A `standard`, `config` or `info` diagnostic names a decision or
 a standard the declaration already meets, so the boundary would draw the
 same page and routing there would only trade the engine's ink for an
 opaque box. -/
-def namesLoss (ds : Array PDiag) : Bool :=
+public def namesLoss (ds : Array PDiag) : Bool :=
   ds.any fun d => d.1.floor != .inert
 
 /-- One micro-token of picture source. The lexer's words run punctuation
 together (`++(0.92,0.92);` is one word), so `ofRaws` re-splits them into
 numbers, identifiers, and single symbols; braces arrive pre-matched as
 groups from `Parse.Raw`. -/
-inductive Tok where
+public inductive Tok where
   | ctrl (name : String)
   | ident (s : String)
   /-- A number literal, in thousandths (`Decl.parseDecimal`, exact to the
@@ -132,21 +134,21 @@ private def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
 
 end
 
-def ofRaws (raws : Array Parse.Raw) : Array Tok :=
+public def ofRaws (raws : Array Parse.Raw) : Array Tok :=
   ofRawList #[] raws.toList
 
 -- Expression evaluation: pgfmath's arithmetic over milli fixed point.
 
 /-- A `\foreach` binding's value: a number in milli, or the raw text of a
 list item that is not one (a label like `alpha`). -/
-inductive Val where
+public inductive Val where
   | num (m : Int)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
 /-- Render a milli value the way pgf prints a macro: an integer without a
 point, otherwise up to three decimals. -/
-def milliString (m : Int) : String :=
+public def milliString (m : Int) : String :=
   let neg := m < 0
   let n := m.natAbs
   let ip := n / 1000
@@ -158,7 +160,7 @@ def milliString (m : Int) : String :=
     let frs := ("".pushn '0' (3 - frs.length)) ++ frs
     s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
 
-def Val.text : Val → String
+public def Val.text : Val → String
   | .num m => milliString m
   | .str s => s
 
@@ -381,23 +383,23 @@ private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except Str
 /-- How many values `{a,...,b}` (step `step`) enumerates: `none` when the
 step is zero or walks away from the bound — the range that would never
 terminate is a diagnostic, not a hang. -/
-def rangeCount (a step b : Int) : Option Nat :=
+public def rangeCount (a step b : Int) : Option Nat :=
   if step > 0 && a ≤ b then some (((b - a) / step).toNat + 1)
   else if step < 0 && b ≤ a then some (((a - b) / (-step)).toNat + 1)
   else none
 
 /-- The enumerated values, indexed off the count: total by construction. -/
-def range (a step b : Int) : Option (Array Int) :=
+public def range (a step b : Int) : Option (Array Int) :=
   (rangeCount a step b).map fun n => (Array.range n).map fun i => a + step * Int.ofNat i
 
 /-- The enumeration is exactly its count long. -/
-theorem range_size (a step b : Int) (n : Nat) (h : rangeCount a step b = some n) :
+public theorem range_size (a step b : Int) (n : Nat) (h : rangeCount a step b = some n) :
     (range a step b).map (·.size) = some n := by
   simp [range, h]
 
 /-- The k-th value is `a + step·k`: the range enumerates its arithmetic
 progression exactly, no value skipped or invented. -/
-theorem range_get (a step b : Int) (xs : Array Int) (hx : range a step b = some xs)
+public theorem range_get (a step b : Int) (xs : Array Int) (hx : range a step b = some xs)
     (i : Nat) (h : i < xs.size) : xs[i] = a + step * i := by
   simp only [range, Option.map_eq_some_iff] at hx
   obtain ⟨n, _, hmap⟩ := hx
@@ -406,7 +408,7 @@ theorem range_get (a step b : Int) (xs : Array Int) (hx : range a step b = some 
 
 /-- The brief's instance: `{a,...,b}` in whole units (milli ×1000, the
 default step) enumerates `b − a + 1` values. -/
-theorem range_unit_size (a b : Int) (hab : a ≤ b) :
+public theorem range_unit_size (a b : Int) (hab : a ≤ b) :
     (range (1000 * a) 1000 (1000 * b)).map (·.size) = some ((b - a).toNat + 1) := by
   have hc : rangeCount (1000 * a) 1000 (1000 * b) = some ((b - a).toNat + 1) := by
     have hcond : (decide ((1000:Int) > 0) && decide ((1000:Int) * a ≤ 1000 * b)) = true := by
@@ -432,7 +434,7 @@ shape this walk can compute:
   They are refused by name, and both branches stay separate so nothing the
   document did not ask for is drawn.
 -/
-inductive CondKind where
+public inductive CondKind where
   | num (name : String)
   | always (v : Bool)
   | mode (name : String) (v : Bool)
@@ -472,7 +474,7 @@ private def condTakesNoTest (n : String) : Bool :=
 
 /-- One parsed picture statement. `fill` and `node` keep their tokenslices — coordinates and options are evaluated per loop iteration, where
 the bindings live. -/
-inductive Stmt where
+public inductive Stmt where
   | fill (toks : Array Tok)
   | node (toks : Array Tok)
   | draw (toks : Array Tok)
@@ -875,7 +877,7 @@ it), the picture's `scale=`, per mille, the named option bundles its
 `name/.style={...}` options declared, and whether `transform shape` opted
 the nodes into the scale (pgf manual §25.4: transformations do not apply
 to nodes unless `transform shape` is given). -/
-structure Cx where
+public structure Cx where
   pal : Ir.Palette
   scale : Int := 1000
   styles : List (String × Array Tok) := []
@@ -945,7 +947,7 @@ structure Cx where
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
-def Cx.toSp (cx : Cx) (m : Int) : Sp :=
+public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
   m * cx.scale * Dim.mm 10 / 1000000
 
 /-- Split on a separator symbol at zero paren depth (groups are subtrees,
@@ -1127,7 +1129,7 @@ under this — `readDef` for the declaration, `expandOpts` for the use,
 what `styleName_agree` pins. The defect that made it one function was a
 name cut at its first hyphen: stored under nothing, named as a dropped key
 under its first component, and unfound at every bracket that used it. -/
-def keyName (ts : List Tok) : Option String := Id.run do
+public def keyName (ts : List Tok) : Option String := Id.run do
   let mut out := ""
   let mut prevWord := false
   for t in ts do
@@ -1209,7 +1211,7 @@ admitted identifier runs only, and a declaration written `edge-muted` was
 stored under nothing, reported as a dropped key `edge`, and found by no
 bracket that used it. Nineteen uses of four such names in one figure read
 as one dropped key. -/
-theorem styleName_agree (p handler g : List Tok)
+private theorem styleName_agree (p handler g : List Tok)
     (hp : ∀ t ∈ p, isSym '/' t = false)
     (hh : ∀ t ∈ handler, isSym '=' t = false)
     (hs : (keyName handler).isSome) :
@@ -1251,7 +1253,7 @@ earlier one. Every other entry comes back unread — `/.tip`, `/.append
 style`, a bare key — for the caller to name at the line that wrote it,
 which is where such a diagnostic belongs: the line is the document's, not
 any one picture's. -/
-def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
+public def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
     List (String × Array Tok) × Array (Array Tok) := Id.run do
   let mut styles := styles
   let mut unread : Array (Array Tok) := #[]
@@ -1267,7 +1269,7 @@ def readStyleList (styles : List (String × Array Tok)) (toks : Array Tok) :
 
 /-- The bundles a document's `\tikzset` lines define, folded in source
 order: what every picture in it starts from. -/
-def documentStyles (sets : Array (Array Tok)) : List (String × Array Tok) := Id.run do
+@[expose] public def documentStyles (sets : Array (Array Tok)) : List (String × Array Tok) := Id.run do
   let mut styles : List (String × Array Tok) := []
   for keys in sets do
     styles := (readStyleList styles keys).1
@@ -1308,7 +1310,7 @@ private def expandOpts (styles : List (String × Array Tok)) (inner : Array Tok)
 /-- The key an option entry sets: its tokens up to the `=`, so `draw` and
 `draw=red` name one key as they do in pgf, and `minimum size=8mm` names
 `minimum size`. -/
-def optKey (opt : Array Tok) : String := Id.run do
+public def optKey (opt : Array Tok) : String := Id.run do
   let mut s := ""
   for t in opt do
     if t == .sym '=' then break
@@ -1329,13 +1331,13 @@ exactly as they would written in one bracket, the picture's first.
 The two facts are `inherit_inner_exact` and `inherit_covers`; they are of
 this reader, not of either artifact, because a picture's keys are consumed
 here and never reach the IR. -/
-def inheritOpts (outer inner : Array (Array Tok)) : Array (Array Tok) :=
+public def inheritOpts (outer inner : Array (Array Tok)) : Array (Array Tok) :=
   let names := inner.map optKey
   outer.filter (fun o => !names.contains (optKey o)) ++ inner
 
 /-- Precedence: an entry in the merge whose key some inner entry also names
 is the inner bracket's own. -/
-theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array Tok}
+public theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ inheritOpts outer inner)
     (hk : ∃ e ∈ inner, optKey e = optKey o) : o ∈ inner := by
   simp only [inheritOpts, Array.mem_append, Array.mem_filter] at hm
@@ -1346,13 +1348,13 @@ theorem inherit_inner_exact {outer inner : Array (Array Tok)} {o : Array Tok}
   · exact h
 
 /-- Nothing the inner bracket said is lost to the merge. -/
-theorem inherit_covers {outer inner : Array (Array Tok)} {o : Array Tok}
+public theorem inherit_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ inner) : o ∈ inheritOpts outer inner := by
   simp only [inheritOpts, Array.mem_append]
   exact Or.inr h
 
 /-- The merge invents nothing: every entry came from one of the two sides. -/
-theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
+public theorem inherit_mem {outer inner : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ inheritOpts outer inner) : o ∈ outer ∨ o ∈ inner := by
   simp only [inheritOpts, Array.mem_append, Array.mem_filter] at hm
   rcases hm with ⟨h, _⟩ | h
@@ -1378,19 +1380,19 @@ the node says.
 three boundaries, `merge_covers` that nothing the bracket said is lost, and
 `merge_global_covers` that a key set once for the document reaches a
 bracket that renamed nothing. -/
-def mergeOpts (global picture every own : Array (Array Tok)) : Array (Array Tok) :=
+public def mergeOpts (global picture every own : Array (Array Tok)) : Array (Array Tok) :=
   inheritOpts (inheritOpts (inheritOpts global picture) every) own
 
 /-- Precedence, innermost level: an entry whose key the bracket's own also
 names is the bracket's own. -/
-theorem merge_own_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+public theorem merge_own_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ own, optKey e = optKey o) : o ∈ own :=
   inherit_inner_exact hm hk
 
 /-- Precedence, third level: an entry whose key `every X` names and the
 bracket's own does not is the `every X` style's. -/
-theorem merge_every_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+public theorem merge_every_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ every, optKey e = optKey o)
     (ho : ¬ ∃ e ∈ own, optKey e = optKey o) : o ∈ every := by
@@ -1402,7 +1404,7 @@ theorem merge_every_exact {global picture every own : Array (Array Tok)} {o : Ar
 neither inner level does is the picture's, not the document's. Without this
 the outermost level could shadow the picture's own and the boundaries
 further in would not notice. -/
-theorem merge_picture_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
+public theorem merge_picture_exact {global picture every own : Array (Array Tok)} {o : Array Tok}
     (hm : o ∈ mergeOpts global picture every own)
     (hk : ∃ e ∈ picture, optKey e = optKey o)
     (he : ¬ ∃ e ∈ every, optKey e = optKey o)
@@ -1414,13 +1416,13 @@ theorem merge_picture_exact {global picture every own : Array (Array Tok)} {o : 
   · exact absurd ⟨o, h, rfl⟩ ho
 
 /-- Nothing the bracket's own entries said is lost to any outer level. -/
-theorem merge_covers {global picture every own : Array (Array Tok)} {o : Array Tok}
+public theorem merge_covers {global picture every own : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ own) : o ∈ mergeOpts global picture every own :=
   inherit_covers h
 
 /-- Nothing the outer level said is lost where no inner entry names its
 key: the level survives the filter, not only the append. -/
-theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
+public theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ outer) (hk : ∀ e ∈ inner, optKey e ≠ optKey o) :
     o ∈ inheritOpts outer inner := by
   simp only [inheritOpts, Array.mem_append, Array.mem_filter]
@@ -1433,7 +1435,7 @@ theorem inherit_outer_covers {outer inner : Array (Array Tok)} {o : Array Tok}
 the merge where neither later level names its key. Without this the
 picture's entries could be dropped wholesale and the boundary facts would
 still hold. -/
-theorem merge_picture_covers {global picture every own : Array (Array Tok)}
+public theorem merge_picture_covers {global picture every own : Array (Array Tok)}
     {o : Array Tok}
     (h : o ∈ picture) (he : ∀ e ∈ every, optKey e ≠ optKey o)
     (ho : ∀ e ∈ own, optKey e ≠ optKey o) :
@@ -1447,7 +1449,7 @@ carries no bracket of its own, exactly as if the edge had carried it. The
 statement the arrowhead defect needed: before it the entry was dropped
 between the `\tikzset` line and the picture, and every edge relying on it
 was drawn headless. -/
-theorem merge_global_covers {global picture every own : Array (Array Tok)}
+public theorem merge_global_covers {global picture every own : Array (Array Tok)}
     {o : Array Tok}
     (h : o ∈ global) (hp : ∀ e ∈ picture, optKey e ≠ optKey o)
     (he : ∀ e ∈ every, optKey e ≠ optKey o)
@@ -1531,7 +1533,7 @@ private def readCoord (toks : Array Tok) (i : Nat) :
 -- `\pgfpointshapeborder`, in closed form per shape.
 
 /-- Integer square root of an `Int` (callers pass sums of squares). -/
-def isqrt (n : Int) : Int := (Nat.sqrt n.toNat : Nat)
+public def isqrt (n : Int) : Int := (Nat.sqrt n.toNat : Nat)
 
 /-- Where the ray from a rectangle's centre `(cx, cy)` (half-extents
 `a`, `b`) toward `(qx, qy)` crosses its border — `\pgfpointshapeborder`
@@ -1539,7 +1541,7 @@ for the rectangle shape (pgf manual, Nodes and Shapes), as algebra: the
 dominant axis (`|dy|·a ≤ |dx|·b`) decides which edge, that coordinate is
 exact, and the other rounds one exact rational (`rectBorder_exact`). A
 ray with no direction answers the centre. -/
-def rectBorder (cx cy a b qx qy : Int) : Int × Int :=
+public def rectBorder (cx cy a b qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
   let adx : Int := dx.natAbs
@@ -1568,7 +1570,7 @@ coordinate sits exactly on an edge; a directionless ray answers the
 centre) and never outside it (both coordinates stay within the
 extents). Sourced at `rectBorder`; the one division is exact on the
 dominant axis and a single rounding on the other. -/
-theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b) :
+public theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b) :
     ((rectBorder cx cy a b qx qy).1 = cx - a ∨ (rectBorder cx cy a b qx qy).1 = cx + a ∨
      (rectBorder cx cy a b qx qy).2 = cy - b ∨ (rectBorder cx cy a b qx qy).2 = cy + b ∨
      (qx = cx ∧ qy = cy)) ∧
@@ -1649,7 +1651,7 @@ theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b) :
 border: `c + r·d/‖d‖`, the normalisation through one integer square
 root — `\pgfpointshapeborder` for the circle shape. A ray with no
 direction answers the centre. -/
-def circleBorder (cx cy r qx qy : Int) : Int × Int :=
+public def circleBorder (cx cy r qx qy : Int) : Int × Int :=
   let dx := qx - cx
   let dy := qy - cy
   let n := isqrt (dx * dx + dy * dy)
@@ -1665,7 +1667,7 @@ sp per axis plus the square root's own step. The squared-distance
 corollary follows by squaring these bounds; that squaring is nonlinear
 algebra the statement deliberately stops short of — the per-axis bound
 is what the renderer's ±1 sp claim rests on. -/
-theorem circleBorder_step (cx cy r qx qy : Int)
+public theorem circleBorder_step (cx cy r qx qy : Int)
     (hn : isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ≠ 0) :
     isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
         * ((circleBorder cx cy r qx qy).1 - cx) ≤ r * (qx - cx) ∧
@@ -1727,7 +1729,7 @@ theorem circleBorder_step (cx cy r qx qy : Int)
 private def innerSepDefault : Int := 3333
 
 /-- One inner sep at this em. -/
-def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
+public def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
 
 /-- **A drawn node's outline is the shape pgf draws**, for a node that does
 not declare its whole extent (pgfmoduleshapes.code.tex, the `rectangle`
@@ -1739,7 +1741,7 @@ the larger minimum. The glyph box `lo`–`hi` is relative to the node's
 centre `sy`. Returns the outline's centre height and its width and height
 (a circle's are both its diameter), so a governing minimum is met to the
 sp. -/
-def nodeOutline (circle : Bool) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
+public def nodeOutline (circle : Bool) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
     Sp × Sp × Sp :=
   let mid := sy + (lo + hi) / 2
   let tx := textHalfW + sepX
@@ -1753,7 +1755,7 @@ def nodeOutline (circle : Bool) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
 drawn rectangle is centred on the text box and at least the text box plus
 two inner seps on each axis — the room pgf gives a node's text, whatever
 minimum it declares — and a governing minimum is its size exactly. -/
-theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
+public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
     (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
       2 * (textHalfW + sepX) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
       2 * ((hi - lo) / 2 + sepY) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.2 ∧
@@ -1772,7 +1774,7 @@ anchor, `.5\wd` across and `.5\ht − .5\dp` up from the box's origin, which
 and depth `dp` stands with its baseline `(ht − dp)/2` below the node, so it
 spans `dp` below that baseline and `ht` above it. Returns the baseline and
 the box's lower and upper edges, relative to the node's position. -/
-def textSeat (ht dp : Sp) : Sp × Sp × Sp :=
+public def textSeat (ht dp : Sp) : Sp × Sp × Sp :=
   let b := -((ht - dp) / 2)
   (b, b - dp, b + ht)
 
@@ -1783,7 +1785,7 @@ frame, the anchors on it and the edges from them therefore follow the node
 and never its glyphs. The defect centred each outline on its letters' box
 instead, so `g` stood 2 bp above `A` at one declared height and a
 `right=of` chain climbed by the difference at every step. -/
-theorem nodeOutline_seat_exact (circle : Bool) (minW minH sy textHalfW ht dp sepX sepY : Int) :
+public theorem nodeOutline_seat_exact (circle : Bool) (minW minH sy textHalfW ht dp sepX sepY : Int) :
     (nodeOutline circle minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
       sepX sepY).1 = sy := by
   have step : ∀ s h d : Int, s + ((-((h - d) / 2) - d) + (-((h - d) / 2) + h)) / 2 = s := by
@@ -1795,7 +1797,7 @@ declared minimum where that is larger.** pgf manual §17.2.2 — a node's
 border is its text *plus* `inner sep`, and §17.5.2's anchors sit on the
 border, not on the letters. One site, so the extent an anchor resolves
 against and the extent a relative placement measures are the same number. -/
-def borderHalf (decl ink sep : Sp) : Sp := max decl (ink + sep)
+public def borderHalf (decl ink sep : Sp) : Sp := max decl (ink + sep)
 
 /-- **The border stands between the letters and one inner sep beyond
 them.** The registered `_between` shape, and the tighter sibling of
@@ -1809,7 +1811,7 @@ The strict lower bound is what the defect failed: the extent was
 where pgf puts it and an edge drawn to a node's `west` started inside the
 label's first letter. Spelled over bare `Int` binders, since `omega` does
 not read an `Sp`-typed structure field. -/
-theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
+public theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
     (hs : 0 < sep) : ink < borderHalf decl ink sep ∧ borderHalf decl ink sep ≤ ink + sep := by
   have step : ∀ d i s : Int, d ≤ i + s → 0 < s → i < max d (i + s) ∧ max d (i + s) ≤ i + s := by
     intro d i s h1 h2; omega
@@ -1817,7 +1819,7 @@ theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
 
 /-- A named node's anchoring geometry: centre and border half-extents (a
 circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
-structure NodeGeom where
+public structure NodeGeom where
   x : Sp
   y : Sp
   a : Sp := 0
@@ -1843,7 +1845,7 @@ with `east` and `west`.
 this walk cannot ask for (the same missing measurement `Cx.metric` names) —
 so the `mid` family is not a constructor here and is named where it is
 written. -/
-inductive NodeAnchor where
+public inductive NodeAnchor where
   | center
   | north | south | east | west
   | northEast | northWest | southEast | southWest
@@ -1877,11 +1879,11 @@ private def diag45 : Int := 707
 
 /-- The horizontal reach of a corner anchor: a rectangle's corner is its
 own border, a circle's the point on the circle at 45°. -/
-def NodeGeom.cornerA (g : NodeGeom) : Sp :=
+public def NodeGeom.cornerA (g : NodeGeom) : Sp :=
   if g.circle then g.a * diag45 / 1000 else g.a
 
 /-- The vertical reach of a corner anchor. -/
-def NodeGeom.cornerB (g : NodeGeom) : Sp :=
+public def NodeGeom.cornerB (g : NodeGeom) : Sp :=
   if g.circle then g.b * diag45 / 1000 else g.b
 
 /-- The baseline the `base` family stands on, held inside the node's own
@@ -1890,13 +1892,13 @@ which is what `Ir.Pic.nodeExtent_covers` says of the number `evalNode`
 registers — and a guard where a metric answers a descender deeper than the
 node's own border: an anchor may not name a point outside the box every
 relative placement measures from. -/
-def NodeGeom.baseY (g : NodeGeom) : Sp :=
+public def NodeGeom.baseY (g : NodeGeom) : Sp :=
   max (g.y - g.b) (min (g.y + g.b) g.base)
 
 /-- Where a named anchor stands. Arithmetic on the centre and the
 half-extents the node registered, arm by arm so each position reads off the
 declaration it came from rather than off an offset table. -/
-def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
+public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
   | .center => (g.x, g.y)
   | .north => (g.x, g.y + g.b)
   | .south => (g.x, g.y - g.b)
@@ -1914,7 +1916,7 @@ def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
 own border: the pairing rather than four coordinates restated, so a sign
 error in the table is one failing conjunct. `offset_corners_exact` is the
 same shape one level up, over the relative-placement vocabulary. -/
-theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.circle = false) :
+public theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.circle = false) :
     g.anchorPoint .northEast = ((g.anchorPoint .east).1, (g.anchorPoint .north).2) ∧
     g.anchorPoint .northWest = ((g.anchorPoint .west).1, (g.anchorPoint .north).2) ∧
     g.anchorPoint .southEast = ((g.anchorPoint .east).1, (g.anchorPoint .south).2) ∧
@@ -1928,7 +1930,7 @@ sign error puts `west` where `east` belongs and this is the conjunct that
 fails. The `_exact` sibling of `offset_opposite_exact`. Spelled through
 bare `Int` binders because `omega` does not read an `Sp`-typed structure
 field — the workaround `Ir.Pic.labelInkSpan_covers_anchor` records. -/
-theorem anchorPoint_opposite_exact (g : NodeGeom) :
+public theorem anchorPoint_opposite_exact (g : NodeGeom) :
     (g.anchorPoint .east).1 - g.x = g.x - (g.anchorPoint .west).1 ∧
     (g.anchorPoint .north).2 - g.y = g.y - (g.anchorPoint .south).2 ∧
     (g.anchorPoint .center) = (g.x, g.y) := by
@@ -1951,7 +1953,7 @@ wherever the face put the baseline — held in by `NodeGeom.baseY`, which is
 why this needs no hypothesis about the measurement. Every arithmetic step
 is a lemma over bare `Int` binders applied to the fields, because `omega`
 does not read an `Sp`-typed structure field. -/
-theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
+public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
     (an : NodeAnchor) :
     Ir.Pic.Box.le (g.anchorPoint an, g.anchorPoint an)
       (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) := by
@@ -2009,7 +2011,7 @@ private def splitAnchor (s : String) : Option (String × String) :=
 /-- Shapes and named losses, accumulated across the unrolled walk. A
 diagnostic dedupes on its message: one construct looped over forty times
 is one problem, not forty. -/
-structure Ev where
+public structure Ev where
   shapes : Array Ir.Pic.Shape := #[]
   diags : Array PDiag := #[]
   /-- The box a `\useasboundingbox` declared (`Ir.Pic.Picture.declared`). -/
@@ -2044,14 +2046,14 @@ private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
 /-- The evaluated marks and authored bounds passed to both backends.
 Node anchor borders and measured text remain separate: a declared text
 height or negative padding may deliberately put text outside its border. -/
-def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
+public def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
   { shapes := ev.shapes, declared := ev.declared, borders := ev.borders, baseline }
 
 /-- Every emitted label's measured text lies in the reserved picture
 extent, unless the author explicitly replaced that extent. This projects
 the IR hull contract onto the actual picture producer; it does not claim
 that an authored node border encloses its text. -/
-theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
+public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ ev.shapes)
@@ -2140,7 +2142,7 @@ private def evalBBox (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
 per mille of the node's own. A label is one line per `\\`, because
 `Ir.Pic.Shape.label` carries one size and one anchor — so a second line is
 a second shape, stacked by `nodeLineLead`, not a break inside one. -/
-abbrev LabelLine := Array Ir.Inline × Nat
+public abbrev LabelLine := Array Ir.Inline × Nat
 
 /-- The baseline-to-baseline distance between a node label's lines: the
 engine's own leading over the size the *following* line sets at, as TeX's
@@ -2158,7 +2160,7 @@ private def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
 was named: the same bracketed ellipsis a degraded formula inks, for the
 same reason — a blank tells a reader nothing stood there.
 `nodeLabel_accounts` is the statement that the case is never silent. -/
-def nodeFloorPlaceholder : String := String.ofList Ir.mathFloorPlaceholder
+public def nodeFloorPlaceholder : String := String.ofList Ir.mathFloorPlaceholder
 
 /-- Commands whose content is invisible by definition: a phantom sets a box
 of its argument's size and no ink. Read rather than refused, so a
@@ -2167,7 +2169,7 @@ is honestly empty — the placeholder would claim ink where TeX shows none.
 The height a phantom props is not lost either: this subset measures no
 node body's extent at all (see the emission note in `evalNode`), so there
 is no height here to keep. -/
-def phantomCtrl : List String := ["vphantom", "hphantom", "phantom"]
+public def phantomCtrl : List String := ["vphantom", "hphantom", "phantom"]
 
 /-- What a node body's salvage is in the middle of. The modes let the walk
 read one token at a time, so a construct spanning several of them needs no
@@ -2520,7 +2522,7 @@ placeholder when the salvage kept nothing and a loss was named. The same
 shape `Ir.floorInk` gives a degraded formula, and for the same reason — a
 blank page region is not an honest floor, because it tells a reader nothing
 stood there. -/
-def labelFloor (lines : Array LabelLine) (named : Bool) : Array LabelLine :=
+public def labelFloor (lines : Array LabelLine) (named : Bool) : Array LabelLine :=
   if Sal.inked lines || !named then lines
   else #[(#[.text nodeFloorPlaceholder], 1000)]
 
@@ -2536,12 +2538,16 @@ pays for it. `nodeLabel_source_mem` bounds the result by its actual text
 sources, including elaborated mathematics. The whole-label rows in
 `pictureNodeFloorChecks` cover selection: naming arguments are discarded
 and readable content is kept. -/
-theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named) :
-    Sal.inked (labelFloor lines named) := by
+public theorem labelFloor_accounts (lines : Array LabelLine) (named : Bool) (h : named) :
+    (0 < (labelFloor lines named).foldl (fun n l => n + l.1.size) 0 : Bool) := by
   unfold labelFloor
   split
   · rename_i hc
-    simpa only [h, Bool.not_true, Bool.or_false] using hc
+    apply decide_eq_true
+    have hi : Sal.inked lines := by
+      simpa only [h, Bool.not_true, Bool.or_false] using hc
+    have hk : 0 < Sal.inkCount lines := of_decide_eq_true hi
+    simpa only [Sal.inkCount] using hk
   · decide
 
 /-- A node body's label lines. Words, numbers and bound macros become text,
@@ -2557,7 +2563,7 @@ that would have told them is the thing they never see. This is the same
 judgement `Ir.mathFloor` makes for a formula the engine cannot set, one
 module over — and the same placeholder closes it, so a named loss never
 ships a blank (`labelFloor_accounts`). -/
-def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+public def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     Array LabelLine × Array PDiag :=
   let walked := salList cx env toks {}
   -- A construct the body opened and never closed has eaten the rest of the
@@ -2572,8 +2578,9 @@ def nodeLabel (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
 
 /-- The page side of `labelFloor_accounts`: a node body whose salvage named
 a loss ships ink, whatever the body was. -/
-theorem nodeLabel_accounts (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
-    ¬ (nodeLabel cx env toks).2.isEmpty → Sal.inked (nodeLabel cx env toks).1 := by
+public theorem nodeLabel_accounts (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    ¬ (nodeLabel cx env toks).2.isEmpty →
+      (0 < (nodeLabel cx env toks).1.foldl (fun n l => n + l.1.size) 0 : Bool) := by
   intro hd
   simp only [nodeLabel] at hd ⊢
   exact labelFloor_accounts _ _ (by simpa using hd)
@@ -2778,14 +2785,14 @@ private theorem Sal.splice_from (P : Char → Prop) (s body : Sal)
 /-- A literal source token, before any salvage decision. A number's
 spelling is the token reader's canonical `milliString`, since `Tok.num`
 retains its value rather than its original spelling. -/
-inductive LabelLiteral where
+public inductive LabelLiteral where
   | word (text : String)
   | number (milli : Int)
   | symbol (char : Char)
   | space
   deriving Repr, BEq
 
-def LabelLiteral.text : LabelLiteral → String
+public def LabelLiteral.text : LabelLiteral → String
   | .word s => s
   | .number m => milliString m
   | .symbol c => String.singleton c
@@ -2794,13 +2801,13 @@ def LabelLiteral.text : LabelLiteral → String
 /-- An independently enumerable input to a node label. A substitution
 retains its declaration name and value; a math input retains its original
 body and display mode, not a certificate attached to the produced inline. -/
-inductive LabelInput where
+public inductive LabelInput where
   | literal (source : LabelLiteral)
   | substitution (name : String) (value : Val)
   | math (display : Bool) (body : List Parse.Raw)
   deriving Repr, BEq
 
-def LabelInput.text (cx : Cx) : LabelInput → String
+public def LabelInput.text (cx : Cx) : LabelInput → String
   | .literal source => source.text
   | .substitution _ value => value.text
   | .math d body => Ir.plainTextOne (cx.math d body.toArray).1
@@ -2811,12 +2818,12 @@ mutual
 declared substitutions. It reads no salvage state, output or diagnostic.
 In particular it enumerates math *inputs* without invoking the callback.
 This walk is over `Tok`, whose group tree is not the document IR. -/
-def labelInputList (env : List (String × Val)) (acc : Array LabelInput) :
+public def labelInputList (env : List (String × Val)) (acc : Array LabelInput) :
     List Tok → Array LabelInput
   | [] => acc
   | t :: rest => labelInputList env (labelInputOne env acc t) rest
 
-def labelInputOne (env : List (String × Val)) (acc : Array LabelInput) :
+public def labelInputOne (env : List (String × Val)) (acc : Array LabelInput) :
     Tok → Array LabelInput
   | .ident w => acc.push (.literal (.word w))
   | .num m => acc.push (.literal (.number m))
@@ -2835,7 +2842,7 @@ mutual
 
 /-- The census preserves its initial sources exactly, including through
 nested groups. This equation exposes its accumulator to consumers. -/
-theorem labelInputList_prefix_exact (env : List (String × Val))
+public theorem labelInputList_prefix_exact (env : List (String × Val))
     (initial acc : Array LabelInput) (ts : List Tok) :
     labelInputList env (initial ++ acc) ts =
       initial ++ labelInputList env acc ts := by
@@ -2845,7 +2852,7 @@ theorem labelInputList_prefix_exact (env : List (String × Val))
     rw [labelInputList, labelInputOne_prefix_exact, labelInputList_prefix_exact]
     rfl
 
-theorem labelInputOne_prefix_exact (env : List (String × Val))
+public theorem labelInputOne_prefix_exact (env : List (String × Val))
     (initial acc : Array LabelInput) (t : Tok) :
     labelInputOne env (initial ++ acc) t = initial ++ labelInputOne env acc t := by
   cases t with
@@ -2855,15 +2862,15 @@ theorem labelInputOne_prefix_exact (env : List (String × Val))
 
 end
 
-def labelInputText (cx : Cx) (inputs : Array LabelInput) : String :=
+public def labelInputText (cx : Cx) (inputs : Array LabelInput) : String :=
   String.join (inputs.toList.map (LabelInput.text cx))
 
-theorem labelInputText_append (cx : Cx) (a b : Array LabelInput) :
+public theorem labelInputText_append (cx : Cx) (a b : Array LabelInput) :
     labelInputText cx (a ++ b) = labelInputText cx a ++ labelInputText cx b := by
   simp [labelInputText, String.join_append]
 
 /-- A character in the census text has an actual input witness. -/
-theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Char) :
+public theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Char) :
     c ∈ (labelInputText cx inputs).toList ↔
       ∃ input ∈ inputs, c ∈ (input.text cx).toList := by
   cases inputs with
@@ -2878,14 +2885,14 @@ theorem labelInputText_mem (cx : Cx) (inputs : Array LabelInput) (c : Char) :
 /-- Potential readable label characters. This projection of the source
 census allows arbitrary math callback output. Salvage may discard sources
 used as options or names, so the bound is containment, not equality. -/
-def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
+public def labelSources (cx : Cx) (env : List (String × Val)) (ts : List Tok) : String :=
   labelInputText cx (labelInputList env #[] ts)
 
-def labelSource (cx : Cx) (env : List (String × Val)) (t : Tok) : String :=
+public def labelSource (cx : Cx) (env : List (String × Val)) (t : Tok) : String :=
   labelInputText cx (labelInputOne env #[] t)
 
 /-- The single-token equation of the independently collected text. -/
-theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
+public theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
     labelSource cx env t = match t with
       | .ident w => w
       | .num m => milliString m
@@ -2899,35 +2906,35 @@ theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok) :
       | .other _ => "" := by
   cases t <;> simp [labelSource, labelInputOne, labelInputText, LabelInput.text,
     LabelLiteral.text, labelSources]
-  split <;> simp [LabelInput.text]
+  split <;> simp [LabelInput.text, *]
 
-theorem labelSources_cons (cx : Cx) (env : List (String × Val)) (t : Tok) (ts : List Tok) :
+public theorem labelSources_cons (cx : Cx) (env : List (String × Val)) (t : Tok) (ts : List Tok) :
     labelSources cx env (t :: ts) = labelSource cx env t ++ labelSources cx env ts := by
   unfold labelSources labelSource
   change labelInputText cx (labelInputList env (labelInputOne env #[] t ++ #[]) ts) = _
   rw [labelInputList_prefix_exact, labelInputText_append]
 
 /-- The closed vocabulary of text the label reader may generate. -/
-inductive LabelGenerated where
+public inductive LabelGenerated where
   | nodeFloor
   deriving Repr, BEq
 
-def LabelGenerated.text : LabelGenerated → String
+public def LabelGenerated.text : LabelGenerated → String
   | .nodeFloor => nodeFloorPlaceholder
 
-inductive LabelOrigin where
+public inductive LabelOrigin where
   | source (input : LabelInput)
   | generated (kind : LabelGenerated)
   deriving Repr, BEq
 
-def LabelOrigin.text (cx : Cx) : LabelOrigin → String
+public def LabelOrigin.text (cx : Cx) : LabelOrigin → String
   | .source input => input.text cx
   | .generated kind => kind.text
 
 /-- Source permission depends only on the input census. The one generated
 fallback is permitted only when the run names a loss. Neither permission
 uses a source tag supplied by the salvage implementation. -/
-def LabelOrigin.Permitted (env : List (String × Val)) (toks : List Tok)
+public def LabelOrigin.Permitted (env : List (String × Val)) (toks : List Tok)
     (named : Bool) : LabelOrigin → Prop
   | .source input => input ∈ labelInputList env #[] toks
   | .generated .nodeFloor => named = true
@@ -3061,7 +3068,7 @@ including malformed bodies, literal brackets and arbitrary math callback
 output. It bounds the actual `salList`/`salOne` salvage, its style/colour
 splice loop and its final floor. It makes no claim that every source is
 selected, nor that each occurrence has a unique origin. -/
-theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+public theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     ∀ line ∈ (nodeLabel cx env toks).1,
       ∀ c ∈ (Ir.plainText line.1).toList,
         ∃ origin : LabelOrigin,
@@ -3084,7 +3091,7 @@ theorem nodeLabel_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
 
 /-- A run without a diagnostic needs only genuine input witnesses; the
 generated fallback cannot account for any of its characters. -/
-theorem nodeLabel_clean_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok)
+public theorem nodeLabel_clean_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok)
     (clean : (nodeLabel cx env toks).2.isEmpty = true) :
     ∀ line ∈ (nodeLabel cx env toks).1,
       ∀ c ∈ (Ir.plainText line.1).toList,
@@ -3106,7 +3113,7 @@ markers cannot become a source merely because the reader encountered them.
 The bound is on provenance, not selection: options may carry readable
 characters which the reader intentionally discards. `nodeLabel_accounts`
 covers the separate guarantee that a named loss leaves visible ink. -/
-theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+public theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     ∀ line ∈ (nodeLabel cx env toks).1,
       ∀ c ∈ (Ir.plainText line.1).toList,
         c ∈ (labelSources cx env toks).toList ∨ c ∈ Ir.mathFloorPlaceholder := by
@@ -3124,7 +3131,7 @@ anchor, so a multi-line label is several of them — `\\` is a real break,
 not a degradation, and layout sets one line per label shape. An empty line
 ships no shape: a blank contributes its height, which this subset does not
 measure, and no ink. -/
-def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Color)
+public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Color)
     (align : Ir.Pic.LabelAlign) (lines : Array LabelLine)
     (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape := Id.run do
   -- Each gap is the leading of the line *below* it, so a smaller second
@@ -3252,7 +3259,7 @@ private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
 /-- A relative placement's direction: the `positioning` keys this subset
 reads — the four sides and the four corners. Public because the placement
 facts range over it: a statement needs a name to talk about. -/
-inductive Dir where
+public inductive Dir where
   | left | right | above | below
   | aboveLeft | aboveRight | belowLeft | belowRight
   deriving Repr, BEq, Inhabited
@@ -3275,7 +3282,7 @@ pair, and both for a corner — pgf spells the pair vertical first. The
 caller adds the two nodes' half-extents to the declared `node distance`,
 which is how pgf measures the gap: border to border, not centre to
 centre (`positioning` library). -/
-def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
+public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   match d with
   | .left => (-sep.2, 0)
   | .right => (sep.2, 0)
@@ -3291,19 +3298,19 @@ been read. Relative placement names exactly one geometry to read; absolute
 placement reads none. Keeping that dependency explicit lets the resolver's
 order contract cover every direction without assuming that arbitrary
 source statements commute. -/
-inductive NodePlacement where
+public inductive NodePlacement where
   | absolute (x y : Sp)
   | relative (dir : Dir) (target : String) (sep : Sp × Sp)
   deriving Repr, Inhabited
 
-def NodePlacement.target : NodePlacement → Option String
+public def NodePlacement.target : NodePlacement → Option String
   | .absolute .. => none
   | .relative _ name _ => some name
 
 /-- Resolve the centre from the declared gap and both nodes' anchor
 extents. Failure carries the missing name so the caller can account for
 it without recovering a name from diagnostic text. -/
-def NodePlacement.position (p : NodePlacement) (a b : Sp)
+public def NodePlacement.position (p : NodePlacement) (a b : Sp)
     (nodes : List (String × NodeGeom)) : Except String (Sp × Sp) :=
   match p with
   | .absolute x y => .ok (x, y)
@@ -3318,18 +3325,18 @@ def NodePlacement.position (p : NodePlacement) (a b : Sp)
 is the text baseline relative to the node centre; resolution translates
 it together with the centre. `evalNode` uses this value for both the
 geometry it emits and the geometry later nodes read. -/
-structure NodePlan where
+public structure NodePlan where
   name : Option String
   placement : NodePlacement
   shape : NodeGeom
   deriving Repr, Inhabited
 
-def NodePlan.resolve (p : NodePlan) (nodes : List (String × NodeGeom)) :
+public def NodePlan.resolve (p : NodePlan) (nodes : List (String × NodeGeom)) :
     Except String NodeGeom :=
   (p.placement.position p.shape.a p.shape.b nodes).map fun (x, y) =>
     { p.shape with x, y, base := y + p.shape.base }
 
-def NodePlan.register (p : NodePlan) (resolved : Option NodeGeom)
+public def NodePlan.register (p : NodePlan) (resolved : Option NodeGeom)
     (nodes : List (String × NodeGeom)) : List (String × NodeGeom) :=
   match p.name, resolved with
   | some name, some g => (name, g) :: nodes
@@ -3337,7 +3344,7 @@ def NodePlan.register (p : NodePlan) (resolved : Option NodeGeom)
 
 /-- Resolve once, then register precisely that geometry if the node has a
 name. An unnamed or unresolved node cannot change another node's lookup. -/
-def NodePlan.run (p : NodePlan) (nodes : List (String × NodeGeom)) :
+public def NodePlan.run (p : NodePlan) (nodes : List (String × NodeGeom)) :
     Except String NodeGeom × List (String × NodeGeom) :=
   let resolved := p.resolve nodes
   (resolved, p.register resolved.toOption nodes)
@@ -3346,12 +3353,12 @@ def NodePlan.run (p : NodePlan) (nodes : List (String × NodeGeom)) :
 neither reads the other's write. Repeated names and a node placed against
 the other node fail these conditions; both are legitimate source programs
 whose order can matter. -/
-def NodePlan.Independent (p q : NodePlan) : Prop :=
+public def NodePlan.Independent (p q : NodePlan) : Prop :=
   (∀ n, p.name = some n → q.name ≠ some n) ∧
   (∀ n, p.placement.target = some n → q.name ≠ some n) ∧
   (∀ n, q.placement.target = some n → p.name ≠ some n)
 
-theorem NodePlan.register_lookup (p : NodePlan) (g : Option NodeGeom)
+public theorem NodePlan.register_lookup (p : NodePlan) (g : Option NodeGeom)
     (nodes : List (String × NodeGeom)) (n : String) (h : p.name ≠ some n) :
     (p.register g nodes).lookup n = nodes.lookup n := by
   cases hn : p.name with
@@ -3361,7 +3368,7 @@ theorem NodePlan.register_lookup (p : NodePlan) (g : Option NodeGeom)
     have hne : (n == name) = false := beq_eq_false_iff_ne.mpr ne
     cases g <;> simp [register, hn, List.lookup_cons, hne]
 
-theorem NodePlan.resolve_register (p q : NodePlan) (g : Option NodeGeom)
+public theorem NodePlan.resolve_register (p q : NodePlan) (g : Option NodeGeom)
     (nodes : List (String × NodeGeom))
     (h : ∀ n, p.placement.target = some n → q.name ≠ some n) :
     p.resolve (q.register g nodes) = p.resolve nodes := by
@@ -3372,7 +3379,7 @@ theorem NodePlan.resolve_register (p q : NodePlan) (g : Option NodeGeom)
     simp only [NodePlacement.position]
     rw [q.register_lookup g nodes target (h target (by simp [NodePlacement.target, hp]))]
 
-theorem NodePlan.register_order (p q : NodePlan) (pg qg : Option NodeGeom)
+public theorem NodePlan.register_order (p q : NodePlan) (pg qg : Option NodeGeom)
     (nodes : List (String × NodeGeom))
     (h : ∀ n, p.name = some n → q.name ≠ some n) (n : String) :
     (p.register pg (q.register qg nodes)).lookup n =
@@ -3391,7 +3398,7 @@ theorem NodePlan.register_order (p q : NodePlan) (pg qg : Option NodeGeom)
 when a reference is missing. This is a contract of the resolver `evalNode`
 uses, not of arbitrary statements: redefining a node or changing a macro
 between nodes can intentionally change the result. -/
-theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String × NodeGeom))
+public theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String × NodeGeom))
     (h : p.Independent q) (name : String) :
     (q.run (p.run nodes).2).2.lookup name =
       (p.run (q.run nodes).2).2.lookup name := by
@@ -3402,7 +3409,7 @@ theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String × Nod
 
 /-- Distinct named absolute placements, as produced by `at (x,y)`, satisfy
 the independence premise for all positions and measured shapes. -/
-theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
+public theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
     (px py qx qy : Sp) (pg qg : NodeGeom) :
     Independent ⟨some pn, .absolute px py, pg⟩ ⟨some qn, .absolute qx qy, qg⟩ := by
   refine ⟨?_, ?_, ?_⟩
@@ -3415,7 +3422,7 @@ theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
 `tikz@auto@anchor` ignores normalized tangent components within ±.05;
 comparing twenty times the component with the length avoids division.
 Swapping sides reverses the tangent before making the same decision. -/
-def autoDir (left : Bool) (dx dy : Sp) : Dir :=
+public def autoDir (left : Bool) (dx dy : Sp) : Dir :=
   let x := if left then dx else -dx
   let y := if left then dy else -dy
   let n := isqrt (x * x + y * y)
@@ -3429,7 +3436,7 @@ def autoDir (left : Bool) (dx dy : Sp) : Dir :=
 
 /-- Reversing a path and swapping its automatic side attach to the same
 side of the same label box, for every tangent, including a zero tangent. -/
-theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
+public theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
     autoDir (!left) dx dy = autoDir left (-dx) (-dy) := by
   cases left <;> simp [autoDir]
 
@@ -3448,29 +3455,29 @@ boxes touched. Stated per axis because the two axes read different members
 of the pair; the corner directions are their conjunction
 (`offset_corners_exact`). Binders are `Int` so `omega` can read them, as
 the convention asks. -/
-theorem placeRight_border_exact (gx ga ownA s : Int) :
+public theorem placeRight_border_exact (gx ga ownA s : Int) :
     gx + (Dir.right.offset (0, s + ga + ownA)).1 - ownA - (gx + ga) = s := by
   simp [Dir.offset]
   omega
 
-theorem placeLeft_border_exact (gx ga ownA s : Int) :
+public theorem placeLeft_border_exact (gx ga ownA s : Int) :
     (gx - ga) - (gx + (Dir.left.offset (0, s + ga + ownA)).1 + ownA) = s := by
   simp [Dir.offset]
   omega
 
-theorem placeAbove_border_exact (gy gb ownB s : Int) :
+public theorem placeAbove_border_exact (gy gb ownB s : Int) :
     gy + (Dir.above.offset (s + gb + ownB, 0)).2 - ownB - (gy + gb) = s := by
   simp [Dir.offset]
   omega
 
-theorem placeBelow_border_exact (gy gb ownB s : Int) :
+public theorem placeBelow_border_exact (gy gb ownB s : Int) :
     (gy - gb) - (gy + (Dir.below.offset (s + gb + ownB, 0)).2 + ownB) = s := by
   simp [Dir.offset]
   omega
 
 /-- The four sides are two opposite pairs: a sign error in the vocabulary
 cannot hide behind a direction nothing tests. -/
-theorem offset_opposite_exact (s : Sp × Sp) :
+public theorem offset_opposite_exact (s : Sp × Sp) :
     Dir.left.offset s = (-(Dir.right.offset s).1, (Dir.right.offset s).2) ∧
       Dir.above.offset s = ((Dir.below.offset s).1, -(Dir.below.offset s).2) := by
   simp [Dir.offset]
@@ -3478,7 +3485,7 @@ theorem offset_opposite_exact (s : Sp × Sp) :
 /-- Each corner is exactly its two sides: `above left` moves by what
 `left` moves along x and what `above` moves along y, so the corner cases
 cannot drift from the sides they are named for. -/
-theorem offset_corners_exact (s : Sp × Sp) :
+public theorem offset_corners_exact (s : Sp × Sp) :
     Dir.aboveLeft.offset s = ((Dir.left.offset s).1, (Dir.above.offset s).2) ∧
       Dir.aboveRight.offset s = ((Dir.right.offset s).1, (Dir.above.offset s).2) ∧
       Dir.belowLeft.offset s = ((Dir.left.offset s).1, (Dir.below.offset s).2) ∧
@@ -3488,7 +3495,7 @@ theorem offset_corners_exact (s : Sp × Sp) :
 /-- The offset moves along one axis per member of the separation and
 invents no distance: every component is `0`, a member of the pair, or its
 negation. What stops a direction from quietly scaling the gap. -/
-theorem offset_mem (d : Dir) (s : Sp × Sp) :
+public theorem offset_mem (d : Dir) (s : Sp × Sp) :
     ((d.offset s).1 = 0 ∨ (d.offset s).1 = s.2 ∨ (d.offset s).1 = -s.2) ∧
       ((d.offset s).2 = 0 ∨ (d.offset s).2 = s.1 ∨ (d.offset s).2 = -s.1) := by
   cases d <;> simp [Dir.offset]
@@ -3586,14 +3593,14 @@ private def readsNodeOpt (opt : Array Tok) : Bool :=
 once for the document, or once for the picture, carries into the brackets
 below it. An entry no shape reads is honoured by nobody, so it stays a
 named loss at the line that wrote it. -/
-def readsOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
+public def readsOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
   readsPathOpt styles opt || readsNodeOpt opt
 
 /-- The two outer brackets as the shape at hand reads them. Neither was
 written at this statement, so an entry for the other shape is not a loss
 here — a document-level arrow tip is no complaint at a node — and the
 entries no shape reads are named where they were declared. -/
-def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) :
+public def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) :
     Array (Array Tok) × Array (Array Tok) :=
   (global.filter reads, picture.filter reads)
 
@@ -3602,7 +3609,7 @@ def outerRead (reads : Array Tok → Bool) (global picture : Array (Array Tok)) 
 (pgfcorescopes.code.tex, `\pgf@picture`), so a width a `\tikzset` line sets
 outside every picture reaches none: lualatex strokes such a picture at
 0.4 pt. The line's other keys do reach it. -/
-def pictureResets (o : Array Tok) : Bool := (readLineWidth o.toList).isSome
+public def pictureResets (o : Array Tok) : Bool := (readLineWidth o.toList).isSome
 
 /-- One `\tikzset` line folded into what the document has set so far: its
 definitions into the bundles, and the entries the subset reads into the
@@ -3612,7 +3619,7 @@ for the same reason — except a width, which every picture resets
 (`pictureResets`). The fold's body as its own function, so
 `documentOptsStep_covers` can state what one line contributes without
 reducing the fold. -/
-def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
+public def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
     (keys : Array Tok) : List (String × Array Tok) × Array (Array Tok) :=
   let (after, unread) := readStyleList sa.1 keys
   (after, inheritOpts sa.2 (unread.filter fun o => readsOpt after o && !pictureResets o))
@@ -3621,7 +3628,7 @@ def documentOptsStep (sa : List (String × Array Tok) × Array (Array Tok))
 entries that are not definitions, that the subset reads, and that no
 picture resets, folded in source order. The definitions those lines carry
 are `documentStyles`; what neither reads is `unreadKeys`. -/
-def documentOpts (sets : Array (Array Tok)) : Array (Array Tok) :=
+public def documentOpts (sets : Array (Array Tok)) : Array (Array Tok) :=
   (sets.foldl documentOptsStep ([], #[])).2
 
 /-- **A line's read entry is one the document has set.** An entry of a
@@ -3631,7 +3638,7 @@ set — so a tip declared once in the preamble is a key of the document and
 not a dropped one. With `outerRead_covers` and `merge_global_covers` this is
 the chain from the line that wrote the key to the bracket a statement
 reads. -/
-theorem documentOptsStep_covers {styles : List (String × Array Tok)}
+public theorem documentOptsStep_covers {styles : List (String × Array Tok)}
     {acc : Array (Array Tok)} {keys o : Array Tok}
     (h : o ∈ (readStyleList styles keys).2)
     (hr : readsOpt (readStyleList styles keys).1 o = true)
@@ -3646,7 +3653,7 @@ picture resets. The defect handed them the line's width, so a document
 whose preamble said `semithick` stroked every picture at 0.6 pt where
 lualatex strokes 0.4 pt — and the private reference corpus's pictures with
 it, on every page. -/
-theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
+public theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
     (h : o ∈ documentOpts sets) : pictureResets o = false := by
   unfold documentOpts at h
   have step : ∀ (sa : List (String × Array Tok) × Array (Array Tok)) (keys : Array Tok),
@@ -3667,7 +3674,7 @@ theorem documentOpts_mem (sets : Array (Array Tok)) {o : Array Tok}
 
 /-- The shape filter keeps what this shape reads: an entry a statement's own
 loop would read is not dropped on its way in from an outer bracket. -/
-theorem outerRead_covers {reads : Array Tok → Bool}
+public theorem outerRead_covers {reads : Array Tok → Bool}
     {global picture : Array (Array Tok)} {o : Array Tok}
     (h : o ∈ global) (hr : reads o) : o ∈ (outerRead reads global picture).1 := by
   simp only [outerRead, Array.mem_filter]
@@ -3678,7 +3685,7 @@ the line that wrote it. The elaborator's one caller; the fold the pictures
 read is `documentStyles`. A key the engine reads (`setsEngineKey`) is not
 among them, nor is one a statement reads (`readsOpt`, carried into every
 bracket by `documentOpts`): those are honoured, not dropped. -/
-def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
+public def unreadKeys (styles : List (String × Array Tok)) (keys : Array Tok) : Array String :=
   let (after, unread) := readStyleList styles keys
   (unread.filter fun e => !setsEngineKey e && !readsOpt after e).filterMap fun e =>
     -- The key's own name, whole: the path before any `/`, which is the name
@@ -3696,14 +3703,14 @@ number of times, ending at the `{text}` (TikZ manual §17.2, the node
 specification), so a prologue is a *fold* over these rather than a fixed
 sequence — a second bracket is ordinary pgf, and so is a bracket standing
 after `at`. -/
-inductive Part where
+public inductive Part where
   | brack (inner : Array Tok)
   | name (n : String)
   | atCoord (xs ys : Array Tok)
   deriving Repr, Inhabited
 
 /-- A node's prologue as read so far. -/
-structure Prologue where
+public structure Prologue where
   /-- Every option bracket's inner tokens, in source order: a later
   bracket's keys stand later, so precedence stays the merge's own rule
   (`mergeOpts`) and is not this reader's to decide. -/
@@ -3716,7 +3723,7 @@ structure Prologue where
 /-- Fold one part in. The shape is what makes the reader order-free by
 construction rather than by inspection: each part touches one field, so no
 part can be the one a position forgot. -/
-def Prologue.step (p : Prologue) : Part → Prologue
+public def Prologue.step (p : Prologue) : Part → Prologue
   | .brack inner => { p with brackets := p.brackets.push inner }
   | .name n => { p with name := p.name.orElse fun _ => some n }
   | .atCoord xs ys => { p with at? := some (xs, ys) }
@@ -3734,7 +3741,7 @@ were refused for *needing a body they had written*. Three errors on the
 private reference corpus read as a missing label. Stated as commutation
 rather than as a list of accepted orders, because the list is what the old
 reader was. -/
-theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
+public theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
     (xs ys : Array Tok) :
     (p.step (.brack inner)).step (.name n) = (p.step (.name n)).step (.brack inner) ∧
     (p.step (.brack inner)).step (.atCoord xs ys)
@@ -3747,7 +3754,7 @@ theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
 leaves the bracket list alone or appends to it, and never rewrites it — so
 a key cannot be dropped by what was written after it. The `_covers` half of
 the pair above. -/
-theorem prologue_brackets_covers (p : Prologue) (part : Part) :
+public theorem prologue_brackets_covers (p : Prologue) (part : Part) :
     (p.step part).brackets = p.brackets ∨
       ∃ inner, (p.step part).brackets = p.brackets.push inner := by
   cases part
@@ -4243,7 +4250,7 @@ set only where a `W0334` naming that construct was raised, so the quiet
 answer can never be the whole story a reader gets.
 -- premise: unreachedName_accounts — the gate reads a flag set only beside a
 -- named gap, so a picture with no gap cannot take this path. -/
-private def unreachedName (gapped : Bool) (what : String) : PDiag :=
+public def unreachedName (gapped : Bool) (what : String) : PDiag :=
   if gapped then
     (.W0334, s!"{what} is declared inside a construct outside the rendered \
 picture subset, so no node carries it; the edge is not drawn")
@@ -4253,7 +4260,7 @@ picture subset, so no node carries it; the edge is not drawn")
 `_accounts` shape: the pending answer is reachable only when a construct
 outside the subset was named, so the two codes stay one code one meaning and
 the reader is never left with the softer of the two alone. -/
-theorem unreachedName_accounts (gapped : Bool) (what : String)
+public theorem unreachedName_accounts (gapped : Bool) (what : String)
     (h : (unreachedName gapped what).1 = .W0334) : gapped = true := by
   cases gapped
   · simp only [unreachedName, Bool.false_eq_true] at h
@@ -4458,7 +4465,7 @@ private structure EdgeLabel where
 /-- Move an already measured label without changing its text or baseline
 rule. Other shapes are unchanged: this is the final step of path-label
 placement, after the path itself has been resolved. -/
-def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
+public def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
   | .label x y content color size align =>
     .label (x + offset.1) (y + offset.2) content color size align
   | s@(.rect ..) | s@(.circle ..) | s@(.frame ..) | s@(.edge ..) => s
@@ -4466,7 +4473,7 @@ def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
 /-- The emitted label's text box is exactly the translated IR box.
 Attachments can therefore use `Box.attachOffset_contract` without a
 second, backend-dependent measurement. -/
-theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
+public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
     (content : Array Ir.Inline) (color : Ir.Color) (size : Nat)
     (align : Ir.Pic.LabelAlign) (metric : Ir.Pic.LabelMetric) :
     match translateLabel offset (.label x y content color size align) with
@@ -5113,7 +5120,7 @@ private def splitRel (toks : Array Tok) : Option (Array Tok × Char × Array Tok
 
 /-- Which branch a test takes, given both sides evaluated: TeX's three
 integer relations and nothing else. -/
-def relHolds (rel : Char) (a b : Int) : Bool :=
+public def relHolds (rel : Char) (a b : Int) : Bool :=
   if rel == '<' then a < b else if rel == '>' then a > b else a == b
 
 /-- **A test takes exactly one branch, and the three relations are the
@@ -5124,7 +5131,7 @@ states away is the recovery it replaced: an `\ifnum` was named and skipped
 to the next `;`, so every statement of *both* branches after the first was
 drawn, which is wrong ink rather than missing ink. The registered `_exact`
 shape. -/
-theorem relTrichotomy_exact (a b : Int) :
+public theorem relTrichotomy_exact (a b : Int) :
     (relHolds '<' a b = true) = !(relHolds '>' a b || relHolds '=' a b) ∧
     (relHolds '>' a b = true) = !(relHolds '<' a b || relHolds '=' a b) ∧
     (relHolds '=' a b = true) = !(relHolds '<' a b || relHolds '>' a b) := by
@@ -5150,12 +5157,12 @@ whole overlay step, measured as a page that stopped existing.
 The recovery this replaced drew statement-for-statement from *both*
 branches, which is not a reading of the diagram at all. So the floor is one
 branch, and the assumption is named where the test was written. -/
-def condFloorTakesThen (thenS : List Stmt) : Bool := !thenS.isEmpty
+public def condFloorTakesThen (thenS : List Stmt) : Bool := !thenS.isEmpty
 
 /-- The branch the floor ships, as a value the statements below range over.
 The evaluator reads `condFloorTakesThen` at its branch point, so this is the
 same decision applied and not a second description of it. -/
-def condFloor (thenS elseS : List Stmt) : List Stmt :=
+public def condFloor (thenS elseS : List Stmt) : List Stmt :=
   if condFloorTakesThen thenS then thenS else elseS
 
 /-- **An unreadable test still ships a branch.** The registered `_accounts`
@@ -5163,7 +5170,7 @@ shape and a sibling of `labelFloor_accounts`: where either branch holds a
 statement, the floor ships statements — so a conditional the walk could not
 compute never silently empties a picture. Both branches empty is the one
 case that ships nothing, and then there was nothing to ship. -/
-theorem condFloor_accounts (thenS elseS : List Stmt)
+public theorem condFloor_accounts (thenS elseS : List Stmt)
     (h : ¬ (thenS.isEmpty ∧ elseS.isEmpty)) : (condFloor thenS elseS) ≠ [] := by
   simp only [condFloor, condFloorTakesThen, List.isEmpty_iff, not_and] at *
   cases thenS with
@@ -5172,7 +5179,7 @@ theorem condFloor_accounts (thenS elseS : List Stmt)
 
 /-- The floor is one of the two branches, never a mixture: the shape of the
 defect it replaced, which shipped statements from both. -/
-theorem condFloor_mem (thenS elseS : List Stmt) :
+public theorem condFloor_mem (thenS elseS : List Stmt) :
     condFloor thenS elseS = thenS ∨ condFloor thenS elseS = elseS := by
   simp only [condFloor]
   split
@@ -5360,7 +5367,7 @@ for resolved operations whose reads and writes are independent.
 The common case costs one run. A picture whose placements all read
 backwards — every picture written the way TikZ demands — defers nothing and
 returns immediately, so no existing document pays for this. -/
-def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
+public def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
   let (_, ev0) := evalList cx sts [] {}
   if ev0.deferred == 0 then return ev0
   let mut prev := ev0
@@ -5375,7 +5382,7 @@ extent under the resolving context's metric. Explicit bounding boxes are
 authoritative; node borders need not enclose text when the author changes
 text dimensions or uses negative padding. The shared IR hull, projected
 through the actual producer, covers all alignments, sizes and placements. -/
-theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
+public theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ (evalFixed cx sts).shapes)
@@ -5399,7 +5406,7 @@ the walk and named where it stands, which is the honest answer: expanding
 it would silently delete the construct, and honouring the redefinition
 would need a picture language this walk does not have. Read off the one
 place the vocabulary lives (`step`), so the two cannot drift. -/
-def walkCtrls : List String :=
+public def walkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "else", "fi"]
 
@@ -5730,7 +5737,7 @@ size ladder and the elaborator's declaration table, without defaults for
 the same reason: a forgotten ladder sets a venue's `\small` at the engine's
 step. `bodySize` is likewise required: label leading and relative lengths
 must read the same document size as their artifact measurement. -/
-def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
+public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
     (sets : Array (Array Parse.Raw) := #[])
@@ -5884,7 +5891,7 @@ outlined box carrying the diagnostic code, following the image precedent
 requested size; W0601). The size is the image default — 1 in square —
 because no honest extent is known, and the outline colour is the image
 placeholder's own grey, so the two failure modes read alike. -/
-def placeholder (code : String) : Ir.Pic.Picture :=
+public def placeholder (code : String) : Ir.Pic.Picture :=
   let side := Dim.inch 1     -- the image-request default when nothing loads
   let th := Dim.pt 3 / 4     -- the image placeholder's 0.75 pt outline
   let grey : Ir.Color := { r := 158, g := 158, b := 168 }  -- its 0.62 0.62 0.66 RG stroke
