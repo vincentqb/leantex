@@ -1,11 +1,42 @@
 import LeanTex.Core.PdfStruct
 
-/-! An ordinary consumer can use the structure producer's observable
-projections without depending on allocation or traversal helpers. -/
+/-! Ordinary consumers use typed content operations and structure
+projections without depending on rendering, allocation, or traversal helpers. -/
 
 namespace Tests.PdfInterfaces
 
 open LeanTex.Core
+
+example : Repr Pdf.PathOp := inferInstance
+example : BEq Pdf.TextItem := inferInstance
+example : Inhabited Pdf.ContentOp := inferInstance
+
+example (operations : Array Pdf.ContentOp) :
+    Pdf.render operations = Pdf.joinLines (Pdf.lines operations) :=
+  Pdf.render_lines_exact operations
+
+example (operations : Array Pdf.ContentOp) :
+    (Pdf.lines operations).countP Pdf.Line.isOpen =
+      (Pdf.lines operations).countP Pdf.Line.isEmc :=
+  Pdf.lines_marked_balanced operations
+
+example (left right : Array Nat)
+    (hl : ∀ glyph ∈ left, glyph < 65536)
+    (hr : ∀ glyph ∈ right, glyph < 65536)
+    (h : (Pdf.TextItem.glyphs left).render = (Pdf.TextItem.glyphs right).render) :
+    left = right :=
+  Pdf.glyphs_inj hl hr h
+
+example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (images : Array (Option Nat)) (tags : Array (Option String)) (page : Layout.PageOut) :
+    Pdf.runsOf (Pdf.contentOps geom remap widths images tags page) = Pdf.pageRuns page :=
+  Pdf.contentOps_text geom remap widths images tags page
+
+example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (images : Array (Option Nat)) (tags : Array (Option String)) (page : Layout.PageOut) :
+    Pdf.inkOps (Pdf.contentOps geom remap widths images tags page) =
+      Pdf.contentOpsPlain geom remap widths images tags page :=
+  Pdf.mark_ink_exact geom remap widths images tags page
 
 example : Repr Pdf.StructKid := inferInstance
 example : Repr Pdf.StructElem := inferInstance
@@ -27,6 +58,27 @@ example (elements : Array Pdf.StructElem) (parent leaf : Nat) (alternative : Ir.
       | .decorative => 0
       | .undeclared | .described _ => 1 :=
   Pdf.altElem_size_exact elements parent leaf alternative
+
+example : True := by
+  fail_if_success have := Pdf.pushGid
+  fail_if_success have := Pdf.dashOp
+  fail_if_success have := Pdf.paintOp
+  fail_if_success have := Pdf.strokeOp
+  fail_if_success have := Pdf.fillOp
+  fail_if_success have := Pdf.renderStep
+  fail_if_success have := Pdf.TextOp.renderLines
+  fail_if_success have := Pdf.ContentOp.renderLines
+  fail_if_success have := Pdf.widthμOf
+  fail_if_success have := Pdf.penTarget
+  fail_if_success have := Pdf.TextSt.closeTJ
+  fail_if_success have := Pdf.TextSt.moveTo
+  fail_if_success have := Pdf.TextSt.setFace
+  fail_if_success have := Pdf.stepRun
+  fail_if_success have := Pdf.stepSeg
+  fail_if_success have := Pdf.pathGroupsList
+  fail_if_success have := Pdf.TextOp.numberList
+  fail_if_success have := Pdf.ContentOp.numberList
+  trivial
 
 example : True := by
   fail_if_success have := Pdf.structTypeOf

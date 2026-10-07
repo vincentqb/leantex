@@ -793,6 +793,9 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (hstm : t.objStmId = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 2)
     (hsize : t.size = t.xmpId + 3) :
     t.ids.toList = List.range' 1 (t.size - 1) := by
+  have joinRanges (s m s' n : Nat) (h : s' = s + m) :
+      List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
+    simpa only [h] using (List.range'_append_1 (s := s) (m := m) (n := n))
   have hfont : ∀ k, [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k, ObjTable.toUniId k]
       = List.range' (3 + 4 * k) 4 := fun _ => rfl
   have hpage : ∀ i, [t.pageId i, t.contentId i] = List.range' (t.pageBase + 2 * i) 2 :=
@@ -817,7 +820,7 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail, hstruct, helems]
   by_cases h0 : t.nOut = 0
   · simp only [h0, beq_self_eq_true, ite_true, Array.toList_empty, List.append_nil] at hsr ⊢
-    simp (disch := omega) only [range'_append_of]
+    simp (disch := omega) only [joinRanges]
     rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
     congr 1
     omega
@@ -826,9 +829,9 @@ theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
       Array.toList_range, hitems] at hsr ⊢
     have hout : [t.outlineRootId] ++ List.range' (t.infoId + 2) t.nOut
         = List.range' (t.infoId + 1) (1 + t.nOut) := by
-      rw [hroot]; exact range'_append_of _ 1 _ _ rfl
+      rw [hroot]; exact joinRanges _ 1 _ _ rfl
     rw [hout]
-    simp (disch := omega) only [range'_append_of]
+    simp (disch := omega) only [joinRanges]
     rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
     congr 1
     omega
