@@ -7,6 +7,10 @@ import Tests.ContrastInterface
 import Tests.PresentationInterfaces
 import Tests.Support
 import Tests.CliFoundationInterface
+import Tests.BoundaryInterface
+import Tests.DriverDiagInterface
+import Tests.ListingHighlightInterface
+import Tests.PublicationInterface
 import Tests.DiagInterface
 import Tests.LeafInterfaces
 import Tests.MathInterface
