@@ -1,3 +1,5 @@
+module
+
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Version
 import LeanTex.Core.Diag
@@ -14,6 +16,8 @@ import LeanTex.Core.Struct
 import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
+import LeanTex.Core.BibStyle
+import LeanTex.Core.PictureCensus
 import LeanTex.Core.Font
 import LeanTex.Core.FontDb
 import LeanTex.Core.Hyphen
@@ -1034,7 +1038,7 @@ def watch (cfg : Config) (file : String) : IO UInt32 := do
       discard <| build (← Ui.mk' cfg) file
   return 0
 
-def main (argv : List String) : IO UInt32 := do
+public def main (argv : List String) : IO UInt32 := do
   match parse argv with
   | .error msg =>
     let stderr ← IO.getStderr

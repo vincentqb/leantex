@@ -1,9 +1,11 @@
-import LeanTex.Cli.Driver
+import Tests.DriverAssets
+import LeanTex.Cli.Publication
+import LeanTex.Cli.ImageAssets
 import Tests.Support
 
 namespace Tests
 
-open LeanTex.Core LeanTex.Cli.Publication LeanTex.Cli.Driver
+open LeanTex.Core LeanTex.Cli.Publication Tests.DriverAssets
 
 /-- A boundary face is the conversion of captured PDF bytes. A stale
 unkeyed sibling cannot answer for it, and a cache replacement between
@@ -25,7 +27,7 @@ def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let initial : Image.Store := { entries := #[
         { src := source, info := some { pxW := 120, pxH := 80 } }] }
       let (imgs, diags, unconverted) ← picsToSvg
-        #[{ src := source, bytes := svgCanvasPdf }] initial
+        #[(source, svgCanvasPdf)] initial
       check ref s!"boundary {name}: conversion follows captured PDF bytes"
         (imgs.entries[0]!.webSvg == some expected && diags.isEmpty && unconverted.isEmpty)
       check ref s!"boundary {name}: preparation creates no output directory"
