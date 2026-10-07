@@ -1587,7 +1587,7 @@ so the face a run selects is one function of `(slot, weight, italic)`
 in both backends: the PDF resolves it through `FontSet.lookup`, the
 HTML emits `weight.css` and ships each face under its own
 `font-weight` (`html_fonts_cover_pdf` carries the coverage half). -/
-theorem weight_agree (ladder : List (String × Nat)) (sty : TextStyle)
+private theorem weight_agree (ladder : List (String × Nat)) (sty : TextStyle)
     (s : Ir.Style) :
     (applyStyle ladder sty s).weight = (s.weight?).getD sty.weight := by
   cases s <;> simp [applyStyle, Ir.Style.weight?]
@@ -1722,7 +1722,7 @@ end
 role-scale entry, the flatten walk recurses with state and style unchanged.
 The block half is `role_transparent_collect`, beside the block walk. The
 Layout-private `leafRole` marker changes attribution only and is excluded. -/
-theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
+private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
     (hs : st.roleMetrics.lookup n = none) :
     flattenOne mathOk noteOk st sty (.role n body)
@@ -1739,7 +1739,7 @@ afforded body's runs carry the kind's ink colour and `Decorations.underline`
 in `Layout.Out`, which `Pdf` lowers to coloured glyphs and an underline fill —
 the PDF half of the one IR value both backends read (`Ir.Styles.linkBodyAfford`;
 HtmlDoc's `linkLeafAfford_projects` is the other). -/
-theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
+private theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (s : Styles) (kind : String) (x : Inline)
     (h : x.bearsLinkText = true) :
     flattenOne mathOk noteOk st sty (s.linkLeafAfford kind x)
@@ -1778,26 +1778,26 @@ private def LeafCtr.attributes : LeafCtr → Bool
   | .fixed _ => false
   | .counting _ _ | .riding _ _ => true
 
-theorem LeafCtr.take_attributes (c : LeafCtr) (h : c.attributes = true) :
+private theorem LeafCtr.take_attributes (c : LeafCtr) (h : c.attributes = true) :
     c.take.1.named = true ∧ c.take.2.attributes = true := by
   cases c <;> simp_all [take, attributes, Attribution.named]
 
-theorem LeafCtr.generated_attributes (c : LeafCtr) (h : c.attributes = true) :
+private theorem LeafCtr.generated_attributes (c : LeafCtr) (h : c.attributes = true) :
     c.generated.named = true := by
   cases c <;> simp_all [generated, attributes, Attribution.named]
 
-theorem LeafCtr.skip_attributes (n : Nat) (c : LeafCtr) :
+private theorem LeafCtr.skip_attributes (n : Nat) (c : LeafCtr) :
     (c.skip n).attributes = c.attributes := by
   cases c <;> rfl
 
-theorem LeafCtr.enter_attributes (c : LeafCtr) : c.enter.attributes = c.attributes := by
+private theorem LeafCtr.enter_attributes (c : LeafCtr) : c.enter.attributes = c.attributes := by
   cases c <;> rfl
 
-theorem LeafCtr.leave_attributes (inner outer : LeafCtr) :
+private theorem LeafCtr.leave_attributes (inner outer : LeafCtr) :
     (LeafCtr.leave inner outer).attributes = inner.attributes := by
   cases inner <;> cases outer <;> rfl
 
-theorem pushWord_toks (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
+private theorem pushWord_toks (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
     (attr : Attribution) (h : attr.named = true) :
     (pushWord st sty cur attr).ctr = st.ctr ∧
       ∀ tk ∈ (pushWord st sty cur attr).toks, tk ∈ st.toks ∨ tk.attributed = true := by
@@ -1808,7 +1808,7 @@ theorem pushWord_toks (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
   · subst hm
     exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using h)
 
-theorem pushChars_toks (sty : TextStyle) (attr : Attribution) (h : attr.named = true)
+private theorem pushChars_toks (sty : TextStyle) (attr : Attribution) (h : attr.named = true)
     (cs : List Char) : ∀ (st : FlattenSt) (cur : Array Char),
     (pushChars sty attr st cur cs).ctr = st.ctr ∧
       ∀ tk ∈ (pushChars sty attr st cur cs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
@@ -1844,13 +1844,13 @@ theorem pushChars_toks (sty : TextStyle) (attr : Attribution) (h : attr.named = 
       · exact Or.inr h1
     · exact ih st (cur.push c)
 
-theorem pushTextAttr_toks (st : FlattenSt) (sty : TextStyle) (s : String)
+private theorem pushTextAttr_toks (st : FlattenSt) (sty : TextStyle) (s : String)
     (attr : Attribution) (h : attr.named = true) :
     (pushTextAttr st sty s attr).ctr = st.ctr ∧
       ∀ tk ∈ (pushTextAttr st sty s attr).toks, tk ∈ st.toks ∨ tk.attributed = true :=
   pushChars_toks sty attr h s.toList st #[]
 
-theorem pushText_toks (st : FlattenSt) (sty : TextStyle) (s : String)
+private theorem pushText_toks (st : FlattenSt) (sty : TextStyle) (s : String)
     (h : st.ctr.attributes = true) :
     (pushText st sty s).ctr.attributes = true ∧
       ∀ tk ∈ (pushText st sty s).toks, tk ∈ st.toks ∨ tk.attributed = true := by
@@ -1858,7 +1858,7 @@ theorem pushText_toks (st : FlattenSt) (sty : TextStyle) (s : String)
   obtain ⟨hc, hm⟩ := pushTextAttr_toks { st with ctr := st.ctr.take.2 } sty s st.ctr.take.1 hn
   exact ⟨by simp only [pushText]; rw [hc]; exact ha, by simpa [pushText] using hm⟩
 
-theorem warn_toks (st : FlattenSt) (code : DiagCode) (msg : String) (help : Option String) :
+private theorem warn_toks (st : FlattenSt) (code : DiagCode) (msg : String) (help : Option String) :
     (warn st code msg help).toks = st.toks ∧ (warn st code msg help).ctr = st.ctr :=
   ⟨rfl, rfl⟩
 
@@ -1869,14 +1869,14 @@ block emits no `.unattributed` token — every new token names a leaf, the
 block, or a note mark — and leaves the counter standing in a block. The
 arms that own a leaf take it (`LeafCtr.take`); the generated placeholders
 take the block; the marker enters and leaves without losing the block. -/
-theorem flatten_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private theorem flatten_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (xs : Array Inline) (h : st.ctr.attributes = true) :
     (flatten mathOk noteOk st sty xs).ctr.attributes = true ∧
       ∀ tk ∈ (flatten mathOk noteOk st sty xs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
   simp only [flatten]
   exact flattenList_attr_covers mathOk noteOk st sty xs.toList h
 
-theorem flattenList_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private theorem flattenList_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (xs : List Inline) (h : st.ctr.attributes = true) :
     (flattenList mathOk noteOk st sty xs).ctr.attributes = true ∧
       ∀ tk ∈ (flattenList mathOk noteOk st sty xs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
@@ -1891,7 +1891,7 @@ theorem flattenList_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : T
     · exact m1 tk hm'
     · exact Or.inr hm'
 
-theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) (h : st.ctr.attributes = true) :
     (flattenOne mathOk noteOk st sty x).ctr.attributes = true ∧
       ∀ tk ∈ (flattenOne mathOk noteOk st sty x).toks, tk ∈ st.toks ∨ tk.attributed = true := by
@@ -2859,7 +2859,7 @@ transforms below keep the flag — so `Seg.gap _ true` on a set line stands
 exactly where the token walk met a space between words. No other `Glue`
 construction in this module writes `word`; the structure's default is
 `false`. -/
-theorem interword_word_exact (size : Sp) (font : Font) :
+private theorem interword_word_exact (size : Sp) (font : Font) :
     (interword size font).word = true := rfl
 
 /-- Ragged setting as an item transform, leaving the breaker untouched:
@@ -16810,7 +16810,7 @@ private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
   exact ⟨h.1, fun hd => (h.2 hd).1,
     fun hd p hm => Or.inr ((h.2 hd).2 p hm)⟩
 
-theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
+private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array StagedOp) (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
     (runFloat fs imgs st group).b.pages = st.b.pages ∨
     (runFloat fs imgs st group).b.pages = st.b.finishPage.pages := by
@@ -19528,9 +19528,8 @@ private theorem runCore_bg
 /-- Every page of a document whose opening palette declares `bg` and whose
 collected epochs keep it declared ships a fill over its whole medium, the bleed strip included (`Geom.ground`): what
 the walk attaches to a page survives to that page's output, observed at the
-page background. Discharged from `Obligations`
-(arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
-page with only its lines, PLAN 2026-09-16 — is its counterexample).
+page background. `page_background_survives` covers the fill-vanishing
+counterexample where `B.commit` rebuilt the page with only its lines.
 `runCore_bg` carries the pipeline's three seams; the marks step is the
 fourth and only appends (`addMarks_mem`), so the fill rides through. -/
 theorem page_background_survives
