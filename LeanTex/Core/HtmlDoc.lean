@@ -61,6 +61,11 @@ public structure Config where
   screen and paper, including standout and title-page frames. -/
   listingGround : Option Ir.Color := none
   listingFg : Option Ir.Color := none
+  /-- A painted body keeps its ground across palette declarations. Its
+  inherited ink retains the declared role so nested surfaces can select
+  that role's recorded realization on their own ground. -/
+  bodyGround : Option Ir.Color := none
+  bodyInk : Option (String × Ir.Color) := none
   /-- The token state in force, same door (`.setTokens`). -/
   tokens : Ir.Tokens := {}
   /-- Whether the emitted page is the paged deck (the slides class's frame
@@ -1360,6 +1365,39 @@ records on that ground. -/
 public def inkDecls (d : Design) (g : Ir.Color) : List String :=
   (d.inks.toList.filter (·.ground == g)).map inkDecl
 
+/-- A local surface resets outer realizations before applying its own.
+An ink corrected on a dark panel must not leak into a nested light panel. -/
+private def surfaceInkDecls (pal : Ir.Palette) (g : Ir.Color) : String :=
+  let d := Design.ofPalette pal
+  let roles := d.inks.foldl (fun xs e =>
+    if xs.contains e.role then xs else xs.push e.role) (#[] : Array String)
+  String.join (roles.toList.filterMap fun role => (pal.find? role).map fun c =>
+    s!"--{role}: {cssColor (d.inkOn role { fg := c, bg := g }).fg};")
+
+/-- The HTML body consumes the same resolved paint as the PDF body. -/
+@[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
+    (parent : Ir.ColorPair) (parentRole : String) : Ir.ColorPair :=
+  (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole
+
+public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind)
+    (parent : Ir.ColorPair) (parentRole : String) :
+    titledBodyPaint pal kind parent parentRole =
+      (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole := by rfl
+
+/-- Both body painters project one IR design value, including independent
+channel inheritance and any recorded correction on the local surface. -/
+public theorem titledBodyPaint_agree (pal : Ir.Palette) (kind : Ir.TitledKind)
+    (parent : Ir.ColorPair) (parentRole : String) :
+    titledBodyPaint pal kind parent parentRole =
+      Layout.titledBodyPaint pal kind parent parentRole := by rfl
+
+/-- HTML retains the shared inset's font-relative unit. At the same body
+font size, its length is exactly the PDF inset, independent of leading. -/
+@[expose] public def titledPadding : Length := Ir.titledPadding
+
+public theorem titledPadding_agree (fontSize xHeight : Sp) :
+    titledPadding.resolve fontSize xHeight = Layout.titledPadding fontSize xHeight := by rfl
+
 /-- **The HTML declares every recorded ink on the ground it was realized
 for.** For every scope the stylesheet paints on an ink's ground, the
 scope's declarations carry that ink — the HTML half of
@@ -1459,25 +1497,9 @@ public def themeCss (doc : Doc) : String :=
   let d := Design.ofDoc doc
   (if d.bgDeclared then "body { background: var(--bg); }\n" else "") ++
   (if d.fgDeclared then "body { color: var(--fg); }\n" else "") ++
-  -- The titled block: its header bold, the bar behind it when the design
-  -- declares one — `Ir.titledLook` is the one resolving site, mirrored
-  -- here as var() fallbacks under the resolved condition, exactly the
-  -- frame-title rule. Padding is the rhythm's own quantum, this backend's
-  -- realization of the PDF bar's half-body pad.
+  -- Paint is carried by each block's palette epoch. A document-level
+  -- condition would miss body declarations that add or remove a bar.
   "section.block > header { font-weight: bold; }\n" ++
-  (String.join ([Ir.TitledKind.block, .alert, .example].map fun kind =>
-    match (Ir.titledLook doc.palette kind).bar with
-    | some _ =>
-      s!"section.block-{kind.name} > header \{ background: var(--{kind.name}titlebg);\n" ++
-      s!"  color: var(--{kind.name}titlefg, var(--bg, #fff));\n" ++
-      s!"  padding: {quantaRem 1} {quantaRem 2}; }\n"
-    | none =>
-      match kind with
-      | .block => ""
-      | .alert =>
-        "section.block-alert > header { color: var(--alerttitlefg, var(--alert)); }\n"
-      | .example =>
-        "section.block-example > header { color: var(--exampletitlefg, var(--example)); }\n")) ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
@@ -5667,22 +5689,27 @@ public def epochTokenStyle (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
 
-/-- Advance the palette epoch while retaining its semantic ground fact.
-A body declaration replaces the frame-entry listing pair: like layout's
-palette transition, it resets the ground and default ink together. Clearing
-the cached foreground lets the listing read the new palette's default ink. -/
+/-- Advance the palette epoch and default ink. A surrounding painted body
+keeps its surface; outside one, the page ground follows the new palette. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.pal p
+  let d := Design.ofPalette p
+  let fg := (d.inkOn "fg" { fg := d.fg, bg := cfg.bodyGround.getD d.bg }).fg
+  let concreteInk := cfg.bodyInk.isSome || cfg.bodyGround.isSome || cfg.listingFg.isSome
   { cfg with pal := p
-             listingGround := p.find? "bg", listingFg := none
-             epochStyle := joinStyles cfg.epochStyle diff.style
-             epochGround := cfg.epochGround || diff.groundChanged }
+             listingGround := cfg.bodyGround.or (p.find? "bg")
+             listingFg := if concreteInk then some fg else none, bodyInk := none
+             epochStyle := joinStyles cfg.epochStyle
+               (joinStyles diff.style (if concreteInk then
+                 s!"color: {cssColor fg};" ++ surfaceInkDecls p (cfg.bodyGround.getD d.bg)
+                else ""))
+             epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 /-- A frame's outgoing palette continues into later frames, as in layout.
 The context fold excludes speaker notes: their declarations are side-channel
 content, while nested body declarations remain in flow order. -/
 private def Config.afterFrame (cfg : Config) : Block → Config
-  | .frame _ _ _ _ body =>
+  | .frame _ _ _ _ body | .titled _ _ body =>
     Ir.foldCtxBlocks {
       openBlock := fun visible cfg b => match b with
         | .note _ => (cfg, false)
@@ -5693,7 +5720,7 @@ private def Config.afterFrame (cfg : Config) : Block → Config
       closeInline := fun _ cfg _ => cfg
     } true cfg body
   | .para .. | .section .. | .list .. | .center .. | .ragged ..
-  | .spaced .. | .role .. | .link .. | .quote .. | .abstract .. | .titled ..
+  | .spaced .. | .role .. | .link .. | .quote .. | .abstract ..
   | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .onSteps ..
   | .altSteps .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
   | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. | .picture ..
@@ -6612,10 +6639,37 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- reader's own included) can address each. An untitled block keeps its
   -- section and drops the header, as the PDF drops the bar.
   | .titled kind title body =>
+    let d := Design.ofPalette cfg.pal
+    let look := d.titledBody kind
+    let inherited := cfg.bodyInk.getD ("fg", cfg.listingFg.getD d.fg)
+    let parent : Ir.ColorPair :=
+      { fg := inherited.2, bg := cfg.listingGround.getD d.bg }
+    let paint := titledBodyPaint cfg.pal kind parent inherited.1
+    let role := if look.fg.isSome then kind.name ++ "bodyfg" else inherited.1
+    let titleLook := Ir.titledLook cfg.pal kind
+    let titleGround := titleLook.bar.getD parent.bg
+    let titleInk := (d.inkOn (kind.name ++ "titlefg")
+      { fg := titleLook.fg, bg := titleGround }).fg
+    let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
+      (titleLook.bar.map fun c =>
+        s!"background: {cssColor c}; padding: {cssLength titledPadding};").getD ""
     let head : Array Html.Node := if title.isEmpty then #[] else
-      #[Html.elem "header" (inlines cfg title) #[]]
-    Html.elem "section" (head ++ blockNodesInto cfg.into #[] body.toList)
-      #[("class", s!"block block-{kind.name}")]
+      #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
+    let bodyCfg := { cfg.into with
+      listingFg := some paint.fg, listingGround := look.bg.or cfg.listingGround
+      bodyGround := look.bg.or cfg.bodyGround
+      bodyInk := some (role, (look.resolve parent).fg) }
+    let kids := blockNodesInto bodyCfg #[] body.toList
+    let bodyStyle := s!"color: {cssColor paint.fg};" ++ surfaceInkDecls cfg.pal paint.bg
+    -- A painted region owns a box, distinct from its independently painted
+    -- title. Unfilled bodies keep their original child structure.
+    let kids := match look.bg with
+      | some bg => #[Html.elem "div" kids #[("class", "block-body"), ("style",
+          bodyStyle ++ s!"background: {cssColor bg}; padding: {cssLength titledPadding};")]]
+      | none => kids
+    let attrs := #[("class", s!"block block-{kind.name}")]
+    let attrs := if look.bg.isNone && look.fg.isSome then attrs.push ("style", bodyStyle) else attrs
+    Html.elem "section" (head ++ kids) attrs
   -- The equation's number is a structural element beside the formula,
   -- never text glued into it: a flex row whose math child takes the
   -- measure and whose tag sits right, the amsmath shape. `display` puts

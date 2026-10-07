@@ -1,0 +1,169 @@
+module
+
+public import LeanTex.Core.Font
+import LeanTex.Core.Layout
+import LeanTex.Core.HtmlDoc
+import LeanTex.Core.BeamerColor
+
+open LeanTex.Core
+
+namespace Tests.BlockBody
+
+private def ink : Ir.Color := { r := 230, g := 240, b := 250 }
+private def ground : Ir.Color := { r := 20, g := 35, b := 50 }
+
+private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
+  unless ok do ref.modify (name :: ·)
+
+private def lineText (line : Layout.LineOut) : String :=
+  String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
+
+/-- Read inherited paint from the typed artifact, keeping the text it
+actually encloses. A stylesheet declaration with no painted body cannot
+satisfy the witness. -/
+private structure HtmlInk where
+  text : String
+  styles : String
+  bodyBox : Bool := false
+
+private def cssProperty (styles name : String) : Option String :=
+  (styles.splitOn ";").foldl (fun value decl =>
+    match decl.splitOn ":" with
+    | [key, val] => if key.trimAscii.toString == name then some val.trimAscii.toString else value
+    | _ => value) none
+
+mutual
+  private def htmlInks (styles : String) (out : Array HtmlInk) : List Html.Node → Array HtmlInk
+    | [] => out
+    | node :: rest => htmlInks styles (htmlInk styles out node) rest
+  private def htmlInk (styles : String) (out : Array HtmlInk) : Html.Node → Array HtmlInk
+    | .text text => out.push { text, styles }
+    | .elem _ attrs kids =>
+      let own := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
+      let styles := styles ++ ";" ++ own
+      let out := if attrs.contains ("class", "block-body") then
+          out.push { text := "", styles, bodyBox := true }
+        else out
+      htmlInks styles out kids.toList
+    | .style _ | .script .. => out
+end
+
+private def probe (kind : Ir.TitledKind) (title : Array Ir.Inline) : Ir.Doc :=
+  { palette := { entries := #[
+      ("fg", Ir.Color.black), ("bg", Ir.Color.white),
+      (kind.name ++ "bodyfg", ink), (kind.name ++ "bodybg", ground)] }
+    body := #[.titled kind title #[.para #[.text "BODY"]]] }
+
+private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
+  Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
+
+private def html (doc : Ir.Doc) : Array HtmlInk :=
+  let (_, nodes, _) := HtmlDoc.emitTree {} doc
+  htmlInks "" #[] nodes.toList
+
+/-- These four small documents hold the reviewed artifact counterexamples:
+epochs must replace inherited concrete ink, nesting owes every inset, empty
+paint has area, and padding participates in fitting on every spill page. -/
+private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let blue : Ir.Color := { r := 0, g := 64, b := 128 }
+  let brown : Ir.Color := { r := 128, g := 64, b := 0 }
+  let pale : Ir.Color := { r := 221, g := 238, b := 255 }
+  let dark : Ir.Color := { r := 34, g := 51, b := 68 }
+  let pal : Ir.Palette := { entries := #[
+    ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodyfg", blue)] }
+  let epoch : Ir.Doc := { palette := pal, body := #[.titled .block #[] #[
+    .para #[.text "BEFORE"],
+    .setPalette { pal with entries := pal.entries.map fun (key, c) =>
+      (key, if key == "fg" then brown else c) },
+    .para #[.text "AFTER", .math false "x"], .verbatim none "CODE" {}]] }
+  let leaves := html epoch
+  for text in #["AFTER", "x", "CODE"] do
+    check ref s!"block body epoch: HTML {text} replaces concrete ink"
+      (leaves.any fun leaf => leaf.text == text &&
+        cssProperty leaf.styles "color" == some brown.css)
+  check ref "block body epoch: PDF replacement ink"
+    ((layout fonts epoch).pages.any fun page => page.lines.any fun line =>
+      (lineText line).contains "AFTER" && line.segs.any fun
+        | .run _ c _ _ _ _ _ _ _ _ _ => c == brown
+        | _ => false)
+  let nested : Ir.Doc := {
+    palette := { entries := #[
+      ("fg", Ir.Color.black), ("bg", Ir.Color.white),
+      ("blockbodybg", pale), ("examplebodybg", dark), ("examplebodyfg", Ir.Color.white)] }
+    body := #[.titled .block #[] #[.titled .example #[] #[.para #[.text "NESTED"]]]] }
+  let pad := Ir.titledPadding.resolve nested.page.fontSize 0
+  check ref "block body nested: PDF outer includes inner padding"
+    ((layout fonts nested).pages.any fun page => page.fills.any fun outer =>
+      outer.color == pale && page.fills.any fun inner =>
+        inner.color == dark && outer.x + pad ≤ inner.x &&
+        outer.y + pad ≤ inner.y &&
+        inner.x + inner.w + pad ≤ outer.x + outer.w &&
+        inner.y + inner.h + pad ≤ outer.y + outer.h)
+  check ref "block body nested: HTML both surfaces enclose content"
+    ((html nested).any fun leaf => leaf.text == "NESTED" &&
+      leaf.styles.contains ("background: " ++ pale.css) &&
+      leaf.styles.contains ("background: " ++ dark.css) &&
+      cssProperty leaf.styles "color" == some Ir.Color.white.css)
+  let empty : Ir.Doc := {
+    palette := { entries := #[
+      ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodybg", dark)] }
+    body := #[.para #[.text "BEFORE"], .titled .block #[] #[], .para #[.text "AFTER"]] }
+  check ref "block body empty: PDF nonzero band between paragraphs"
+    ((layout fonts empty).pages.any fun page => page.fills.any fun fill =>
+      fill.color == dark && fill.h ≥ 2 * pad &&
+        page.lines.any (fun line => lineText line == "BEFORE" && line.y < fill.y) &&
+        page.lines.any (fun line => lineText line == "AFTER" && fill.y + fill.h < line.y))
+  check ref "block body empty: HTML padded band"
+    ((html empty).any fun leaf => leaf.bodyBox &&
+      cssProperty leaf.styles "background" == some dark.css &&
+      cssProperty leaf.styles "padding" == some (HtmlDoc.cssLength Ir.titledPadding))
+  let spill : Ir.Doc := {
+    page := {
+      width := Dim.pt 200, height := Dim.pt 100, hmargin := Dim.pt 10
+      vmargin := Dim.pt 1, fontSize := Dim.pt 10 }
+    palette := { entries := #[
+      ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodybg", pale)] }
+    body := #[.titled .block #[] ((List.range 24).map fun i =>
+      Ir.Block.para #[.text s!"LINE{i}"]).toArray] }
+  let out := layout fonts spill
+  check ref "block body spill: every padded fragment is inside the medium"
+    (out.pages.size > 1 && out.pages.all fun page =>
+      let fills := page.fills.filter (·.color == pale)
+      fills.size == 1 && fills.all fun fill =>
+        0 ≤ fill.x && 0 ≤ fill.y && fill.x + fill.w ≤ spill.page.width &&
+        fill.y + fill.h ≤ spill.page.height)
+  check ref "block body spill: every line survives once"
+    ((List.range 24).all fun i =>
+      (out.pages.flatMap (·.lines) |>.filter (lineText · == s!"LINE{i}")).size == 1)
+
+/-- Filled titled bodies ship their declared ink and an enclosing surface
+on both artifacts, for every kind and with or without a title. These are
+artifact assertions; resolving a role in the IR alone cannot pass them. -/
+public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  for kind in #[Ir.TitledKind.block, .alert, .example] do
+    for title in #[#[], #[Ir.Inline.text "TITLE"]] do
+      let doc := probe kind title
+      let label := s!"block body {kind.name}/{title.size}"
+      let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
+      let lines := out.pages.flatMap (·.lines) |>.filter (!·.furniture)
+      let body := lines.filter (lineText · == "BODY")
+      check ref (label ++ ": content survives") (body.size == 1)
+      check ref (label ++ ": PDF body ink and ground")
+        (body.any fun line => line.segs.any fun
+          | .run _ c _ _ _ _ _ _ _ g _ => c == ink && g == some ground
+          | _ => false)
+      check ref (label ++ ": PDF fill encloses body")
+        (out.pages.any fun page => page.lines.any fun line =>
+          lineText line == "BODY" && page.fills.any fun fill =>
+            fill.color == ground && fill.x ≤ line.x &&
+            line.x + line.setWidth ≤ fill.x + fill.w &&
+            fill.y < line.y && line.y < fill.y + fill.h)
+      let (_, nodes, _) := HtmlDoc.emitTree {} doc
+      let leaves := htmlInks "" #[] nodes.toList
+      check ref (label ++ ": HTML body ink and surface")
+        (leaves.any fun leaf => leaf.text == "BODY" &&
+          cssProperty leaf.styles "color" == some ink.css &&
+          cssProperty leaf.styles "background" == some ground.css)
+  regionChecks ref fonts
+
+end Tests.BlockBody

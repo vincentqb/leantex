@@ -10278,6 +10278,20 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
 public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
     (SurfaceLook.mk none none).resolve parent = parent := by rfl
 
+/-- The native block bar's existing half-body-em inset, shared by a filled
+title and body. This measures against the body font, not a leading quantum:
+PDF resolves the length in sp and HTML retains its em unit. Keeping the
+font-relative length here makes the inset independent of either renderer's
+line-spacing policy. -/
+@[expose] public def titledPadding : Length := { em := 500 }
+
+public theorem titledPadding_contract (fontSize xHeight : Sp) :
+    titledPadding.resolve fontSize xHeight = fontSize / 2 := by
+  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv,
+    Int.add_zero]
+  change (500 * fontSize) / (500 * 2) = fontSize / 2
+  exact Int.mul_ediv_mul_of_pos _ _ (by decide)
+
 /-- Beamer's three body elements (`beamercolorthemedefault.sty`) start
 empty. Themes such as Moloch declare their fills and inheritance through
 the palette bindings; no title or accent role implies a body fill. -/
@@ -10521,6 +10535,32 @@ the document's declarations. -/
 public theorem Design.titledBody_projects (pal : Palette) (kind : TitledKind) :
     (Design.ofPalette pal).titledBody kind = titledBodyLook pal kind := by
   cases kind <;> rfl
+
+/-- Read a recorded contrast realization on this surface. Source colours
+stay exact unless the contrast judge recorded a bounded correction for
+this role, declaration and ground. -/
+@[expose] public def Design.inkOn (d : Design) (role : String) (pair : ColorPair) : ColorPair :=
+  { pair with fg := ((d.inks.find? fun e =>
+      e.role == role && e.declared == pair.fg && e.ground == pair.bg).map (·.ink)).getD pair.fg }
+
+/-- The body inherits its enclosing ink's role as well as its declaration,
+so a nested background-only body reads the correction for its own ground. -/
+@[expose] public def Design.titledBodyPaint (d : Design) (kind : TitledKind)
+    (parent : ColorPair) (parentRole : String) : ColorPair :=
+  let look := d.titledBody kind
+  d.inkOn (if look.fg.isSome then kind.name ++ "bodyfg" else parentRole) (look.resolve parent)
+
+/-- Ground selection and ink realization share one resolved body value;
+realization can change its ink only, never introduce a new ground. -/
+public theorem Design.titledBodyPaint_contract (d : Design) (kind : TitledKind)
+    (parent : ColorPair) (parentRole : String) :
+    (d.titledBodyPaint kind parent parentRole).bg = (d.titledBody kind).bg.getD parent.bg := by
+  rfl
+
+public theorem Design.titledBodyPaint_declared_exact (d : Design) (kind : TitledKind)
+    (parent : ColorPair) (parentRole : String) (h : d.inks = #[]) :
+    d.titledBodyPaint kind parent parentRole = (d.titledBody kind).resolve parent := by
+  simp [Design.titledBodyPaint, Design.inkOn, h]
 
 /-- The ground a frame's body stands on when the frame declares one of its
 own: a title page's (`titlepagebg`, through `Design.ofPalette`), `none` for

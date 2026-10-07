@@ -589,12 +589,22 @@ private structure UseCx where
   /-- A frame-entry ground lasts only until the next palette declaration,
   even when that declaration repeats the same palette. -/
   groundEpoch : Option Nat := none
+  /-- A body's default ink follows a palette declaration, while its
+  physical fill remains the enclosing surface. -/
+  inkEpoch : Option Nat := none
+  /-- Frame default for a nested surface; the frame's own default pair is
+  already judged by its design-site contract. -/
+  inheritedInk : Option (String × Color) := none
 
-private def UseCx.atEpoch (cx : UseCx) (epoch : Nat) : UseCx :=
+private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
+  let cx := if cx.inkEpoch.any (· != epoch) then
+    { cx with cur := some (some "fg", (Design.ofPalette pal).fg,
+        (cx.cur.map (·.2.2)).getD 0), inkEpoch := some epoch }
+    else cx
   -- premise: listingPaletteAuditChecks — a body declaration replaces the
   -- entry ground; its colour equality cannot stand in for the boundary.
   if cx.groundEpoch.any (· != epoch) then
-    { cx with ground := none, groundName := none, groundEpoch := none }
+    { cx with ground := none, groundName := none, groundEpoch := none, inheritedInk := none }
   else cx
 
 private def UseCx.large (cx : UseCx) : Bool :=
@@ -738,7 +748,7 @@ private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
   match xs with
   | [] => acc
   | b :: rest =>
-    let cx := cx.atEpoch acc.epochs.size
+    let cx := cx.atEpoch acc.pal acc.epochs.size
     usesBlocks cx (usesBlock cx acc b) rest
 
 private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
@@ -760,18 +770,28 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .quote body => usesBlocks cx acc body.toList
   | .abstract body => usesBlocks cx acc body.toList
   | .titled kind title body =>
-    -- The block is a design site of its epoch: the kind's resolved title
-    -- pair is judged against the palette in force here. The title's own
-    -- runs are judged on the ground Layout paints under them — the bar
-    -- when the palette declares one, the page otherwise.
     let acc := if title.isEmpty then acc else
       { acc with blockPals := pushUnique acc.blockPals (kind, acc.pal) }
     let look := titledLook acc.pal kind
     let titleCx := { cx with
       bold := true
-      ground := look.bar
-      groundName := look.bar.map (fun _ => "the block-title bar") }
-    usesBlocks cx (usesInlines titleCx acc title.toList) body.toList
+      cur := some (some (kind.name ++ "titlefg"), look.fg, acc.runs)
+      ground := look.bar.or cx.ground
+      groundName := (look.bar.map (fun _ => "the block-title bar")).or cx.groundName }
+    let d := Design.ofPalette acc.pal
+    let bodyLook := d.titledBody kind
+    let defaultInk := cx.inheritedInk.getD ("fg", d.fg)
+    let inherited := cx.cur.getD (some defaultInk.1, defaultInk.2, acc.runs + 1)
+    let parent : ColorPair := { fg := inherited.2.1, bg := cx.ground.getD (surfaceOf acc.pal) }
+    let bodyCx := { cx with
+      cur := some (if bodyLook.fg.isSome then some (kind.name ++ "bodyfg") else inherited.1,
+        (bodyLook.resolve parent).fg, acc.runs + 1)
+      inkEpoch := some acc.epochs.size
+      ground := bodyLook.bg.or cx.ground
+      groundName := (bodyLook.bg.map (fun _ => "the block body")).or cx.groundName
+      groundEpoch := if bodyLook.bg.isSome then none else cx.groundEpoch }
+    usesBlocks bodyCx
+      (usesInlines titleCx { acc with runs := acc.runs + 2 } title.toList) body.toList
   | .role _ body => usesBlocks cx acc body.toList
   | .link _ body => usesBlocks cx acc body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
@@ -817,9 +837,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       else (titleCx, acc)
     -- A standout frame's content sits on the inversion, never the page:
     -- the ground Layout paints (`standoutbg`, else the palette's `fg`).
+    let d := Design.ofPalette acc.pal
     let bodyCx := if standout then
-        { cx with ground := some ((acc.pal.find? "standoutbg").getD
-            ((acc.pal.find? "fg").getD Color.black))
+        { cx with ground := some d.standout.bg
+                  inheritedInk := some ("standoutfg", d.standout.fg)
                   groundName := some "the standout frame"
                   groundEpoch := some acc.epochs.size }
       -- And a title page with a declared ground sits on that: the ground
@@ -829,6 +850,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       else match titleGroundOf acc.pal valign with
         | some ground =>
           { cx with ground := some ground, groundName := some "the title page"
+                    inheritedInk := some ("titlepagefg", (d.titlepage.map (·.fg)).getD d.fg)
                     groundEpoch := some acc.epochs.size }
         | none => cx
     usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
@@ -1625,6 +1647,9 @@ public def designContract (d : Design) : Bool :=
     && contrastMilli d.blockTitle.fg (d.blockTitle.bar.getD d.bg) ≥ aaText
     && contrastMilli d.alertTitle.fg (d.alertTitle.bar.getD d.bg) ≥ aaText
     && contrastMilli d.exampleTitle.fg (d.exampleTitle.bar.getD d.bg) ≥ aaText
+    && ([TitledKind.block, .alert, .example].all fun kind =>
+      let pair := d.titledBodyPaint kind { fg := d.fg, bg := d.bg } "fg"
+      contrastMilli pair.fg pair.bg ≥ aaText)
     && contrastMilli d.standout.fg d.standout.bg ≥ aaLargeText
 
 /-- A palette's whole contract: `alert` and `example` colour body text on
