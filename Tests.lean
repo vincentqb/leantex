@@ -1,4 +1,11 @@
 import Tests.HtmlInterface
+import Tests.CompatInterface
+import Tests.ElabInterface
+import Tests.SlotLossInterface
+import Tests.InputInterface
+import Tests.CliDriverInterface
+import Tests.FrontendContractInterface
+import Tests.UmbrellaInterface
 import Tests.LayoutContractInterface
 import Tests.PdfInterfaces
 import Tests.DocumentContractInterfaces
@@ -115,6 +122,7 @@ import Tests.InputOrigins
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
+import Tests.ThemePalette
 import Tests.SlideLabels
 import Tests.FontMath
 import Tests.FormulaFloor
@@ -634,6 +642,7 @@ together so each stays a leaf and `main`'s spent elaboration budget stays
 flat. -/
 def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   paletteChecks ref
+  Tests.ThemePalette.checks ref
   mixChecks ref
   contrastChecks ref
   contrastContractChecks ref
