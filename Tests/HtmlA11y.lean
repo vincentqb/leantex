@@ -109,7 +109,7 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
   for k in Array.range store.entries.size do
     let en := store.entries[k]!
     if en.info.isNone || en.src.startsWith Ir.picSrcPrefix then continue
-    let href := HtmlDoc.imageRequestHref "assets" store en.toRequest
+    let href := HtmlDoc.imageRequestHref store en.toRequest
     let sameSource := uses.filter (·.1 == href)
     if sameSource.isEmpty then continue
     let bytes ← IO.FS.readBinFile s!"testdata/corpus/{HtmlDoc.resolvedSrc en}"
@@ -118,7 +118,7 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
         t s!"html a11y {name}: '{href}' carries its emitted request index"
           (index.any fun i => (store.entries[i]?).any fun entry =>
             entry.info.isSome &&
-            HtmlDoc.imageRequestHref "assets" store entry.toRequest == href)
+            HtmlDoc.imageRequestHref store entry.toRequest == href)
       unless sameSource.any (·.2 == some k) do continue
       undecodableSeen := undecodableSeen + 1
       t s!"html a11y {name}: '{href}' no browser decodes, and a diagnostic names it"

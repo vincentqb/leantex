@@ -49,14 +49,13 @@ def svgAssetUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgs : Image.Store := { entries := #[
     { src := source, info := some { pxW := 20, pxH := 20 },
       webSvg := some "<svg/>".toUTF8, posterSvg := some "<svg/>".toUTF8 }] }
-  let assetsDir := "output files/figures#1"
   let doc := (elabStr "\\includegraphics[alt={Moving square}]{image.svg}").1
   -- Use the image's IR value: percent/hash in a filename is not TeX syntax.
   let rename (i : Ir.Inline) : Ir.Inline := match i with
     | .image _ size alt => .image source size alt
     | i => i
   let doc := { doc with body := Ir.mapBlocks rename doc.body }
-  let (_, tree, _) := HtmlDoc.emitTree { imgs, assetsDir } doc
+  let (_, tree, _) := HtmlDoc.emitTree { imgs } doc
   let images := elemAttrsList (· == "img") #[] tree.toList
   let sources := elemAttrsList (· == "source") #[] tree.toList
   let embedded := "data:image/svg+xml;base64,PHN2Zy8+"
@@ -84,7 +83,7 @@ def imageContentUrlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let doc := (elabStr "\\includegraphics[alt={A square}]{chart.svg}").1
   let links (en : Image.Loaded) : Array String × Array String :=
     let (_, tree, _) := HtmlDoc.emitTree
-      { imgs := { entries := #[en] }, assetsDir := "assets" } doc
+      { imgs := { entries := #[en] } } doc
     (tree.foldl HtmlDoc.imgSrcsOne #[],
       (elemAttrsList (· == "source") #[] tree.toList).filterMap fun (_, attrs) =>
         HtmlDoc.attrOf? attrs "srcset")
@@ -154,7 +153,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let drawing := "<svg/>".toUTF8
   let imgs : Image.Store := { entries := #[{ src := "diagram.svg", info, source := some drawing }] }
   let doc := (elabStr "\\includegraphics[alt={A moving square}]{diagram.svg}").1
-  let (_, body, diags) := HtmlDoc.emitTree { imgs, assetsDir := "assets" } doc
+  let (_, body, diags) := HtmlDoc.emitTree { imgs } doc
   let srcs := body.foldl HtmlDoc.imgSrcsOne #[]
   t "SVG print face still captures the SVG browser bytes"
     ((HtmlDoc.imageResources imgs).map (·.bytes) == #[drawing])

@@ -860,8 +860,7 @@ def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Fon
     | .none => .none
   let cfg : HtmlDoc.Config :=
     { css, imgs := store
-      fonts := if doc.fontPolicy == .embedded then some fs else none
-      fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
+      fonts := if doc.fontPolicy == .embedded then some fs else none }
   return ((HtmlDoc.emit cfg doc).1, read)
 
 /-- The PDF's rhythm quantum for a fixture, in thousandths of a bp: half the

@@ -1737,8 +1737,7 @@ def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontS
   let faced := facedStore store
   let cfg : HtmlDoc.Config :=
     { css, imgs := faced
-      fonts := if doc.fontPolicy == .embedded then some fs else none
-      fontsDir := s!"{name}.fonts", assetsDir := s!"{name}.assets" }
+      fonts := if doc.fontPolicy == .embedded then some fs else none }
   let .ok cfg ← LeanTex.Cli.Publication.captureHtmlResources file cfg doc | return none
   let (head, body, _) := HtmlDoc.emitTree cfg doc
   let browserSources := browserSourceBlobs name doc store

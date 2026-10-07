@@ -35,7 +35,7 @@ def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
       (expected == expectedFor actual && expected.size == 2)
     check ref "hermetic source: the typed page contains every captured resource URI"
       ((HtmlDoc.imageResources faced).all fun a =>
-        let html := (HtmlDoc.emit { imgs := faced, assetsDir := "figure.assets" } doc).1
+        let html := (HtmlDoc.emit { imgs := faced } doc).1
         (html.splitOn a.uri).length > 1)
     let without : Image.Store :=
       { entries := store.entries.map fun en => { en with companion := none } }

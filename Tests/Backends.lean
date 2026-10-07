@@ -2153,7 +2153,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
         ((2, 400, true), 1), ((2, 700, true), 1)] }
   let src ← IO.FS.readFile "testdata/corpus/deck.tex"
   let (doc, _) ← elabFixture "deck" src
-  let cfg : HtmlDoc.Config := { fonts := some fs, fontsDir := "deck.fonts" }
+  let cfg : HtmlDoc.Config := { fonts := some fs }
   let (html, _) := HtmlDoc.emit cfg doc
   let faces := HtmlDoc.shipFaces fs
   t "census deck html: one @font-face per resolved face"
@@ -4297,7 +4297,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let png : Image.Plan := { pxW := 64, pxH := 40 }
   let srcsOf (store : Image.Store) (doc : Ir.Doc) : Array String :=
-    let (head, body, _) := HtmlDoc.emitTree { imgs := store, assetsDir := "out.assets" } doc
+    let (head, body, _) := HtmlDoc.emitTree { imgs := store } doc
     imgSrcsList (imgSrcsList #[] head.toList) body.toList
   let docOf (body : String) : IO Ir.Doc := do
     let (doc, ds) := elabStr (dvDoc "" body)
@@ -4349,7 +4349,7 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     { entries := #[{ src := picSrc, webSvg := some "<svg/>".toUTF8
                      info := some { pxW := 10, pxH := 10 } }] }
   t "html assets: a boundary picture embeds its SVG bytes"
-    (HtmlDoc.imageHref "out.assets" picStore picSrc == "data:image/svg+xml;base64,PHN2Zy8+" &&
+    (HtmlDoc.imageHref picStore picSrc == "data:image/svg+xml;base64,PHN2Zy8+" &&
      (HtmlDoc.imageResources picStore).map (·.bytes) == #["<svg/>".toUTF8])
   -- The name's index is recoverable whatever the basename (the executable
   -- twin of `imageAssetName_inj`).

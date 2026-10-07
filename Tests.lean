@@ -1,3 +1,5 @@
+import Tests.HtmlInterface
+import Tests.LayoutContractInterface
 import Tests.PdfInterfaces
 import Tests.DocumentContractInterfaces
 import Tests.ColourInterface

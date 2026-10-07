@@ -1,5 +1,6 @@
 import LeanTex.Cli.FontDiscovery
 import LeanTex
+import LeanTex.Core.HtmlDoc
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
