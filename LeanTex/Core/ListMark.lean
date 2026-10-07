@@ -22,19 +22,18 @@ def digitsRev (n : Nat) : List Char :=
   if h : n < 10 then [Nat.digitChar n]
   else Nat.digitChar (n % 10) :: digitsRev (n / 10)
 
-def digitVal (c : Char) : Nat :=
+private def digitVal (c : Char) : Nat :=
   if c.toNat ≥ 48 then c.toNat - 48 else 0
 
 /-- Decoder for `digitsRev`, the injectivity witness. -/
-def undigitsRev : List Char → Nat
+private def undigitsRev : List Char → Nat
   | [] => 0
   | c :: cs => digitVal c + 10 * undigitsRev cs
 
-theorem digitVal_digitChar {d : Nat} (h : d < 10) : digitVal (Nat.digitChar d) = d := by
-  match d, h with
-  | 0, _ | 1, _ | 2, _ | 3, _ | 4, _ | 5, _ | 6, _ | 7, _ | 8, _ | 9, _ => rfl
+private theorem digitVal_digitChar {d : Nat} (h : d < 10) : digitVal (Nat.digitChar d) = d := by
+  simp [digitVal, Nat.toNat_digitChar_of_lt_ten h]
 
-theorem undigitsRev_digitsRev (n : Nat) : undigitsRev (digitsRev n) = n := by
+private theorem undigitsRev_digitsRev (n : Nat) : undigitsRev (digitsRev n) = n := by
   unfold digitsRev
   split
   · next h => simp [undigitsRev, digitVal_digitChar h]
@@ -43,11 +42,10 @@ theorem undigitsRev_digitsRev (n : Nat) : undigitsRev (digitsRev n) = n := by
       undigitsRev_digitsRev (n / 10)]
     omega
 
-theorem digitChar_ascii {d : Nat} (h : d < 10) :
+private theorem digitChar_ascii {d : Nat} (h : d < 10) :
     48 ≤ (Nat.digitChar d).toNat ∧ (Nat.digitChar d).toNat ≤ 57 := by
-  match d, h with
-  | 0, _ | 1, _ | 2, _ | 3, _ | 4, _ | 5, _ | 6, _ | 7, _ | 8, _ | 9, _ =>
-    simp [Nat.digitChar]
+  rw [Nat.toNat_digitChar_of_lt_ten h]
+  omega
 
 /-- Every char the arabic encoding emits is an ASCII digit. -/
 theorem digitsRev_digits {n : Nat} {c : Char} (h : c ∈ digitsRev n) :
@@ -90,7 +88,7 @@ def letterN (base : Nat) (n : Nat) : String :=
 def alphN : Nat → String := letterN 'a'.toNat
 def AlphN : Nat → String := letterN 'A'.toNat
 
-theorem toNat_ofNat_letter {base k : Nat} (hb : base = 97 ∨ base = 65) (hk : k < 26) :
+private theorem toNat_ofNat_letter {base k : Nat} (hb : base = 97 ∨ base = 65) (hk : k < 26) :
     (Char.ofNat (base + k)).toNat = base + k := by
   have hv : Nat.isValidChar (base + k) := by
     unfold Nat.isValidChar
@@ -132,7 +130,7 @@ theorem letterN_inj {base m n : Nat} (hb : base = 97 ∨ base = 65)
 -- Roman ------------------------------------------------------------------------
 
 /-- The subtractive table, value-descending, as `\romannumeral` produces. -/
-def romanTable : List (Nat × String) :=
+private def romanTable : List (Nat × String) :=
   [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
    (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")]
 
@@ -144,7 +142,7 @@ def romanN (n : Nat) : String :=
     (acc ++ String.join (List.replicate (r / v) s), r % v)) ("", n)
   out
 
-def romanCharVal (c : Char) : Nat :=
+private def romanCharVal (c : Char) : Nat :=
   if c = 'm' then 1000 else if c = 'd' then 500 else if c = 'c' then 100
   else if c = 'l' then 50 else if c = 'x' then 10 else if c = 'v' then 5
   else if c = 'i' then 1 else 0
@@ -201,7 +199,7 @@ theorem enumLabel_inj {level m n : Nat} (hl : level ≠ 3)
 asterisk, centered dot — with an ASCII stand-in per level for a machine
 where no face covers the glyph, so a marker never renders as nothing. The
 stand-ins keep adjacent levels distinct whichever of the pair degrades. -/
-def itemGlyph (level : Nat) : Char × Char :=
+private def itemGlyph (level : Nat) : Char × Char :=
   match level with
   | 2 => ('–', '-')   -- \bfseries\textendash
   | 3 => ('∗', '*')   -- \textasteriskcentered (U+2217)
