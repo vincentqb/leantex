@@ -23,6 +23,7 @@ import Tests.PdfBoundaryInterface
 import Tests.Batch
 import Tests.CacheInterface
 import Tests.PictureAssetsInterface
+import Tests.ImageAssetsInterface
 import Tests.Compression
 import Tests.BrowserFaceBatch
 import Tests.CacheIO

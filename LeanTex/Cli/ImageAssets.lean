@@ -1,7 +1,10 @@
-import LeanTex.Core.Image
+module
+
+public import LeanTex.Core.Image
 import LeanTex.Core.PdfCensus
 import LeanTex.Cli.SvgPoster
 import LeanTex.Cli.ConvCache
+import LeanTex.Cli.RunBounded
 
 /-! Vector image IO. Captured SVG bytes remain the browser source. Fresh
 conversions return bytes; only the driver decides when to publish them. -/
@@ -138,7 +141,7 @@ private def Spec.recipe (s : Spec) : String :=
 hermetic source key hashes this value, while the browser oracle separately
 records the exact output bytes. Every invocation below reads these same
 argument builders, so a recipe change invalidates the committed report. -/
-def browserFaceContract : String :=
+public def browserFaceContract : String :=
   String.intercalate "\n" <|
     ([.svgPdf false, .svgPdf true, .svgPoster false, .svgPoster true,
       .pdfPage 1, .picFace] : List Op).map (·.spec.recipe)
@@ -184,7 +187,7 @@ that can supply outside meaning. True requests removal of that inert
 identifier from the converter input; declarations and non-predefined
 entity references remain unsupported. Parser error callbacks also refuse.
 The caller must first require a successful parser exit. -/
-def svgSaxBoundary (sax : String) : Except String Bool := do
+public def svgSaxBoundary (sax : String) : Except String Bool := do
   let events := (sax.splitOn "\n").map (·.trimAscii.toString)
   let has := fun name => events.any (·.startsWith ("SAX." ++ name ++ "("))
   if ["entityDecl", "attributeDecl", "elementDecl", "notationDecl",
@@ -298,14 +301,14 @@ error lets the caller fall back to converting its selected PDF page.
 Success includes a usable static PDF plan; retain the original bytes for
 the browser, preserving animation and source identity. Requires the
 installed xmllint and librsvg tools; either failing is an error value. -/
-def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .default) :
+public def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .default) :
     IO (Except String Image.Plan) := do
   let pdf ← convert (.svgPdf false) bytes
   return pdf >>= fun b => Image.probe b >>= Image.plan params
 
 /-- First reads the authored base drawing; last projects the final declared
 values of one synchronized animation cycle. Later numbered frames need a sequence. -/
-def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
+public def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
   | .first | .number 1 => .ok false
   | .last => .ok true
   | .number _ => .error "a numbered SVG poster requires a PDF frame sequence"
@@ -313,7 +316,7 @@ def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
 /-- librsvg's vector reading of a self-contained SVG, optionally after a
 terminal-value projection. The caller retains the captured SVG unchanged
 for the browser. Unsupported timelines fail rather than paint the base. -/
-def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
+public def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first)
     (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
     IO (Except String Image.Plan) := do
@@ -325,7 +328,7 @@ def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on
 the selected page instead when a companion PDF supplies a chosen frame. -/
-def svgPoster (bytes : ByteArray) (page : PdfRead.PageSelection := .first) :
+public def svgPoster (bytes : ByteArray) (page : PdfRead.PageSelection := .first) :
     IO (Except String ByteArray) := do
   match svgPosterAtEnd page with
   | .error err => return .error err
@@ -334,13 +337,13 @@ def svgPoster (bytes : ByteArray) (page : PdfRead.PageSelection := .first) :
 /-- Poppler reads the physical page selected by the same page-tree
 traversal as the native importer, including `last`; `/Count` is never a
 substitute for that traversal. -/
-def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
+public def pdfSvg (bytes : ByteArray) (page : PdfRead.PageSelection) :
     IO (Except String ByteArray) := do
   match PdfRead.pageNumber bytes page with
   | .error e => return .error e
   | .ok n => convert (.pdfPage n) bytes
 
-def picFace (bytes : ByteArray) : IO (Except String ByteArray) :=
+public def picFace (bytes : ByteArray) : IO (Except String ByteArray) :=
   convert .picFace bytes
 
 end LeanTex.Cli.ImageAssets
