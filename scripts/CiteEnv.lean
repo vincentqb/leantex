@@ -6,6 +6,34 @@ namespace CiteEnv
 
 open Lean
 
+-- Source identifier spelling is not a lossless transport for kernel names:
+-- hygienic names and components containing an escape delimiter do not parse.
+-- Keep the component kind and bytes, leaf first, in both worker directions.
+inductive NamePart where
+  | str (value : String)
+  | num (value : Nat)
+  deriving FromJson, ToJson
+
+def nameParts : Name → List NamePart
+  | .anonymous => []
+  | .str parent value => .str value :: nameParts parent
+  | .num parent value => .num value :: nameParts parent
+
+def partsName : List NamePart → Name
+  | [] => .anonymous
+  | .str value :: parent => .str (partsName parent) value
+  | .num value :: parent => .num (partsName parent) value
+
+theorem nameParts_roundtrip_exact (name : Name) :
+    partsName (nameParts name) = name := by
+  induction name <;> simp_all [nameParts, partsName]
+
+local instance : ToJson Name where
+  toJson name := toJson (nameParts name)
+
+local instance : FromJson Name where
+  fromJson? json := partsName <$> (fromJson? json : Except String (List NamePart))
+
 public structure Site where
   moduleName : String
   file : String
@@ -129,7 +157,7 @@ def resolvesIn (env : Environment) (moduleName : String) (ns : Name)
       projections.isEmpty && (env.checked.get.find? name).isSome
 
 def verdict (env : Environment) (idx : NameIndex) (q : Query) : Verdict :=
-  if resolvesIn env q.moduleName q.ns [.simple `Obligations []] q.token then .scope
+  if resolvesIn env q.moduleName q.ns [] q.token then .scope
   else if (idx[(q.token.splitOn ".").getLast!]?.getD #[]).any fun (m, ns) =>
       resolvesIn env m ns [] q.token then .tree
   else .phantom

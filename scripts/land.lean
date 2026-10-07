@@ -375,24 +375,17 @@ lakefile for its name was a substring test a valid lakefile defeated.
 `--wfail` is how this project spells "zero warnings": scanning output for
 `warning:` is unsound, because a warm cache replays a module's logged warning
 without recompiling it and a scan of a quiet build proves nothing about the
-module that did not rebuild. The flag is written out per gate rather than
-inherited from another gate's internals: `land`'s own theorem and the gate
-scripts are built under it, and `Obligations` — the staging area for open
-proofs, which warns once per staged statement by design — is a separate build
-without it, as the pre-commit hook already does. The first build requests all
-gate executables together so Lake can schedule their independent jobs;
-`lake test` then runs its already-built driver in the same environment. -/
+module that did not rebuild. Every maintained target shares
+that flag and the lakefile's proof-error setting. The first build requests
+all gate executables together; `lake test` and `lake lint` then run their
+drivers in order. Lint owns the source, compiled-proof and citation audits,
+including their selftests. -/
 def defaultGates : List String := [
-  "build=lake build --wfail leantex Tests precommit owed cites land scoreboard",
-  "obligations-build=lake build Obligations",
+  "build=lake build --wfail LeanTex leantex Tests precommit proofcheck lint cites land scoreboard",
   "test=lake test",
+  "lint=lake lint",
   "land-selftest=.lake/build/bin/land --selftest",
   "land-scenarios=.lake/build/bin/land --scratch-selftest",
-  "precommit-selftest=.lake/build/bin/precommit --selftest",
-  "precommit-tree=.lake/build/bin/precommit --tree",
-  "cites-selftest=.lake/build/bin/cites --selftest",
-  "cites-check=.lake/build/bin/cites --check",
-  "owed=lake env lean --run scripts/owed.lean",
   "scoreboard-check=.lake/build/bin/scoreboard --check",
   "scoreboard-base=.lake/build/bin/scoreboard --check --base {main}",
   "scoreboard-selftest=.lake/build/bin/scoreboard --selftest"]
@@ -1640,24 +1633,33 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail" [("case", "the shipped gate list parses, one gate per line"),
       ("why", e.why)]
-  -- Give Lake all executable roots before waiting for any of them. Keep
-  -- staged proofs out of --wfail and run the test driver after both builds.
-  let grouped := match gateList.toList with
-    | build :: obligations :: test :: _ =>
+  -- Every source area shares the strict build, followed by the standard
+  -- test and lint drivers. No separately permissive proof build may return.
+  let grouped : Bool := match gateList.toList with
+    | build :: test :: lint :: _ =>
       build.cmd == "lake" && build.args[0]? == some "build"
         && build.args.contains "--wfail"
-        && #["leantex", "Tests", "precommit", "owed", "cites", "land", "scoreboard"].all
+        && #["LeanTex", "leantex", "Tests", "precommit",
+            "proofcheck", "lint", "cites", "land", "scoreboard"].all
           (build.args.contains ·)
-        && !build.args.contains "Obligations"
-        && obligations.cmd == "lake" && obligations.args == #["build", "Obligations"]
         && test.cmd == "lake" && test.args == #["test"]
+        && lint.cmd == "lake" && lint.args == #["lint"]
+        && (gateList.filter fun g => g.cmd == "lake" && g.args[0]? == some "build").size == 1
     | _ => false
   if grouped then
-    say "selftest" "ok" [("case", "gate executables share a build; proofs and test execution follow")]
+    say "selftest" "ok" [("case", "strict maintained-source build, then test and lint")]
   else
     bad := bad + 1
     say "selftest" "fail"
-      [("case", "gate executables share a build; proofs and test execution follow")]
+      [("case", "strict maintained-source build, then test and lint")]
+  let baseline := gateList.filter (·.name == "scoreboard-base")
+  if baseline.size == 1 &&
+      baseline[0]!.cmd == ".lake/build/bin/scoreboard" &&
+      baseline[0]!.args == #["--check", "--base", "{main}"] then
+    say "selftest" "ok" [("case", "scoreboard compares against the pinned landing base")]
+  else
+    bad := bad + 1
+    say "selftest" "fail" [("case", "scoreboard compares against the pinned landing base")]
   -- Porcelain quoting: a value with a space must come back as one value.
   if pv "a b" != "\"a b\"" || pv "ab" != "ab" || pv "" != "\"\"" then
     bad := bad + 1

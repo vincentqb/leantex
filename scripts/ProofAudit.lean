@@ -1,8 +1,6 @@
 module
 
 public meta import Lean.Elab.Command
-public meta import Lean.Elab.Frontend
-public meta import Lean.Elab.Import
 public meta import Lean.Server.InfoUtils
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
@@ -48,32 +46,16 @@ meta def exampleSnapshot (ctx : ContextInfo) (tree : InfoTree) :
       unless (inner.env.checked.get.find? name).isSome do return none
       return some (name, inner.env)
 
-/-- Replay a maintained source with its original imports already initialized.
-Inspect actual parsed/elaborated commands, including macro expansions, and use
-the kernel snapshot saved before each anonymous declaration is discarded.
-Missing snapshots are a refusal, never evidence of a completed proof. -/
-elab "#audit_source" file:str : command => do
-  let path := file.getString
-  let input ← IO.FS.readFile path
-  let ictx := Parser.mkInputContext input path
-  let (header, ps, msgs) ← Parser.parseHeader ictx
-  let env ← getEnv
-  unless HeaderSyntax.isModule header == env.header.isModule do
-    throwError "proof audit: {path}: source and audit wrapper disagree on module mode"
-  for imp in HeaderSyntax.imports header do
-    unless env.header.moduleNames.contains imp.module do
-      throwError "proof audit: {path}: source import {imp.module} is absent from the audit wrapper"
-  let opts := Elab.async.set (← getOptions) false
-  let state ← IO.processCommands ictx ps (Command.mkState env msgs opts)
-  if state.commandState.messages.hasErrors then
-    for msg in state.commandState.messages.toList do
-      if msg.severity == .error then
-        logError m!"proof audit: {path}: source elaboration failed: {← msg.toString}"
-    return
-  let mut expected := state.commands.flatMap parsedExamples
+/-- Run after the frontend has joined this command's elaboration tasks.
+The saved kernel environments retain anonymous proofs before discard, including
+macro expansions. Missing snapshots are a refusal, never a completed proof. -/
+meta def auditExamples (command : Syntax) : CommandElabM Nat := do
+  let path ← getFileName
+  let fileMap ← getFileMap
+  let mut expected := parsedExamples command
   let mut observed : Array Syntax := #[]
   let mut count := 0
-  for tree in state.commandState.infoState.trees do
+  for tree in (← getInfoState).trees do
     let commands := tree.foldInfoTree (init := #[]) fun ctx node found =>
       match node with
       | .node (.ofCommandInfo info) _ =>
@@ -85,7 +67,7 @@ elab "#audit_source" file:str : command => do
           command[1].isOfKind ``Parser.Command.example do continue
       let stx := command[1]
       observed := observed.push stx
-      let pos := ictx.fileMap.toPosition (stx.getPos?.getD 0)
+      let pos := fileMap.toPosition (stx.getPos?.getD 0)
       let some (name, snapshot) ← exampleSnapshot ctx node
         | throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example has no checked kernel snapshot; give it a theorem or definition name so the compiled audit can verify it"
       -- Include auxiliaries even when the resulting example never uses them.
@@ -96,16 +78,27 @@ elab "#audit_source" file:str : command => do
         unless (snapshot.checked.get.find? decl).isSome do
           throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous auxiliary {decl} has no kernel information"
         let (axioms, _) ← (collectAxioms decl : CoreM (Array Name)).toIO
-          { fileName := path, fileMap := ictx.fileMap } { env := snapshot }
+          { fileName := path, fileMap } { env := snapshot }
         let unexpected := unexpectedAxioms axioms
         unless unexpected.isEmpty do
           logError m!"proof audit: {path}:{pos.line}:{pos.column}: anonymous example {decl} depends on {unexpected}"
       count := count + 1
   for stx in expected do
     unless observed.any (·.eqWithInfo stx) do
-      let pos := ictx.fileMap.toPosition (stx.getPos?.getD 0)
+      let pos := fileMap.toPosition (stx.getPos?.getD 0)
       throwError "proof audit: {path}:{pos.line}:{pos.column}: anonymous example was not audited before discard; give it a theorem or definition name (including examples nested in mutual or diagnostic commands)"
-  logInfo m!"proof audit: {path}: {count} anonymous examples checked before discard"
+  return count
+
+/-- Loading this module as a native compiler plugin registers the audit without
+adding its imports to the source's environment. Lean sequences the count across
+asynchronous commands; the terminal receipt also witnesses that the plugin ran. -/
+meta initialize
+  discard <| registerStatefulLinter (τ := Unit) (0 : Nat)
+    (post := fun stx count _ _ _ => do
+      let count := count + (← auditExamples stx)
+      if Parser.isTerminalCommand stx then
+        logInfo m!"proof audit: {← getFileName}: {count} anonymous examples checked before discard"
+      return count)
 
 /-- Audit the compiled declarations of an explicit source manifest, including
 private and unused declarations. The compiler loads the complete environment;

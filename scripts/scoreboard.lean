@@ -406,52 +406,16 @@ its format, and any request it still holds"
 
 -- ## The queue
 
-/-- Grouped deficits, not a single ranking. Obligations whose blocker names
-no other open obligation come first — they are the ones a proof can start on
-today — and among those, the ones whose own name appears in the most other
-blockers, because discharging one of those releases the most. Then the
-blocker ranking a sibling commits, then every tier's worst items, ranked by
-the deficit its own encoding defines.
-
-**The order between groups is policy, not a ranking**, and the label says
-so. Deficits in different tiers are in different units — a compat row is
-minutes, a `_covers` over two private loops is weeks — so a cross-tier order
-needs a cost model this has no data for. Reading the head as "the next thing
-to do" would take a proof obligation first while any of the ready ones
-remains, which is a decision and not a measurement.
-
-What a real ranking still needs: the blocker graph as data rather than as
-prose (a `blocked-by:` field naming obligations, so "names no other open
-obligation" stops being a substring search over English); the per-item cost
-of a deficit; and the count of documents each deficit holds back, which the
-parity ladder's fixtures-held-back number would give. With those the order
-becomes value over cost; with only these, it is readiness over size, inside
-each group. -/
+/-- Constructs held back and per-tier deficits. Their different units do
+not support a single cross-tier ranking. -/
 def queue (limit : Nat) : IO UInt32 := do
   let mut lines : Array String := #[]
-  let (obs, malformed) ← obligations
-  if !malformed.isEmpty then
-    for m in malformed do
-      lines := lines.push s!"queue: malformed owed record — {m}"
-  let unblocks := fun (o : Ob) =>
-    (obs.filter fun p => p.name != o.name && containsSub p.blocker o.name).size
-  let readyObs := (ready obs).qsort fun a b =>
-    if unblocks a == unblocks b then a.name < b.name else unblocks a > unblocks b
-  lines := lines.push s!"queue: group 1 of 3 — obligations a proof can start on today \
-({readyObs.size} of {obs.size} open); the order between groups is policy, not a ranking"
-  for o in readyObs do
-    let b := o.blocker
-    let short := if b.length > 90 then ((b.take 90).toString) ++ "…" else b
-    -- The owner file: "whose owner files are free" needs the file, not only
-    -- the module name.
-    lines := lines.push s!"queue: obligation {o.name} owner={o.owner} file={o.file} \
-blocked-by-open=0 unblocks={unblocks o} blocker={short}"
   -- The blocker ranking a sibling commits: constructs nothing in the engine
   -- answers, ranked by the documents they alone hold back. Read when
   -- present, because the ranking data belongs to whoever measured it.
   let blockers ← readFileOr "testdata/coverage/blockers.tsv"
   if blockers.isEmpty then
-    lines := lines.push "queue: group 2 of 3 — no testdata/coverage/blockers.tsv, so no \
+    lines := lines.push "queue: group 1 of 2 — no testdata/coverage/blockers.tsv, so no \
 construct ranking (the coverage tier writes it)"
   else
     -- The format is `scripts/blockers.lean`'s: `#` provenance, one header
@@ -484,13 +448,13 @@ construct ranking (the coverage tier writes it)"
       IO.eprintln "queue: the blocker table is malformed, so no queue is printed from it"
       return 2
     let named := rows.filter (·.1 != "aggregate")
-    lines := lines.push s!"queue: group 2 of 3 — constructs nothing answers, by the \
+    lines := lines.push s!"queue: group 1 of 2 — constructs nothing answers, by the \
 documents they alone block ({named.size} ranked; {rows.size - named.size} aggregate \
 row(s) of names the table does not publish)"
     for (kind, construct, owner, sole, share, docs) in named.toList.take 5 do
       lines := lines.push s!"queue: blocker {kind}:{construct} owner={owner} sole={sole} \
 share={share} docs={docs}"
-  lines := lines.push "queue: group 3 of 3 — each tier's worst items, in its own \
+  lines := lines.push "queue: group 2 of 2 — each tier's worst items, in its own \
 units; not comparable across tiers"
   let (tiers, misnamed) ← discover
   for m in misnamed do
@@ -1406,29 +1370,6 @@ the request the base carries)"])
                     rows := #[{ item := "a", value := 2 }, { item := "b", value := 5 }] }
   no "deficit: raw ranks the distance from the best item" (deficits rw == #[("a", 3)])
 
-  -- The record form the obligations tier and the owed ratchet both read,
-  -- from the one definition in scripts/Gate.lean.
-  let samples : List (String × Option String) :=
-    [("-- owed: t_one", some "t_one"),
-     -- Leading whitespace is trimmed first, which owed.lean's own test also
-     -- pins ("  -- owed: x" parses). Getting this wrong here was how this
-     -- block first failed.
-     ("  -- owner: M.Two", some "M.Two"),
-     ("-- owner: M.Two", some "M.Two"), ("owed: x", none),
-     ("-- blocker:", some "")]
-  for (line, want) in samples do
-    let key := if containsSub line "owner" then "owner"
-      else if containsSub line "blocker" then "blocker" else "owed"
-    no s!"fieldOf disagrees with the record form on '{line}'"
-      (fieldOf line key == want)
-  -- Routed, the same way: `cites` loads no scoreboard module, so a
-  -- backticked name of one of Board's theorems in any docstring reads to it
-  -- as a phantom and fails the gate — which is the half of this row that
-  -- fails already. This half fails once `scripts/cites.lean` loads the
-  -- module; then delete the row and cite the theorems by name.
-  let citesSrc ← readFileOr "scripts/cites.lean"
-  no "routed: scripts/cites.lean now loads scripts.Board — delete this row, and cite \
-Board's theorems by name where the prose relies on them" (!containsSub citesSrc "scripts.Board")
   -- Tier discovery by convention, both halves. `--check` and the selftest
   -- agree on every state: absence passes only for a declared-pending tier,
   -- and a pending name whose tier has landed fails here — which is what

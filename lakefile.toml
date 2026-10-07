@@ -2,6 +2,9 @@ name = "leantex"
 defaultTargets = ["LeanTex", "leantex"]
 testDriver = "Tests"
 lintDriver = "lint"
+# Every compiled project declaration must be free of unfinished proofs. The lint
+# driver additionally audits compiled axioms and proofs erased after elaboration.
+moreLeanArgs = ["-E", "hasSorry"]
 
 [leanOptions]
 weak."linter.extra" = true
@@ -20,14 +23,6 @@ weak."linter.loopingSimpArgs" = true
 [[lean_lib]]
 name = "LeanTex"
 globs = ["LeanTex", "LeanTex.+"]
-
-# The owed-theorem staging area: statements the engine does not yet earn,
-# type-checked, proofs open. Not a default target: `lake build` and
-# `lake test` never see it, nothing in LeanTex/ may import it (the
-# pre-commit hook and scripts/owed.lean both check), and the ratchet in
-# scripts/owed.lean keeps the debt from growing unnamed.
-[[lean_lib]]
-name = "Obligations"
 
 [[lean_exe]]
 name = "leantex"
@@ -67,10 +62,6 @@ root = "scripts.lint"
 [[lean_exe]]
 name = "precommit"
 root = "scripts.precommit"
-
-[[lean_exe]]
-name = "owed"
-root = "scripts.owed"
 
 # Citation checks inspect the compiled environment.
 [[lean_exe]]

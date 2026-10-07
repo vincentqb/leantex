@@ -1,6 +1,7 @@
 /-
-Pre-commit gate: compile+lint via lake build --wfail, plus convention checks
-over the staged diff. Silent on success. Git executes the FILE
+Pre-commit gate: lake build --wfail, lake test, lake lint, and
+convention checks over the staged diff.
+Silent on success. Git executes the FILE
 scripts/hooks/pre-commit, a 3-line sh trampoline that runs this after a cheap
 staged-file filter; install with: git config core.hooksPath scripts/hooks
 
@@ -9,10 +10,10 @@ index and reads a revision range instead (`--range origin/main...HEAD`), or
 nothing at all (`--tree`); both run every whole-tree check unconditionally,
 so the structural guarantees do not depend on a per-clone core.hooksPath.
 
-Two checks are their own binaries, invoked from here and directly from CI,
-because each needs the tree compiled rather than read: scripts/owed.lean
-(the owed-theorem ratchet) and scripts/cites.lean (does every theorem name a
-docstring cites resolve to a declaration?).
+The lint driver owns the compiled proof and citation audits. It invokes
+this script with --conventions to run source checks without recursively
+building or testing. As with a commit-time build, these checks read the
+working tree; CI checks the committed tree.
 -/
 
 import scripts.Gate
@@ -86,15 +87,9 @@ def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
     || f == "lean-toolchain" || f.startsWith "testdata/golden/"
 
-/-- The owed-theorem staging area (see scripts/owed.lean): the one path
-where a stated obligation may hold its proof open. -/
-def obligationsFile (f : String) : Bool :=
-  f == "Obligations.lean" || f.startsWith "Obligations/"
-
 /-- The banned words, composed so this file's own staged diff never contains
 them as word-delimited tokens — the gate scans every .lean file, itself
 included. -/
-def kwPartial : String := "par" ++ "tial"
 def kwUnsafe : String := "uns" ++ "afe"
 
 /-- Composed for the same reason: prepending to a recursive call's result
@@ -1012,12 +1007,10 @@ def gates : List Gate := [
   Conventions, holds the technique) — the allowance list emptied on
   2026-09-19 and stays empty.
   Fix: make the recursion structural (see AGENTS.md, Conventions)." },
-  { applies := (!obligationsFile ·)
+  { applies := fun _ => true
     flag := bannedWord kwSorry
-    what := fun f => s!"'{kwSorry}' in staged changes outside Obligations/, in {f}"
-    help := "  Fix: finish the proof -- a broken theorem is a broken build -- or, for a
-  statement the engine does not yet earn, stage it as a recorded obligation
-  under Obligations/ (see scripts/owed.lean; the ratchet applies)." },
+    what := fun f => s!"'{kwSorry}' in staged changes to {f}"
+    help := "  Fix: finish the proof." },
   { applies := fun _ => true
     flag := bannedWord kwUnsafe
     what := fun f => s!"'{kwUnsafe}' in staged changes to {f}"
@@ -1036,13 +1029,6 @@ def gates : List Gate := [
   a b c` once matched only the default, with the whole suite green (PLAN
   2026-09-15).
   Fix: spell the field at every constructor site; defaults belong on structures." },
-  { applies := (!obligationsFile ·)
-    flag := importsObligations
-    what := fun f => s!"import of Obligations outside the staging area, in {f}"
-    help := "  Obligations is the owed-theorem staging area: statements with open proofs.
-  The gated library must never depend on it (scripts/owed.lean also checks
-  the whole tree).
-  Fix: prove the statement and move it into its owner module first." },
   { applies := fun f => f.endsWith ".lean" && f != "LeanTex/Core/Diag.lean"
     flag := demotedAssign
     what := fun f => s!"a demotion written outside Diag.lean, in {f}"
@@ -1160,45 +1146,8 @@ def gates : List Gate := [
     help := s!"  The tree holds zero heartbeat raises; a proof that needs one is telling
   you the definition's shape is wrong (the MarkdownDoc emit_body_title_first
   case), not that the budget is small.
-  Fix: reshape the proof or the definition; if neither closes, state it in
-  Obligations and report the blocker." }]
-
-/-- The five fields an owed record carries, in the order
-`scripts/owed.lean` reads them off consecutive lines. -/
-def obFields : List String := ["owed", "owner", "source", "blocker", "goldens"]
-
-/-- The field key a record line spells, when it spells one: `-- <key>:`
-after trimming, matching `owed.lean`'s own `fieldOf`. A blocker's prose sits
-after the colon on one line, so no interior text can be read as a key. -/
-def obFieldKey (l : String) : Option String :=
-  let t := l.trimAscii.toString
-  obFields.find? fun k => t.startsWith ("-- " ++ k ++ ":")
-
-/-- Each owed record's field faults: a key that appears more or less than
-once between this record's `-- owed:` line and the next one.
-
-`owed.lean` reads a record as five *consecutive* lines, so a sixth field
-line following a complete record is invisible to it — and that is the shape
-a merge can produce when both sides of a conflict are kept,
-leaving a record carrying two or three
-`-- blocker:` lines. The ratchet noticed only indirectly, via a record count
-that no longer matched the hole count, which names neither the record nor
-the field. This names both. -/
-def obRecordFaults (lines : Array String) : Array (Nat × String × Nat) := Id.run do
-  let mut out : Array (Nat × String × Nat) := #[]
-  let mut starts : Array Nat := #[]
-  for i in [0:lines.size] do
-    if obFieldKey (lines[i]?.getD "") == some "owed" then starts := starts.push i
-  for s in [0:starts.size] do
-    let from_ := starts[s]?.getD 0
-    let to_ := (starts[s+1]?).getD lines.size
-    let mut counts : Array (String × Nat) := obFields.toArray.map (·, 0)
-    for i in [from_:to_] do
-      if let some k := obFieldKey (lines[i]?.getD "") then
-        counts := counts.map fun (k2, n) => if k2 == k then (k2, n + 1) else (k2, n)
-    for (k, n) in counts do
-      if n != 1 then out := out.push (from_ + 1, k, n)
-  return out
+  Fix: reshape the proof or the definition. Report any remaining blocker
+  without claiming an unproved guarantee." }]
 
 /-- An import of the scoreboard format module, spelled by concatenation so
 this file's own gate does not read it as a site. -/
@@ -1596,51 +1545,6 @@ def selftest : IO UInt32 := do
   smCase "twice sealed, once unsealed" ["seal Foo", "seal Foo", "unseal Foo"] (["Foo"], [])
   smCase "a comment is data" ["-- seal Foo"] ([], [])
 
-  expect "obFieldKey" (fun l => (obFieldKey l).isSome) [
-    -- the five record lines, indented or not
-    ("-- owed: lines_attributed_covers", true),
-    ("-- owner: LeanTex.Core.Layout", true),
-    ("  -- source: an audit", true),
-    ("-- blocker: two loops stand between the walk and the pages", true),
-    ("-- goldens: no", true),
-    -- prose, a docstring, and a key named after the colon stay unread
-    ("-- a comment about the owner of a walk", false),
-    ("/-- Attribution covers the ink. -/", false),
-    ("-- blocker text naming -- goldens: no mid-line", false)]
-
-  -- obRecordFaults: the merge damage this closes, and the healthy record.
-  -- A record is read to the NEXT `-- owed:`, which is why a sixth field
-  -- line after a complete record — invisible to owed.lean's five-line
-  -- window — is caught here.
-  let obCase (name : String) (src : List String)
-      (want : List (Nat × String × Nat)) : IO Unit := do
-    if (obRecordFaults src.toArray).toList != want then
-      fails.modify (s!"obRecordFaults {name}: got {(obRecordFaults src.toArray).toList}" :: ·)
-  let wellFormed := ["-- owed: t_one", "-- owner: M", "-- source: S",
-    "-- blocker: B", "-- goldens: no", "theorem t_one : True := by " ++ kwSorry]
-  obCase "a well-formed record" wellFormed []
-  -- the shape a keep-both-sides merge resolution leaves: two blockers,
-  -- the second one past the five-line window owed.lean reads
-  obCase "two blocker lines" (["-- owed: t_one", "-- owner: M", "-- source: S",
-    "-- blocker: B1", "-- goldens: no", "-- blocker: B2",
-    "theorem t_one : True := by " ++ kwSorry]) [(1, "blocker", 2)]
-  -- three, the other observed spelling: both inside the window, which
-  -- pushes `goldens` out of it
-  obCase "three blocker lines" (["-- owed: t_one", "-- owner: M",
-    "-- blocker: B1", "-- blocker: B2", "-- blocker: B3", "-- goldens: no",
-    "theorem t_one : True := by " ++ kwSorry])
-    [(1, "source", 0), (1, "blocker", 3)]
-  -- a missing field is the same fault read the other way
-  obCase "a missing field" (["-- owed: t_one", "-- owner: M", "-- source: S",
-    "-- goldens: no", "theorem t_one : True := by " ++ kwSorry])
-    [(1, "blocker", 0)]
-  -- two adjacent records do not bleed into each other's counts
-  obCase "two records" (wellFormed ++ ["-- owed: t_two", "-- owner: M",
-    "-- source: S", "-- blocker: B", "-- goldens: yes",
-    "theorem t_two : True := by " ++ kwSorry]) []
-  -- a file with no records has no faults
-  obCase "no records" ["theorem t : True := trivial"] []
-
   expect "topLevelDefName" (fun l => (topLevelDefName l).isSome) [
     -- the Support-rule gate: only a top-level def counts
     ("def deckBuilder (body : String) : String := body", true),
@@ -1826,8 +1730,7 @@ def selftest : IO UInt32 := do
     -- the escape that prompted the stripper: a command-name table entry
     ("+   (\"" ++ kwPartial ++ "\", .ord, '𝜕'),", false),
     ("+    say s!\"a message naming " ++ kwPartial ++ " in prose\"", false),
-    -- comments are data too: the shared stripper ended the divergence where
-    -- the hook fired on a comment the owed ratchet ignored
+    -- Both gates share the same treatment of code and comments.
     ("+  -- a comment naming " ++ kwPartial ++ " does not count", false),
     -- word-delimiting still holds
     ("+  let " ++ kwPartial ++ "Sums := 3", false)]
@@ -1967,21 +1870,14 @@ def selftest : IO UInt32 := do
     ("  let g := (a.resolve tok).width", false),
     ("  let mmNames := [\"mm\", \"cm\"]", false)]
 
-  expect "obligationsFile" obligationsFile [
-    -- the staging area, root module and any future submodule
-    ("Obligations.lean", true),
-    ("Obligations/Conservation.lean", true),
-    -- everything else keeps the flat ban
-    ("LeanTex/Core/Ir.lean", false),
-    ("Tests.lean", false),
-    ("scripts/owed.lean", false),
-    ("ObligationsExtra.lean", false)]
-
-  expect "importsObligations" importsObligations [
-    ("import Obligations", true),
-    ("import Obligations.Conservation", true),
-    ("-- import Obligations would be rejected", false),
-    ("import LeanTex.Core.Ir", false)]
+  -- The same proof rule applies to every maintained source path.
+  expect "unfinished proof in every source path" (fun f =>
+    gates.any fun r => r.applies f && r.flag ("theorem unfinished : True := by " ++ kwSorry)) [
+    ("LeanTex/Core/Probe.lean", true),
+    ("Tests/Probe.lean", true),
+    ("scripts/probe.lean", true),
+    ("ExtraProofs.lean", true),
+    ("ExtraProofs/Probe.lean", true)]
 
   expect "walkEntry" (fun l => (walkEntry l).isSome) [
     -- the shapes the tree carries today: entries in, companions and
@@ -2267,6 +2163,24 @@ def selftest : IO UInt32 := do
   for f in failed do
     IO.eprintln s!"FAIL {f}"
   return 1
+
+/-- The compiled part of the hook. Build all prerequisites together, then
+run the standard drivers in order. A failing stage stops the run and keeps
+its exit code; no later stage may turn an incomplete proof into a pass. -/
+def checkCompiledTree (env : Array (String × Option String) := #[]) : IO UInt32 := do
+  let stages := #[
+    ("lake", #["build", "--wfail", "LeanTex", "leantex", "Tests",
+      "precommit", "proofcheck", "lint", "cites", "land"]),
+    ("lake", #["test"]),
+    ("lake", #["lint"])]
+  for (cmd, args) in stages do
+    let out ← IO.Process.output { cmd, args, env }
+    if out.exitCode != 0 then
+      IO.eprintln s!"pre-commit: {cmd} {String.intercalate " " args.toList} failed:"
+      IO.eprint out.stdout
+      IO.eprint out.stderr
+      return out.exitCode
+  return 0
 
 def main (args : List String) : IO UInt32 := do
   if args.contains "--selftest" then
@@ -2739,37 +2653,14 @@ def main (args : List String) : IO UInt32 := do
       say s!"pre-commit: selftestFrameDebt names {p}, which is gone.
   Fix: delete its row (scripts/precommit.lean)."
 
-  -- The owed record's shape, whole tree and ahead of the ratchet: a record
-  -- carries exactly one of each field. owed.lean reads five consecutive
-  -- lines, so a sixth field line after a complete record is invisible to
-  -- it; that is the shape a rebase produces when an append-only-log
-  -- conflict is resolved keep-both-sides. Checked here rather than there
-  -- because it needs no compiled environment, so it reports before the
-  -- ratchet's indirect count mismatch does.
-  for f in (← System.FilePath.walkDir ".") do
-    let p := f.toString
-    let p := if p.startsWith "./" then (p.drop 2).toString else p
-    if obligationsFile p && p.endsWith ".lean" then
-      let lines := ((← IO.FS.readFile p).splitOn "\n").toArray
-      for (line, key, n) in obRecordFaults lines do
-        say s!"pre-commit: the owed record at {p}:{line} has {n} '-- {key}:' lines, not one.
-  An owed record is a fixed five-field form (owed/owner/source/blocker/goldens),
-  not an append-only log. Keeping both sides of a conflict can duplicate a
-  field. owed.lean reads five consecutive
-  lines, so a duplicate past the fifth is invisible there.
-  Fix: keep the one field value you mean and delete the others."
-
   -- The standard lint driver invokes these source checks without starting
   -- another build. Compile and proof checks are owned by that driver.
   if args.contains "--conventions" then
     return if ← failed.get then 1 else 0
 
-  -- Proof debt stays in its source records — one hole per named record,
-  -- no duplicate names, no import of Obligations from the gated
-  -- library. The check reads the whole tree, not the diff, so the count
-  -- cannot drift through an edit the diff scanner does not see. Off the
-  -- index it always runs: CI has no reason to trust a file list for a
-  -- whole-tree fact.
+  if ← failed.get then
+    return 1
+
   let mut env : Array (String × Option String) := #[]
   let clang := "/home/linuxbrew/.linuxbrew/bin/clang"
   if (← IO.getEnv "LEAN_CC").isNone && (← System.FilePath.pathExists clang) then
@@ -2777,63 +2668,4 @@ def main (args : List String) : IO UInt32 := do
     let pre := prefixOut.stdout.trimAscii.toString
     env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
 
-  if src != .index || staged.any (fun f => obligationsFile f || f == "scripts/owed.lean") then
-    let owedBuild ← IO.Process.output
-      { cmd := "lake", args := #["build", "owed", "-q"], env }
-    let owed ← if owedBuild.exitCode == 0 then
-        IO.Process.output { cmd := ".lake/build/bin/owed", args := #["--check"] }
-      else pure owedBuild
-    if owed.exitCode != 0 then
-      say s!"pre-commit: the owed-theorem ratchet failed:
-{owed.stderr}  Fix: give each obligation one complete source record, or finish
-  its proof and move it to its owner module (see scripts/owed.lean)."
-
-  -- The phantom-citation gate (scripts/cites.lean), whole tree: does every
-  -- theorem name a docstring cites resolve to a declaration? Its own binary
-  -- rather than a check here, because it resolves names against the compiled
-  -- environment -- `Lean.findDocString?` over the imported modules, the
-  -- elaborator's own resolver over each backticked token -- and an
-  -- environment exists only once the tree has been built. The scan is
-  -- whole-tree by nature, so it needs no diff and runs in all three modes;
-  -- on the index a commit staging no .lean file cannot move a citation or a
-  -- declaration, which is the one case it skips. Like `lake build --wfail`
-  -- below, it reads the working tree rather than the index: the same
-  -- approximation a commit-time compile already makes, closed by CI running
-  -- the pushed tree.
-  if src != .index || staged.any (·.endsWith ".lean") then
-    let citeBuild ← IO.Process.output
-      { cmd := "lake", args := #["build", "leantex", "Tests", "Obligations",
-        "precommit", "owed", "cites", "-q"], env }
-    let cites ← if citeBuild.exitCode == 0 then
-        IO.Process.output { cmd := ".lake/build/bin/cites", args := #["--check"] }
-      else pure citeBuild
-    if cites.exitCode != 0 then
-      say s!"{cites.stderr}{cites.stdout}"
-
-  if ← failed.get then
-    return 1
-
-  let build ← IO.Process.output
-    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed",
-        "cites", "land"], env }
-  if build.exitCode != 0 then
-    IO.eprintln "pre-commit: lake build --wfail failed (linter warnings fail too):"
-    IO.eprint build.stdout
-    IO.eprint build.stderr
-    return 1
-
-  -- Staged obligations must still type-check: the staging target builds
-  -- without --wfail, so its expected open-proof warnings pass while a
-  -- statement that does not compile still fails the commit. A statement
-  -- that does not compile is worse than no statement. Off the index it
-  -- always runs: the staging target is outside `lake build`, so nothing
-  -- else in CI would compile it.
-  if src != .index || staged.any obligationsFile then
-    let ob ← IO.Process.output { cmd := "lake", args := #["build", "Obligations", "-q"], env }
-    if ob.exitCode != 0 then
-      IO.eprintln "pre-commit: lake build Obligations failed (staged statements must type-check):"
-      IO.eprint ob.stdout
-      IO.eprint ob.stderr
-      return 1
-
-  return 0
+  checkCompiledTree env

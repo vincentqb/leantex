@@ -5957,13 +5957,12 @@ first leaf of the block whose text the line sets (a footnote's lines name
 the note's first leaf), and the ink of every leaf the block owns stands, in
 preorder, inside the ink its lines paint — gaps read as spaces, a line-end
 hyphen joined away, the no-break space and soft hyphen outside the measure
-(`Obligations.inkChars`) — with equality where the block carries no
+(`Layout.inkCensus`) — with equality where the block carries no
 generated ink. Generated ink the tree does not census (the abstract
 heading, the headline band) is `none`; decoration of a block (a section
 number, a list marker, a caption prefix, a bibliography marker) rides the
-block's leaf. The owed statements are `lines_attributed_covers` and
-`lines_attributed_text` (Obligations.lean); these rows are their executable
-witness over the corpus, and the exceptions are enumerated, never a
+block's leaf. `Layout.run_paras_leaf_exact` proves the paragraph case.
+These rows check the broader corpus; exceptions are enumerated, never a
 wildcard:
 - `.formula` leaves: the leaf is the source, the page paints the rendering
   (M7-24 owns the run channel);
@@ -6003,7 +6002,7 @@ end
 def leafRows (t : Struct.Tree) : Array LeafRow :=
   leafRowsList [] false false #[] t.children.toList
 
-/-- The ink the comparison reads: `Obligations.inkChars`'s exclusions plus
+/-- The ink the comparison reads: `Layout.inkCensus`'s exclusions plus
 every fixed-space character (a kern, no glyph) and the hyphen — an
 this block-level census joins a line-end hyphen away whatever its origin
 (the run channel names the breaker's `.hyphen` apart; `leafInk` below

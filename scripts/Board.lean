@@ -847,7 +847,7 @@ Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
   ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "external", "htmla11y",
-   "htmlreader", "obligations", "parity", "purity", "rhythm"]
+   "htmlreader", "parity", "purity", "rhythm"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,
 and their absence reports `missing`, which the aggregate does not gate — so
@@ -981,51 +981,6 @@ def deficits (t : Tsv) : Array (String × Int) := Id.run do
       let d := best - r.value
       if d > 0 then out := out.push (r.item, d)
   return out.qsort (fun a b => a.2 > b.2)
-
--- ## Obligations, read as records
-
-structure Ob where
-  name : String
-  owner : String
-  blocker : String
-  file : String
-deriving Inhabited
-
-/-- Every owed record staged under the obligations path. A record is five
-consecutive field lines, and a run of them that is not five is **rejected**,
-exactly as `scripts/owed.lean` rejects it — not counted under owner `?`.
-Counting a malformed record would mean this tier and the owed gate disagree
-about what is staged, and the one that is silent about it is the one you
-would trust by accident. -/
-def obligations : IO (Array Ob × Array String) := do
-  let mut files : Array String := #[]
-  if ← System.FilePath.pathExists "Obligations.lean" then
-    files := files.push "Obligations.lean"
-  if ← System.FilePath.isDir "Obligations" then
-    for p in ← System.FilePath.walkDir "Obligations" do
-      if p.toString.endsWith ".lean" then files := files.push p.toString
-  let mut out : Array Ob := #[]
-  let mut malformed : Array String := #[]
-  for f in files do
-    let lines := ((← IO.FS.readFile f).splitOn "\n").toArray
-    for i in [0:lines.size] do
-      if let some name := (lines[i]?).bind (fieldOf · "owed") then
-        match (lines[i+1]?).bind (fieldOf · "owner"),
-              (lines[i+2]?).bind (fieldOf · "source"),
-              (lines[i+3]?).bind (fieldOf · "blocker"),
-              (lines[i+4]?).bind (fieldOf · "goldens") with
-        | some owner, some _, some blocker, some _ =>
-          out := out.push { name, owner, blocker, file := f }
-        | _, _, _, _ =>
-          malformed := malformed.push s!"{f}: record '{name}' is not five field \
-lines (owner, source, blocker, goldens)"
-  return (out, malformed)
-
-/-- Obligations whose blocker names no other open obligation: the ones a
-proof attempt can start on today. Computed from the records, not listed. -/
-def ready (obs : Array Ob) : Array Ob :=
-  obs.filter fun o =>
-    !obs.any fun p => p.name != o.name && containsSub o.blocker p.name
 
 def readFileOr (p : String) : IO String := do
   if ← System.FilePath.pathExists p then IO.FS.readFile p else return ""

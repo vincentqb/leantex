@@ -1,11 +1,6 @@
-/-
-The line-scanner helpers both gate scripts share. precommit.lean and
-owed.lean once each carried a copy of these; the copies were identical
-except that the hook's banned-word scan did not strip `--` comments while
-owed's hole counter did — one keyword, two behaviours, so a comment naming
-the hole keyword failed a commit the ratchet would have passed. One module,
-one behaviour: gates that must agree read the same definition.
--/
+/- Shared lexical conventions for source checks. The compiler and axiom
+audit remain authoritative for proof completeness; this scanner provides
+earlier feedback on a staged diff. -/
 
 def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_'
 
@@ -77,24 +72,11 @@ as a word-delimited token — the hook scans every .lean file, these
 included. -/
 def kwSorry : String := "sor" ++ "ry"
 
+/-- Shared spelling for the totality convention. -/
+def kwPartial : String := "par" ++ "tial"
+
 /-- A banned keyword as a code token: word-delimited, string content and
 `--` comments aside. Strings are stripped first, so a literal containing
 `--` does not hide the code after it. -/
 def bannedWord (kw l : String) : Bool :=
   hasWord (stripLineComment (stripStrings l)) kw
-
-/-- An import of the owed-theorem staging area: legal only inside it. The
-gated library must never depend on a statement whose proof is open. -/
-def importsObligations (l : String) : Bool :=
-  ((stripLineComment l).trimAscii.toString).startsWith "import Obligations"
-
-/-- The value of `-- <key>: <value>` when the line is one — the field form an
-owed record is written in. Two gates read it: `scripts/owed.lean`, which is
-the ratchet, and the scoreboard's obligations tier, which counts the same
-records per owner. One definition, so the two cannot disagree about what a
-record says; that is what this module is for. -/
-def fieldOf (l key : String) : Option String :=
-  let t := l.trimAscii.toString
-  let pre := "-- " ++ key ++ ":"
-  if t.startsWith pre then some (((t.drop pre.length).toString).trimAscii.toString)
-  else none

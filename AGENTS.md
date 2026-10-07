@@ -55,10 +55,9 @@ in this repo; refer to the private reference corpus abstractly.
   placement as evidence (leantex centres measured target ink along the
   arrow's forward ray; cancel.sty places the value at the arrow tip).
   `--report` prints without gating, `--selftest` checks the parsers.
-- `lake env lean --run scripts/owed.lean` — what does this engine not yet
-  guarantee? Prints every owed obligation (a type-checked statement whose
-  proof is open, staged under `Obligations/`) with owner, source, and
-  blocker. Exits non-zero only when the ratchet is violated.
+- `lake lint` checks every maintained Lean source, including unimported
+  modules and executables, with strict elaboration and a compiled axiom
+  audit. The build uses `-E hasSorry`; no source path exempts a proof.
 - `lake env lean --run` interprets the `.olean` files as they stand and
   rebuilds none of them, so build the libraries a script imports first
   (`lake build scoreboard` for `scripts.Board`). A script library built
@@ -106,7 +105,7 @@ in this repo; refer to the private reference corpus abstractly.
   | a gate on the declared setup (context, config, declarations, state) that names, silences, or demotes a loss | the check that falsifies its premise, named beside it: `-- premise: <pin> — <why>`, or the refusal `-- premise: none — <why>` (hook, whole tree; the pin must resolve to a theorem the build checks or a check block the suite runs). A premise about another subsystem is a claim, and prose rots — three defects shared that shape. The shape of such a check is two builds differing by the gate's own condition: a byte-identical artifact with different diagnostics means nothing else was handling the case, so the gate is a silencer (`pictureKeyGateChecks`) |
   | a diagnostic emission at a site another code already names | one accounting, not two: fold the fragment into the first code's message, or land a `siteAccounting` row naming the file that owes the merge (`siteAccountingChecks`). A `degraded`/`pending` code is *censused* (`DiagCode.censused`) and the census runs on `subject` alone — `tallySites` returns a subjectless diagnostic untouched — so such a code carries a subject at every emission, or a frozen `subjectDebt` baseline row that may fall and never rise (`subjectCensusChecks`). `W0301` counted its command while `W0341` printed once per site for a fragment of that same command, at the same span |
   | a comparison level with a declared blind spot | the pair of inputs differing only in what it ignores, asserted equal under that level and unequal under the level above — for **every** level with a blind spot, not the newest one (`parity --selftest` holds `censusKey` blind and `orderKey` sighted, and `orderKey` blind and `lineKey` sighted). A "blind to" column nobody checks is prose: the reading-order level was believed to see line breaking until two pages with identical scalar sequences and different line partitions both passed it. Also owed: the level's *ordering premise* as a check, not a docstring — the line reading claimed first-paint order was reading order, which a float placed away from its source position falsifies. A record format owes the same of its empty value — round-trip every field empty, which is the arm a real fixture eventually takes and the one a hand-written example never does |
-  | a `forIn`/`Id.run` loop whose state an owed statement must cross | the invariant, written in the loop's own module (where the private state is nameable) and exported as the corollary the statement reads — never the loop restated as a fold. `LeanTex.Core.Loop` reads a loop that `break`s, which is exactly where the stdlib's `foldl` bridges stop, and `Obligations.floorMask_id` is the worked example: three loops, no change to the walk. A pure invariant is blind to how much input the loop consumed, so a claim about the loop's *value* (a census, a round trip) owes the progress-indexed form or its own algebra instead — say which of the two the statement is (review) |
+  | a `forIn`/`Id.run` loop whose state an owed statement must cross | the invariant, written in the loop's own module (where the private state is nameable) and exported as the corollary the statement reads — never the loop restated as a fold. `LeanTex.Core.Loop` reads a loop that `break`s, which is exactly where the stdlib's `foldl` bridges stop, and `Ir.floorMask_id` is the worked example: three loops, no change to the walk. A pure invariant is blind to how much input the loop consumed, so a claim about the loop's *value* (a census, a round trip) owes the progress-indexed form or its own algebra instead — say which of the two the statement is (review) |
   | a measurement a goal is judged by | a tier, not a number in a report: `testdata/scoreboard/<t>.tsv` (`<t>` matching `[a-z0-9-]+`, which the aggregate faults otherwise; `#` provenance lines, then `item<TAB>integer`, higher is better, sorted, unique) written only by `scripts/<t>.lean` in the three modes (regenerate / `--check` / `--selftest`), plus its name in `Scoreboard.declaredTiers`, whose absence is a **fault** unless the name is also on `pendingTiers` — and a pending name whose tier has both halves fails the selftest, so landing a tier and removing its name are one commit. The contract the aggregate reads is `--check`'s exit status alone: a porcelain line (`tierLine`) is optional and can never override a non-zero exit, and `# encoding:` is an optional ranking hint (absent: gated, unranked). An absent or empty baseline under `--check` is a fault; only regeneration starts from nothing — and the aggregate faults an empty or rowless baseline itself, whatever its producer exits. One ratchet for every tier (`Board.ratchet`, applied by the `tierMain` a producer is built on): a fall or an unretired vanish fails, and so does an **unrecorded rise** (`result=stale`) — record it by regenerating, in the commit that earned it, as `subjectDebt` and `siteAccounting` are read in both directions. Weakening is a request a human writes in the committed file and regeneration spends once: a fall needs `# lowered: <item> <old>→<new> — <why>` naming exactly the fall from the committed floor, and is written back as the record `# lowered (applied): …`, which authorises nothing again, so a second fall of one item needs a second request; a committed file still holding a request that names its committed floor is `stale`, and one holding a request that names any other floor is a fault (the message says: mark it `# lowered (applied):` if it records a fall already written, otherwise correct or delete it). A shrink-is-good metric is encoded as headroom (`cap - count`), never as the count, because a ratchet points one way for every tier; an item is retired only by a `# retired: <item> — <why>` line written beside its row, which regeneration applies by dropping the row (a measurement that still produces a retired item is malformed), and a whole tier only by a `# retired-tier: <why>` tombstone in its file. `scoreboard --check --base <rev>` is the gate the land tool runs, `<rev>` the main it lands onto: against the files committed at `<rev>`, read with replacement objects off, a fall or a vanish needs a line new since `<rev>` (a record spending a request `<rev>` holds is new), a baseline present at `<rev>` may not disappear, a base git cannot read is a fault, and every tier file in the tree — one new since `<rev>` included — must validate and is `stale` while it holds any request, so neither a hand-edited floor nor a deleted-and-regenerated baseline launders one; a pass prints each weakening and each new line it credited, control characters spelled out, which is where the human reads them. `--check` is hermetic — committed references and in-repo data only — and anything needing another engine, the network or the host's TeX tree is a report (`scoreboard --bench`), never a gate (`scoreboard --selftest` fans out to every tier's) |
   | an HTML emission assistive technology must name or reach, or is told to skip — an `<svg>`, an `<img>`, a box a stylesheet rule scrolls (`overflow: auto`), a box under `aria-hidden` | its fact in the judge `HtmlDoc.a11yFacts` — a scroll rule also enters `declaresScroll`, or the judge cannot see the box: a name (`carriesName`), a non-blank `alt` or a declared decorative role, `tabindex="0"` and — where the role takes one — a name, and no tab stop under `aria-hidden` (`tabbable`). A judge that skips what `aria-hidden` removes still counts the tab stops in it, or hiding a link scores as a fix: a linked logo shipped that way. `htmlA11yChecks` holds `svg`, `scroll` and `hidden-focus` at zero on every shipped page; the `htmla11y` tier ratchets the rest, and axe over the rendered corpus is its report |
   | a box a stylesheet rule bounds and scrolls on screen (a fixed height, `overflow: auto`) | its print lift: paper has no scroll, and a scroll container is monolithic there, so it clips what exceeds it — on paper the box grows or its lines wrap, and growing leaves no sheet blank (`print_lifts_stage_bounds_covers` for the deck's stages; the reader oracle's `print-spill` and `print-sheets` rows on the printed corpus). A frame of 30 items once printed 14, and the first lift printed three blank sheets |
@@ -150,7 +149,8 @@ in this repo; refer to the private reference corpus abstractly.
   case analysis the statement never mentions, a private state the
   statement cannot name, a heartbeat wall. Write it as the refactor it
   needs — a field the statement can read, a state split, an equation
-  pack — and stage the statement in `Obligations/` meanwhile. Never work
+  pack — and complete the proof against the resulting interface. Record
+  an unresolved claim as pending work, never as a proved theorem. Never work
   around it with fuel, `decide` over samples, or a test in a theorem's
   clothes.
 
@@ -313,7 +313,7 @@ in this repo; refer to the private reference corpus abstractly.
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter. A guarantee stated in
   prose names the theorem that holds it; a claim with no theorem is
-  recorded as an owed obligation. In a statement meant for
+  described as pending work, without an unfinished Lean declaration. In a statement meant for
   `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
   the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
   to it. `omega` handles `Int.max`/`min` directly — no `Int.max_def` unfold,
@@ -321,16 +321,12 @@ in this repo; refer to the private reference corpus abstractly.
   spelled `decide +kernel` instead. A case split whose branches read
   identical may still be load-bearing for elaboration cost — judge dead
   proof structure by deletion and rebuild, never by inspection.
-- A theorem the engine does not yet earn is stated anyway — in
-  `Obligations/`, the staging queue: its own lake target, outside the
-  default `lake build` and `lake test`, never imported by `LeanTex/` (the
-  hook and `scripts/owed.lean` check mechanically). `sorry` is permitted
-  only there, one per obligation, each carrying an
-  owed/owner/source/blocker/goldens record with a unique, nonempty name —
-  the ratchet: the debt may never grow unnamed. A discharged obligation
-  moves into its owner module with a real
-  proof; the queue is not a home. Statements range over the engine's own
-  functions, never a spec copy.
+- Every maintained theorem has a complete proof. `lake build` uses
+  `-E hasSorry`; `lake lint` additionally checks compiled axiom closure and
+  fresh source elaboration, including anonymous and private proofs. Project
+  axioms and proof holes are rejected. External behavior is an explicit
+  premise about returned evidence, exercised by boundary tests; statements
+  range over the actual implementation, never a specification copy.
 - No default values on inductive constructor fields — patterns then
   under-specify silently; the hook rejects them. Structure fields keep theirs.
 - Never add `partial` to reach a green build. Tree recursion over `Array`
@@ -395,8 +391,8 @@ in this repo; refer to the private reference corpus abstractly.
   artifact. The landing never resolves a conflict: a conflict outside the
   union-merged files is a refusal with exit 2 that touches nothing of the
   owner's, and the branch's owner rebases and resolves it in their own
-  worktree, then re-runs `land check` — keep-both once doubled an owed
-  record's `blocker:` line, which is why the tool refuses rather than guesses.
+  worktree, then re-runs `land check`; the tool never guesses how to
+  reconcile conflicting implementations or specifications.
   A branch landed onto a `main` that had moved keeps its original commits: the
   ledger records the tip it read, and `land retire` reads that. A landed
   branch is never continued: while `main` holds its landing, `land` refuses

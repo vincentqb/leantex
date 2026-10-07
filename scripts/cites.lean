@@ -1,7 +1,7 @@
 /-
 Does every theorem name a docstring cites resolve to a declaration?
 
-  lake build LeanTex TestsModules Obligations ScriptsModules leantex Tests cites
+  lake build LeanTex TestsModules ScriptsModules leantex Tests cites
   .lake/build/bin/cites --check
 
 AGENTS.md asks that a guarantee stated in prose name the theorem holding it.
@@ -54,7 +54,7 @@ def citeBare (tk : String) : Bool :=
     && containsSub tk "_"
 
 /-- The namespace-qualified spelling of the same thing: `Elab.x`,
-`Obligations.y`, `Diag.tallySites_exact`. A citation reaching out of its own
+`Layout.run_paras_body_exact`, `Diag.tallySites_exact`. A citation reaching out of its own
 file writes the qualifier, and this tree's house style does so routinely, so
 the bare form alone left a hole -- three dangling citations to a theorem that
 never existed passed the gate under the dotted spelling, in the very change
@@ -106,72 +106,10 @@ def citeForeign : List String :=
    "x_y",                      -- an example label key, quoted as prose
    "xn_over_d"]                -- TeX's scaled-integer routine (TeX §107)
 
-/-- The phantom citations standing when this resolver landed: a backticked
-theorem name in a docstring that resolves to no declaration. Each is a
-guarantee that reads as held and is not, so the list may only shrink -- a new
-phantom fails the commit. A name leaves this list when its citation is
-corrected (the theorem is written, the claim is restated in prose, or the
-dead name is deleted).
-
-Sixteen stood when the text-scanning gate landed; eleven were resolved over
-two sweeps, and the five that remained were all cited from
-`LeanTex/Core/Ir.lean`. Those five are now gone too, and not one of them
-needed a proof it did not have: four were mislabels, where the fact was
-held by something other than the name written down -- an oracle called "the
-statement" twice (the boundary request's byte-identity, `boundaryChecks`;
-a pure function's determinism is definitional, so no theorem was ever owed
-there), an equation a deleted one-line renderer carried and its own
-declaration now states, and two live holders one sentence away that did
-not say their names (`langWrap_text`, three lines below its own label, and
-`pages_partition_frames`, the record Obligations.lean actually states over
-`Ir.frameSteps`). The fifth, `algorithm_lines_agree`, was the one that did
-owe a proof: the HTML nesting builder was factored out of its match arm so
-a statement had something to range over, and the theorem was written.
-PLAN 2026-09-23 carries the accounts. A row names the anchor declaration
-rather than a line: every line number the first sweep recorded had moved
-by the second.
-
-Two rows arrived with the resolver, and neither is new debt -- both were
-standing phantoms the text scan could not see, and each is one word to
-repair:
-
-  frames_sections   cited from the docstrings of `Ir.frameSteps` and of
-                    `deckStepChecks`. It is the name of a check LABEL, not
-                    of a declaration: Tests/Themes.lean spells it inside the
-                    string a test is titled with. The predecessor resolved a
-                    citation against test-label strings, which is how a
-                    label came to read as a theorem. The claim is genuinely
-                    held -- by `deckStepChecks`, which resolves -- so the
-                    repair is to cite the checks by their declaration, or to
-                    drop the backticks and let the sentence name the census
-                    in prose.
-  sty_is_defaults   cited from the docstrings of both halves,
-                    `sty_is_defaults_tokens` and `sty_is_defaults_palette`.
-                    Nothing carries the shared prefix: it names the pair,
-                    which is a pair and not a theorem. The predecessor's
-                    resolver accepted a name whenever some declaration
-                    started with it and an underscore, so the two halves
-                    vouched for a name neither of them is. The repair is to
-                    name both halves, or to write the sentence without the
-                    shared stem.
-
-Keyed by name and site: a row is one citation's anchor, so the ratchet reads
-in both directions, as `subjectDebt` and `siteAccounting` do. A second
-citation of a parked name is a new phantom, since a parked name is not a
-licence to cite it again, and a row whose citation was fixed is dead and
-fails `--check` until it is deleted, so the list cannot hold a name after
-its debt is paid. The site is the file and the compiled declaration whose docstring
-carries the citation, or `the module docstring` for a module's own. Line numbers are not keys, because every line number the
-first sweep recorded had moved by the second.
-
-The list stays when it empties. `citeCandidate` recognises a citation by its
-spelling, so the gate can fire on prose that makes no claim -- a docstring
-may name a deleted theorem as history -- and a false positive needs a
-parking place that names the real holder, or the next reader silences it by
-deleting the sentence. That is the one repair this gate must not buy, and an
-empty list with no row to imitate invites it. A row added here carries the
-same three things every row above did: the anchor declaration, what actually
-holds the fact, and the one-line fix. -/
+/-- A known unresolved citation, keyed by name, file, and declaration.
+The ratchet rejects both new sites and rows whose citation now resolves.
+Correct the reference or prove its claim; do not remove a supported claim
+merely to silence its citation. -/
 structure PhantomRow where
   name : String
   file : String
@@ -280,7 +218,7 @@ def bestVerdict : Verdict → Verdict → Verdict
   | .tree, _ | _, .tree => .tree
   | .phantom, .phantom => .phantom
 
-/-- Scope resolution uses the citing module and namespace, plus Obligations.
+/-- Scope resolution uses the citing module and namespace.
 The tree tier permits the existing house style of citing another namespace's
 short name. Both tiers require Lean to resolve a complete compiled declaration. -/
 def resolveTree (tree : CompiledTree) (queries : Array Query) : IO (Array Verdict) := do
@@ -387,8 +325,8 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
         private theorem dashed_invariant : True := trivial\n\
         /-- The private claim `missing_dashed_invariant` must fail. -/\n\
         private def anchor : Nat := 0\nend Dashed\n"),
-      ("Obligations", "module\nnamespace Obligations\n\
-        public theorem staged_invariant : True := trivial\nend Obligations\n"),
+      ("ExtraProofs", "module\nnamespace ExtraProofs\n\
+        public theorem root_invariant : True := trivial\nend ExtraProofs\n"),
       ("Tools.One", "/-- The executable claim `missing_one_invariant` must fail. -/\n\
         def main : IO Unit := pure ()\n"),
       ("Tools.Two", "/-- The other executable claim `missing_two_invariant` must fail. -/\n\
@@ -421,7 +359,9 @@ def compiledSelftest : IO (List String) := IO.FS.withTempDir fun dir => do
       ("check-label string", q "label_only_invariant" `Extra, .phantom),
       ("shared prefix", q "split_invariant" `Extra, .phantom),
       ("continuation-line declaration", q "fixture_continuation_witness" `Extra, .scope),
-      ("staging namespace", q "staged_invariant" `Extra, .scope),
+      ("qualified root module", q "ExtraProofs.root_invariant" `Extra, .scope),
+      ("foreign bare name", q "root_invariant" `Extra, .tree),
+      ("root module namespace", q "root_invariant" `ExtraProofs "ExtraProofs", .scope),
       ("private bare name", q "private_invariant" `Extra, .scope),
       ("private qualified name", q "Extra.private_invariant", .scope),
       ("modern private doc namespace", q "Local.local_invariant" `Local "LeanTex.CiteProbe", .scope),
@@ -468,6 +408,33 @@ cases are spellings of this tree. A gate that does not catch the shape it
 commemorates grants false confidence, so a gate change lands with both. -/
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
+  -- Worker messages must preserve kernel namespaces, including hygienic and
+  -- numeric components which are not source-level identifiers.
+  let namespaces : Array Name := #[
+    .anonymous, `Ordinary.Namespace,
+    .str (.str (.num
+      (.str (.str (.str (.str .anonymous "initFn") "_@") "scripts") "ProofAudit")
+      3794864908) "_hygCtx") "_hyg",
+    .str .anonymous "", .str .anonymous "part.with spaces",
+    .str .anonymous "quote\"\\\n", .str .anonymous "»", .str .anonymous "#0",
+    .num .anonymous 0,
+    .str (.num (.str .anonymous "same") 12) "tail",
+    .str (.str (.str .anonymous "same") "12") "tail"]
+  for ns in namespaces do
+    let request : Request := {
+      modules := #["Synthetic"], paths := #[], collect := true
+      queries := #[⟨"Synthetic", ns, "some_invariant"⟩] }
+    let response : Response := {
+      modules := #["Synthetic"]
+      sites := #[⟨"Synthetic", "Synthetic.lean", 7, ns, "anchor", "text"⟩] }
+    let decodedRequest : Except String Request :=
+      Json.parse (toJson request).compress >>= fromJson?
+    let decodedResponse : Except String Response :=
+      Json.parse (toJson response).compress >>= fromJson?
+    unless (decodedRequest.toOption.map (·.queries)) == some request.queries do
+      fails.modify (s!"request namespace roundtrip failed: {repr ns}" :: ·)
+    unless (decodedResponse.toOption.map (·.sites.map (·.ns))) == some #[ns] do
+      fails.modify (s!"response namespace roundtrip failed: {repr ns}" :: ·)
   let expect (name : String) (p : String → Bool) (cases : List (String × Bool)) : IO Unit := do
     for (line, want) in cases do
       if p line != want then
@@ -502,7 +469,7 @@ def selftest : IO UInt32 := do
     ("White_Space", false),
     ("_leading", false),
     ("trailing_", false),
-    ("lake env lean --run scripts/owed.lean", false),
+    ("lake env lean --run scripts/proofcheck.lean", false),
     ("", false)]
 
   let spanCases : List (String × List String) := [

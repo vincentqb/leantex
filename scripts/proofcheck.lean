@@ -1,4 +1,5 @@
 import scripts.ProofSources
+import scripts.ProofAudit
 import LeanTex.Cli.Batch
 
 namespace ProofCheck
@@ -6,32 +7,29 @@ namespace ProofCheck
 open ProofSources
 
 def auditCommand (root : System.FilePath) (names manifest : Array String) : String :=
-  "#audit_proofs [" ++ String.intercalate ", " (names.toList.map reprStr) ++ "] from " ++
+  "#audit_proofs [" ++ String.intercalate ", " (names.toList.map (reprStr ∘ importName)) ++ "] from " ++
   reprStr root.toString ++ " with [" ++
-  String.intercalate ", " (manifest.toList.map reprStr) ++ "]\n"
+  String.intercalate ", " (manifest.toList.map (reprStr ∘ importName)) ++ "]\n"
 
 def wrapper (root : System.FilePath) (names manifest : Array String) : String :=
   "import scripts.ProofAudit\n" ++
   String.join (names.toList.map fun name => "import " ++ importName name ++ "\n") ++
   auditCommand root names manifest
 
-/-- Preserve the source's modern/legacy mode and import visibility. Importing
-the auditor normally initializes elaborators; replaying a freshly imported
-environment in-process would leave their initializers unexecuted. -/
-def sourceWrapper (file : System.FilePath) : IO String := do
-  let input ← IO.FS.readFile file
-  let (header, _, msgs) ← Lean.Parser.parseHeader (Lean.Parser.mkInputContext input file.toString)
-  if msgs.hasErrors then
-    throw <| IO.userError s!"proof audit: cannot parse imports of {file}"
-  let modern := Lean.Elab.HeaderSyntax.isModule header
-  let imports := Lean.Elab.HeaderSyntax.imports header |>.toList.map fun imp =>
-    (if modern && imp.isExported then "public " else "") ++
-    (if modern && imp.isMeta then "meta " else "") ++ "import " ++
-    (if imp.importAll then "all " else "") ++ imp.module.toString ++ "\n"
-  return (if modern then "module\n" else "") ++ "prelude\n" ++
-    String.join imports ++ (if modern then "meta " else "") ++
-    "import scripts.ProofAudit\n#audit_source " ++
-    reprStr file.toString ++ "\n"
+/-- Lake chooses the platform's native library name. Loading a compiler plugin
+registers the linter without adding imports to the module being checked. -/
+def sourcePlugin : IO System.FilePath := do
+  let target := "+scripts.ProofAudit:dynlib"
+  let built ← IO.Process.output { cmd := "lake", args := #["build", "--wfail", target] }
+  unless built.exitCode == 0 do
+    throw <| IO.userError (built.stdout ++ built.stderr)
+  let queried ← IO.Process.output { cmd := "lake", args := #["query", target] }
+  unless queried.exitCode == 0 do
+    throw <| IO.userError (queried.stdout ++ queried.stderr)
+  let path := System.FilePath.mk queried.stdout.trimAscii.toString
+  unless ← path.pathExists do
+    throw <| IO.userError s!"proof audit: compiler plugin was not built: {path}"
+  return path
 
 def compile (file : System.FilePath) (extra : Array String := #[])
     (search : Option System.FilePath := none) : IO IO.Process.Output := do
@@ -48,11 +46,21 @@ def checkGroup (dir : System.FilePath) (index : Nat)
   IO.FS.writeFile file (wrapper (← IO.currentDir) names manifest)
   compile file
 
-def checkSource (dir : System.FilePath) (index : Nat)
-    (source : System.FilePath) : IO IO.Process.Output := do
-  let file := dir / s!"Source{index}.lean"
-  IO.FS.writeFile file (← sourceWrapper source)
-  compile file
+/-- A successful compiler exit is insufficient if its audit did not finish. -/
+def requireSourceAudit (source : System.FilePath) (out : IO.Process.Output) :
+    IO.Process.Output :=
+  if out.exitCode != 0 || (out.stdout.splitOn "\n").any (fun line =>
+      line.startsWith s!"proof audit: {source}: " &&
+      line.endsWith " anonymous examples checked before discard") then out
+  else
+    { out with
+      exitCode := 1
+      stderr := out.stderr ++ s!"proof audit: {source}: compiler audit receipt is missing\n" }
+
+def checkSource (plugin source : System.FilePath) (extra : Array String := #[])
+    (search : Option System.FilePath := none) : IO IO.Process.Output := do
+  return requireSourceAudit source (← compile source
+    (#["--plugin=" ++ plugin.toString] ++ extra) search)
 
 /-- Compiler audits read already-built dependencies and own distinct temporary
 wrappers. Keep at most two compilers resident: source elaboration can be large.
@@ -70,11 +78,12 @@ def verify : IO UInt32 := do
   if built.exitCode != 0 then
     IO.eprint (built.stdout ++ built.stderr)
     return built.exitCode
+  let plugin ← sourcePlugin
   IO.FS.withTempDir fun dir => do
     let manifest := files.map moduleName
     let compiled ← auditBatch (groups files) fun index names =>
       checkGroup dir index names manifest
-    let elaborated ← auditBatch files (checkSource dir)
+    let elaborated ← auditBatch files fun _ file => checkSource plugin file
     let mut passed := true
     for results in #[compiled, elaborated] do
       for out in results do
@@ -88,6 +97,7 @@ def verify : IO UInt32 := do
 /-- Exercise the compiler and the compiled audit independently. A suppressed
 compiler warning cannot certify a proof; unused private declarations count too. -/
 def selftest : IO UInt32 := IO.FS.withTempDir fun dir => do
+  let plugin ← sourcePlugin
   let mut failures : Array String := #[]
   let expect (label : String) (okay : Bool) : StateT (Array String) IO Unit :=
     unless okay do modify (·.push label)
@@ -98,6 +108,10 @@ def selftest : IO UInt32 := IO.FS.withTempDir fun dir => do
   let hole := "sor" ++ "ry"
   let valid ← probe "Valid" "module\npublic theorem identity (n : Nat) : n = n := rfl\n"
   (_, failures) ← (expect "valid proof rejected by the compiler" (valid.exitCode == 0)).run failures
+  let hyphenated ← probe "Hyphenated-Module"
+    "module\npublic theorem hyphenatedIdentity (n : Nat) : n = n := rfl\n"
+  (_, failures) ← (expect "hyphenated module fixture did not compile"
+    (hyphenated.exitCode == 0)).run failures
   let visible ← probe "Visible" s!"module\npublic theorem hole : False := by {hole}\n"
   (_, failures) ← (expect "hasSorry did not reject an unfinished proof"
     (visible.exitCode != 0 &&
@@ -142,10 +156,12 @@ public theorem dependentBoundary : False := exportedBoundary
 "
   (_, failures) ← (expect "transitive-axiom consumer did not compile"
     (axiomConsumer.exitCode == 0)).run failures
-  let allFixtures := #["Valid", "Visible", "Hidden", "Foreign", "Foundation",
+  let allFixtures := #["Valid", "Hyphenated-Module", "Visible", "Hidden", "Foreign", "Foundation",
     "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Unimported"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
+      ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
+        #["Valid", "Hyphenated-Module"], true),
       ("accepted logical foundation", #["Foundation"], #["Foundation"], true),
       ("unused private unfinished proof", #["Hidden"], #["Hidden"], false),
       ("unused private project axiom", #["Foreign"], #["Foreign"], false),
@@ -184,14 +200,14 @@ public theorem dependentBoundary : False := exportedBoundary
   for name in ["LeanTex", "Tests", "scripts", "NewLibrary", "tests", "testdata", ".lake"] do
     IO.FS.createDirAll (sourceRoot / name)
   for name in ["LeanTex.lean", "LeanTex/Unimported.lean", "Tests/Private.lean",
-      "scripts/tool.lean", "Obligations.lean", "NewLibrary/Unregistered.lean",
+      "scripts/tool.lean", "ExtraProofs.lean", "NewLibrary/Unregistered.lean",
       "tests/Unimported.lean", "testdata/fixture.lean", ".lake/Generated.lean"] do
     IO.FS.writeFile (sourceRoot / name) ""
   let discovered ← sources sourceRoot
   (_, failures) ← (expect "source discovery omitted an unimported module"
     ((discovered.map moduleName) ==
-      #["LeanTex", "LeanTex.Unimported", "NewLibrary.Unregistered",
-        "Obligations", "Tests.Private", "scripts.tool", "tests.Unimported"])).run failures
+      #["ExtraProofs", "LeanTex", "LeanTex.Unimported", "NewLibrary.Unregistered",
+        "Tests.Private", "scripts.tool", "tests.Unimported"])).run failures
   let regrouped := (groups discovered).foldl (· ++ ·) #[]
   (_, failures) ← (expect "audit grouping lost or duplicated a source"
     (regrouped.size == discovered.size &&
@@ -295,13 +311,33 @@ public theorem dependentBoundary : False := exportedBoundary
       (_, failures) ← (expect (label ++ ": mutation did not compile")
         (built.exitCode == 0)).run failures
       if built.exitCode != 0 then IO.eprint (built.stdout ++ built.stderr)
-      let audit := dir / "AnonymousAudit.lean"
-      IO.FS.writeFile audit (← sourceWrapper source)
-      let out ← compile audit #["-R", dir.toString] (some dir)
+      let out ← checkSource plugin source #["-R", dir.toString] (some dir)
       (_, failures) ← (expect label
         ((out.exitCode == 0) == okay && (out.stdout ++ out.stderr).contains diagnostic)).run failures
       if (out.exitCode == 0) != okay || !(out.stdout ++ out.stderr).contains diagnostic then
         IO.eprint (out.stdout ++ out.stderr)
+  -- The audit's implementation imports must not become imports of the source.
+  -- In particular, an interface guard must have the same answer under audit.
+  let isolated := dir / "Isolated.lean"
+  IO.FS.writeFile isolated "module
+
+/-- error: Unknown identifier `Std.HashSet` -/
+#guard_msgs in
+#check Std.HashSet
+
+example (n : Nat) : n = n := rfl
+"
+  let built ← compile isolated #["-R", dir.toString] (some dir)
+  (_, failures) ← (expect "isolated source fixture did not compile"
+    (built.exitCode == 0)).run failures
+  if built.exitCode != 0 then IO.eprint (built.stdout ++ built.stderr)
+  (_, failures) ← (expect "a compiler run without the audit plugin was accepted"
+    ((requireSourceAudit isolated built).exitCode != 0)).run failures
+  let out ← checkSource plugin isolated #["-R", dir.toString] (some dir)
+  (_, failures) ← (expect "auditor exposed its implementation imports to the source"
+    (out.exitCode == 0 &&
+      (out.stdout ++ out.stderr).contains "1 anonymous examples checked before discard")).run failures
+  if out.exitCode != 0 then IO.eprint (out.stdout ++ out.stderr)
   for failure in failures do IO.eprintln ("proof audit selftest: " ++ failure)
   if failures.isEmpty then IO.println "proof audit selftest: all passed"
   return if failures.isEmpty then 0 else 1

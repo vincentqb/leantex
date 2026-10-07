@@ -20,32 +20,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends libxml2-utils librsvg2-bin poppler-utils
       - uses: leanprover/lean-action@v1
         with:
+          build: true
           test: true
-          # Linter warnings fail the build, as they do at commit time. This
-          # is the cold build of the run, so the warnings are emitted here;
-          # the gate's own --wfail build below sees a warm cache and cannot
-          # be relied on for them.
-          build-args: "--wfail"
+          lint: true
+          # One strict build, then the standard test and lint drivers.
+          # Lint checks every maintained source, compiled axiom closure,
+          # anonymous proof and citation, and runs those gates' selftests.
+          build-args: "--wfail LeanTex leantex Tests precommit proofcheck lint cites land scoreboard"
 
-      # The structural gates. Until now they ran only out of a per-clone
-      # core.hooksPath, so a fresh clone could merge a wildcard IR arm, a
-      # non-terminating recursion, an IO leak into the pure core, or an
-      # unnamed obligation, all green.
-      - name: build the gate binaries
-        run: lake build precommit owed cites leantex Tests Obligations
-      - name: gate selftests
+      - name: landing and baseline selftests
         run: |
-          .lake/build/bin/precommit --selftest
-          .lake/build/bin/owed --selftest
-          .lake/build/bin/cites --selftest
-      - name: owed-theorem ratchet
-        run: .lake/build/bin/owed --check
-      # Whole-tree by nature: it resolves every theorem name a docstring
-      # cites against the compiled environment, so it reads no diff and has
-      # nothing to gain from the range below. It needs the tree's oleans,
-      # which is why the build step above names every library.
-      - name: citation resolution
-        run: .lake/build/bin/cites --check
+          .lake/build/bin/land --selftest
+          .lake/build/bin/land --scratch-selftest
+          .lake/build/bin/scoreboard --selftest
+      - name: scoreboard ratchet
+        run: .lake/build/bin/scoreboard --check
       - name: structural gates
         env:
           # Empty on a push; the target branch on a pull request.
@@ -65,10 +54,10 @@ jobs:
           fi
           if [ -n "${RANGE}" ]; then
             echo "gate range: ${RANGE}"
-            .lake/build/bin/precommit --range "${RANGE}"
+            .lake/build/bin/precommit --range "${RANGE}" --conventions
           else
             # No computable range (a first push, a force-push over a gone
             # commit): the whole-tree gates still run.
             echo "gate range: none, whole tree only"
-            .lake/build/bin/precommit --tree
+            .lake/build/bin/precommit --tree --conventions
           fi

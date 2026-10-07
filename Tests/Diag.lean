@@ -1807,11 +1807,10 @@ reads), and every entry is paid for by a diagnostic whose `subject` names the
 command — the `_named` shape, matched on the structured key and never on the
 message text.
 
-Executable rather than a theorem, and the reason is recorded rather than
-assumed: the quantification runs over `Elab.runRaws`'s whole diagnostic
-surface, an imperative preamble fold with no equational theory an induction
-can enter. That is the wall `ctrl_groups_never_ink` still names, now as its
-only one. Invented content throughout. -/
+`Elab.control_completion_contract` proves recovery accounting for the executed
+frontend's final output. These invented probes additionally check which
+constructs record recovery and distinguish recovered content from authored
+prose. -/
 def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let named (ds : Array Diag) (ss : Array Ir.Recovered) : Bool :=

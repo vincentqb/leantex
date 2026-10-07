@@ -7600,11 +7600,10 @@ other half of the same vocabulary: which construct the characters came from.
 recovers goes through `Elab.warnOnce` with the key `"ctrl:<name>"`, which
 lands on `Diag.subject` — the structured dedup key, never the message text
 (`pending_named` is the shape this follows). So an entry is accounted for
-when some diagnostic carries the same subject, which `salvageChecks` runs
-over the corpus and the probes. An executable oracle rather than a theorem:
-the quantification runs over the whole elaboration's diagnostic surface, an
-imperative fold with no equational theory an induction can enter, which is
-the one wall `ctrl_groups_never_ink` still names. -/
+when some diagnostic carries the same subject.
+`Elab.control_completion_contract` proves recovery accounting at the executed
+frontend's final output; `salvageChecks` checks that distinction over the
+corpus and invented probes. -/
 public structure Recovered where
   code : DiagCode
   /-- The refused command's name, without its backslash. -/
