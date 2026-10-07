@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfRead
+module
+
+public import LeanTex.Core.PdfRead
+public import LeanTex.Core.Flate
+import all LeanTex.Core.PdfRead
 import LeanTex.Core.Flate.RoundtripProof
 import LeanTex.Core.Flate.ChecksumProof
 
@@ -27,7 +31,7 @@ private theorem decodeStream_flate (dict : Obj) (raw data : ByteArray)
   simp only [bind, Except.bind]
   simp [show ¬ raw.size < 4 by omega, hc]
 
-theorem decodeStream_deflate_exact (dict : Obj) (data : ByteArray)
+public theorem decodeStream_deflate_exact (dict : Obj) (data : ByteArray)
     (hsize : data.size ≤ maxDecoded)
     (hf : dict.get? "Filter" = some (.name "FlateDecode"))
     (hd : dict.get? "DL" = none) (hp : dict.get? "DecodeParms" = none) :
@@ -36,7 +40,7 @@ theorem decodeStream_deflate_exact (dict : Obj) (data : ByteArray)
   exact decodeStream_flate dict _ data hf hd hp
     (Flate.inflate_deflate_bounded_id data maxDecoded hsize) hc.1 hc.2
 
-theorem decodeStream_unfiltered_exact (dict : Obj) (raw : ByteArray)
+public theorem decodeStream_unfiltered_exact (dict : Obj) (raw : ByteArray)
     (hf : dict.get? "Filter" = none) : decodeStream dict raw = .ok raw := by
   unfold decodeStream
   rw [hf]

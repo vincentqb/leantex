@@ -1,5 +1,10 @@
+module
+
+public import LeanTex.Cli.ConvCache
 import LeanTex.Cli.FontDiscovery
-import LeanTex.Cli.ConvCache
+import LeanTex.Cli.RunBounded
+import LeanTex.Cli.ToolProbe
+import LeanTex.Core.Flate
 
 /-! Fulfil standalone picture requests with owned scratch and checked cache
 answers. Tools must finish their writers with the foreground invocation;
@@ -9,17 +14,17 @@ namespace LeanTex.Cli.PictureAssets
 
 open LeanTex.Core
 
-def key (wrapped : String) : String := Flate.contentKey wrapped.toUTF8
+public def key (wrapped : String) : String := Flate.contentKey wrapped.toUTF8
 
-def slotName (wrapped tool stamp version : String) : String :=
+public def slotName (wrapped tool stamp version : String) : String :=
   ConvCache.slotName wrapped.toUTF8 "standalone-picture"
     (String.intercalate "\u0000" [tool, stamp, version])
 
-structure Answer where
+public structure Answer where
   result : ConvCache.Result
   cached : Bool := false
 
-def cacheDir : IO (Option System.FilePath) := do
+public def cacheDir : IO (Option System.FilePath) := do
   try
     let some root ← FontDiscovery.cacheDir | return none
     let dir := root / "pics"
@@ -32,7 +37,7 @@ private def readAnswer (path : System.FilePath) : IO (Option (Except String Byte
 
 /-- Without a tool, only complete checked drawings of this request can
 serve. Legacy raw PDFs and remembered refusals supply no such evidence. -/
-def previous (dir : System.FilePath) (key : String) : IO (Option ByteArray) := do
+public def previous (dir : System.FilePath) (key : String) : IO (Option ByteArray) := do
   try
     let entries := (← dir.readDir).qsort (fun a b => a.fileName < b.fileName)
     for entry in entries do
@@ -79,7 +84,7 @@ private def replay (answer : Except String ByteArray) : ConvCache.Result :=
 before cleanup, then publishes one integrity-checked answer by atomic rename.
 Cache failures leave the produced answer intact; unfinished attempts write
 nothing (`ConvCache.inconclusive_retried_exact`). -/
-def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : String) :
+public def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : String) :
     IO Answer := do
   let slot ← if !stamp.isEmpty && !version.isEmpty && (← ToolProbe.witness tool) == stamp then
       pure (dir.map (· / slotName wrapped tool stamp version))

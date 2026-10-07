@@ -18,9 +18,11 @@ import Tests.ParseInterface
 import Tests.DataInterface
 import Tests.TcolorboxInterface
 import Tests.PdfReaderInterface
+import Tests.PdfCensusInterface
 import Tests.PdfBoundaryInterface
 import Tests.Batch
 import Tests.CacheInterface
+import Tests.PictureAssetsInterface
 import Tests.Compression
 import Tests.BrowserFaceBatch
 import Tests.CacheIO
