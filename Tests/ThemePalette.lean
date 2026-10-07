@@ -21,6 +21,11 @@ example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
   SeedPalette.generated_role_contract p (foreground := .muted) (ground := .paper)
     (by simp [SeedPalette.requirements])
 
+example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
+    Contrast.aaText ≤ Contrast.contrastMilli p.colors.accentText p.colors.surface :=
+  SeedPalette.generated_beamer_contract p (element := "block title alerted")
+    (foreground := .accentText) (ground := .surface) (by simp [SeedPalette.beamerBlocks])
+
 /-- Invented seeds in both polarities. The panel witness breaks a palette
 that checks text only against the page; the export keeps each named role. -/
 public def checks (ref : IO.Ref (List String)) : IO Unit := do
@@ -46,6 +51,21 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
           (Contrast.contrastMilli paperOnly paper ≥ Contrast.aaText &&
             !SeedPalette.contract seeds { colors with muted := paperOnly })
     let declarations := SeedPalette.declarations "sample" seeds palette
+    let blocks := SeedPalette.beamerDeclarations "sample" seeds palette
+    check ref "plain palette export does not require Beamer"
+      (!declarations.contains "\\setbeamercolor")
+    check ref "filled block export preserves all existing RGB declarations"
+      (blocks.startsWith declarations && (blocks.splitOn "\\definecolor{").length == 11)
+    let expected := [
+      ("block title", "Ink"), ("block title alerted", "AccentText"),
+      ("block title example", "Muted"), ("block body", "Ink"),
+      ("block body alerted", "Ink"), ("block body example", "Ink")]
+    check ref "filled block export binds exactly six elements"
+      ((blocks.splitOn "\\setbeamercolor{").length == 7)
+    for (element, foreground) in expected do
+      check ref s!"filled {element} declares both checked channels"
+        ((blocks.splitOn ("\\setbeamercolor{" ++ element ++ "}{fg=sample" ++ foreground ++
+          ",bg=sampleSurface}\n")).length == 2)
     for role in SeedPalette.Role.all do
       let color := role.color seeds colors
       check ref s!"theme palette exports {role.name}'s checked RGB"

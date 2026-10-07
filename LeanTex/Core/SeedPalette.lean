@@ -151,4 +151,40 @@ public def declarations (stem : String) (s : Seeds) (p : Generated s) : String :
     "\\definecolor{" ++ stem ++ role.name ++ "}{HTML}{" ++
         Color.hexByte ink.r ++ Color.hexByte ink.g ++ Color.hexByte ink.b ++ "}\n")
 
+/-- Opt-in filled blocks share the neutral surface. Title emphasis follows
+the existing text roles; body text keeps the primary ink in every kind.
+These are standard Beamer element names, resolved by BeamerColor rather
+than a second native-key mapping in the authoring layer. -/
+@[expose] public def beamerBlocks : List (String × Role × Role) :=
+  [("block title", .ink, .surface),
+   ("block title alerted", .accentText, .surface),
+   ("block title example", .muted, .surface),
+   ("block body", .ink, .surface),
+   ("block body alerted", .ink, .surface),
+   ("block body example", .ink, .surface)]
+
+private theorem beamer_requirement_mem {element : String} {foreground ground : Role}
+    (h : (element, foreground, ground) ∈ beamerBlocks) :
+    (foreground, ground, Contrast.aaText) ∈ requirements := by
+  simp only [beamerBlocks, List.mem_cons, List.mem_nil_iff, or_false, Prod.mk.injEq] at h
+  rcases h with ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ |
+    ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ <;> simp [requirements]
+
+/-- Every exported block pair satisfies the same generated RGB contract.
+This is a contrast guarantee, not a judgement of aesthetic preference. -/
+public theorem generated_beamer_contract {s : Seeds} (p : Generated s)
+    {element : String} {foreground ground : Role}
+    (h : (element, foreground, ground) ∈ beamerBlocks) :
+    Contrast.aaText ≤ Contrast.contrastMilli
+      (foreground.color s p.colors) (ground.color s p.colors) :=
+  generated_role_contract p (beamer_requirement_mem h)
+
+/-- Define the same colours as the plain export, then bind all six filled
+block elements to those names. Explicit channels avoid theme-dependent
+inheritance; theme initialization must precede these declarations. -/
+public def beamerDeclarations (stem : String) (s : Seeds) (p : Generated s) : String :=
+  declarations stem s p ++ String.join (beamerBlocks.map fun (element, foreground, ground) =>
+    "\\setbeamercolor{" ++ element ++ "}{fg=" ++ stem ++ foreground.name ++
+      ",bg=" ++ stem ++ ground.name ++ "}\n")
+
 end LeanTex.Core.SeedPalette
