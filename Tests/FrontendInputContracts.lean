@@ -60,9 +60,14 @@ def frontendInputRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a request inside consumed log operands need not become a refusal"
     (inputObservations hidden == #[("usepackage", "HiddenProbe", "", #["HiddenProbe"])] &&
       !(finalOf hidden).any (fun d => d.kind == .W0103 && d.refused == some "HiddenProbe"))
-  t "a dormant definition can be rewritten without executing a reader request"
+  t "a dormant definition neither requests nor refuses its stored package load"
     ((inputObservations dormant).isEmpty &&
-      (finalOf dormant).any (fun d => d.kind == .W0103 && d.refused == some "DormantProbe"))
+      !(finalOf dormant).any (fun d => d.kind == .W0103 && d.refused == some "DormantProbe"))
+  let live := dormant ++ "\\later"
+  t "invoking the stored package load produces its request and refusal"
+    (inputObservations live == #[("usepackage", "DormantProbe", "", #["DormantProbe"])] &&
+      ((finalOf live).filter (fun d => d.kind == .W0103 &&
+        d.refused == some "DormantProbe")).size == 1)
   for row in Compat.themeAsking do
     let actual ← pure (inputObservations ("\\" ++ row.1 ++ "[choice]{Invented}"))
     t s!"expanded {row.1} asks for its registry prefix"

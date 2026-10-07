@@ -4910,8 +4910,8 @@ inside the driver's own fixpoint (`Input.expandInputs`), so a
 inside a spliced `.sty`, and an `\input` inside a `.sty` all resolve —
 each degraded to a misleading W0103 "not supported" while the splice was
 one-shot, top-level-only, and ran after `\input` expansion. A `.sty` that
-`\RequirePackage`s itself hits the `\input` nesting bound (E0501), never
-loops. Fixtures live in testdata/corpus/sty-parity, synthetic and invented. -/
+`\RequirePackage`s itself reads once: its reservation precedes its body.
+Fixtures live in testdata/corpus/sty-parity, synthetic and invented. -/
 def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let run := runStyParity
@@ -4943,9 +4943,9 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "parity c: an input inside a .sty expands on the next pass"
     (dsC.all (fun d => d.code != "W0103" && d.code != "E0502") &&
      docC.page.hmargin == Dim.pt 108)
-  let (_, dsD, _) ← run "styloop"
-  t "a .sty that RequirePackages itself hits the nesting bound, never loops"
-    (dsD.any (·.code == "E0501"))
+  let (_, dsD, splicedD) ← run "styloop"
+  t "a .sty that RequirePackages itself reads once without exhausting nesting depth"
+    (dsD.all (·.severity == .note) && splicedD.toList.map (·.1) == ["venued.sty"])
   -- The spliced-.sty collapse: a TeX internal the engine refuses inside a
   -- venue's style file is correct and unactionable per line, so W0301/W0357
   -- demote to notes there (listed under -v) and N0020's third count carries

@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
+public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 public import LeanTex.Core.Ir
@@ -551,16 +552,21 @@ private structure CondPending where
   file : String
   pos : Pos
 
-/-- What the package- and class-loaded tests read (`condList`): the loads
-written so far, in flow order. A package carries the option list its first
-load passed — a second load of a loaded package passes nothing new, the
-kernel's clash check aside (latex.ltx, `\@onefilewithoptions`) — and `none`
-for a local style file, whose passed options the splice resolves inside the
-file and does not carry. `passed` holds every `\PassOptionsToPackage` list
-per package, and the class half mirrors the package half. -/
+/-- Package/class declarations read by `condList`, and separate reservations
+for bodies admitted by the loader. The first declaration's options stand;
+an input wrapper without its originating package call carries `none`.
+`passed` holds each `\PassOptionsToPackage` list in flow order. Repeated
+body admissions use `PackageImports.admit`, including the kernel's option
+clash comparison (latex.ltx, `\@onefilewithoptions`). -/
 private structure LoadSet where
   pkgs : Array (String × Option (Array String)) := #[]
   passed : Array (String × Array String) := #[]
+  /-- Bodies already admitted, including local files still executing.
+  Merely recording a declaration in `pkgs` does not reserve its body. -/
+  imports : PackageImports.Loads := []
+  /-- Native rewriting consumes the executed stream later. Replaying option
+  passes here keeps a late pass from altering an earlier native load. -/
+  rewritePassed : Array (String × Array String) := #[]
   cls : Option (String × Array String) := none
   clsPassed : Array (String × Array String) := #[]
   deriving Repr, BEq, Inhabited
@@ -1588,6 +1594,19 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
 /-- Options read from the same executed call as the filename. -/
 @[expose] public def InputRequest.options (request : InputRequest) : String :=
   ((takeOpt request.call 1).1.getD "").trimAscii.toString
+
+/-- The scalar loading calls in one executed request, in source order.
+Duplicates are retained: the admission gate, not a candidate scan, decides
+whether their bodies run. Options and positions remain parsed syntax. -/
+public def InputRequest.packageCalls (request : InputRequest) :
+    Array (String × Array Raw) :=
+  if request.command == "usepackage" || request.command == "RequirePackage" then
+    let head := request.call.extract 0 (takeOpt request.call 1).2
+    ((request.name.splitOn ",").map (·.trimAscii.toString)).toArray.map fun name =>
+      (name, head.push (.group #[.word name request.pos] request.pos))
+  else if let some pre := themeAsking.lookup request.command then
+    #[(pre ++ request.name.trimAscii.toString, request.call)]
+  else #[]
 
 private theorem takeGroups_loop_exact (raws : Array Raw) (i n : Nat) :
     takeGroups raws i n = (forIn [0:n] (#[], i) (fun _ => takeGroupsStep raws)).run := by rfl
@@ -2962,6 +2981,46 @@ private def optionItems (s : String) : Array String :=
   ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
     |>.filter (!·.isEmpty) |>.toArray
 
+/-- One execution gate for native packages and local styles. Reserving a
+fresh name precedes its body, so recursive requires see the reservation.
+A repeat keeps the first execution even on a clash, and names every new
+option at the later call. The write also accounts for a compatible skip. -/
+private def admitPackage (name : String) (options passed : List String) (pos : Pos) :
+    M (Option (List String)) := do
+  let (decision, imports) := PackageImports.admit (← get).loads.imports name options passed
+  write fun st => { st with loads := { st.loads with imports } }
+  match decision with
+  | .load => return some (passed ++ options)
+  | .skip missing =>
+    for option in missing do
+      say .W0110 s!"package '{name}' was already loaded; new option '{option}' is not applied" pos
+        (help := "put all package options before its first load")
+        (subject := some s!"package-option-clash:{name}:{option}")
+    return none
+
+/-- The production gate, for every compatible repeated load: no body is
+returned, no diagnostic is added, and no semantic state is changed.
+`writes` is only the dispatcher's accounting counter. -/
+private theorem admitPackage_compatible_exact (name : String)
+    (options passed first : List String) (pos : Pos) (st : St)
+    (loaded : st.loads.imports.lookup name = some first)
+    (compatible : ∀ o ∈ options, o ∈ first ++ passed) :
+    admitPackage name options passed pos st = (none, { st with writes := st.writes + 1 }) := by
+  simp only [admitPackage, bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
+  rw [PackageImports.admit_compatible_exact _ _ _ _ _ loaded compatible]
+  rfl
+
+/-- Tentatively admit a local file. The driver commits the returned
+context only when the file exists, or when this is a repeat. A missing
+file therefore remains an ordinary unresolved package request. Forwarded
+options are precisely those in force at this executed call. -/
+public def InputContext.admitLocalPackage (context : InputContext)
+    (name options : String) (pos : Pos) : Option (List String) × InputContext :=
+  let passed := (context.state.loads.passed.filter (·.1 == name)).toList.flatMap (·.2.toList)
+  let (options, state) :=
+    admitPackage name (PackageImports.literalOptions options) passed pos context.state
+  (options, { state })
+
 /-- One package load: the first load of a name stands, and a later one of the
 same name passes nothing new. -/
 private def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
@@ -3030,7 +3089,9 @@ private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option L
     let name := args.getD 0 #[]
     if !plainName name || (rawSrc name).isEmpty then none
     else some { cls := test.cls, name := rawSrc name,
-                want := if test.withOpts then some (optionItems (rawSrc (args.getD 1 #[])))
+                want := if test.withOpts then some (
+                  if test.cls then optionItems (rawSrc (args.getD 1 #[]))
+                  else (PackageImports.literalOptions (rawSrc (args.getD 1 #[]))).toArray)
                   else none }
 
 /-- e-TeX's `\detokenize` doubles parameter characters. -/
@@ -3135,7 +3196,7 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let (opt, j) := takeOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     let os := if name == "RequirePackageWithOptions" then none
-      else some (optionItems (opt.getD ""))
+      else some (PackageImports.literalOptions (opt.getD "")).toArray
     write fun st => { st with loads :=
       (names (args.getD 0 #[])).foldl (fun s p => s.addPkg p os) st.loads }
   else if name == "documentclass" then
@@ -3146,7 +3207,8 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
       write fun st => { st with loads := st.loads.setCls c (optionItems (opt.getD "")) }
   else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
     let (args, _) := takeGroups raws (i + 1) 2
-    let os := optionItems (rawSrc (args.getD 0 #[]))
+    let os := if name == "PassOptionsToClass" then optionItems (rawSrc (args.getD 0 #[]))
+      else (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
     let ps := (names (args.getD 1 #[])).map (·, os)
     write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
   else if let some pre := themeAsking.lookup name then
@@ -3211,7 +3273,8 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
-      ["input", "include", "markdownInput"].contains n ||
+      ["input", "include", "markdownInput", "usepackage", "RequirePackage",
+        "PassOptionsToPackage"].contains n || (themeAsking.lookup n).isSome ||
       -- Length declarations and mutations execute at each use. Their
       -- operands reach the later scoped rewrite in execution order, so
       -- repeated assignments read the value the preceding one left.
@@ -4609,7 +4672,7 @@ private theorem packageCall_request_exact (command names : String)
 private def packageLoaded (st : St) (names : String) : St :=
   { st with
     loads := (optionItems names.trimAscii.toString).foldl
-      (fun s p => s.addPkg p (some (optionItems ""))) st.loads
+      (fun s p => s.addPkg p (some (PackageImports.literalOptions "").toArray)) st.loads
     writes := st.writes + 1 }
 
 private theorem recordLoad_package_exact (command names : String)
@@ -7651,7 +7714,7 @@ owns the option and group readers; this producer owns each package's exact
 native replacement or refusal record. Keeping the scalar transition named
 lets the request contract read its diagnostic without expanding the whole
 control dispatcher. -/
-private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
+private def rewritePackageBody (name p : String) (opt : Option String) (pos : Pos) :
     M (Array Raw) := do
   let mut out : Array Raw := #[]
   if p == "geometry" then
@@ -7880,6 +7943,39 @@ and \\tokens declare the design directly")
       (refused := some p)
   return out
 
+/-- Admit a native package before installing its defaults. Local files use
+the same gate before their input fragment executes. Missing packages still
+reach their existing refusal, without reserving a name that never loaded.
+Option passes are read in rewrite order, not from the execution phase's
+final list, so a later pass cannot change an earlier installation. -/
+private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
+    M (Array Raw) := do
+  if nativePackages.contains p then
+    let passed := (← get).loads.rewritePassed.toList.flatMap fun (q, os) =>
+      if q == p then os.toList else []
+    let some options ← admitPackage p (PackageImports.literalOptions (opt.getD "")) passed pos
+      | return #[]
+    let opt := if passed.isEmpty then opt else some (String.intercalate "," options)
+    rewritePackageBody name p opt pos
+  else
+    rewritePackageBody name p opt pos
+
+/-- The real native producer returns no declarations on a compatible
+repeat and preserves every semantic field, even after intervening commands
+changed a default the first load installed. -/
+private theorem rewritePackage_compatible_exact (name p : String) (opt : Option String)
+    (pos : Pos) (st : St) (first : List String)
+    (native : nativePackages.contains p = true)
+    (loaded : st.loads.imports.lookup p = some first)
+    (compatible : ∀ o ∈ PackageImports.literalOptions (opt.getD ""),
+      o ∈ first ++ st.loads.rewritePassed.toList.flatMap
+        (fun (q, os) => if q == p then os.toList else [])) :
+    rewritePackage name p opt pos st = (#[], { st with writes := st.writes + 1 }) := by
+  simp only [rewritePackage, native, ↓reduceIte, bind, StateT.bind,
+    get, getThe, MonadStateOf.get, StateT.get, pure]
+  rw [admitPackage_compatible_exact _ _ _ _ _ _ loaded compatible]
+  rfl
+
 /-- The external-package refusal's whole record, before the source index
 adds its trigger. Native package options are judged by their own producer;
 sharing W0103 does not make them failed file requests. -/
@@ -7907,7 +8003,7 @@ private theorem rewritePackage_external_exact (name p : String)
     simp_all [List.lookup_eq_none_iff, fontPackages]
   have hnmem : p ∉ nativePackages := by simpa using hn
   have hbmem : ¬(p ∈ boundaryPkgs ∧ st.boundaryOpen = true) := by simpa using hb
-  simp [rewritePackage, hf, hnmem, ht, hn']
+  simp [rewritePackage, rewritePackageBody, hf, hnmem, ht, hn']
   dsimp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
     pure]
   simp only [hbmem, ↓reduceIte]
@@ -7985,6 +8081,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
     -- for package writers (ltclass.dtx), and a local `.sty` spliced into
     -- the preamble spells its loads that way.
+    -- Replacement text is stored, not a load. Actual uses have already
+    -- expanded through the execution reader (`condLiveRaw`).
+    if (← get).inDef then return none
     if (← get).inDoc then
       -- LaTeX's own rule: "\usepackage can be used only in preamble"
       -- (ltclass.dtx \@onlypreamble) — in the body the placement is the
@@ -8002,6 +8101,17 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
     let out ← rewritePackages name pkgs opt pos
     return some (out, k)
+  | "PassOptionsToPackage" =>
+    if (← get).inDef then return none
+    let (args, k) := takeGroups raws start 2
+    if args.size != 2 then return none
+    let options := (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
+    let packages := optionItems (rawSrc (args.getD 1 #[]))
+    write fun st => { st with loads := { st.loads with
+      rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
+    discard "\\PassOptionsToPackage{...}{...}" "package options are recorded"
+      "PassOptionsToPackage" pos
+    return some (#[], k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
@@ -10105,7 +10215,7 @@ private theorem rewriteCtrl_package_named (command names : String) (pos gp np : 
 private theorem rewriteCtrlNamed_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hd : st.inDoc = false)
+    (hd : st.inDoc = false) (hdef : st.inDef = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
     (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -10124,14 +10234,15 @@ private theorem rewriteCtrlNamed_package_external_exact
     ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st hn hb ht
   rcases hc with rfl | rfl <;>
     simp only [rewriteCtrlNamed, bind, StateT.bind, get, getThe,
-      MonadStateOf.get, StateT.get, hd, Bool.false_eq_true, ↓reduceIte,
+      MonadStateOf.get, StateT.get, hd, hdef, Bool.false_eq_true, ↓reduceIte,
       hread.2.1, hread.2.2, hempty, hsrc, hpkgs, pure, StateT.pure, List.map_map,
       Function.comp_def]
 
 private theorem rewriteCtrl_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hd : st.inDoc = false) (hw : st.wholeDoc = false) (hl : st.inList = false)
+    (hd : st.inDoc = false) (hdef : st.inDef = false)
+    (hw : st.wholeDoc = false) (hl : st.inList = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
     (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -10151,7 +10262,7 @@ private theorem rewriteCtrl_package_external_exact
     simp only [Array.size_append, List.size_toArray, List.length_map]
     omega
   simp only [rewriteCtrl, rewriteCtrl_package_named command names pos gp np st hc hw hl,
-    rewriteCtrlNamed_package_external_exact command names pos gp np st hc hd hn hb ht,
+    rewriteCtrlNamed_package_external_exact command names pos gp np st hc hd hdef hn hb ht,
     Array.isEmpty_empty, ↓reduceIte, account]
   rw [ite_eq_left (Or.inl hsize)]
 
@@ -10365,7 +10476,7 @@ private theorem rewriteList_control_exact (inBody : Bool) (raws out : Array Raw)
 private theorem rewriteList_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hd : st.inDoc = false) (hw : st.wholeDoc = false)
+    (hd : st.inDoc = false) (hf : st.inDef = false) (hw : st.wholeDoc = false)
     (hl : st.inList = false) (hpic : st.inPicture = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
@@ -10383,7 +10494,7 @@ private theorem rewriteList_package_external_exact
   have ho : overlayName command = command := by
     rcases hc with rfl | rfl <;> simp [overlayName, String.startsWith_string_iff]
   have hstep := rewriteCtrl_package_external_exact command names pos gp np st
-    hc hd hw hl hn hb ht part hp
+    hc hd hf hw hl hn hb ht part hp
   have h := rewriteList_control_exact false (packageCall command names pos gp np) #[]
     command pos [.group #[.word names np] gp] [] 0 st _ hdef hpic
     (by simpa only [ho, Nat.zero_add, List.length_cons, List.length_nil] using hstep)
@@ -11173,7 +11284,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
       exact (hnames q hq).2.2.2
     have hstep := rewriteList_package_external_exact command names pos groupPos namePos st
-      hc rfl rfl rfl rfl hn hb ht part hpart
+      hc rfl rfl rfl rfl rfl hn hb ht part hpart
     let reports := ((names.trimAscii.toString.splitOn ",").map fun p =>
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
@@ -11628,8 +11739,8 @@ spends the named handlers. LuaLaTeX probes in `scripts/package-options.lean`
 hold ordering, whitespace, empty items and handler lifetime to its kernel.
 
 Bodies enter the existing compatibility passes unchanged: this is not a
-TeX expansion runtime. Only the supplied package options are available here,
-not global class options or forwarded options. An unknown caller option
+TeX expansion runtime. The driver supplies direct and forwarded package
+options; global class options are not available here. An unknown caller option
 without a catch-all emits an explicit request, settled as W0110 only when
 its site is live. `\\ProvidesPackage` and `\\NeedsTeXFormat` identify the
 file and produce nothing. -/
@@ -11729,6 +11840,17 @@ private def bundleFloor (pre nm : String) (pos : Pos) : Array Raw :=
     #[.ctrl "theme" pos, .group #[.word nm pos] pos]
   else #[]
 
+/-- Splice one admitted file. The driver reserves the package before
+resuming this fragment, so a recursive require cannot splice it again.
+Both package and theme spellings share the same option scheduler and
+bundle floor; every declaration keeps its original execution order. -/
+public def spliceLocalPackage (name : String) (passed : List String)
+    (raws : Array Raw) (pos : Pos) : Array Raw :=
+  let floor := match themeSlotOfPackage? name with
+    | some (_, pre, nm) => bundleFloor pre nm pos
+    | none => #[]
+  floor.push (.env (Parse.inputEnv (name ++ ".sty")) (spliceStyOptions name passed raws) pos)
+
 /-- The replacement for one `\\usepackage`/`\\RequirePackage` at `i`, given
 the style files read: the raws standing in its place, the splice records,
 and the index past its arguments — `none` when nothing it names is a local
@@ -11741,19 +11863,14 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
   let (args, k) := takeGroups raws j 1
   if args.isEmpty then return none
   let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
-  let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+  let passed := PackageImports.literalOptions (opt.getD "")
   let mut keep : Array String := #[]
   let mut splice : Array Raw := #[]
   let mut recs : Array (String × Option String × Pos) := #[]
   for p in pkgs do
     match stys.find? (·.1 == p) with
     | some (_, sraws) =>
-      -- A theme file named as a package floors on its shipped bundle, as
-      -- the slot spelling does: the two spellings are one ask.
-      if let some (_, pre, nm) := themeSlotOfPackage? p then
-        splice := splice ++ bundleFloor pre nm pos
-      splice := splice.push
-        (.env (Parse.inputEnv (p ++ ".sty")) (spliceStyOptions p passed sraws) pos)
+      splice := splice ++ spliceLocalPackage p passed sraws pos
       recs := recs.push (p ++ ".sty", none, pos)
     | none => keep := keep.push p
   if recs.isEmpty then return none
@@ -11796,10 +11913,8 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
   let p := pre ++ nm
   match stys.find? (·.1 == p) with
   | some (_, sraws) =>
-    let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-    let floor := bundleFloor pre nm pos
-    return some (floor.push
-      (.env (Parse.inputEnv (p ++ ".sty")) (spliceStyOptions p passed sraws) pos),
+    let passed := PackageImports.literalOptions (opt.getD "")
+    return some (spliceLocalPackage p passed sraws pos,
       #[(p ++ ".sty", none, pos)], k)
   | none => return none
 

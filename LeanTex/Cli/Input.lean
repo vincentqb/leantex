@@ -18,7 +18,9 @@ import LeanTex.Cli.DriverDiag
 macro evaluator returns requests; this driver reads the file, parses its
 surface once and resumes the same execution context with that answer.
 Unused definitions and unselected branches have no file effects. Local
-styles and ordinary inputs share the existing eight-file nesting bound.
+styles reserve their first load before execution; repeats and cycle back
+edges read nothing. Distinct nested styles and ordinary inputs share the
+existing eight-file nesting bound.
 
 Every other file the *document* names is read here for the same reason:
 the document's own bytes (`readSource`), the `.bib` its `\bibliography`
@@ -127,42 +129,77 @@ private structure InputLog where
 
 private abbrev ReadM := StateT InputLog IO
 
-/-- Fulfil one executed request. The existing eight-file input-stack bound
-also covers local styles; ordinary macro execution keeps its own binding
-order and does not spend input depth. An absent local style is left for
-normal package dispatch. Answers stay parsed AST and execute before the
-requesting token stream continues. -/
+/-- Fulfil one executed request. A local style is admitted before reading
+its body; a compatible repeat or cycle back edge consumes no input depth.
+Distinct nested files retain the existing eight-file input-stack bound.
+An absent local style is left for normal package dispatch. Answers stay
+parsed AST and execute before the requesting token stream continues. -/
 private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
     Compat.InputReader ReadM := fun request context => do
   let input := ["input", "include", "markdownInput"].contains request.command
-  let (style, records) ← if input then pure (#[], #[])
-    else expandLocalSty dir request.call
-  if !input && records.isEmpty then return (none, context)
-  match depth with
-  | 0 =>
-    let d := { DriverDiag.inputTooDeep with span := some ⟨request.file, request.pos⟩ }
-    modify fun log => { log with diags := log.diags.push d }
-    return (none, context)
-  | depth + 1 =>
-    let (sub, diags) ← if !input then pure (style, #[])
-      else if request.command == "markdownInput" then do
-        let prefer := fun name : String =>
-          if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
-        let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
-          "markdownInput" Md.read
-        let ds := if request.options.isEmpty then ds else ds.push <|
-          Diag.of .W0110 s!"'\\markdownInput' options '{request.options}' are not applied; \
+  if input then
+    match depth with
+    | 0 =>
+      let d := { DriverDiag.inputTooDeep with span := some ⟨request.file, request.pos⟩ }
+      modify fun log => { log with diags := log.diags.push d }
+      return (none, context)
+    | depth + 1 =>
+      let (sub, diags) ← if request.command == "markdownInput" then do
+          let prefer := fun name : String =>
+            if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
+          let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
+            "markdownInput" Md.read
+          let ds := if request.options.isEmpty then ds else ds.push <|
+            Diag.of .W0110 s!"'\\markdownInput' options '{request.options}' are not applied; \
 the file uses the Markdown document dialect" (some ⟨request.file, request.pos⟩)
-            (subject := some "markdownInput:options")
-        pure (sub, ds)
-      else readInput dir request.file request.name request.pos
-    let records := records.map fun (sty, source, pos) =>
-      (sty, source <|> if request.file == root then none else some request.file, pos)
-    modify fun log => { log with
-      diags := log.diags ++ diags, spliced := log.spliced ++ records }
-    let (answer, context) ←
-      Elab.resumeInput (readAt dir root depth) context request.file sub
-    return (some answer, context)
+              (subject := some "markdownInput:options")
+          pure (sub, ds)
+        else readInput dir request.file request.name request.pos
+      modify fun log => { log with diags := log.diags ++ diags }
+      let (answer, context) ←
+        Elab.resumeInput (readAt dir root depth) context request.file sub
+      return (some answer, context)
+  else
+    let mut out : Array Parse.Raw := #[]
+    let mut current := context
+    let mut handled := false
+    -- Admit and execute each member before the next one. A dependency of
+    -- the first member may already have loaded a later sibling.
+    for (name, call) in request.packageCalls do
+      if name.isEmpty || Compat.nativePackages.contains name then
+        out := out ++ call
+        continue
+      let (options, reserved) := current.admitLocalPackage name request.options request.pos
+      match options with
+      | none =>
+        -- The gate also diagnoses new options. Neither a compatible repeat
+        -- nor a clash reads the file or spends another input-stack level.
+        current := reserved
+        handled := true
+      | some passed =>
+        let path := dir / (name ++ ".sty")
+        unless ← path.pathExists do
+          out := out ++ call
+          continue
+        match depth with
+        | 0 =>
+          let d := { DriverDiag.inputTooDeep with span := some ⟨request.file, request.pos⟩ }
+          modify fun log => { log with diags := log.diags.push d }
+          out := out ++ call
+        | depth + 1 =>
+          let text ← IO.FS.readFile path
+          let (toks, _) := Lex.lex (name ++ ".sty") text
+          let (raws, _) := Parse.parse (name ++ ".sty") toks
+          let source := if request.file == root then none else some request.file
+          modify fun log => { log with
+            spliced := log.spliced.push (name ++ ".sty", source, request.pos) }
+          let sub := Compat.spliceLocalPackage name passed raws request.pos
+          let (answer, next) ←
+            Elab.resumeInput (readAt dir root depth) reserved request.file sub
+          out := out ++ answer
+          current := next
+          handled := true
+    return if handled then (some out, current) else (none, context)
 
 /-- Execute macros and fulfil input requests in source order. A definition
 or unselected branch never reads a file; an actual use binds its filename
