@@ -1176,4 +1176,22 @@ real tomorrow. -/
 public def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
   allowed.filter (!fired.contains ·)
 
+/-- Degraded output carries content; recovery can use this fact without unfolding
+the diagnostic policy. -/
+public theorem Loss.degraded_floor_ships_exact :
+    Loss.degraded.floor.ships = true := by
+  rfl
+
+/-- Diagnostic construction preserves the kind's registered code. -/
+public theorem Diag.of_code_exact (c : DiagCode) (message : String) (span : Option Span)
+    (help subject : Option String) (refused : Option String := none)
+    (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
+    (output : Option Diag.Output := none) :
+    (Diag.of c message span help subject refused trigger recovery output).code = c.code := by
+  rfl
+
+/-- The outline diagnostic keeps its registered spelling. -/
+public theorem DiagCode.w0320_code_exact : DiagCode.W0320.code = "W0320" := by
+  rfl
+
 end LeanTex.Core
