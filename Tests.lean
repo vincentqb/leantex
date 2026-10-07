@@ -1,3 +1,5 @@
+import Tests.PdfInterfaces
+import Tests.DocumentContractInterfaces
 import Tests.ColourInterface
 import Tests.PresentationInterfaces
 import Tests.Support
