@@ -10254,6 +10254,41 @@ public structure ColorPair where
   bg : Color
   deriving Repr, BEq
 
+/-- A region's declared paint. Missing channels inherit independently;
+an absent background never requests a fill. This is shared design data,
+not a backend's choice of fallback colours. -/
+public structure SurfaceLook where
+  fg : Option Color := none
+  bg : Option Color := none
+  deriving Repr, BEq
+
+/-- Resolve a region on its enclosing surface, including a nested region
+or a frame with its own ground. The declaration remains available to the
+painter: `look.bg` alone decides whether to paint a new surface. -/
+@[expose] public def SurfaceLook.resolve (look : SurfaceLook) (parent : ColorPair) : ColorPair :=
+  { fg := look.fg.getD parent.fg, bg := look.bg.getD parent.bg }
+
+/-- Inheritance is per channel and preserves every explicit declaration.
+Both artifacts project this same pair; neither invents a body colour. -/
+public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : ColorPair) :
+    (look.resolve parent).fg = look.fg.getD parent.fg ∧
+    (look.resolve parent).bg = look.bg.getD parent.bg := by
+  exact ⟨rfl, rfl⟩
+
+public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
+    (SurfaceLook.mk none none).resolve parent = parent := by rfl
+
+/-- Beamer's three body elements (`beamercolorthemedefault.sty`) start
+empty. Themes such as Moloch declare their fills and inheritance through
+the palette bindings; no title or accent role implies a body fill. -/
+@[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
+  { fg := pal.find? (kind.name ++ "bodyfg"), bg := pal.find? (kind.name ++ "bodybg") }
+
+public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
+    (titledBodyLook pal kind).fg = pal.find? (kind.name ++ "bodyfg") ∧
+    (titledBodyLook pal kind).bg = pal.find? (kind.name ++ "bodybg") := by
+  exact ⟨rfl, rfl⟩
+
 /-- A titled block's resolved look: the title's ink, and the bar behind it
 when the palette declares one — no bar key, no bar, exactly the
 frame-title rule. -/
@@ -10350,6 +10385,11 @@ public structure Design where
   blockTitle : TitledLook
   alertTitle : TitledLook
   exampleTitle : TitledLook
+  /-- Each body inherits the enclosing surface unless its own channels
+  are declared. Title and body surfaces are independent. -/
+  blockBody : SurfaceLook
+  alertBody : SurfaceLook
+  exampleBody : SurfaceLook
   /-- The themed section page and its progress bar, when the design has one. -/
   progress : Option ColorPair
   /-- The section-page variant inherits the base progress colours but
@@ -10453,6 +10493,9 @@ the document's declarations. -/
     blockTitle := titledLook pal .block
     alertTitle := titledLook pal .alert
     exampleTitle := titledLook pal .example
+    blockBody := titledBodyLook pal .block
+    alertBody := titledBodyLook pal .alert
+    exampleBody := titledBodyLook pal .example
     progress := (pal.find? "progressfg").map fun barFg =>
       { fg := barFg
         bg := (pal.find? "progressbg").getD bg }
@@ -10468,6 +10511,16 @@ the document's declarations. -/
     inks := pal.inks
     progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := {} }
+
+/-- The body's declaration projected from the resolved design. -/
+@[expose] public def Design.titledBody (d : Design) : TitledKind → SurfaceLook
+  | .block => d.blockBody
+  | .alert => d.alertBody
+  | .example => d.exampleBody
+
+public theorem Design.titledBody_projects (pal : Palette) (kind : TitledKind) :
+    (Design.ofPalette pal).titledBody kind = titledBodyLook pal kind := by
+  cases kind <;> rfl
 
 /-- The ground a frame's body stands on when the frame declares one of its
 own: a title page's (`titlepagebg`, through `Design.ofPalette`), `none` for
@@ -10585,6 +10638,9 @@ public def Design.consumedRoles : List String :=
    "blocktitlefg", "blocktitlebg",    -- Layout.collectBlock titled arm,
    "alerttitlefg", "alerttitlebg",    --   HtmlDoc.themeCss (titledLook is
    "exampletitlefg", "exampletitlebg",--   the one resolving site)
+   "blockbodyfg", "blockbodybg",      -- Layout and HtmlDoc titled bodies;
+   "alertbodyfg", "alertbodybg",      --   Contrast judges their local surface
+   "examplebodyfg", "examplebodybg",  --   through titledBodyLook
    "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
    "sectionprogressfg", "sectionprogressbg", -- the section-page progress variant
    "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
