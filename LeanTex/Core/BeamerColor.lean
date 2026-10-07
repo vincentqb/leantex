@@ -77,6 +77,8 @@ public structure State where
   opening : Palette := {}
   painted : Array String := #[]
   reached : List String := []
+  /-- Winning authored channels, rebuilt by `resolve` in native role order. -/
+  origins : Array (String × Color × Span) := #[]
   deriving Inhabited
 
 private def unbrace (s : String) : String :=
@@ -123,11 +125,15 @@ public def State.native (s : State) (key : String) (color : Color) : State := Id
       s := { s with elements := s.elements.filter (·.name != name) ++ [e] }
   return s
 
+private structure Channel where
+  color : Option Color
+  origin : Option Span := none
+
 private structure Reading where
-  /-- `none` leaves an earlier parent alone; `some none` explicitly clears
-  it. Beamer's empty `fg={}` / `bg={}` definitions still run. -/
-  fg : Option (Option Color) := none
-  bg : Option (Option Color) := none
+  /-- `none` leaves an earlier parent alone; a channel with no colour
+  explicitly clears it. Empty `fg={}` / `bg={}` still run. -/
+  fg : Option Channel := none
+  bg : Option Channel := none
   reached : List String := []
   issues : List Issue := []
   changed : Bool := false
@@ -137,10 +143,20 @@ private def Reading.over (a b : Reading) : Reading :=
     reached := a.reached ++ b.reached, issues := a.issues ++ b.issues,
     changed := a.changed || b.changed }
 
+/-- Dropping origins commutes with the per-channel override decision. -/
+private theorem Reading.over_projects (a b : Reading) :
+    ((a.over b).fg.map Channel.color, (a.over b).bg.map Channel.color) =
+      ((b.fg.map Channel.color).or (a.fg.map Channel.color),
+       (b.bg.map Channel.color).or (a.bg.map Channel.color)) := by
+  cases hfg : b.fg <;> cases hbg : b.bg <;> simp [Reading.over, hfg, hbg]
+
 private def own (pal : Palette) (name : String) : Reading :=
   match roles.lookup name with
-  | some (fg, bg) => { fg := (pal.find? fg).map some, bg := (pal.find? bg).map some }
-  | none => if name == "structure" then { fg := (pal.find? "fg").map some } else {}
+  | some (fg, bg) =>
+    { fg := (pal.find? fg).map (fun c => ⟨some c, none⟩),
+      bg := (pal.find? bg).map (fun c => ⟨some c, none⟩) }
+  | none => if name == "structure" then
+      { fg := (pal.find? "fg").map (fun c => ⟨some c, none⟩) } else {}
 
 /-- DFS removes the current element before descending. A path detects a
 cycle, and the shrinking declaration list proves termination without fuel.
@@ -164,22 +180,22 @@ private def read (pal : Palette) (path : List (String × Option Span)) (es : Lis
     for used in e.uses do
       let u := read aliases ((name, e.sites.lookup "use") :: path) rest used
       let current := Design.ofPalette aliases
-      aliases := aliases.declare (used ++ ".fg") (u.fg.join.getD current.fg)
-      aliases := aliases.declare (used ++ ".bg") (u.bg.join.getD current.bg)
+      aliases := aliases.declare (used ++ ".fg") ((u.fg.bind (·.color)).getD current.fg)
+      aliases := aliases.declare (used ++ ".bg") ((u.bg.bind (·.color)).getD current.bg)
       r := { r with reached := r.reached ++ u.reached,
                     issues := r.issues ++ u.issues }
     for parent in e.parents.getD (if e.reset then [] else defaultParents name) do
       r := r.over (read aliases ((name, e.sites.lookup "parent") :: path) rest parent)
     let defaults := if e.reset then ({} : Reading) else own pal name
-    let channel (key : String) (v : Option Value) (fallback : Option (Option Color)) :
-        Option (Option Color) × List Issue :=
+    let channel (key : String) (v : Option Value) (fallback : Option Channel) :
+        Option Channel × List Issue :=
       match v with
       | none => (fallback, [])
-      | some (.native c) => (some (some c), [])
-      | some (.source "") => (some none, [])
+      | some (.native c) => (some ⟨some c, none⟩, [])
+      | some (.source "") => (some ⟨none, some (e.site key)⟩, [])
       | some (.source src) =>
         match aliases.resolveSource none src with
-        | .ok (some c) => (some (some c), [])
+        | .ok (some c) => (some ⟨some c, some (e.site key)⟩, [])
         | _ => (none, [⟨s!"'{name}' {key} colour '{src}' cannot be resolved", e.site key⟩])
     let (fg, fgIssues) := channel "fg" e.fg defaults.fg
     let (bg, bgIssues) := channel "bg" e.bg defaults.bg
@@ -198,7 +214,7 @@ aliases available to expressions, but contributes no inherited channel.
 Missing parents contribute nothing, as in Beamer. -/
 public def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
   let base := s.painted.foldl (fun p key => p.restore s.opening key) pal
-  let mut s := s
+  let mut s := { s with origins := #[] }
   let mut out := base
   let mut issues := []
   let allNames := (roles.map (·.1)) ++ ["structure", "titlelike"] ++
@@ -210,7 +226,7 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   -- the sites, even when normal text was declared after a child.
   let normal := read base [] es "normal text"
   let context := [("fg", normal.fg), ("bg", normal.bg)].foldl (fun p (key, value) =>
-    match value with
+    match value.map (·.color) with
     | none => p
     | some none => p.erase key
     | some (some c) => p.declare key c) base
@@ -226,13 +242,17 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
       issues := issues ++ r.issues
       for (key, value) in [(fgKey, r.fg), (bgKey, r.bg)] do
         unless key.isEmpty do
+          let origin := value.bind (·.origin)
+          let value := value.bind (·.color)
           -- An empty Beamer heading inherits normal text. Erasing its
           -- native key would instead choose the title bar's inverse ink.
-          let value := if key == "frametitlefg" then value.join.or (some normalFg)
-            else value.join
+          let value := if key == "frametitlefg" then value.or (some normalFg) else value
           unless s.painted.contains key do
             s := { s with opening := s.opening.restore base key,
                           painted := s.painted.push key }
+          s := { s with origins := s.origins.filter (·.1 != key) }
+          if let (some c, some span) := (value, origin) then
+            s := { s with origins := s.origins.push (key, c, span) }
           out := match value with
             | some c => out.declare key c
             | none => out.erase key

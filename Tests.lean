@@ -74,12 +74,16 @@ import Tests.CancelContext
 import Tests.CancelReview
 import Tests.BeamerHooks
 import Tests.BeamerColors
+import Tests.BeamerColorOrigins
 import Tests.BeamerTemplates
 import Tests.ListDeclarations
 import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.BlockBody
+import Tests.BlockRegionFit
+import Tests.BlockHeaderClearance
+import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
 import Tests.ListingHighlight
@@ -119,18 +123,26 @@ import Tests.DiagnosticTrigger
 import Tests.DiagnosticImageOrigins
 import Tests.DiagnosticFontScope
 import Tests.DiagnosticOrigins
+import Tests.DiagnosticContrastOrigins
+import Tests.DiagnosticLayoutOrigins
+import Tests.DiagnosticLiteralOrigins
+import Tests.DiagnosticListingOrigins
+import Tests.DiagnosticProducerOrigins
 import Tests.SourceAnnotations
 import Tests.InputOrigins
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
 import Tests.ThemePalette
+import Tests.ThemeCss
 import Tests.SlideLabels
 import Tests.FontMath
 import Tests.FormulaFloor
 import Tests.MathAlphaGeometry
 import Tests.MathAlphaSemantics
 import Tests.MathAlphaEntry
+import Tests.MathDiagnosticOrigins
+import Tests.MathDelimiterTriggers
 import Tests.Struct
 import Tests.PdfConformance
 import Tests.PdfWriter
@@ -173,6 +185,8 @@ import Tests.Redefine
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
+import Tests.PicturePathSyntax
+import Tests.PictureShrink
 import Tests.PictureBoundary
 import Tests.FontDefaults
 import Tests.PictureContracts
@@ -201,9 +215,12 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
   overlaySetChecks overlayStyleChecks overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks
-  diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
+  diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   mathAlphaSemanticsChecks tableContextChecks linkMacroLayoutChecks
-  inputUseChecks mathAlphaEntryChecks listDeclarationChecks stringConditionalChecks)
+  inputUseChecks mathAlphaEntryChecks mathDiagnosticOriginChecks mathDelimiterTriggerChecks
+  mathDollarSurfaceChecks
+  diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
+  listDeclarationChecks stringConditionalChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks)
@@ -278,6 +295,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
   layoutSourceChecks ref oneFace
+  diagnosticLayoutOriginChecks ref oneFace
+  Tests.diagnosticLiteralOriginChecks ref oneFace
+  Tests.diagnosticListingOriginChecks ref
   for (name, ok) in LeanTex.Tests.LayoutContracts.ownershipChecks oneFace do
     check ref s!"layout ownership: {name}" ok
   for (name, ok) in LeanTex.Tests.LayoutContracts.attributionChecks oneFace do
@@ -313,7 +333,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tcolorboxColorChecks ref oneFace
   blockBarChecks ref oneFace
   Tests.BlockBody.checks ref oneFace
+  Tests.BlockRegionFit.checks ref oneFace
+  Tests.BlockHeaderClearance.checks ref oneFace
+  Tests.BlockFillConditionals.blockFillConditionalChecks ref oneFace
   Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
+  Tests.ThemeCss.epochChecks ref oneFace
   stringConditionalChecks ref oneFace
   seedPaletteChecks ref oneFace
   titleTemplateOptionalChecks ref oneFace
@@ -396,6 +420,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   artifactMarkChecks ref oneFace pats
   structTreeChecks ref oneFace arts
   pictureLayoutChecks ref oneFace
+  picturePathSyntaxChecks ref oneFace
+  pictureShrinkChecks ref oneFace
   PictureContracts.provenanceRenderChecks ref oneFace
   pictureBoxChecks ref oneFace
   pictureBendChecks ref oneFace
@@ -610,6 +636,9 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathAlphaGeometryChecks ref
   mathAlphaSemanticsChecks ref
   mathAlphaEntryChecks ref
+  mathDiagnosticOriginChecks ref
+  mathDelimiterTriggerChecks ref
+  mathDollarSurfaceChecks ref
   isolatedHoleChecks ref
   mathSymChecks ref
   textSymChecks ref
@@ -647,6 +676,7 @@ flat. -/
 def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   paletteChecks ref
   Tests.ThemePalette.checks ref
+  Tests.ThemeCss.checks ref
   mixChecks ref
   contrastChecks ref
   contrastContractChecks ref
@@ -689,6 +719,11 @@ def main (args : List String) : IO UInt32 := do
   diagnosticImageOriginChecks ref
   diagnosticFontScopeChecks ref
   diagnosticOriginChecks ref
+  diagnosticContrastOriginChecks ref
+  Tests.beamerColorOriginsChecks ref
+  diagnosticProducerOriginChecks ref
+  diagnosticAggregationOriginChecks ref
+  diagnosticPipelineOriginChecks ref
   sourceAnnotationChecks ref
   inputOriginsChecks ref
   imageOriginsChecks ref

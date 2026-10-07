@@ -3355,6 +3355,30 @@ public inductive VAlign where
   | golden
   deriving Repr, BEq, Inhabited
 
+/-- The fixed opening skip before a frame's body, separate from its
+distributable space: beamerbaseframe.sty's title box ends with
+`\vskip0.25em` (line 126), and `[t]` adds `.2cm` (line 263). Centred
+frames add only fil glue (beamerinnerthememoloch.sty:455). Resolve the em
+at the frame's body size, even when its first block has larger type.
+PDF reads this on ordinary frame openings; HTML projects it on titled,
+non-standout frames before distributing spare space. -/
+public def frameBodySkip (hasTitle : Bool) (valign : VAlign) : Length :=
+  { sp := if valign matches .top then Dim.mm 2 else 0
+    em := if hasTitle then 250 else 0 }
+
+/-- The title contributes one quarter of the body size; top alignment
+contributes the fixed top skip. Neither depends on the first body's
+construct, its paint padding, or how much flexible space remains. -/
+public theorem frameBodySkip_exact (hasTitle : Bool) (valign : VAlign)
+    (size : Sp) :
+    (frameBodySkip hasTitle valign).resolve size 0 =
+      (if hasTitle then size / 4 else 0) +
+        (if valign matches .top then Dim.mm 2 else 0) := by
+  have hquarter : 250 * size / 1000 = size / 4 :=
+    Int.mul_ediv_mul_of_pos size 4 (by decide : (0 : Int) < 250)
+  cases hasTitle <;> cases valign <;>
+    simp [frameBodySkip, Length.resolve, hquarter, Int.add_comm]
+
 /-- moloch's title-page template glue, in thousandths of a fil unit:
 `\vspace{0pt plus 1.618fil}` and `\vfil` above the title matter against
 `\vspace{0pt plus 1fil}` below it (beamerinnerthememoloch.dtx, the
@@ -6592,7 +6616,7 @@ public theorem listing_source_exact (spec : ListingSpec) (source : String) :
   · assumption
   · simp [Array.map_map, Function.comp_def, ListingHighlight.lineText]
 
-/-- A listing segment's layout spelling and next source column. TAB
+/-- A listing segment's layout spelling and next display column. TAB
 advances to the next stop, including a full stop at an exact boundary.
 The caller resets the column at each source newline and may thread it
 through highlighted segments; neither stored source nor token text changes.
@@ -8870,6 +8894,21 @@ end
 /-- `foldInline` over an inline tree, the collectors' entry. -/
 @[expose] public def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
   foldInlineList fi acc xs.toList
+
+/-- The first contributing source location, in document order. Enclosing
+declarations precede their content, so a delayed diagnostic retains the
+declaration's origin even when its value was parsed separately. -/
+-- conserves: none — reads provenance through the generic inline fold.
+public def inlineSource (content : Array Inline) : Option Span :=
+  foldInlines (fun source inline => match inline with
+    | .located span _ => source.orElse (fun _ => some span)
+    | .text _ | .math _ _ | .formula _ _ _ | .styled _ _
+      | .colored _ _ _ | .role _ _ | .link _ _ | .label _
+      | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
+      | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
+      | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
+      | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => source)
+    none content
 
 @[expose] public def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
   | [] => acc
@@ -15121,6 +15160,89 @@ public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
     (doc : Doc) : Array Math.MathAlphabet :=
   foldDoc (mathAlphaMissingStep coverage) #[] doc (mathAlphaMissingBlock coverage)
 
+/-- A formula and the authored location enclosing it. The canonical formula
+text is not source evidence: the lexical trigger lives on the stored span. -/
+public structure MathRequest where
+  body : Math.MList
+  source : Option Span
+
+/-- The two existing consumers read different regions: alphabet resolution
+rewrites notes and style templates, whereas face loading follows the painted
+scalar census, which excludes them and includes picture labels. -/
+public inductive MathRequestScope where
+  | alphabets
+  | face
+  deriving BEq, DecidableEq
+
+private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathRequest) where
+  openBlock := fun ctx out _ => (out, ctx)
+  closeBlock := fun _ out _ => out
+  openInline := fun ctx out x => match x with
+    | .located span _ => (out, (ctx.1.orElse (fun _ => some span), ctx.2))
+    | .formula _ _ body =>
+      (if ctx.2 then out.push ⟨body, ctx.1⟩ else out, ctx)
+    | .text _ | .math _ _ | .styled _ _ | .colored _ _ _ | .role _ _
+    | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _
+    | .footnote _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
+    | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
+    | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
+  closeInline := fun _ out _ => out
+
+private def mathRequestFold (scope : MathRequestScope) :
+    CtxFold (Option Span × Bool) (Array MathRequest) :=
+  { mathRequestInlines with
+    openBlock := fun ctx out b =>
+      let read := foldCtxInlines mathRequestInlines ctx
+      match b with
+      | .note _ => (out, (ctx.1, ctx.2 && scope == .alphabets))
+      | .verbatim _ _ spec =>
+        (match spec.caption with
+          | some (_, caption) => read out caption
+          | none => out, ctx)
+      | .bibliography _ _ items =>
+        (items.foldl (fun acc item => read acc item.content) out, ctx)
+      | .picture pic =>
+        (if scope == .face then pic.labelContents.foldl read out else out, ctx)
+      | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
+      | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
+      | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
+      | .only _ _ | .nav _ _ | .frame _ _ _ _ _ | .framefoot _
+      | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
+      | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => (out, ctx) }
+
+/-- Formula requests in the shared context fold's document order.
+A location binds only its own descendants; siblings cannot
+borrow it. Outermost locations retain a macro's authored call site.
+
+The face scope matches the regions of `Layout.docMathScalars`; the alphabet
+scope matches `missingMathAlphas`, including block-owned captions and
+references. Neither changes which formulas are resolved or request a face. -/
+public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathRequest :=
+  let body := foldCtxBlocks (mathRequestFold scope) (none, true) #[] doc.body
+  let furniture := match scope with
+    | .alphabets => furnitureInlines doc
+    | .face =>
+      furnitureInlines.optRegion doc.head ++ furnitureInlines.optRegion doc.foot ++
+        (match doc.headline with
+          | some hl => #[hl.title, hl.author, hl.institute]
+          | none => #[]) ++
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight
+  furniture.foldl (fun out xs => foldCtxInlines mathRequestInlines (none, true) out xs) body
+
+/-- The first actual formula needing glyphs, before a face is selected.
+An unsourced request stays unsourced rather than borrowing a later site. -/
+public def mathFaceRequest (doc : Doc) : Option MathRequest :=
+  (mathRequests .face doc).find? fun r => !(Math.MList.scalarsList #[] r.body).isEmpty
+
+/-- A selected face request belongs to the painted census and really asks
+for at least one scalar; an empty formula cannot own the automatic-face note. -/
+public theorem mathFaceRequest_covers (doc : Doc) (request : MathRequest)
+    (h : mathFaceRequest doc = some request) :
+    request ∈ mathRequests .face doc ∧
+      (Math.MList.scalarsList #[] request.body).isEmpty = false := by
+  refine ⟨Array.mem_of_find?_eq_some h, ?_⟩
+  simpa using Array.find?_some h
+
 /-- Resolve typed math-alphabet scopes in the shared IR before the scalar
 fallback census and both backends. The returned diagnostics are one per
 alphabet, never one per glyph; isolated holes in a supported range remain
@@ -15129,12 +15251,37 @@ mapped and therefore keep the ordinary per-character fallback path. -/
     (doc : Doc) : Doc × Array Diag :=
   let leaf := resolveMathAlphaInline coverage
   let resolved := mapDoc (mapInlines leaf) (mapBlocks leaf) doc
+  let requests := mathRequests .alphabets doc
   let diags := (missingMathAlphas coverage doc).map fun a =>
+    let source := (requests.find? fun r =>
+      (Math.missingMathAlphas coverage r.body).contains a).bind (·.source)
     Diag.of .N0018
       s!"'{family}' has no {a.styleLabel} alphabet for the characters used; ordinary math source glyphs stand"
+      source
       (help := some "write \\fonts{ math = \"...\" } with a face that carries this alphabet")
       (subject := some ("math-alpha:" ++ a.name))
+      (trigger := source.bind (·.pos.command))
   (resolved, diags)
+
+/-- Every located alphabet note is witnessed by a formula in the sourced
+census that actually lacks the named alphabet. An earlier supported formula
+or a different alphabet's loss cannot supply its origin. -/
+public theorem resolveMathAlphas_origin_covers (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc) (d : Diag) (span : Span)
+    (hd : d ∈ (resolveMathAlphas coverage family doc).2) (hs : d.span = some span) :
+    ∃ a, a ∈ missingMathAlphas coverage doc ∧
+      d.subject = some ("math-alpha:" ++ a.name) ∧
+      ∃ request, request ∈ mathRequests .alphabets doc ∧
+        request.source = some span ∧
+          (Math.missingMathAlphas coverage request.body).contains a = true := by
+  obtain ⟨a, ha, rfl⟩ := Array.mem_map.mp hd
+  refine ⟨a, ha, ?_, ?_⟩
+  · rw [Diag.of_record_exact]
+  · rw [Diag.of_record_exact] at hs
+    obtain ⟨request, hr, hsource⟩ := Option.bind_eq_some_iff.mp hs
+    exact ⟨request, Array.mem_of_find?_eq_some hr, hsource,
+      Array.find?_some (p := fun r : MathRequest =>
+        (Math.missingMathAlphas coverage r.body).contains a) hr⟩
 
 /-- The N0018 census is `_named`: `resolveMathAlphas` emits exactly one
 diagnostic per missing alphabet, each carrying that alphabet's key as its

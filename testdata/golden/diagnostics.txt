@@ -13,7 +13,7 @@
 ✖ [E0101]
   lone backslash at end of input
 ── E0102 (dropped) unclosed verbatim environment
-✖ [E0102]
+✖ [E0102] - \begin
   unclosed {verbatim}: expected '\end{verbatim}'
 ── E0111 (dropped) beamer template body carrying content dropped
 ✖ [E0111] - \setbeamertemplate
@@ -34,7 +34,7 @@
 ✖ [E0202]
   unexpected '}'
 ── E0205 (dropped) malformed or mismatched environment name
-✖ [E0205]
+✖ [E0205] - \begin
   expected an environment name
 ── E0303 (dropped) malformed \define signature
 ✖ [E0303] - \define
@@ -57,7 +57,7 @@
 ✖ [E0310] - \begin
   content before the first '\item'
 ── E0311 (dropped) reserved character in text
-✖ [E0311]
+✖ [E0311] - &
   reserved character '&'
   suggestion: escape it as '\&'
 ── E0312 (dropped) block-level command used inline
@@ -241,7 +241,7 @@
 ℹ [N0021]
   header and footer gaps differ by 10pt as declared; equal gaps are the default
 ── N0022 (info) a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)
-ℹ [N0022]
+ℹ [N0022] - \alert
   'alert' is realized lighter (#EE7C38) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
 ℹ [N0023] - \begin
@@ -326,9 +326,9 @@
   'Open Sans' (testdata/corpus/fonts/OpenSans-Regular.ttf) has no OpenType MATH table; math is set as plain text
   suggestion: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as its text content
-⚠ [W0012]
+⚠ [W0012] - $
   math with \overset is not rendered yet; the formula sets as its text content
-⚠ [W0012]
+⚠ [W0012] - $
   math with \overset is not rendered yet; the formula sets as a placeholder: it has no text content
 ── W0013 (config) an \allow'd code never fired
 ⚠ [W0013]
@@ -430,7 +430,7 @@
   '\maketitle' with nothing declared; no title is set
   suggestion: declare \title{...} (and \author, \date, ...) before it
 ── W0310 (degraded) '[' never closes; not an argument
-⚠ [W0310]
+⚠ [W0310] - [
   '[' after '\section' never closes; it is not an argument
   suggestion: add the matching ']'
 ── W0311 (degraded) a second \frametitle replaces the first
@@ -446,7 +446,7 @@
   column width 'banana' is not a fraction of the text width; the column shares the leftover
   suggestion: write a factor like {0.5\textwidth}
 ── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
-⚠ [W0315]
+⚠ [W0315] - \textcolor
   text coloured 'yellow!50' (#FFFF80) reads at 1.01:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
   suggestion: no weight of this mix meets its ground: name it in \palette{ <name> = #FFFF80 } to have it met on its ground, or declare that entry under \palette[decorative] to keep it low
 ── W0316 (config) unknown option in \palette; block skipped
@@ -500,7 +500,7 @@
 ⚠ [W0329] - \fontfallback
   '\fontfallback' is not implemented yet; skipped
 ── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
-⚠ [W0330]
+⚠ [W0330] - \palette
   declared page #18181B keeps the defaulted #000000 ink: 1.18:1, below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
   suggestion: a declared surface chooses its ink: declare \palette{ fg = ... } beside bg
 ── W0331 (degraded) declared marker not expressible in this backend; default substituted
@@ -561,7 +561,7 @@
   a second '\runningfoot' replaces the first
   suggestion: one '\runningfoot' declares the line; delete the one you do not mean
 ── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
-⚠ [W0345]
+⚠ [W0345] - \palette
   covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
   suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0346 (config) a declaration inside inline content is ignored
@@ -715,7 +715,7 @@
   frame 1 is 3.437pt taller than its page; it continues on the next page
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
-⚠ [W0385]
+⚠ [W0385] - $
   '\textbf' inside math sets in the surrounding style
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
 ⚠ [W0386]
@@ -730,7 +730,7 @@
   the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
   suggestion: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
-⚠ [W0389]
+⚠ [W0389] - $
   math with \raisebox is not rendered yet; its content operand sets in its place
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
 ⚠ [W0390]

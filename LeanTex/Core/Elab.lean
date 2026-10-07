@@ -440,10 +440,12 @@ public structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
   cites : Array (String × Span) := #[]
-  /-- Each colour expression's first span, the value it resolved to, and
-  whether it named a role: the contrast judge's `-->`, and the expression
-  it names for a colour that carries no role. -/
-  colors : Array (String × Color × Bool × Span) := #[]
+  /-- Each colour expression and source value's first use in its palette.
+  Equal ink on different grounds must retain distinct reporting sites. -/
+  colors : Array (Palette × String × Color × Bool × Span) := #[]
+  /-- Declarations supply origins for furniture and implicit foregrounds;
+  an explicit use of the same value takes precedence for reporting. -/
+  colorDeclarations : Array (String × Color × Bool × Span) := #[]
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
@@ -1007,14 +1009,23 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
   recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
-/-- Record a colour expression's span and value, first occurrence per
-expression: the contrast judge's `-->` and the name it reports. -/
+/-- Record a colour expression's first use in its source palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
     (pos : Pos) : EM Unit :=
   modify fun st =>
-    if st.spans.colors.any (·.1 == expr) then st
+    if st.spans.colors.any (fun (p, e, v, _, _) =>
+      p == ctx.palette && e == expr && v.sameSource c) then st
     else { st with spans :=
-      { st.spans with colors := st.spans.colors.push (expr, c, role, ctx.sourceSpan pos) } }
+      { st.spans with colors :=
+        st.spans.colors.push (ctx.palette, expr, c, role, ctx.sourceSpan pos) } }
+
+private def recordColorDeclaration (key : String) (c : Color) (span : Span) : EM Unit :=
+  modify fun st =>
+    if st.spans.colorDeclarations.any (fun (e, v, _, _) => e == key && v.sameSource c)
+      then st
+    else { st with spans :=
+      { st.spans with colorDeclarations :=
+        st.spans.colorDeclarations.push (key, c, true, span) } }
 
 /-- The one W0304: a palette name that resolves to nothing keeps its
 content uncoloured. Every colour door — the inline `\textcolor` arm, the
@@ -1028,13 +1039,22 @@ private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
       else s!"declared: {String.intercalate ", "
         (ctx.palette.entries.toList.map (·.1))}")
 
-/-- Where a coloured use came from, for the contrast judge: a role's first
-use, or the first expression that resolved to an anonymous colour. -/
-public def colorSiteOf (colors : Array (String × Color × Bool × Span)) :
-    Option String → Color → Option (String × Span)
-  | some r, _ => (colors.find? (·.1 == r)).map fun (e, _, _, sp) => (e, sp)
-  | none, c => (colors.find? fun (_, v, role, _) => !role && v.sameSource c).map
-      fun (e, _, _, sp) => (e, sp)
+/-- A use's origin matches its role, source value and judged palette.
+Equal ink on a different ground cannot borrow an earlier use's source.
+Furniture without an explicit use falls back to its declaration. -/
+public def colorSiteOf (colors : Array (Palette × String × Color × Bool × Span))
+    (name : Option String) (c : Color)
+    (declarations : Array (String × Color × Bool × Span) := #[])
+    (palette : Option Palette := none) :
+    Option (String × Span) :=
+  let matchesSite := fun (e, v, role, _) =>
+    v.sameSource c && match name with
+      | some r => e == r
+      | none => !role
+  let used := colors.find? fun (p, entry) =>
+    palette.all (· == p) && matchesSite entry
+  (used.map fun (_, e, _, _, sp) => (e, sp)).orElse fun _ =>
+    (declarations.find? matchesSite).map fun (e, _, _, sp) => (e, sp)
 
 /-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
@@ -7450,6 +7470,8 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
     (settle : Bool := false) : EM Palette := do
   let (colors, pal, issues) := (← get).flowPalette.resolve pal
   modify fun st => { st with flowPalette := colors }
+  for (key, c, span) in colors.origins do
+    recordColorDeclaration key c span
   if settle then
     for issue in issues do
       let origin := { ctx with file := issue.span.file, callSite := none }
@@ -7546,6 +7568,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
       else
         let put (pal : Palette) (c : Color) : EM Palette := do
           noteDeclared ctx "palette" key
+          recordColorDeclaration key c (ctx.sourceSpan pos)
           modify fun st => { st with flowPalette := st.flowPalette.native key c }
           return pal.declare key c decorative
         match ← readColor ctx pal none valueSrc pos with
@@ -14012,6 +14035,9 @@ list levels: itemize2..4, enumerate2..4")
   let inlineOf (src : String) : EM (Option (Array Inline)) := do
     let inner := if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
       then (src.drop 1).dropEnd 1 |>.toString else src
+    -- Fragment positions are relative to the value, not the source file.
+    -- Requests and diagnostics retain the enclosing declaration's location.
+    let fragmentCtx := ctx.atCall "style" pos
     let (toks, _) := Lex.lex ctx.file inner
     let (raws, _) := Parse.parse ctx.file toks
     -- Value text re-enters through the same door as the document, idiom
@@ -14026,8 +14052,10 @@ list levels: itemize2..4, enumerate2..4")
     let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
     let (raws, ds, _) := Compat.rewrite ctx.file raws
       (warned := (← get).warnedUnknown) (inherited := inherited)
-    modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
-    return some (← elabInlines ctx raws)
+    let ds := (ds.filter (·.severity != .note)).map fun d =>
+      { d with span := some (fragmentCtx.sourceSpan pos) }
+    modify fun st => { st with diags := st.diags ++ ds }
+    return some (← elabInlines fragmentCtx raws)
   let lengthOf (key src : String) : EM (Option SymGlue) := do
     -- The engine's own page lengths read here as in any length the
     -- document writes (`0.6\paperwidth`, a template node's measure): the
@@ -14070,7 +14098,9 @@ list levels: itemize2..4, enumerate2..4")
           return none
       match key with
       | "font" => st := { st with font := ← asInline }
-      | "marker" => st := { st with marker := ← asInline }
+      | "marker" =>
+        st := { st with marker := (← asInline).map fun body =>
+          #[.located (ctx.sourceSpan pos) body] }
       | "before" => st := { st with before := ← asLength }
       | "after" => st := { st with after := ← asLength }
       | "indent" => st := { st with indent := ← asLength }
@@ -15469,6 +15499,7 @@ the built-in's heading and margins stand{replaced}"
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
         let ds := Theme.apply th before
         for (key, c) in th.palette.entries do
+          recordColorDeclaration key c (s.ctx.sourceSpan pos)
           modify fun st => { st with flowPalette := st.flowPalette.native key c }
         let pal ← resolveBeamerColors s.ctx ds.palette
         return { s with
@@ -17213,6 +17244,25 @@ public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : C
   unfold prepareExecuted
   exact prepareRewritten_inputAttempts_exact file _ _ _ _ _ _
 
+/-- Lexical evidence is independent of rewriting and stays with its source. -/
+public theorem prepareRewritten_sourceTriggers_exact (file : String)
+    (scan : Compat.BoundaryScan) (macros : Array (String × String))
+    (triggers : Compat.SourceTriggers) (prior : Array Diag)
+    (rewritten : Array Raw × Array Diag × Array String)
+    (attempts : Array Compat.InputAttempt) :
+    (prepareRewritten file scan macros triggers prior rewritten attempts).sourceTriggers =
+      triggers := by
+  rcases rewritten with ⟨raws, diags, warned⟩
+  unfold prepareRewritten
+  cases Compat.rewriteText file raws warned
+  rfl
+
+attribute [local irreducible] prepareRewritten macroScan in
+public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : Compat.Executed) :
+    (prepareExecuted file executed).sourceTriggers = executed.sourceTriggers := by
+  unfold prepareExecuted
+  exact prepareRewritten_sourceTriggers_exact file _ _ _ _ _ _
+
 /-- Rewrite and scan, once. LaTeX idioms become native declarations here,
 which is why a `\fonts` a document never wrote — `\setmainfont`, a class
 option, a beamer font theme — is nonetheless a declaration the preamble
@@ -17412,7 +17462,9 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry
   -- N0022 where a pair realized, the pairing warnings where none could.
-  let (doc, contrast) := Contrast.realizeDoc doc (colorSiteOf st.spans.colors)
+  let (doc, contrast) := Contrast.realizeDoc doc
+    (fun pal name c => colorSiteOf st.spans.colors name c
+      (declarations := st.spans.colorDeclarations) (palette := some pal))
   let st := finishPictureKeys report doc p.picSets st
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
@@ -17420,10 +17472,9 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, Diag.tallySites (accountRecovered doc.salvage
-    (earlier ++ p.compatDiags ++ st.diags.map p.sourceTriggers.attribute ++
-      contrast ++ outline ++ alt.map p.sourceTriggers.attribute ++ links ++ sequences)
-    (st.spans.recoveryDiags.map p.sourceTriggers.attribute)),
+  (doc, Diag.tallySites ((accountRecovered doc.salvage
+    (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences)
+    st.spans.recoveryDiags).map p.sourceTriggers.attribute),
     { inputAttempts := p.inputAttempts
       bib := st.spans.bib
       images := st.spans.images

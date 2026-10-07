@@ -607,20 +607,45 @@ private def LinkSetup.native (l : LinkSetup) : String :=
       s!"\\style\{cite}\{ color = {l.cite} }"
   else ""
 
-/-- Written commands indexed before execution; generated commands inherit the
+/-- Written tokens indexed before execution; generated commands inherit the
 written call's coordinates and therefore its spelling. -/
 public abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
 
+/-- Only original source boundaries may index written tokens. A normalized
+fragment's fallback coordinates can coincide with an unrelated written token. -/
+@[expose] public def SourceTriggers.writtenAt (sources : SourceTriggers) (file : String)
+    (pos : Pos) : Option String :=
+  if pos.sourceMapped then sources[(file, pos.line, pos.col)]? else none
+
 /-- Restore a downstream diagnostic's written trigger from lexical evidence,
-retaining an explicit trigger when no source command owns its span. -/
+retaining an explicit trigger when no source token owns its span. -/
 @[expose] public def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
   { d with trigger := (d.span.bind fun s =>
-      sources[(s.file, s.pos.line, s.pos.col)]?).orElse (fun _ => d.trigger) }
+      sources.writtenAt s.file s.pos).orElse (fun _ => d.trigger) }
 
 /-- Attribution changes presentation only, including for accepted or scoped
 records; every other diagnostic field is exactly the input field. -/
 public theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Diag) :
     { sources.attribute d with trigger := d.trigger } = d := by rfl
+
+/-- Reapplying the same lexical evidence cannot change a diagnostic again. -/
+public theorem SourceTriggers.attribute_fixed_point (sources : SourceTriggers) (d : Diag) :
+    sources.attribute (sources.attribute d) = sources.attribute d := by
+  unfold SourceTriggers.attribute
+  cases d.span.bind (fun s => sources.writtenAt s.file s.pos) <;> simp
+
+/-- Failed source mapping cannot borrow any token from the index, regardless
+of its contents; all diagnostic fields, including explicit evidence, survive. -/
+public theorem SourceTriggers.attribute_unmapped_id (sources : SourceTriggers) (d : Diag)
+    (h : ∀ s, d.span = some s → s.pos.sourceMapped = false) :
+    sources.attribute d = d := by
+  have absent : (d.span.bind fun s => sources.writtenAt s.file s.pos) = none := by
+    cases hs : d.span with
+    | none => simp
+    | some s => simp [SourceTriggers.writtenAt, h s hs]
+  unfold SourceTriggers.attribute
+  rw [absent]
+  rfl
 
 mutual
 
@@ -628,7 +653,10 @@ mutual
 commands. Input wrappers change only their contents' filename. A desugared
 Markdown command has no lexical evidence, so its generated TeX spelling is
 never reported as authored. Environments keep the literal opening control
-word, without reconstructing braces or whitespace the parser consumed. -/
+word, without reconstructing braces or whitespace the parser consumed.
+Math keeps its recorded opener, never a spelling inferred from display mode.
+Words and symbols need the same original evidence: their rendered values can
+be normalized or synthesized and cannot establish what the author wrote. -/
 -- conserves: none — an index of the parsed surface, before IR exists.
 private def sourceTriggers (file : String) (acc : SourceTriggers) :
     List Raw → SourceTriggers
@@ -636,11 +664,16 @@ private def sourceTriggers (file : String) (acc : SourceTriggers) :
   | r :: rest => sourceTriggers file (sourceTrigger file acc r) rest
 
 private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → SourceTriggers
-  | .ctrl _ p | .verb _ _ p =>
+  | .ctrl _ p | .verb _ _ p | .word _ p | .sym _ p =>
     match p.command with
     | some command => acc.insertIfNew (file, p.line, p.col) command
     | none => acc
-  | .group body _ | .math _ body _ => sourceTriggers file acc body.toList
+  | .group body _ => sourceTriggers file acc body.toList
+  | .math _ body p =>
+    let acc := match p.command with
+      | some command => acc.insertIfNew (file, p.line, p.col) command
+      | none => acc
+    sourceTriggers file acc body.toList
   | .env n body p =>
     match Parse.inputEnvFile? n with
     | some child => sourceTriggers child acc body.toList
@@ -649,7 +682,7 @@ private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → Sourc
         | some command => acc.insertIfNew (file, p.line, p.col) command
         | none => acc
       sourceTriggers file acc body.toList
-  | .word _ _ | .space | .par _ | .sym _ _ => acc
+  | .space | .par _ => acc
 
 end
 
@@ -1138,7 +1171,14 @@ public def styInternal (file name : String) : Bool :=
 /-- Attribute a diagnostic by its source site, preserving an explicit trigger. -/
 public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) : Diag :=
-  { d with trigger := d.trigger.orElse fun _ => sources[(file, pos.line, pos.col)]? }
+  { d with trigger := d.trigger.orElse fun _ => sources.writtenAt file pos }
+
+/-- Immediate attribution has the same failed-mapping boundary as delayed
+attribution: an unavailable original coordinate leaves the record untouched. -/
+public theorem SourceTriggers.atSource_unmapped_id (sources : SourceTriggers) (file : String)
+    (pos : Pos) (d : Diag) (h : pos.sourceMapped = false) :
+    sources.atSource file pos d = d := by
+  simp [SourceTriggers.atSource, SourceTriggers.writtenAt, h]
 
 private def atSource (st : St) (pos : Pos) (d : Diag) : Diag :=
   st.sourceTriggers.atSource st.file pos d
@@ -9316,8 +9356,19 @@ private def boxRowRaw : Raw → M Raw
     let kids ← boxRowList #[] body.toList
     return .group (← boxRowEmit kids) p
   | .env n body p => do
-    let kids ← boxRowList #[] body.toList
-    return .env n (← boxRowEmit (if n == "columns" then columnsRowPos kids else kids)) p
+    match Parse.inputEnvFile? n with
+    | some file =>
+      -- This late pass emits its own row notes after rewriteRaw has
+      -- restored the caller's file. Follow the input wrapper again.
+      let saved := (← get).file
+      write fun st => { st with file := file }
+      let kids ← boxRowList #[] body.toList
+      let body' ← boxRowEmit kids
+      write fun st => { st with file := saved }
+      return .env n body' p
+    | none =>
+      let kids ← boxRowList #[] body.toList
+      return .env n (← boxRowEmit (if n == "columns" then columnsRowPos kids else kids)) p
   | .math d body p => pure (.math d body p)
   | .word s p => pure (.word s p)
   | .space => pure .space
@@ -9432,13 +9483,34 @@ private theorem boxRowList_tailDiag (acc : Array Raw) (rs : List Raw)
 private theorem boxRowRaw_tailDiag (r : Raw) (d : Diag) (st : St)
     (h : TailDiag d st) : TailDiag d (boxRowRaw r st).2 := by
   cases r with
-  | group body p | env n body p =>
+  | group body p =>
     rw [boxRowRaw]
     apply state_bind_inv (TailDiag d) _ _ st
       (boxRowList_tailDiag #[] body.toList d st h)
     intro kids s hs
     exact state_bind_inv (TailDiag d) _ _ s
       (boxRowEmit_tailDiag _ d s hs) (fun _ _ hp => hp)
+  | env n body p =>
+    rw [boxRowRaw]
+    cases Parse.inputEnvFile? n with
+    | some file =>
+      apply state_bind_inv (TailDiag d) _ _ st h
+      intro observed s hs
+      apply state_bind_inv (TailDiag d) _ _ s hs
+      intro _ s' hs'
+      apply state_bind_inv (TailDiag d) _ _ s'
+        (boxRowList_tailDiag #[] body.toList d s' hs')
+      intro kids s'' hs''
+      apply state_bind_inv (TailDiag d) _ _ s''
+        (boxRowEmit_tailDiag _ d s'' hs'')
+      intro body' s''' hs'''
+      exact state_bind_inv (TailDiag d) _ _ s''' hs''' (fun _ _ hp => hp)
+    | none =>
+      apply state_bind_inv (TailDiag d) _ _ st
+        (boxRowList_tailDiag #[] body.toList d st h)
+      intro kids s hs
+      exact state_bind_inv (TailDiag d) _ _ s
+        (boxRowEmit_tailDiag _ d s hs) (fun _ _ hp => hp)
   | math | word | space | par | ctrl | sym | verb => exact h
 
 end

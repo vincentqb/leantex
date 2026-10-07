@@ -14,9 +14,12 @@ public structure Pos where
   col : Nat := 1
   /-- Enclosing macro invocations, outermost first. -/
   origins : List MacroOrigin := []
-  /-- The exact control token read by the TeX lexer, including its backslash.
-  Desugared or otherwise synthetic positions have no written command. -/
+  /-- The exact authored token, before normalization or display expansion.
+  Desugared or otherwise synthetic positions have no written token. -/
   command : Option String := none
+  /-- Whether these coordinates identify a boundary in the original source.
+  A normalized fragment without such a boundary cannot index authored tokens. -/
+  sourceMapped : Bool := true
   deriving Repr, DecidableEq
 
 /-- Source-location identity ignores expansion and token provenance. Consumers that
@@ -31,6 +34,10 @@ public theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
 changing it cannot change source-location identity. -/
 public theorem Pos.beq_command_exact (p q : Pos) (xs ys : Option String) :
     ({ p with command := xs } == { q with command := ys }) = (p == q) := rfl
+
+/-- Source-map availability is provenance metadata, not location identity. -/
+public theorem Pos.beq_sourceMapped_exact (p q : Pos) (a b : Bool) :
+    ({ p with sourceMapped := a } == { q with sourceMapped := b }) = (p == q) := rfl
 
 public def Pos.next (p : Pos) (newline : Bool) : Pos :=
   if newline then { p with line := p.line + 1, col := 1 }

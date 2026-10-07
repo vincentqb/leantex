@@ -1,6 +1,5 @@
 module
 
-import Std.Data.HashMap
 public import LeanTex.Core.Diag
 import LeanTex.Core.Nfc
 
@@ -167,22 +166,98 @@ private def writtenControl (source : Array Char) (i : Nat) : Option String := do
     else if c == '\r' && source[i + 2]? == some '\n' then i + 3 else i + 2
   return strFrom source i stop
 
-/-- NFC can change a control name or the number of preceding scalars. Escape
-characters are normalization boundaries (UAX #15), so normalizing the disjoint
-slices between them transports their offsets without re-normalizing prefixes.
-Only the original array supplies a spelling. Ordinary NFC input needs no map.
-The table premise and transported offsets are held by diagnosticImageOriginChecks. -/
-private def writtenControls (source : Array Char) : Std.HashMap Nat String := Id.run do
-  let mut out := {}
-  let mut start := 0
-  let mut normalized := 0
-  for i in [0:source.size] do
-    if source[i]? == some '\\' then
-      normalized := normalized + (Nfc.normalizeChars (source.extract start i)).size
-      if let some command := writtenControl source i then
-        out := out.insert normalized command
-      start := i
+private structure SourceChunk where
+  first : Nat
+  stop : Nat
+  offset : Nat
+  normalized : Array Char
+  unchanged : Bool
+  pos : Pos
+
+private structure SourceMap where
+  chunks : Array SourceChunk := #[]
+  size : Nat := 0
+  stop : Nat := 0
+  pos : Pos := {}
+
+/-- Structural ASCII characters and whitespace separate NFC slices (UAX #15).
+Keep their original scalar offsets and positions, including the end boundary.
+The normalizer still owns token text; only the original array supplies evidence. -/
+private def sourceMap (source : Array Char) : SourceMap := Id.run do
+  let mut out : SourceMap := {}
+  let mut i := 0
+  for _ in [0:source.size] do
+    if h : i < source.size then
+      let j := if special source[i] || isWs source[i] then i + 1
+        else scanWhile source i (fun c => !special c && !isWs c)
+      let raw := source.extract i j
+      let normalized := Nfc.normalizeChars raw
+      out := { out with
+        chunks := out.chunks.push ⟨i, j, out.size, normalized, raw == normalized, out.pos⟩
+        size := out.size + normalized.size
+        stop := j
+        pos := posOver source i j out.pos }
+      i := j
   return out
+
+/-- Most token boundaries coincide with a chunk boundary. A control may consume
+part of a word chunk; an internal cut is accepted only when normalizing its two
+original slices gives exactly the two normalized slices. A reordered or expanded
+scalar with no such cut provides no literal evidence for a synthetic fragment. -/
+private def SourceMap.point (m : SourceMap) (source : Array Char) (i : Nat) :
+    Option (Nat × Pos) := Id.run do
+  if i == m.size then return some (m.stop, m.pos)
+  let mut lo := 0
+  let mut hi := m.chunks.size
+  for _ in [0:m.chunks.size + 1] do
+    if h : lo < hi ∧ hi ≤ m.chunks.size then
+      let mid := (lo + hi) / 2
+      let chunk := m.chunks[mid]'(by omega)
+      if i < chunk.offset then hi := mid
+      else if chunk.offset + chunk.normalized.size ≤ i then lo := mid + 1
+      else
+        let k := i - chunk.offset
+        if k == 0 then return some (chunk.first, chunk.pos)
+        if chunk.unchanged then
+          return some (chunk.first + k, posOver source chunk.first (chunk.first + k) chunk.pos)
+        let lead := chunk.normalized.extract 0 k
+        let rest := chunk.normalized.extract k chunk.normalized.size
+        for j in [chunk.first + 1:chunk.stop] do
+          if Nfc.normalizeChars (source.extract chunk.first j) == lead &&
+              Nfc.normalizeChars (source.extract j chunk.stop) == rest then
+            return some (j, posOver source chunk.first j chunk.pos)
+        return none
+    else break
+  return none
+
+private def writtenRange (m : SourceMap) (source cs : Array Char) (i j : Nat) :
+    Option String := do
+  let (a, _) ← m.point source i
+  let (b, _) ← m.point source j
+  guard (a < b && b ≤ source.size &&
+    Nfc.normalizeChars (source.extract a b) == cs.extract i j)
+  return strFrom source a b
+
+/-- Every admitted literal is a nonempty original source slice whose NFC is
+the token's normalized slice; arbitrary or incomplete maps cannot invent it. -/
+private theorem writtenRange_source_exact
+    (m : SourceMap) (source cs : Array Char) (i j : Nat) (text : String)
+    (h : writtenRange m source cs i j = some text) :
+    ∃ a b, a < b ∧ b ≤ source.size ∧
+      Nfc.normalizeChars (source.extract a b) = cs.extract i j ∧
+      text = strFrom source a b := by
+  cases ha : m.point source i with
+  | none => simp [writtenRange, ha] at h
+  | some a =>
+    cases hb : m.point source j with
+    | none => simp [writtenRange, ha, hb] at h
+    | some b =>
+      simp [writtenRange, ha, hb, guard] at h
+      split at h
+      next good =>
+        simp at h
+        exact ⟨a.1, b.1, good.1.1, good.1.2, good.2, h.symm⟩
+      next bad => simp [failure] at h
 
 /-- The lexically blind environments: their bodies are code, captured raw
 in one token — `{verbatim}`, and the listing environments that differ from
@@ -203,7 +278,12 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   let source := input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize)
   let cs := Nfc.normalizeChars source
   let unchanged := source == cs
-  let written := if unchanged then {} else writtenControls source
+  let locations := if unchanged then {} else sourceMap source
+  let sourcePos (i : Nat) (fallback : Pos) :=
+    if unchanged then fallback else
+      ((locations.point source i).map (·.2)).getD { fallback with sourceMapped := false }
+  let written (i j : Nat) :=
+    if unchanged then some (strFrom source i j) else writtenRange locations source cs i j
   let mut toks : Array Token := #[]
   let mut diags : Array Diag := #[]
   let mut i := 0
@@ -211,7 +291,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
-      let here := pos
+      let here := sourcePos i pos
       if isWs c then
         let j := scanWhile cs i isWs
         let n := newlines cs i j
@@ -233,12 +313,13 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
         let j := min (j + 1) cs.size
         let k := scanWhile cs j isWs
         for tok in wsTokens true (newlines cs j k) do
-          toks := toks.push ⟨tok, posOver cs i j pos⟩
+          toks := toks.push ⟨tok, sourcePos j (posOver cs i j pos)⟩
         pos := posOver cs i k pos
         i := k
       else if c == '\\' then
         let here := { here with command :=
-          if unchanged then writtenControl source i else written[i]? }
+          if unchanged then writtenControl source i
+          else (locations.point source i).bind fun (offset, _) => writtenControl source offset }
         if h' : i + 1 < cs.size then
           let c1 := cs[i + 1]
           if nameChar c1 then
@@ -295,7 +376,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
               unless (textSymbols.lookup name).isSome do
                 let k := scanWhile cs i isWs
                 for tok in wsTokens true (newlines cs i k - 1) do
-                  toks := toks.push ⟨tok, pos⟩
+                  toks := toks.push ⟨tok, sourcePos i pos⟩
                 pos := posOver cs i k pos
                 i := k
           else if c1 == '\n' || c1 == '\r' then
@@ -306,7 +387,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
             let e := if c1 == '\r' && cs[i + 2]? == some '\n' then i + 3 else i + 2
             let k := scanWhile cs e isWs
             for tok in wsTokens true (newlines cs e k) do
-              toks := toks.push ⟨tok, posOver cs i e pos⟩
+              toks := toks.push ⟨tok, sourcePos e (posOver cs i e pos)⟩
             pos := posOver cs i k pos
             i := k
           else
@@ -326,16 +407,20 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
         pos := pos.next false
         i := i + 1
       else if c == '$' then
+        -- Keep individual shifts: in `$x$$y$` the middle pair closes one
+        -- inline formula and opens the next.
+        let stop := if cs[i + 1]? == some '$' then i + 2 else i + 1
+        let here := { here with command := written i stop }
         toks := toks.push ⟨.math, here⟩
         pos := pos.next false
         i := i + 1
       else if special c then
-        toks := toks.push ⟨.sym c, here⟩
+        toks := toks.push ⟨.sym c, { here with command := written i (i + 1) }⟩
         pos := pos.next false
         i := i + 1
       else
         let j := scanWhile cs i (fun c => !special c && !isWs c)
-        toks := toks.push ⟨.word (strFrom cs i j), here⟩
+        toks := toks.push ⟨.word (strFrom cs i j), { here with command := written i j }⟩
         pos := posOver cs i j pos
         i := j
   return (toks, diags)

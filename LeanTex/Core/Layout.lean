@@ -34,6 +34,16 @@ any base over about 21 pt — the poster's 31 pt body put its "1." 30 pt
 into the trim. -/
 public def listIndentFor (base : Sp) : Sp := base * 3 / 2
 
+/-- The frame's fixed opening skip, projected from its shared IR length
+at the body size. Painted extents and flexible space are accounted for
+by the page builder after this boundary. -/
+public def frameBodySkip (hasTitle : Bool) (valign : VAlign) (size : Sp) : Sp :=
+  (Ir.frameBodySkip hasTitle valign).resolve size 0
+
+public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign) (size : Sp) :
+    frameBodySkip hasTitle valign size = (Ir.frameBodySkip hasTitle valign).resolve size 0 := by
+  simp only [frameBodySkip]
+
 public structure Geom where
   pageW : Sp := pt 612
   pageH : Sp := pt 792
@@ -1102,6 +1112,44 @@ public inductive PagePath where
   /-- A filled triangle: an arrow tip. -/
   | tri (x1 y1 x2 y2 x3 y3 : Sp)
   deriving Repr, Inhabited
+
+/-- A placed path moved down the page by `d`, including every Bézier
+control point. Page shrink, vertical distribution and row alignment use
+this same translation. -/
+public def PagePath.shiftY (d : Sp) : PagePath → PagePath
+  | .circle cx cy r => .circle cx (cy + d) r
+  | .rect x y w h => .rect x (y + d) w h
+  | .segs ss => .segs (ss.map fun s => match s with
+    | .line x1 y1 x2 y2 => .line x1 (y1 + d) x2 (y2 + d)
+    | .cubic x1 y1 a1 b1 a2 b2 x2 y2 => .cubic x1 (y1 + d) a1 (b1 + d) a2 (b2 + d) x2 (y2 + d))
+  | .tri x1 y1 x2 y2 x3 y3 => .tri x1 (y1 + d) x2 (y2 + d) x3 (y3 + d)
+
+/-- No displacement preserves every path coordinate and dimension. A
+layout-coordinate fact: this helper acts after the IR's affine placement. -/
+public theorem PagePath.shiftY_zero_id (p : PagePath) : p.shiftY 0 = p := by
+  cases p <;> simp only [shiftY, Int.add_zero]
+  congr 1
+  apply Array.map_id''
+  intro s
+  cases s <;> simp
+
+/-- Translations compose by addition for every placed path, including
+curved edges. Shrink followed by distribution or alignment is one rigid
+translation, never a deformation of endpoints or control points. -/
+public theorem PagePath.shiftY_add_exact (p : PagePath) (a b : Sp) :
+    (p.shiftY a).shiftY b = p.shiftY (a + b) := by
+  cases p <;> simp only [shiftY, Int.add_assoc]
+  congr 1
+  rw [Array.map_map]
+  apply Array.map_congr_left
+  intro s _
+  cases s <;> simp [Int.add_assoc]
+
+/-- Reversing a translation recovers the entire placed path, so applying
+page shrink loses no geometry. -/
+public theorem PagePath.shiftY_cancel_id (p : PagePath) (d : Sp) :
+    (p.shiftY d).shiftY (-d) = p := by
+  rw [shiftY_add_exact, Int.add_right_neg, shiftY_zero_id]
 
 /-- A placed path with its declared paint: stroke and/or fill, exactly as
 the picture shape carried them. -/
@@ -4808,23 +4856,28 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   -- Native shaping describes PDF ink. HTML and Markdown retain Unicode;
   -- a browser's glyph fallback is not this font set's decision.
   for (idx, c) in acc.dropped do
+    let source := glyphOrigin acc.origins .E0405 idx c
     diags := diags.push (Diag.of .E0405
       s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
-      (span := glyphOrigin acc.origins .E0405 idx c) (output := some .pdf)
-      (trigger := String.singleton c) (recovery := some .skipped)
+      (span := source) (output := some .pdf)
+      (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
+      (recovery := some .skipped)
       (help := "declare a face that covers it in \\fonts, or accept the loss \
 with \\allow{E0405}"))
   for (idx, c, fb) in acc.substs do
+    let source := glyphOrigin acc.origins .W0009 idx c
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
-      (span := glyphOrigin acc.origins .W0009 idx c) (output := some .pdf)
-      (trigger := String.singleton c)
+      (span := source) (output := some .pdf)
+      (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'")))
   for (idx, c, a, base) in acc.unstyled do
+    let source := glyphOrigin acc.origins .W0016 idx c
     diags := diags.push (Diag.of .W0016
       s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for U+{hex c.toNat}"
-      (span := glyphOrigin acc.origins .W0016 idx c) (output := some .pdf)
-      (trigger := String.singleton c) (recovery := some (.replacedBy s!"the base letter '{base}'"))
+      (span := source) (output := some .pdf)
+      (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
+      (recovery := some (.replacedBy s!"the base letter '{base}'"))
       (help := some "declare a math face that carries this alphabet: \\fonts{ math = ... }")
       (subject := some ("math-alpha:" ++ a.name)))
   return (items, diags, acc.cache, acc.extras, acc.notes, acc.wordOffsets,
@@ -7329,6 +7382,112 @@ private structure DisplayJob where
   lead : Nat := 0
   deriving Inhabited
 
+/-- The preceding band's spacing reference. Text relates to a lower rule
+by its baseline; a rule relates to following text by its ink edge; a box
+reserves its complete painted extent while retaining text leading. -/
+public inductive Spacing.Band where
+  | text
+  | rule
+  | box
+  deriving Inhabited, Repr, DecidableEq
+
+/-- A column's final baseline and the lower bounds read by spacing:
+clearance, leading and measured box depth. Joining columns preserves each
+absolute bound independently; the column with the lowest baseline need
+not have the lowest edge. Measured depth remains distinct from clearance
+because TeX's vertical fill centers the actual box. -/
+public structure Spacing.Tail where
+  y : Sp
+  depth : Sp
+  below : Sp
+  boxDepth : Sp
+  band : Spacing.Band
+
+/-- The common tail of neighbouring columns. A mixed row is a box:
+unlike a text-only row, its next rule must clear the full painted depth. -/
+public def Spacing.Tail.join (a b : Spacing.Tail) : Spacing.Tail :=
+  let y := max a.y b.y
+  { y := y
+    depth := max (a.y + a.depth) (b.y + b.depth) - y
+    below := max (a.y + a.below) (b.y + b.below) - y
+    boxDepth := max (a.y + a.boxDepth) (b.y + b.boxDepth) - y
+    band := if a.band = b.band then a.band else .box }
+
+/-- Both columns' clearance, leading and measured bottoms survive the
+production join. -/
+public theorem Spacing.Tail.join_covers (a b : Spacing.Tail) :
+    a.y + a.depth ≤ (a.join b).y + (a.join b).depth ∧
+    b.y + b.depth ≤ (a.join b).y + (a.join b).depth ∧
+    a.y + a.below ≤ (a.join b).y + (a.join b).below ∧
+    b.y + b.below ≤ (a.join b).y + (a.join b).below ∧
+    a.y + a.boxDepth ≤ (a.join b).y + (a.join b).boxDepth ∧
+    b.y + b.boxDepth ≤ (a.join b).y + (a.join b).boxDepth := by
+  simp only [Spacing.Tail.join, Sp]
+  omega
+
+/-- Joining columns neither drops measured ink nor substitutes nominal
+font descent: the joined box ends exactly at its lowest measured edge. -/
+public theorem Spacing.Tail.join_boxDepth_exact (a b : Spacing.Tail) :
+    (a.join b).y + (a.join b).boxDepth =
+      max (a.y + a.boxDepth) (b.y + b.boxDepth) := by
+  simp only [Spacing.Tail.join, Sp]
+  omega
+
+/-- A boxed column keeps the row's rule-clearance convention. -/
+public theorem Spacing.Tail.join_box_exact (a b : Spacing.Tail)
+    (h : a.band = .box ∨ b.band = .box) :
+    (a.join b).band = .box := by
+  simp only [Spacing.Tail.join]
+  split
+  · rcases h with h | h
+    · exact h
+    · rename_i he
+      exact he.trans h
+  · rfl
+
+/-- Column order cannot change the row's geometric tail. -/
+public theorem Spacing.Tail.join_comm (a b : Spacing.Tail) :
+    a.join b = b.join a := by
+  simp only [Spacing.Tail.join]
+  congr 1
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · split <;> split <;> simp_all
+
+/-- Rejoining a saved tail does not add padding or leading. -/
+public theorem Spacing.Tail.join_id (a : Spacing.Tail) : a.join a = a := by
+  cases a
+  simp only [Spacing.Tail.join, ↓reduceIte]
+  congr 1 <;> simp only [Sp] <;> omega
+
+/-- Grouping a row into nested column flows cannot change its tail. -/
+public theorem Spacing.Tail.join_assoc (a b c : Spacing.Tail) :
+    (a.join b).join c = a.join (b.join c) := by
+  rcases a with ⟨ay, ad, al, ai, ab⟩
+  rcases b with ⟨byy, bd, bl, bi, bb⟩
+  rcases c with ⟨cy, cd, cl, ci, cb⟩
+  simp only [Spacing.Tail.join]
+  congr 1
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · simp only [Sp]; omega
+  · cases ab <;> cases bb <;> cases cb <;> decide
+
+/-- Repeated furniture and the resolved spacing reference below it. A
+frame's body opening updates this reference after the title is pinned;
+headline-only furniture keeps its ink-edge reference. -/
+private structure Spacing.Chrome where
+  lines : Array LineOut
+  fills : Array Fill
+  y : Sp
+  depth : Sp
+  below : Sp
+  band : Spacing.Band
+  header : Option Sp
+
 /-- Page assembly state. A page is set the way a line is: its lines are
 boxes, the vertical skips between them are glue, and `y` is the baseline of
 the last line at the glue's natural size. Shrink is applied to the whole
@@ -7345,6 +7504,9 @@ public structure Spacing.Page where
   private capHeight : Sp
   /-- Body x-height in sp, so `ex` tokens resolve against the real font. -/
   private xHeight : Sp := 0
+  /-- Authored picture openings keyed by the PDF structure leaf. Repeated
+  overlay placement reads the same source, independently of page order. -/
+  private pictureSpans : Array (Nat × Span) := #[]
   private pages : Array PageOut := #[]
   private cur : PageOut := {}
   /-- Page-local lifecycle declarations survive boundaries that ship no
@@ -7363,10 +7525,9 @@ public structure Spacing.Page where
   /-- Leaded below of the last line placed (`LineBox.below`): the upper
   term of the metric interline rule. -/
   private prevBelow : Sp := 0
-  /-- The last line placed was bare rule ink (`ruleOnly`): the next
-  interline is ink-referenced — from the rule's bottom edge to the
-  next line's cap line (`interlineFor`). -/
-  private prevRuleOnly : Bool := false
+  /-- The preceding band's spacing reference survives column and slot
+  restoration. Closing a painted box replaces the last text reference. -/
+  private prevBand : Spacing.Band := .text
   /-- Where the last text line set ends, from the left margin: the right
   edge of its content, what TeX's `\predisplaysize` measures (tex.web
   §1146) for a display the paragraph runs into. `none` after anything
@@ -7382,6 +7543,15 @@ public structure Spacing.Page where
   private skip : Glue := {}
   /-- Per line of the current page: total shrink in the glue above it. -/
   private shrinkAbove : Array Sp := #[]
+  /-- Per rectangle fill and path: the preceding glue, recorded beside
+  the content each rider belongs to. A title bar follows its title line,
+  even when later lines consume different shares of the page's glue. -/
+  private fillShrinkAbove : Array Sp := #[]
+  private pathShrinkAbove : Array Sp := #[]
+  private fillStretchAbove : Array Sp := #[]
+  private pathStretchAbove : Array Sp := #[]
+  private fillFilsAbove : Array Nat := #[]
+  private pathFilsAbove : Array Nat := #[]
   /-- Total shrink in the glue laid on the current page. -/
   private pageShrink : Sp := 0
   /-- Per line of the current page: total finite stretch in the glue above
@@ -7392,6 +7562,14 @@ public structure Spacing.Page where
   /-- How far the current page overflows at natural glue: what closing it
   must take out of the shrink. -/
   private needed : Sp := 0
+  /-- The box that last strictly increased `needed`, not the last box
+  visited. A column may subsequently rewind the cursor. -/
+  private neededSource : Option Span := none
+  /-- Source of the line awaiting the fit/commit door. It survives a spill
+  of the preceding page and is consumed by that line's commit. -/
+  private pendingSource : Option Span := none
+  /-- Source at the current cursor, saved and restored with column boxes. -/
+  private lastSource : Option Span := none
   /-- The next line opens at the page top, even though lines already stand
   on the page: a later column rewound to a fresh page's start must place
   its first line where the first column placed its. -/
@@ -7482,7 +7660,7 @@ public structure Spacing.Page where
   (`allowframebreaks`, user guide §8.1: the title is per-frame furniture,
   not first-page content). Cleared at the deliberate frame boundary
   (`.brk`), so only mid-frame overflow repeats it. -/
-  private chrome : Option (Array LineOut × Array Fill × Sp × Sp × Sp) := none
+  private chrome : Option Spacing.Chrome := none
   /-- Block links open on the current page; closed spans wait for the page's
   final vertical placement before their rectangles are measured. -/
   private openRegions : Array RegionStart := #[]
@@ -7780,6 +7958,32 @@ private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = t
   simp
   omega
 
+/-- The end a PDF page's distribution must clear: its ordinary box end
+and any painted surface end. This is artifact geometry, not an IR
+statement. In particular, TeX's cancelled final depth cannot cancel the
+bottom inset of a surface that has already closed. -/
+public def regionContentEnd (ordinary : Sp) (painted : Option Sp) : Sp :=
+  max ordinary (painted.getD ordinary)
+
+public theorem regionContentEnd_none_exact (ordinary : Sp) :
+    regionContentEnd ordinary none = ordinary := by
+  simp [regionContentEnd]
+
+/-- Both contributors remain in the page-close budget. This local bound
+does not claim that every region can fit an arbitrarily small page. -/
+public theorem regionContentEnd_covers (ordinary painted : Sp) :
+    ordinary ≤ regionContentEnd ordinary (some painted) ∧
+      painted ≤ regionContentEnd ordinary (some painted) :=
+  ⟨Int.le_max_left .., Int.le_max_right ..⟩
+
+/-- Measure the same open and closed fragments that page close will
+paint, after shrink and before distributing the remaining space. -/
+private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
+    (fills : Array Fill) (paths : Array PathOut) : Option Sp :=
+  let spans := b.closedRegions ++ b.openRegions.map (fun start => start.close b.cur)
+  (regionFills spans lines fills paths).foldl (fun edge (_, f) =>
+    some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
+
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
 above it, the glue set at one ratio like a justified line's. `owed` is the
@@ -7796,9 +8000,18 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
         { l with y := l.y - above * b.needed / b.pageShrink }
     else b.cur.lines
+  let fills := if b.needed > 0 && b.pageShrink > 0 then
+      b.cur.fills.mapIdx fun i f =>
+        { f with y := f.y - b.fillShrinkAbove.getD i 0 * b.needed / b.pageShrink }
+    else b.cur.fills
+  let paths := if b.needed > 0 && b.pageShrink > 0 then
+      b.cur.paths.mapIdx fun i p =>
+        { p with path := p.path.shiftY (-(b.pathShrinkAbove.getD i 0 * b.needed / b.pageShrink)) }
+    else b.cur.paths
   let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
       (s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
-        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"))
+        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")
+      (span := b.neededSource) (trigger := b.neededSource.bind (·.pos.command)))
     else b.diags
   -- The leftover between the content's bottom and the bottom margin. Fil
   -- glue owns it when any stands on the page: each line moves by its
@@ -7806,15 +8019,15 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- \vfill bottom-flushes, exactly TeX's infinite-glue model. A trailing
   -- pending fil (a \vfill nothing follows) joins the denominator. With no
   -- fil, the page's declared ratio (`VDist`) splits it as before. Only
-  -- what follows the `.pin` mark moves; the page's fills ride together
-  -- with the shift of the last line, which is exact whenever the fil
-  -- glue brackets the content whole.
+  -- what follows the `.pin` mark moves. Lines, fills and paths read
+  -- their own glue shares, so a bar and its title stay attached.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
+  let paintedEnd := b.surfaceEnd lines fills paths
   let leftover := if lines.size > b.pinnedLines then
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
       -- after the shift, anchored at bodyBottom)
-      noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed
+      noteFloor b.bottom b.footins b.notesH - regionContentEnd (b.contentEnd owed) paintedEnd
     else 0
   -- `\flushbottom` on a page the builder broke (`flush`): with no fil and
   -- no shrink given, the page's finite stretch takes the leftover between
@@ -7822,7 +8035,9 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- \@colht` with the last box's depth cancelled and no `\@textbottom`
   -- fil (latex.ltx `\@make@normalcolbox`, `\flushbottom`) — each line
   -- moving by its share of the stretch above it, at one glue-set ratio.
-  let lo := noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.y
+  -- A surface's metric depth and insets remain painted even when its
+  -- source region has closed. Ordinary text keeps TeX's baseline floor.
+  let lo := noteFloor b.bottom b.footins b.notesH - regionContentEnd b.y paintedEnd
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
@@ -7839,8 +8054,15 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       (if d == 0 then lines else
         lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + d },
        d)
-  let bodyFills := if delta == 0 then b.cur.fills else
-    b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
+  let riderShift (stretch : Sp) (fils : Nat) : Sp :=
+    if pageFils > 0 then filShare leftover fils pageFils
+    else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
+        && lines.size > b.pinnedLines then stretch * lo / b.pageStretch
+    else delta
+  let bodyFills := fills.mapIdx fun i f =>
+    if i < b.pinnedFills then f
+    else { f with
+      y := f.y + riderShift (b.fillStretchAbove.getD i 0) (b.fillFilsAbove.getD i 0) }
   -- The footer background occupies its measured band, including the
   -- template's closing skip, below the body floor. It is page furniture
   -- and therefore never participates in the body's vertical distribution.
@@ -7849,20 +8071,12 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       let y := footBaseline b.geom.pageH d - h
       #[{ x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c : Fill }]
     | _, _, _ => #[]
-  -- Picture paths ride with the fills: the same vertical-distribution
-  -- shift, no pinning (chrome never draws one).
-  let paths := if delta == 0 then b.cur.paths else
-    b.cur.paths.map fun p =>
-      { p with path := match p.path with
-          | .circle cx cy r => .circle cx (cy + delta) r
-          | .rect x y w h => .rect x (y + delta) w h
-          | .segs segs => .segs (segs.map fun sg => match sg with
-              | .line x1 y1 x2 y2 => .line x1 (y1 + delta) x2 (y2 + delta)
-              | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-                .cubic x1 (y1 + delta) c1x (c1y + delta) c2x (c2y + delta)
-                  x2 (y2 + delta))
-          | .tri x1 y1 x2 y2 x3 y3 =>
-            .tri x1 (y1 + delta) x2 (y2 + delta) x3 (y3 + delta) }
+  -- Picture paths carry the picture's shares, including pictures with
+  -- no labels. Chrome never draws a path, so no path pin is needed.
+  let paths := paths.mapIdx fun i p =>
+    { p with
+      path := p.path.shiftY
+        (riderShift (b.pathStretchAbove.getD i 0) (b.pathFilsAbove.getD i 0)) }
   let openSpans := b.openRegions.map fun start => start.close b.cur
   let spans := b.closedRegions ++ openSpans
   let links := spans.filterMap fun span => span.linkRect lines bodyFills paths
@@ -7883,8 +8097,11 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
                                    frame := b.curFrame, frameOrigin := b.curFrameOrigin,
                                    band := b.curBand },
            cur := {}, curBand := none, pageState := b.pageState.ship,
-           shrinkAbove := #[], pageShrink := 0, stretchAbove := #[], pageStretch := 0,
-           needed := 0, skip := {},
+           shrinkAbove := #[], fillShrinkAbove := #[], pathShrinkAbove := #[],
+           fillStretchAbove := #[], pathStretchAbove := #[],
+           fillFilsAbove := #[], pathFilsAbove := #[],
+           pageShrink := 0, stretchAbove := #[], pageStretch := 0,
+           needed := 0, neededSource := none, lastSource := none, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
@@ -8061,21 +8278,26 @@ baseline and depth. The repeated lines never move (they are the new
 page's pin) and carry no shrink or fil share. -/
 private def Spacing.Page.reopenChrome (b : B) : B :=
   match b.chrome with
-  | some (lines, fills, y0, d0, bl0) =>
-    { b with cur := { lines := lines, fills := fills }
+  | some c =>
+    { b with cur := { lines := c.lines, fills := c.fills }
              openRegions := b.openRegions.map fun s =>
-               { s with lines := lines.size, fills := fills.size, paths := 0, titleFill := none }
-             pinnedLines := lines.size
-             pinnedFills := fills.size
-             shrinkAbove := .replicate lines.size 0
-             stretchAbove := .replicate lines.size 0
-             filsAbove := .replicate lines.size 0
-             y := y0
-             prevDepth := d0
-             prevBelow := bl0
-             -- The chrome's last line is the frame title's text, never a
-             -- bare rule: the resumed interline is the metric rule.
-             prevRuleOnly := false }
+               { s with lines := c.lines.size, fills := c.fills.size, paths := 0, titleFill := none }
+             pinnedLines := c.lines.size
+             pinnedFills := c.fills.size
+             shrinkAbove := .replicate c.lines.size 0
+             fillShrinkAbove := .replicate c.fills.size 0
+             pathShrinkAbove := #[]
+             fillStretchAbove := .replicate c.fills.size 0
+             pathStretchAbove := #[]
+             fillFilsAbove := .replicate c.fills.size 0
+             pathFilsAbove := #[]
+             stretchAbove := .replicate c.lines.size 0
+             filsAbove := .replicate c.lines.size 0
+             y := c.y
+             prevDepth := c.depth
+             prevBelow := c.below
+             prevBand := c.band
+             curBand := c.header }
   | none => b
 
 /-- moloch's frametitle box, closed: the last title baseline plus the
@@ -8234,7 +8456,15 @@ private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
     | none => b
   if fills.isEmpty && paths.isEmpty then b
   else { b with cur := { b.cur with fills := b.cur.fills ++ fills,
-                                    paths := b.cur.paths ++ paths } }
+                                    paths := b.cur.paths ++ paths }
+                fillShrinkAbove := b.fillShrinkAbove ++
+                  .replicate fills.size (shrink.getD b.pageShrink)
+                pathShrinkAbove := b.pathShrinkAbove ++
+                  .replicate paths.size (shrink.getD b.pageShrink)
+                fillStretchAbove := b.fillStretchAbove ++ .replicate fills.size b.pageStretch
+                pathStretchAbove := b.pathStretchAbove ++ .replicate paths.size b.pageStretch
+                fillFilsAbove := b.fillFilsAbove ++ .replicate fills.size (fils.getD b.pageFils)
+                pathFilsAbove := b.pathFilsAbove ++ .replicate paths.size (fils.getD b.pageFils) }
 
 /-- Push a picture's label lines: each a rider on the picture's own
 shrink and fil count, through the one rider door. -/
@@ -8264,13 +8494,16 @@ private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
            filsAbove := b.filsAbove.push fils
            pageShrink := above
            needed := max b.needed overflow
+           neededSource := if b.needed < overflow then b.pendingSource else b.neededSource
+           lastSource := b.pendingSource
+           pendingSource := none
            y := line.y
            freshStart := false
            anchored := false
            ignoreDepth := false
            prevDepth := depth
            prevBelow := below
-           prevRuleOnly := ruleLine
+           prevBand := if ruleLine then .rule else .text
            lineEnd := none
            texAfter := false
            skip := {} }
@@ -8330,6 +8563,34 @@ public structure LineBox where
   the furniture bands must clear. -/
   inkBelow : Sp
   deriving Repr
+
+/-- Baseline-relative reach of a padded PDF band: the declared metric
+strut or the measured ink, whichever is taller, plus the band's inset.
+Placement and painting read this one extent. -/
+public def paddedLineExtent (ascent descent : Sp) (ink : Sp × Sp) (pad : Sp) : Sp × Sp :=
+  (max ascent ink.1 + pad, max descent ink.2 + pad)
+
+/-- The padding clears both the measured ink and its metric strut. -/
+public theorem paddedLineExtent_covers (ascent descent : Sp) (ink : Sp × Sp) (pad : Sp) :
+    ink.1 + pad ≤ (paddedLineExtent ascent descent ink pad).1 ∧
+    ink.2 + pad ≤ (paddedLineExtent ascent descent ink pad).2 ∧
+    ascent + pad ≤ (paddedLineExtent ascent descent ink pad).1 ∧
+    descent + pad ≤ (paddedLineExtent ascent descent ink pad).2 :=
+  ⟨Int.add_le_add_right (Int.le_max_right ..) pad,
+    Int.add_le_add_right (Int.le_max_right ..) pad,
+    Int.add_le_add_right (Int.le_max_left ..) pad,
+    Int.add_le_add_right (Int.le_max_left ..) pad⟩
+
+/-- Reserve a painted band's whole reach before its first baseline is
+placed. The interline rule reads this box, including its fill padding. -/
+public def reserveLineBox (box : LineBox) (extent : Sp × Sp) : LineBox :=
+  { above := max box.above extent.1, below := max box.below extent.2,
+    inkAbove := extent.1, inkBelow := extent.2 }
+
+private theorem reserveLineBox_covers (box : LineBox) (extent : Sp × Sp) :
+    extent.1 ≤ (reserveLineBox box extent).above ∧
+      extent.2 ≤ (reserveLineBox box extent).below :=
+  ⟨Int.le_max_right .., Int.le_max_right ..⟩
 
 /-- CSS 2.1 §10.8.1's half-leading over one (ascent, descent, leading)
 triple: the leading less the metric extent, split into integer halves
@@ -8522,11 +8783,36 @@ written once here: a descender-free last line's gap below is not larger —
 that is the point — and an accented capital's accent rises into the upper
 gap. Equal declared gaps are equal visible gaps by definition
 (`title_bars_symmetric`), and under the default gap a descender can never
-reach the bottom bar (`bars_clear_descenders`). -/
-public def interlineFor (prevRule : Bool) (prevDepth prevBelow : Sp)
+reach the bottom bar (`bars_clear_descenders`). A completed box instead
+reserves its painted depth before a rule and its leaded depth before text;
+the last text baseline inside a box is not the box's bottom edge. -/
+public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
     (ruleLine : Bool) (box : LineBox) : Sp :=
-  (if prevRule then prevDepth else if ruleLine then 0 else prevBelow)
-    + (if prevRule || ruleLine then box.inkAbove else box.above)
+  match prev, ruleLine with
+  | .text, false | .box, false => prevBelow + box.above
+  | .text, true => box.inkAbove
+  | .rule, _ | .box, true => prevDepth + box.inkAbove
+
+/-- A placement-coordinate bound for a titled, ordinary frame's padded
+first line: normal interline placement reserves the whole painted reach,
+so distributing any remaining frame space cannot consume the shared opening
+skip. The origin must already clear the header and the preceding strut
+must have nonnegative depth.
+This covers the additive placement and distribution steps, not a frame that
+retries on another page, shrinks glue, or overrides the first baseline. -/
+public theorem frame_opening_paint_covers (header origin below size leftover : Int)
+    (valign : VAlign) (box : LineBox) (extent : Int × Int)
+    (hheader : header ≤ origin) (hbelow : 0 ≤ below) :
+    header + frameBodySkip true valign size ≤
+      origin + frameBodySkip true valign size +
+        interlineFor .text 0 below false (reserveLineBox box extent) - extent.1 +
+        (VDist.of valign).aboveShare leftover := by
+  have hreach : extent.1 ≤ (reserveLineBox box extent).above :=
+    (reserveLineBox_covers box extent).1
+  have hshare : (0 : Int) ≤ (VDist.of valign).aboveShare leftover :=
+    (VDist.split_exact (VDist.of valign) leftover).1
+  simp only [interlineFor]
+  omega
 
 /-- Reserve painted reach below a baseline in both the ink and leaded
 depths. Existing space is kept; paint is not an additional gap. -/
@@ -8541,6 +8827,17 @@ public theorem reserveBelow_covers (depth below reach : Sp) :
     reach ≤ (reserveBelow depth below reach).1 ∧
     reach ≤ (reserveBelow depth below reach).2 :=
   ⟨Int.le_max_left .., Int.le_max_left .., Int.le_max_right .., Int.le_max_right ..⟩
+
+/-- A placement-coordinate contract: a rule after a completed box clears
+the whole painted reach, for any font extents and any nonnegative skip.
+The same reserved depths are carried by the page and column state. -/
+public theorem closed_box_rule_covers (y depth below reach skip : Int)
+    (box : LineBox) (hskip : 0 ≤ skip) :
+    y + reach ≤ y + skip +
+      interlineFor .box (reserveBelow depth below reach).1
+        (reserveBelow depth below reach).2 true box - box.inkAbove := by
+  simp only [interlineFor, reserveBelow]
+  omega
 
 /-- TeX's baseline distance between two boxes (tex.web §679, where a box
 joins a vertical list): `\baselineskip` whenever that leaves the boxes at
@@ -8574,12 +8871,12 @@ pending skip — so equal declared gaps are equal visible gaps by
 definition, whatever the type's metrics or the rule weights. -/
 public theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
     (above below inkAbove inkBelow : Int) :
-    skip + interlineFor true prevDepth prevBelow false
+    skip + interlineFor .rule prevDepth prevBelow false
         ⟨above, below, inkAbove, inkBelow⟩ - inkAbove - prevDepth = skip ∧
-    skip + interlineFor false prevDepth prevBelow true
+    skip + interlineFor .text prevDepth prevBelow true
         ⟨above, below, inkAbove, inkBelow⟩ - inkAbove = skip := by
   simp only [interlineFor]
-  constructor <;> simp <;> omega
+  constructor <;> omega
 
 /-- Under the default bar gap the bottom bar clears every descender: the
 gap below the title runs from the baseline (`interlineFor`), a descender
@@ -8640,13 +8937,35 @@ headline is empty, so `\headheight` is zero): its `\vbox{}` is the paper's
 top edge, or the bottom of a band already painted there. -/
 private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
-  { b with y := if b.cur.lines.isEmpty then barBottom
-                else max (b.y + b.prevDepth) barBottom
-           prevDepth := 0
-           prevBelow := b.strutBelow fs
-           prevRuleOnly := false
-           skip := b.skip.add g
-           opened := true }
+  let opened := { b with y := if b.cur.lines.isEmpty then barBottom
+                             else max (b.y + b.prevDepth) barBottom
+                         prevDepth := 0
+                         prevBelow := b.strutBelow fs
+                         prevBand := .text
+                         skip := b.skip.add g
+                         opened := true }
+  -- A spill discards pending inter-block glue, but repeats the frame's
+  -- own opening. Store that opening's natural skip in its resume origin.
+  { opened with chrome := b.chrome.map fun c =>
+      { c with y := opened.y + opened.skip.width
+               depth := opened.prevDepth
+               below := opened.prevBelow
+               band := opened.prevBand
+               header := opened.curBand } }
+
+/-- Reopening pinned furniture uses the same resolved body reference as
+the first page, including its fixed opening skip and header census.
+The spill's cleared pending glue cannot change that reference. -/
+private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : Glue)
+    (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Sp) (flush : Bool) :
+    let opened := b.openBody fs g
+    let resumed := (opened.finishPage owed flush).reopenChrome
+    resumed.y = opened.y + opened.skip.width ∧
+    resumed.prevDepth = opened.prevDepth ∧
+    resumed.prevBelow = opened.prevBelow ∧
+    resumed.prevBand = opened.prevBand ∧
+    resumed.curBand = opened.curBand := by
+  simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc]
 
 /-- The pending skip a fresh page keeps. TeX discards glue at the top of a
 page up to its first box or rule, and `\vspace*`'s zero rule is one
@@ -8755,12 +9074,23 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
     (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
     (display : Option DisplayJob := none) (opens : Bool := false)
-    (anchors : Array String := #[]) : B :=
+    (anchors : Array String := #[]) (paintPadding : Option Sp := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
   -- it does in TeX's hbox, so it is read before the filter below.
   let ink := segsInk fs segs
+  -- A painted rider must be fitted before its line commits: adding the
+  -- bar afterwards cannot recover an off-page top or an unpaid depth.
+  let extent := paddedLineExtent
+    (b.ascent * (if size == 0 then b.geom.fontSize else size) / b.geom.fontSize)
+    box.inkBelow ink (paintPadding.getD 0)
+  let box := match paintPadding with
+    | some _ => reserveLineBox box extent
+    | none => box
+  let ink := match paintPadding with
+    | some _ => extent
+    | none => ink
   -- A display's box is TeX's too (tex.web §1199), and a display
   -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
   -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`).
@@ -8793,7 +9123,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       else texBaselineGap bs b.boxDepth h
     | _, _ =>
       if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth h
-      else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
+      else interlineFor b.prevBand b.prevDepth b.prevBelow rl box
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
   -- and the pending skip an anchor keeps (`Spacing.Page.topKept`). The line's box
@@ -8810,7 +9140,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
          else gap b))
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
-    (fun b => b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
+    (fun b => b.y + interlineFor b.prevBand b.prevDepth b.prevBelow rl box)
     box.inkBelow box.below rl box.inkBelow bottom notes).keepInk d).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
@@ -8873,10 +9203,10 @@ private theorem sourceBound_displayState {n : Nat} (b : B) (tex : Bool)
 private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
     (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
-    (opens : Bool) (anchors : Array String) (hb : b.SourceBound n)
+    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp) (hb : b.SourceBound n)
     (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
     (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
-      anchors).SourceBound n := by
+      anchors paintPadding).SourceBound n := by
   simp only [Spacing.Page.placeLine]
   apply sourceBound_displayState
   apply sourceBound_keepInk
@@ -8908,7 +9238,7 @@ plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (firstBaseline : Option Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
-    (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
+    (hpr : b.prevBand = .text) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
     (hfit : b.y + b.skip.width
         + firstBaseline.getD
@@ -9017,7 +9347,8 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
-      noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed
+      noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
@@ -9027,8 +9358,8 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
 box, to within one sp** (`_exact`), stated at the page close that ships it.
 With no fil glue, no shrink given and no note block, every line below the
 pinned chrome moves by one shift, and that shift — the space above the
-content — and the space left between the content's end (`Spacing.Page.contentEnd`)
-and the floor differ by at most the scaled point the halving assigns below.
+content — and the space left between the complete content end (`regionContentEnd`,
+including closed surface paint) and the floor differ by at most the scaled point the halving assigns below.
 The bottom is the box's, as beamer centres its frame's `\vbox`: the last
 line's depth (`Spacing.Page.contentEnd`: TeX's glyph box on a TeX page, the face's
 descent on a frame) or a picture's declared box, and the closing space the
@@ -9038,17 +9369,25 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
-    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) :
+    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
-          VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed))) ∧
-    VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-      ≤ (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) ∧
-    (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-      ≤ VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
+          VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)))) ∧
+    VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+      ≤ (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) ∧
+    (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+      ≤ VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
         + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
@@ -9069,8 +9408,8 @@ one stretch — `\vspace*{\fill}` above and below, the card's idiom. On a page
 whose two fil units stand one above every line past the pin and one below
 them, with no shrink given and no note block, page close moves every such
 line by the one share `filShare l 1 2` of the leftover `l` between the
-content's TeX box (`Spacing.Page.contentEnd`: the last line's deepest glyph and the
-space it keeps) and the floor, and the share left below differs from it by
+complete content end (`regionContentEnd`: the ordinary box and any painted
+surface below it) and the floor, and the share left below differs from it by
 at most the scaled point the halving assigns below. `VDist.center_split_exact`
 is the arithmetic; on a TeX page the box it is measured on is
 `placeLine_boxDepth_exact`'s at the bottom and `Spacing.Page.firstRise`'s at the top. -/
@@ -9079,17 +9418,25 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
     (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
     (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
-    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) :
+    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
-          filShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) 1 2)) ∧
-    filShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) 1 2
-      ≤ (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-        - filShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) 1 2 ∧
-    (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed)
-        - filShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) 1 2
-      ≤ filShare (noteFloor b.bottom b.footins b.notesH - b.surfaceBottom - b.contentEnd owed) 1 2 + 1 := by
+          filShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2)) ∧
+    filShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
+      ≤ (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        - filShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 ∧
+    (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        - filShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
+      ≤ filShare (noteFloor b.bottom b.footins b.notesH -
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
@@ -9102,7 +9449,8 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
 private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
-      (Diag.of .W0005 "overfull line; no feasible break" (span := source)) }
+      (Diag.of .W0005 "overfull line; no feasible break" (span := source)
+        (trigger := source.bind (·.pos.command))) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns. -/
@@ -9181,6 +9529,9 @@ public structure Spacing.Paragraph where
   /-- The paragraph is display math, set as TeX sets a display
   (`Spacing.Page.placeLine`'s `display`). -/
   private display : Option DisplayJob := none
+  /-- A bar painted behind the paragraph's final line reserves its full
+  extent at that line's fit, before the rider is emitted. -/
+  private paintPadding : Option Sp := none
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -9380,6 +9731,9 @@ public structure Spacing.Context where
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   private imgs : Image.Store := {}
+  /-- Native-picture source openings, on the same structure leaves the
+  collector allocates before overlay replay. -/
+  private pictureSpans : Array (Nat × Span) := #[]
   /-- The walk is inside a float: every paragraph collected here is box
   content, marked uncounted for the line-number census (`Spacing.Paragraph.inFloat`,
   `LineOut.counted`). -/
@@ -9869,7 +10223,7 @@ private def collectPara (r : Rd) (a : Acc)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
     (hangIndent : Sp := 0) (literalLines : Bool := false)
-    (dispJob : Option DisplayJob := none) : Acc :=
+    (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -9952,7 +10306,8 @@ private def collectPara (r : Rd) (a : Acc)
           setLine nitems s brk target (setsToMeasure r.geom.justify nitems s brk) false false
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
-            (span := lineSource nsources s brk))
+            (span := lineSource nsources s brk)
+            (trigger := (lineSource nsources s brk).bind (·.pos.command)))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs
@@ -10000,6 +10355,7 @@ private def collectPara (r : Rd) (a : Acc)
       target := measure
       indent := indent, center := center, size := size
       firstBaseline := firstBaseline
+      paintPadding := paintPadding
       flushRight := r.geom.flushRight
       justify := r.geom.justify
       protrude := r.geom.protrude
@@ -10108,10 +10464,12 @@ private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (rule : Option HeadingRule := none)
-    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0) : Acc :=
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
+    (paintPadding : Option Sp := none) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
+    (paintPadding := paintPadding)
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
 cell takes when nothing bends. Penalties add nothing — a pen's width is
@@ -11120,11 +11478,13 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
   let w := px1 - px0
   let h := py1 - py0
   let avail := (a.measure.getD r.geom.textWidth) - indent
+  let source := (r.pictureSpans.find? (·.1 == a.leafNext)).map (·.2)
   let a := if w > avail || h > r.geom.textHeight then
       { a with diags := a.diags.push (Diag.of .W0335
         (s!"the picture is {w.toPtString}pt × {h.toPtString}pt against a text area " ++
           s!"of {avail.toPtString}pt × {r.geom.textHeight.toPtString}pt; it may overrun \
 the page")
+        (span := source) (trigger := source.bind (·.pos.command))
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
@@ -11571,6 +11931,9 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
           out := out.push (.text "\u00a0")
         else
           let mut column := 0
+          -- Source columns count authored scalars. Display columns expand
+          -- tabs and exclude the generated line-number prefix.
+          let mut sourceColumn := 0
           for token in line do
             let (kept, nextColumn) := spec.layoutText column token.text
             column := nextColumn
@@ -11579,8 +11942,10 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
             let source := spec.source.map fun source =>
               let line := source.pos.line + i - 1 +
                 (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
-              { source with pos := { source.pos with line := line, col :=
-                  if line == source.pos.line then source.pos.col else 1 } }
+              let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
+              { source with pos := { source.pos with
+                  line := line, col := col, command := some token.text } }
+            sourceColumn := sourceColumn + token.text.length
             out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
       pure #[.styled .mono out]
   let inner := match covered with
@@ -11727,6 +12092,7 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
   let (a, leaf) := a.leafRange (leafCount title)
   let a := collectDisplay r a title (indent + pad) false r.geom.fontSize
     (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
+    (paintPadding := look.bar.map fun _ => pad)
   let a := match look.bar with
     | some barBg =>
       { a with ops := a.ops.push (.blockBar barBg pad (r.geom.hmargin + indent) width) }
@@ -12601,10 +12967,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- moves the body below it, never the title (beamer's frametitle).
     -- Its content opens on a baseline below the title box (`Spacing.Page.openBody`),
     -- with no peer gap: beamer's `\vskip-\parskip` cancels the first one.
-    -- The skip is the title box's own `\vskip0.25em`
-    -- (beamerbaseframe.sty:126) and, on a `[t]` frame, the `.2cm` top skip
-    -- (:263); a centred frame's top skip is a bare fil (moloch,
-    -- beamerinnerthememoloch.sty:455), which the distribution spends.
+    -- `Ir.frameBodySkip` declares the fixed title/top skip; the frame's
+    -- distribution spends the remaining flexible space.
     let a := if title.isEmpty then
         -- An untitled frame whose page carries the footline opens the same
         -- way, at the top of beamer's text area: its content's `\vbox{}`
@@ -12612,12 +12976,11 @@ private def collectBlock (r : Rd) (a : Acc)
         -- no title box and so no `\vskip0.25em` (`Spacing.Page.openBody`).
         if a.frameNum.isSome && (a.selectedFoot false).isSome then
           { a with ops := a.ops.push (.bodyOpen
-              { width := if valign matches .top then Dim.mm 2 else 0 }), -- [t]'s .2cm, beamerbaseframe.sty:263
+              { width := frameBodySkip false valign r.geom.fontSize }),
                    wantDefault := false }
         else a
       else
-      let g : Glue := { width := r.geom.fontSize / 4 + -- \vskip0.25em, beamerbaseframe.sty:126
-        (if valign matches .top then Dim.mm 2 else 0) } -- [t]'s .2cm, beamerbaseframe.sty:263
+      let g : Glue := { width := frameBodySkip true valign r.geom.fontSize }
       { a with ops := (a.ops.push .pin).push (.bodyOpen g), wantDefault := false }
     -- A golden frame is the title page (only \maketitle declares golden),
     -- and everything on it is display furniture: titles never hyphenate
@@ -13453,6 +13816,9 @@ private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
   repeat' split
   all_goals exact ⟨rfl, rfl, rfl, rfl⟩
 
+private def Spacing.Page.withPendingSource (b : B) (source : Option Span) : B :=
+  { b with pendingSource := source }
+
 /-- One break of a paragraph placed: the fold step `placePara` runs over
 `breaks`. The threaded state is (builder, previous break, first line).
 A named step so `runFloat_whole` can state page preservation by fold
@@ -13471,11 +13837,13 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   let firstBaseline := if st.2.2 then j.firstBaseline else none
   let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1
+  let b1 := b1.withPendingSource (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
   (placeParaTrailer fs j brk g.1
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
       (display := j.display) (opens := st.2.2)
-      (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))),
+      (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))
+      (paintPadding := if brk + 1 == j.items.size then j.paintPadding else none)),
     brk, false)
 
 /-- The breaker may choose the end-fill immediately before a forced
@@ -13605,6 +13973,10 @@ private theorem sourceBound_placeParaTrailer {n : Nat} (fs : FontSet) (j : ParaJ
   unfold placeParaTrailer
   split <;> exact hb.of_eq rfl rfl rfl rfl rfl
 
+private theorem sourceBound_withPendingSource {n : Nat} (b : B) (source : Option Span)
+    (hb : b.SourceBound n) : (b.withPendingSource source).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
+
 private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat)
     (hj : j.SourceBound n) (hb : st.1.SourceBound n) :
@@ -13613,7 +13985,8 @@ private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
   simp only [placeParaLine, hj.notes, Array.isEmpty_empty, ite_true]
   apply sourceBound_placeParaTrailer
   apply sourceBound_placeLine
-  · apply sourceBound_openDisplayAt
+  · apply sourceBound_withPendingSource
+    apply sourceBound_openDisplayAt
     split
     · exact hb.of_eq rfl rfl rfl rfl rfl
     · exact hb
@@ -14128,9 +14501,10 @@ private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
     (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
     (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
+    (paintPadding : Option Sp)
     (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.placeLine fs b x size segs w hang ex #[] counted leaf
-      firstBaseline display opens anchors) =
+      firstBaseline display opens anchors paintPadding) =
       Spacing.Page.census pick b ++ (if pick leaf counted then segs.toList.flatMap Seg.glyphChars else []) := by
   simp only [Spacing.Page.placeLine]
   rw [census_displayState, census_keepInk]
@@ -14195,6 +14569,10 @@ private theorem census_placeParaTrailer (pick : Option Nat → Bool → Bool) (f
   unfold placeParaTrailer
   split <;> rfl
 
+private theorem census_withPendingSource (pick : Option Nat → Bool → Bool) (b : B)
+    (source : Option Span) :
+    Spacing.Page.census pick (b.withPendingSource source) = Spacing.Page.census pick b := rfl
+
 private theorem census_placeParaLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool) (brk : Nat)
     (hj : j.SourceBound n) (hb : st.1.SourceBound n)
@@ -14204,9 +14582,10 @@ private theorem census_placeParaLine {n : Nat} (pick : Option Nat → Bool → B
        else []) := by
   simp only [placeParaLine, (Spacing.Paragraph.SourceBound.notes hj), Array.isEmpty_empty, ite_true]
   rw [census_placeParaTrailer, census_placeLine]
-  · rw [census_openDisplayAt]
+  · rw [census_withPendingSource, census_openDisplayAt]
     split <;> simp only [census_warnOverfull, paraLineGeom_chars fs j st.1 _ _ _ hj hp]
-  · apply sourceBound_openDisplayAt
+  · apply sourceBound_withPendingSource
+    apply sourceBound_openDisplayAt
     split
     · exact hb.of_eq rfl rfl rfl rfl rfl
     · exact hb
@@ -14360,18 +14739,6 @@ private def StagedOp.SourceBound (n : Nat) : StagedOp → Prop
   | .skip _ | .skipAlt _ _ | .anchorRule _ | .anchor _ => True
   | _ => False
 
--- conserves: none — reads provenance through the generic inline fold.
-private def labelSource (content : Array Ir.Inline) : Option Span :=
-  Ir.foldInlines (fun source inline => match inline with
-    | .located span _ => source.orElse (fun _ => some span)
-    | .text _ | .math _ _ | .formula _ _ _ | .styled _ _
-      | .colored _ _ _ | .role _ _ | .link _ _ | .label _
-      | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
-      | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
-      | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
-      | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => source)
-    none content
-
 /-- Occurrences in a selected picture, indexed before placement. Matching
 uses this identity as well as the label key, so equal text at another
 source site cannot stand in for a missing line. -/
@@ -14381,7 +14748,7 @@ public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
     | .label _ _ content _ _ _ =>
       some ({ origin := (origin, i)
               key := Ir.plainText content
-              source := labelSource content
+              source := Ir.inlineSource content
               blank := labelTextBlank content } : LabelAudit.Request)
     | .rect _ _ _ _ _ | .circle _ _ _ _ _ | .frame _ _ _ _ _ _
       | .edge _ _ _ => none).filterMap id
@@ -14405,11 +14772,42 @@ private structure ColMark where
   lines : Nat
   fills : Nat
   paths : Nat
+  /-- The column produced a box or moved the cursor; inherited spacing
+  alone contributes neither an alignment reference nor a lower bound. -/
+  contributes : Bool := false
   first : Option Sp := none
   y : Sp := 0
   depth : Sp := 0
   below : Sp := 0
-  rule : Bool := false
+  boxDepth : Sp := 0
+  band : Spacing.Band := .text
+  source : Option Span := none
+
+/-- Diagnostic provenance follows the column supplying the painted lower
+bound; geometric joins remain independent of source order. -/
+private structure ColEnd where
+  tail : Spacing.Tail
+  source : Option Span
+
+private def ColEnd.join (a b : ColEnd) : ColEnd :=
+  { tail := a.tail.join b.tail
+    source := if a.tail.y + a.tail.depth < b.tail.y + b.tail.depth
+      then b.source else a.source }
+
+/-- Both ordinary and aligned rows join only measured contributions. -/
+private def ColEnd.remember (acc : Option ColEnd) (last : ColEnd)
+    (contributes : Bool) : Option ColEnd :=
+  if contributes then some ((acc.map (·.join last)).getD last) else acc
+
+/-- An empty column cannot change any bound or provenance in either row
+join, regardless of the preceding column's measurements. -/
+private theorem ColEnd.remember_empty_id (acc : Option ColEnd) (last : ColEnd) :
+    ColEnd.remember acc last false = acc := rfl
+
+private def Spacing.Page.colEnd (b : B) : ColEnd :=
+  { tail := { y := b.y, depth := b.prevDepth, below := b.prevBelow,
+              boxDepth := b.boxDepth, band := b.prevBand }
+    source := b.lastSource }
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. `pos`,
@@ -14419,16 +14817,22 @@ private structure ColSave where
   y : Sp
   prevDepth : Sp
   prevBelow : Sp
-  prevRule : Bool
+  boxDepth : Sp
+  prevBand : Spacing.Band
   skip : Glue
   fresh : Bool
-  bottomY : Sp
-  bottomDepth : Sp
-  bottomBelow : Sp
-  bottomRule : Bool
+  /-- Only completed columns enter the join. The preceding page band is
+  the opening cursor, not a member of this row. -/
+  bottom : Option ColEnd := none
+  source : Option Span := none
   pos : Array Ir.BoxPos := #[]
   page : Nat := 0
   marks : Array ColMark := #[]
+
+private def ColSave.opening (save : ColSave) : ColEnd :=
+  { tail := { y := save.y, depth := save.prevDepth, below := save.prevBelow,
+              boxDepth := save.boxDepth, band := save.prevBand }
+    source := save.source }
 
 /-- The placement walk's whole state: the page builder, the column-save
 stack, the logo spans keyed to page indexes, and the running prose-line
@@ -14552,6 +14956,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- of the picture on the baseline), so the next line stands a leading
   -- below it, as TeX's `\baselineskip` from a box of depth zero does.
   let strut := b0.strutBelow fs
+  let source := leaf.bind fun id => (b0.pictureSpans.find? (·.1 == id)).map (·.2)
   let mut b := b0
   -- Fit the picture's box the way `placeLine` fits a line of height
   -- `h` and no depth: at the top of a fresh page, else below the last
@@ -14604,16 +15009,20 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
   b := ({ b with pageStretch := stretch
                  diags := b.diags ++ emitted.diags }.pushSibling
-    (fills := emitted.fills) (paths := emitted.paths)).pushLabels emitted.lines above fils
+    (fills := emitted.fills) (paths := emitted.paths)
+    (shrink := some above) (fils := some fils)).pushLabels emitted.lines above fils
   b := { b with
     openRegions := b.openRegions.map fun s => { s with begun := true }
     pageShrink := above
     pageFils := fils
     needed := max b.needed overflow
+    neededSource := if b.needed < overflow then source else b.neededSource
+    lastSource := source
+    pendingSource := none
     y := yTop + h - rise
     prevDepth := rise
     prevBelow := max strut rise
-    prevRuleOnly := false
+    prevBand := .box
     skip := {}
     freshStart := false
     anchored := false
@@ -14631,7 +15040,9 @@ private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat
   let (col, l0, f0) := save
   let group := b.cur.lines.extract l0 b.cur.lines.size
   let restored := { b with y := col.y, prevDepth := col.prevDepth
-                           prevBelow := col.prevBelow, prevRuleOnly := col.prevRule
+                           prevBelow := col.prevBelow, prevBand := col.prevBand
+                           lastInk := some (col.y, col.prevDepth, col.boxDepth)
+                           lastSource := col.source
                            skip := col.skip, freshStart := col.fresh }
   match group[0]? with
   | none => restored
@@ -14669,18 +15080,35 @@ private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat ×
 private def Spacing.Page.colMark (b : B) : ColMark :=
   { lines := b.cur.lines.size, fills := b.cur.fills.size, paths := b.cur.paths.size }
 
-/-- A column ends where the builder stands: its last baseline and depth. -/
-private def ColMark.finish (m : ColMark) (b : B) : ColMark :=
-  { m with y := b.y, depth := b.prevDepth, below := b.prevBelow, rule := b.prevRuleOnly }
+/-- A column ends where the builder stands. Count boxes before asking
+whether they paint: a zero-width strut still owns its measured height.
+Cursor changes also retain reservations with no emitted marks. -/
+private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
+  { m with y := b.y, depth := b.prevDepth, below := b.prevBelow, band := b.prevBand
+           boxDepth := b.boxDepth
+           contributes := b.pages.size != save.page ||
+             m.lines != b.cur.lines.size || m.fills != b.cur.fills.size ||
+             m.paths != b.cur.paths.size || b.y != save.y ||
+             b.prevDepth != save.prevDepth || b.prevBelow != save.prevBelow ||
+             b.boxDepth != save.boxDepth
+           source := b.lastSource }
 
-/-- A placed path moved down the page by `d`. -/
-private def PagePath.shiftY (d : Sp) : PagePath → PagePath
-  | .circle cx cy r => .circle cx (cy + d) r
-  | .rect x y w h => .rect x (y + d) w h
-  | .segs ss => .segs (ss.map fun s => match s with
-    | .line x1 y1 x2 y2 => .line x1 (y1 + d) x2 (y2 + d)
-    | .cubic x1 y1 a1 b1 a2 b2 x2 y2 => .cubic x1 (y1 + d) a1 (b1 + d) a2 (b2 + d) x2 (y2 + d))
-  | .tri x1 y1 x2 y2 x3 y3 => .tri x1 (y1 + d) x2 (y2 + d) x3 (y3 + d)
+/-- With unchanged page, marks and cursor, the column owns no geometry.
+This is the premise consumed by both joins' empty-column identity. -/
+private theorem ColMark.finish_unchanged (m : ColMark) (save : ColSave) (b : B)
+    (hp : b.pages.size = save.page)
+    (hl : m.lines = b.cur.lines.size) (hf : m.fills = b.cur.fills.size)
+    (hs : m.paths = b.cur.paths.size) (hy : b.y = save.y)
+    (hd : b.prevDepth = save.prevDepth) (hb : b.prevBelow = save.prevBelow)
+    (hi : b.boxDepth = save.boxDepth) :
+    (m.finish save b).contributes = false := by
+  simp [ColMark.finish, hp, hl, hf, hs, hy, hd, hb, hi]
+
+private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
+  let marks := save.marks.modify (save.marks.size - 1) (·.finish save b)
+  { save with marks := marks
+              bottom := ColEnd.remember save.bottom b.colEnd
+                (marks.back?.any (·.contributes)) }
 
 /-- **A row stands its boxes on one baseline** — TeX's line of boxes
 (TeXbook ch. 12), each box's reference point the one its `[pos]` names
@@ -14689,9 +15117,10 @@ middle; `Ir.BoxPos`). Every column was set from the row's start; the one
 whose point stands lowest stays, and each other moves down by the
 difference, its lines, fills and paths together. A `top` box's point is the
 row's start, so a row of undeclared boxes moves nothing. The row then ends
-where the column that ends lowest ends. -/
+at the joined baseline, clearance, leading and measured box bottom. -/
 private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
   let refOf (k : Nat) (m : ColMark) : Sp :=
+    if !m.contributes then save.y else
     let lineEnd := (save.marks[k + 1]?.map (·.lines)).getD b.cur.lines.size
     let firstLine := if m.lines < lineEnd then (b.cur.lines[m.lines]?.map (·.y)).getD m.y
       else m.y
@@ -14708,19 +15137,29 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     let mut d : Sp := 0
     for k in [0:save.marks.size] do
       if let some m := save.marks[k]? then
-        if start m ≤ i then d := target - refs[k]!
+        if m.contributes && start m ≤ i then d := target - refs[k]!
     return d
   let lines := b.cur.lines.mapIdx fun i l => { l with y := l.y + dyAt (·.lines) i }
   let fills := b.cur.fills.mapIdx fun i f => { f with y := f.y + dyAt (·.fills) i }
   let paths := b.cur.paths.mapIdx fun i p => { p with path := p.path.shiftY (dyAt (·.paths) i) }
-  let (ey, ed, eb, er) := (save.marks.zip refs).foldl (fun (acc : Sp × Sp × Sp × Bool) (m, r) =>
-    let y := m.y + (target - r)
-    if y > acc.1 then (y, m.depth, m.below, m.rule) else acc)
-    (save.y, save.prevDepth, save.prevBelow, save.prevRule)
+  let ending := (save.marks.zip refs).foldl
+    (fun (acc : Option ColEnd) (m, r) =>
+      let last : ColEnd := {
+        tail := { y := m.y + (target - r), depth := m.depth, below := m.below,
+                  boxDepth := m.boxDepth, band := m.band }
+        source := m.source }
+      ColEnd.remember acc last m.contributes) none
+  let contributed := ending.isSome
+  let ending := ending.getD save.opening
+  let tail := ending.tail
   { b with cur := { b.cur with lines := lines, fills := fills, paths := paths }
-           y := ey, prevDepth := ed, prevBelow := eb, prevRuleOnly := er
-           skip := {}, freshStart := false
-           needed := max b.needed (ey + ed - b.geom.bodyBottom) }
+           y := tail.y, prevDepth := tail.depth, prevBelow := tail.below, prevBand := tail.band
+           lastSource := ending.source, lastInk := some (tail.y, tail.depth, tail.boxDepth)
+           skip := if contributed then {} else save.skip
+           freshStart := if contributed then false else save.fresh
+           needed := max b.needed (tail.y + tail.depth - b.geom.bodyBottom)
+           neededSource := if b.needed < tail.y + tail.depth - b.geom.bodyBottom then ending.source
+             else b.neededSource }
 
 /-- An aligned row moves ink inside the page being built and nothing else:
 the shipped pages, the geometry, the document's ground and the break flag
@@ -14749,6 +15188,7 @@ private def Spacing.Page.closeRegion (b : B) : B :=
     closedRegions := (closing.map (·.1)).getD b.closedRegions
     prevDepth := (reserve.map (·.1)).getD b.prevDepth
     prevBelow := (reserve.map (·.2)).getD b.prevBelow
+    prevBand := if reserve.isSome then .box else b.prevBand
     lastInk := if reserve.isSome then none else b.lastInk }
 
 /-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
@@ -14830,8 +15270,17 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- repeated bar.
     let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
     let (depth, below) := reserveBelow b.prevDepth b.prevBelow (barBottom - b.y)
-    b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size
-                  chrome := some (b.cur.lines, b.cur.fills, b.y, depth, below) }
+    b := { b with
+      pinnedLines := b.cur.lines.size
+      pinnedFills := b.cur.fills.size
+      chrome := some {
+        lines := b.cur.lines
+        fills := b.cur.fills
+        y := b.y
+        depth := depth
+        below := below
+        band := .rule
+        header := b.curBand } }
   | .colOpen pos =>
     -- On a fresh page nothing stands above the columns: their bottom starts
     -- at the body top, never at the last page's last line, which
@@ -14842,40 +15291,38 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b with colAnchor := some (if b.ignoreDepth then 0 else inkClearance) }
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
-      prevRule := b.prevRuleOnly, skip := b.skip
+      boxDepth := b.boxDepth
+      prevBand := b.prevBand, skip := b.skip
       fresh := fresh
-      bottomY := if fresh then b.geom.bodyTop else b.y
-      bottomDepth := if fresh then 0 else b.prevDepth, bottomBelow := b.prevBelow
-      bottomRule := b.prevRuleOnly
+      source := b.lastSource
       pos := pos, page := b.pages.size, marks := #[b.colMark] }
   | .colNext =>
     if let some save := colSaves.back? then
-      let save := if b.y > save.bottomY
-        then { save with bottomY := b.y, bottomDepth := b.prevDepth
-                         bottomBelow := b.prevBelow, bottomRule := b.prevRuleOnly }
-        else save
+      let save := save.finish b
       colSaves := colSaves.pop.push { save with
-        marks := (save.marks.modify (save.marks.size - 1) (·.finish b)).push b.colMark }
+        marks := save.marks.push b.colMark }
       b := { b with y := save.y, prevDepth := save.prevDepth
-                    prevBelow := save.prevBelow, prevRuleOnly := save.prevRule
+                    prevBelow := save.prevBelow, prevBand := save.prevBand
+                    lastSource := save.source
+                    lastInk := some (save.y, save.prevDepth, save.boxDepth)
                     skip := save.skip
                     freshStart := save.fresh }
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
       if colSaves.isEmpty then b := { b with colAnchor := none }
-      let save := { save with marks := save.marks.modify (save.marks.size - 1) (·.finish b) }
+      let save := save.finish b
       if save.pos.any (· != .top) && save.marks.size == save.pos.size &&
           b.pages.size == save.page then
         b := b.alignRow save
       else
-        let (bottomY, bottomDepth, bottomBelow, bottomRule) := if b.y > save.bottomY
-          then (b.y, b.prevDepth, b.prevBelow, b.prevRuleOnly)
-          else (save.bottomY, save.bottomDepth, save.bottomBelow, save.bottomRule)
-        b := { b with y := bottomY, prevDepth := bottomDepth
-                      prevBelow := bottomBelow, prevRuleOnly := bottomRule
-                      skip := {}
-                      freshStart := false }
+        let ending := save.bottom.getD save.opening
+        b := { b with y := ending.tail.y, prevDepth := ending.tail.depth
+                      prevBelow := ending.tail.below, prevBand := ending.tail.band
+                      lastSource := ending.source
+                      lastInk := some (ending.tail.y, ending.tail.depth, ending.tail.boxDepth)
+                      skip := if save.bottom.isSome then {} else save.skip
+                      freshStart := if save.bottom.isSome then false else save.fresh }
   | .titleBar color pad strut =>
     -- The bar sits behind the line just placed: full page width, page
     -- top to `pad` below the line's depth. Its bottom edge rides onto
@@ -14904,20 +15351,19 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
             curBand := some (max h (b.curBand.getD 0)) }
       | _, _ => b
   | .blockBar color pad x w =>
-    -- The bar sits behind the line just placed: the measure across, one
-    -- `pad` above the line's ink top (the body ascent at the line's own
-    -- size) to one below its depth. Fills paint before every glyph run,
-    -- so the title's ink stays on top.
+    -- The fit and the paint read the same padded extent. Fills paint
+    -- before every glyph run, so the title's ink stays on top.
     b := match b.cur.lines.back? with
       | some l =>
-        let asc := b.ascent * l.size / b.geom.fontSize
-        let bar : Fill := { x := x, y := l.y - asc - pad, w := w,
-                            h := asc + b.prevDepth + 2 * pad, color := color }
+        let extent := l.regionExtent.getD
+          (b.ascent * l.size / b.geom.fontSize + pad, b.prevDepth + pad)
+        let bar : Fill := { x := x, y := l.y - extent.1, w := w,
+                            h := extent.1 + extent.2, color := color }
         let (depth, below) := reserveBelow b.prevDepth b.prevBelow (bar.y + bar.h - b.y)
         -- Following lines and displays clear the painted band, not the
         -- title's cached glyph depth.
         { b.pushSibling (fills := #[bar]) with
-            prevDepth := depth, prevBelow := below, lastInk := none }
+            prevDepth := depth, prevBelow := below, prevBand := .box, lastInk := none }
       | none => b
   | .hrule color th =>
     -- A line whose only seg is the rule: the full line machinery decides
@@ -14951,7 +15397,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                  color := fg }]
     b := { b.pushSibling (fills := fills) with
                   prevDepth := b.prevDepth + gap + thick
-                  prevBelow := b.prevBelow + gap + thick }
+                  prevBelow := b.prevBelow + gap + thick
+                  prevBand := .box }
   | .para j t =>
     let breaks := t.get
     -- A plain full-measure text paragraph is the continuous reading the
@@ -14973,10 +15420,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .slotOpen =>
     slotSaves := slotSaves.push ({
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
-      prevRule := b.prevRuleOnly, skip := b.skip
-      fresh := b.fresh
-      bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
-      bottomRule := b.prevRuleOnly }, b.cur.lines.size, b.cur.fills.size)
+      boxDepth := b.boxDepth
+      prevBand := b.prevBand, skip := b.skip
+      fresh := b.fresh, source := b.lastSource }, b.cur.lines.size, b.cur.fills.size)
   | .slotClose spec =>
     if let some save := slotSaves.back? then
       slotSaves := slotSaves.pop
@@ -15331,8 +15777,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+    (anchors : Array String) (paintPadding : Option Sp) :
+    PagesExtend b
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
   simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
   exact fitCommit_extends ..
 
@@ -15341,18 +15788,20 @@ the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String)
+    (anchors : Array String) (paintPadding : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).pages = b.pages := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
+      b.pages := by
   simp only [Spacing.Page.placeLine, displayState_pages, keepInk_pages]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String)
+    (anchors : Array String) (paintPadding : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).noBreak = true := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
+      true := by
   simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -15373,14 +15822,16 @@ extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
-    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) :=
+    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
+    (paintPadding : Option Sp) :
+    PagesExtend b0
+      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     PagesExtend st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine]
+  simp only [placeParaLine, Spacing.Page.withPendingSource]
   exact pagesExtend_congr (placeParaTrailer_pages ..)
     (placeLine_extends' fs st.1 _ (by split <;> simp) ..)
 
@@ -15388,7 +15839,7 @@ private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) (h : st.1.noBreak = true) :
     (placeParaLine fs j st brk).1.pages = st.1.pages ∧
     (placeParaLine fs j st brk).1.noBreak = true := by
-  simp only [placeParaLine]
+  simp only [placeParaLine, Spacing.Page.withPendingSource]
   constructor
   · rw [placeParaTrailer_pages]
     split <;> rw [placeLine_pages_noBreak] <;> simp [h]
@@ -15480,12 +15931,14 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String)
+    (anchors : Array String) (paintPadding : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).pages = b.pages ∧
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors).noBreak = true :=
-  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors h,
-   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors h⟩
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
+      b.pages ∧
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
+      true :=
+  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h,
+   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h⟩
 
 /-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
@@ -15676,8 +16129,9 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+    (anchors : Array String) (paintPadding : Option Sp) :
+    BgStep b
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
   simp only [Spacing.Page.placeLine]
   apply BgStep.displayState
   apply BgStep.keepInk
@@ -15697,7 +16151,7 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     BgStep st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine]
+  simp only [placeParaLine, Spacing.Page.withPendingSource]
   refine BgStep.trans (BgStep.trans ?_ (bgStep_placeLine ..))
     (BgStep.of_eq (placeParaTrailer_geom ..) (placeParaTrailer_docBg ..)
       (placeParaTrailer_pages ..))
@@ -15891,7 +16345,10 @@ private structure FlowSt where
 /-- The next column owns new ink, starting at the row's original cursor.
 The first flow already owns the page prefix and its pending notes. -/
 private def restartColumn (start latest : B) : B :=
-  { start with cur := {}, shrinkAbove := #[], stretchAbove := #[], filsAbove := #[]
+  { start with cur := {}, shrinkAbove := #[], fillShrinkAbove := #[], pathShrinkAbove := #[]
+               fillStretchAbove := #[], pathStretchAbove := #[]
+               fillFilsAbove := #[], pathFilsAbove := #[]
+               stretchAbove := #[], filsAbove := #[]
                pinnedLines := 0, pinnedFills := 0, pendingNotes := #[]
                opened := !start.fresh, freshStart := start.fresh
                openRegions := start.openRegions.map RegionStart.nextPage, closedRegions := #[]
@@ -15926,19 +16383,32 @@ private def RegionSpan.afterPage (s : RegionSpan) (p : PageOut) : RegionSpan :=
            titleFill := s.titleFill.map (p.fills.size + ·) }
 
 /-- Two unfinished columns on the same page retain their line ledgers
-and link ranges. The furthest box owns the cursor following the row. -/
+and link ranges. Clearance, leading and measured lower bounds survive
+the join. -/
 private def joinColumnCurrent (a b : B) : B :=
   let endCursor := if a.y + a.prevDepth > b.y + b.prevDepth then a else b
+  let ending := a.colEnd.join b.colEnd
   let cur := { a.cur with
     lines := a.cur.lines ++ b.cur.lines
     fills := a.cur.fills ++ b.cur.fills
     paths := a.cur.paths ++ b.cur.paths }
   { endCursor with
     cur := cur
+    y := ending.tail.y, prevDepth := ending.tail.depth
+    prevBelow := ending.tail.below, prevBand := ending.tail.band
+    lastSource := ending.source
+    lastInk := some (ending.tail.y, ending.tail.depth, ending.tail.boxDepth)
     shrinkAbove := a.shrinkAbove ++ b.shrinkAbove, pageShrink := max a.pageShrink b.pageShrink
+    fillShrinkAbove := a.fillShrinkAbove ++ b.fillShrinkAbove
+    pathShrinkAbove := a.pathShrinkAbove ++ b.pathShrinkAbove
+    fillStretchAbove := a.fillStretchAbove ++ b.fillStretchAbove
+    pathStretchAbove := a.pathStretchAbove ++ b.pathStretchAbove
+    fillFilsAbove := a.fillFilsAbove ++ b.fillFilsAbove
+    pathFilsAbove := a.pathFilsAbove ++ b.pathFilsAbove
     stretchAbove := a.stretchAbove ++ b.stretchAbove, pageStretch := max a.pageStretch b.pageStretch
     filsAbove := a.filsAbove ++ b.filsAbove, pageFils := max a.pageFils b.pageFils
     needed := max a.needed b.needed
+    neededSource := if a.needed < b.needed then b.neededSource else a.neededSource
     pendingNotes := a.pendingNotes ++ b.pendingNotes.map (fun l => { l with y := l.y + a.notesH })
     notesH := a.notesH + b.notesH
     closedRegions := a.closedRegions ++ a.openRegions.map (·.close a.cur) ++
@@ -15979,8 +16449,7 @@ private def columnEnd (save : ColumnFlow) (st : StepSt) : StepSt :=
   let b := save.add st.b
   let colSaves := if b.pages.size == save.start.pages.size then st.colSaves
     else st.colSaves.modify (st.colSaves.size - 1) fun s =>
-      { s with bottomY := b.y, bottomDepth := b.prevDepth
-               bottomBelow := b.prevBelow, bottomRule := b.prevRuleOnly }
+      { s with bottom := some b.colEnd }
   { st with b := b, colSaves := colSaves }
 
 /-- Page switching belongs to the flow driver. `stepStaged` continues to
@@ -16359,8 +16828,9 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) :
-    FrameStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+    (anchors : Array String) (paintPadding : Option Sp) :
+    FrameStep b
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
   simp only [Spacing.Page.placeLine]
   apply FrameStep.displayState
   apply FrameStep.keepInk
@@ -16377,12 +16847,16 @@ private theorem frameStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat
   unfold placeParaTrailer
   split <;> exact FrameStep.of_eq rfl rfl
 
+private theorem frameStep_withPendingSource (b : B) (source : Option Span) :
+    FrameStep b (b.withPendingSource source) := FrameStep.of_eq rfl rfl
+
 private theorem frameStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     FrameStep st.1 (placeParaLine fs j st brk).1 := by
   simp only [placeParaLine]
-  refine FrameStep.trans (FrameStep.trans (FrameStep.trans ?_
-    (frameStep_openDisplayAt ..)) (frameStep_placeLine ..)) (frameStep_placeParaTrailer ..)
+  refine FrameStep.trans (FrameStep.trans (FrameStep.trans (FrameStep.trans ?_
+    (frameStep_openDisplayAt ..)) (frameStep_withPendingSource ..))
+    (frameStep_placeLine ..)) (frameStep_placeParaTrailer ..)
   split <;> exact FrameStep.of_eq rfl rfl
 
 private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
@@ -16809,8 +17283,9 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) :
-    ReflowStep b (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors) := by
+    (anchors : Array String) (paintPadding : Option Sp) :
+    ReflowStep b
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
   simp only [Spacing.Page.placeLine]
   apply ReflowStep.displayState
   apply ReflowStep.keepInk
@@ -16831,12 +17306,16 @@ private theorem reflowStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Na
   unfold placeParaTrailer
   split <;> exact ReflowStep.of_eq rfl rfl
 
+private theorem reflowStep_withPendingSource (b : B) (source : Option Span) :
+    ReflowStep b (b.withPendingSource source) := ReflowStep.of_eq rfl rfl
+
 private theorem reflowStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     ReflowStep st.1 (placeParaLine fs j st brk).1 := by
   simp only [placeParaLine]
-  refine ReflowStep.trans (ReflowStep.trans (ReflowStep.trans ?_
-    (reflowStep_openDisplayAt ..)) (reflowStep_placeLine ..)) (reflowStep_placeParaTrailer ..)
+  refine ReflowStep.trans (ReflowStep.trans (ReflowStep.trans (ReflowStep.trans ?_
+    (reflowStep_openDisplayAt ..)) (reflowStep_withPendingSource ..))
+    (reflowStep_placeLine ..)) (reflowStep_placeParaTrailer ..)
   split
   · exact reflowStep_warnOverfull ..
   · exact ReflowStep.refl _
@@ -17817,6 +18296,36 @@ lose content). The structure tree the attribution channel indexes is
 set. -/
 public def pdfView (doc : Doc) : Doc := { doc with body := Ir.keepFor "pdf" doc.body }
 
+/-- Picture ordinals in the elaborator's document order. Hidden backend
+branches still consume an ordinal, but supply no PDF slot. The shared
+context fold descends through nested blocks and inline block bodies. -/
+private def pdfPictureOrdinals (doc : Doc) : Array Nat :=
+  let walk : Ir.CtxFold Bool (Nat × Array Nat) := {
+    openBlock := fun kept (n, out) b =>
+      let kept := kept && Ir.keptBy "pdf" b
+      match b with
+      | .picture _ => ((n + 1, if kept then out.push n else out), kept)
+      | _ => ((n, out), kept)
+    closeBlock := fun _ acc _ => acc
+    openInline := fun kept acc _ => (acc, kept)
+    closeInline := fun _ acc _ => acc }
+  (Ir.foldCtxBlocks walk true (0, #[]) doc.body).2
+
+/-- Translate native-picture request keys into the PDF structure leaves
+placement reads. Pair every picture before looking up its optional source:
+a missing site must not shift the attribution of subsequent pictures.
+Overlay replay keeps its original structure leaf and therefore its source.
+conserves: none — collects supplied source evidence, not document content. -/
+public def pictureSpansForPdf (doc : Doc) (spans : Array (String × Span)) :
+    Array (Nat × Span) :=
+  let leaves := (Struct.ofDoc (pdfView doc)).leaves.filterMap fun (id, leaf) =>
+    match leaf with
+    | .picture _ => some id
+    | _ => none
+  (leaves.zip (pdfPictureOrdinals doc)).filterMap fun (id, ordinal) =>
+    (spans.find? (·.1 == Ir.picKeyPrefix ++ toString ordinal)).map fun (_, source) =>
+      (id, source)
+
 /-- Translate opening-frame source sites from the final elaborated document's
 body indices to the indices `run` reads after backend filtering. The producer
 must return these sites alongside that same document after normalization and
@@ -18547,7 +19056,8 @@ re-running another IR walk or adding background state to the runtime builder. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (k : Array StagedOp → B → (StepSt → Shipped) → α)
-    (frameSpans : Array (Nat × Span) := #[]) : α := Id.run do
+    (frameSpans : Array (Nat × Span) := #[])
+    (pictureSpans : Array (Nat × Span) := #[]) : α := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
   -- owns.
@@ -18632,6 +19142,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    slides := doc.docClass.record.model == .frame
                    lists := doc.docClass.record.lists
                    imgs := imgs
+                   pictureSpans := pictureSpans
                    headline := doc.headline
                    footGap := footGap }
   let acc0 : Acc := { pal := doc.palette
@@ -18734,6 +19245,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     descent := scale (-font.descent)
     capHeight := scale font.capHeight
     xHeight := xHeight
+    pictureSpans := pictureSpans
     docBg := if design.bgDeclared then some design.bg else none
     footins := ((doc.tokens.find? "footins").getD
       (Ir.footinsDefault geom.fontSize)).resolve geom.fontSize xHeight |>.width
@@ -18805,9 +19317,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
 
 /-- The one shipment producer: staging, actual placement, and final close. -/
 private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Shipped :=
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
+    (pictureSpans : Array (Nat × Span) := #[]) : Shipped :=
   withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
-    post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans
+    post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans pictureSpans
 
 private theorem sourceBound_collected {n : Nat} (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
@@ -19178,8 +19691,9 @@ private def labelRequestsCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen
 
 /-- The pre-marks pipeline consumes the shipment value directly. -/
 private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
-  let sh := shipCore geom fs pats doc imgs frameSpans
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
+    (pictureSpans : Array (Nat × Span) := #[]) : Out :=
+  let sh := shipCore geom fs pats doc imgs frameSpans pictureSpans
   auditLabelInk fs sh.labelRequests (runPost sh)
 
 /-- The precondition for an all-pages background claim: no collected palette
@@ -19201,8 +19715,9 @@ and print marks that `run` adds. This reads the same math-resolved PDF view,
 overlay expansion, float placement and final close as `run`, through its
 one `shipCore` producer. Source indices have the same meaning as in `run`. -/
 public def ship (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Shipped :=
-  shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans
+    (doc : Doc) (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
+    (pictureSpans : Array (Nat × Span) := #[]) : Shipped :=
+  shipCore geom fs pats (resolveDocMath fs doc).1 imgs frameSpans pictureSpans
 
 /-- The frame decisions emitted by the actual collector, before placement.
 This observes the same resolved PDF view and overlay expansion as `run`;
@@ -19233,11 +19748,14 @@ pages alike carry the same eight, painted over any background.
 `frameSpans` supplies opening-environment provenance keyed by top-level
 indices in `(pdfView doc).body`, before overlay expansion. The caller has
 the source syntax; layout carries each supplied span unchanged through
-every continuation of that frame. -/
+every continuation of that frame. `pictureSpans` supplies picture openings
+keyed by `Struct.ofDoc (pdfView doc)` leaf IDs (`pictureSpansForPdf` translates
+the elaborator's request keys); geometry never depends on this evidence. -/
 public def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
-    (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[]) : Out :=
+    (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
+    (pictureSpans : Array (Nat × Span) := #[]) : Out :=
   let (doc, diags) := resolveDocMath fs doc
-  let out := addMarks (runCore geom fs pats doc imgs frameSpans) (markFillsOf geom doc)
+  let out := addMarks (runCore geom fs pats doc imgs frameSpans pictureSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
 
 private theorem keepFor_plain_body (backend : String) (body : Array Block)
@@ -19937,7 +20455,7 @@ without a column restart, pending notes, a depth reset, or display interline.
 The next line is text rather than a bare rule and carries no new notes. -/
 public def Ready (b : Page) (segs : Array Seg) : Prop :=
   b.cur.lines.isEmpty = false ∧ b.freshStart = false ∧
-  b.prevRuleOnly = false ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
+  b.prevBand = .text ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
   b.ignoreDepth = false ∧ b.texAfter = false
 
 public def baselines (b : Page) : Array Sp := b.cur.lines.map (·.y)
@@ -20197,7 +20715,8 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
 
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
-  Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none)
+  j.paintPadding = none ∧
+    Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none)
 
 private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
     (segs : Array Seg) (a b : B) (h : PageRise a b) :
@@ -20221,14 +20740,18 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
     simp only [paraLineGeom, h.geom, h.xHeight]
   unfold ParaFits at ha hb
   simp only [hg] at ha
+  have hp := ha.1
+  have ha := ha.2
+  have hb := hb.2
   unfold placeParaLine
   dsimp only
-  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj]
+  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, ite_self]
   apply trailer_rise
   split
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
-  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ h ha.1 hb.1 ha.2 hb.2
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+      { h with } ha.1 hb.1 ha.2 hb.2
 
 /-- A proof trace of the numeric input conditions at every iteration of the
 production paragraph fold. It runs no second line-setting algorithm. -/
@@ -20567,7 +21090,7 @@ private def boundaryEnd (fs : FontSet) (b : B) (j : ParaJob)
   placePara fs (boundaryStart b gs) j breaks
 
 /-- Checkable inputs to the production calls after the fixed prefix:
-ordinary paragraph modes, numeric fit before every line commit, and
+ordinary unpainted paragraph modes, numeric fit before every line commit, and
 natural-size fixed-top closing. No output ordering is assumed. -/
 public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) : Prop :=

@@ -37,14 +37,19 @@ import Tests.CancelReview
 import Tests.MathSym
 import Tests.BeamerHooks
 import Tests.BeamerColors
+import Tests.BeamerColorOrigins
 import Tests.BeamerTemplates
 import Tests.ListDeclarations
 import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.BlockBody
+import Tests.BlockFillConditionals
+import Tests.BlockRegionFit
+import Tests.BlockHeaderClearance
 import Tests.PaletteTextEpoch
 import Tests.ThemePalette
+import Tests.ThemeCss
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
@@ -52,6 +57,8 @@ import Tests.PublicationPaths
 import Tests.MarkdownInput
 import Tests.InputUse
 import Tests.MathAlphaEntry
+import Tests.MathDiagnosticOrigins
+import Tests.MathDelimiterTriggers
 import Tests.OverlaySets
 import Tests.OverlayStyles
 import Tests.OverlayContracts
@@ -63,6 +70,11 @@ import Tests.DiagnosticTrigger
 import Tests.DiagnosticImageOrigins
 import Tests.DiagnosticFontScope
 import Tests.DiagnosticOrigins
+import Tests.DiagnosticContrastOrigins
+import Tests.DiagnosticLayoutOrigins
+import Tests.DiagnosticLiteralOrigins
+import Tests.DiagnosticListingOrigins
+import Tests.DiagnosticProducerOrigins
 import Tests.SourceAnnotations
 import Tests.InputOrigins
 import Tests.ImageOrigins
@@ -70,6 +82,8 @@ import Tests.SlideLabels
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
+import Tests.PicturePathSyntax
+import Tests.PictureShrink
 import Tests.PictureBoundary
 import Tests.FontDefaults
 import Tests.Batch
@@ -109,8 +123,10 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
-  diagnosticOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
+  diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
+  mathDiagnosticOriginChecks mathDelimiterTriggerChecks mathDollarSurfaceChecks
+  diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
   listDeclarationChecks stringConditionalChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
@@ -734,12 +750,27 @@ def reports : List Report := [
     state := .guarded "f373a48c" .before .audit },
   { id := "R92", date := "2026-10-07"
     what := "block body colours were ignored, leaving filled headings above unpainted bodies and losing the shared theme palette across output formats"
-    pins := [check% Tests.BlockBody.checks, check% Tests.ThemePalette.checks,
+    pins := [check% Tests.BlockBody.checks, check% Tests.BlockFillConditionals.blockFillConditionalChecks,
+      check% Tests.BlockRegionFit.checks,
+      check% faceCentreChecks, check% fillCentreChecks,
+      check% Tests.ThemePalette.checks,
       thm% Ir.Design.titledBody_projects, thm% HtmlDoc.titledBodyPaint_agree,
+      thm% Layout.closed_box_rule_covers,
+      thm% Layout.Spacing.Tail.join_covers, thm% Layout.Spacing.Tail.join_comm,
+      thm% Layout.Spacing.Tail.join_assoc,
+      thm% Layout.Spacing.Tail.join_boxDepth_exact,
       thm% SeedPalette.generated_beamer_contract]
     accept := ["eighteen artifact assertions and forty-eight generated-palette assertions failed before the body renderer, covering normal, alert and example blocks with and without titles",
-      "independent rendered review checks local colour changes, nested insets, empty filled bodies and page continuations against native ink and computed browser styles",
-      "reference presentations use six title and body colour pairs derived from their common theme palette in both renderers"]
+      "independent rendered review checks local colour changes, nested insets, empty filled bodies and page continuations against native ink and rendered browser pages",
+      "reference presentations use six title and body colour pairs derived from their common theme palette in both renderers",
+      "one hundred forty-nine source and artifact assertions cover command availability, guarded defaults and explicit overrides; four mutations remove, truncate or mispaint the body and each is rejected",
+      "twelve typed HTML controls check actual declaration ownership and nesting; six malformed variants accepted by the earlier assertions are now rejected",
+      "four further layout assertions fail before complete painted bounds enter page fitting and distribution; all sixteen region checks pass after repair",
+      "fifty-one emitted PDF checks cover nested title padding, empty siblings, title and body seams, link annotations, source conservation, page edges and footer clearance; three fail before repair and none after, with five native pages inspected at 216 dpi",
+      "two further artifact assertions fail when a following rule overlaps a closed surface; all twenty-six region checks pass after box bounds become an explicit spacing reference",
+      "four column-order assertions fail when a text column hides a neighbouring surface's lower padding; all ninety-eight region checks pass after the shared column join preserves both ink and leaded bounds",
+      "six existing card-centering assertions and six native PDF raster probes fail when column joins discard measured text depth; preserving that third bound restores centering while all one hundred forty-nine surface and page-boundary PDF checks still pass",
+      "sixteen final-layout assertions fail when empty columns contribute inherited spacing; joining only contributing columns restores neutrality in each alignment and column order while preserving empty filled bodies and invisible struts"]
     state := .guarded "a77aeab8" .before .reviewer },
   { id := "R93", date := "2026-10-07"
     what := "changing or clearing the foreground left HTML text and listings in the previous colour, including after a filled block"
@@ -747,8 +778,107 @@ def reports : List Report := [
       thm% HtmlDoc.Config.advancePalette_ink_projects]
     accept := ["fifteen typed artifact comparisons fail before the correction in ordinary flow and after leaving a filled body",
       "eighteen browser text colour checks agree with native layout after the correction, including plain text, mathematics, listings and foreground erasure",
-      "both native documents remain byte-identical while the HTML foreground is repaired"]
-    state := .guarded "4f9dc31d" .before .reviewer }
+      "both native documents remain byte-identical while the HTML foreground is repaired",
+      "eighteen additional HTML assertions fail before declaration state is threaded through list items and ordinary containers; their native glyph checks already pass",
+      "the corrected path passes typed and native checks for itemized, numbered and description lists, nested containers, and declarations scoped inside columns or notes"]
+    state := .guarded "4f9dc31d" .before .reviewer },
+  { id := "R94", date := "2026-10-07"
+    what := "diagram paths rejected supported relative coordinates and misplaced orthogonal corners or labels"
+    pins := [check% picturePathSyntaxChecks, thm% Picture.coordStep_offset_exact,
+      thm% Picture.coordStep_advance_exact, thm% Picture.orthogonalCorner_exact]
+    accept := ["forty-seven artifact assertions fail before the parser correction, covering balanced coordinate expressions, relative endpoints and labels before or after endpoints",
+      "thirty-two additional orthogonal-corner assertions fail against the earlier corner calculation; both artifacts agree with the reference engine after repair",
+      "a reference presentation compiles without its three path syntax errors, while unsupported transformations remain diagnosed"]
+    state := .guarded "872d7e02" .before .author },
+  { id := "R95", date := "2026-10-07"
+    what := "sparse HTML palettes used unrelated literal colours instead of the shared theme defaults"
+    pins := [check% Tests.ThemeCss.checks]
+    accept := ["eight typed stylesheet assertions and twenty-two of one hundred and six computed browser colour checks fail before the shared fallback correction",
+      "built-in and sparse palettes now agree on screen and in print while authored stylesheet overrides remain effective"]
+    state := .guarded "e746d229" .before .author },
+  { id := "R96", date := "2026-10-07"
+    what := "delayed list marker warnings omitted the declaring source file, line and command"
+    pins := [check% diagnosticOriginChecks, check% diagnosticFormatChecks]
+    accept := ["three real compiler runs omit all source coordinates before repair: a direct style, a translated template and an included declaration",
+      "five additional typed and CLI assertions fail until style fragments retain their declaration and delayed HTML diagnostics resolve its written command",
+      "typed diagnostic checks retain the exact declaring line without changing either artifact; three real HTML outputs remain byte-identical after the final source attribution repair"]
+    state := .guarded "2a9f1cf8" .before .author },
+  { id := "R97", date := "2026-10-07"
+    what := "page compression moved diagram labels without their boxes and arrows"
+    pins := [check% pictureShrinkChecks, thm% Layout.PagePath.shiftY_zero_id,
+      thm% Layout.PagePath.shiftY_add_exact, thm% Layout.PagePath.shiftY_cancel_id]
+    accept := ["ten artifact assertions fail before repair when three pictures follow different amounts of shrinkable space",
+      "emitted PDF coordinates and native layout now translate labels, fills, arrowheads and cubic control points by the same displacement",
+      "a page requiring no compression keeps byte-identical PDF output"]
+    state := .guarded "5f521c69" .before .reviewer },
+  { id := "R98", date := "2026-10-07"
+    what := "body palette declarations overrode title and standout surfaces, including frames inside structural scopes"
+    pins := [check% Tests.ThemeCss.epochChecks,
+      thm% HtmlDoc.Config.advancePalette_ink_projects]
+    accept := ["one hundred and twenty computed browser colour assertions fail before separating stage paint from palette tokens",
+      "twenty-four additional artifact assertions fail when conditional or alignment wrappers apply ordinary flow paint to their returned stage",
+      "eighty-four authored fixtures now compare typed stage colours with native page fills and glyph ink while preserving the author's stylesheet priority"]
+    state := .guarded "5f521c69" .before .reviewer },
+  { id := "R99", date := "2026-10-07"
+    what := "delayed compatibility notes, palette repairs and repeated contrast diagnostics lost their authored location and trigger"
+    pins := [check% diagnosticContrastOriginChecks,
+      check% Tests.beamerColorOriginsChecks,
+      check% diagnosticProducerOriginChecks,
+      check% diagnosticAggregationOriginChecks,
+      check% diagnosticPipelineOriginChecks,
+      thm% Compat.SourceTriggers.attribute_record_exact,
+      thm% Compat.SourceTriggers.attribute_fixed_point]
+    accept := ["six source-origin checks fail before repair across authored declarations, uses, anonymous mixes and changed palette epochs",
+      "equal ink on a later contrasting ground identifies the later use instead of an earlier passing use",
+      "repeated-site accounting preserves the first owning source and attribution changes only the trigger field",
+      "fourteen additional assertions fail before the late compatibility pass restores nested and sibling input filenames",
+      "four native pipeline probes preserve complete source records and direct versus included HTML bytes",
+      "nine inherited and aliased colour ownership assertions fail before the shared resolver carries each winning channel's authored origin",
+      "reapplying lexical attribution is a fixed point"]
+    state := .guarded "5f521c69" .before .author },
+  { id := "R100", date := "2026-10-07"
+    what := "Math font selection and missing alphabet diagnostics lacked their owning formula source"
+    pins := [check% mathDiagnosticOriginChecks,
+      check% mathDelimiterTriggerChecks,
+      check% mathDollarSurfaceChecks,
+      thm% Ir.mathFaceRequest_covers,
+      thm% Ir.resolveMathAlphas_origin_covers]
+    accept := ["one hundred six authored source assertions fail before repair and pass after",
+      "ordinary formulas, later alphabet requests, macro calls, included content, captions and furniture retain their owning source",
+      "thirty-three delimiter assertions fail until the source index retains the opener already recorded by the lexer",
+      "seventy-seven dollar assertions fail until the production parser distinguishes inline and display delimiters and retains their authored opener",
+      "source attribution preserves shipped glyphs, typed math and serialized artifacts"]
+    state := .guarded "6792a009" .before .author },
+  { id := "R101", date := "2026-10-07"
+    what := "overfull lines, wide pictures and page compression diagnostics lost the source that caused the loss"
+    pins := [check% diagnosticLayoutOriginChecks,
+      check% Tests.diagnosticLiteralOriginChecks,
+      check% Tests.diagnosticListingOriginChecks,
+      thm% Compat.SourceTriggers.attribute_unmapped_id,
+      thm% Compat.SourceTriggers.atSource_unmapped_id]
+    accept := ["six source assertions fail before repair on body text, footnotes, repeated pictures and a compression-causing macro",
+      "sparse picture sources, backend selection, overlay replay and column cursor changes preserve the owning source",
+      "the responsible box is the one that last increased the page deficit, so a later short column cannot replace it",
+      "twenty-two literal assertions fail until the lexer retains exact authored text and coordinates through normalization and delayed diagnostics",
+      "two independent assertions fail before repair when a normalized Unicode split fragment without an authored boundary borrows the adjacent underscore or math opener as its trigger",
+      "twelve additional listing assertions fail until authored columns and tokens survive highlighting, tab expansion and generated line numbers",
+      "source metadata preserves shipped layout paint and PDF bytes; absent evidence remains absent"]
+    state := .guarded "0fa9c4da" .before .author },
+  { id := "R102", date := "2026-10-07"
+    what := "Slide blocks could lose their opening space below the header, including on continuation pages"
+    pins := [check% Tests.BlockHeaderClearance.checks,
+      thm% Ir.frameBodySkip_exact,
+      thm% Layout.frameBodySkip_projects,
+      thm% Layout.frame_opening_paint_covers,
+      thm% HtmlDoc.frameBodySkip_projects,
+      thm% HtmlDoc.cssLength_zero_exact]
+    accept := ["the retained pre-fix integration snapshot fails twelve typed artifact assertions across ordinary paragraphs and titled, titleless and nested blocks",
+      "twenty-one additional assertions fail before the opening space composes with authored margins and skips hidden speaker notes",
+      "five additional assertions fail before zero-length root tokens, fallbacks and in-frame token changes retain their units for CSS length addition",
+      "six continuation assertions fail before top, centre and bottom aligned frames repeat the resolved body opening and report the header they paint",
+      "the fixed opening derives from the shared frame rule and leaves remaining space to the declared vertical alignment",
+      "the placement theorem names its header clearance and preceding strut premises instead of claiming arbitrary overflow cannot collide"]
+    state := .guarded "5f521c69" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

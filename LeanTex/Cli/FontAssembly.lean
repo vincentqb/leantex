@@ -200,8 +200,9 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let wantsMath : Bool := match purpose with
     | .provisional math => math
     | .settled => !(Layout.docMathScalars doc).isEmpty
+  let mathSource := (Ir.mathFaceRequest doc).bind (·.source)
   let math ← FontEnv.resolveMath faces spec.math spec.body
-    wantsMath fonts paths missing (some cache)
+    wantsMath fonts paths missing (some cache) mathSource
   fonts := math.fonts
   paths := math.paths
   missing := math.missing

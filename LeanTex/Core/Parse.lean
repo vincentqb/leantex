@@ -67,6 +67,7 @@ public theorem markMacroList_toList (origin : MacroOrigin) (acc : Array Raw) (rs
 inductive Stop where
   | brace
   | math
+  | dollarDisplay
   | parenMath
   | displayMath
   | env (name : String)
@@ -75,6 +76,7 @@ inductive Stop where
 def Stop.name : Stop → String
   | .brace => "'}'"
   | .math => "closing '$'"
+  | .dollarDisplay => "closing '$$'"
   | .parenMath => "'\\)'"
   | .displayMath => "'\\]'"
   | .env n => s!"'\\end\{{n}}'"
@@ -95,7 +97,7 @@ public def envDefiners : List String :=
   ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
 
 /-- A definer body's half of a construct its other body completes — an
-environment, or math opened with `$`, `\(` or `\[` — kept by name for the
+environment, or math opened with `$`, `$$`, `\(` or `\[` — kept by name for the
 definer to judge. The name holds a space, which no word token holds (`Lex`:
 a word is a run of characters neither special nor white space), and a
 document's environment name is one word (`envName`), so no document can
@@ -114,6 +116,7 @@ delimiter that opened the math. -/
 def Stop.halfName : Stop → String
   | .env n => n
   | .math => "$"
+  | .dollarDisplay => "$$"
   | .parenMath => "\\("
   | .displayMath => "\\["
   | .brace => "{"
@@ -122,6 +125,7 @@ def Stop.halfName : Stop → String
 an environment's unless it spells a math delimiter, which no word can. -/
 def halfStop (name : String) : Stop :=
   if name == "$" then .math
+  else if name == "$$" then .dollarDisplay
   else if name == "\\(" then .parenMath
   else if name == "\\[" then .displayMath
   else .env name
@@ -215,9 +219,20 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
   match f.stop with
   | .brace => f.outer.push (.group body f.openPos)
   | .math => f.outer.push (.math false body f.openPos)
+  | .dollarDisplay => f.outer.push (.math true body f.openPos)
   | .parenMath => f.outer.push (.math false body f.openPos)
   | .displayMath => f.outer.push (.math true body f.openPos)
   | .env n => f.outer.push (.env n body f.openPos)
+
+/-- Every math delimiter carries its entire original opening position into
+the raw formula, for any body and preceding forest. This also covers the
+same closing operation used by recovery, without synthesizing a spelling
+from the display flag. -/
+private theorem Frame.close_math_source_exact (f : Frame) (body : Array Raw)
+    (h : f.stop = .math ∨ f.stop = .dollarDisplay ∨
+      f.stop = .parenMath ∨ f.stop = .displayMath) :
+    ∃ display, f.close body = f.outer.push (.math display body f.openPos) := by
+  rcases h with h | h | h | h <;> simp [Frame.close, h]
 
 private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : Diag :=
   Diag.of code msg (some ⟨file, pos⟩)
@@ -295,15 +310,22 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       | .math =>
         match frames.back? with
         | some f =>
-          if f.stop == .math then
+          if f.stop == .math || f.stop == .dollarDisplay then
+            if f.stop == .dollarDisplay then
+              if toks[i]?.any (·.tok == .math) then i := i + 1
+              else
+                diags := diags.push
+                  (err file .E0202 "expected a second '$' to close display math" pos)
             frames := frames.pop
             acc := f.close acc
-          else
-            frames := frames.push ⟨.math, pos, acc, false⟩
-            acc := #[]
-        | none =>
-          frames := frames.push ⟨.math, pos, acc, false⟩
-          acc := #[]
+            continue
+        | none => pure ()
+        -- Pair shifts only when opening display math. An inline close
+        -- above consumes one shift, leaving an adjacent opener intact.
+        let display := toks[i]?.any (·.tok == .math)
+        if display then i := i + 1
+        frames := frames.push ⟨if display then .dollarDisplay else .math, pos, acc, false⟩
+        acc := #[]
       | .ctrl "(" =>
         frames := frames.push ⟨.parenMath, pos, acc, false⟩
         acc := #[]

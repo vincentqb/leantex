@@ -1016,9 +1016,9 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let grayHalf := Ir.Color.ofGray half
   let rgbSpan : Span := ⟨"rgb.tex", { line := 1, col := 1 }⟩
   let graySpan : Span := ⟨"gray.tex", { line := 2, col := 1 }⟩
-  let sites : Array (String × Ir.Color × Bool × Span) :=
-    #[("rgb(.5,.5,.5)", rgbHalf, false, rgbSpan),
-      ("gray(.5)", grayHalf, false, graySpan)]
+  let sites : Array (Ir.Palette × String × Ir.Color × Bool × Span) :=
+    #[({}, "rgb(.5,.5,.5)", rgbHalf, false, rgbSpan),
+      ({}, "gray(.5)", grayHalf, false, graySpan)]
   t "anonymous colour-site selection keeps PDF model provenance"
     (rgbHalf == grayHalf && rgbHalf.pdfModel != grayHalf.pdfModel &&
       Elab.colorSiteOf sites none grayHalf == some ("gray(.5)", graySpan))
@@ -3226,15 +3226,13 @@ After text keeps it: flow scope, no brace revert.")
   t "the html sibling after the declaration redefines the property on itself"
     ((entries.find? fun (txt, _) => hasStr txt "Late ink").map
       (fun (_, st) => hasStr st "--accent: #cc1100") == some true)
-  -- The nested walk (`blockNodesInto`): an epoch inside a block reaches
-  -- its later siblings, and — the documented divergence from the PDF's
-  -- whole-flow scope — dies at the enclosing element's close, because a
-  -- custom property cannot reach an ancestor's later siblings without a
-  -- wrapper, and a wrapper would break the rhythm rules' `* + *` sibling
-  -- adjacency.
-  let (d5, _) := elabStr (doc
+  -- Nested declarations keep the same flow scope in both backends.
+  -- Later siblings carry the resulting epoch on their own element;
+  -- propagating it requires no wrapper around preceding content.
+  let nestedSrc := doc
     "\\block{First inside.\n\n\\palette{ accent = #CC1100 }\n\nSecond inside.}\n\n\
-Outside after.")
+\\textcolor{accent}{Outside after.}"
+  let (d5, _) := elabStr nestedSrc
   let (_, body5, _) := HtmlDoc.emitTree {} d5
   let els5 := elemStylesList #[] body5.toList
   t "a nested epoch redefines the property on its later siblings"
@@ -3243,8 +3241,11 @@ Outside after.")
   t "a nested epoch never reaches the content before it"
     (els5.all fun (txt, st) => !(hasStr txt "First inside" &&
       !hasStr txt "Second inside" && hasStr st "--accent"))
-  t "html: a nested epoch ends at its enclosing element (the named divergence)"
-    (els5.all fun (txt, st) => !(hasStr txt "Outside after" && hasStr st "--accent"))
+  t "a nested epoch reaches the enclosing element's later siblings in html"
+    (els5.any fun (txt, st) => hasStr txt "Outside after" &&
+      !hasStr txt "First inside" && hasStr st "--accent: #cc1100")
+  t "a nested epoch reaches the same later text in pdf"
+    (colorOf (runsOf nestedSrc) "Outside after" == some post)
   -- The deck walk threads the same epoch: a declaration between frames
   -- reaches the sections after it.
   let (dd, _) := elabStr ("\\documentclass{slides}\\palette{ accent = #1155CC }\

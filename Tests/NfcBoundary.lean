@@ -50,10 +50,10 @@ public def escapeChecks (t : String → Bool → IO Unit)
       nfc.comp.toList.all fun (pair, result) =>
         pair.toNat / 0x100000000 != escape.toNat &&
         pair.toNat % 0x100000000 != escape.toNat && result != escape)
-  t "image origin: every decomposition scalar preserves normalized sites and raw triggers"
+  t "image origin: every decomposition scalar preserves authored sites and raw triggers"
     (!decompositions.isEmpty && decompositions.all fun (scalar, _) =>
       prefixAgrees (String.ofList [Char.ofNat scalar.toNat]))
-  t "image origin: every expanded decomposition preserves normalized sites and raw triggers"
+  t "image origin: every expanded decomposition preserves authored sites and raw triggers"
     (!decompositions.isEmpty && decompositions.all fun (_, parts) =>
       prefixAgrees (String.ofList parts.toList))
 

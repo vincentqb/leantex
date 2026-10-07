@@ -719,6 +719,15 @@ as the row above, one class"),
 construct is reported at the picture's position, where W0362 already names the picture's \
 placeholder; name the constructs in W0362, or report each at its own span")]
 
+/-- Independent facts at one source site, witnessed below by varying the
+translation and the colour realization separately. These are not merge debt. -/
+def independentSiteFacts : List (String × String) :=
+  [("N0022", "N0100")]
+
+def sitePairClassified (pair : String × String) : Bool :=
+  independentSiteFacts.contains pair ||
+    siteAccounting.any (fun row => row.1 == pair.1 && row.2.1 == pair.2)
+
 /-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
 count — the mechanical first cut the user asked for, needing no judgement
 about any rule: group every diagnostic by its cause site and look at the
@@ -734,7 +743,7 @@ def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
 
 /-- **One construct, one accounting.** A recovery that accounts for all of a
 construct's arguments leaves no fragment for a second diagnostic to name, so
-two codes never report the same cause site.
+two codes must not duplicate that loss. Distinct facts can share a source site.
 
 This is the mechanical audit: group the diagnostics by cause site, flag any
 group larger than one. It found the reported defect without reading a single
@@ -747,14 +756,51 @@ corpus as well as the probes, it found three more that no probe reproduced,
 two of them one class: a rewrite's translation note beside the refusal of
 what the rewrite produced.
 
-Collisions that stand today are registered in `siteAccounting` with the file
-that owes the change, read in both directions so a closed row cannot linger.
-A collision is not always a defect — two independent losses can meet at one
-span — so each row says which it is. -/
+Merge debt is registered in `siteAccounting` with the file that owes the
+change, read in both directions so a closed row cannot linger. Independent
+facts have a separate registry and executed controls: translating a colour
+declaration and realizing its contrast can both describe the same use.
+Sharing a severity never exempts a pair from classification. -/
 def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut seen : List (String × String) := []
   let mut sources : Array (String × Array Diag) := #[]
+  let mut independentWitnesses : Array (String × String) := #[]
+  for (color, repaired) in [("888888", true), ("222222", false)] do
+    let pre := "\\palette{washed=#" ++ color ++ ",bg=#FFFFFF,fg=#222222}\n"
+    let (translated, ds) := elabStr (dvDoc pre "{\\color{washed}Probe text.}")
+    let (native, ns) := elabStr (dvDoc pre "\\textcolor{washed}{Probe text.}")
+    for (label, notes, command, col, translation) in
+        [("translated", ds, "\\color", 2, true),
+         ("native", ns, "\\textcolor", 1, false)] do
+      let caseLabel := s!"independent site facts {color}/{label}: "
+      t (caseLabel ++ "no diagnostic loss") (notes.all (·.severity == .note))
+      for (kind, wanted) in [(DiagCode.N0100, translation), (.N0022, repaired)] do
+        let found := notes.filter (·.kind == kind)
+        t (caseLabel ++ kind.code ++ " occurs exactly when its condition holds")
+          (found.size == if wanted then 1 else 0)
+        t (caseLabel ++ kind.code ++ " retains its complete authored site")
+          (found.all fun d => d.trigger == some command &&
+            d.span.any (fun s => s.file == "t" && s.pos.line == 4 &&
+              s.pos.col == col && s.pos.sourceMapped))
+      sources := sources.push (caseLabel, notes)
+    let (th, tb, _) := HtmlDoc.emitTree {} translated
+    let (nh, nb, _) := HtmlDoc.emitTree {} native
+    t s!"independent site facts {color}: translation keeps the complete HTML artifact"
+      (Html.document "en" th tb == Html.document "en" nh nb)
+    t s!"independent site facts {color}: native spelling has no collision"
+      (siteCollisions ns == #[])
+    if repaired then
+      independentWitnesses := siteCollisions ds
+      t "independent site facts: translation and realization share their owning use"
+        (independentWitnesses == #[("N0022", "N0100")])
+    else
+      t "independent site facts: translation alone has no collision" (siteCollisions ds == #[])
+  t "site accounting: another information-code pair remains unclassified"
+    (!sitePairClassified ("N0100", "N0200"))
+  for pair in independentSiteFacts do
+    t s!"independent site facts {pair.1}/{pair.2}: an executed control witnesses the row"
+      (independentWitnesses.contains pair)
   for (src, what) in siteAccountingProbes do
     sources := sources.push (what, (elabStr src).2)
   -- The whole corpus as well as the probes: a collision a probe never
@@ -765,7 +811,7 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (what, ds) in sources do
     for pair in siteCollisions ds do
       unless seen.contains pair do seen := pair :: seen
-      unless siteAccounting.any (fun r => r.1 == pair.1 && r.2.1 == pair.2) do
+      unless sitePairClassified pair do
         t s!"site accounting {what}: {pair.1} and {pair.2} name one site, with no row" false
   for (a, b, _) in siteAccounting do
     t s!"site accounting {a}/{b}: the row still describes a live collision"

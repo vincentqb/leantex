@@ -37,9 +37,14 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     let source := leadText ++ " \\\u212A{} " ++ leadText ++ " \\includegraphics{poster.pdf}"
     let (tokens, ds) := Lex.lex file source
     let (normalized, normalizedDs) := Lex.lex file (Nfc.normalize source)
-    -- Token equality ignores command evidence but includes normalized positions.
-    ds.isEmpty && normalizedDs.isEmpty && tokens == normalized &&
-      commandEvidence tokens == #[some "\\\u212A", some "\\includegraphics"]
+    -- NFC determines token values; the written source determines coordinates.
+    ds.isEmpty && normalizedDs.isEmpty &&
+      tokens.map (·.tok) == normalized.map (·.tok) &&
+      commandEvidence tokens == #[some "\\\u212A", some "\\includegraphics"] &&
+      (tokens.filterMap fun tok =>
+        match tok.tok with
+        | .ctrl _ => some (tok.pos.line, tok.pos.col)
+        | _ => none) == #[(1, leadText.length + 2), (1, 2 * leadText.length + 8)]
   NfcBoundary.escapeChecks t prefixAgrees
   t "image origin: reordered marks and arithmetic Hangul preserve escape alignment"
     (["e\u0301\u0327", "\u1100\u1161\u11A8", "\uAC01"].all prefixAgrees)
@@ -47,14 +52,19 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skippedSource := "e\u0301 % \\ignored\n\\verb|e\u0301\\ignored|\n" ++
     "\\\\" ++ "\\\u212A{} \\includegraphics{poster.pdf}"
   let (skippedTokens, skippedDs) := Lex.lex skippedFile skippedSource
-  t "image origin: skipped and paired escapes preserve normalized tokens and positions"
+  t "image origin: skipped and paired escapes preserve normalized token values"
     (skippedDs.isEmpty &&
-      skippedTokens == (Lex.lex skippedFile (Nfc.normalize skippedSource)).1)
+      skippedTokens.map (·.tok) ==
+        ((Lex.lex skippedFile (Nfc.normalize skippedSource)).1).map (·.tok))
   t "image origin: comments, verb bodies and paired escapes do not shift raw triggers"
     (commandEvidence skippedTokens ==
-      #[some "\\verb", some "\\\\", some "\\\u212A", some "\\includegraphics"])
+      #[some "\\verb", some "\\\\", some "\\\u212A", some "\\includegraphics"] &&
+      (skippedTokens.filterMap fun tok =>
+        match tok.tok with
+        | .ctrl _ | .verb _ _ => some (tok.pos.line, tok.pos.col)
+        | _ => none) == #[(2, 1), (3, 1), (3, 3), (3, 8)])
   -- Several authored spellings share a normalized control token. Evidence
-  -- keeps the full source slice, and ordinary following tokens inherit none.
+  -- keeps the full source slice; following words carry their own evidence.
   for (label, written, name) in [
       ("control-space", "\\ ", " "),
       ("control-LF", "\\\n", " "),
@@ -73,10 +83,13 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"image origin: {label} source index keeps the exact authored slice"
       (prepared.sourceTriggers[(file, 1, 1)]? == some written)
     let following := tokens.toList.drop 1
-    t s!"image origin: {label} evidence is absent on following ordinary tokens"
+    t s!"image origin: {label} following tokens keep only their own evidence"
       (!following.isEmpty && following.all fun tok =>
-        tok.pos.command.isNone &&
-          (prepared.sourceTriggers[(file, tok.pos.line, tok.pos.col)]?).isNone)
+        let expected := match tok.tok with
+          | .word s => some s
+          | _ => none
+        tok.pos.command == expected &&
+          prepared.sourceTriggers[(file, tok.pos.line, tok.pos.col)]? == expected)
   let (animated, animatedDs, spans) := imageOriginTex "animation.tex"
     "before\n\n\\animategraphics{12}{poster.pdf}{}{}"
   let ads := missing animatedDs
@@ -116,16 +129,19 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imageTokens := prefixedTokens.filter (·.tok == .ctrl "includegraphics")
   t "image origin: preceding NFC contraction preserves exact ASCII command evidence"
     (prefixedLexDs.isEmpty && imageTokens.size == 1 &&
-      prefixedTokens.any (·.tok == .word "\u00E9") &&
-      prefixedTokens.all fun tok => tok.pos.command ==
-        (if tok.tok == .ctrl "includegraphics" then some "\\includegraphics" else none))
+       prefixedTokens.any (·.tok == .word "\u00E9") &&
+       prefixedTokens.all fun tok => tok.pos.command ==
+        (match tok.tok with
+         | .ctrl "includegraphics" => some "\\includegraphics"
+         | .word "\u00E9" => some "e\u0301"
+         | .word "poster.pdf" => some "poster.pdf"
+         | _ => none))
   let (_, prefixedDs, _) := imageOriginTex prefixedFile prefixedSource
   let prefixedWarnings := missing prefixedDs
-  -- Follow the lexer's position convention; preceding NFC contraction must
-  -- neither shift the evidence onto another token nor break attribution.
-  t "image origin: an ASCII image after decomposed text keeps its lexer site and header"
+  t "image origin: an ASCII image after decomposed text keeps its authored column"
     (imageTokens.size == 1 && imageTokens.all fun tok =>
-      hasHeader prefixedWarnings s!"{prefixedFile}:{tok.pos.line}:{tok.pos.col}"
+      tok.pos.line == 1 && tok.pos.col == 4 &&
+      hasHeader prefixedWarnings s!"{prefixedFile}:1:4"
         "\\includegraphics" && prefixedWarnings.all fun d =>
           d.span == some ⟨prefixedFile, tok.pos⟩ && d.subject == some "poster.pdf")
   -- The reader, not the filename suffix, decides this is Markdown.

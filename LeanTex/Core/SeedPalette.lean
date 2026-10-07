@@ -22,6 +22,7 @@ public structure Colors where
   surface : Color
   accentText : Color
   accentOnDark : Color
+  accentEdge : Color
   accentSoft : Color
   deriving Repr, BEq
 
@@ -29,7 +30,7 @@ public structure Colors where
 role too: the same ink may have to work on several actual surfaces. -/
 public inductive Role where
   | ink | paper | accent | muted | mutedOnDark | diagramMuted
-  | surface | accentText | accentOnDark | accentSoft
+  | surface | accentText | accentOnDark | accentEdge | accentSoft
   deriving Repr, BEq, DecidableEq
 
 public def Role.name : Role → String
@@ -37,21 +38,27 @@ public def Role.name : Role → String
   | .muted => "Muted" | .mutedOnDark => "MutedOnDark"
   | .diagramMuted => "DiagramMuted" | .surface => "Surface"
   | .accentText => "AccentText" | .accentOnDark => "AccentOnDark"
-  | .accentSoft => "AccentSoft"
+  | .accentEdge => "AccentEdge" | .accentSoft => "AccentSoft"
 
 @[expose] public def Role.color (s : Seeds) (c : Colors) : Role → Color
   | .ink => s.ink | .paper => s.paper | .accent => s.accent
   | .muted => c.muted | .mutedOnDark => c.mutedOnDark
   | .diagramMuted => c.diagramMuted | .surface => c.surface
   | .accentText => c.accentText | .accentOnDark => c.accentOnDark
-  | .accentSoft => c.accentSoft
+  | .accentEdge => c.accentEdge | .accentSoft => c.accentSoft
 
 public def Role.all : List Role :=
   [.ink, .paper, .accent, .muted, .mutedOnDark, .diagramMuted,
-   .surface, .accentText, .accentOnDark, .accentSoft]
+   .surface, .accentText, .accentOnDark, .accentEdge, .accentSoft]
 
 public theorem Role.all_mem (role : Role) : role ∈ Role.all := by
   cases role <;> simp [Role.all]
+
+public theorem Role.name_inj {a b : Role} (h : a.name = b.name) : a = b := by
+  cases a <;> cases b <;> simp_all [Role.name]
+
+public theorem Role.all_nodup : Role.all.Nodup := by
+  decide
 
 /-- A decorative wash's contrast, not an accessibility threshold. One design
 token controls both neutral panels and accent tracks. -/
@@ -59,6 +66,7 @@ public def washRatio : Nat := 1150
 
 /-- Each requirement names the surface it actually shares. Text and essential
 edges must work on the panel as well as on the page (WCAG 2.2, 1.4.3/1.4.11).
+The exact accent seed is decorative; AccentEdge carries essential information.
 Decorative fills carry no text or essential information of their own. -/
 @[expose] public def requirements : List (Role × Role × Nat) :=
   [(.ink, .paper, Contrast.aaText),
@@ -71,9 +79,9 @@ Decorative fills carry no text or essential information of their own. -/
    (.accentOnDark, .ink, Contrast.aaText),
    (.diagramMuted, .paper, Contrast.aaNonText),
    (.diagramMuted, .surface, Contrast.aaNonText),
-   (.accent, .paper, Contrast.aaNonText),
-   (.accent, .surface, Contrast.aaNonText),
-   (.accent, .accentSoft, Contrast.aaNonText)]
+   (.accentEdge, .paper, Contrast.aaNonText),
+   (.accentEdge, .surface, Contrast.aaNonText),
+   (.accentEdge, .accentSoft, Contrast.aaNonText)]
 
 public def pairs (s : Seeds) (c : Colors) : List (Color × Color × Nat) :=
   requirements.map fun (foreground, ground, req) =>
@@ -89,6 +97,13 @@ the generator is free to change. -/
 public structure Generated (s : Seeds) where
   colors : Colors
   valid : contract s colors = true
+
+/-- Derived roles never alter the author's three seeds, including a bright
+decorative accent that would not be readable as text or an essential edge. -/
+public theorem generated_seeds_exact {s : Seeds} (p : Generated s) :
+    Role.ink.color s p.colors = s.ink ∧
+      Role.paper.color s p.colors = s.paper ∧ Role.accent.color s p.colors = s.accent :=
+  ⟨rfl, rfl, rfl⟩
 
 public theorem generated_contract {s : Seeds} (p : Generated s)
     {ink ground : Color} {req : Nat} (h : (ink, ground, req) ∈ pairs s p.colors) :
@@ -121,18 +136,30 @@ public theorem tint_mem {req : Nat} {seed ground under c : Color}
   have : q < 101 := List.mem_range.mp hm
   exact ⟨q, by omega, hc.symm⟩
 
+/-- Reuse the accent solver for each actual ground, retaining a candidate
+only if it passes all of them. Already usable accents remain exact.
+This finite candidate search makes no claim of global perceptual optimality. -/
+private def realizeOn (req : Nat) (grounds : List Color) (accent : Color) : Option Color :=
+  let meets := fun c => grounds.all fun ground =>
+    decide (req ≤ Contrast.contrastMilli c ground)
+  if meets accent then some accent
+  else grounds.findSome? fun ground => do
+    let c ← Contrast.realizeNearest req ground accent
+    if meets c then some c else none
+
 private def candidate (s : Seeds) : Option Colors := do
   let surface ← tint washRatio s.ink s.paper s.paper
   let accentSoft ← tint washRatio s.accent s.paper s.paper
   let muted ← tint Contrast.aaText s.ink s.paper surface
   let mutedOnDark ← tint Contrast.aaText s.paper s.ink s.ink
   let diagramMuted ← tint Contrast.aaNonText s.ink s.paper surface
-  let accentText ← Contrast.realizeNearest Contrast.aaText surface s.accent
-  let accentOnDark ← Contrast.realizeNearest Contrast.aaText s.ink s.accent
-  return { muted, mutedOnDark, diagramMuted, surface, accentText, accentOnDark, accentSoft }
+  let accentText ← realizeOn Contrast.aaText [s.paper, surface] s.accent
+  let accentOnDark ← realizeOn Contrast.aaText [s.ink] s.accent
+  let accentEdge ← realizeOn Contrast.aaNonText [s.paper, surface, accentSoft] s.accent
+  return { muted, mutedOnDark, diagramMuted, surface, accentText, accentOnDark, accentEdge, accentSoft }
 
 /-- Opt-in seed authoring: retain the RGB seeds, derive restrained neutrals
-from their segment, and reuse the contrast solver for accent text. CMYK is
+from their segment, and reuse the contrast solver for accent text and edges. CMYK is
 refused because this sRGB operation cannot preserve its print components.
 Material's role/ground model and Radix's text/edge/surface separation motivate
 the roles; neither system's fixed colour scale is copied here. -/

@@ -159,4 +159,4 @@ note[N0100] 87:1 '\ul' → \underline
 note[N0100] 87:38 '\varul' → \underline
 note[N0100] 16:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}
 note[N0100] 85:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force
-note[N0022] - 'muted' is realized darker (#73727F) on the page (#FAFAF9) to meet 4.50:1
+note[N0022] 63:6 'muted' is realized darker (#73727F) on the page (#FAFAF9) to meet 4.50:1

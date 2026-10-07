@@ -63,6 +63,22 @@ macOS `.ttc` collections are not supported.
 
 List themes with `leantex themes` and select one with `\theme{moloch}`.
 
+Generate a coordinated palette from ink, paper and accent RGB seeds:
+
+```sh
+lake build scripts.palette
+lake env lean --run scripts/palette.lean --beamer-blocks Slide 192A3D FFFFFF FA9D25 > colors.tex
+```
+
+Load `colors.tex` after the Beamer theme. The export keeps the three seeds
+unchanged and derives block surfaces, muted text and accent colors with
+checked contrast. Use `SlideAccent` for decoration and `SlideAccentText` for text
+on `SlidePaper` or `SlideSurface`. Use `SlideAccentEdge` for essential strokes
+on those surfaces or `SlideAccentSoft`; `SlideAccentOnDark` is text on `SlideInk`.
+For a saved palette, replace the three RGB arguments with `--seeds colors.json`,
+where the JSON object has exactly `ink`, `paper` and `accent` hex strings.
+Regenerate the TeX export after changing the seeds.
+
 ## Images and code
 
 PNG, JPEG and PDF images embed directly in PDF output. SVG conversion runs

@@ -26,12 +26,20 @@ example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
   SeedPalette.generated_beamer_contract p (element := "block title alerted")
     (foreground := .accentText) (ground := .surface) (by simp [SeedPalette.beamerBlocks])
 
+example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
+    Contrast.aaNonText ≤ Contrast.contrastMilli p.colors.accentEdge p.colors.accentSoft :=
+  SeedPalette.generated_role_contract p (foreground := .accentEdge) (ground := .accentSoft)
+    (by simp [SeedPalette.requirements])
+
+example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
+    SeedPalette.Role.accent.color s p.colors = s.accent :=
+  (SeedPalette.generated_seeds_exact p).2.2
+
 /-- Invented seeds in both polarities. The panel witness breaks a palette
 that checks text only against the page; the export keeps each named role. -/
 public def checks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "theme palette exports every role once"
-    (SeedPalette.Role.all.length == 10 &&
-      (SeedPalette.Role.all.map (·.name)).eraseDups.length == 10)
+    ((SeedPalette.Role.all.map (·.name)).eraseDups.length == SeedPalette.Role.all.length)
   let dark : Ir.Color := { r := 25, g := 42, b := 61 }
   let accent : Ir.Color := { r := 196, g := 106, b := 119 }
   let mut panelWitness := false
@@ -44,6 +52,9 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "theme palette rejects text equal to its ground"
       (!SeedPalette.contract seeds { colors with muted := colors.surface } &&
         !SeedPalette.contract seeds { colors with accentText := seeds.paper })
+    check ref "theme palette rejects essential edges equal to any checked ground"
+      ([seeds.paper, colors.surface, colors.accentSoft].all fun ground =>
+        !SeedPalette.contract seeds { colors with accentEdge := ground })
     if let some paperOnly := SeedPalette.tint Contrast.aaText ink paper paper then
       if Contrast.contrastMilli paperOnly colors.surface < Contrast.aaText then
         panelWitness := true
@@ -55,7 +66,8 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     check ref "plain palette export does not require Beamer"
       (!declarations.contains "\\setbeamercolor")
     check ref "filled block export preserves all existing RGB declarations"
-      (blocks.startsWith declarations && (blocks.splitOn "\\definecolor{").length == 11)
+      (blocks.startsWith declarations &&
+        (blocks.splitOn "\\definecolor{").length == SeedPalette.Role.all.length + 1)
     let expected := [
       ("block title", "Ink"), ("block title alerted", "AccentText"),
       ("block title example", "Muted"), ("block body", "Ink"),

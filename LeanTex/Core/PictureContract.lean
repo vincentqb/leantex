@@ -157,12 +157,9 @@ public theorem completePrepared_pictureKeys_named (file : String) (p : Prepared)
   apply named_tally
   rcases finishPictureKeys_named report _ p.picSets st key hdrew h with ⟨d, hd, hk, hs⟩
   refine ⟨p.sourceTriggers.attribute d, ?_, hk, hs⟩
-  have hm : p.sourceTriggers.attribute d ∈
-      (finishPictureKeys report
-        (Contrast.realizeDoc doc (colorSiteOf st.spans.colors)).1 p.picSets st).diags.map
-          p.sourceTriggers.attribute := Array.mem_map.mpr ⟨d, hd, rfl⟩
+  refine Array.mem_map.mpr ⟨d, ?_, rfl⟩
   apply accountRecovered_mem
-  simp only [Array.mem_append, hm, or_true, true_or]
+  simp only [Array.mem_append, hd, or_true, true_or]
 
 /-- The actual prepared run: an engine picture in the returned document
 forces accounting for every unread key of its prepared configuration. -/

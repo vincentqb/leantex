@@ -4561,7 +4561,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
      hasStr html "padding-left: var(--bibhang, 1em); text-indent: calc(-1 * var(--bibhang, 1em))" &&
      hasStr html "row-gap: var(--bibsep, 0.8em)")
   t "natbib list html: a declared \\bibhang and \\bibsep reach the page's custom properties"
-    (hasStr html2 "--bibhang: 2em;" && hasStr html2 "--bibsep: 0;")
+    (hasStr html2 "--bibhang: 2em;" && hasStr html2 "--bibsep: 0pt;")
   -- numbered: ten labels, `[1]` narrower than `[10]`
   let (ndoc, nout, nhtml) :=
     build "\\usepackage[numbers]{natbib}" "e1,e2,e3,e4,e5,e6,e7,e8,e9,e10"

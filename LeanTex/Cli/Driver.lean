@@ -654,7 +654,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       pure { front with doc := doc, diags := diags ++ w.notes, spans := spans }
     let refused := w.standing
     let doc := front.doc
-    let diags := front.diags
+    let sourceDiag := front.prepared.sourceTriggers.attribute
+    let diags := front.diags.map sourceDiag
     let reqSpans := front.spans
     let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
     if resolved.errors > 0 then
@@ -674,11 +675,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     | .error d =>
       -- No usable font set exists at all: nothing downstream can run, so
       -- this stays fatal whatever the document accepts.
-      ui.diag d
+      ui.diag (sourceDiag d)
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, doc, fontDiags, paths) =>
-      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) fontDiags)
+      resolved := resolved.append
+        (← ui.resolve doc.allow allowAll (outputs := outputs) (fontDiags.map sourceDiag))
       if resolved.errors > 0 then
         ui.accepted resolved.accepted
         ui.summary file resolved.errors (← since t0)
@@ -722,7 +724,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let picAlts := Ir.picAltDiags doc
         (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
         (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
-      let imgDiags := (imgDiags ++ picAlts).map front.prepared.sourceTriggers.attribute
+      let imgDiags := (imgDiags ++ picAlts).map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
         let cached := if imgHits == 0 then "" else s!", {imgHits} cached"
@@ -738,7 +740,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs pats doc imgs
         (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
-      let layoutDiags := out.diags.map front.prepared.sourceTriggers.attribute
+        (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
+      let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- An unaccepted error anywhere before the writers means no output: a
@@ -798,7 +801,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- than decorative.
       let slotDiags := SlotLoss.diags doc.fonts fs doc
         (SlotLoss.carries emit doc.fontPolicy)
-      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) slotDiags)
+      resolved := resolved.append
+        (← ui.resolve doc.allow allowAll (outputs := outputs) (slotDiags.map sourceDiag))
       -- The declared contract, held against each emitted artifact's
       -- realization record: a fact the artifact cannot yet realize is one
       -- W0701 per artifact, per fact — warnings, resolved before the gate
@@ -810,7 +814,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if emit.contains .html then
         contractWarnings := contractWarnings ++
           Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
-      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) contractWarnings)
+      resolved := resolved.append
+        (← ui.resolve doc.allow allowAll (outputs := outputs) (contractWarnings.map sourceDiag))
       let mut htmlBuilt : Option HtmlArtifact := none
       if emit.contains .html then
         let t ← IO.monoMsNow
@@ -858,7 +863,8 @@ in the HTML" (← since t)
             Layout.mathTextEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
-        resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) hdiags)
+        resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
+          (hdiags.map front.prepared.sourceTriggers.attribute))
         match result with
         | .error detail =>
           ui.diag (DriverDiag.htmlResourceUnavailable detail)

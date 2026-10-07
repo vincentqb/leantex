@@ -20,12 +20,16 @@ private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO 
 private def lineText (line : Layout.LineOut) : String :=
   String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
 
-/-- Read inherited paint from the typed artifact, keeping the text it
-actually encloses. A stylesheet declaration with no painted body cannot
-satisfy the witness. -/
+/-- Keep each element's declarations separate: backgrounds do not inherit,
+and two declarations on one box do not witness two nested surfaces. -/
+private structure HtmlElement where
+  tag : String
+  styles : String
+  bodyBox : Bool
+
 private structure HtmlInk where
   text : String
-  styles : String
+  ancestors : List HtmlElement -- nearest element first
   bodyBox : Bool := false
 
 private def cssProperty (styles name : String) : Option String :=
@@ -35,20 +39,94 @@ private def cssProperty (styles name : String) : Option String :=
     | _ => value) none
 
 mutual
-  private def htmlInks (styles : String) (out : Array HtmlInk) : List Html.Node → Array HtmlInk
+  private def htmlInks (ancestors : List HtmlElement) (out : Array HtmlInk) :
+      List Html.Node → Array HtmlInk
     | [] => out
-    | node :: rest => htmlInks styles (htmlInk styles out node) rest
-  private def htmlInk (styles : String) (out : Array HtmlInk) : Html.Node → Array HtmlInk
-    | .text text => out.push { text, styles }
-    | .elem _ attrs kids =>
+    | node :: rest => htmlInks ancestors (htmlInk ancestors out node) rest
+  private def htmlInk (ancestors : List HtmlElement) (out : Array HtmlInk) :
+      Html.Node → Array HtmlInk
+    | .text text => out.push { text, ancestors }
+    | .elem tag attrs kids =>
       let own := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
-      let styles := styles ++ ";" ++ own
-      let out := if attrs.contains ("class", "block-body") then
-          out.push { text := "", styles, bodyBox := true }
+      let bodyBox := attrs.contains ("class", "block-body")
+      let ancestors := { tag, styles := own, bodyBox : HtmlElement } :: ancestors
+      let out := if bodyBox then
+          out.push { text := "", ancestors, bodyBox := true }
         else out
-      htmlInks styles out kids.toList
+      htmlInks ancestors out kids.toList
     | .style _ | .script .. => out
 end
+
+/-- Nearest explicit inline colour, in the emitted declaration format.
+This reads inline ownership, not the browser's full stylesheet cascade. -/
+private def HtmlInk.inlineColor (leaf : HtmlInk) : Option String :=
+  leaf.ancestors.findSome? (fun elem => cssProperty elem.styles "color")
+
+private def HtmlInk.bodyProperty (leaf : HtmlInk) (name : String) : Option String :=
+  (leaf.ancestors.find? (·.bodyBox)).bind (fun elem => cssProperty elem.styles name)
+
+/-- Epoch paint belongs on the paragraph/pre containing the text. Ancestor
+ink alone cannot stand in for it: a normal stylesheet rule on the child
+outranks inherited ink. Descendant inline ink must agree too. This contract
+does not compute arbitrary selectors or stylesheet `!important` overrides. -/
+private def HtmlInk.epochPaint (leaf : HtmlInk) (tag color : String) : Bool :=
+  match leaf.ancestors.find? (fun elem => elem.tag == "p" || elem.tag == "pre") with
+  | some owner => owner.tag == tag && cssProperty owner.styles "color" == some color &&
+    leaf.inlineColor == some color
+  | none => false
+
+private def HtmlInk.nestedPaint (leaf : HtmlInk) (outer inner color : String) : Bool :=
+  match leaf.ancestors.filter (·.bodyBox) with
+  | innerBox :: outerBox :: [] =>
+    cssProperty outerBox.styles "background" == some outer &&
+    cssProperty innerBox.styles "background" == some inner &&
+    leaf.inlineColor == some color
+  | _ => false
+
+private def HtmlInk.paddedBand (leaf : HtmlInk) (background padding : String) : Bool :=
+  leaf.bodyBox && leaf.bodyProperty "background" == some background &&
+    leaf.bodyProperty "padding" == some padding
+
+/-- Break the witnesses themselves: declaration presence cannot substitute
+for the owning element or the actual ancestor relationship. -/
+private def htmlWitnessChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let body (styles : String) (kids : Array Html.Node) : Html.Node :=
+    .elem "div" #[("class", "block-body"), ("style", styles)] kids
+  let inner := body "background: #223344; color: #ffffff;" #[.text "NESTED"]
+  let nestedAccepts (nodes : List Html.Node) :=
+    (htmlInks [] #[] nodes).any fun leaf =>
+      leaf.text == "NESTED" && leaf.nestedPaint "#ddeeff" "#223344" "#ffffff"
+  for (name, nodes, expected) in #[
+      ("distinct nested surfaces", [body "background: #ddeeff;" #[inner]], true),
+      ("collapsed backgrounds", [body
+        "background: #ddeeff; background: #223344; color: #ffffff;" #[.text "NESTED"]], false),
+      ("overwritten outer background",
+        [body "background: #ddeeff; background: #223344;" #[inner]], false),
+      ("sibling surfaces", [body "background: #ddeeff;" #[], inner], false)] do
+    check ref ("block body HTML witness: " ++ name) (nestedAccepts nodes == expected)
+  let epochAccepts (styles : String) (child : Html.Node) :=
+    (htmlInks [] #[] [
+      .style "p { color: #004080; }",
+      .elem "section" #[("style", "color: #804000;")]
+        #[.elem "p" #[("style", styles)] #[child]]]).any fun leaf =>
+      leaf.text == "AFTER" && leaf.epochPaint "p" "#804000"
+  for (name, styles, child, expected) in #[
+      ("owned epoch paint", "color: #804000;", Html.Node.text "AFTER", true),
+      ("ancestor-only epoch paint", "", .text "AFTER", false),
+      ("overwritten epoch paint", "color: #804000; color: #004080;", .text "AFTER", false),
+      ("descendant inline override", "color: #804000;",
+        .elem "span" #[("style", "color: #004080;")] #[.text "AFTER"], false)] do
+    check ref ("block body HTML witness: " ++ name) (epochAccepts styles child == expected)
+  let paddedAccepts (styles : String) :=
+    (htmlInks [] #[] [.elem "section"
+      #[("style", "background: #223344; padding: 0.5em;")] #[body styles #[]]]).any
+      (fun leaf => leaf.paddedBand "#223344" "0.5em")
+  for (name, styles, expected) in #[
+      ("owned empty band", "background: #223344; padding: 0.5em;", true),
+      ("ancestor-only empty band", "", false),
+      ("ancestor-only empty background", "padding: 0.5em;", false),
+      ("ancestor-only empty padding", "background: #223344;", false)] do
+    check ref ("block body HTML witness: " ++ name) (paddedAccepts styles == expected)
 
 private def probe (kind : Ir.TitledKind) (title : Array Ir.Inline) : Ir.Doc :=
   { palette := { entries := #[
@@ -61,7 +139,7 @@ private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
 
 private def html (doc : Ir.Doc) : Array HtmlInk :=
   let (_, nodes, _) := HtmlDoc.emitTree {} doc
-  htmlInks "" #[] nodes.toList
+  htmlInks [] #[] nodes.toList
 
 /-- Exercise the exported source through the real front end and both
 artifacts. A correct palette or an isolated IR renderer cannot stand in
@@ -104,8 +182,8 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
               fill.y < line.y && line.y < fill.y + fill.h)
         check ref (label ++ ": HTML ink and surface")
           ((html doc).any fun leaf => leaf.text == "BODY" &&
-            cssProperty leaf.styles "color" == some seeds.ink.css &&
-            cssProperty leaf.styles "background" == some palette.colors.surface.css)
+            leaf.inlineColor == some seeds.ink.css &&
+            leaf.bodyProperty "background" == some palette.colors.surface.css)
 
 /-- These four small documents hold the reviewed artifact counterexamples:
 epochs must replace inherited concrete ink, nesting owes every inset, empty
@@ -123,10 +201,9 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       (key, if key == "fg" then brown else c) },
     .para #[.text "AFTER", .math false "x"], .verbatim none "CODE" {}]] }
   let leaves := html epoch
-  for text in #["AFTER", "x", "CODE"] do
+  for (text, tag) in #[("AFTER", "p"), ("x", "p"), ("CODE", "pre")] do
     check ref s!"block body epoch: HTML {text} replaces concrete ink"
-      (leaves.any fun leaf => leaf.text == text &&
-        cssProperty leaf.styles "color" == some brown.css)
+      (leaves.any fun leaf => leaf.text == text && leaf.epochPaint tag brown.css)
   check ref "block body epoch: PDF replacement ink"
     ((layout fonts epoch).pages.any fun page => page.lines.any fun line =>
       (lineText line).contains "AFTER" && line.segs.any fun
@@ -147,9 +224,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
         inner.y + inner.h + pad ≤ outer.y + outer.h)
   check ref "block body nested: HTML both surfaces enclose content"
     ((html nested).any fun leaf => leaf.text == "NESTED" &&
-      leaf.styles.contains ("background: " ++ pale.css) &&
-      leaf.styles.contains ("background: " ++ dark.css) &&
-      cssProperty leaf.styles "color" == some Ir.Color.white.css)
+      leaf.nestedPaint pale.css dark.css Ir.Color.white.css)
   let empty : Ir.Doc := {
     palette := { entries := #[
       ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodybg", dark)] }
@@ -160,9 +235,8 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
         page.lines.any (fun line => lineText line == "BEFORE" && line.y < fill.y) &&
         page.lines.any (fun line => lineText line == "AFTER" && fill.y + fill.h < line.y))
   check ref "block body empty: HTML padded band"
-    ((html empty).any fun leaf => leaf.bodyBox &&
-      cssProperty leaf.styles "background" == some dark.css &&
-      cssProperty leaf.styles "padding" == some (HtmlDoc.cssLength Ir.titledPadding))
+    ((html empty).any fun leaf =>
+      leaf.paddedBand dark.css (HtmlDoc.cssLength Ir.titledPadding))
   let spill : Ir.Doc := {
     page := {
       width := Dim.pt 200, height := Dim.pt 100, hmargin := Dim.pt 10
@@ -186,6 +260,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
 on both artifacts, for every kind and with or without a title. These are
 artifact assertions; resolving a role in the IR alone cannot pass them. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  htmlWitnessChecks ref
   for kind in #[Ir.TitledKind.block, .alert, .example] do
     for title in #[#[], #[Ir.Inline.text "TITLE"]] do
       let doc := probe kind title
@@ -205,11 +280,11 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
             line.x + line.setWidth ≤ fill.x + fill.w &&
             fill.y < line.y && line.y < fill.y + fill.h)
       let (_, nodes, _) := HtmlDoc.emitTree {} doc
-      let leaves := htmlInks "" #[] nodes.toList
+      let leaves := htmlInks [] #[] nodes.toList
       check ref (label ++ ": HTML body ink and surface")
         (leaves.any fun leaf => leaf.text == "BODY" &&
-          cssProperty leaf.styles "color" == some ink.css &&
-          cssProperty leaf.styles "background" == some ground.css)
+          leaf.inlineColor == some ink.css &&
+          leaf.bodyProperty "background" == some ground.css)
   generatedSourceChecks ref fonts
   regionChecks ref fonts
 

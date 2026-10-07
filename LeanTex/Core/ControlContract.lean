@@ -243,7 +243,9 @@ public theorem completePrepared_recovery_named (file : String) (p : Prepared)
     RecoveryNamed (completePrepared file p earlier doc table report st).2.1 item := by
   unfold completePrepared at h ⊢
   dsimp only at h ⊢
-  exact recovery_tally _ item (accountRecovered_named _ _ _ item h)
+  apply recovery_tally
+  rcases accountRecovered_named _ _ _ item h with ⟨d, hd, hk, hs⟩
+  exact ⟨p.sourceTriggers.attribute d, Array.mem_map.mpr ⟨d, hd, rfl⟩, hk, hs⟩
 
 /-- Every production declaration/body run reaches the accounting boundary.
 No premise about the body's commands or its earlier diagnostic log is
@@ -315,7 +317,9 @@ public theorem completePrepared_body_text (file : String) (p : Prepared)
     (report : PictureReportContext) (st : ESt) :
     Ir.blocksText (completePrepared file p earlier doc table report st).1.body =
       Ir.blocksText doc.body := by
-  change Ir.blocksText (Contrast.realizeDoc doc (colorSiteOf st.spans.colors)).1.body = _
+  change Ir.blocksText (Contrast.realizeDoc doc
+    (fun pal name c => colorSiteOf st.spans.colors name c
+      (declarations := st.spans.colorDeclarations) (palette := some pal))).1.body = _
   unfold Contrast.realizeDoc
   dsimp only
   split

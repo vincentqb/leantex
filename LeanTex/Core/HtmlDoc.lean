@@ -90,6 +90,10 @@ public structure Config where
   without a wrapper element — a wrapper would break the `* + *` sibling
   adjacency the rhythm gap rules key on. -/
   epochStyle : String := ""
+  /-- Concrete paint for ordinary flow after a palette declaration. Kept
+  apart from the inherited tokens: a deck stage resolves its own surface
+  and ink, including standout/title paint and the author's CSS. -/
+  epochPaint : String := ""
   /-- Whether that accumulated palette diff changes the rendered page ground.
   Kept as data: no CSS substring is used to infer a semantic epoch. -/
   epochGround : Bool := false
@@ -254,7 +258,7 @@ public def engineClasses : List String :=
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "bt-nowrap", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
-   "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
+   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-start", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
@@ -311,7 +315,9 @@ private def decMilli (n : Int) : String :=
 
 /-- A length in CSS. `em`/`ex` survive as their CSS equivalents rather than
 being resolved, so the browser scales them with the reader's font size — the
-one place HTML should *not* copy what the PDF path does. -/
+one place HTML should *not* copy what the PDF path does. Zero retains its
+length unit so it composes with other lengths in `calc()`:
+https://www.w3.org/TR/css-values-4/#calc-type-checking. -/
 public def cssLength (l : Length) : String :=
   let parts :=
     (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
@@ -319,9 +325,14 @@ public def cssLength (l : Length) : String :=
     -- CSS has an `ex` unit of its own; the browser measures the real font.
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
-  | [] => "0"
+  | [] => "0pt"
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
+
+/-- The zero source length keeps its dimension in the artifact spelling,
+including when a custom property substitutes it into a length sum. -/
+public theorem cssLength_zero_exact : cssLength ({} : Length) = "0pt" := by
+  simp [cssLength]
 
 /-- A sourced length in CSS: the custom property the value was declared
 under, with the resolved length as its fallback. This is the whole reason
@@ -718,9 +729,8 @@ public def cssString (s : String) : String :=
 /-- `\style` declarations as CSS on the element selectors. A declared marker
 becomes a `::marker` rule when it is expressible there — plain text under
 colour and font wrappers (`markerCss?`; CSS Pseudo-Elements 4 §4.1) — and
-the inexpressible remainder is diagnosed by name (W0328), never silently
-defaulted: the PDF sets the same declared content, so a silent fallback here
-is a silent backend divergence (FINDINGS F1). A base list element styles
+the inexpressible remainder is diagnosed at its declaration (W0331).
+A base list element styles
 every nesting level (as the PDF path does), so its marker rule is emitted at
 each depth — the depth-qualified selectors match the level defaults'
 specificity and, standing later in the sheet, win. -/
@@ -779,6 +789,7 @@ public def styleRules (doc : Doc) : String × Array Diag :=
         diags := diags.push (Diag.of .W0331
           s!"the declared '{element}' marker is not expressible in HTML; \
 the level default marks these items"
+          (span := Ir.inlineSource m)
           (help := some "marker = {...} reaches HTML as text with colour \
 and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
 an overlay step does not"))
@@ -1138,8 +1149,13 @@ private def gapAfterLists : List GapRule :=
    -- caption's own `margin-bottom`, the float's one internal seam, so the
    -- object's peer margin yields, as the page's float plan pays that skip
    -- alone (`Ir.captionSides`).
-   .boundary "figure.float > figcaption:first-child + *" "0",
-   .boundary ":is(h1, h2, h3, h4) + *" "0"]
+    .boundary "figure.float > figcaption:first-child + *" "0",
+    -- The first body element owns the frame opening, including a filled
+    -- block with no paragraph margin. A fil spacer cannot pay this fixed
+    -- skip when the frame has no spare space.
+    .boundary "section.slide > .frame-body-start"
+      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
+    .boundary ":is(h1, h2, h3, h4) + *" "0"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
@@ -1515,8 +1531,8 @@ public def themeCss (doc : Doc) : String :=
     -- the PDF pays the title's; the inner h2 drops to `1em` in the deck's
     -- own override so the step is paid once, not squared.
     s!"  font-size: {stepFactor "Large"}rem;\n" ++
-    -- The bar owns no space below: the frame body's first block pays its
-    -- own gap (`blockGapCss`), one emitter per boundary.
+    -- The first body element pays the shared frame opening skip through
+    -- `blockGapCss`, one emitter per boundary.
     s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
     s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
@@ -3873,6 +3889,24 @@ public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
   generalize ha : x * 100000 = a at heq ⊢
   omega
 
+/-- The shared frame opening, scaled with the stage rather than with the
+first child's type size. This remains a fixed margin when the flex
+spacers have no space to distribute. -/
+public def frameBodySkipMilli (hasTitle : Bool) (valign : VAlign)
+    (size height : Sp) : Int :=
+  deckStageMilli ((Ir.frameBodySkip hasTitle valign).resolve size 0) height
+
+/-- The HTML opening projects the IR boundary to within one printed
+milli-percent of the stage. The PDF resolves the same length in sp. -/
+public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign)
+    (size height : Sp) (hh : 0 < height) :
+    frameBodySkipMilli hasTitle valign size height * height ≤
+        (Ir.frameBodySkip hasTitle valign).resolve size 0 * 100000 ∧
+      (Ir.frameBodySkip hasTitle valign).resolve size 0 * 100000 <
+        frameBodySkipMilli hasTitle valign size height * height + height := by
+  simpa only [frameBodySkipMilli] using
+    deckStageMilli_share ((Ir.frameBodySkip hasTitle valign).resolve size 0) height hh
+
 /-- The cross-backend type ratio, exact up to the printed milli: the
 deck's body size over the viewport height is the very ratio the PDF
 stage declares — `fontSize` over the page height (`Ir.slidesStage169`'s
@@ -4529,7 +4563,6 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- scope it stands flush left, as it always did.
   "table { margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto); }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
-  s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
   -- grid that reserves the right max-content column before the left wraps.
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
@@ -5646,7 +5679,7 @@ style already stands on an ancestor element and inherits into it, so it is
 never re-applied below. The epoch palette and tokens carry in for the
 diffs a nested declaration makes. -/
 public def Config.into (cfg : Config) : Config :=
-  { cfg with epochStyle := "", epochGround := false }
+  { cfg with epochStyle := "", epochPaint := "", epochGround := false }
 
 /-- Project the IR frame's numbered extent, including title and body
 endpoints, into every part of its HTML frame. -/
@@ -5693,10 +5726,11 @@ public def epochTokenStyle (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
 
-/-- Advance the palette epoch and default ink. A surrounding painted body
-keeps its surface; outside one, the page ground follows the new palette.
-Every epoch sets concrete ink: a custom property does not recompute an
-ancestor's inherited CSS color. -/
+/-- Advance the palette tokens and the ordinary flow's default ink
+separately. A surrounding painted body keeps its surface; outside one,
+the page ground follows the new palette. Flow needs concrete ink because
+a custom property does not recompute an ancestor's inherited CSS color;
+a deck stage instead reads the tokens through its own paint rules. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.pal p
   let d := Design.ofPalette p
@@ -5704,9 +5738,9 @@ public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   { cfg with pal := p
              listingGround := cfg.bodyGround.or (p.find? "bg")
              listingFg := some fg, bodyInk := none
-             epochStyle := joinStyles cfg.epochStyle
-               (joinStyles diff.style
-                 (s!"color: {cssColor fg};" ++ surfaceInkDecls p (cfg.bodyGround.getD d.bg)))
+             epochStyle := joinStyles cfg.epochStyle diff.style
+             epochPaint := s!"color: {cssColor fg};" ++
+               surfaceInkDecls p (cfg.bodyGround.getD d.bg)
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 /-- Listings inherit the epoch's shared IR ink on the enclosing surface,
@@ -5718,26 +5752,43 @@ public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette
           bg := cfg.bodyGround.getD (Design.ofPalette p).bg }).fg := by
   rfl
 
-/-- A frame's outgoing palette continues into later frames, as in layout.
-The context fold excludes speaker notes: their declarations are side-channel
-content, while nested body declarations remain in flow order. -/
-private def Config.afterFrame (cfg : Config) : Block → Config
-  | .frame _ _ _ _ body | .titled _ _ body =>
-    Ir.foldCtxBlocks {
-      openBlock := fun visible cfg b => match b with
-        | .note _ => (cfg, false)
-        | .setPalette p => (if visible then cfg.advancePalette p else cfg, visible)
-        | _ => (cfg, visible)
-      closeBlock := fun _ cfg _ => cfg
-      openInline := fun visible cfg _ => (cfg, visible)
-      closeInline := fun _ cfg _ => cfg
-    } true cfg body
-  | .para .. | .section .. | .list .. | .center .. | .ragged ..
-  | .spaced .. | .role .. | .link .. | .quote .. | .abstract ..
-  | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .onSteps ..
-  | .altSteps .. | .note .. | .only .. | .nav .. | .logo .. | .pagebreak
-  | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. | .picture ..
-  | .table .. | .float .. | .bibliography .. => cfg
+/-- Token declarations have the same sibling flow as palette declarations. -/
+private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
+  { cfg with tokens := tk
+             epochStyle := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk) }
+
+/-- The outgoing declarations of ordinary containers continue in source
+order. Columns, notes and navigation are independent content scopes, as
+in layout; a page marker has no content. The context fold applies that
+boundary at every depth, including inside lists and titled bodies. -/
+private def declarationFlow : Ir.CtxFold Bool Config where
+  openBlock := fun visible cfg b => match b with
+    | .columns _ | .note _ | .nav _ _ => (cfg, false)
+    | .role name _ => (cfg, visible && !Ir.pageMarkerRole name)
+    | .setPalette p => (if visible then cfg.advancePalette p else cfg, visible)
+    | .setTokens tk => (if visible then cfg.advanceTokens tk else cfg, visible)
+    | _ => (cfg, visible)
+  closeBlock := fun _ cfg _ => cfg
+  openInline := fun visible cfg _ => (cfg, visible)
+  closeInline := fun _ cfg _ => cfg
+
+private def Config.afterBlock (cfg : Config) : Block → Config
+  | .columns _ | .note _ | .nav _ _ => cfg
+  | b => Ir.foldCtxBlock declarationFlow true cfg b
+
+private def Config.afterBlocks (cfg : Config) (body : Array Block) : Config :=
+  Ir.foldCtxBlocks declarationFlow true cfg body
+
+/-- A column's private declarations cannot change the configuration used
+for the following sibling, regardless of its content or nesting. -/
+private theorem Config.afterBlock_columns_exact (cfg : Config)
+    (cols : Array (BoxWidth × Array Block)) :
+    cfg.afterBlock (.columns cols) = cfg := rfl
+
+/-- The outgoing state of a palette declaration is its concrete ink
+transition, including its surface, rather than a CSS token update alone. -/
+private theorem Config.afterBlock_palette_projects (cfg : Config) (p : Ir.Palette) :
+    cfg.afterBlock (.setPalette p) = cfg.advancePalette p := rfl
 
 /-- A flow epoch that changes the page ground paints each following
 continuous-flow box in that ground. This avoids a wrapper (which would break
@@ -5747,6 +5798,12 @@ private def epochSurfaceStyle (style : String) (groundChanged : Bool) : String :
   if groundChanged then
     joinStyles style ("background: " ++ stageGround)
   else style
+
+/-- Ordinary siblings carry the epoch's concrete flow ink as well as its
+tokens. Deck stages carry only `epochStyle`, so the presence of an overlay
+track cannot change which surface rule wins. -/
+private def Config.flowEpochStyle (cfg : Config) : String :=
+  joinStyles cfg.epochStyle cfg.epochPaint
 
 /-- The epoch's redefinitions onto one emitted sibling node. The epoch
 comes first, so an element's own style declarations win (CSS style
@@ -5764,6 +5821,20 @@ public def withEpoch (style : String) (groundChanged : Bool) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
+/-- Paint ownership follows the emitted element, including a stage reached
+through structural scopes or returned unchanged by a spacing role. A stage
+or its overlay track carries the epoch's tokens; its own CSS resolves the
+surface. Other flow siblings also need the epoch's concrete inherited ink. -/
+private def Config.applyEpoch (cfg : Config) (node : Node) : Node :=
+  let stage := match node with
+    | .elem tag attrs _ =>
+      let classes := ((attrOf? attrs "class").getD "").splitOn " "
+      (tag == "section" && (classes.contains "slide" || classes.contains "section-page")) ||
+        (tag == "div" && classes.contains "slide-track")
+    | .text _ | .style _ | .script .. => false
+  if stage then withEpoch cfg.epochStyle false node
+  else withEpoch cfg.flowEpochStyle cfg.epochGround node
+
 /-- The node with one more class token, appended to an element's `class` or
 added as it: how an engine role that only spaces or styles reaches the
 element it governs without becoming an element of its own. -/
@@ -5775,6 +5846,33 @@ public def withClass (c : String) : Node → Node
   | .text s => .text s
   | .style css => .style css
   | .script attrs code => .script attrs code
+
+/-- A generated inline leading margin becomes the authored addend of the
+frame boundary. Keeping an inline `margin-top` would override the shared
+gap rule instead of adding to it. Other declarations remain on their box. -/
+private def frameBodyBefore (style : String) : String :=
+  String.intercalate ";" ((style.splitOn ";").map fun decl =>
+    match decl.splitOn ":" with
+    | [key, value] =>
+      if key.trimAscii.toString == "margin-top" then
+        s!"--frame-body-before: {value.trimAscii.toString}"
+      else decl
+    | _ => decl)
+
+/-- Put the frame boundary on its first participating body element. State,
+text and hidden speaker notes do not take it. A generated leading margin
+joins the fixed opening at its one owner; the element tree is unchanged. -/
+private def frameBodyStart (kids : Array Node) : Array Node :=
+  match kids.findIdx? (fun node => match node with
+    | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
+    | .text _ | .style _ | .script .. => false) with
+  | some i => kids.modify i fun node =>
+    withClass "frame-body-start" (match node with
+      | .elem tag attrs body =>
+        .elem tag (attrs.map fun (key, value) =>
+          (key, if key == "style" then frameBodyBefore value else value)) body
+      | .text _ | .style _ | .script .. => node)
+  | none => kids
 
 /-- One reference-list entry: the style's marker, the formatted content,
 and the anchor its citations link to. A numbered entry's content is one
@@ -6539,26 +6637,28 @@ public def abstractClass (styles : Ir.Styles) : String :=
   let step := Ir.abstractBodySize styles
   "abstract size-" ++ step
 
+-- Shared by ordinary paragraphs and description items after their label
+-- is removed. The block walk recurses only over source children.
+private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
+  -- Label anchors alone must not open a blank paragraph.
+  if !content.isEmpty && content.all (fun x => x matches .label _) then
+    Html.elem "span" (inlines cfg content)
+  else
+  if hasFill content then
+    let rows := splitAtBreaks content
+    if rows.size == 1 then
+      fillRow cfg "p" "entry" content
+    else
+      Html.elem "p" (rows.map fun row => fillRow cfg "span" "entry-row" row)
+        #[("class", "entry-rows")]
+  else
+    Html.elem "p" (inlines cfg content)
+
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
   match b with
-  | .para content =>
-    -- A paragraph holding only label anchors is not prose: its anchors
-    -- ship as an inline span, never a <p> whose rhythm margin would open
-    -- a blank line.
-    if !content.isEmpty && content.all (fun x => x matches .label _) then
-      Html.elem "span" (inlines cfg content)
-    else
-    if hasFill content then
-      let rows := splitAtBreaks content
-      if rows.size == 1 then
-        fillRow cfg "p" "entry" content
-      else
-        Html.elem "p" (rows.map fun row => fillRow cfg "span" "entry-row" row)
-          #[("class", "entry-rows")]
-    else
-      Html.elem "p" (inlines cfg content)
+  | .para content => paragraphNode cfg content
   | .section level _ num title =>
     let element := match level with
       | 0 => "titlepage"
@@ -6642,7 +6742,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- descendant before this node is built.
   | .link target body =>
     Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
-      #[("href", target), ("style", "display: block; color: inherit")]
+      #[("href", target), ("style", "display: block")]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
@@ -6853,6 +6953,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let bodyCfg := { cfg.into with
       listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
     let kids := blockNodesInto bodyCfg #[] body.toList
+    let opening := !standout && !title.isEmpty
+    let kids := if opening then frameBodyStart kids else kids
+    let openingAttrs := if opening then
+        let length := if cfg.deck then
+            s!"{decMilli (frameBodySkipMilli true valign cfg.page.fontSize cfg.page.height)}vh"
+          else cssLength (Length.ofSp ((Ir.frameBodySkip true valign).resolve cfg.page.fontSize 0))
+        #[("style", s!"--frame-body-skip: {length}")]
+      else #[]
     let kids := if cfg.deck then
         let (above, below) := vdistShares valign
         let spacer (n : Nat) : Array Html.Node :=
@@ -6863,7 +6971,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         up ++ kids ++ down
       else kids
     Html.elem "section" (header ++ kids)
-      (#[("class", cls)] ++ stageAttrs cfg.deck (frameName title kids))
+      (#[("class", cls)] ++ stageAttrs cfg.deck (frameName title kids) ++ openingAttrs)
   | .framefoot _ =>
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
@@ -6947,24 +7055,22 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
 /-- The accumulator threads through the sibling walk, as in
 `inlineNodesInto` — and so does the epoch: a `.setPalette`/`.setTokens`
 updates the state in force, and every following sibling carries the
-accumulated redefinitions on its style attribute (flow scope realized
-sibling-wise; past the enclosing element's close the properties no longer
-reach, except a frame's outgoing palette, which continues into later
-frames as on the PDF path). -/
+accumulated redefinitions on its style attribute. Ordinary containers
+carry their outgoing declarations to later siblings through the same
+context fold; independent content scopes keep their declarations local. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | .logo _ :: rest => blockNodesInto cfg acc rest
   | .setPalette p :: rest =>
     blockNodesInto (cfg.advancePalette p) acc rest
   | .setTokens tk :: rest =>
-    let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
-    blockNodesInto { cfg with tokens := tk, epochStyle := style } acc rest
+    blockNodesInto (cfg.advanceTokens tk) acc rest
   -- A page-model mark (`Ir.pageMarkerBlock`) ships no node: a continuous
   -- medium has no page top and no interline glue.
   | b :: rest =>
     if Ir.pageMarkerBlock b then blockNodesInto cfg acc rest
-    else blockNodesInto (cfg.afterFrame b)
-      (acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))) rest
+    else blockNodesInto (cfg.afterBlock b)
+      (acc.push (cfg.applyEpoch (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -6990,7 +7096,7 @@ private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node)
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
   | item :: rest =>
-    listItemsInto cfg (acc.push (Html.elem "li" (listItem cfg item.toList))) rest
+    listItemsInto (cfg.afterBlocks item) (acc.push (listItem cfg "li" item.toList)) rest
 
 /-- A description list's items as HTML's own description list: each label a
 `<dt>` (the inlines the page runs in, `Ir.descLabel?`), the text after it
@@ -7000,28 +7106,32 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
   | [] => acc
   | ⟨Block.para c :: bs⟩ :: rest =>
     let (label, after) := (Ir.descLabel? c).getD (#[], c)
-    let dd := match bs with
-      | [] => inlines cfg after
-      | _ => blockNodesInto cfg #[Html.elem "p" (inlines cfg after) #[]] bs
-    descItemsInto cfg ((acc.push (Html.elem "dt" (inlines cfg label) #[])).push
-      (Html.elem "dd" dd #[])) rest
+    let body := if bs.isEmpty then inlines cfg after
+      else blockNodesInto cfg.into #[paragraphNode cfg.into after] bs
+    descItemsInto (cfg.afterBlocks bs.toArray)
+      ((acc.push (cfg.applyEpoch (Html.elem "dt" (inlines cfg label)))).push
+        (cfg.applyEpoch (Html.elem "dd" body))) rest
   | item :: rest =>
-    descItemsInto cfg ((acc.push (Html.elem "dt" #[] #[])).push
-      (Html.elem "dd" (listItem cfg item.toList) #[])) rest
+    descItemsInto (cfg.afterBlocks item)
+      ((acc.push (Html.elem "dt" #[])).push (listItem cfg "dd" item.toList)) rest
 
--- A one-paragraph item carries its content directly: wrapping it in <p> is
--- what makes generated lists render with extra vertical space.
-private def listItem (cfg : Config) : List Block → Array Node
-  | [.para content] => inlines cfg content
-  | [] => #[]
+-- A one-paragraph item owns its paint on li/dd. Eliding its p must not
+-- elide the epoch with it, or add a wrapper that changes list rhythm.
+private def listItem (cfg : Config) (tag : String) : List Block → Node
+  | [.para content] => cfg.applyEpoch (Html.elem tag (inlines cfg content))
+  | [] => cfg.applyEpoch (Html.elem tag #[])
+  | .logo _ :: rest => listItem cfg tag rest
   | .setPalette p :: rest =>
-    listItem (cfg.advancePalette p) rest
+    listItem (cfg.advancePalette p) tag rest
   | .setTokens tk :: rest =>
-    let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
-    listItem { cfg with tokens := tk, epochStyle := style } rest
+    listItem (cfg.advanceTokens tk) tag rest
   | b :: rest =>
-    if Ir.pageMarkerBlock b then listItem cfg rest
-    else blockNodesInto cfg #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)] rest
+    if Ir.pageMarkerBlock b then listItem cfg tag rest
+    else
+      let child := cfg.into
+      cfg.applyEpoch (Html.elem tag
+        (blockNodesInto (child.afterBlock b)
+          #[child.applyEpoch (blockNode child b)] rest))
 
 end
 
@@ -7179,12 +7289,10 @@ private theorem snapWalk_count (id text label : String) :
     simp only [Array.size_push, List.length_cons]
     omega
 
-/-- The step count the two backends agree on, HTML half, stated over
-`Ir.frameSteps`: a stepped frame's track carries exactly
-`frameSteps frame` snap spacers beside its one sticky stage — the count
-`deckStepCss` reads back as `--steps` and the very count the PDF handout
-paginates the frame by (that half is the owed `pages_partition_frames`;
-there is no umbrella theorem over the two, one half being owed). -/
+/-- A stepped frame's track carries exactly `Ir.frameSteps frame` snap
+spacers beside its one sticky stage. `deckStepCss` reads the same count as
+`--steps`. Physical PDF pages can also include overflow continuations, so
+this contract counts HTML steps rather than physical pages. -/
 private theorem track_snaps_exact (id text label : String)
     (taken : Std.HashMap String String) (diags : Array Diag)
     (frame : Ir.Block) :
@@ -7228,8 +7336,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
     | .setPalette p =>
       cfg := cfg.advancePalette p
     | .setTokens tk =>
-      let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
-      cfg := { cfg with tokens := tk, epochStyle := style }
+      cfg := cfg.advanceTokens tk
     | .section 1 _ _ title =>
       out := close out cur openId
       let text := Ir.plainText title
@@ -7244,10 +7351,10 @@ anchor '{base}'; the second becomes '{id}'"
 retitle one section, or link to '#{id}'"))
       taken := taken.insert id text
       openId := some id
-      cur := #[withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b)]
+      cur := #[cfg.applyEpoch (blockNode cfg b)]
     | _ =>
-      unless Ir.pageMarkerBlock b do cur := cur.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))
-      cfg := cfg.afterFrame b
+      unless Ir.pageMarkerBlock b do cur := cur.push (cfg.applyEpoch (blockNode cfg b))
+      cfg := cfg.afterBlock b
   return (close out cur openId, diags)
 
 /-- Does an element take keyboard focus in sequential navigation — a tab
@@ -7394,7 +7501,7 @@ diagnostics the backend itself raises; `emit` renders it. The tree is the
 page before serialization: what the cross-backend agreement census judges
 against the PDF's `Layout.Out`, so a divergence is caught on structure, not
 by parsing the rendering back. -/
-private def emitTreeCore (cfg : Config) (doc : Doc) :
+private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Diag) :
     Array Node × Array Node × Array Diag := Id.run do
   -- The page's view of the document: backend conditionals resolve here, at
   -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
@@ -7498,8 +7605,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc) :
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
   -- Element styles are the document's own design and ride along in every
   -- mode: they are declarations, not a framework. A marker the sheet cannot
-  -- express is named here (W0328), not silently defaulted.
-  let (styled, styleDiags) := styleRules doc
+  -- express retains the declaration's source location (W0331).
+  let (styled, styleDiags) := styles
   diags := diags ++ styleDiags
   -- The shipped faces' rules ride exactly where the slot variables ride:
   -- a mode that emits no variables ships no rules, and the driver writes
@@ -7582,8 +7689,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) :
         | .setPalette p =>
           cfg := cfg.advancePalette p
         | .setTokens tk =>
-          let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
-          cfg := { cfg with tokens := tk, epochStyle := style }
+          cfg := cfg.advanceTokens tk
         | .logo c =>
           -- A state change for this walk, not content (the PDF's
           -- `.setLogo` twin): the frames from here on carry `c`, an
@@ -7613,9 +7719,9 @@ via \\chrome is the sequence both backends share"))
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*
           -- under the class-gated uncover rules (`deckStepCss`), so the
-          -- HTML section count is the frame count — the PDF's page count
-          -- less its per-step duplicates (`frames_sections` in Tests;
-          -- both counts are projections of `Ir.frameSteps`).
+          -- HTML section count is the source frame count (`frames_sections`
+          -- in Tests). Physical PDF pages also include overlay steps and
+          -- overflow continuations.
           let (node, named2) := claimStageName named (blockNode frameCfg b)
           named := named2
           -- The frame's anchor: its title slug, unique among the deck's
@@ -7703,8 +7809,8 @@ first; retitle one frame, or link to '#{id}'"))
               | .text s => Node.text s
               | .style s => Node.style s
               | .script attrs s => Node.script attrs s
-          acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround node)
-          cfg := cfg.afterFrame b
+          acc := acc.push (cfg.applyEpoch node)
+          cfg := cfg.afterBlock b
         | .section 1 starred num title =>
           curSection := title
           if (Design.ofPalette cfg.pal).sectionProgress.isSome then
@@ -7722,7 +7828,7 @@ first; retitle one frame, or link to '#{id}'"))
             -- force, as the PDF furnishes every page.
             let name := claimName named (sectionPageName title)
             named := named.insert name
-            acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround
+            acc := acc.push (cfg.applyEpoch
               (attachLogo cfg
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
@@ -7731,10 +7837,11 @@ first; retitle one frame, or link to '#{id}'"))
                 (Ir.logoInForce doc.logo logoSpans i)))
             sectionPages := sectionPages + 1
           else
-            acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround
+            acc := acc.push (cfg.applyEpoch
               (blockNode cfg (.section 1 starred num title)))
         | _ =>
-          unless Ir.pageMarkerBlock b do acc := acc.push (withEpoch cfg.epochStyle cfg.epochGround (blockNode cfg b))
+          unless Ir.pageMarkerBlock b do acc := acc.push (cfg.applyEpoch (blockNode cfg b))
+          cfg := cfg.afterBlock b
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   -- The endnotes: one section before the article end (W3C DPUB-ARIA 1.1
@@ -7873,7 +7980,8 @@ public def emitTree (cfg : Config) (doc : Doc) :
   -- hide a display formula, a description label, or a flex-row separator
   -- from the backend's structural classifiers. The caller's spanned IR
   -- remains available for diagnostics.
-  let (head, body, backendDiags) := emitTreeCore cfg (Ir.eraseLocations doc)
+  let (head, body, backendDiags) :=
+    emitTreeCore cfg (Ir.eraseLocations doc) (styleRules doc)
   (head, body, diags ++ backendDiags)
 
 /-- Both tree projections read the IR resolver's one fixed point. -/

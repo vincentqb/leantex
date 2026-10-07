@@ -77,16 +77,19 @@ public theorem reported_append (left right : Array Diag) (d : Diag) (h : Reporte
 /-- Document completion preserves the diagnostics supplied by execution and
 compatibility, including their original refused names, codes and spans.
 Colour realization, recovered-content accounting and the first tally
-cannot change any of those fields. -/
+cannot change any of those fields. The trigger is restored from the
+prepared source's lexical evidence. -/
 public theorem completePrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (d : Diag)
     (h : d ∈ earlier ++ p.compatDiags) :
-    Reported (completePrepared file p earlier doc table report st).2.1 d := by
+    Reported (completePrepared file p earlier doc table report st).2.1
+      (p.sourceTriggers.attribute d) := by
   unfold completePrepared
   dsimp only
   apply reported_tally
   apply reported_of_mem
+  refine Array.mem_map.mpr ⟨d, ?_, rfl⟩
   apply accountRecovered_mem
   exact Array.mem_append.mpr (Or.inl
     (Array.mem_append.mpr (Or.inl
@@ -100,7 +103,8 @@ completion for every picture-withdrawal environment. -/
 public theorem runPrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (d : Diag) (h : d ∈ earlier ++ p.compatDiags) :
-    Reported (runPrepared file p earlier metric withdrawn).2.1 d := by
+    Reported (runPrepared file p earlier metric withdrawn).2.1
+      (p.sourceTriggers.attribute d) := by
   obtain ⟨doc, table, report, st, heq⟩ :=
     runPrepared_complete_exact file p earlier metric withdrawn
   rw [heq]
@@ -113,13 +117,13 @@ reference judge preserve its producer records through the final tally. -/
 public theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (d : Diag)
     (h : d ∈ earlier ++ p.compatDiags) :
-    Reported (runPreparedFinal file p earlier metric).2 d := by
+    Reported (runPreparedFinal file p earlier metric).2 (p.sourceTriggers.attribute d) := by
   unfold runPreparedFinal finishPreparedRuns
   dsimp only
   split
-  · exact reported_tally _ d (reported_append _ _ d
+  · exact reported_tally _ _ (reported_append _ _ _
       (runPrepared_reports_contract file p earlier metric #[] d h))
-  · exact reported_tally _ d (reported_append _ _ d
+  · exact reported_tally _ _ (reported_append _ _ _
       (runPrepared_reports_contract file p earlier metric _ d h))
 
 attribute [local irreducible] Compat.rewriteText in
@@ -146,6 +150,7 @@ public theorem prepareExecuted_diags_covers (file : String)
     d ∈ (prepareExecuted file executed).compatDiags :=
   prepareRewritten_diags_covers file _ _ _ _ _ _ d h
 
+attribute [local irreducible] prepareExecuted runPreparedFinal in
 /-- A compatibility refusal reaches the final executed-document result,
 through text rewriting, body interpretation, recovery and both tallies.
 The caller still owes the producer-to-request connection; this lemma
@@ -154,16 +159,19 @@ public theorem runExecuted_reports_contract (file : String)
     (executed : Compat.Executed) (earlier : Array Diag)
     (metric : Ir.Pic.LabelMetric) (d : Diag)
     (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
-    Reported (runExecuted file executed earlier metric).2 d :=
-  runPreparedFinal_reports_contract file _ earlier metric d
-    (Array.mem_append.mpr (Or.inr (prepareExecuted_diags_covers file executed d h)))
+    Reported (runExecuted file executed earlier metric).2
+      (executed.sourceTriggers.attribute d) := by
+  simpa only [runExecuted, prepareExecuted_sourceTriggers_exact] using
+    runPreparedFinal_reports_contract file (prepareExecuted file executed) earlier metric d
+      (Array.mem_append.mpr (Or.inr (prepareExecuted_diags_covers file executed d h)))
 
 attribute [local irreducible] executeInputs Compat.executeInputs
   Compat.rewriteExecuted runExecuted in
 /-- A live external-package declaration whose reader returns no input has
 an actual failed-call receipt, the requested style-file candidate for each
 name, and its producer's full source-located refusal in the final result.
-The only permitted diagnostic change is the tally's site count.
+The final trigger uses the same lexical evidence as the producer, so
+the only further change is the tally's site count.
 
 The domain is stated on the source call and the external reader before
 execution: either package-loading spelling, arbitrary nonempty external
@@ -205,9 +213,10 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
   intro part hpart
   have hname : request.name = names.trimAscii.toString :=
     Compat.InputRequest.package_name_exact file command names pos groupPos namePos
-  refine ⟨?_, runExecuted_reports_contract file _ earlier metric _
-    (hproducer.2 part hpart)⟩
-  exact (CompatContract.inputRequest_names_asked request).1 hc part
-    (by simpa only [hname] using hpart) (hnames part hpart).1 (hnames part hpart).2.1
+  constructor
+  · exact (CompatContract.inputRequest_names_asked request).1 hc part
+      (by simpa only [hname] using hpart) (hnames part hpart).1 (hnames part hpart).2.1
+  · simpa only [Compat.SourceTriggers.attribute_fixed_point] using
+      runExecuted_reports_contract file _ earlier metric _ (hproducer.2 part hpart)
 
 end LeanTex.Core.Elab

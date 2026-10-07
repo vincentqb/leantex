@@ -138,7 +138,8 @@ face the document did not choose is never silent. -/
 public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
     (body : Option String) (wantsMath : Bool)
     (fonts : Array Font.Font) (paths : Array String)
-    (missing : Array String) (cache : Option Cache := none) : IO MathFace := do
+    (missing : Array String) (cache : Option Cache := none)
+    (source : Option Span := none) : IO MathFace := do
   let mut fonts := fonts
   let mut paths := paths
   let mut missing := missing
@@ -192,9 +193,10 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
       if let some (i, f) := loaded then
         if f.math.isSome then
           mathIdx := some i
-          diags := diags.push (match companionOf with
+          let note := match companionOf with
             | some named => DriverDiag.mathFaceCompanion f.family named
-            | none => DriverDiag.mathFaceFirst f.family)
+            | none => DriverDiag.mathFaceFirst f.family
+          diags := diags.push { note with span := source, trigger := source.bind (·.pos.command) }
   return { fonts, paths, index := mathIdx, missing, diags }
 
 end LeanTex.Cli.FontEnv

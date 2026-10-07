@@ -307,6 +307,26 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         record.getObjValAs? String "file" == .ok triggered.toString &&
         record.getObjValAs? Nat "line" == .ok 2 &&
         record.getObjValAs? String "trigger" == .ok "\\directlua")
+    let font ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
+    for command in ["\\style{itemize}{marker={\\includegraphics{missing.png}}}",
+        "\\setbeamertemplate{itemize item}{\\includegraphics{missing.png}}"] do
+      let marker := dir / "marker.tex"
+      IO.FS.writeFile marker ("\\documentclass{article}\n\n" ++ command ++ "\n" ++
+        "\\begin{document}\\begin{itemize}\\item body\\end{itemize}\\end{document}")
+      let result ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[marker.toString, "-o", (dir / "marker.html").toString, "--porcelain"]
+        env := #[("LEANTEX_FONT", some font.toString)] }
+      let records := (result.stdout.splitOn "\n").filterMap fun line =>
+        (Lean.Json.parse line).toOption
+      let trigger := (command.splitOn "{").head!
+      for code in ["W0331", "W0601"] do
+        let losses := records.filter (·.getObjValAs? String "code" == .ok code)
+        t s!"diagnostic format: delayed marker loss keeps its written declaration {trigger}/{code}"
+          (result.exitCode == 0 && losses.length == 1 && losses.all fun record =>
+            record.getObjValAs? String "file" == .ok marker.toString &&
+            record.getObjValAs? Nat "line" == .ok 3 &&
+            record.getObjValAs? String "trigger" == .ok trigger)
     let source := (dir / "example.tex").toString
     for allow in [false, true] do
       IO.FS.writeFile source ("\\documentclass{article}\n" ++

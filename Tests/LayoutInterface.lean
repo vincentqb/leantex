@@ -21,10 +21,10 @@ example (line : LineOut) : Array Seg × Option Nat × Bool × List Char :=
   (line.segs, line.leaf, line.counted, line.glyphChars)
 
 example : Geom → FontSet → Option Hyphen.Patterns → Ir.Doc → Image.Store →
-    Array (Nat × Span) → Out := @run
+    Array (Nat × Span) → Array (Nat × Span) → Out := @run
 
 example : Geom → FontSet → Option Hyphen.Patterns → Ir.Doc → Image.Store →
-    Array (Nat × Span) → Shipped := @ship
+    Array (Nat × Span) → Array (Nat × Span) → Shipped := @ship
 
 example : Shipped → Out := runPost
 example : Ir.Doc → Array Char := docScalars
