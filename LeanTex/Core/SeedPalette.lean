@@ -25,27 +25,59 @@ public structure Colors where
   accentSoft : Color
   deriving Repr, BEq
 
+/-- Authoring roles, independent of renderer palette keys. A ground is a
+role too: the same ink may have to work on several actual surfaces. -/
+public inductive Role where
+  | ink | paper | accent | muted | mutedOnDark | diagramMuted
+  | surface | accentText | accentOnDark | accentSoft
+  deriving Repr, BEq, DecidableEq
+
+public def Role.name : Role → String
+  | .ink => "Ink" | .paper => "Paper" | .accent => "Accent"
+  | .muted => "Muted" | .mutedOnDark => "MutedOnDark"
+  | .diagramMuted => "DiagramMuted" | .surface => "Surface"
+  | .accentText => "AccentText" | .accentOnDark => "AccentOnDark"
+  | .accentSoft => "AccentSoft"
+
+@[expose] public def Role.color (s : Seeds) (c : Colors) : Role → Color
+  | .ink => s.ink | .paper => s.paper | .accent => s.accent
+  | .muted => c.muted | .mutedOnDark => c.mutedOnDark
+  | .diagramMuted => c.diagramMuted | .surface => c.surface
+  | .accentText => c.accentText | .accentOnDark => c.accentOnDark
+  | .accentSoft => c.accentSoft
+
+public def Role.all : List Role :=
+  [.ink, .paper, .accent, .muted, .mutedOnDark, .diagramMuted,
+   .surface, .accentText, .accentOnDark, .accentSoft]
+
+public theorem Role.all_mem (role : Role) : role ∈ Role.all := by
+  cases role <;> simp [Role.all]
+
 /-- A decorative wash's contrast, not an accessibility threshold. One design
 token controls both neutral panels and accent tracks. -/
 public def washRatio : Nat := 1150
 
-/-- Each pair names the surface it actually shares. Text and essential
+/-- Each requirement names the surface it actually shares. Text and essential
 edges must work on the panel as well as on the page (WCAG 2.2, 1.4.3/1.4.11).
 Decorative fills carry no text or essential information of their own. -/
+@[expose] public def requirements : List (Role × Role × Nat) :=
+  [(.ink, .paper, Contrast.aaText),
+   (.ink, .surface, Contrast.aaText),
+   (.muted, .paper, Contrast.aaText),
+   (.muted, .surface, Contrast.aaText),
+   (.mutedOnDark, .ink, Contrast.aaText),
+   (.accentText, .paper, Contrast.aaText),
+   (.accentText, .surface, Contrast.aaText),
+   (.accentOnDark, .ink, Contrast.aaText),
+   (.diagramMuted, .paper, Contrast.aaNonText),
+   (.diagramMuted, .surface, Contrast.aaNonText),
+   (.accent, .paper, Contrast.aaNonText),
+   (.accent, .surface, Contrast.aaNonText),
+   (.accent, .accentSoft, Contrast.aaNonText)]
+
 public def pairs (s : Seeds) (c : Colors) : List (Color × Color × Nat) :=
-  [(s.ink, s.paper, Contrast.aaText),
-   (s.ink, c.surface, Contrast.aaText),
-   (c.muted, s.paper, Contrast.aaText),
-   (c.muted, c.surface, Contrast.aaText),
-   (c.mutedOnDark, s.ink, Contrast.aaText),
-   (c.accentText, s.paper, Contrast.aaText),
-   (c.accentText, c.surface, Contrast.aaText),
-   (c.accentOnDark, s.ink, Contrast.aaText),
-   (c.diagramMuted, s.paper, Contrast.aaNonText),
-   (c.diagramMuted, c.surface, Contrast.aaNonText),
-   (s.accent, s.paper, Contrast.aaNonText),
-   (s.accent, c.surface, Contrast.aaNonText),
-   (s.accent, c.accentSoft, Contrast.aaNonText)]
+  requirements.map fun (foreground, ground, req) =>
+    (foreground.color s c, ground.color s c, req)
 
 public def contract (s : Seeds) (c : Colors) : Bool :=
   (pairs s c).all fun (ink, ground, req) =>
@@ -63,6 +95,13 @@ public theorem generated_contract {s : Seeds} (p : Generated s)
     req ≤ Contrast.contrastMilli ink ground := by
   have hv := List.all_eq_true.mp p.valid _ h
   exact of_decide_eq_true hv
+
+/-- A named requirement is checked against the generated RGB values, the
+same values exported for both backends. -/
+public theorem generated_role_contract {s : Seeds} (p : Generated s)
+    {foreground ground : Role} {req : Nat} (h : (foreground, ground, req) ∈ requirements) :
+    req ≤ Contrast.contrastMilli (foreground.color s p.colors) (ground.color s p.colors) :=
+  generated_contract p (List.mem_map.mpr ⟨(foreground, ground, req), h, rfl⟩)
 
 /-- Select from the seed-to-ground Oklab segment, at the existing cover
 API's percentage resolution. Search from the ground: the quietest passing
@@ -107,13 +146,9 @@ public def generate (s : Seeds) : Option (Generated s) := do
 There is no generator or colour solver to run when compiling the exported
 document. Prefix validation belongs to the authoring tool. -/
 public def declarations (stem : String) (s : Seeds) (p : Generated s) : String :=
-  let c := p.colors
-  String.join (([("Ink", s.ink), ("Paper", s.paper), ("Accent", s.accent),
-    ("Muted", c.muted), ("MutedOnDark", c.mutedOnDark),
-    ("DiagramMuted", c.diagramMuted), ("Surface", c.surface),
-    ("AccentText", c.accentText), ("AccentOnDark", c.accentOnDark),
-    ("AccentSoft", c.accentSoft)] : List (String × Color)).map fun (role, ink) =>
-      "\\definecolor{" ++ stem ++ role ++ "}{HTML}{" ++
+  String.join (Role.all.map fun role =>
+    let ink := role.color s p.colors
+    "\\definecolor{" ++ stem ++ role.name ++ "}{HTML}{" ++
         Color.hexByte ink.r ++ Color.hexByte ink.g ++ Color.hexByte ink.b ++ "}\n")
 
 end LeanTex.Core.SeedPalette
