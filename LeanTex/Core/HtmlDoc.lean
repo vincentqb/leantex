@@ -5690,20 +5690,29 @@ public def epochTokenStyle (before after : Ir.Tokens) : String :=
     before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
 
 /-- Advance the palette epoch and default ink. A surrounding painted body
-keeps its surface; outside one, the page ground follows the new palette. -/
+keeps its surface; outside one, the page ground follows the new palette.
+Every epoch sets concrete ink: a custom property does not recompute an
+ancestor's inherited CSS color. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.pal p
   let d := Design.ofPalette p
   let fg := (d.inkOn "fg" { fg := d.fg, bg := cfg.bodyGround.getD d.bg }).fg
-  let concreteInk := cfg.bodyInk.isSome || cfg.bodyGround.isSome || cfg.listingFg.isSome
   { cfg with pal := p
              listingGround := cfg.bodyGround.or (p.find? "bg")
-             listingFg := if concreteInk then some fg else none, bodyInk := none
+             listingFg := some fg, bodyInk := none
              epochStyle := joinStyles cfg.epochStyle
-               (joinStyles diff.style (if concreteInk then
-                 s!"color: {cssColor fg};" ++ surfaceInkDecls p (cfg.bodyGround.getD d.bg)
-                else ""))
+               (joinStyles diff.style
+                 (s!"color: {cssColor fg};" ++ surfaceInkDecls p (cfg.bodyGround.getD d.bg)))
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
+
+/-- Listings inherit the epoch's shared IR ink on the enclosing surface,
+including the default selected when a foreground declaration is erased. -/
+public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :
+    (cfg.advancePalette p).listingFg =
+      some ((Design.ofPalette p).inkOn "fg"
+        { fg := (Design.ofPalette p).fg
+          bg := cfg.bodyGround.getD (Design.ofPalette p).bg }).fg := by
+  rfl
 
 /-- A frame's outgoing palette continues into later frames, as in layout.
 The context fold excludes speaker notes: their declarations are side-channel
