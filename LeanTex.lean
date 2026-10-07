@@ -59,6 +59,7 @@ import LeanTex.Core.MathMl
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.MarkdownDoc
 import LeanTex.Core.Layout
+import LeanTex.Core.LayoutCensus
 import LeanTex.Core.Layout.FramePartition
 import LeanTex.Core.Layout.SpacingContract
 import LeanTex.Core.Layout.InkContract

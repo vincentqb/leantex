@@ -4,6 +4,7 @@ import Tests.DiagInterface
 import Tests.LeafInterfaces
 import Tests.MathInterface
 import Tests.ImageInterface
+import Tests.BibPendingInterface
 import Tests.InkInterface
 import Tests.FontInterface
 import Tests.FontDiscoveryInterface
