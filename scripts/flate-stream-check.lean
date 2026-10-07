@@ -1,4 +1,5 @@
 import LeanTex.Core.Flate
+import LeanTex.Core.Flate.DecodeLoop
 
 /-!
 Focused compression regression check, independent of the document engine:
@@ -14,6 +15,26 @@ open LeanTex.Core
 
 private def fail (message : String) : IO α :=
   throw (IO.userError s!"flate-stream-check: {message}")
+
+-- The budget counts the terminal step too. A terminal answer/error must
+-- stop the real loop, even when its caller supplied a larger bound.
+private def loopChecks : IO Unit := do
+  let step (s : Nat) : Except String (Sum Nat Nat) :=
+    if s == 3 then .ok (.inl 21)
+    else if s > 3 then .error "past answer"
+    else .ok (.inr (s + 1))
+  for budget in [:6] do
+    unless (match Flate.DecodeLoop.run budget step 0 "exhausted" with
+      | .ok n => budget ≥ 4 && n == 21
+      | .error e => budget < 4 && e == "exhausted") do
+      fail s!"loop: success/exhaustion at budget {budget}"
+    let refusing := fun s => if s == 2 then .error "bad token" else step s
+    unless (match Flate.DecodeLoop.run budget refusing 0 "exhausted" with
+      | .error e => e == if budget < 3 then "exhausted" else "bad token"
+      | .ok _ => false) do
+      fail s!"loop: error/exhaustion at budget {budget}"
+  unless (Flate.DecodeLoop.run 1 step 3 "exhausted").toOption == some 21 do
+    fail "loop: first step answer"
 
 private def samples : Array (String × ByteArray) := Id.run do
   let mut cases := #[
@@ -68,6 +89,7 @@ private def check (dir : System.FilePath) (label : String) (raw : ByteArray) : I
   IO.println s!"{label}\t{encoded.size}\t{Flate.contentKey encoded}"
 
 def main : IO Unit := do
+  loopChecks
   let dir ← IO.FS.createTempDir
   try
     for (label, raw) in samples do check dir label raw

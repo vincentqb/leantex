@@ -5,16 +5,23 @@ import LeanTex.Core.Flate.Progress
 namespace LeanTex.Core.Flate.DecodeLoop
 
 /-- A bounded decoder keeps its continuation state separate from a completed
-answer. The bound is the format's input or output bound, supplied by its caller. -/
+answer. Terminal branches must not retain the previous continuation: that
+would share its output buffer across `step` and copy the prefix on append.
+The bound is the format's input or output bound, supplied by its caller. -/
 @[specialize] public def run {ε σ α : Type} (count : Nat)
     (step : σ → Except ε (Sum α σ)) (initial : σ) (exhausted : ε) : Except ε α :=
-  let result := (forIn [0:count] (none, initial) fun _ state => do
-    match step state.2 with
-    | .error e => return .done (some (.error e), state.2)
-    | .ok (.inl answer) => return .done (some (.ok answer), state.2)
-    | .ok (.inr next) => return .yield (none, next) :
-      Id (Option (Except ε α) × σ)).run
-  result.1.getD (.error exhausted)
+  let result := (forIn [0:count] (.inr initial) fun _ state => do
+    match state with
+    | .inl answer => return .done (.inl answer)
+    | .inr current =>
+      match step current with
+      | .error e => return .done (.inl (.error e))
+      | .ok (.inl answer) => return .done (.inl (.ok answer))
+      | .ok (.inr next) => return .yield (.inr next) :
+      Id (Sum (Except ε α) σ)).run
+  match result with
+  | .inl answer => answer
+  | .inr _ => .error exhausted
 
 /-- A successful execution trace of the real one-step reader. The final step
 is counted, so the statement includes the decoder's termination budget. -/
@@ -35,30 +42,42 @@ theorem run_exact {ε σ α : Type} (step : σ → Except ε (Sum α σ))
     (initial : σ) (answer : α) (count budget : Nat) (exhausted : ε)
     (h : Finishes step initial count answer) (hb : count ≤ budget) :
     run budget step initial exhausted = .ok answer := by
-  let P (k : Nat) (state : Option (Except ε α) × σ) : Prop :=
-    ∃ n, n + k ≤ budget ∧ Finishes step state.2 n answer
-  let Q (state : Option (Except ε α) × σ) : Prop :=
-    state.1 = some (.ok answer)
+  let P (k : Nat) (state : Sum (Except ε α) σ) : Prop :=
+    match state with
+    | .inl _ => False
+    | .inr current => ∃ n, n + k ≤ budget ∧ Finishes step current n answer
+  let Q (state : Sum (Except ε α) σ) : Prop :=
+    state = .inl (.ok answer)
   have hf := Progress.forIn_range_exact P Q
     (fun _ state => do
-      match step state.2 with
-      | .error e => return .done (some (.error e), state.2)
-      | .ok (.inl a) => return .done (some (.ok a), state.2)
-      | .ok (.inr next) => return .yield (none, next))
-    0 budget (none, initial) (Nat.zero_le _)
+      match state with
+      | .inl a => return .done (.inl a)
+      | .inr current =>
+        match step current with
+        | .error e => return .done (.inl (.error e))
+        | .ok (.inl a) => return .done (.inl (.ok a))
+        | .ok (.inr next) => return .yield (.inr next))
+    0 budget (.inr initial) (Nat.zero_le _)
     ⟨count, by omega, h⟩ ?_ ?_
-  · simp only [run, Q, hf, Option.getD_some]
+  · simp only [run, Q] at hf ⊢
+    rw [hf]
   · intro i _ _ state hs
-    obtain ⟨n, hn, ht⟩ := hs
-    cases ht with
-    | done he => simp only [he]; rfl
-    | next he rest =>
-      simp only [he]
-      exact ⟨_, by omega, rest⟩
+    cases state with
+    | inl _ => exact hs.elim
+    | inr current =>
+      obtain ⟨n, hn, ht⟩ := hs
+      cases ht with
+      | done he => simp only [he]; rfl
+      | next he rest =>
+        simp only [he]
+        exact ⟨_, by omega, rest⟩
   · intro state hs
-    obtain ⟨n, hn, ht⟩ := hs
-    have := ht.positive
-    omega
+    cases state with
+    | inl _ => exact hs.elim
+    | inr current =>
+      obtain ⟨n, hn, ht⟩ := hs
+      have := ht.positive
+      omega
 
 /-- Continuation steps, before the final marker has been read. -/
 inductive Steps {ε σ α : Type} (step : σ → Except ε (Sum α σ)) :

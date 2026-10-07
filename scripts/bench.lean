@@ -23,6 +23,10 @@ path. Cold means application caches, not the OS page cache. Phases and
 image work counts come from verbose porcelain records. Cache inventories
 are not hit counters for operations the compiler does not instrument.
 Its gates are equivalence, invalidation and work counts, never milliseconds.
+`--slides-compressed-only` applies those same checks to eight slides with a
+256x256 dynamic-Huffman alpha PNG, exercising the token decoder rather than
+stored blocks. Optional `LEANTEX_BENCH_COMPARE_BINARY` runs a second compiler
+on the same fixtures and requires identical artifacts and diagnostics.
 `--slides-selftest` tests those judges without compiling any documents.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
@@ -416,6 +420,11 @@ def pngChunk (tag : String) (data : ByteArray) : ByteArray :=
   let payload := tag.toUTF8 ++ data
   be32 data.size ++ payload ++ be32 (crc32 payload).toNat
 
+def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
+  ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩ ++
+    pngChunk "IHDR" (be32 width ++ be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
+    pngChunk "IDAT" compressed ++ pngChunk "IEND" ByteArray.empty
+
 /-- Two same-sized RGBA fixtures, one filename. Changing the colour must
 invalidate alpha decoding by content even when the dimensions are identical. -/
 def raster (edited : Bool) : ByteArray := Id.run do
@@ -425,9 +434,25 @@ def raster (edited : Bool) : ByteArray := Id.run do
     for x in [:128] do
       raw := raw ++ ⟨#[if edited then 200 else 40, UInt8.ofNat (x + y),
         if edited then 40 else 200, if x % 16 < 8 then 255 else 128]⟩
-  return ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩ ++
-    pngChunk "IHDR" (be32 128 ++ be32 80 ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
-    pngChunk "IDAT" (Flate.deflateStored raw) ++ pngChunk "IEND" ByteArray.empty
+  return png 128 80 (Flate.deflateStored raw)
+
+/-- Seeded low-entropy noise needs both literals and matches. Long flat runs
+would hide repeated prefix copying in the compressed-token decoder. The edit
+changes one colour sample, retaining the path, dimensions and alpha format. -/
+def compressedRaster (side : Nat) (edited : Bool) : ByteArray := Id.run do
+  let mut raw := ByteArray.emptyWithCapacity (side * (4 * side + 1))
+  let mut seed : UInt64 := 731
+  for y in [:side] do
+    raw := raw.push 0
+    for x in [:side] do
+      for c in [:4] do
+        seed := seed ^^^ (seed >>> 12)
+        seed := seed ^^^ (seed <<< 25)
+        seed := seed ^^^ (seed >>> 27)
+        let value := (seed * 2685821657736338717).toUInt8
+        let value := if c == 3 then 128 + value % 128 else value % 32
+        raw := raw.push (if edited && x == 0 && y == 0 && c == 0 then value ^^^ 16 else value)
+  return png side side (Flate.deflate raw)
 
 /-- A font-free vector asset, generated outside timing. Its conversion
 has no dependency on a host font substitution. -/
@@ -530,6 +555,14 @@ def selftest : IO Unit := do
     require (match png.alpha with | .soft _ 8 => true | _ => false) "fixture lost alpha"
   require ((raster false).size == (raster true).size && raster false != raster true)
     "asset edit must preserve size, change content"
+  for edit in [false, true] do
+    let source ← checked (Image.probe (compressedRaster 16 edit))
+    require ((source.payload[2]?.getD 0 >>> 1) &&& 3 == 2)
+      "compressed fixture must exercise dynamic-Huffman decoding"
+    let image ← checked (Image.decode (compressedRaster 16 edit))
+    require (image.pxW == 16 && image.pxH == 16 && image.losses.isEmpty &&
+      match image.alpha with | .soft _ 8 => true | _ => false) "compressed RGBA fixture"
+  require (compressedRaster 16 false != compressedRaster 16 true) "compressed asset edit"
   require ((vector false).size == (vector true).size && vector false != vector true)
     "vector edit must preserve size, change content"
   require (deck 8 != deck 8 true) "source edit must change content"
@@ -611,9 +644,10 @@ def checkEdit (binary dir cache : System.FilePath) (format label : String)
   say s!"  {label}: changed bytes = fresh-cache oracle; repeat identical (not in medians)"
   return changed
 
-def bench (binary dir : System.FilePath) (n frames : Nat) (format : String) : IO Unit := do
+def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
+    (image : Bool → ByteArray := raster) : IO Run := do
   IO.FS.writeFile (dir / "deck.tex") (deck frames)
-  IO.FS.writeBinFile (dir / "grid.png") (raster false)
+  IO.FS.writeBinFile (dir / "grid.png") (image false)
   IO.FS.writeBinFile (dir / "blocks.pdf") (vector false)
   let cache := dir / "cache"
   let mut cold : Array Run := #[]
@@ -651,7 +685,7 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String) : IO
   say s!"  inventory: imgs={entries first.cache "imgs" ".img"} flate={entries first.cache "flate" ".answer"} convs={entries first.cache "convs" ".answer"} (published answers; identical on repeat)"
   say s!"  artifact={Flate.contentKey first.bytes} bytes={first.bytes.size} pages={first.report.pages} diagnostics={first.report.diagnostics.size}"
   say s!"  font environment: {((first.report.phase? "fontdb").map (·.detail)).getD ""}; {((first.report.phase? "font").map (·.detail)).getD ""}"
-  IO.FS.writeBinFile (dir / "grid.png") (raster true)
+  IO.FS.writeBinFile (dir / "grid.png") (image true)
   let changed ← checkEdit binary dir cache format "same-path asset edit" frames 0 first
   require (entries changed.cache "imgs" ".img" == 2) "asset edit reused the old alpha answer"
   IO.FS.writeBinFile (dir / "blocks.pdf") (vector true)
@@ -659,17 +693,29 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String) : IO
   IO.FS.writeFile (dir / "deck.tex") (deck frames true)
   let sourceEdit ← checkEdit binary dir cache format "same-path source edit" frames 1 vectorEdit
   require (entries sourceEdit.cache "imgs" ".img" == 2) "source edit repeated unchanged alpha work"
+  return first
 
 def load : IO String := do
   return ((← (IO.FS.readFile "/proc/loadavg").toBaseIO).toOption.getD "unavailable").trimAscii.toString
 
-def run (n : Nat) : IO Unit := do
+def run (n : Nat) (compressed : Bool := false) : IO Unit := do
   require (n ≥ 3) "N must be at least 3 for slide medians"
   selftest
   let versions ← toolVersions
   let binary ← IO.FS.realPath (← compiler)
   let binaryKey ← binaryHash binary
+  let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
+    | none => pure none
+    | some path =>
+      let path ← IO.FS.realPath path
+      pure (some (path, ← binaryHash path))
+  let image := if compressed then compressedRaster 256 else raster
+  -- Capture the exact encoded inputs once; generation is outside all samples.
+  let original := image false
+  let edited := image true
+  let image := fun edit => if edit then edited else original
   say s!"slides runtime benchmark v1; N={n}; binary={binary}; sha256={binaryKey}"
+  say s!"PNG workload: {if compressed then "256x256 dynamic-Huffman" else "128x80 stored"}"
   for (tool, version) in versions do
     say s!"tool {tool}: {(Lean.Json.str version).compress}"
   say "Application-cache cold; OS caches uncontrolled. Shared-host timings are provisional; rerun on a quiet host for before/after claims."
@@ -681,9 +727,18 @@ def run (n : Nat) : IO Unit := do
       if file.path.extension == some "otf" || file.path.extension == some "ttf" then
         IO.FS.writeBinFile (dir / "fonts" / file.fileName) (← IO.FS.readBinFile file.path)
     let fonts ← inventory (dir / "fonts")
-    say s!"inputs: fonts={fingerprint fonts} ({fonts.size} files) png={Flate.contentKey (raster false)} pdf={Flate.contentKey (vector false)}; LC_ALL=C TZ=UTC"
-    for frames in [8, 32] do
-      for format in ["pdf", "html"] do bench binary dir n frames format
+    say s!"inputs: fonts={fingerprint fonts} ({fonts.size} files) png={Flate.contentKey original} pdf={Flate.contentKey (vector false)}; LC_ALL=C TZ=UTC"
+    for frames in (if compressed then [8] else [8, 32]) do
+      for format in ["pdf", "html"] do
+        say s!"primary compiler sha256={binaryKey}"
+        let primary ← bench binary dir n frames format image
+        if let some (other, key) := comparison then
+          say s!"comparison compiler={other}; sha256={key}"
+          let reference ← bench other dir n frames format image
+          require (equivalent frames primary.report reference.report primary.bytes reference.bytes)
+            "compiler comparison changed artifacts, diagnostics or font environment"
+          require ((← binaryHash other) == key) "comparison compiler changed during the benchmark"
+          say "compiler comparison: byte-identical artifact and ordered diagnostics"
     require ((← inventory (dir / "fonts")) == fonts) "font bytes changed during the benchmark"
   require ((← binaryHash binary) == binaryKey) "compiler changed during the benchmark"
   require ((← toolVersions) == versions) "external tool versions changed during the benchmark"
@@ -701,6 +756,9 @@ def main (args : List String) : IO UInt32 := do
   if n == 0 then die "N must be positive"
   if args == ["--slides-only"] then
     Slides.run n
+    return 0
+  if args == ["--slides-compressed-only"] then
+    Slides.run n true
     return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
