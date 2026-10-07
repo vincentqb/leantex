@@ -1,3 +1,9 @@
+module
+
+public import LeanTex.Core.Image
+public import LeanTex.Core.PdfRead
+public import LeanTex.Core.Flate
+import LeanTex.Core.Ir
 import LeanTex.Core.HtmlDoc
 import LeanTex.Cli.Batch
 import LeanTex.Cli.ImageAssets
@@ -6,37 +12,37 @@ namespace LeanTex.Cli.BrowserFaces
 
 open LeanTex.Core
 
-inductive Conversion where
+public inductive Conversion where
   | svgPoster (page : PdfRead.PageSelection)
   | pdfPage (page : PdfRead.PageSelection)
   deriving BEq, Repr
 
 /-- The driver's requests, before host conversion. The hermetic oracle
 reads the same plan without running a converter. -/
-inductive Plan where
+public inductive Plan where
   | keep
   | movingSvgWithPoster (conversion : Conversion)
   | convertedPrimary (conversion : Conversion)
   | animatedWithCompanion (conversion : Conversion)
   deriving BEq, Repr
 
-def Conversion.key : Conversion → String
+public def Conversion.key : Conversion → String
   | .svgPoster page => s!"svg-poster:{reprStr page}"
   | .pdfPage page => s!"pdf-page:{reprStr page}"
 
-def Plan.key : Plan → String
+public def Plan.key : Plan → String
   | .keep => "keep"
   | .movingSvgWithPoster op => "moving:" ++ op.key
   | .convertedPrimary op => "primary:" ++ op.key
   | .animatedWithCompanion op => "companion:" ++ op.key
 
-def Plan.conversion? : Plan → Option Conversion
+public def Plan.conversion? : Plan → Option Conversion
   | .keep => none
   | .movingSvgWithPoster op | .convertedPrimary op | .animatedWithCompanion op => some op
 
 /-- Select from the captured source and native plan. A previous browser
 conversion must not turn a PDF request into an SVG request on a second pass. -/
-def plan (en : Image.Loaded) : Plan :=
+public def plan (en : Image.Loaded) : Plan :=
   if en.src.startsWith Ir.picSrcPrefix then .keep else
   match en.info with
   | none => .keep
@@ -47,11 +53,11 @@ def plan (en : Image.Loaded) : Plan :=
     else if en.animated && en.companion.isSome then .animatedWithCompanion (.pdfPage en.page)
     else .convertedPrimary (.pdfPage en.page)
 
-structure Outcome where
+public structure Outcome where
   bytes : Except String ByteArray
   companionOk : Bool := false
 
-def apply (en : Image.Loaded) (p : Plan) (answer : Outcome) : Image.Loaded :=
+public def apply (en : Image.Loaded) (p : Plan) (answer : Outcome) : Image.Loaded :=
   match p with
   | .keep => en
   | .movingSvgWithPoster _ =>
@@ -72,13 +78,13 @@ def apply (en : Image.Loaded) (p : Plan) (answer : Outcome) : Image.Loaded :=
                 webError := none }
 
 /-- Browser payloads preserve the native plan that the PDF backend reads. -/
-theorem apply_info_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
+public theorem apply_info_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
     (apply en p answer).info = en.info := by
   rcases answer with ⟨bytes, companionOk⟩
   cases p <;> cases bytes <;> rfl
 
 /-- Browser payloads preserve the captured first-frame animation canvas. -/
-theorem apply_canvas_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
+public theorem apply_canvas_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
     (apply en p answer).canvasSize = en.canvasSize := by
   rcases answer with ⟨bytes, companionOk⟩
   cases p <;> cases bytes <;> rfl
@@ -91,12 +97,12 @@ private def Conversion.source? (en : Image.Loaded) : Conversion → Option ByteA
 Serialize even different recipes for that fingerprint: filenames and page
 spellings are not cache identities, and no hash injectivity is assumed.
 Entries without conversion bytes receive their own position key. -/
-def sourceKey (source : Option ByteArray) (index : Nat) : Sum Nat String :=
+public def sourceKey (source : Option ByteArray) (index : Nat) : Sum Nat String :=
   match source with
   | none => .inl index
   | some bytes => .inr (Flate.contentKey bytes)
 
-theorem sourceKey_contract (a b : ByteArray) (i j : Nat) :
+public theorem sourceKey_contract (a b : ByteArray) (i j : Nat) :
     sourceKey (some a) i = sourceKey (some b) j ↔
       Flate.contentKey a = Flate.contentKey b := by
   simp [sourceKey]
@@ -137,7 +143,7 @@ private def Prepared.finish (prepared : Prepared) : IO Image.Loaded := do
       | none => pure false
     return apply en p { bytes, companionOk }
 
-def prepare (en : Image.Loaded) : IO Image.Loaded := do
+public def prepare (en : Image.Loaded) : IO Image.Loaded := do
   (← preparePrimary en).finish
 
 /-- Prepare browser faces with at most `max 1 limit` concurrent requests,
@@ -147,7 +153,7 @@ Both phases use the same content keys as the conversion cache's source
 prefix and the ordered, exclusive partition checked by `Batch.plan_exact`,
 `Batch.plan_bounded` and `Batch.plan_keys_nodup`. Tool identity memos may
 share a path across keys; ConvCache publishes those atomically too. -/
-def prepareAll (entries : Array Image.Loaded) (limit : Nat := 4) :
+public def prepareAll (entries : Array Image.Loaded) (limit : Nat := 4) :
     IO (Array Image.Loaded) := do
   let prepared ← mapBySource limit primarySource? preparePrimary entries
   mapBySource limit Prepared.companion? Prepared.finish prepared
