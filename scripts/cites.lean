@@ -179,8 +179,7 @@ structure PhantomRow where
   deriving BEq, Repr, Inhabited
 
 def citePhantomKnown : List PhantomRow :=
-  [⟨"frames_sections", "LeanTex/Core/Ir.lean", "LeanTex.Core.Ir.frameSteps"⟩,
-   ⟨"frames_sections", "Tests/Themes.lean", "deckStepChecks"⟩,
+  [⟨"frames_sections", "Tests/Themes.lean", "deckStepChecks"⟩,
    -- Five the qualified-spelling hole hid: the resolver read only the bare
    -- snake_case form, so a citation written `Namespace.theorem_name` was not
    -- a candidate at all, and the gate never asked. They are pre-existing,
