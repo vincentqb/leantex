@@ -52,6 +52,10 @@ example : Struct.Tree → Array Pdf.StructElem := Pdf.skeleton
 example (tree : Struct.Tree) : Pdf.Unfilled (Pdf.skeleton tree) :=
   Pdf.skeleton_unfilled_contract tree
 
+example (elements : Array Pdf.StructElem) (leafPages : Array (Array (Nat × Nat))) :
+    (Pdf.fill elements leafPages).size = elements.size :=
+  Pdf.fill_size_exact elements leafPages
+
 example (alternative : Ir.Alt) :
     (Pdf.altElem #[Pdf.rootElem] 0 0 alternative).back?.bind (·.alt) =
       match alternative with
@@ -99,6 +103,10 @@ example : True := by
   fail_if_success have := Pdf.bibEntryElems
   fail_if_success have := Pdf.skelList
   fail_if_success have := Pdf.skelStep
+  fail_if_success have := Pdf.fillKid
+  fail_if_success have := Pdf.leafIdsOf
+  fail_if_success have := Pdf.skelLeafIds
+  fail_if_success have := Pdf.fillKids_mcid_exact
   trivial
 
 end Tests.PdfInterfaces

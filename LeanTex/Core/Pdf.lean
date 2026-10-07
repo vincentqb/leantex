@@ -2235,7 +2235,7 @@ theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (prepare geom fs pages info imgs outline streams tree ops programs).table =
       tableOf fs pages imgs outline tree := by
   unfold prepare tableOf
-  simp only [Id.run, pure, bind, keepFaces, fill, Array.size_map]
+  simp only [Id.run, pure, bind, keepFaces, fill_size_exact]
 
 /-- The exact IDs of the producer's object-stream values. -/
 theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
@@ -2256,9 +2256,9 @@ theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array
   dsimp only
   simp only [prepare, Id.run, pure, bind, List.map_append, List.map_cons,
     List.map_nil, List.map_flatMap, FontObjects.rows, List.map_map, Function.comp_def,
-    List.append_assoc, fill, Array.size_map]
+    List.append_assoc, fill_size_exact]
   simp only [apply_ite, List.map_nil, List.map_cons, List.map_map, Function.comp_def]
-  simp only [map_zipIdx_snd, Array.length_toList, Array.size_map]
+  simp only [map_zipIdx_snd, apply_ite, Array.length_toList, fill_size_exact, ite_self]
   rfl
 private theorem forIn_ids {α β : Type} (ids : β → List Nat)
     (f : α → β → Id (ForInStep β)) (emits : α → List Nat)
@@ -2361,7 +2361,7 @@ theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet) (pages
       [p.table.xmpId] := by
   let t := tableOf fs pages imgs outline tree
   dsimp only
-  simp only [prepare, Id.run, bind, pure, fill, Array.size_map]
+  simp only [prepare, Id.run, bind, pure, fill_size_exact]
   simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, flateRow_id]
   rw [forIn_range_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
     (emits := fun k => [ObjTable.toUniId k, t.fileId k])]
