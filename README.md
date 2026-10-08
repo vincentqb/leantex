@@ -42,8 +42,9 @@ document-local `.sty` files. It does not execute arbitrary installed TeX package
 or Lua code; unsupported constructs produce diagnostics. A TeX installation
 is not required for native rendering.
 
-Markdown supports headings, emphasis, links, images, lists, quotes and fenced
-code. Include a Markdown fragment in TeX with:
+Markdown supports headings, emphasis, links, images, lists, quotes, fenced
+code and GitHub-style pipe tables, which set as booktabs tables. Include a
+Markdown fragment in TeX with:
 
 ```tex
 \usepackage{markdown}
