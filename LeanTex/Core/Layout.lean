@@ -735,6 +735,9 @@ the math face's ascender/descender or its optically matched em. -/
 public structure RunMetrics where
   leading : Option Sp := none
   math : Option MathLineMetrics := none
+  /-- The named size step the run was set under (`TextStyle.step`): the
+  leading its line box takes where no explicit one is carried. -/
+  step : Option String := none
   deriving Repr, BEq, Inhabited
 
 public inductive Item where
@@ -765,6 +768,26 @@ public inductive Item where
 private def Item.boxChars : Item → List Char
   | .box _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
   | .glue _ | .decoratedGlue _ _ | .pen .. | .img .. | .rule .. | .poly .. => []
+
+/-- A run box recording the named size step it was set under
+(`RunMetrics.step`); every other item is untouched. -/
+private def Item.withStep (step : Option String) : Item → Item
+  | .box w f c l gs sz m d r g a => .box w f c l gs sz { m with step := step } d r g a
+  | .glue g => .glue g
+  | .decoratedGlue g d => .decoratedGlue g d
+  | .pen w cost flagged f c gs => .pen w cost flagged f c gs
+  | .img store w h => .img store w h
+  | .rule w t r c => .rule w t r c
+  | .poly pts c => .poly pts c
+
+private theorem Item.withStep_boxChars (step : Option String) (it : Item) :
+    (it.withStep step).boxChars = it.boxChars := by
+  cases it <;> rfl
+
+private theorem Item.withStep_flat_boxChars (step : Option String) (ws : Array Item) :
+    (ws.map (Item.withStep step)).toList.flatMap Item.boxChars =
+      ws.toList.flatMap Item.boxChars := by
+  simp only [Array.toList_map, List.flatMap_map, Item.withStep_boxChars]
 
 public def forcedCost : Int := -10000
 
@@ -1369,6 +1392,10 @@ public structure TextStyle where
   the same site. `none` uses the document's ordinary leading; `some 0`
   preserves an explicitly zero skip. -/
   leading : Option (Affine Measure) := none
+  /-- The named size step in force (`\small`, `\Large`): the leading it
+  sets with its size (`Ir.stepSkip`). `none` under no size command, or
+  after an explicit `\fontsize`, whose own skip governs. -/
+  step : Option String := none
   /-- Set as small caps. Applies to the word, not the face: see
   `smallCapSynth`. -/
   smallcaps : Bool := false
@@ -1654,9 +1681,10 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .normal => {}
   | .lang tag => { sty with lang := some tag }
   | .size n => match ladder.lookup n with
-    | some k => { sty with scale := k, fontSize := none, leading := none }
+    | some k => { sty with scale := k, fontSize := none, leading := none, step := some n }
     | none => sty
-  | .fontSize size leading => { sty with fontSize := some size, leading := some leading }
+  | .fontSize size leading =>
+    { sty with fontSize := some size, leading := some leading, step := none }
 
 /-- `weight_agree`: the weight a style leaves in force is exactly
 `Ir.Style.weight?` — the one projection the HTML emission also reads —
@@ -3401,6 +3429,9 @@ private structure MathEnv where
   link : Option String
   decorations : Decorations
   leading : Option Sp
+  /-- The surrounding text's named size step (`TextStyle.step`): the
+  formula's runs keep its leading, as its text neighbours do. -/
+  step : Option String := none
   base : Sp
   /-- Ambient text size, before matching the math face's x-height. -/
   textBase : Sp
@@ -3455,7 +3486,7 @@ private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :
 /-- Reserve a formula's reach against its ambient font-relative strut.
 The signed bounds are independent of the run's subsequent raise. -/
 private def MathEnv.metrics (e : MathEnv) (top bottom : Sp) : RunMetrics :=
-  { leading := e.leading, math := some {
+  { leading := e.leading, step := e.step, math := some {
       size := e.textBase, ascent := e.textAscent, descent := e.textDescent,
       top, bottom } }
 
@@ -4632,6 +4663,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
+    let ws := ws.map (Item.withStep sty.step)
     -- The space before the word pairs with its first glyph. Read first,
     -- written inside the one update, so the items array is written in
     -- place: a copy of it per word made a paragraph's items quadratic.
@@ -4669,8 +4701,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (glyphOf sz (fs.get fb) c).map (fb, ·)
     match hit with
     | some (fb, g) =>
-      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz {leading} decorations 0
-        sty.ground attr
+      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz { leading, step := sty.step }
+        decorations 0 sty.ground attr
       { acc with items := acc.items.push box }
     | none =>
       if acc.dropped.contains (idx, c) then acc
@@ -4701,6 +4733,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         link := sty.link
         decorations := sty.resolvedDecorations size xHeight textW textH fs
         leading := leading
+        step := sty.step
         ground := sty.ground
         attr := attr }
       let (ms, m) := mathItems e display body acc.dropped
@@ -5208,7 +5241,8 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
       (fs.get (fs.lookup sty.slot sty.weight.css sty.italic)) cs
       acc.dropped acc.substs acc.cache owners origins acc.origins hc.1 hc.2
     refine ⟨⟨hw.1, hw.2.1⟩, ?_⟩
-    simp only [Array.toList_append, List.flatMap_append, widenLast_boxChars, hw.2.2]
+    simp only [Array.toList_append, List.flatMap_append, widenLast_boxChars,
+      Item.withStep_flat_boxChars, hw.2.2]
   case space sty =>
     dsimp only
     intro hc
@@ -8687,12 +8721,12 @@ private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox
   | some a => some ⟨max a.above box.above, max a.below box.below,
       max a.inkAbove box.inkAbove, max a.inkBelow box.inkBelow⟩
 
-private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
+private def lineBoxStep (fs : FontSet) (body nominal : Sp) (leadFactor : Nat)
     (acc : Option LineBox) : Seg → Option LineBox
   | .run idx _ _ _ _ sz metrics _ raise _ _ =>
     match metrics.math with
     | some m =>
-      let lineHeight := metrics.leading.getD (Ir.leadingFor m.size leadFactor)
+      let lineHeight := metrics.leading.getD (Ir.stepSkip body metrics.step m.size leadFactor)
       let strut := leadedBox m.ascent m.descent lineHeight
       let top := max 0 (m.top + raise)
       let below := max 0 (-m.bottom - raise)
@@ -8700,7 +8734,7 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat)
     | none =>
       let font := fs.get idx
       let sz := if sz == 0 then nominal else sz
-      let lineHeight := metrics.leading.getD (Ir.leadingFor sz leadFactor)
+      let lineHeight := metrics.leading.getD (Ir.stepSkip body metrics.step sz leadFactor)
       let box := leadedBox (scaledAt sz font font.ascent.toNat)
         (scaledAt sz font (-font.descent).toNat) lineHeight
       mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
@@ -8731,20 +8765,25 @@ still holds one leading. The strut belongs to lines carrying a glyph
 run; a line of rules, gaps, or images has exactly the box its segments
 make — TeX's `\hrule` is a rule box with no strut (TeXbook ch. 21), and
 the title-bars convention (`interlineFor`) measures to a rule's edges,
-which a phantom body ascent above a 1 pt rule would falsify. -/
+which a phantom body ascent above a 1 pt rule would falsify. The strut
+is the paragraph's own: `size` is its nominal size and `step` the named
+size it is set in (`Ir.paraStep?`), whose leading the strut takes
+(`Ir.stepSkip`) — a paragraph set wholly in `\footnotesize` stands its
+lines at `\footnotesize`'s `\baselineskip`, never the body's. -/
 public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
-    (leadFactor : Nat) (size : Sp) (segs : Array Seg) : LineBox :=
+    (leadFactor : Nat) (size : Sp) (segs : Array Seg) (step : Option String := none) :
+    LineBox :=
   let nominal := if size == 0 then fontSize else size
   let customLeading := segs.any Seg.hasLeading
   let init : Option LineBox :=
     if customLeading then none
     else if segs.isEmpty || segs.any Seg.isRun then
       let strut := leadedBox (bodyAscent * nominal / fontSize)
-        (bodyDescent * nominal / fontSize) (Ir.leadingFor nominal leadFactor)
+        (bodyDescent * nominal / fontSize) (Ir.stepSkip fontSize step nominal leadFactor)
       some ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
         bodyDescent * nominal / fontSize⟩
     else none
-  let measured := segs.foldl (lineBoxStep fs nominal leadFactor) init
+  let measured := segs.foldl (lineBoxStep fs fontSize nominal leadFactor) init
   measured.getD ⟨0, 0, 0, 0⟩
 
 /-- Emptying a line's glyph payload while retaining its font metrics and
@@ -8755,10 +8794,10 @@ at tight leading. Ordinary text still retains its full metric depth,
 including a descender-less title. -/
 public theorem line_box_glyph_free (fs : FontSet)
     (fontSize bodyAscent bodyCap bodyDescent : Sp) (leadFactor : Nat)
-    (size : Sp) (segs : Array Seg) :
+    (size : Sp) (segs : Array Seg) (step : Option String := none) :
     lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size
-        (segs.map Seg.stripGlyphs) =
-      lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size segs := by
+        (segs.map Seg.stripGlyphs) step =
+      lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size segs step := by
   unfold lineExtent
   have hrun : (segs.map Seg.stripGlyphs).any Seg.isRun
       = segs.any Seg.isRun := by
@@ -9156,9 +9195,10 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
     (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
     (display : Option DisplayJob := none) (opens : Bool := false)
-    (anchors : Array String := #[]) (paintPadding : Option Sp := none) : B :=
+    (anchors : Array String := #[]) (paintPadding : Option Sp := none)
+    (step : Option String := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-    b.geom.leading size segs
+    b.geom.leading size segs step
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
   -- it does in TeX's hbox, so it is read before the filter below.
   let ink := segsInk fs segs
@@ -9177,7 +9217,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   -- A display's box is TeX's too (tex.web §1199), and a display
   -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
   -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`).
-  let bs := Ir.leadingFor size b.geom.leading
+  let bs := Ir.stepSkip b.geom.fontSize step size b.geom.leading
   let (h, d) := match display with
     | some dj => if dj.ctx.align then (max ink.1 (bs * 7 / 10), max ink.2 (bs * 3 / 10)) else ink
     | none => ink
@@ -9214,7 +9254,8 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   -- `\nointerlineskip` the line takes no interline glue: its box stands on
   -- the last box's (`Spacing.Page.ignoreDepth`). The peer gap is the display-aware
   -- one (`gap`), which reduces to the metric interline off a display.
-  let lead := Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading
+  let lead := Ir.stepSkip b.geom.fontSize step (if size == 0 then b.geom.fontSize else size)
+    b.geom.leading
   ((b.fitCommit mk
     (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
@@ -9286,10 +9327,11 @@ private theorem sourceBound_displayState {n : Nat} (b : B) (tex : Bool)
 private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
     (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
-    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp) (hb : b.SourceBound n)
+    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp)
+    (step : Option String) (hb : b.SourceBound n)
     (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
     (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
-      anchors paintPadding).SourceBound n := by
+      anchors paintPadding step).SourceBound n := by
   simp only [Spacing.Page.placeLine]
   apply sourceBound_displayState
   apply sourceBound_keepInk
@@ -9400,8 +9442,9 @@ descenders by half their depth, and so does the page close
 (`faceCentreChecks`). -/
 private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) :
-    (b.placeLine fs x size segs w hang ex ns c lf).boxDepth = (segsInk fs segs).2 := by
+    (lf : Option Nat) (step : Option String := none) :
+    (b.placeLine fs x size segs w hang ex ns c lf (step := step)).boxDepth =
+      (segsInk fs segs).2 := by
   simp only [Spacing.Page.placeLine]
   exact keepInk_boxDepth_exact ..
 
@@ -9564,6 +9607,9 @@ public structure Spacing.Paragraph where
   private indent : Sp
   private center : Bool
   private size : Sp
+  /-- The named size step the paragraph is set in (`Ir.paraStep?`), `size`
+  then that step's: its lines stand on the step's strut and leading. -/
+  private step : Option String := none
   /-- A title part that opens a new line takes TeX's baseline skip in force
   on that lower line, rather than combining two CSS half-leading boxes. -/
   private firstBaseline : Option Sp := none
@@ -10362,7 +10408,8 @@ private def collectPara (r : Rd) (a : Acc)
     -- counter where the mark stood (`Tk.note`'s `bodyLeaf`)
     for (markIdx, num, body, noteLeaf) in rawNotes do
       let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
-        itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
+        itemsOfInlines r.pats noteSize r.xHeight r.fs
+          { color := a.fg, ground := a.ground, step := some "footnotesize" } body
           cache (LeafCtr.of noteLeaf (leafCount body) body) r.imgs r.geom.textWidth
           r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
       ds := ds ++ nds
@@ -10393,7 +10440,7 @@ private def collectPara (r : Rd) (a : Acc)
             (trigger := (lineSource nsources s brk).bind (·.pos.command)))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
-          r.geom.leading noteSize lsegs
+          r.geom.leading noteSize lsegs (some "footnotesize")
         let y := if first then max box.above sep else yPrev + belowPrev + box.above
         lines := lines.push { x := r.geom.hmargin, y := y, size := noteSize,
                               segs := lsegs, setWidth := lw, note := true, leaf := noteLeaf,
@@ -10430,13 +10477,19 @@ private def collectPara (r : Rd) (a : Acc)
       wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
       anchors.map (fun (n, i) => (n, i + 1)),
       itemSources.map (fun (i, span) => (i + 1, span)))
+  -- A paragraph set wholly in one named size stands on that step's strut
+  -- and leading (`Ir.paraStep?`); its runs keep the base they were built at.
+  let step := Ir.paraStep? inlines
+  let strutSize := match step with
+    | some n => Ir.scaleStepIn r.geom.scale size n
+    | none => size
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
       items := items, extras := extras, wordOffsets := wordOffsets, anchors := anchors
       itemSources := itemSources, diags := ds
       target := measure
-      indent := indent, center := center, size := size
+      indent := indent, center := center, size := strutSize, step := step
       firstBaseline := firstBaseline
       paintPadding := paintPadding
       flushRight := r.geom.flushRight
@@ -13927,7 +13980,8 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
       (display := j.display) (opens := st.2.2)
       (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))
-      (paintPadding := if brk + 1 == j.items.size then j.paintPadding else none)),
+      (paintPadding := if brk + 1 == j.items.size then j.paintPadding else none)
+      (step := j.step)),
     brk, false)
 
 /-- The breaker may choose the end-fill immediately before a forced
@@ -14108,6 +14162,14 @@ private def ItemsProse (items : Array Item) : Prop :=
     ItemsProse (xs ++ ys) ↔ ItemsProse xs ∧ ItemsProse ys := by
   simp [ItemsProse, or_imp, forall_and]
 
+/-- Recording a run's size step changes no item's kind. -/
+private theorem itemsProse_withStep (step : Option String) (ws : Array Item)
+    (h : ItemsProse ws) : ItemsProse (ws.map (Item.withStep step)) := by
+  intro it hit
+  rcases Array.mem_map.mp hit with ⟨w, hw, rfl⟩
+  have := h w hw
+  cases w <;> simp_all [Item.withStep, Item.Prose]
+
 private theorem flushWord_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     (size : Sp) (leading : Option Sp) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
@@ -14254,7 +14316,7 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
       patsOf_off]
     exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
-      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
+      itemsProse_withStep _ _ (wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _)⟩
   case space sty =>
     exact (itemsProse_push _ _).mpr ⟨hi, decoratedGlue_prose _ _ _ _ _⟩
 
@@ -14585,10 +14647,10 @@ private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
     (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
     (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
-    (paintPadding : Option Sp)
+    (paintPadding : Option Sp) (step : Option String)
     (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.placeLine fs b x size segs w hang ex #[] counted leaf
-      firstBaseline display opens anchors paintPadding) =
+      firstBaseline display opens anchors paintPadding step) =
       Spacing.Page.census pick b ++ (if pick leaf counted then segs.toList.flatMap Seg.glyphChars else []) := by
   simp only [Spacing.Page.placeLine]
   rw [census_displayState, census_keepInk]
@@ -14945,7 +15007,8 @@ private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
       !b.fresh &&
       noteFloor b.bottom b.footins b.notesH + b.pageShrink + b.skip.shrink
         < b.y + b.prevDepth + b.skip.width
-          + (n : Int) * Ir.leadingFor j.size b.geom.leading + j.keepNext then
+          + (n : Int) * Ir.stepSkip b.geom.fontSize j.step j.size b.geom.leading
+          + j.keepNext then
     b.spillPage
   else b
 
@@ -15861,9 +15924,10 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String) :
     PagesExtend b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+        step) := by
   simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
   exact fitCommit_extends ..
 
@@ -15872,20 +15936,20 @@ the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
-      b.pages := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+      step).pages = b.pages := by
   simp only [Spacing.Page.placeLine, displayState_pages, keepInk_pages]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
-      true := by
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+      step).noBreak = true := by
   simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -15895,8 +15959,9 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
     (nb : NoteBlock) (hnb : nb ∈ ns)
-    (l : LineOut) (hl : l ∈ nb.lines) :
-    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op).pendingNotes,
+    (l : LineOut) (hl : l ∈ nb.lines) (step : Option String := none) :
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op
+        (step := step)).pendingNotes,
       l'.segs = l.segs := by
   simp only [Spacing.Page.placeLine, displayState_pendingNotes, keepInk_pendingNotes]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
@@ -15907,9 +15972,10 @@ private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
     (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) :
+    (paintPadding : Option Sp) (step : Option String) :
     PagesExtend b0
-      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) :=
+      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+        step) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -16015,14 +16081,16 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
-      b.pages ∧
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
-      true :=
-  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h,
-   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h⟩
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+      step).pages = b.pages ∧
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+      step).noBreak = true :=
+  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors
+      paintPadding step h,
+   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors
+      paintPadding step h⟩
 
 /-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
@@ -16213,9 +16281,10 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String) :
     BgStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+        step) := by
   simp only [Spacing.Page.placeLine]
   apply BgStep.displayState
   apply BgStep.keepInk
@@ -16359,7 +16428,7 @@ two leadings did not. -/
 private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Sp :=
   let box (first : Bool) (prev brk : Nat) : LineBox :=
     lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading j.size
-      (paraLineGeom fs j b first prev brk).1
+      (paraLineGeom fs j b first prev brk).1 j.step
   match breaks[0]?, breaks[1]? with
   | some k0, some k1 =>
     let l0 := box true 0 k0
@@ -16391,7 +16460,7 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
       glue + inkClearance + (py1 - py0)
     | .para j t =>
       if 0 < j.keepNext then
-        glue + (t.get.size : Int) * Ir.leadingFor j.size b.geom.leading
+        glue + (t.get.size : Int) * Ir.stepSkip b.geom.fontSize j.step j.size b.geom.leading
           + max j.keepNext (keepExt b fs imgs staged (k + 1) 0)
       else glue + keptHead fs b j t.get
     | _ => 0
@@ -16912,9 +16981,10 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String) :
     FrameStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+        step) := by
   simp only [Spacing.Page.placeLine]
   apply FrameStep.displayState
   apply FrameStep.keepInk
@@ -17367,9 +17437,10 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (step : Option String) :
     ReflowStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
+        step) := by
   simp only [Spacing.Page.placeLine]
   apply ReflowStep.displayState
   apply ReflowStep.keepInk
@@ -20725,41 +20796,43 @@ private structure PageRise (a b : B) : Prop where
   regions : a.openRegions = b.openRegions
 
 private def nextBaseline (fs : FontSet) (b : B) (size : Sp)
-    (segs : Array Seg) (first : Option Sp) : Sp :=
+    (segs : Array Seg) (first : Option Sp) (step : Option String := none) : Sp :=
   b.y + b.skip.width + first.getD
     (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-      b.geom.leading size segs) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop
+      b.geom.leading size segs step) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop
 
 /-- Numeric fit at the next call to the real placer, before it branches. -/
 private def LineFits (fs : FontSet) (b : B) (size : Sp)
-    (segs : Array Seg) (first : Option Sp) : Prop :=
-  nextBaseline fs b size segs first +
+    (segs : Array Seg) (first : Option Sp) (step : Option String := none) : Prop :=
+  nextBaseline fs b size segs first step +
     (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-      b.geom.leading size segs).inkBelow + b.surfaceBottom -
+      b.geom.leading size segs step).inkBelow + b.surfaceBottom -
     b.bottom ≤ b.pageShrink + b.skip.shrink
 
 private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
     (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
-    (h : Ready b segs) (hf : LineFits fs b size segs first) :
-    b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors =
+    (step : Option String)
+    (h : Ready b segs) (hf : LineFits fs b size segs first step) :
+    b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors
+        (step := step) =
       ((b.commit
-        { x, y := nextBaseline fs b size segs first, size
+        { x, y := nextBaseline fs b size segs first step, size
           segs := segs.filter fun s => match s with
             | .rule width _ _ _ => width != 0
             | _ => true
           setWidth := w, hang, expand, counted, leaf, anchors
           regionExtent := some ((segsInk fs segs).1,
             (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-              b.geom.leading size segs).inkBelow) }
+              b.geom.leading size segs step).inkBelow) }
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs).inkBelow
+          b.geom.leading size segs step).inkBelow
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-          b.geom.leading size segs).below
+          b.geom.leading size segs step).below
         false true
-        (min (nextBaseline fs b size segs first +
+        (min (nextBaseline fs b size segs first step +
           (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-            b.geom.leading size segs).inkBelow + b.surfaceBottom - b.bottom)
+            b.geom.leading size segs step).inkBelow + b.surfaceBottom - b.bottom)
           (b.pageShrink + b.skip.shrink))).keepInk (segsInk fs segs).2).displayState
         false (some (x + w - b.geom.hmargin)) := by
   rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩
@@ -20775,17 +20848,19 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
 private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
     (leaf : Option Nat) (first : Option Sp) (opens : Bool)
-    (aa ab : Array String) (h : PageRise a b)
+    (aa ab : Array String) (step : Option String) (h : PageRise a b)
     (ha : Ready a segs) (hb : Ready b segs)
-    (hfa : LineFits fs a size segs first) (hfb : LineFits fs b size segs first) :
-    PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa)
-      (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab) := by
-  have hy : nextBaseline fs a size segs first ≤ nextBaseline fs b size segs first := by
+    (hfa : LineFits fs a size segs first step) (hfb : LineFits fs b size segs first step) :
+    PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa
+        (step := step))
+      (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab
+        (step := step)) := by
+  have hy : nextBaseline fs a size segs first step ≤ nextBaseline fs b size segs first step := by
     simp only [nextBaseline, Spacing.Page.surfaceTop, h.regions, h.geom, h.ascent,
       h.capHeight, h.descent, Spacing.Page.textGap, h.below, h.depth, h.math]
     exact Int.add_le_add_right (Int.add_le_add_right h.cursor _) _
-  rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa ha hfa,
-      ordinary_line fs b x size segs w hang expand counted leaf first opens ab hb hfb]
+  rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa step ha hfa,
+      ordinary_line fs b x size segs w hang expand counted leaf first opens ab step hb hfb]
   constructor
   · exact h.geom
   · exact h.ascent
@@ -20806,7 +20881,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
   j.paintPadding = none ∧
-    Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none)
+    Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none) j.step
 
 private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
     (segs : Array Seg) (a b : B) (h : PageRise a b) :
@@ -20838,9 +20913,9 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, ite_self]
   apply trailer_rise
   split
-  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
-  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
 
 /-- A proof trace of the numeric input conditions at every iteration of the

@@ -250,8 +250,9 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
       ((elemNodesOne (· == "header") #[] box).any fun n =>
         (elemNodesOne (· == "strong") #[] n).map (nodeTextOne "") ==
           #["Packing reminder"])
+    -- A paragraph set wholly small carries the step on its own element.
     t "box body keeps its small text and structured fraction over a radical"
-      ((elemNodesOne (· == "span") #[] box).any (fun n => match n with
+      ((elemNodesOne (fun tag => tag == "span" || tag == "p") #[] box).any (fun n => match n with
         | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "size-small" &&
             hasStr (nodeTextOne "" n) "Keep the folded pieces"
         | _ => false) &&

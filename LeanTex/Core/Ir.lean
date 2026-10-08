@@ -2700,6 +2700,56 @@ itself: the identity factor, `normalsize`'s. -/
 @[expose] public def scaleStep (base : Sp) (name : String) : Sp :=
   base * ((sizeScale.lookup name).getD 1000) / 1000
 
+/-- Each named step's `\baselineskip`, per mille of the body size: the
+second argument of size10.clo's `\@setfontsize` rows (`\tiny` 5/6 pt,
+`\scriptsize` 7/8, `\footnotesize` 8/9.5, `\small` 9/11, `\normalsize`
+10/12, `\large` 12/14, `\Large` 14.4/18, `\LARGE` 17.28/22, `\huge`
+20.74/25, `\Huge` 24.88/30), each measured under lualatex as the line pitch
+of a paragraph set wholly in the step. A size command sets both lengths,
+so the leading belongs to the step, not to a ratio of its type: the 6⁄5
+rule (`leadingFor`) sets a `\footnotesize` line 0.1 pt loose and a
+`\LARGE` one 1.3 pt tight. The ladder is size10.clo's at every body
+(`sizeScale`), and so is this column. -/
+@[expose] public def sizeSkipScale : List (String × Nat) :=
+  [("tiny", 600), ("scriptsize", 800), ("footnotesize", 950), ("small", 1100),
+   ("normalsize", 1200), ("large", 1400), ("Large", 1800), ("LARGE", 2200),
+   ("huge", 2500), ("Huge", 3000)]
+
+/-- **The baseline distance a run sets at** — the one resolving site the
+page's line boxes and the deck's line heights read: a named step's own
+`\baselineskip` (`sizeSkipScale` over the body), any other size the 6⁄5
+rule of its own size (`leadingFor`), both under the page's `\linespread`
+factor, which LaTeX's `\selectfont` applies to whatever `\baselineskip`
+the size command left. -/
+@[expose] public def stepSkip (body : Sp) (step : Option String) (size : Sp)
+    (factor : Nat := 1000) : Sp :=
+  match step.bind (fun n => sizeSkipScale.lookup n) with
+  | some k => body * (k : Int) / 1000 * factor / 1000
+  | none => leadingFor size factor
+
+/-- A run under no size command sets at the 6⁄5 rule of its own size. -/
+@[simp] public theorem stepSkip_none_exact (body size : Sp) (factor : Nat) :
+    stepSkip body none size factor = leadingFor size factor := rfl
+
+/-- The size file's two columns — each row's size (`sizeScale`) and its
+leading (`sizeSkipScale`) — name the same steps in the same order: a step
+with a size has a leading and none is invented. -/
+public theorem sizeSkipScale_agree : sizeSkipScale.map (·.1) = sizeScale.map (·.1) := by decide
+
+/-- Every step's leading lies between 8⁄7 of its size (`\scriptsize`'s,
+the tightest the size file sets) and 9⁄7 (`\LARGE`'s 22/17.28 is the
+loosest): no step sets its lines closer than the type and none drifts
+from the size file's proportions. -/
+public theorem sizeSkipScale_between :
+    ∀ p ∈ sizeScale, ∀ q ∈ sizeSkipScale, p.1 = q.1 →
+      8 * p.2 ≤ 7 * q.2 ∧ 7 * q.2 ≤ 9 * p.2 := by decide
+
+/-- At the body's own step the table is the 6⁄5 rule exactly: a paragraph
+that names `\normalsize` sets where an undeclared one does. -/
+public theorem stepSkip_normalsize_exact (body : Sp) (factor : Nat) :
+    stepSkip body (some "normalsize") body factor = leadingFor body factor := by
+  simp [stepSkip, sizeSkipScale, List.lookup, leadingFor, leadingMilli]
+
 /-- The size a document title sets at when no `titlepage` font template
 declares one: the one resolving site, so the two backends read one
 function rather than each naming a step. A flow page takes `LARGE`
@@ -16636,6 +16686,140 @@ public theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls 
   induction ds with
   | nil => rfl
   | cons d rest ih => simp only [wrapDecls, Decl.wrap_text, ih]
+
+mutual
+
+/-- The named size a paragraph is set in, read down the chain of single
+wrappers around its whole content (`.styled`, `.colored`, `.located`): the
+innermost size scope wins, as the last size command in force does; an
+explicit `\fontsize` or `\normalfont` ends the reading, the run's own
+leading or the body's then governing. -/
+-- conserves: none — a classifier over the wrapper chain; emits no document text.
+public def paraStepIn (acc : Option String) (xs : List Inline) : Option String :=
+  match xs with
+  | [x] => paraStepOne acc x
+  | [] => acc
+  | _ :: _ :: _ => acc
+
+-- conserves: none — the one-node face of paraStepIn's classifier.
+public def paraStepOne (acc : Option String) (x : Inline) : Option String :=
+  match x with
+  | .styled (.size n) body => paraStepIn (some n) body.toList
+  | .styled (.fontSize _ _) _ | .styled .normal _ => none
+  | .styled _ body => paraStepIn acc body.toList
+  | .colored _ _ body => paraStepIn acc body.toList
+  | .located _ body => paraStepIn acc body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
+  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => acc
+
+end
+
+/-- **The size step a paragraph is set at**: the named size the scopes
+wrapping its whole content leave in force — `{\small …\par}`, a `\small`
+declaration standing over the paragraph, an environment's declarations
+around each of its regions (`wrapDecls`). `none` when some content stands
+outside every size scope (a body paragraph with a small run inside it) or
+no size scope wraps it. LaTeX sets a paragraph's lines at the
+`\baselineskip` in force where the paragraph ends; the IR identifies
+`{\small A}\par` with `{\small A\par}` (`Decl.wrap`), so the first, whose
+group closes before the paragraph ends, sets at the step too — the recorded
+departure from the outer `\baselineskip` LaTeX keeps there. The one
+resolving site: the page sets the paragraph's strut at this step, the HTML
+gives the paragraph element the step's class (`liftParaStep`). -/
+public def paraStep? (xs : Array Inline) : Option String := paraStepIn none xs.toList
+
+mutual
+
+/-- The wrapper chain with the size scopes `paraStepIn` reads removed —
+the step stands on the paragraph element itself, so a scope left inside
+would scale the type twice — and every other wrapper kept. -/
+public def liftParaStepIn (xs : List Inline) : Array Inline :=
+  match xs with
+  | [x] => liftParaStepOne x
+  | [] => #[]
+  | y :: z :: rest => (y :: z :: rest).toArray
+
+/-- The one-node face of `liftParaStepIn`. -/
+public def liftParaStepOne (x : Inline) : Array Inline :=
+  match x with
+  | .styled (.size _) body => liftParaStepIn body.toList
+  | .styled (.fontSize s l) body => #[.styled (.fontSize s l) body]
+  | .styled .normal body => #[.styled .normal body]
+  | .styled st body => #[.styled st (liftParaStepIn body.toList)]
+  | .colored c n body => #[.colored c n (liftParaStepIn body.toList)]
+  | .located span body => #[.located span (liftParaStepIn body.toList)]
+  | .text s => #[.text s]
+  | .math d src => #[.math d src]
+  | .formula d src body => #[.formula d src body]
+  | .role n body => #[.role n body]
+  | .link url body => #[.link url body]
+  | .label k => #[.label k]
+  | .ref k f t g => #[.ref k f t g]
+  | .decorated k body => #[.decorated k body]
+  | .fill => #[.fill]
+  | .hspace g k => #[.hspace g k]
+  | .rule w h r => #[.rule w h r]
+  | .pageNumber => #[.pageNumber]
+  | .pageCount => #[.pageCount]
+  | .linebreak g => #[.linebreak g]
+  | .strut h => #[.strut h]
+  | .italicCorr m => #[.italicCorr m]
+  | .onSteps spec body => #[.onSteps spec body]
+  | .altSteps spec a b => #[.altSteps spec a b]
+  | .image src size alt => #[.image src size alt]
+  | .icon c label => #[.icon c label]
+  | .cite f keys => #[.cite f keys]
+  | .footnote n body => #[.footnote n body]
+
+end
+
+/-- A paragraph's content with its step lifted (`paraStep?`) to the element
+that carries it. -/
+public def liftParaStep (xs : Array Inline) : Array Inline := liftParaStepIn xs.toList
+
+mutual
+
+private theorem liftParaStepIn_text (xs : List Inline) :
+    plainText (liftParaStepIn xs) = plainTextList xs := by
+  match xs with
+  | [x] =>
+    rw [liftParaStepIn, liftParaStepOne_text]
+    simp [plainTextList]
+  | [] => rw [liftParaStepIn]; rfl
+  | y :: z :: rest => rw [liftParaStepIn]; simp [plainText]
+
+private theorem liftParaStepOne_text (x : Inline) :
+    plainText (liftParaStepOne x) = plainTextOne x := by
+  match x with
+  | .styled (.size _) body =>
+    rw [liftParaStepOne, liftParaStepIn_text]
+    simp [plainTextOne]
+  | .styled (.fontSize _ _) body | .styled .normal body =>
+    rw [liftParaStepOne]; simp [plainText, plainTextList]
+  | .styled (.bold) body | .styled (.italic) body | .styled (.mono) body
+  | .styled (.smallcaps) body | .styled (.emph) body | .styled (.sans) body
+  | .styled (.roman) body | .styled (.medium) body | .styled (.series _) body
+  | .styled (.upright) body | .styled (.lang _) body
+  | .colored _ _ body | .located _ body =>
+    have ih := liftParaStepIn_text body.toList
+    simp only [liftParaStepOne, plainText, plainTextList, plainTextOne] at ih ⊢
+    simp [ih]
+  | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
+  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ =>
+    rw [liftParaStepOne]; simp [plainText, plainTextList]
+
+end
+
+/-- Lifting the step moves markup, never content: the paragraph ships the
+census it had. -/
+public theorem liftParaStep_text : Conserves plainText liftParaStep := fun xs => by
+  show plainText (liftParaStepIn xs.toList) = plainText xs
+  rw [liftParaStepIn_text]
+  rfl
 
 mutual
 

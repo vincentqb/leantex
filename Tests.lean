@@ -180,6 +180,7 @@ import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.PackageImports
 import Tests.ParagraphMathRhythm
+import Tests.LineRhythm
 import Tests.BeamerProof
 import Tests.DiagAudit
 import Tests.MathSym
@@ -239,6 +240,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   styleChecks ref
   htmlLayoutChecks ref
   htmlRhythmChecks ref
+  Tests.LineRhythm.htmlStepChecks ref
+  Tests.LineRhythm.htmlGapChecks ref
   htmlListGapChecks ref
   htmlSectionGapChecks ref
   printLiftChecks ref
@@ -386,6 +389,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inkGeometryChecks ref
   spacingChecks ref geom oneFace font
   paragraphMathRhythmChecks ref
+  Tests.LineRhythm.stepLeadingChecks ref oneFace
   displayTexChecks ref oneFace
   titleBarChecks ref geom oneFace font
   slideChecks ref oneFace

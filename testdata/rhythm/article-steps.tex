@@ -1,0 +1,44 @@
+% rhythm: article text at 10pt: each named size step's line pitch inside one paragraph set wholly in it, a normalsize paragraph's pitch with a small run inside it, and a small scope closed before its paragraph ends
+% boundary: step-tiny Kapok pitch
+% boundary: step-scriptsize Laurel pitch
+% boundary: step-footnotesize Myrtle pitch
+% boundary: step-small Nutmeg pitch
+% boundary: step-normalsize Olive pitch
+% boundary: step-large Poplar pitch
+% boundary: step-xlarge Quassia pitch
+% boundary: step-xxlarge Redwood pitch
+% boundary: step-huge Sumac pitch
+% boundary: step-xhuge Tamarind pitch
+% boundary: inline-small Vetch pitch
+% boundary: closed-small Wisteria pitch
+\documentclass{article}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\begin{document}
+{\tiny Acacia one\\Kapok two\par}
+
+{\scriptsize Bamboo one\\Laurel two\par}
+
+{\footnotesize Catalpa one\\Myrtle two\par}
+
+{\small Deodar one\\Nutmeg two\par}
+
+{\normalsize Elder one\\Olive two\par}
+
+{\large Fig one\\Poplar two\par}
+
+{\Large Ginkgo one\\Quassia two\par}
+
+{\LARGE Hawthorn one\\Redwood two\par}
+
+{\huge Ilex one\\Sumac two\par}
+
+{\Huge Jasmine one\\Tamarind two\par}
+
+Upas one {\small Yew} one\\Vetch two\par
+
+{\small Zelkova one\\Wisteria two}\par
+
+Xylem closes the page.
+\end{document}

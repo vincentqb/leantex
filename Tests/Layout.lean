@@ -2015,9 +2015,9 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let body := geom.fontSize
   let leading := Ir.leadingFor body geom.leading
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
-  let leadedAt (sz : Dim.Sp) : Dim.Sp × Dim.Sp :=
+  let leadedAt (sz : Dim.Sp) (step : Option String := none) : Dim.Sp × Dim.Sp :=
     Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
-      (Ir.leadingFor sz geom.leading)
+      (Ir.stepSkip body step sz geom.leading)
   -- Interline is the metric rule (CSS 2.1 §10.8.1): the previous line's
   -- leaded below plus this line's leaded above — for uniform text exactly
   -- one leading, and after a Huge line the Huge box's own below, never a
@@ -2044,9 +2044,11 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
   let hugeSize := body * 2488 / 1000
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
+  -- A Huge line's own box is leaded at `\Huge`'s `\baselineskip`, 30 pt.
   t "the line after a Huge title is spaced by the metric rule"
     (huge.size == 2 && huge[1]! - huge[0]! ==
-      (leadedAt hugeSize).2 + (leadedAt body).1 + (geom.parskip.resolve body 0).width)
+      (leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 +
+        (geom.parskip.resolve body 0).width)
   t "the line after a Huge title is not a Huge leading away"
     (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
   -- TeX's page builder: `\topskip` (the body size) above the first line,
@@ -2069,7 +2071,8 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let mixed := ysOf geom ("{\\Huge M} " ++
     String.intercalate " " (List.replicate 60 "grid"))
   t "a size change displaces by the metric rule and leaves the grid"
-    (mixed.size ≥ 3 && mixed[1]! - mixed[0]! == (leadedAt hugeSize).2 + (leadedAt body).1 &&
+    (mixed.size ≥ 3 &&
+     mixed[1]! - mixed[0]! == (leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 &&
      mixed[1]! - mixed[0]! != leading && mixed[2]! - mixed[1]! == leading)
   -- The heading rule is raised half the x-height of the heading's own
   -- face at the heading's size — never the body's — asserted over
@@ -4907,9 +4910,16 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     t s!"\\vspace* keeps its space at a page's top, below a {ts}pt \\topskip"
       ((at? (src s!"\\setlength\{\\topskip}\{{ts}pt}" "\\vspace*{20pt}\nAlpha words") 0 "Alpha").map
         (·.1 == Dim.pt (ts + 20) + lead) |>.getD false)
+  -- A rule taller than the body's leading: lualatex stands this line 0.21 bp
+  -- above the engine. A `\Huge` paragraph sets at `\Huge`'s own 30 pt
+  -- leading (`Ir.paraStep?`), clear of its 17.9 pt line: lualatex and the
+  -- engine both stand it 30 pt below the kept space.
   t "a first line taller than the leading takes \\lineskip below the kept space"
-    ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words}") 0 "Alpha").map
+    ((at? (src "" "\\vspace*{20pt}\n\\rule{1pt}{24pt} Alpha words") 0 "Alpha").map
       (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  t "a Huge first line stands Huge's leading below the kept space"
+    ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words\\par}") 0 "Alpha").map
+      (fun (y, _, _) => y == Dim.pt 60) |>.getD false)
   -- After `\newpage` the depth `\@vspacer` saves is the last line's.
   let p2 (pre : String) := src "" ("Alpha words\n\\newpage\n" ++ pre ++ "\\vspace*{20pt}\nBravo words")
   t "after \\newpage the line takes \\baselineskip less the last line's depth"

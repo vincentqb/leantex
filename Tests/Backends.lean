@@ -1453,9 +1453,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
          !["height", "max-height", "block-size", "max-block-size", "flex-basis"].contains
            ((d.splitOn ":").headD "").trimAscii.toString)
   -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
-  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.
+  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds;
+  -- its lines at the page's leading (`Ir.stepSkip`), not the screen's.
   t "deck type is the PDF's stage ratio, in vh"
-    (has deckPage "font-size: 4.311vh; }" &&
+    (has deckPage "font-size: 4.311vh; line-height: 1.200; }" &&
      has deckPage "h1 { font-size: 1.728em; }" &&
      has deckPage "section.slide > header h2 { font-size: 1.440em; }")
   let (tokDoc, _) := elabStr (deck169 "\\tokens{ safearea = 20pt }"
@@ -1518,7 +1519,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- duplicates nothing on its way through the gate grouping. Each rule
   -- renders on one line, so the parse is line-local: the body between a
   -- line's last `{` and first `}`.
-  let rules := HtmlDoc.deckRules "4.311vh" "453.543pt 255.118pt" 38 3
+  let rules := HtmlDoc.deckRules { body := "4.311vh", root := "3.568vh", leading := "1.200" }
+    "453.543pt 255.118pt" 38 3
   let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
   let emitted := ((HtmlDoc.emitDeckRules rules).splitOn "\n").flatMap fun l =>
     if (l.splitOn "{").length ≥ 2 && (l.splitOn "}").length ≥ 2 then
