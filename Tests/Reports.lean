@@ -41,6 +41,7 @@ import Tests.CancelContext
 import Tests.CancelReview
 import Tests.MathSym
 import Tests.BeamerHooks
+import Tests.StandoutPalette
 import Tests.BeamerColors
 import Tests.BeamerColorOrigins
 import Tests.BeamerTemplates
@@ -937,7 +938,23 @@ def reports : List Report := [
     accept := ["twelve artifact assertions fail before all six heading ranks are preserved",
       "typed HTML and parsed PDF retain each heading rank independently of document titles and nesting",
       "native section numbering and run-in headings preserve their existing behavior"]
-    state := .guarded "e1f84ab8e797e2a827415e683b79ce4e52d54b30" .before .author }
+    state := .guarded "e1f84ab8e797e2a827415e683b79ce4e52d54b30" .before .author },
+  { id := "R108", date := "2026-10-08"
+    what := "Listing highlighting lost the selected Python environment when its interpreter was a symbolic link"
+    pins := [check% listingProviderChecks]
+    accept := ["twelve provider invocation assertions fail before interpreter paths preserve their environment",
+      "absolute, relative and empty search path entries resolve before the child process changes directory",
+      "provider replacement, failure and recovery follow the selected executable without stale answers"]
+    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author },
+  { id := "R109", date := "2026-10-08"
+    what := "Standout frames ignored appended colour aliases and could retain them beyond their scope"
+    pins := [check% Tests.StandoutPalette.standoutPaletteChecks,
+      thm% BeamerColor.restoreAliases_contract]
+    accept := ["nineteen typed HTML and shipped layout assertions fail before standout aliases are applied",
+      "selected aliases restore their opening values while unrelated palette changes survive",
+      "native PDF, HTML and reference output agree on the resolved frame colours",
+      "unsupported callback content remains diagnosed"]
+    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
