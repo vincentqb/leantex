@@ -406,7 +406,7 @@ def contextBlindPlaces : Array Place :=
 engine models a family of commands *only* inside. -/
 def places : Array Place :=
   contextBlindPlaces ++ #[
-    { label := "inline-math", doc := fun s => wrap ("$" ++ s ++ "$") },
+    { label := "inline-math", doc := fun s => wrap ("$ " ++ s ++ " $") },
     { label := "display-math", doc := fun s => wrap ("\\[" ++ s ++ "\\]") },
     { label := "math-operand", doc := fun s => wrap ("$" ++ s ++ " x$") },
     { label := "tabular-cell",
