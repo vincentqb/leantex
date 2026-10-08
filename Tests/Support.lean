@@ -451,6 +451,15 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
 def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
 
+/-- One of the suite's shipped faces by file name, parsed; `none` when the
+file is missing or does not parse. -/
+def loadTestFont (file : String) : IO (Option Font.Font) := do
+  let p := testFonts ++ "/" ++ file
+  unless ← System.FilePath.pathExists p do return none
+  match Font.parse (← IO.FS.readBinFile p) with
+  | .ok f => return some f
+  | .error _ => return none
+
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
 is not valid UTF-8, so the search is over bytes. -/

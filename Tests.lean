@@ -99,6 +99,8 @@ import Tests.Markdown
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
 import Tests.MarkdownTables
+import Tests.MarkdownPage
+import Tests.MarkdownWarnings
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
 import Tests.MarkdownTwin
@@ -265,6 +267,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownHtmlChecks ref
   markdownHeadingChecks ref
   Tests.MarkdownTables.markdownTableChecks ref
+  Tests.MarkdownPage.markdownPageChecks ref
+  Tests.MarkdownWarnings.markdownWarningChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref

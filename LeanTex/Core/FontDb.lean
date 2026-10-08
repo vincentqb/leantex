@@ -644,4 +644,86 @@ public def defaultFamily (faces : Array Face) : Option String :=
     | some f => some f.family
     | none => faces[0]?.map (·.family)
 
+/-- The designed monospaced companions, as data: one row per text family
+the scan may report, the fixed-pitch family its own project ships beside
+it, and where that is documented. The engine ships none of these faces — a
+row costs nothing until the host already has the face. Sources:
+- github.com/dejavu-fonts/dejavu-fonts (README, "Available fonts") — DejaVu
+  Sans, DejaVu Serif and DejaVu Sans Mono, one family; the DejaVu fonts
+  licence (Bitstream Vera's, with public-domain changes).
+- github.com/mozilla/Fira — Mozilla's Fira type family ships Fira Mono beside
+  Fira Sans; SIL OFL.
+- github.com/IBM/plex (README) — "The IBM Plex family comes in Sans, Serif,
+  Mono, and Sans Condensed"; SIL OFL.
+- gust.org.pl/projects/e-foundry/latin-modern — Latin Modern's typewriter
+  faces, Latin Modern Mono: fontspec's default typewriter beside its default
+  Latin Modern Roman, which makes it LaTeX's own pairing; GUST Font License. -/
+public def monoCompanions : Array Pairing := #[
+  { body := "DejaVu Sans", companion := "DejaVu Sans Mono"
+    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence" },
+  { body := "DejaVu Serif", companion := "DejaVu Sans Mono"
+    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence" },
+  { body := "Fira Sans", companion := "Fira Mono"
+    source := "github.com/mozilla/Fira", license := "SIL Open Font License" },
+  { body := "IBM Plex Sans", companion := "IBM Plex Mono"
+    source := "github.com/IBM/plex", license := "SIL Open Font License" },
+  { body := "IBM Plex Serif", companion := "IBM Plex Mono"
+    source := "github.com/IBM/plex", license := "SIL Open Font License" },
+  { body := "Latin Modern Roman", companion := "Latin Modern Mono"
+    source := "gust.org.pl/projects/e-foundry/latin-modern", license := "GUST Font License" },
+  { body := "Latin Modern Sans", companion := "Latin Modern Mono"
+    source := "gust.org.pl/projects/e-foundry/latin-modern", license := "GUST Font License" }]
+
+/-- The face an undeclared typewriter slot takes, decided against the
+supplied faces: the text family's designed monospaced companion when the
+scan holds it (`monoCompanions`), else the least installed face that
+declares fixed pitch, under the one documented order (`faceLt`) — LaTeX's
+`\ttfamily` always names a typewriter face, Latin Modern Mono under
+fontspec, and a typewriter run set in the text's own proportional face is
+the loss W0390 names. `none` only when no installed face declares fixed
+pitch. -/
+public def pickMono (faces : Array Face) (text : String) : Option Face :=
+  let companion : Option Face :=
+    (monoCompanions.find? fun p => normEq text ((norm p.body).toList.toArray)).bind fun row =>
+      leastBy faceLt (faces.filter fun f => normEq f.family ((norm row.companion).toList.toArray))
+  companion.orElse fun _ => leastBy faceLt (faces.filter (·.fixedPitch))
+
+private theorem leastStep_mem (lt : Face → Face → Bool) :
+    ∀ (xs : List Face) (best : Option Face) (m : Face),
+      xs.foldl (leastStep lt) best = some m → best = some m ∨ m ∈ xs
+  | [], _, _, h => .inl h
+  | x :: rest, best, m, h => by
+    rcases leastStep_mem lt rest (leastStep lt best x) m h with h | h
+    · unfold leastStep at h
+      split at h
+      · exact .inr (Option.some.inj h ▸ List.mem_cons_self)
+      · split at h
+        · exact .inr (Option.some.inj h ▸ List.mem_cons_self)
+        · exact .inl h
+    · exact .inr (List.mem_cons_of_mem _ h)
+
+private theorem leastBy_mem (lt : Face → Face → Bool) (xs : Array Face) (m : Face)
+    (h : leastBy lt xs = some m) : m ∈ xs := by
+  rcases leastStep_mem lt xs.toList none m h with h | h
+  · cases h
+  · exact Array.mem_toList_iff.mp h
+
+/-- The mono pick is an installed face: the companion row only names a
+family, and both arms draw the face from the scan. -/
+public theorem pickMono_mem (faces : Array Face) (text : String) (f : Face)
+    (h : pickMono faces text = some f) : f ∈ faces := by
+  unfold pickMono at h
+  generalize hc : (monoCompanions.find? fun p => normEq text ((norm p.body).toList.toArray)).bind
+    (fun row => leastBy faceLt (faces.filter fun f =>
+      normEq f.family ((norm row.companion).toList.toArray))) = c at h
+  cases c with
+  | some g =>
+    simp only [Option.orElse_some, Option.some.injEq] at h
+    subst h
+    rcases Option.bind_eq_some_iff.mp hc with ⟨row, _, hrow⟩
+    exact (Array.mem_filter.mp (leastBy_mem _ _ _ hrow)).1
+  | none =>
+    simp only [Option.orElse_none] at h
+    exact (Array.mem_filter.mp (leastBy_mem _ _ _ h)).1
+
 end LeanTex.Core.FontDb

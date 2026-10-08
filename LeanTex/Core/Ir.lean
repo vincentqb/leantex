@@ -252,6 +252,20 @@ characters at 10 pt — the measure the band diagnostic exists to catch. A
 document that declares any `\page` geometry keeps every value it named. -/
 public def articleTextBlock : Sp := pt 312
 
+/-- The text block of a markdown page: 32 picas (384 pt). A markdown source
+declares no page, so this is the whole of its geometry, and it is set by
+characters per line, not inherited from the article's 26 picas — 61
+characters of the face a markdown page sets in. Through the copy-fitting
+fit the readable-band judge reads (W0201; memoir manual eqs. 2.1–2.2) it
+sets 75 characters of DejaVu Sans, the first family an undeclared document
+takes (`FontDb.defaultFamilies`), whose lowercase alphabet runs 146.5 pt at
+10 pt: the upper bound Bringhurst gives continuous text (Elements §2.1.2).
+In the narrowest family of that list, the Helvetica class (127.3 pt, TeX
+Gyre Heros), it sets 85, the low end of the 85–90 he allows discontinuous
+text — the code, lists and tables most markdown documents are made of — so
+every default family lands inside the band, 75 to 85. -/
+public def markdownTextBlock : Sp := pt 384
+
 /-- The slides stage and its defaults, beamer's own where beamer names one:
 128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
 160×90 mm at `aspectratio=169`, side text margins of 1 cm ("the left and

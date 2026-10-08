@@ -4692,8 +4692,13 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
+    -- A typewriter run (slot 2, `applyStyle`'s `.mono`) is never
+    -- hyphenated: LaTeX's typewriter families set `\hyphenchar` to −1
+    -- (t1cmtt.fd; tulmtt.fd, Latin Modern Mono under fontspec), so a hyphen
+    -- never appears inside an identifier.
+    let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
-      wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
+      wordItems wordPats (sty.lang.getD "") sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
     -- The space before the word pairs with its first glyph. Read first,
@@ -4980,11 +4985,13 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 with \\allow{E0405}"))
   for (idx, c, fb) in acc.substs do
     let source := glyphOrigin acc.origins .W0009 idx c
+    -- One loss per face and scalar, counted at every site it recurs.
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
-      (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'")))
+      (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
+      (subject := some s!"glyph:{(fs.get idx).family}:U+{hex c.toNat}"))
   for (idx, c, a, base) in acc.unstyled do
     let source := glyphOrigin acc.origins .W0016 idx c
     diags := diags.push (Diag.of .W0016
@@ -5262,7 +5269,7 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
   all_goals first | contradiction | skip
   case word sty cs attr =>
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-      patsOf_off, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
+      patsOf_off, ite_self, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
     intro hc
     have hw := wordItems_none_chars (sty.lang.getD "")
       (sty.metrics size xHeight textW textH).1
@@ -9706,11 +9713,15 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
+/-- The census key every overfull line shares: one loss, the content wider
+than the measure that sets it, counted at each line it recurs on. -/
+def overfullSubject : String := "line:overfull"
+
 private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (trigger := source.bind (·.pos.command))) }
+        (trigger := source.bind (·.pos.command)) (subject := some overfullSubject)) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns. -/
@@ -10624,7 +10635,8 @@ private def collectPara (r : Rd) (a : Acc)
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
             (span := lineSource nsources s brk)
-            (trigger := (lineSource nsources s brk).bind (·.pos.command)))
+            (trigger := (lineSource nsources s brk).bind (·.pos.command))
+            (subject := some overfullSubject))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs
@@ -14750,7 +14762,7 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
   all_goals first | contradiction | skip
   case word sty cs attr =>
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-      patsOf_off]
+      patsOf_off, ite_self]
     exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
       wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
   case space sty =>

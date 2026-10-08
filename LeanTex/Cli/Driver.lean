@@ -79,10 +79,11 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
 
 /-- Resolve and print one phase against the document's acceptance
 (`\allow` and `--best-effort`). Return its accounting without retaining
-already-emitted messages. -/
+already-emitted messages. A loss repeated in the phase shows once, its first
+site carrying the count and every later one a note (`Diag.foldRepeats`). -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
-  let r := Diag.resolveAll allowed allowAll (Diag.forOutputs outputs ds)
+  let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
   for d in r.diags do
     ui.diag d
   return { r with diags := #[] }

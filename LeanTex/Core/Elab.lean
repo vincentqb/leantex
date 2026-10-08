@@ -16927,8 +16927,10 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
-    -- declares any \page geometry keeps every value it named.
-    page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
+    -- declares any \page geometry keeps every value it named. A markdown
+    -- source can declare none, so its page is the markdown text block.
+    let block := if file.endsWith ".md" then Ir.markdownTextBlock else Ir.articleTextBlock
+    page := { page with hmargin := (page.width - block) / 2 }
   -- Furniture legality is the class record's, not the geometry's: a class
   -- that carries no running furniture drops the declaration and says so.
   if !record.runningFurniture && (head.isSome || foot.isSome) then

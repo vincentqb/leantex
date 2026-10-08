@@ -1126,6 +1126,42 @@ public theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i
   rw [Diag.count_mapIdx_eq_one (Diag.carrier ds.toList) i i hl
     fun j hj => Diag.carrier_eq_iff_self ds.toList i j hl hj (by simpa using hn)]
 
+/-- **One loss, one line on the default log.** The tally, with every later
+site of a loss — a record `tallySites` leaves with no sites, because an
+earlier diagnostic of the same code, subject and output carries the count —
+delivered as a note, listed under `-v`. What `Elab`'s `warnOnce` does for
+the elaborator's keyed warnings, as the one presentation for every
+producer: the markdown reader's routes, the layout's substitutions and
+overfull lines alike. Repetition changes presentation, never accounting:
+nothing is added, removed, reordered or reworded, the counts are the
+tally's, and a diagnostic with no subject — its own one site — keeps its
+severity. The demotion bit is written here beside `Diag.accept`, the other
+policy door. -/
+public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
+  (Diag.tallySites ds).map fun d => if d.sites == 0 then d.demote else d
+
+/-- A first site, and a subjectless one, is the tally's record unchanged; a
+later site is the tally's record demoted. -/
+public theorem Diag.foldRepeats_exact (ds : Array Diag) (i : Nat)
+    (h : i < (Diag.tallySites ds).size) :
+    (Diag.foldRepeats ds)[i]? = some (if ((Diag.tallySites ds)[i]).sites == 0
+      then ((Diag.tallySites ds)[i]).demote else (Diag.tallySites ds)[i]) := by
+  simp [Diag.foldRepeats, h]
+
+/-- **Folding keeps the census.** The sites of a folded log still add up to
+its length: demotion rewrites what a line says it is, never how much it
+counts. -/
+public theorem Diag.foldRepeats_sum_exact (ds : Array Diag) :
+    ((Diag.foldRepeats ds).toList.map (·.sites)).sum = ds.size := by
+  have hsites : (Diag.foldRepeats ds).toList.map (·.sites) =
+      (Diag.tallySites ds).toList.map (·.sites) := by
+    simp only [Diag.foldRepeats, Array.toList_map, List.map_map]
+    congr 1
+    funext d
+    simp only [Function.comp_apply]
+    split <;> rfl
+  rw [hsites, Diag.tallySites_sum_exact]
+
 /-- Diagnostics resolved against the document's acceptance, with the counts
 of every resolved phase. Counts follow acceptance, so an accepted loss is
 neither an error nor a warning. -/

@@ -106,6 +106,17 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let spec := if spec.body.isNone && spec.sans.isNone then
       { spec with body := FontDb.defaultFamily faces }
     else spec
+  -- beamer sets a presentation in its sans family (see `resolveName`).
+  let slides := doc.docClass == Ir.DocClass.slides
+  let textFamily := if slides then spec.sans.orElse fun _ => spec.body
+    else spec.body.orElse fun _ => spec.sans
+  -- An undeclared typewriter slot takes a fixed-pitch face, as LaTeX's
+  -- `\ttfamily` always does: the text family's designed companion, else the
+  -- least installed fixed-pitch face (`FontDb.pickMono`). Only a scan holding
+  -- none leaves the slot to the text face, which is the loss W0390 names.
+  let spec := if spec.mono.isNone then
+      { spec with mono := (textFamily.bind (FontDb.pickMono faces ·)).map (·.family) }
+    else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
@@ -129,7 +140,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- text slot is the declared sans family, and its declared per-variant
   -- faces come with it. The engine's three slots carry no separate serif
   -- default for decks: \rmfamily follows the deck's face.
-  let slides := doc.docClass == Ir.DocClass.slides
   let resolveName (slot : Nat) : Option String :=
     match slot with
     -- A document that names a sans family and no body family reads its
@@ -138,8 +148,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     -- regular — but as an accident of load order that no weight or
     -- variant could refine; naming it makes the sans's declared faces
     -- (an upright of another weight, a light one) reach the text.
-    | 0 => if slides then spec.sans.orElse fun _ => spec.body
-      else spec.body.orElse fun _ => spec.sans
+    | 0 => textFamily
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
   -- A slot's declared faces live under its *effective* slot: the one its
