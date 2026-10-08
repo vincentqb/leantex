@@ -1,6 +1,8 @@
 /-
 The CommonMark classifier: what this engine's markdown dialect does with
-every one of the 652 spec examples. Run from the repository root after
+every one of the 652 spec examples, and with the eight examples of the GFM
+spec's table extension, the one GitHub Flavored Markdown construct the
+dialect reads. Run from the repository root after
 `lake build TestsModules ScriptsModules` — the modules it imports, which
 `lake env lean --run` reads as they stand and rebuilds none of:
 
@@ -8,6 +10,10 @@ every one of the 652 spec examples. Run from the repository root after
   lake env lean --run scripts/commonmark.lean --check      check the committed verdicts and tier only
   lake env lean --run scripts/commonmark.lean --selftest   the reader, the comparison and the ratchet, on hand-written inputs
   lake env lean --run scripts/commonmark.lean --reader-hop the markdown twin through an external reader: a report
+
+The GFM cases keep the spec's own example numbers, in their own verdict
+table (`testdata/commonmark/gfm-verdicts.tsv`), and their tier rows carry a
+`GFM ` prefix; every rule below applies to them unchanged.
 
 **A classifier, not a gate.** Every case carries a committed verdict and an
 unclassified deviation fails. Four verdicts:
@@ -70,6 +76,26 @@ repo's own hermetic check — PATH pointed at an empty directory — and a
 classifier whose first act is to spawn a process cannot run there at all. -/
 def specKey : String :=
   "9AED364DA0B11E9BF5347E88BB9B04E1"
+
+/-- The GitHub Flavored Markdown spec, read for its one extension the
+dialect implements: tables. Its other sections are CommonMark 0.29, which
+the spec above classifies at a later version, or extensions this dialect
+does not read (`PROVENANCE.txt` says which and why). -/
+def gfmSpecPath : String := "testdata/commonmark/gfm-spec-0.29.txt"
+def gfmVerdictPath : String := "testdata/commonmark/gfm-verdicts.tsv"
+def gfmSpecSha : String :=
+  "7d8e5814befec287ac116786d81ff14e0adc9b13295b4494649e995408fd871c"
+def gfmSpecKey : String := "114C6285F004E129F26CF42E5BC85B7F"
+
+/-- The GFM section classified, by its heading in the spec. -/
+def gfmSection : String := "Tables (extension)"
+
+/-- The section's examples, in the spec's own numbering. -/
+def gfmCases : Nat := 8
+
+/-- A GFM section's name in the tier: prefixed, so it never merges with a
+CommonMark section that shares its heading. -/
+def gfmItem (sec : String) : String := "GFM " ++ sec
 
 -- ## The declared normalizations
 --
@@ -143,7 +169,63 @@ paint a newline immediately before </pre> — and a code block that genuinely \
 ends in a blank line differs by two newlines, so it still fails."),
    ("attribute order",
     "the two emitters order attributes differently; the comparison sorts \
-them. Hides: nothing — HTML attribute order is not content.")]
+them. Hides: nothing — HTML attribute order is not content."),
+   ("a table cell's alignment spelling",
+    "the GFM spec writes a cell's alignment as the `align` attribute, which \
+HTML lists as non-conforming (HTML §16, 'use CSS instead'); the engine writes \
+`text-align` in the cell's `style`. Both are read into one `align` value and \
+compared. Hides: the spelling alone — two different alignments, or an \
+alignment against none, still differ."),
+   ("a column group of bare columns",
+    "the engine opens every table with a `<colgroup>` of one `<col>` per \
+column; a column that carries no attribute adds nothing to the columns HTML's \
+table model forms from the cells (HTML §4.9.12), so such a group is dropped. \
+Hides: nothing — a group or a column carrying any attribute stays compared."),
+   ("a header cell's column scope in a header row",
+    "the engine marks each cell of a table's head `scope=col`; in a row with \
+no data cell, HTML's own model already makes every header cell a column \
+header (HTML §4.9.12.2, the auto state), so the value states nothing new and \
+is dropped there. Hides: nothing — any other scope, or a scope in a row that \
+holds a data cell, stays compared.")]
+
+/-- A `style` attribute's `text-align`, lower-cased, if it declares one. -/
+def textAlignOf (style : String) : Option String :=
+  (style.splitOn ";").findSome? fun decl =>
+    match decl.splitOn ":" with
+    | [prop, value] =>
+      if prop.trimAscii.toString.toLower == "text-align" then
+        some value.trimAscii.toString.toLower
+      else none
+    | _ => none
+
+/-- A cell's alignment as one `align` value, whichever spelling carried it:
+the declared normalization of a table cell's alignment. -/
+def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
+    Array (String × String) :=
+  if tag != "td" && tag != "th" then attrs
+  else
+    let spelled := (attrs.find? (·.1 == "align")).map (·.2.toLower)
+    let styled := (attrs.find? (·.1 == "style")).bind (textAlignOf ·.2)
+    let rest := attrs.filter (·.1 != "align")
+    match spelled.orElse fun _ => styled with
+    | some a => rest.push ("align", a)
+    | none => rest
+
+/-- A `<colgroup>` whose every child is a `<col>` carrying no attribute (or
+whitespace between them), and which carries none itself. -/
+def bareColGroup (n : Html.Node) : Bool :=
+  match n with
+  | .elem "colgroup" attrs kids =>
+    attrs.isEmpty && kids.all fun k => match k with
+      | .elem "col" a ks => a.isEmpty && ks.isEmpty
+      | .text s => s.trimAscii.isEmpty
+      | _ => false
+  | _ => false
+
+/-- A row with no data cell: every header cell in it is a column header by
+HTML's own model, the condition of the column-scope normalization. -/
+def headRow (tag : String) (kids : Array Html.Node) : Bool :=
+  tag == "tr" && !(kids.any fun k => k.tag? == some "td")
 
 -- ## The deliberate divergences
 --
@@ -151,6 +233,10 @@ them. Hides: nothing — HTML attribute order is not content.")]
 -- the entry: a row with no reason is not a divergence, it is a defect.
 
 def divergences : List (Nat × String) := []
+
+/-- The GFM table cases' deliberate divergences, keyed by the GFM spec's own
+example numbers. -/
+def gfmDivergences : List (Nat × String) := []
 
 -- ## The vendored spec
 
@@ -468,8 +554,9 @@ title never offsets the body's ranks. `pre` says whether whitespace is
 significant here. `gaps` are the IR gaps whose cost
 is hidden — empty for the comparison that decides `match`, and the run's
 own routes only when *attributing* an `owed` case; `inLi` says the parent
-is a list item, where a loose list's `<p>` sits. -/
-def canonG (gaps : List String) (pre inLi : Bool) (n : Html.Node) : String :=
+is a list item, where a loose list's `<p>` sits, and `inHeadRow` that it is
+a row with no data cell (`headRow`). -/
+def canonN (gaps : List String) (pre inLi inHeadRow : Bool) (n : Html.Node) : String :=
   match n with
   | .text s => if pre then s else squeeze s
   -- A stylesheet or script node is compared as the element it prints as,
@@ -482,8 +569,11 @@ def canonG (gaps : List String) (pre inLi : Bool) (n : Html.Node) : String :=
   | .elem tag attrs kids =>
     if tag == "hr" && gaps.contains "md:thematic-break" then ""
     else if tag == "p" && inLi && gaps.contains "md:loose-list" then
-      canonGList gaps pre false "" kids.toList
+      canonNList gaps pre false "" false "" kids.toList
     else
+      let attrs := cellAlignAttrs tag attrs
+      let attrs := if inHeadRow && tag == "th" then attrs.filter (· != ("scope", "col"))
+        else attrs
       let costs (a : String) : Bool :=
         (a == "start" && gaps.contains "md:list-start")
           || (a == "title" && tag == "a" && gaps.contains "md:link-title")
@@ -498,18 +588,29 @@ def canonG (gaps : List String) (pre inLi : Bool) (n : Html.Node) : String :=
       let pre' := pre || Html.preserveTags.contains tag
       if Html.voidTags.contains tag then "<" ++ tag ++ as ++ ">"
       else
-        let body := canonGList gaps pre' (tag == "li") "" kids.toList
+        let body := canonNList gaps pre' (tag == "li") tag (headRow tag kids) "" kids.toList
         -- Text-node boundaries are not line boundaries. Normalize once on
         -- the assembled block code, leaving its child elements intact.
         let body := if pre && tag == "code" then dropOneTrailingNewline body else body
         "<" ++ tag ++ as ++ ">" ++ body ++ "</" ++ tag ++ ">"
 
-def canonGList (gaps : List String) (pre inLi : Bool) (acc : String) :
-    List Html.Node → String
+/-- The children of a `parent` element, accumulated: a table's bare column
+group is the one child dropped (`bareColGroup`). -/
+def canonNList (gaps : List String) (pre inLi : Bool) (parent : String) (inHeadRow : Bool)
+    (acc : String) : List Html.Node → String
   | [] => acc
-  | k :: rest => canonGList gaps pre inLi (acc ++ canonG gaps pre inLi k) rest
+  | k :: rest =>
+    let s := if parent == "table" && bareColGroup k then "" else canonN gaps pre inLi inHeadRow k
+    canonNList gaps pre inLi parent inHeadRow (acc ++ s) rest
 
 end
+
+def canonG (gaps : List String) (pre inLi : Bool) (n : Html.Node) : String :=
+  canonN gaps pre inLi false n
+
+def canonGList (gaps : List String) (pre inLi : Bool) (acc : String) (ns : List Html.Node) :
+    String :=
+  canonNList gaps pre inLi "" false acc ns
 
 /-- The comparison that decides `match`: no gap is hidden. -/
 def canon (pre : Bool) (n : Html.Node) : String := canonG [] pre false n
@@ -873,7 +974,8 @@ structure Judged where
   silent : Array String := #[]
   deriving Inhabited
 
-def classify (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
+def classify (reviewed : Array (Nat × String)) (ex : Example)
+    (divs : List (Nat × String) := divergences) : Judged :=
   let wantNs := (hParse ex.html).toList
   let want := canonList false "" wantNs
   let (ns, diags) := engineFragment ex.md
@@ -884,7 +986,7 @@ def classify (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
   let gotG := canonGList gaps false false "" ns.toList
   let refusals := (refusalsOf diags).map fun r => (r, corroborated reviewed ex r)
   let (v, note) := judge want got wantG gotG refusals routes
-    ((divergences.find? (·.1 == ex.id)).map (·.2))
+    ((divs.find? (·.1 == ex.id)).map (·.2))
   let silent := if !(diags.any (·.kind == .E0390)) then
       silentGaps (gapInkList {} wantNs) (gapInkList {} ns.toList) routes
     else #[]
@@ -938,12 +1040,14 @@ def tierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row := 
     out := out.push { item := sec ++ ".cases", value := Int.ofNat ss.size }
   return out
 
-def verdictText (rows : Array Row) : String := Id.run do
-  let mut s := "# One row per CommonMark 0.31.2 spec example: id, section, verdict, note.\n"
+def verdictText (rows : Array Row)
+    (what : String := "CommonMark 0.31.2 spec example") (divTable : String := "divergences") :
+    String := Id.run do
+  let mut s := s!"# One row per {what}: id, section, verdict, note.\n"
   s := s ++ "# verdicts: match | rejected | divergence | owed.\n"
   s := s ++ "# `rejected` is a strict refusal (E0390) corroborated from outside the reader:\n"
   s := s ++ "# the expected HTML for raw HTML, testdata/commonmark/strict-reviewed.tsv otherwise;\n"
-  s := s ++ "# `divergence` needs a row in `divergences` in scripts/commonmark.lean;\n"
+  s := s ++ s!"# `divergence` needs a row in `{divTable}` in scripts/commonmark.lean;\n"
   s := s ++ "# `owed` is not implemented yet and the ratchet lets it only fall.\n"
   s := s ++ "# This file is written only by scripts/commonmark.lean.\n"
   for r in rows do
@@ -1280,12 +1384,13 @@ def counts (rows : Array Row) : Nat × Nat × Nat × Nat :=
 /-- Every case through `classify`, once. The rows are the committed verdicts;
 the judged values carry what the reports and the reviewed-list check read,
 so nothing reruns the engine. -/
-def classifyAll (exs : Array Example) (reviewed : Array (Nat × String)) :
+def classifyAll (exs : Array Example) (reviewed : Array (Nat × String))
+    (divs : List (Nat × String) := divergences) :
     Array Row × Array Judged := Id.run do
   let mut rows : Array Row := #[]
   let mut js : Array Judged := #[]
   for e in exs do
-    let j := classify reviewed e
+    let j := classify reviewed e divs
     rows := rows.push { id := e.id, section_ := e.section_, verdict := j.verdict, note := j.note }
     js := js.push j
   return (rows, js)
@@ -1314,10 +1419,18 @@ def die (code : UInt32) (msg : String) : IO UInt32 := do
   return code
 
 /-- The tier's provenance lines: data, never gated. -/
-def tierProvenance (exs : Array Example) (rows : Array Row) : Array String :=
+def tierProvenance (exs : Array Example) (rows : Array Row) (gfmExs : Array Example)
+    (gfmRows : Array Row) : Array String :=
   let (m, r, d, o) := counts rows
+  let (gm, gr, gd, go) := counts gfmRows
   #[s!"# spec: CommonMark 0.31.2, {exs.size} cases, sha256 {specSha}",
-    s!"# verdicts ({verdictPath}): match {m}, rejected {r}, divergence {d}, owed {o}"]
+    s!"# verdicts ({verdictPath}): match {m}, rejected {r}, divergence {d}, owed {o}",
+    s!"# spec: GFM 0.29 \"{gfmSection}\", {gfmExs.size} cases, sha256 {gfmSpecSha}",
+    s!"# verdicts ({gfmVerdictPath}): match {gm}, rejected {gr}, divergence {gd}, owed {go}"]
+
+/-- The GFM section's tier rows, its items prefixed (`gfmItem`). -/
+def gfmTierRows (exs : Array Example) (rows : Array Row) : Array Scoreboard.Row :=
+  (tierRows exs rows).map fun r => { r with item := gfmItem r.item }
 
 /-- The three strict classes, and how many spec cases each one touches:
 read off the subject each refusal carried, not asserted — with how many of
@@ -1361,6 +1474,14 @@ def selftest : IO UInt32 := do
   if let some e := (readExamples sample2)[0]? then
     unless e.section_ == "Real" do
       bad := bad.push s!"reader: a heading inside an example became a section '{e.section_}'"
+  -- A GFM extension example names its extension after the word, and is an
+  -- example all the same, numbered in sequence with the others.
+  let sample3 := "## Tables (extension)\n\n" ++ fence ++ " example\na\n.\n<p>a</p>\n" ++ fence
+    ++ "\n" ++ fence ++ " example table\n| a |\n| - |\n.\n<table></table>\n" ++ fence ++ "\n"
+  let exs3 := readExamples sample3
+  unless exs3.size == 2 && (exs3[1]?.map (·.id)) == some 2
+      && (exs3[1]?.map (·.section_)) == some "Tables (extension)" do
+    bad := bad.push s!"reader: a tagged extension example was not read in sequence ({exs3.size} read)"
   -- The HTML reader and the canonical form. Every declared normalization is
   -- broken once here in both directions: it hides the difference it
   -- declares, and it does not hide the one next to it.
@@ -1428,7 +1549,41 @@ def selftest : IO UInt32 := do
        "<pre><code>a\n\n</code></pre>" "<pre><code>a\n</code></pre>",
      -- attribute order
      same "attributes: order" "<img src=\"u\" alt=\"a\">" "<img alt=\"a\" src=\"u\">",
-     differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>"]
+     differ "attributes: a value still differs" "<a href=\"u\">t</a>" "<a href=\"v\">t</a>",
+     -- a table cell's alignment: one value whichever spelling carries it
+     same "cell alignment: the attribute and the style are one alignment"
+       "<table><tr><td align=\"right\">a</td></tr></table>"
+       "<table><tr><td style=\"text-align: right\">a</td></tr></table>",
+     differ "cell alignment: two alignments still differ"
+       "<table><tr><td align=\"right\">a</td></tr></table>"
+       "<table><tr><td style=\"text-align: center\">a</td></tr></table>",
+     differ "cell alignment: an alignment against none still differs"
+       "<table><tr><td align=\"right\">a</td></tr></table>" "<table><tr><td>a</td></tr></table>",
+     differ "cell alignment: the text beside it is still compared"
+       "<table><tr><td style=\"text-align: right\">a</td></tr></table>"
+       "<table><tr><td style=\"text-align: right\">b</td></tr></table>",
+     -- a column group of bare columns
+     same "colgroup: a group of bare columns is dropped"
+       "<table><colgroup><col><col></colgroup><tr><td>a</td></tr></table>"
+       "<table><tr><td>a</td></tr></table>",
+     differ "colgroup: a column carrying an attribute stays"
+       "<table><colgroup><col span=\"2\"></colgroup><tr><td>a</td></tr></table>"
+       "<table><tr><td>a</td></tr></table>",
+     differ "colgroup: a group carrying an attribute stays"
+       "<table><colgroup hidden><col></colgroup><tr><td>a</td></tr></table>"
+       "<table><tr><td>a</td></tr></table>",
+     differ "colgroup: only a table's own group is dropped"
+       "<div><colgroup><col></colgroup></div>" "<div></div>",
+     -- a header cell's column scope in a row with no data cell
+     same "scope: a column scope in a header row is dropped"
+       "<table><tr><th scope=\"col\">a</th></tr></table>" "<table><tr><th>a</th></tr></table>",
+     differ "scope: a column scope beside a data cell stays"
+       "<table><tr><th scope=\"col\">a</th><td>b</td></tr></table>"
+       "<table><tr><th>a</th><td>b</td></tr></table>",
+     differ "scope: any other scope stays"
+       "<table><tr><th scope=\"row\">a</th></tr></table>" "<table><tr><th>a</th></tr></table>",
+     differ "scope: the header text is still compared"
+       "<table><tr><th scope=\"col\">a</th></tr></table>" "<table><tr><th>b</th></tr></table>"]
   for c in cs do
     if let some m := c then bad := bad.push m
   -- Listing tokens may split text anywhere, including immediately after a
@@ -1804,6 +1959,47 @@ def loadInputs : IO (Except String (Array Example × Array (Nat × String))) := 
   | .ok rv => return .ok (exs, rv)
   | .error e => return .error s!"commonmark: {e}"
 
+/-- The GFM spec's table cases, gated on the vendored file's content key. -/
+def loadGfm : IO (Except String (Array Example)) := do
+  unless ← System.FilePath.pathExists gfmSpecPath do
+    return .error s!"commonmark: {gfmSpecPath} is missing"
+  let got ← keyOf gfmSpecPath
+  unless got == gfmSpecKey do
+    return .error s!"commonmark: {gfmSpecPath} has content key {got}, expected {gfmSpecKey}"
+  let exs := (readExamples (← IO.FS.readFile gfmSpecPath)).filter (·.section_ == gfmSection)
+  unless exs.size == gfmCases do
+    return .error s!"commonmark: read {exs.size} '{gfmSection}' examples, expected {gfmCases}"
+  return .ok exs
+
+/-- A committed verdict table against this run's rows, in both directions:
+a case with no committed verdict, a verdict or note that moved, and a
+committed case the spec no longer holds. -/
+def verdictFindings (path : String) (rows : Array Row) : IO (Except String (Array String)) := do
+  unless ← System.FilePath.pathExists path do
+    return .error s!"commonmark: {path} is missing; regenerate it"
+  let committed ← match parseVerdicts (← IO.FS.readFile path) with
+    | .ok rs => pure rs
+    | .error e => return .error s!"commonmark: {path}: {e}"
+  let mut bad : Array String := #[]
+  for r in rows do
+    match committed.find? (·.id == r.id) with
+    | none => bad := bad.push s!"{path}: case {r.id} has no committed verdict"
+    | some c =>
+      unless c.verdict == r.verdict do
+        bad := bad.push
+          s!"{path}: case {r.id} ({r.section_}): {r.verdict.name}, committed {c.verdict.name}"
+      -- The note is part of the verdict, checked in both directions: a
+      -- case parked on a pending dialect decision or on a named loss must
+      -- not quietly become a `match`, and a case must not acquire a note
+      -- nobody reviewed.
+      unless c.note == r.note do
+        bad := bad.push
+          s!"{path}: case {r.id} ({r.section_}): note '{r.note}', committed '{c.note}'"
+  for c in committed do
+    unless rows.any (·.id == c.id) do
+      bad := bad.push s!"{path}: committed case {c.id} is not in the spec"
+  return .ok bad
+
 /-- The three tier modes, shared with every other tier through
 `Scoreboard.tierMain`, plus the verdict table this tier owns. Regeneration
 writes the verdict table only after the tier was written: when the tier
@@ -1812,9 +2008,12 @@ def run (args : List String) : IO UInt32 := do
   let (exs, reviewed) ← match ← loadInputs with
     | .ok v => pure v
     | .error e => return ← die 1 e
+  let gfmExs ← match ← loadGfm with
+    | .ok v => pure v
+    | .error e => return ← die 1 e
   -- The two markdown doors read every case alike, before any case is
   -- judged: a verdict must not depend on which door read the case.
-  let split := exs.filter fun ex =>
+  let split := (exs ++ gfmExs).filter fun ex =>
     !(doorsAgree caseIncluded caseAloneInHost caseAlone ex.md &&
       doorsAgree caseIncludedSpaced caseAloneInHost caseAlone ex.md)
   for ex in split do
@@ -1823,6 +2022,10 @@ def run (args : List String) : IO UInt32 := do
     return ← die 1 s!"commonmark: {split.size} cases read differently through the two doors"
   let t0 ← IO.monoMsNow
   let (rows, js) := classifyAll exs reviewed
+  -- The reviewed list is keyed by CommonMark case numbers, so a GFM case
+  -- reads none: a strict refusal there is corroborated by the expected HTML
+  -- or not at all.
+  let (gfmRows, gfmJs) := classifyAll gfmExs #[] gfmDivergences
   let ms := (← IO.monoMsNow) - t0
   -- The reviewed list in its other direction, in every mode: a stale row is
   -- a fault, never a note.
@@ -1832,7 +2035,7 @@ def run (args : List String) : IO UInt32 := do
   -- the engine's page drops unnamed is a reader defect, never a verdict.
   -- Reported beside the stale rows rather than after them, so one run
   -- names every fault.
-  let silent := (exs.zip js).filter (!·.2.silent.isEmpty)
+  let silent := ((exs.zip js) ++ (gfmExs.zip gfmJs)).filter (!·.2.silent.isEmpty)
   for (e, j) in silent do
     IO.eprintln s!"commonmark: case {e.id} ({e.section_}) drops {j.silent.toList} and names nothing"
   unless stale.isEmpty && silent.isEmpty do
@@ -1840,34 +2043,18 @@ def run (args : List String) : IO UInt32 := do
 {silent.size} cases drop a gap construct in silence"
   let tier (a : List String) : IO UInt32 :=
     Scoreboard.tierMain "commonmark" (.pairs "match" "cases")
-      (pure (tierProvenance exs rows, tierRows exs rows)) selftest a
+      (pure (tierProvenance exs rows gfmExs gfmRows,
+        tierRows exs rows ++ gfmTierRows gfmExs gfmRows)) selftest a
   if args.contains "--check" then
-    unless ← System.FilePath.pathExists verdictPath do
-      return ← die 1 s!"commonmark: {verdictPath} is missing; regenerate it"
-    let committed ← match parseVerdicts (← IO.FS.readFile verdictPath) with
-      | .ok rs => pure rs
-      | .error e => return ← die 1 s!"commonmark: {verdictPath}: {e}"
     let mut bad : Array String := #[]
-    for r in rows do
-      match committed.find? (·.id == r.id) with
-      | none => bad := bad.push s!"case {r.id} has no committed verdict"
-      | some c =>
-        unless c.verdict == r.verdict do
-          bad := bad.push
-            s!"case {r.id} ({r.section_}): {r.verdict.name}, committed {c.verdict.name}"
-        -- The note is part of the verdict, checked in both directions: a
-        -- case parked on a pending dialect decision or on a named loss must
-        -- not quietly become a `match`, and a case must not acquire a note
-        -- nobody reviewed.
-        unless c.note == r.note do
-          bad := bad.push
-            s!"case {r.id} ({r.section_}): note '{r.note}', committed '{c.note}'"
-    for c in committed do
-      unless rows.any (·.id == c.id) do
-        bad := bad.push s!"committed case {c.id} is not in the spec"
+    for (path, rs) in [(verdictPath, rows), (gfmVerdictPath, gfmRows)] do
+      match ← verdictFindings path rs with
+      | .ok b => bad := bad ++ b
+      | .error e => return ← die 1 e
     for b in bad do IO.eprintln s!"commonmark: {b}"
     report exs rows
-    printStrict js
+    report gfmExs gfmRows
+    printStrict (js ++ gfmJs)
     let rc ← tier ["--check"]
     unless bad.isEmpty do
       return ← die 1 s!"commonmark: {bad.size} verdict findings"
@@ -1876,11 +2063,15 @@ def run (args : List String) : IO UInt32 := do
     return 0
   let rc ← tier []
   if rc != 0 then
-    return ← die rc s!"commonmark: the tier was not written, so neither is {verdictPath}"
+    return ← die rc s!"commonmark: the tier was not written, so neither are \
+{verdictPath} and {gfmVerdictPath}"
   IO.FS.writeFile verdictPath (verdictText rows)
+  IO.FS.writeFile gfmVerdictPath
+    (verdictText gfmRows s!"GFM 0.29 \"{gfmSection}\" example" "gfmDivergences")
   report exs rows
-  printStrict js
-  IO.println s!"commonmark: wrote {verdictPath} and {tierPath} ({ms} ms)"
+  report gfmExs gfmRows
+  printStrict (js ++ gfmJs)
+  IO.println s!"commonmark: wrote {verdictPath}, {gfmVerdictPath} and {tierPath} ({ms} ms)"
   return 0
 
 /-- One case's judgement in full: the two canonical forms, the refusals with
@@ -2003,7 +2194,12 @@ def scalingShapes : List (String × (Nat → String)) :=
       for k in [0:n / 8 + 1] do s := s ++ s!"# a{k}\n"
       return s),
    ("many fences", repeatTo "```\na\n```\n"),
-   ("many paragraphs", repeatTo "a\n\n")]
+   ("many paragraphs", repeatTo "a\n\n"),
+   -- GFM tables: one table's rows, many tables, and delimiter rows that
+   -- each fail their header and stay text
+   ("table rows", fun n => "| a | b |\n| - | - |\n" ++ repeatTo "| c `d` | e |\n" n),
+   ("many tables", repeatTo "| a |\n| - |\n| b |\n\n"),
+   ("failing delimiter rows", fun n => "a | b | c\n" ++ repeatTo "-|-\n" n)]
 
 /-- The minimum of `runs` timings of `f` on the document an `IO.Ref` holds,
 in nanoseconds. Read through the ref after the clock starts, so the work
@@ -2079,6 +2275,18 @@ def main (argv : List String) : IO UInt32 := do
       IO.println s!"  {d.code} {d.message}{match d.span with
         | some sp => s!" @{sp.pos.line}:{sp.pos.col}" | none => ""}"
     return 0
+  | ["--explain-gfm", idS] =>
+    let some id := idS.toNat? | return ← die 2 "commonmark: --explain-gfm needs a case number"
+    let exs ← match ← loadGfm with
+      | .ok v => pure v
+      | .error e => return ← die 1 e
+    let some ex := exs.find? (·.id == id) | return ← die 2 s!"commonmark: no GFM table case {id}"
+    explainOne ex (classify #[] ex gfmDivergences)
+    let (_, ds) := engineFragment ex.md
+    for d in ds do
+      IO.println s!"  {d.code} {d.message}{match d.span with
+        | some sp => s!" @{sp.pos.line}:{sp.pos.col}" | none => ""}"
+    return 0
   | ["--audit"] =>
     -- Every case a strict refusal or a route touches, explained: what a
     -- human reviewing the strict list reads. A report mode; writes nothing.
@@ -2100,5 +2308,6 @@ def main (argv : List String) : IO UInt32 := do
     readerHop exs rows
   | [] => run []
   | _ =>
-    IO.eprintln "usage: commonmark [--check | --selftest | --scaling [shape] | --explain <case> | --audit | --reader-hop]"
+    IO.eprintln "usage: commonmark [--check | --selftest | --scaling [shape] | --explain <case> | \
+--explain-gfm <case> | --audit | --reader-hop]"
     return 2

@@ -2,6 +2,8 @@
 # encoding: pairs match/cases
 # spec: CommonMark 0.31.2, 652 cases, sha256 257c41ad946f7a1414a499aca402a1aa8fdac3678532266611348c1cf54f4b80
 # verdicts (testdata/commonmark/verdicts.tsv): match 327, rejected 123, divergence 0, owed 202
+# spec: GFM 0.29 "Tables (extension)", 8 cases, sha256 7d8e5814befec287ac116786d81ff14e0adc9b13295b4494649e995408fd871c
+# verdicts (testdata/commonmark/gfm-verdicts.tsv): match 7, rejected 0, divergence 0, owed 1
 # lowered (applied): Backslash escapes.match 6→5 — case 24 was a false match: the comparison dropped class, and the run named the lost language with W0110
 # lowered (applied): Entity and numeric character references.match 10→9 — case 34 was a false match: the comparison dropped class, and the run named the lost language with W0110
 # lowered (applied): Fenced code blocks.match 25→24 — case 144 was a false match: the comparison dropped class, and the run named the lost language with W0110
@@ -23,6 +25,8 @@ Entity and numeric character references.cases	17
 Entity and numeric character references.match	9
 Fenced code blocks.cases	29
 Fenced code blocks.match	24
+GFM Tables (extension).cases	8
+GFM Tables (extension).match	7
 HTML blocks.cases	44
 HTML blocks.match	1
 Hard line breaks.cases	15

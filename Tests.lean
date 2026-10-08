@@ -98,6 +98,7 @@ import Tests.PublicationPaths
 import Tests.Markdown
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
+import Tests.MarkdownTables
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
 import Tests.MarkdownTwin
@@ -263,6 +264,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownChecks ref
   markdownHtmlChecks ref
   markdownHeadingChecks ref
+  Tests.MarkdownTables.markdownTableChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref
