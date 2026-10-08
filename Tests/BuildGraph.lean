@@ -133,17 +133,23 @@ def judge (files : Array (String × String)) : List (String × Bool) := Id.run d
       largeReads.all fun (n, _) => graph.contains n)]
   for (name, text) in files do
     let size := (text.splitOn "\n").length
+    let large := size ≥ largeLines
     let row := largeReads.lookup name
-    if size ≥ largeLines || row.isSome then
-      let reads := (graph.get? name).map (privateReads graph) |>.getD #[]
-      facts := facts ++ [(s!"{name} ({size} lines) reads exactly the private parts \
-{row.getD []} (found {reads.toList})",
-        size ≥ largeLines && row == some reads.toList)]
+    if large || row.isSome then
+      let reads := ((graph.get? name).map (privateReads graph) |>.getD #[]).toList
+      facts := facts ++ [match row with
+        | some r =>
+          if large then (s!"{name} ({size} lines) reads exactly the private parts {r} \
+(found {reads})", r == reads)
+          else (s!"{name} keeps a largeReads row at {size} lines, under {largeLines}", false)
+        | none => (s!"{name} ({size} lines) declares what it reads in largeReads \
+(found {reads})", false)]
   return facts
 
 /-- The model on an invented graph, both ways: a legacy file reads its whole
 closure, a module reads only through `import all`, and `import all` is
-transitive only through further `import all`. -/
+transitive only through further `import all`; and the table both ways: a
+large file needs a row, and a row needs a large file. -/
 def selfTest : List (String × Bool) :=
   let g : List (String × String) :=
     [("A", "module\n\nimport all B\nimport C\n\nnamespace A"),
@@ -159,7 +165,13 @@ def selfTest : List (String × Bool) :=
    ("a plain import reads no private part", reads "D" == #[]),
    ("a legacy file reads its whole closure", reads "L" == #["C", "F"]),
    ("a header ends at its first other line",
-     (graph.get? "A").map (·.imports.size) == some 2)]
+     (graph.get? "A").map (·.imports.size) == some 2),
+   ("a large file without a declared row fails",
+     let big := "module\n" ++ "\n".intercalate (List.replicate largeLines "-- line")
+     (judge #[("Synthetic.Big", big)]).any fun (n, ok) => !ok && hasStr n "Synthetic.Big"),
+   ("a declared row on a small file fails",
+     (judge #[("LeanTex.Core.Compat", "module\n")]).any fun (n, ok) =>
+       !ok && hasStr n "keeps a largeReads row")]
 
 end Tests.BuildGraph
 
