@@ -43,6 +43,10 @@ example (bs : ByteArray) : Utf8.read (Utf8.read bs).text.toUTF8 = ⟨(Utf8.read 
   Utf8.read_fixed_point bs
 example : ListingHighlight.Language → Array String → Array (Array ListingHighlight.Token) :=
   ListingHighlight.tokenize
+example (lang : ListingHighlight.Language) (lines : Array String) :
+    (ListingHighlight.tokenize lang lines).map ListingHighlight.lineText = lines :=
+  ListingHighlight.tokenize_source_exact lang lines
+example : Highlight.Lexer → Highlight.Src → Array Highlight.Raw := Highlight.lex
 example (tokens : Array ListingHighlight.Token) :
     ListingHighlight.lineText tokens = tokens.foldl (fun s t => s ++ t.text) "" := by rfl
 example (drawn : Bool) (refusal : Option String) :
@@ -102,8 +106,8 @@ example : True := by
   fail_if_success have := Utf8.go
   fail_if_success have := Utf8.subpart
   fail_if_success have := Utf8.marks
-  fail_if_success have := ListingHighlight.tokenAt
-  fail_if_success have := ListingHighlight.scanWhile
+  fail_if_success have := ListingHighlight.runsGo
+  fail_if_success have := ListingHighlight.lineBases
   fail_if_success have := RunBounded.Capture
   fail_if_success have := RunBounded.capture
   fail_if_success have := ToolProbe.decodeMemo

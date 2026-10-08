@@ -12,8 +12,9 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests.ListingProvider
 
--- Synthetic classification data, independent of an installed lexer. The
--- provider's language accuracy is a separate rendered acceptance report.
+-- Synthetic classification data, independent of an installed lexer, for a
+-- language no native lexer reads. The provider's language accuracy is a
+-- separate rendered acceptance report.
 def providerSource : String := "echo\t\"ready\"\n\n$HOME  # terminal\t  "
 
 def reply (request : ListingReply.Request) : String :=
@@ -35,7 +36,7 @@ def prepared (markdown : Bool) (input : String) : Elab.Prepared × Array Diag :=
 
 def invocationReply (kind : String) : String :=
   ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson
-    (ListingReply.Request.ofSource "bash" "sample")
+    (ListingReply.Request.ofSource "fish" "sample")
     #[ShellHighlight.shellTokenJson 0 kind "sample\n"]]
 
 def invocationStub (replyName : String) : String :=
@@ -48,7 +49,7 @@ exec /bin/cat \"$reply\"\n"
 -- The child owns PATH; the suite's environment and working directory stay put.
 def invocationProbe (dir : System.FilePath) : IO (List String) := do
   let ref ← IO.mkRef ([] : List String)
-  let request := ListingReply.Request.ofSource "bash" "sample"
+  let request := ListingReply.Request.ofSource "fish" "sample"
   let expect (label : String) (kind : LeanTex.Core.ListingHighlight.Kind) : IO Unit := do
     let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
     check ref label (ds.isEmpty && answers.size == 1 && answers.all fun answer =>
@@ -61,7 +62,7 @@ def invocationProbe (dir : System.FilePath) : IO (List String) := do
   let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
   check ref "missing provider returns no answer and one keyed warning"
     (answers.isEmpty && ds.size == 1 &&
-      ds.all fun d => d.code == "W0393" && d.subject == some "listing-language:bash")
+      ds.all fun d => d.code == "W0393" && d.subject == some "listing-language:fish")
   IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
   expect "restored provider retries the unchanged request" .nameBuiltin
   IO.FS.writeFile (dir / "base-python") (invocationStub "replacement.json")
@@ -122,12 +123,12 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let source := ListingProvider.providerSource
   let cases := [
     (false, Ir.ListingStyle.default, dvDoc "\\usepackage{minted}"
-      ("\\begin{minted}{bash}\n" ++ source ++ "\n\\end{minted}")),
+      ("\\begin{minted}{fish}\n" ++ source ++ "\n\\end{minted}")),
     (false, Ir.ListingStyle.friendly, dvDoc "\\usepackage{minted}\\setminted{style=friendly}"
-      ("\\begin{minted}{sh}\n" ++ source ++ "\n\\end{minted}")),
+      ("\\begin{minted}{fishshell}\n" ++ source ++ "\n\\end{minted}")),
     (false, Ir.ListingStyle.default, dvDoc "\\usepackage{listings}"
-      ("\\begin{lstlisting}[language=shell]\n" ++ source ++ "\n\\end{lstlisting}")),
-    (true, Ir.ListingStyle.default, "```bash\n" ++ source ++ "\n```")]
+      ("\\begin{lstlisting}[language=tcsh]\n" ++ source ++ "\n\\end{lstlisting}")),
+    (true, Ir.ListingStyle.default, "```fish\n" ++ source ++ "\n```")]
   for (markdown, style, input) in cases do
     let (base, earlier) := ListingProvider.prepared markdown input
     let (cold, coldDiags, _) := Elab.runPrepared "listing" base earlier

@@ -140,15 +140,16 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
     ("\\begin{minted}{lean4}\n" ++ holeSource ++ "\n\\end{minted}"))
 
-/-- A provider listing whose classes carry boxes in the shipped styles. -/
+/-- A provider listing whose classes carry boxes in the shipped styles, in a
+language no native lexer reads. -/
 def boxedAnswer : ListingReply.Answer :=
-  { request := ListingReply.Request.ofSource "bash" "x$y"
+  { request := ListingReply.Request.ofSource "fish" "x$y"
     tokens := #[#[{ kind := Kind.ofPygments "Token.Name", text := "x" },
       { kind := Kind.ofPygments "Token.Error", text := "$" },
       { kind := Kind.ofPygments "Token.Comment.Special", text := "y" }]] }
 
 def boxedDoc (style : Ir.ListingStyle) (copies : Nat) : Ir.Doc × Array Diag :=
-  let listing := "\\begin{minted}{bash}\nx$y\n\\end{minted}\n"
+  let listing := "\\begin{minted}{fish}\nx$y\n\\end{minted}\n"
   let (base, earlier) := ListingProvider.prepared false
     (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
       (String.join (List.replicate copies listing)))

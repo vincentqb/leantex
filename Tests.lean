@@ -242,7 +242,7 @@ import Tests.Privacy
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks svgAssetChecks svgToolChecks
-  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
+  shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks markdownInputHtmlChecks
@@ -304,6 +304,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingHighlightChecks ref
   pygmentsLexerChecks ref
   shellReplyChecks ref
+  shellHighlightChecks ref
   listingProviderChecks ref
   listingStyleTableChecks ref
   mdPreambleChecks ref

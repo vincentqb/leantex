@@ -41,7 +41,8 @@ public structure Answer where
   deriving BEq, Repr
 
 /-- Requests are leaves of the one generic document fold, including listings
-inside captions, notes and nested containers. Styles share a classification. -/
+inside captions, notes and nested containers, for the languages no native
+lexer reads. Styles share a classification. -/
 -- conserves: none — this collector returns requests, not a rewritten document.
 public def requests (doc : Ir.Doc) : Array Request :=
   Ir.foldDoc (fun acc _ => acc) #[] doc (fb := fun acc block =>

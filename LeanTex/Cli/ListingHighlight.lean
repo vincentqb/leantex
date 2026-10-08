@@ -7,7 +7,8 @@ import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
 
 /-!
-The installed Pygments boundary. One isolated Python process classifies a
+The installed Pygments boundary, for the listing languages no native lexer
+reads (`ListingHighlight.language?`). One isolated Python process classifies a
 bounded batch; only built-in registry aliases select lexers. The document
 supplies language and source data, never Python, options, filters or paths.
 `ListingReply.decode` validates the entire response before any classification

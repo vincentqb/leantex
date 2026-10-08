@@ -330,15 +330,21 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let friendly := (ShellHighlight.minted "bash" .friendly "echo x").1
   let markdown := (elabMd "```bash\necho x\n```").1
   let ruby := ListingHighlight.sourceDoc "ruby" "puts 7"
-  let combined := { bash with
+  let combined : Ir.Doc := { bash with
     body := native.body ++ lean.body ++
       #[.center (bash.body ++ #[.quote (friendly.body ++ markdown.body)] ++ ruby.body)] }
-  let collected := ListingReply.requests combined
+  let fish := (ShellHighlight.minted "fish" .default "echo x").1
+  let fishFriendly := (ShellHighlight.minted "fish" .friendly "echo x").1
+  let fishMarkdown := (elabMd "```fish\necho x\n```").1
+  let withFish : Ir.Doc := { combined with
+    body := combined.body ++
+      #[.center (fish.body ++ #[.quote (fishFriendly.body ++ fishMarkdown.body)])] }
+  let collected := ListingReply.requests withFish
   t "listing reply: generic fold finds nested requests, dedupes surfaces and styles"
-    (collected == #[{ language := "bash", source := "echo x" },
-      { language := "ruby", source := "puts 7" }])
-  t "listing reply: native Lean and Python need no external request"
-    ((ListingReply.requests native).isEmpty && (ListingReply.requests lean).isEmpty)
+    (collected == #[{ language := "ruby", source := "puts 7" },
+      { language := "fish", source := "echo x" }])
+  t "listing reply: native Lean, Python and shell listings need no external request"
+    ([native, lean, bash, friendly, markdown].all fun d => (ListingReply.requests d).isEmpty)
 
 /-- Fail-before artifact guard, independent of native versus external lexing.
 The optional fulfiller is the CLI's effects-as-data seam; the default reads

@@ -9532,8 +9532,9 @@ language argument. Honoured keys: `caption` (numbered in flow order — the
 listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
 `linenos`, `language` (normalized through `Ir.listingLang?` to the token
-both text artifacts carry; Lean and Python receive native token types,
-other names consume source-checked driver replies or remain plain, and a
+both text artifacts carry; a language with a native lexer receives its
+token types, other names consume source-checked driver replies or remain
+plain, and a
 spelling outside the token grammar is named W0110 and carries nothing), minted's
 `fontsize` (a named size command or `auto`) and `style` (`default` or
 `friendly`), listings' `basicstyle`

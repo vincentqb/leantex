@@ -221,52 +221,37 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes (dvDoc "" "\\begin{lstlisting}[style=friendly]\nx\n\\end{lstlisting}")).contains
       "W0110")
 
-/-- Classification boundaries and losslessness are independent checks: a
-lexer that preserves text but classifies every scalar plain fails the first;
-a lexer that finds the right keywords but drops whitespace fails the second. -/
+/-- The native lexers are Pygments' own (`pygmentsLexerChecks` holds every
+recorded stream token for token); these pins name what a reader sees: a
+proof hole, a declaration, a decorator, an interpolation, a prompt. The IR's
+reader stays honest on what no lexer vouches for: stale classification. -/
 def listingLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let lean := ListingHighlight.classified .lean
-    "def count' (α : Type) :=\n/- outer\n /- nested -/ still outer -/\n\"a\\\"b\" ++ 'x'\n#check 0x2a"
-  t "highlight lexer: Lean declarations, Unicode names and apostrophes"
-    (ListingHighlight.hasToken lean .keyword "def" &&
-     ListingHighlight.hasToken lean .nameFunction "count'" &&
-     lean.any (fun token => token.kind == .text && token.text.contains 'α') &&
-     ListingHighlight.hasToken lean .nameBuiltin "Type")
-  t "highlight lexer: nested Lean comments retain multiline state"
-    (ListingHighlight.hasToken lean .comment "/- outer" &&
-     ListingHighlight.hasToken lean .comment " /- nested -/ still outer -/")
-  t "highlight lexer: Lean escaped strings, characters, commands and hex"
-    (ListingHighlight.hasToken lean .string "\"a\\\"b\"" &&
-     ListingHighlight.hasToken lean .string "'x'" &&
-     ListingHighlight.hasToken lean .keyword "#check" &&
-     ListingHighlight.hasToken lean .number "0x2a")
+  let lean := ListingHighlight.classified .lean4
+    "@[simp] theorem t : 1 = 1 := by\n  sorry\n/- outer /- nested -/ -/ #eval `name"
+  t "highlight lexer: Lean attributes, declarations and proof holes take Pygments' types"
+    (ListingHighlight.hasToken lean ⟨"Keyword.Declaration"⟩ "@[" &&
+     ListingHighlight.hasToken lean ⟨"Keyword.Namespace"⟩ "theorem" &&
+     ListingHighlight.hasToken lean .genericError "sorry" &&
+     ListingHighlight.hasToken lean ⟨"Literal.String.Symbol"⟩ "`name")
+  t "highlight lexer: a nested Lean comment closes where Lean closes it"
+    (ListingHighlight.hasToken lean .comment "/-" &&
+     ListingHighlight.hasToken lean ⟨"Comment.Multiline"⟩ " outer /- nested -/ -/")
   let python := ListingHighlight.classified .python
-    "def sample(value):\n  r\"a\\\"b\" # comment\n  '''first\nsecond'''\n  return f\"{value}\" + str(1.25e-2)"
-  t "highlight lexer: Python declarations, comments and prefixed strings"
-    (ListingHighlight.hasToken python .keyword "def" &&
-     ListingHighlight.hasToken python .nameFunction "sample" &&
-     ListingHighlight.hasToken python .comment "# comment" &&
-     ListingHighlight.hasToken python .string "r\"a\\\"b\"")
-  t "highlight lexer: Python triples, f-string floor and numeric exponent"
-    (ListingHighlight.hasToken python .string "'''first" &&
-     ListingHighlight.hasToken python .string "second'''" &&
-     ListingHighlight.hasToken python .string "f\"{value}\"" &&
+    "@cache\ndef area(r):\n    return f\"{r!r:>4}\" + str(3.5e2)  # done"
+  t "highlight lexer: Python decorators, functions, interpolation and literals"
+    (ListingHighlight.hasToken python ⟨"Name.Decorator"⟩ "@cache" &&
+     ListingHighlight.hasToken python .nameFunction "area" &&
+     ListingHighlight.hasToken python ⟨"Literal.String.Interpol"⟩ "!r:" &&
      ListingHighlight.hasToken python .nameBuiltin "str" &&
-     ListingHighlight.hasToken python .number "1.25e-2")
-  for language in [LeanTex.Core.ListingHighlight.Language.lean, .python] do
-    let alphabet := "ab_λ0'\"`#\\/-+<>& \t\n\r«»".toList.toArray
-    let mut seed : UInt64 := 17
-    for n in [:256] do
-      let mut source := ""
-      for _ in [:n] do
-        let (i, next) := rand seed alphabet.size
-        seed := next
-        source := source.push alphabet[i]!
-      let lines := ((source.splitOn "\n").map id).toArray
-      t s!"highlight lexer: exact scalar/whitespace reconstruction {repr language} {n}"
-        ((LeanTex.Core.ListingHighlight.tokenize language lines).map
-          LeanTex.Core.ListingHighlight.lineText == lines)
+     ListingHighlight.hasToken python ⟨"Literal.Number.Float"⟩ "3.5e2" &&
+     ListingHighlight.hasToken python ⟨"Comment.Single"⟩ "# done")
+  let session := ListingHighlight.classified .console "$ echo hi\nhi\n# whoami\nroot"
+  t "highlight lexer: a shell session's prompts, commands and output"
+    (ListingHighlight.hasToken session ⟨"Generic.Prompt"⟩ "$ " &&
+     ListingHighlight.hasToken session .nameBuiltin "echo" &&
+     ListingHighlight.hasToken session ⟨"Generic.Output"⟩ "hi" &&
+     ListingHighlight.hasToken session ⟨"Generic.Prompt"⟩ "# ")
   let source := "\n  literal <tag>\n\nnext\tline\n"
   let stale : Ir.ListingSpec :=
     { highlight := #[#[{ kind := .keyword, text := "wrong source" }]] }

@@ -1,33 +1,24 @@
 module
 
+public import LeanTex.Core.Highlight
+
 /-!
-A bounded native listing lexer. It classifies source; it neither parses nor
-executes the language. Lean 4 and Python are the supported lexical subsets, following
-the Lean reference's lexical structure and Python's lexical analysis reference.
-Unrecognized names stay ordinary text. In particular, Python formatted
-string contents are one string token, not a second parser for interpolation.
+Listing classification for the elaborator: a native lexer's token stream
+(`Highlight`, Pygments' own lexers mirrored rule for rule) as one token
+array per source line. Classes are Pygments token types (`Kind`), the
+vocabulary the installed provider answers in too, so one style table paints
+both, and a language with no native lexer reaches the provider instead.
 
-Classes are Pygments token types (`Kind`), the vocabulary the installed
-provider answers in too, so one style table paints both. A Lean proof hole
-is `Generic.Error`, as Pygments' Lean 4 lexer classifies the two hole
-tactics (pygments/lexers/lean.py).
-
-The scanner copies every source scalar once, using lookahead only at token
-boundaries. Tokens retain their exact text, including whitespace. Newlines split
-the result into lines without changing the lexical state: a nested Lean block
-comment or Python triple-quoted string can span any number of lines.
+A line's tokens are its scalars, each typed by the stream at its position
+and adjacent scalars of one type in one token: `tokenize_source_exact`
+holds every line's text whatever the stream says.
 -/
 namespace LeanTex.Core.ListingHighlight
 
-public inductive Language where
-  | lean | python
-  deriving Repr, BEq, DecidableEq, Inhabited
+/-- A language with a native lexer. -/
+public abbrev Language := Highlight.Lexer
 
-public def language? (name : String) : Option Language :=
-  match name.toLower with
-  | "lean" | "lean4" => some .lean
-  | "python" | "python3" | "py" => some .python
-  | _ => none
+public def language? (name : String) : Option Language := Highlight.Lexer.ofName? name
 
 /-- A Pygments token type (https://pygments.org/docs/tokens/): its dotted
 path below the root `Token` (`Keyword.Type`), `""` for the root itself. -/
@@ -78,179 +69,73 @@ public structure Token where
 @[expose] public def lineText (tokens : Array Token) : String :=
   tokens.foldl (fun s t => s ++ t.text) ""
 
-private def charAt (chars : Array Char) (i : Nat) : Char := chars[i]?.getD '\x00'
+/-- One line's runs: each scalar takes the type `kinds` holds at its
+position, and adjacent scalars of one type share a token. -/
+private def runsGo (kinds : Array String) : Nat → List Char → String → String →
+    Array Token → Array Token
+  | _, [], kind, cur, acc => if cur.isEmpty then acc else acc.push { kind := ⟨kind⟩, text := cur }
+  | i, c :: cs, kind, cur, acc =>
+    let k := kinds[i]?.getD Highlight.Ty.text
+    if cur.isEmpty || k == kind then runsGo kinds (i + 1) cs k (cur.push c) acc
+    else runsGo kinds (i + 1) cs k (String.singleton c) (acc.push { kind := ⟨kind⟩, text := cur })
 
-private def slice (chars : Array Char) (start stop : Nat) : String :=
-  String.ofList (chars.extract start stop).toList
+private theorem lineText_push (acc : Array Token) (t : Token) :
+    lineText (acc.push t) = lineText acc ++ t.text := by
+  simp [lineText]
 
-private def scanWhile (chars : Array Char) (start : Nat) (p : Char → Bool) : Nat :=
-  Id.run do
-    let mut stop := start
-    for h : i in [start:chars.size] do
-      if !p chars[i] then break
-      stop := i + 1
-    return stop
+private theorem runsGo_text (kinds : Array String) (cs : List Char) :
+    ∀ (i : Nat) (kind cur : String) (acc : Array Token),
+      lineText (runsGo kinds i cs kind cur acc) = lineText acc ++ cur ++ String.ofList cs := by
+  induction cs with
+  | nil =>
+    intro i kind cur acc
+    simp only [runsGo]
+    split
+    · rename_i h
+      simp [String.isEmpty_iff.mp h]
+    · simp [lineText_push]
+  | cons c cs ih =>
+    intro i kind cur acc
+    simp only [runsGo]
+    split
+    · rw [ih, String.ofList_cons, String.push_eq_append]
+      simp only [String.append_assoc]
+    · rw [ih, lineText_push, String.ofList_cons]
+      simp only [String.append_assoc]
 
-private def identStart (c : Char) : Bool :=
-  c.isAlpha || c == '_' ||
-    (c.toNat ≥ 128 && !c.isWhitespace &&
-      !("∀∃→←↔⇒⇔:=+-*/<>≤≥≠∧∨¬∈∉∪∩⟨⟩«»".contains c))
+private def runs (kinds : Array String) (base : Nat) (line : String) : Array Token :=
+  runsGo kinds base line.toList "" "" #[]
 
-private def identRest (lang : Language) (c : Char) : Bool :=
-  identStart c || c.isDigit || (lang == .lean && c == '\'')
+private theorem runs_text (kinds : Array String) (base : Nat) (line : String) :
+    lineText (runs kinds base line) = line := by
+  rw [runs, runsGo_text]
+  simp [lineText]
 
-private def keywords : Language → List String
-  | .lean =>
-    ["abbrev", "axiom", "by", "class", "def", "deriving", "do", "else",
-     "end", "example", "export", "extends", "for", "fun", "have", "if",
-     "import", "in", "inductive", "instance", "let", "macro", "match",
-     "mutual", "namespace", "noncomputable", "opaque", "open", "partial",
-     "private", "protected", "return", "section", "set_option", "structure",
-     "syntax", "termination_by", "then", "theorem", "universe", "variable",
-     "where", "with", "simp", "simpa", "exact", "apply", "intro",
-     "intros", "rw", "rfl", "constructor", "cases", "induction", "decide"]
-  | .python =>
-    ["False", "None", "True", "and", "as", "assert", "async", "await",
-     "break", "class", "continue", "def", "del", "elif", "else", "except",
-     "finally", "for", "from", "global", "if", "import", "in", "is",
-     "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-     "while", "with", "yield"]
+/-- Where each line starts in the lexed text, a newline after each. -/
+private def lineBases (lines : Array String) : Array Nat := Id.run do
+  let mut out : Array Nat := Array.mkEmpty lines.size
+  let mut at_ := 0
+  for line in lines do
+    out := out.push at_
+    at_ := at_ + line.length + 1
+  return out
 
-private def builtins : Language → List String
-  | .lean =>
-    ["Type", "Prop", "Sort", "Nat", "Int", "Float", "Bool", "String",
-     "Char", "List", "Array", "Option", "Except", "IO", "Unit", "true", "false"]
-  | .python =>
-    ["abs", "all", "any", "bool", "bytes", "dict", "enumerate", "filter",
-     "float", "int", "isinstance", "len", "list", "map", "max", "min",
-     "object", "open", "print", "range", "repr", "reversed", "set",
-     "sorted", "str", "sum", "super", "tuple", "type", "zip"]
+/-- Classify normalized listing lines: the lexer reads them joined, with
+the one trailing newline the provider adds too, so a rule that ends at a
+newline also types the last line. -/
+public def tokenize (lang : Language) (lines : Array String) : Array (Array Token) :=
+  let src := Highlight.Src.ofString (String.intercalate "\n" lines.toList ++ "\n")
+  let kinds := Highlight.kindsOf src.size (Highlight.lex lang src)
+  let bases := lineBases lines
+  lines.mapIdx fun k line => runs kinds (bases[k]?.getD 0) line
 
-private def declaresName (lang : Language) (s : String) : Bool :=
-  match lang with
-  | .lean => ["def", "abbrev", "theorem", "axiom", "opaque", "structure",
-      "class", "inductive"].contains s
-  | .python => s == "def" || s == "class"
-
-/-- Find a closing quote, accounting for backslash escapes and triple quotes.
-A single-quoted Python string stops before an unescaped newline; an unfinished
-triple string or Lean string keeps its remaining source as a string token. -/
-private def stringEnd (chars : Array Char) (start : Nat) (quote : Char)
-    (triple multiline : Bool) : Nat := Id.run do
-  let width := if triple then 3 else 1
-  let mut escaped := false
-  for h : i in [start + width:chars.size] do
-    let c := chars[i]
-    if escaped then escaped := false
-    else if c == '\\' then escaped := true
-    else if !multiline && c == '\n' then return i
-    else if c == quote &&
-        (!triple || (charAt chars (i + 1) == quote && charAt chars (i + 2) == quote)) then
-      return i + width
-  return chars.size
-
-private def blockCommentEnd (chars : Array Char) (start : Nat) : Nat := Id.run do
-  let mut depth := 1
-  let mut skip := start + 2
-  for i in [start + 2:chars.size] do
-    if i < skip then continue
-    if charAt chars i == '/' && charAt chars (i + 1) == '-' then
-      depth := depth + 1
-      skip := i + 2
-    else if charAt chars i == '-' && charAt chars (i + 1) == '/' then
-      depth := depth - 1
-      if depth == 0 then return i + 2
-      skip := i + 2
-  return chars.size
-
-private def numberEnd (lang : Language) (chars : Array Char) (start : Nat) : Nat := Id.run do
-  let digit (c : Char) := c.isDigit || c == '_'
-  if charAt chars start == '0' then
-    let base := (charAt chars (start + 1)).toLower
-    if base == 'x' || base == 'o' || base == 'b' then
-      let allowed (c : Char) := c == '_' || (if base == 'x' then c.isHexDigit
-        else if base == 'o' then '0' ≤ c && c ≤ '7' else c == '0' || c == '1')
-      return scanWhile chars (start + 2) allowed
-  let mut stop := scanWhile chars start digit
-  if charAt chars stop == '.' && (charAt chars (stop + 1)).isDigit then
-    stop := scanWhile chars (stop + 1) digit
-  if (charAt chars stop).toLower == 'e' then
-    let after := stop + 1
-    let after := if charAt chars after == '+' || charAt chars after == '-' then after + 1 else after
-    if (charAt chars after).isDigit then stop := scanWhile chars after digit
-  if lang == .python && (charAt chars stop).toLower == 'j' then stop := stop + 1
-  return stop
-
-/-- One token boundary. The returned end is exclusive. Lookahead never changes
-the source; the outer traversal copies each visited scalar exactly once. -/
-private def tokenAt (lang : Language) (chars : Array Char) (i : Nat)
-    (expectName : Bool) : Kind × Nat × Bool := Id.run do
-  let c := charAt chars i
-  let next := charAt chars (i + 1)
-  if (lang == .python && c == '#') || (lang == .lean && c == '-' && next == '-') then
-    return (Kind.comment, scanWhile chars i (· != '\n'), false)
-  if lang == .lean && c == '/' && next == '-' then
-    return (Kind.comment, blockCommentEnd chars i, false)
-  if c == '"' || (lang == .python && c == '\'') then
-    let triple := lang == .python && next == c && charAt chars (i + 2) == c
-    return (.string, stringEnd chars i c triple (triple || lang == .lean), false)
-  -- A Lean character literal needs its closing quote. Apostrophes inside names
-  -- are consumed by identRest, so `value'` is never a string.
-  if lang == .lean && c == '\'' then
-    let stop := stringEnd chars i c false false
-    if stop ≤ i + 4 && stop ≤ chars.size && charAt chars (stop - 1) == '\'' then
-      return (.string, stop, false)
-  if lang == .lean && c == '«' then
-    let stop := scanWhile chars (i + 1) (· != '»')
-    return (Kind.text, min chars.size (stop + 1), false)
-  if c.isDigit || (c == '.' && next.isDigit) then
-    return (.number, numberEnd lang chars i, false)
-  if identStart c || (lang == .lean && c == '#' && identStart next) then
-    let stop := scanWhile chars (i + 1) (identRest lang)
-    let word := slice chars i stop
-    if lang == .python &&
-        ["r", "u", "b", "f", "br", "rb", "fr", "rf"].contains word.toLower &&
-        (charAt chars stop == '"' || charAt chars stop == '\'') then
-      let q := charAt chars stop
-      let triple := charAt chars (stop + 1) == q && charAt chars (stop + 2) == q
-      return (.string, stringEnd chars stop q triple triple, false)
-    let kind := if lang == .lean && (word == "sorry" || word == "admit") then Kind.genericError
-      else if (keywords lang).contains word || (lang == .lean && c == '#') then .keyword
-      else if expectName then .nameFunction
-      else if (builtins lang).contains word then .nameBuiltin else .text
-    return (kind, stop, declaresName lang word)
-  if "=:+-*/<>!%&|^~∀∃→←↔⇒⇔≤≥≠∧∨¬∈∉∪∩".contains c then
-    return (.operator, i + 1, false)
-  return (Kind.text, i + 1, expectName && c.isWhitespace)
-
-/-- Classify normalized listing lines. Newlines remain line boundaries and
-adjacent scalars of the same class coalesce, including spaces within comments
-and strings. The shared IR reader separately certifies text preservation even
-for manually constructed or stale metadata. -/
-public def tokenize (lang : Language) (lines : Array String) : Array (Array Token) := Id.run do
-  if lines.isEmpty then return #[]
-  let chars := (String.intercalate "\n" lines.toList).toList.toArray
-  let mut result : Array (Array Token) := #[]
-  let mut line : Array Token := #[]
-  let mut text := ""
-  let mut kind := Kind.text
-  let mut stop := 0
-  let mut expectName := false
-  for h : i in [:chars.size] do
-    let c := chars[i]
-    let (nextKind, nextStop, nextExpect) :=
-      if i < stop then (kind, stop, expectName) else tokenAt lang chars i expectName
-    if nextKind != kind || c == '\n' then
-      unless text.isEmpty do line := line.push { kind, text }
-      text := ""
-    kind := nextKind
-    stop := nextStop
-    expectName := nextExpect
-    if c == '\n' then
-      result := result.push line
-      line := #[]
-    else text := text.push c
-  unless text.isEmpty do line := line.push { kind, text }
-  return result.push line
+/-- Classification keeps every line's text exactly, for any lexer and any
+lines: the token stream decides types, never text. -/
+public theorem tokenize_source_exact (lang : Language) (lines : Array String) :
+    (tokenize lang lines).map lineText = lines := by
+  apply Array.ext
+  · simp [tokenize]
+  · intro i _ _
+    simp [tokenize, runs_text]
 
 end LeanTex.Core.ListingHighlight

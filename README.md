@@ -127,7 +127,7 @@ Optional tools must be on the shell's `PATH`:
 | SVG images | `xmllint`, `rsvg-convert` |
 | Final-frame SVG animation posters | `xsltproc`, plus the SVG tools |
 | PDF images in HTML | Poppler's `pdftocairo` |
-| Syntax highlighting beyond Lean and Python | Pygments (`python3 -m pip install Pygments`) |
+| Syntax highlighting beyond Lean, Python, shell scripts and sessions, and plain text | Pygments (`python3 -m pip install Pygments`) |
 
 For image support on macOS:
 

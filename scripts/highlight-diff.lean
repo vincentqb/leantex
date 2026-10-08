@@ -375,8 +375,9 @@ def pyLine (d : Draw) : Draw :=
     | 0 => (d.oneOf #["match ", "case ", "match", "case\t"]).times 3 fun d =>
         d.oneOf #["x", "_", " ", "(", "[a, _]", ":", "=", ".y", "if", "_x", "a_", "None", "|", ")"]
     | 1 => (d.oneOf #["def ", "def\\\n ", "class ", "class\t"]).oneOf #["f", "__init__", "1x", "é", "(", ""]
-    | 2 => (d.oneOf #["import ", "from "]).times 4 fun d =>
-        d.oneOf #["os", ".", " ", "as", " as ", ",", " , ", "import", " import ", "None", "x.y", "\n"]
+    | 2 => (d.oneOf #["import ", "from "]).times 5 fun d =>
+        d.oneOf #["os", ".", " ", "as", " as ", " as", " asx", " as\n", ",", " , ", "import",
+          " import ", " importx", "None", " None", "x.y", "\n"]
     | 3 => d.oneOf #["\"\"\"doc\"\"\"", "r'''doc'''", "\"\"\"open", "ub\"\"\"x\"\"\"", "  \n  \"\"\"x\"\"\""]
     | 4 => d.times 4 pyString
     | 5 => d.times 4 fun d => (pyNumber d).oneOf #["", " ", "+", ".", "x", "j"]
@@ -384,8 +385,9 @@ def pyLine (d : Draw) : Draw :=
         "__init__", "ValueError", "async for", "yield from", "yield", "await", "not", "in", "is",
         "isinstance", "True", "None", "lambda", "@", "@deco", "!=", ":=", "**", "->", "$", "?"]
     | 7 => d.oneOf #["#!/usr/bin/env python", "# note", "\\", "\\\n", "#", "#!"]
-    | 8 => (d.add "f\"").times 3 (fun d => d.oneOf #["{", "}", "{x", "{x!r}", "{x:>{y}}",
-        "{(a, b)}", "{[1]}", "{ {1} }", "{x = }", "{'s'}", "{\"d\"}", "text", "\n"]) |>.add "\""
+    | 8 => (d.add "f\"").times 3 (fun d => d.oneOf #["{", "}", "{x", "{x!r}", "{x!f}", "{x!z}",
+        "{x!}", "{x=!s}", "{x = !a:>3}", "{x:>{y}}", "{(a, b)}", "{[1]}", "{ {1} }", "{x = }",
+        "{'s'}", "{\"d\"}", "text", "\n"]) |>.add "\""
     | _ => d.times 3 fun d => d.oneOf #["x", " ", "(", ")", "[", "]", "{", "}", ",", ":", ";"]
   d.add "\n"
 
@@ -418,7 +420,8 @@ def consoleLine (d : Draw) : Draw :=
   let (k, d) := d.nat 4
   let d := match k with
     | 0 => (d.oneOf #["$ ", "# ", "% ", "$", "user@host:~$ ", "[user@host dir]$ ", "sh-5.1$ ",
-        "root@box:/# ", "(x) $ ", "[a]$", "u@h ~ % ", "a@b:c d $ "]).times 4 bashPart
+        "root@box:/# ", "(x) $ ", "[a]$", "u@h ~ % ", "a@b:c d $ ", "sh$x@y:z # ", "sh$ ",
+        "shell@h:~% ", "sh@x $ ", "[a@b c]d]$ ", "[x]y$ ", "(v)sh$ ", "(v)u@h:~# "]).times 4 bashPart
     | 1 => (d.oneOf #["> ", ">", "> x"]).times 2 bashPart
     | 2 => d.oneOf #["output", "  out", "", "error: $x", "100%", "a # b", "x $ y"]
     | _ => ((d.oneOf #["$ ", "# "]).times 2 bashPart).add "\\"
