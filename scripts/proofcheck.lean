@@ -62,12 +62,18 @@ def checkSource (plugin source : System.FilePath) (extra : Array String := #[])
   return requireSourceAudit source (← compile source
     (#["--plugin=" ++ plugin.toString] ++ extra) search)
 
+/-- Compilers resident at once. Source elaboration can be large: the largest
+audit (Layout) peaks near 2.5 GB and the next two (Compat, Elab) under 2 GB,
+so eight stay under 20 GB. At two, re-elaborating 481 sources held
+`lake lint`, which every commit's hook runs, at 25 minutes. -/
+def auditWidth : Nat := 8
+
 /-- Compiler audits read already-built dependencies and own distinct temporary
-wrappers. Keep at most two compilers resident: source elaboration can be large.
-The shared executor joins every started process and retains source order. -/
+wrappers, at most `auditWidth` at a time. The shared executor joins every
+started process and retains source order. -/
 def auditBatch (jobs : Array α) (run : Nat → α → IO IO.Process.Output) :
     IO (Array IO.Process.Output) :=
-  LeanTex.Cli.Batch.map 2 Prod.snd (fun (job, index) => run index job) jobs.zipIdx
+  LeanTex.Cli.Batch.map auditWidth Prod.snd (fun (job, index) => run index job) jobs.zipIdx
 
 def verify : IO UInt32 := do
   let files ← sources "."
