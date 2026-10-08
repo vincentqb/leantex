@@ -59,6 +59,7 @@ import Tests.ThemeCss
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
+import Tests.ListingStyleTable
 import Tests.PublicationPaths
 import Tests.MarkdownInput
 import Tests.InputUse
@@ -123,7 +124,7 @@ promoted.
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
-  shellReplyChecks listingProviderChecks publicationPathChecks
+  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
@@ -954,7 +955,17 @@ def reports : List Report := [
       "selected aliases restore their opening values while unrelated palette changes survive",
       "native PDF, HTML and reference output agree on the resolved frame colours",
       "unsupported callback content remains diagnosed"]
-    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author }
+    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author },
+  { id := "R110", date := "2026-10-08"
+    what := "A proof hole in a highlighted listing shipped as a bold keyword instead of its highlighting style's error red, and every token type the style styles beyond a few coarse classes lost its colour and weight, in both artifacts"
+    pins := [check% listingStyleTableChecks, check% shellReplyChecks,
+      thm% Listing.paint_declared_mem, thm% Listing.paint_style_exact,
+      thm% Listing.token_inline_source_exact]
+    accept := ["a presentation deck's proof-hole slide against its lualatex build, in PDF and HTML: the hole sets in the style's red at regular weight and no other page changes",
+      "one hundred thirty-seven guard assertions fail with the fix reverted: the hole lexed as a keyword, weights composed as the resolved style rather than the lualatex chain, style colours beyond seven classes dropped, and the token-box diagnostic absent",
+      "eight assertions fail with the hole lexing alone reverted: the hole as a bold keyword in both styles and both artifacts",
+      "every standard token type of both shipped styles resolves and composes as the installed highlighter answers, from a table its generator regenerates"]
+    state := .guarded "9db3a0ec" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
