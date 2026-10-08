@@ -6428,7 +6428,11 @@ option's US (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size, else
 the class record's `trimDefault`, with `safeMargin` on both margins, and
 sets display-text policy: no hyphenation, and — below the 40-character
 working minimum for justified text (Bringhurst, Elements 2.1.2) — ragged.
-A frame fills beamer's stage (`slidesStageOf`) with the slides margins.
+A frame fills beamer's stage (`slidesStageOf`) with the slides margins,
+its text ragged right as beamer.cls declares among its defaults
+(`\raggedright`, measured under lualatex: no frame line is stretched to
+the measure, and no hyphen pays against `\raggedright`'s infinite
+stretch).
 Flow reads the `*paper`/`paper=` options against `pageSizes` and
 `landscape` swaps the axes — the reading the geometry package documents
 for exactly these options (geometry manual §5.2). A document that declared
@@ -6460,6 +6464,9 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
+    -- beamer.cls sets `\raggedright` among its defaults, for every frame.
+    if page.justify.isNone then
+      page := { page with justify := some false }
   else if record.model == .face then
     if page.width == dflt.width && page.height == dflt.height then
       let named :=

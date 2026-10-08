@@ -4482,6 +4482,14 @@ private def captionScopeCss (pos : Array (String × Ir.CaptionPos)) : String :=
     s!"  --ltx-capsep-top: {chain objTop k}; --ltx-capfar-top: {chain farTop k};\n" ++
     s!"  --ltx-capmargin: var(--{s}captionmargin, var(--captionmargin, 0px)); }\n")
 
+/-- Whether the page's paragraphs hyphenate where a line wants it: a justified
+page that hyphenates. A ragged page — beamer's frames, a card — breaks
+against a stretch no hyphen's penalty beats (TeX's `\raggedright`), so its
+lines break at spaces and the screen's must too; `\page{ hyphenate = off }`
+says the same in so many words. -/
+public def autoHyphens (page : PageSpec) : Bool :=
+  page.justify != some false && page.hyphenate != some false
+
 /-- The HTML line-through rule thickness, derived from the one shared token
 `Ir.lineThroughThickness` the PDF path also lowers (`Layout.lineThroughThickness`
 aliases it), so a strike is one weight on either artifact. -/
@@ -4593,7 +4601,9 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- hyphens follows the declared language: the browser's dictionaries on
   -- the same lang= tags the engine's patterns read — one declaration, two
   -- conforming hyphenators (the agreement is about tags, never breaks).
-  "p { hyphens: auto; }\n" ++
+  -- A page set ragged or unhyphenated hyphenates nothing on its own
+  -- (`autoHyphens`), as the page's breaker never pays a hyphen there.
+  s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
   -- A list's items, a description's text under its label and a
   -- quotation's two edges stand their level's `\leftmargin` in, as the
   -- page sets them (`listIndentCss`).

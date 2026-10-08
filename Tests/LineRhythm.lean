@@ -119,4 +119,40 @@ def htmlGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a deck's bigskip stands its 12 pt share of the 96 mm stage"
     (hasStr deck "margin-top: 4.409vh" && !hasStr deck "margin-top: 12pt")
 
+/-- Invented prose, long enough to break across several lines of a frame. -/
+private def longPara : String :=
+  String.intercalate " " (List.replicate 6
+    "Alder birch cedar dogwood elm fir hazel juniper larch maple oak pine rowan spruce")
+
+/-- **A beamer frame sets its text ragged right**, as beamer.cls's own
+`\raggedright` does for every frame (measured under lualatex: the lines
+of a frame paragraph end where their words end, none hyphenated), while an
+article's lines stand justified to the measure; the HTML hyphenates only
+where the page would, so a deck's paragraphs break at spaces. Before, a
+frame's lines were stretched to the measure and hyphenated, in both
+artifacts. -/
+def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deckSrc := "\\documentclass[10pt]{beamer}\n\\begin{document}\n\\begin{frame}[t]\n" ++
+    longPara ++ "\n\\end{frame}\n\\end{document}"
+  let (deck, _) := elabStr deckSrc
+  let measure := deck.page.width - 2 * deck.page.hmargin
+  let lines := bodyLines (layoutOf oneFace deck)
+  let inner := lines.extract 0 (lines.size - 1)
+  t "a frame paragraph breaks across several lines" (lines.size ≥ 3)
+  t "a frame's lines stand within the measure" (lines.all (·.setWidth ≤ measure))
+  t "a frame's lines end ragged, where their words end"
+    (inner.any fun l => l.setWidth < measure - pt 2)
+  t "a frame's lines end on whole words" (lines.all fun l => !(lineText l).endsWith "-")
+  let (art, _) := elabStr (metricDoc longPara)
+  let artMeasure := art.page.width - 2 * art.page.hmargin
+  let artLines := bodyLines (layoutOf oneFace art)
+  t "an article's lines stand justified to the measure"
+    (artLines.size ≥ 3 && (artLines.extract 0 (artLines.size - 1)).all fun l =>
+      artMeasure - pt 1 ≤ l.setWidth)
+  t "a deck's paragraphs hyphenate nothing on their own"
+    (hasStr (HtmlDoc.emit {} deck).1 "p { hyphens: manual; }")
+  t "an article's paragraphs keep the browser's hyphenation"
+    (hasStr (HtmlDoc.emit {} art).1 "p { hyphens: auto; }")
+
 end Tests.LineRhythm
