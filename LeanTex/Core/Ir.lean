@@ -15224,9 +15224,12 @@ A location binds only its own descendants; siblings cannot
 borrow it. Outermost locations retain a macro's authored call site.
 
 The face scope matches the regions of `Layout.docMathScalars`; the alphabet
-scope matches `missingMathAlphas`, including block-owned captions,
-references and picture labels. Neither changes which formulas are resolved
-or request a face. -/
+scope is the regions `resolveMathAlphas` rewrites — body, furniture, notes,
+style templates, listing captions, formatted references and picture labels
+— and `missingMathAlphas` is defined over it. Holding the scope to the
+rewrite is `mathRequests_resolve_covers` in one direction only: a region
+the rewrite reaches and this fold misses resolves without a note. Neither
+scope changes which formulas are resolved or request a face. -/
 public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathRequest :=
   let body := foldCtxBlocks (mathRequestFold scope) (none, true) #[] doc.body
   let furniture := match scope with

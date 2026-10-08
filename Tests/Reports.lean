@@ -978,7 +978,7 @@ def reports : List Report := [
       thm% Layout.labelMetric_resolve_id,
       thm% Layout.resolveMathAlphaPicture_box_id]
     accept := ["twenty-seven assertions fail with the fix reverted: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census and the diagram fixture's upright label",
-      "twelve further assertions fail on that commit itself, whose labels resolved after elaboration had measured their source glyphs: label measures over eight invented labels, and four drawn outlines up to nine tenths of a point off a text node's margin",
+      "the label-measure guards landed in a follow-up to that commit, whose first form resolved labels after elaboration had measured their source glyphs: four drawn-outline assertions failed there, up to nine tenths of a point off a text node's margin, and pass after",
       "a fresh build of a presentation deck ships no error element, and its alphabet edge label sets upright in both artifacts as the reference build does"]
     state := .guarded "04b2c321" .revert .author },
   { id := "R112", date := "2026-10-08"

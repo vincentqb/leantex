@@ -201,11 +201,11 @@ scalars, and every shipped `math` element is its tree's only root. Before
 alphabet resolution reached picture labels, a label's alphabet shipped as an
 unresolved node — an `merror` around the source glyphs in HTML, which a
 browser frames in red on yellow, and the source italic on the page — and the
-label's carrier nested each formula's own `math` root. The label is also
-measured as it paints, so the outline, anchors and edges elaboration placed
-around it stand around the glyphs the page sets. Reads `Layout.Out`, the
-emitted HTML tree and the placed picture, never an IR dump. Invented
-content. -/
+label's carrier nested each formula's own `math` root. A drawn outline,
+placed at elaboration, keeps a text node's margin around the glyphs the page
+sets, measured from the resolved label (the measure itself is
+`Layout.labelMetric_resolve_id`). Reads `Layout.Out`, the emitted HTML tree
+and the placed picture, never an IR dump. Invented content. -/
 def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -235,17 +235,6 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
 ({(elemNodesList (· == "math") #[] labelBody.toList).size} math elements)")
       (MathMl.unnestedList labelBody.toList &&
         (elemNodesList (· == "math") #[] labelBody.toList).size == 1)
-    -- Elaboration places the picture by the label's measure, before the
-    -- driver resolves its alphabets: the measure must be the one of what
-    -- paints, or a node's outline, its anchors and its edges stand around
-    -- glyphs the page never sets.
-    let metric := Layout.labelMetric (Layout.Geom.ofPage label.page) fs
-    let resolveLabel := Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets)
-    t (name ++ " is measured as it paints")
-      ((PictureMathLabels.pictures label).all fun pic => pic.shapes.all fun s =>
-        match s with
-        | .label _ _ content _ scale _ => metric content scale == metric (resolveLabel content) scale
-        | _ => true)
     let proseOut := layoutOf fs prose
     let labelOut := layoutOf fs label
     t (name ++ s!" sets the paragraph's scalars on the page \

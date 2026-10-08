@@ -1490,7 +1490,8 @@ theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t
 end
 
 /-- A formula's content holds no `math` element, for every list: the
-emitter's vocabulary has none, and `merror` is not one. -/
+emitter's vocabulary has none, and `merror` is not one. A fact of the
+artifact, as `formula_unnested_contract` is. -/
 public theorem formulaKids_mathFree_contract (display : Bool) (body : MList) (mk : Marks) :
     tagFreeList (· == "math") (formulaKids display body mk).toList = true :=
   listNodes_tagFree (· == "math") (contentTags_beq_false (by simp [contentTags]))

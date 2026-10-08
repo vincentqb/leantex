@@ -671,6 +671,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let scan ← match reuse with
       | some s => pure s
       | none => scanFaces ui file doc.fonts
+    -- The calls elaboration made: the labels as it measured them, before
+    -- the font set resolves their alphabets against its own coverage.
+    let measured := FontFix.probes doc.body
     match ← buildFontSet doc scan front.cache .settled with
     | .error d =>
       -- No usable font set exists at all: nothing downstream can run, so
@@ -700,7 +703,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- environment, never of whichever face happened to be resolved first.
       let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
       let t ← IO.monoMsNow
-      let ps := FontFix.probes doc.body
+      let ps := measured
       let settled : Bool := match front.provisional with
         | some pre => FontFix.agree pre metric ps
         | none => Elab.enginePictures doc.body == 0

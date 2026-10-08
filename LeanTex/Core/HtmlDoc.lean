@@ -6418,7 +6418,8 @@ public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
     simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
 
-/-- `labelNodesOne_mathFree_contract` over a list of inlines. -/
+/-- `labelNodesOne_mathFree_contract` over a list of inlines; a fact of the
+artifact, as that one is. -/
 public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Node)
     (xs : List Inline) (mathCfg : Option Config)
     (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
