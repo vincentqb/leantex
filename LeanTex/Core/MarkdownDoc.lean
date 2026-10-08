@@ -8,23 +8,105 @@ and the twin is only trustworthy if it comes from the same source as the
 page. Here it is the same IR the HTML and PDF backends consume: the document
 metadata renders as the llms.txt preamble (markdown has no `<head>`, so the
 title and subject become the `#` line and the blockquote), and the body maps
-structurally. Like every backend, this one consumes the IR and nothing else. -/
+structurally. Like every backend, this one consumes the IR and nothing else.
+
+The twin is written to be read back. Text escapes what would read as
+markup, raw HTML and character references included (`escapeText`); a code
+span holds its content exactly; a link's destination reads back as it
+stands, and a bare link is an autolink; runs of one style are one run, with
+their spaces outside the delimiters. The round trip is measured, never
+assumed: the `mdtwin` tier counts the CommonMark examples and the corpus
+documents whose twin reads back to the same IR, and `Tests/MarkdownTwin.lean`
+pins each spelling class.
+
+**External premise — the reader hop.** What a twin means to the world is
+what a CommonMark reader makes of it. This module claims that a CommonMark
+reader parses every spelling the twin writes as the markdown door
+does. Evidence, not proof: the commonmark tier's `match`
+verdicts, ratcheted, in the sections those spellings live in — ATX
+headings, lists, list items, fenced code, code spans, emphasis, links,
+images, autolinks, block quotes, hard breaks, backslash escapes. A report
+from an external reader over the corpus twins is the direct check, and
+stays a report. -/
 
 namespace LeanTex.Core.MarkdownDoc
 
 open LeanTex.Core LeanTex.Core.Ir
 
-/-- Escape the characters that would read as markup. `#` and `-` are left
-alone: they mark up only at line starts, where the emitter itself decides
-what a line starts with. `|` is not line-anchored — anywhere in a pipe
-table's row it splits the cell — and `\|` is a valid CommonMark escape
-everywhere (§2.4: any ASCII punctuation), so it escapes globally. -/
+/-- Escape the characters that would read as markup anywhere in a line:
+CommonMark's inline punctuation, the pipe table's cell separator, and `<`
+and `&`, so the twin never writes raw HTML (§6.6) or reads a character
+reference (§2.5) into its text — each is a valid backslash escape (§2.4:
+any ASCII punctuation). A line ending inside text is the one character it
+spells as a numeric reference, since it has no other spelling.
+`#` and `-` are left alone: they mark up only at a line's start, where the
+emitter decides what a line starts with. -/
 private def escapeText (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
-        || c == '|' then
+        || c == '|' || c == '<' || c == '&' then
       (acc.push '\\').push c
+    -- a line ending inside text has no other spelling: a newline would end
+    -- the line, and a paragraph's text cannot hold one
+    else if c == '\n' then acc ++ "&#10;"
+    else if c == '\r' then acc ++ "&#13;"
     else acc.push c
+
+/-- The longest run of `c` in `s`. -/
+private def longestRun (c : Char) (s : String) : Nat :=
+  (s.foldl (fun (best, cur) x => if x == c then (max best (cur + 1), cur + 1) else (best, 0))
+    (0, 0)).1
+
+/-- A code span holding `s` exactly (CommonMark §6.1): delimited by a
+backtick run longer than any inside, and padded with one space where the
+content opens or closes with a backtick, or opens and closes with a space
+without being only spaces — the reader strips one such pair. Code span
+content is not unescaped, so it is written as it is. -/
+private def codeSpan (s : String) : String :=
+  if s.isEmpty then "" else
+  let ticks := String.ofList (List.replicate (longestRun '`' s + 1) '`')
+  let pad := s.startsWith "`" || s.endsWith "`" ||
+    (s.startsWith " " && s.endsWith " " && s.any (· != ' '))
+  ticks ++ (if pad then " " ++ s ++ " " else s) ++ ticks
+
+/-- An absolute URI an autolink can carry (§6.4): a scheme of two to
+thirty-two letters, digits, `+`, `.` or `-`, opening with a letter, then
+`:`, and no space, `<`, `>` or control character after it. -/
+private def autolinkable (url : String) : Bool :=
+  match url.splitOn ":" with
+  | scheme :: _ :: _ =>
+    scheme.length ≥ 2 && scheme.length ≤ 32 &&
+      (scheme.toList.head?.map Char.isAlpha).getD false &&
+      scheme.all (fun c => c.isAlphanum || c == '+' || c == '.' || c == '-') &&
+      url.all (fun c => c != ' ' && c != '<' && c != '>' && c.toNat ≥ 32)
+  | _ => false
+
+/-- A link destination as `[text](…)` reads it back (§6.3): angle-bracketed
+where it holds a space, with `<` and `>` escaped; otherwise bare, with
+parentheses and backslashes escaped. -/
+private def linkDest (url : String) : String :=
+  let esc (bad : Char → Bool) : String :=
+    url.foldl (init := "") fun acc c => if bad c then (acc.push '\\').push c else acc.push c
+  if url.any (fun c => c == ' ' || c == '<' || c == '>') then
+    "<" ++ esc (fun c => c == '<' || c == '>' || c == '\\') ++ ">"
+  else esc (fun c => c == '(' || c == ')' || c == '\\')
+
+/-- A run's text split at its own leading and trailing spaces: a delimiter
+beside a space neither opens nor closes (§6.2), so the spaces stand outside
+the delimiters. -/
+private def spaceSplit (s : String) : String × String × String :=
+  let cs := s.toList
+  let lead := cs.takeWhile (· == ' ')
+  let rest := cs.drop lead.length
+  let trail := rest.reverse.takeWhile (· == ' ')
+  (String.ofList lead, String.ofList (rest.take (rest.length - trail.length)), String.ofList trail)
+
+/-- The delimiter a style takes in markdown, where it has one. -/
+private def styleMark : Style → Option String
+  | .bold => some "**"
+  | .italic => some "*"
+  | .emph => some "*"
+  | _ => none
 
 mutual
 
@@ -44,7 +126,10 @@ private def inlineInto (acc : String) : Inline → String
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
   -- the alt text rides as markdown's own image construct; the size
   -- request degrades like colour
-  | .image src _ alt => acc ++ s!"![{alt.text}]({src})"
+  | .image src _ alt =>
+    let shown := escapeText alt.text
+    let dest := linkDest src
+    acc ++ "![" ++ shown ++ "](" ++ dest ++ ")"
   -- an icon's markdown spelling is its text alternative: prose keeps the
   -- meaning, the glyph is a web/print rendering
   | .icon _ label =>
@@ -57,25 +142,34 @@ private def inlineInto (acc : String) : Inline → String
     let escaped := escapeText text
     acc ++ escaped
   | .styled st body =>
-    let inner := inlinesInto "" body.toList
     match st with
-    | .bold => acc ++ s!"**{inner}**"
-    | .italic => acc ++ s!"*{inner}*"
-    | .emph => acc ++ s!"*{inner}*"
-    | .mono => acc ++ s!"`{inner}`"
-    | _ => acc ++ inner
-  | .colored _ _ body => inlinesInto acc body.toList
-  | .located _ body => inlinesInto acc body.toList
+    -- a code span's content is not unescaped: its text, as it is
+    | .mono =>
+      let span := codeSpan (Ir.plainText body)
+      acc ++ span
+    | _ =>
+      let inner := inlinesInto "" none body.toList
+      match styleMark st with
+      | some m =>
+        let (lead, core, trail) := spaceSplit inner
+        if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
+      | none => acc ++ inner
+  | .colored _ _ body => inlinesInto acc none body.toList
+  | .located _ body => inlinesInto acc none body.toList
   -- the role's class is a web styling hook; prose keeps the words
-  | .role _ body => inlinesInto acc body.toList
+  | .role _ body => inlinesInto acc none body.toList
   | .link url body =>
-    let inner := inlinesInto "" body.toList
-    -- A bare link prints its own URL; wrapping it as [url](url) says nothing.
-    if inner == url then acc ++ url else acc ++ s!"[{inner}]({url})"
-  | .decorated _ body => inlinesInto acc body.toList
-  | .onSteps _ body => inlinesInto acc body.toList
+    -- A bare link is an autolink; anything else writes its text and a
+    -- destination that reads back exactly.
+    if Ir.plainText body == url && autolinkable url then acc ++ "<" ++ url ++ ">"
+    else
+      let inner := inlinesInto "" none body.toList
+      let dest := linkDest url
+      acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
+  | .decorated _ body => inlinesInto acc none body.toList
+  | .onSteps _ body => inlinesInto acc none body.toList
   | .altSteps _ active otherwise =>
-    inlinesInto (inlinesInto acc active.toList) otherwise.toList
+    inlinesInto (inlinesInto acc none active.toList) none otherwise.toList
   -- `\hfill` separates a label from what it pushes to the far margin; text
   -- has no margin, so the separation renders as a spaced em dash. The space
   -- the author typed before it folds in rather than doubling.
@@ -112,17 +206,40 @@ private def inlineInto (acc : String) : Inline → String
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ => acc ++ "\\\n"
 
-private def inlinesInto (acc : String) : List Inline → String
+/-- The sibling walk. Adjacent runs written with one delimiter are written
+as one run — `**a****b**` reads back as neither two runs nor one — so a run
+that follows a run of its own delimiter reopens it: the closing delimiter
+written last comes off, and this run's opening one is not written. `prev`
+is the delimiter the text written so far ends on, if it ends on a closing
+one; a run's own spaces stand outside its delimiters (`spaceSplit`). -/
+private def inlinesInto (acc : String) (prev : Option String := none) : List Inline → String
   | [] => acc
-  | x :: rest => inlinesInto (inlineInto acc x) rest
+  | .styled st body :: rest =>
+    match styleMark st with
+    | some m =>
+      let (lead, core, trail) := spaceSplit (inlinesInto "" none body.toList)
+      let ends := if trail.isEmpty then some m else none
+      if core.isEmpty then
+        inlinesInto (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none) rest
+      else if prev == some m then
+        inlinesInto ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends rest
+      else inlinesInto (acc ++ lead ++ m ++ core ++ m ++ trail) ends rest
+    | none => inlinesInto (inlineInto acc (.styled st body)) none rest
+  | x :: rest =>
+    -- an inline that writes nothing (an italic correction, a label) leaves
+    -- the run it follows open to the next
+    let next := inlineInto acc x
+    inlinesInto next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) rest
 
 end
 
 /-- The markdown spelling of inline content: what a heading or a cell sets.
 Public because the placement theorems below quote it — the emitted title
-line is `# ` followed by exactly this. -/
+line is `# ` followed by exactly this. A trailing `#` is escaped, so a
+heading's text never reads as its closing sequence (§4.2). -/
 public def inlineText (xs : Array Inline) : String :=
-  inlinesInto "" xs.toList
+  let s := inlinesInto "" none xs.toList
+  if s.endsWith "#" then (s.dropEnd 1).toString ++ "\\#" else s
 
 /-- The reference list's markdown spelling: one paragraph per entry, the
 style's marker leading it — thebibliography's shape in prose. -/

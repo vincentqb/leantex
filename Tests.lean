@@ -99,6 +99,7 @@ import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
+import Tests.MarkdownTwin
 import Tests.InputUse
 import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
@@ -272,6 +273,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownInputChecks ref
   Tests.MarkdownDoors.markdownDoorChecks ref
   Tests.MarkdownDoors.markdownDoorDriverChecks ref
+  Tests.MarkdownTwin.markdownTwinChecks ref
   inputUseChecks ref
   backendChecks ref
   pictureBoundaryChecks ref
