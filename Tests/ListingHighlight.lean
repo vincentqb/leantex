@@ -120,8 +120,9 @@ end
 end ListingHighlight
 
 /-- Selecting Friendly must change actual ink while conserving the code.
-The colour pins come from Pygments 2.20.0 `styles/friendly.py`; the same
-coarse classes retain bold keywords and italic comments in both styles. -/
+The colour pins are Pygments' `styles/friendly.py` (the whole table is held
+to Pygments by `listingStyleTableChecks`); keywords stay bold and comments
+italic in both styles. -/
 def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "listing style: bounded typed names leave unsupported styles unresolved"
@@ -130,16 +131,13 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
      Ir.ListingStyle.ofName? " friendly " == some .friendly &&
      (["", "Friendly", "friendly-extra", "unknown-style"] : List String).all
        fun name => (Ir.ListingStyle.ofName? name).isNone)
-  let friendly := (Ir.Design.ofPalette {} (style := .friendly)).listing
-  t "listing friendly: sourced class palette resolves in IR"
-    (friendly == {
-      keyword := { r := 0, g := 112, b := 32 }
-      string := { r := 64, g := 112, b := 160 }
-      number := { r := 64, g := 160, b := 112 }
-      comment := { r := 96, g := 160, b := 176 }
-      builtin := { r := 0, g := 112, b := 32 }
-      name := { r := 6, g := 40, b := 126 }
-      operator := { r := 102, g := 102, b := 102 } })
+  let friendly := Ir.listingRoles.map fun (_, kind) =>
+    (Listing.paint (Ir.Design.ofPalette {}) .friendly kind).map (·.color)
+  t "listing friendly: the role types resolve to the style's sourced colours"
+    (friendly == ([{ r := 0, g := 112, b := 32 }, { r := 64, g := 112, b := 160 },
+      { r := 64, g := 160, b := 112 }, { r := 96, g := 160, b := 176 },
+      { r := 0, g := 112, b := 32 }, { r := 6, g := 40, b := 126 },
+      { r := 102, g := 102, b := 102 }] : List Ir.Color).map some)
   let authored := ({} : Ir.Palette).declare "codekeyword" Ir.Color.black
   t "listing friendly: authored roles take precedence over style defaults"
     (Listing.ink authored none .keyword (style := .friendly) == some Ir.Color.black)
@@ -227,9 +225,9 @@ def listingLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     "def count' (α : Type) :=\n/- outer\n /- nested -/ still outer -/\n\"a\\\"b\" ++ 'x'\n#check 0x2a"
   t "highlight lexer: Lean declarations, Unicode names and apostrophes"
     (ListingHighlight.hasToken lean .keyword "def" &&
-     ListingHighlight.hasToken lean .name "count'" &&
-     lean.any (fun token => token.kind == .plain && token.text.contains 'α') &&
-     ListingHighlight.hasToken lean .builtin "Type")
+     ListingHighlight.hasToken lean .nameFunction "count'" &&
+     lean.any (fun token => token.kind == .text && token.text.contains 'α') &&
+     ListingHighlight.hasToken lean .nameBuiltin "Type")
   t "highlight lexer: nested Lean comments retain multiline state"
     (ListingHighlight.hasToken lean .comment "/- outer" &&
      ListingHighlight.hasToken lean .comment " /- nested -/ still outer -/")
@@ -242,14 +240,14 @@ def listingLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
     "def sample(value):\n  r\"a\\\"b\" # comment\n  '''first\nsecond'''\n  return f\"{value}\" + str(1.25e-2)"
   t "highlight lexer: Python declarations, comments and prefixed strings"
     (ListingHighlight.hasToken python .keyword "def" &&
-     ListingHighlight.hasToken python .name "sample" &&
+     ListingHighlight.hasToken python .nameFunction "sample" &&
      ListingHighlight.hasToken python .comment "# comment" &&
      ListingHighlight.hasToken python .string "r\"a\\\"b\"")
   t "highlight lexer: Python triples, f-string floor and numeric exponent"
     (ListingHighlight.hasToken python .string "'''first" &&
      ListingHighlight.hasToken python .string "second'''" &&
      ListingHighlight.hasToken python .string "f\"{value}\"" &&
-     ListingHighlight.hasToken python .builtin "str" &&
+     ListingHighlight.hasToken python .nameBuiltin "str" &&
      ListingHighlight.hasToken python .number "1.25e-2")
   for language in [LeanTex.Core.ListingHighlight.Language.lean, .python] do
     let alphabet := "ab_λ0'\"`#\\/-+<>& \t\n\r«»".toList.toArray

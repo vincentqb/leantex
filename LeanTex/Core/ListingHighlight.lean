@@ -7,6 +7,11 @@ the Lean reference's lexical structure and Python's lexical analysis reference.
 Unrecognized names stay ordinary text. In particular, Python formatted
 string contents are one string token, not a second parser for interpolation.
 
+Classes are Pygments token types (`Kind`), the vocabulary the installed
+provider answers in too, so one style table paints both. A Lean proof hole
+is `Generic.Error`, as Pygments' Lean 4 lexer classifies the two hole
+tactics (pygments/lexers/lean.py).
+
 The scanner copies every source scalar once, using lookahead only at token
 boundaries. Tokens retain their exact text, including whitespace. Newlines split
 the result into lines without changing the lexical state: a nested Lean block
@@ -24,12 +29,49 @@ public def language? (name : String) : Option Language :=
   | "python" | "python3" | "py" => some .python
   | _ => none
 
-public inductive Kind where
-  | plain | keyword | string | number | comment | builtin | name | operator
-  deriving Repr, BEq, DecidableEq, Inhabited
+/-- A Pygments token type (https://pygments.org/docs/tokens/): its dotted
+path below the root `Token` (`Keyword.Type`), `""` for the root itself. -/
+public structure Kind where
+  path : String
+  deriving Repr, BEq, DecidableEq, Inhabited, Hashable
+
+namespace Kind
+
+public def text : Kind := ⟨"Text"⟩
+public def keyword : Kind := ⟨"Keyword"⟩
+public def string : Kind := ⟨"Literal.String"⟩
+public def number : Kind := ⟨"Literal.Number"⟩
+public def comment : Kind := ⟨"Comment"⟩
+public def nameBuiltin : Kind := ⟨"Name.Builtin"⟩
+public def nameFunction : Kind := ⟨"Name.Function"⟩
+public def operator : Kind := ⟨"Operator"⟩
+public def genericError : Kind := ⟨"Generic.Error"⟩
+
+/-- The types from the top level down to `k` itself, the root excluded: the
+order Pygments' LaTeX formatter applies their styles in
+(pygments/formatters/latex.py, `format_unencoded`). -/
+public def chain (k : Kind) : List Kind :=
+  if k.path.isEmpty then [] else
+  let parts := k.path.splitOn "."
+  (List.range parts.length).map fun i => ⟨".".intercalate (parts.take (i + 1))⟩
+
+/-- A provider's class name as a type: `Token` or a dotted descendant, each
+part an ASCII capital and then letters, digits or `_`, as Pygments creates
+subtypes (pygments/token.py, `_TokenType.__getattr__`). Anything else is
+ordinary text, so no class name becomes paint it does not name. -/
+public def ofPygments (name : String) : Kind :=
+  let parts := name.splitOn "."
+  let part (p : String) : Bool := match p.toList with
+    | c :: cs => 'A' ≤ c && c ≤ 'Z' && cs.all fun d => d.isAlphanum || d == '_'
+    | [] => false
+  if parts.head? == some "Token" && parts.length ≤ 8 && name.length ≤ 128 &&
+      parts.tail.all part then ⟨".".intercalate parts.tail⟩
+  else text
+
+end Kind
 
 public structure Token where
-  kind : Kind := .plain
+  kind : Kind := .text
   text : String
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -65,7 +107,7 @@ private def keywords : Language → List String
      "mutual", "namespace", "noncomputable", "opaque", "open", "partial",
      "private", "protected", "return", "section", "set_option", "structure",
      "syntax", "termination_by", "then", "theorem", "universe", "variable",
-     "where", "with", "sorry", "simp", "simpa", "exact", "apply", "intro",
+     "where", "with", "simp", "simpa", "exact", "apply", "intro",
      "intros", "rw", "rfl", "constructor", "cases", "induction", "decide"]
   | .python =>
     ["False", "None", "True", "and", "as", "assert", "async", "await",
@@ -146,9 +188,9 @@ private def tokenAt (lang : Language) (chars : Array Char) (i : Nat)
   let c := charAt chars i
   let next := charAt chars (i + 1)
   if (lang == .python && c == '#') || (lang == .lean && c == '-' && next == '-') then
-    return (.comment, scanWhile chars i (· != '\n'), false)
+    return (Kind.comment, scanWhile chars i (· != '\n'), false)
   if lang == .lean && c == '/' && next == '-' then
-    return (.comment, blockCommentEnd chars i, false)
+    return (Kind.comment, blockCommentEnd chars i, false)
   if c == '"' || (lang == .python && c == '\'') then
     let triple := lang == .python && next == c && charAt chars (i + 2) == c
     return (.string, stringEnd chars i c triple (triple || lang == .lean), false)
@@ -160,7 +202,7 @@ private def tokenAt (lang : Language) (chars : Array Char) (i : Nat)
       return (.string, stop, false)
   if lang == .lean && c == '«' then
     let stop := scanWhile chars (i + 1) (· != '»')
-    return (.plain, min chars.size (stop + 1), false)
+    return (Kind.text, min chars.size (stop + 1), false)
   if c.isDigit || (c == '.' && next.isDigit) then
     return (.number, numberEnd lang chars i, false)
   if identStart c || (lang == .lean && c == '#' && identStart next) then
@@ -172,13 +214,14 @@ private def tokenAt (lang : Language) (chars : Array Char) (i : Nat)
       let q := charAt chars stop
       let triple := charAt chars (stop + 1) == q && charAt chars (stop + 2) == q
       return (.string, stringEnd chars stop q triple triple, false)
-    let kind := if (keywords lang).contains word || (lang == .lean && c == '#') then .keyword
-      else if expectName then .name
-      else if (builtins lang).contains word then .builtin else .plain
+    let kind := if lang == .lean && (word == "sorry" || word == "admit") then Kind.genericError
+      else if (keywords lang).contains word || (lang == .lean && c == '#') then .keyword
+      else if expectName then .nameFunction
+      else if (builtins lang).contains word then .nameBuiltin else .text
     return (kind, stop, declaresName lang word)
   if "=:+-*/<>!%&|^~∀∃→←↔⇒⇔≤≥≠∧∨¬∈∉∪∩".contains c then
     return (.operator, i + 1, false)
-  return (.plain, i + 1, expectName && c.isWhitespace)
+  return (Kind.text, i + 1, expectName && c.isWhitespace)
 
 /-- Classify normalized listing lines. Newlines remain line boundaries and
 adjacent scalars of the same class coalesce, including spaces within comments
@@ -190,7 +233,7 @@ public def tokenize (lang : Language) (lines : Array String) : Array (Array Toke
   let mut result : Array (Array Token) := #[]
   let mut line : Array Token := #[]
   let mut text := ""
-  let mut kind := Kind.plain
+  let mut kind := Kind.text
   let mut stop := 0
   let mut expectName := false
   for h : i in [:chars.size] do

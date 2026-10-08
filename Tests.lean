@@ -87,6 +87,7 @@ import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
 import Tests.ListingHighlight
+import Tests.ListingStyleTable
 import Tests.ListingProvider
 import Tests.PublicationPaths
 import Tests.Markdown
@@ -212,7 +213,7 @@ import Tests.LinkColor
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
-  shellReplyChecks listingProviderChecks publicationPathChecks
+  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
@@ -257,6 +258,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingHighlightChecks ref
   shellReplyChecks ref
   listingProviderChecks ref
+  listingStyleTableChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
   inputUseChecks ref

@@ -39,7 +39,7 @@ example : True := by
   fail_if_success have := Oklab.nearestGo
   fail_if_success have := Oklab.nearestChannel
   fail_if_success have := Oklab.toColor
-  fail_if_success have := Listing.fontStyle
+  fail_if_success have := Listing.weighted
   trivial
 
 end Tests.ColourInterface

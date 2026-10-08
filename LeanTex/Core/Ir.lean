@@ -5186,19 +5186,29 @@ public def listingLang? (raw : String) : Option ListingLang :=
   let s := raw.trimAscii.toString.toLower
   if h : listingLangOk s = true then some ⟨s, h⟩ else none
 
-/-- The native style choices, independent of lexical classification.
-Pygments style names are case-sensitive; unsupported names remain a
-frontend option diagnostic, never an implicit default selection. -/
+/-- The Pygments styles a listing may select, each painted from its own
+table (`PygmentsStyleData`, resolved by `PygmentsStyle`), independent of
+lexical classification. Pygments style names are case-sensitive;
+unsupported names remain a frontend option diagnostic, never an implicit
+default selection. -/
 public inductive ListingStyle where
   | default
   | friendly
   deriving Repr, BEq, Inhabited
 
+/-- The style's Pygments name, the one spelling a document selects it by. -/
+public def ListingStyle.name : ListingStyle → String
+  | .default => "default"
+  | .friendly => "friendly"
+
+public def ListingStyle.all : List ListingStyle := [.default, .friendly]
+
+public theorem ListingStyle.all_complete (s : ListingStyle) : s ∈ ListingStyle.all := by
+  cases s <;> simp [ListingStyle.all]
+
 public def ListingStyle.ofName? (name : String) : Option ListingStyle :=
-  match name.trimAscii.toString with
-  | "default" => some .default
-  | "friendly" => some .friendly
-  | _ => none
+  let name := name.trimAscii.toString
+  ListingStyle.all.find? (·.name == name)
 
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
@@ -5214,8 +5224,8 @@ furniture beside it, generated ink outside the census as a list's markers
 are. `language` is listings' `language=` key or minted's mandatory
 argument, normalized (`listingLang?`): one fact the HTML `code` element's
 class and the markdown fence's info string both project (`htmlClass`,
-`fenceInfo`, `listing_language_agree`). `highlight` holds native lexical
-classes, assigned once during elaboration; both backends consume the same
+`fenceInfo`, `listing_language_agree`). `highlight` holds Pygments token
+types, assigned once during elaboration; both backends consume the same
 segments. A bare `{verbatim}` is the default value everywhere. -/
 public structure ListingSpec where
   /-- Authentic source start for diagnostics on listing lines and tokens.
@@ -10382,16 +10392,21 @@ public def titledLook (pal : Palette) : TitledKind → TitledLook
       bar := bar }
 
 
-/-- The lexical inks a design resolves once for both artifacts. The unstyled
-class inherits its enclosing foreground, so it needs no palette entry. -/
-public structure ListingColors where
-  keyword : Color
-  string : Color
-  number : Color
-  comment : Color
-  builtin : Color
-  name : Color
-  operator : Color
+/-- The palette roles that declare a listing colour, each for one Pygments
+token type: the role reads as that type's colour declaration in the
+listing's style, inherited by every descendant that declares none of its
+own (`Listing.paint`). -/
+public def listingRoles : List (String × ListingHighlight.Kind) :=
+  [("codekeyword", .keyword), ("codestring", .string), ("codenumber", .number),
+   ("codecomment", .comment), ("codebuiltin", .nameBuiltin), ("codename", .nameFunction),
+   ("codeoperator", .operator)]
+
+/-- A listing colour a palette declares: the role, the token type whose
+colour it declares, and the colour. -/
+public structure ListingRole where
+  role : String
+  kind : ListingHighlight.Kind
+  color : Color
   deriving Repr, BEq
 
 /-- The document's resolved design: every semantic role the backends read,
@@ -10420,10 +10435,11 @@ public structure Design where
   /-- Quieted secondary furniture — the chrome footer's small text draws in
   it; the body ink when undeclared. -/
   muted : Color
-  /-- Native listing colours, resolved from `code…` roles. The shared listing
-  painter chooses a legible default on the actual ground; authored palette
-  entries instead pass through the ordinary contrast judge. -/
-  listing : ListingColors
+  /-- The listing colours the palette declares (`code…` roles). Every other
+  token colour is the listing's style's, which the shared painter keeps
+  legible on the actual ground; declared ones pass through the ordinary
+  contrast judge. -/
+  listing : Array ListingRole
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
   /-- The title's ink when no bar is declared, and the subtitle's ink on
@@ -10491,31 +10507,9 @@ chain behind it is not, and it was written out a second time in
 The two fields a palette cannot answer — the progress bar's thickness and
 the style table — take their undeclared values here, and `ofDoc` overlays
 the document's declarations. -/
-@[expose] public def Design.ofPalette (pal : Palette) (style : ListingStyle := .default) : Design :=
+@[expose] public def Design.ofPalette (pal : Palette) : Design :=
   let fg := (pal.find? "fg").getD Color.black
   let bg := (pal.find? "bg").getD Color.white
-  -- Pygments 2.20.0 DefaultStyle / FriendlyStyle:
-  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/default.py
-  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/friendly.py
-  -- Native classes project Keyword, String, Number, Comment, Name.Builtin,
-  -- Name.Function and Operator. Authored roles override these defaults below.
-  let listing : ListingColors := match style with
-    | .default => {
-        keyword := { r := 0, g := 128, b := 0 }
-        string := { r := 186, g := 33, b := 33 }
-        number := { r := 102, g := 102, b := 102 }
-        comment := { r := 61, g := 123, b := 123 }
-        builtin := { r := 0, g := 128, b := 0 }
-        name := { r := 0, g := 0, b := 255 }
-        operator := { r := 102, g := 102, b := 102 } }
-    | .friendly => {
-        keyword := { r := 0, g := 112, b := 32 }
-        string := { r := 64, g := 112, b := 160 }
-        number := { r := 64, g := 160, b := 112 }
-        comment := { r := 96, g := 160, b := 176 }
-        builtin := { r := 0, g := 112, b := 32 }
-        name := { r := 6, g := 40, b := 126 }
-        operator := { r := 102, g := 102, b := 102 } }
   let frameTitleFg := (pal.find? "frametitlefg").getD fg
   let frametitle := (pal.find? "frametitlebg").map fun barBg =>
     { fg := (pal.find? "frametitlefg").getD bg, bg := barBg : ColorPair }
@@ -10531,14 +10525,8 @@ the document's declarations. -/
     coveredFraction := pal.coveredFraction.getD coveredFractionDefault
     covered := pal.find? "covered"
     muted := muted
-    listing := {
-      keyword := (pal.find? "codekeyword").getD listing.keyword
-      string := (pal.find? "codestring").getD listing.string
-      number := (pal.find? "codenumber").getD listing.number
-      comment := (pal.find? "codecomment").getD listing.comment
-      builtin := (pal.find? "codebuiltin").getD listing.builtin
-      name := (pal.find? "codename").getD listing.name
-      operator := (pal.find? "codeoperator").getD listing.operator }
+    listing := (listingRoles.filterMap fun (role, kind) =>
+      (pal.find? role).map fun color => { role, kind, color }).toArray
     frametitle := frametitle
     frameTitleFg := frameTitleFg
     framesubtitle := (pal.find? "framesubtitlefg").getD
@@ -10728,11 +10716,10 @@ public def Design.consumedRoles : List String :=
    "titlepagefg", "titlepagebg",      -- Layout.titleGround / collectBlock frame
                                       -- arm, HtmlDoc.themeCss, Contrast's
                                       -- titlePageStep
-   "codekeyword", "codestring", "codenumber", "codecomment",
-   "codebuiltin", "codename", "codeoperator", -- Listing.tokenInline, both backends
-   "separator"]                       -- the title-page rule (Elab.titleBlocks
+   "separator"] ++                    -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)
+  listingRoles.map (·.1)              -- Listing.tokenInline, both backends
 
 
 /-- How covering paints: the colour of a covered run that had none of its

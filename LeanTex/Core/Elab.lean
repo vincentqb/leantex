@@ -18,6 +18,7 @@ import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
 import LeanTex.Core.PdfContract
 public import LeanTex.Core.ListingReply
+import LeanTex.Core.Listing
 public import LeanTex.Core.BeamerColor
 
 namespace LeanTex.Core.Elab
@@ -9131,6 +9132,15 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   blocks := blocks.push (.table cols padL padR rows rules spans)
   return blocks
 
+/-- The distinct token types of a listing whose style draws a box around
+them, first appearance first: what the typed inlines cannot carry. -/
+private def boxedKinds (style : Ir.ListingStyle) (lines : Array (Array ListingHighlight.Token)) :
+    Array (ListingHighlight.Kind × PygmentsStyle.Box) :=
+  lines.foldl (fun acc line => line.foldl (fun acc t =>
+    match Listing.box? style t.kind with
+    | some box => if acc.any (·.1 == t.kind) then acc else acc.push (t.kind, box)
+    | none => acc) acc) #[]
+
 /-- One listing block from a lexically blind capture. `{verbatim}` is the
 default spec, as always. `{lstlisting}` reads listings' per-environment
 keys from its option head, `{minted}` its option head and its mandatory
@@ -9138,7 +9148,7 @@ language argument. Honoured keys: `caption` (numbered in flow order — the
 listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
 `linenos`, `language` (normalized through `Ir.listingLang?` to the token
-both text artifacts carry; Lean and Python receive native lexical classes,
+both text artifacts carry; Lean and Python receive native token types,
 other names consume source-checked driver replies or remain plain, and a
 spelling outside the token grammar is named W0110 and carries nothing), minted's
 `fontsize` (a named size command or `auto`) and `style` (`default` or
@@ -9149,8 +9159,10 @@ tabs, no wrapping. Bare fontsize names are text in FancyVerb, not size
 commands; name that unsupported spelling with its correction.
 Every other key, and a value
 asking for what the engine does not draw, is named W0110 — never a
-silent drop. The caption is kept as its literal text: a listing caption
-is plain prose; markup inside one is out of the blind capture's reach. -/
+silent drop; so is a token type whose style draws a frame or background
+around it, W0397 keyed by the type. The caption is kept as its literal
+text: a listing caption is plain prose; markup inside one is out of the
+blind capture's reach. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
   -- The size in force where the environment stands, resolved once through
   -- the ordinary declaration scope (`blockDecls`), defaulting to the body
@@ -9305,6 +9317,13 @@ size commands; the current style stands" (some pos)
     | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
     | none => (spec.langToken.bind fun language =>
         ListingReply.lookup ctx.listingReplies language content).getD #[]
+  for (kind, box) in boxedKinds spec.style highlight do
+    let drawn := match box with
+      | .frame .. => "frame"
+      | .fill _ => "background"
+    warnOnce ctx ("listing-token:" ++ kind.path) .W0397
+      s!"the {drawn} the '{spec.style.name}' highlighting style draws around '{kind.path}' \
+tokens is not drawn; their text and colour still set" pos
   return .verbatim none content { spec with highlight }
 
 /-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)

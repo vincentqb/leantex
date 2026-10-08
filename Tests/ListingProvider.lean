@@ -52,14 +52,14 @@ def invocationProbe (dir : System.FilePath) : IO (List String) := do
   let selected := dir / "selected environment"
   expect "selected symlink preserves its environment and source" .keyword
   IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
-  expect "same request observes changed environment" .builtin
+  expect "same request observes changed environment" .nameBuiltin
   IO.FS.removeFile (selected / "reply.json")
   let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
   check ref "missing provider returns no answer and one keyed warning"
     (answers.isEmpty && ds.size == 1 &&
       ds.all fun d => d.code == "W0393" && d.subject == some "listing-language:bash")
   IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
-  expect "restored provider retries the unchanged request" .builtin
+  expect "restored provider retries the unchanged request" .nameBuiltin
   IO.FS.writeFile (dir / "base-python") (invocationStub "replacement.json")
   expect "same invocation observes a replaced interpreter" .number
   return (← ref.get).reverse
@@ -155,8 +155,9 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
         ShellHighlight.visibleText source)
     let painted := ShellHighlight.htmlPaintList none #[] codes.toList
     let pdf := pdfText (Pdf.write (Layout.Geom.ofPage doc.page) fonts out.pages doc.info)
-    for (word, kind) in [("echo", LeanTex.Core.ListingHighlight.Kind.builtin),
-        ("ready", .string), ("$HOME", .name), ("# terminal", .comment)] do
+    for (word, kind) in [("echo", LeanTex.Core.ListingHighlight.Kind.nameBuiltin),
+        ("ready", ⟨"Literal.String.Double"⟩), ("$HOME", ⟨"Name.Variable"⟩),
+        ("# terminal", ⟨"Comment.Single"⟩)] do
       let ink := (Listing.ink doc.palette none kind (style := style)).getD Ir.Color.black
       t "listing provider: Layout.Out ships checked class ink"
         ((ShellHighlight.witnessPaint? source word glyphs).any fun colors =>

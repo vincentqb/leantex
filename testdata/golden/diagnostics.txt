@@ -753,6 +753,9 @@
 ── W0396 (degraded) picture label extends beyond its reserved glyph box
 ⚠ [W0396]
   picture label extends beyond its reserved glyph box
+── W0397 (degraded) a listing token sets without the frame or background its highlighting style draws around it; its text and colour still set
+⚠ [W0397] - \begin
+  the frame the 'default' highlighting style draws around 'Error' tokens is not drawn; their text and colour still set
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display
