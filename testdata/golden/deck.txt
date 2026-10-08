@@ -87,6 +87,8 @@ frame standout
     text "Questions?"
 -- diagnostics
 note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 9:1 '\usetheme' → \theme{example}
 note[N0100] 10:1 '\setbeamercovered' → \palette{ covered = 15\% }
 note[N0100] 11:1 '\newcommand{\dim}' → \define \dim(a1: content) {...}

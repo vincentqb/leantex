@@ -73,4 +73,6 @@ frame
         text "The closing line."
 -- diagnostics
 note[N0100] 5:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 5:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 5:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 7:1 '\newenvironment{callout}' → \defineenv{callout}(a1: content) {begin} {end}

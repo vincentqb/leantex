@@ -57,5 +57,7 @@ frame
     text "One page, one frame."
 -- diagnostics
 note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 9:1 '\usetheme' → \theme{moloch}
 warning[W0332] - the footer mixes the physical page number with the frame number; a stepped frame advances one and not the other | help: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot

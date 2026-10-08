@@ -378,6 +378,26 @@ styles elements; \\runningfoot sets a document footer"),
 against — beamer's article mode keeps a frame the presentation omits. -/
 public def presentationClasses : List String := ["beamer", "slides"]
 
+/-- Beamer's class options load the two AMS packages together unless the
+`noamsthm` key occurs. Its value is immaterial, as in Beamer's keyval handler
+(`beamer.cls` and `beamerbaseoptions.sty`, Beamer 3.77).
+The native slides class has no implicit TeX package dependencies. -/
+public def classPackages (cls : String) (options : List String) : List String :=
+  let disabled := options.any fun option =>
+    let key := ((option.splitOn "=").head!).trimAscii.toString
+    let key := if key.startsWith "{" && key.endsWith "}" then
+      ((key.drop 1).toString.dropEnd 1).toString else key
+    String.ofList (key.toList.filter (!·.isWhitespace)) == "noamsthm"
+  if cls == "beamer" && !disabled then ["amsmath", "amsthm"] else []
+
+/-- The class's AMS support is one decision, shared by package queries and
+native package admission. -/
+public theorem classPackages_ams_agree (cls : String) (options : List String) :
+    ("amsmath" ∈ classPackages cls options) ↔
+      ("amsthm" ∈ classPackages cls options) := by
+  dsimp only [classPackages]
+  split <;> simp
+
 /-- beamer's theme-loading family, and the file each member asks the input
 path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
 the whole family through the package loader (beamerbasethemes.sty), so the
@@ -567,6 +587,8 @@ private structure LoadSet where
   /-- Native rewriting consumes the executed stream later. Replaying option
   passes here keeps a late pass from altering an earlier native load. -/
   rewritePassed : Array (String × Array String) := #[]
+  /-- Class option passes are likewise replayed at their execution point. -/
+  rewriteClassPassed : Array (String × Array String) := #[]
   cls : Option (String × Array String) := none
   clsPassed : Array (String × Array String) := #[]
   deriving Repr, BEq, Inhabited
@@ -3028,7 +3050,11 @@ private def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String
 
 /-- The class line: the first `\documentclass` is the class. -/
 private def LoadSet.setCls (s : LoadSet) (c : String) (os : Array String) : LoadSet :=
-  if s.cls.isSome then s else { s with cls := some (c, os) }
+  if s.cls.isSome then s else
+    let passed := s.clsPassed.toList.flatMap fun (name, options) =>
+      if name == c then options.toList else []
+    (classPackages c (passed ++ os.toList)).foldl
+      (fun loads name => loads.addPkg name (some #[])) { s with cls := some (c, os) }
 
 /-- Option passes, onto the class half or the package half. -/
 private def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × Array String)) :
@@ -3089,9 +3115,8 @@ private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option L
     let name := args.getD 0 #[]
     if !plainName name || (rawSrc name).isEmpty then none
     else some { cls := test.cls, name := rawSrc name,
-                want := if test.withOpts then some (
-                  if test.cls then optionItems (rawSrc (args.getD 1 #[]))
-                  else (PackageImports.literalOptions (rawSrc (args.getD 1 #[]))).toArray)
+                want := if test.withOpts then
+                  some (PackageImports.literalOptions (rawSrc (args.getD 1 #[]))).toArray
                   else none }
 
 /-- e-TeX's `\detokenize` doubles parameter characters. -/
@@ -3203,12 +3228,12 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let (opt, j) := takeOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     let c := rawSrc (args.getD 0 #[])
+    let os := (PackageImports.literalOptions (opt.getD "")).toArray
     unless c.isEmpty do
-      write fun st => { st with loads := st.loads.setCls c (optionItems (opt.getD "")) }
+      write fun st => { st with loads := st.loads.setCls c os }
   else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
     let (args, _) := takeGroups raws (i + 1) 2
-    let os := if name == "PassOptionsToClass" then optionItems (rawSrc (args.getD 0 #[]))
-      else (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
+    let os := (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
     let ps := (names (args.getD 1 #[])).map (·, os)
     write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
   else if let some pre := themeAsking.lookup name then
@@ -3273,8 +3298,9 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
-      ["input", "include", "markdownInput", "usepackage", "RequirePackage",
-        "PassOptionsToPackage"].contains n || (themeAsking.lookup n).isSome ||
+      ["input", "include", "markdownInput", "documentclass", "usepackage", "RequirePackage",
+        "RequirePackageWithOptions", "PassOptionsToPackage", "PassOptionsToClass"].contains n ||
+      (themeAsking.lookup n).isSome ||
       -- Length declarations and mutations execute at each use. Their
       -- operands reach the later scoped rewrite in execution order, so
       -- repeated assignments read the value the preceding one left.
@@ -8101,16 +8127,17 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
     let out ← rewritePackages name pkgs opt pos
     return some (out, k)
-  | "PassOptionsToPackage" =>
+  | "PassOptionsToPackage" | "PassOptionsToClass" =>
     if (← get).inDef then return none
     let (args, k) := takeGroups raws start 2
     if args.size != 2 then return none
     let options := (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
     let packages := optionItems (rawSrc (args.getD 1 #[]))
-    write fun st => { st with loads := { st.loads with
-      rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
-    discard "\\PassOptionsToPackage{...}{...}" "package options are recorded"
-      "PassOptionsToPackage" pos
+    write fun st => { st with loads := if name == "PassOptionsToClass" then
+      { st.loads with
+        rewriteClassPassed := st.loads.rewriteClassPassed ++ packages.map (·, options) }
+      else { st.loads with rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
+    discard s!"\\{name}\{...}\{...}" "load options are recorded" name pos
     return some (#[], k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
@@ -8147,7 +8174,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     else if cls == "beamer" then
       let o := match opt with | some o => s!"[{o}]" | none => ""
       became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
-      return some (← synthAt s!"\\documentclass{o}\{slides}" pos, k)
+      let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
+        if name == cls then options.toList else []
+      let packages := classPackages cls (passed ++ PackageImports.literalOptions (opt.getD ""))
+      let declaration ← synthAt s!"\\documentclass{o}\{slides}" pos
+      let dependencies ← rewritePackages "RequirePackage" packages none pos
+      return some (declaration ++ dependencies, k)
     else return none
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
     -- `\babelfont[lang]{slot}{font}` binds a font per language (babel

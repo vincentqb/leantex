@@ -67,4 +67,6 @@ frame
 note[N0100] 12:1 '\begin{overprint}' → \alt alternation, one item per overlay
 note[N0100] 28:1 '\begin{overprint}' → \alt alternation, one item per overlay
 note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 warning[W0302] 35:1 unknown environment '{overprint}'; its body is kept | help: \defineenv{name}(...) {begin} {end} declares one

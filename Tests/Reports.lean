@@ -14,6 +14,9 @@ import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
+import Tests.PackageImports
+import Tests.ParagraphMathRhythm
+import Tests.BeamerProof
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -878,7 +881,36 @@ def reports : List Report := [
       "six continuation assertions fail before top, centre and bottom aligned frames repeat the resolved body opening and report the header they paint",
       "the fixed opening derives from the shared frame rule and leaves remaining space to the declared vertical alignment",
       "the placement theorem names its header clearance and preceding strut premises instead of claiming arbitrary overflow cannot collide"]
-    state := .guarded "5f521c69" .before .author }
+    state := .guarded "5f521c69" .before .author },
+  { id := "R103", date := "2026-10-08"
+    what := "Repeated package imports could reload definitions or disagree about dependencies already loaded"
+    pins := [check% Tests.packageImportChecks,
+      thm% PackageImports.admit_first_exact,
+      thm% PackageImports.admit_repeat_fixed_point,
+      thm% PackageImports.admit_distinct_agree]
+    accept := ["fifty-nine focused assertions fail before package admission records successful loads and compatible repeated options",
+      "independent checks cover cycles, repeated imports and failed dependencies reached through two parents",
+      "commutation is claimed only for distinct package admissions whose effects are independent"]
+    state := .guarded "376a50aa" .before .author },
+  { id := "R104", date := "2026-10-08"
+    what := "Small inline math could enlarge paragraph line spacing even when it fitted the shared line envelope"
+    pins := [check% paragraphMathRhythmChecks,
+      thm% Layout.inlineMathGap_covers,
+      thm% Layout.inlineMathGap_fixed_point,
+      thm% Layout.inlineMath_extent_fixed_point,
+      thm% Layout.Spacing.inlineMath_placement_fixed_point]
+    accept := ["twenty-four focused assertions fail before bounded math uses the paragraph strut",
+      "shipped glyph positions preserve ordinary baselines while tall formulas still reserve their measured reach",
+      "independent checks cover surrounding text, neighboring lines and collision clearance"]
+    state := .guarded "888469cd" .before .author },
+  { id := "R105", date := "2026-10-08"
+    what := "Proof environments supplied implicitly by the slide class were reported as undefined"
+    pins := [check% Tests.beamerProofChecks,
+      thm% Compat.classPackages_ams_agree]
+    accept := ["one hundred seventy focused assertions fail before the class admits its implicit theorem and math packages",
+      "artifact checks cover ordinary proofs, named proofs, displayed math and nested blocks",
+      "class options retain their source order, explicit opt-out remains effective, and repeated package loads preserve content once"]
+    state := .guarded "53f39495" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

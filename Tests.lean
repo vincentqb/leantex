@@ -176,6 +176,9 @@ import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
+import Tests.PackageImports
+import Tests.ParagraphMathRhythm
+import Tests.BeamerProof
 import Tests.DiagAudit
 import Tests.MathSym
 import Tests.AmsMath
@@ -378,6 +381,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linkSignalChecks ref geom oneFace
   inkGeometryChecks ref
   spacingChecks ref geom oneFace font
+  paragraphMathRhythmChecks ref
   displayTexChecks ref oneFace
   titleBarChecks ref geom oneFace font
   slideChecks ref oneFace
@@ -564,6 +568,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inlineAttributionChecks ref oneFace pats
   loadedTestChecks ref oneFace
   packageCodeChecks ref oneFace
+  Tests.packageImportChecks ref oneFace
+  Tests.beamerProofChecks ref
   xparseProvideChecks ref oneFace
   xparseIgnoredOperandsChecks ref oneFace
   overlaySetChecks ref oneFace

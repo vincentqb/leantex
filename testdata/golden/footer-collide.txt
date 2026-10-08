@@ -42,4 +42,6 @@ frame
     text "The overlong note reaches the number, which yields in place."
 -- diagnostics
 note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 8:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
