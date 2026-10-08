@@ -47,7 +47,7 @@ def readers : List String := ["chromium", "firefox"]
 def features : List String :=
   ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
-   "print-sheets", "no-script", "code-height", "deck-links"]
+   "print-sheets", "no-script", "code-height", "stage-fit", "deck-links"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -498,20 +498,24 @@ const census = (s) => {
   return m;
 };
 const inked = (s) => /[\p{L}\p{N}]/u.test(s);
+// The deck's page, as its own @page rule declares it: the PDF page's size
+// in points, which is the sheet the print judgements read and the aspect
+// the stage judgement sets the viewport to.
+const pageSizeOf = (page) => page.evaluate(() => {
+  const find = (rules) => {
+    for (const r of rules) {
+      if (r instanceof CSSPageRule) return r.style.getPropertyValue('size');
+      if (r.cssRules) { const s = find(r.cssRules); if (s) return s; }
+    }
+    return '';
+  };
+  for (const sheet of document.styleSheets) { const s = find(sheet.cssRules); if (s) return s; }
+  return '';
+});
 const printDeck = async (page, name, fx) => {
   const none = { ok: true, n: 0, why: '' };
   if (name !== 'chromium') return { spill: none, sheets: none };
-  const size = await page.evaluate(() => {
-    const find = (rules) => {
-      for (const r of rules) {
-        if (r instanceof CSSPageRule) return r.style.getPropertyValue('size');
-        if (r.cssRules) { const s = find(r.cssRules); if (s) return s; }
-      }
-      return '';
-    };
-    for (const sheet of document.styleSheets) { const s = find(sheet.cssRules); if (s) return s; }
-    return '';
-  });
+  const size = await pageSizeOf(page);
   const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec(size.trim());
   if (!pt) {
     const bad = { ok: false, n: 1, why: `no @page size in points (${size})` };
@@ -544,6 +548,50 @@ const printDeck = async (page, name, fx) => {
   const short = lost.reduce((a, [c, n]) => a + n - (got.get(c) || 0), 0);
   return { sheets: sheetsCell, spill: { ok: lost.length === 0, n: 1,
     why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` } };
+};
+
+// A frame its PDF page holds is held by its stage: at the deck's own aspect
+// (1280 CSS px wide, the height the PDF page's ratio gives), no stage's
+// content runs past its foot — the stage scrolls (`overflow-y: auto`), so a
+// spill is invisible until a reader scrolls a slide. The premise comes from
+// the PDF build of the same source, written beside the page as
+// `<fixture>.unfit`: the frames that continue on a further page (W0384,
+// named by frame number) and the frames that declare `[allowframebreaks]`;
+// their stages are not judged. Numbers restart after `\appendix`, so a
+// repeated number exempts both of its frames: the check only weakens. The
+// stage is judged in its first snap state, the one a reader lands on.
+const stageFit = async (page, fx) => {
+  const none = { ok: true, n: 0, why: '' };
+  const deck = await page.evaluate(() =>
+    /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType));
+  if (!deck) return none;
+  const size = await pageSizeOf(page);
+  const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec(size.trim());
+  if (!pt) return { ok: false, n: 1, why: `no @page size in points (${size})` };
+  let exempt;
+  try {
+    exempt = require('fs').readFileSync(path.join(dir, fx + '.unfit'), 'utf8')
+      .split(/\s+/).filter(Boolean);
+  } catch (e) { return { ok: false, n: 1, why: 'no PDF premise for the deck: ' + clean(e.message) }; }
+  await page.setViewportSize({ width: 1280, height: Math.round(1280 * +pt[2] / +pt[1]) });
+  await page.evaluate(() => document.fonts.ready);
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const r = await page.evaluate((exempt) => {
+    let n = 0;
+    const over = [];
+    for (const s of document.querySelectorAll('section.slide')) {
+      const track = s.closest('.slide-track');
+      const num = s.dataset.frameNumber || (track && track.dataset.frameNumber);
+      if (num && exempt.includes(num)) continue;
+      n++;
+      const spill = s.scrollHeight - s.clientHeight;
+      if (spill > 1) over.push(`${s.id || (track && track.id) || num} by ${spill}px`);
+    }
+    return { n, over };
+  }, exempt);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  return { ok: r.over.length === 0, n: r.n,
+    why: r.over.length ? `${r.over.length}/${r.n} stages run past their foot: ${r.over.join(', ')}` : '' };
 };
 
 const deckLinks = async (page, url) => {
@@ -769,6 +817,7 @@ async function runReader(name) {
       for (const [feature, fn] of Object.entries(checks)) {
         out(fx, name, feature, cell(await page.evaluate(fn)));
       }
+      out(fx, name, 'stage-fit', cell(await stageFit(page, fx)));
       out(fx, name, 'deck-links', cell(await deckLinks(page, url)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
@@ -848,6 +897,33 @@ def findChromium (node : String) : IO (Option (String × String)) := do
     if out.exitCode == 0 then
       return some (m, out.stdout.trimAscii.toString)
   return none
+
+/-- The numbers of the frames a deck's PDF build continues on a further page:
+the subjects of its W0384 porcelain records, each a frame's number. -/
+def spilledFrames (porcelain : String) : Array String :=
+  ((porcelain.splitOn "\n").filter (hasSub · "\"code\":\"W0384\"")).toArray.filterMap fun l =>
+    match (l.splitOn "\"subject\":\"").drop 1 with
+    | rest :: _ => some ((rest.splitOn "\"").headD "")
+    | [] => none
+where hasSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+/-- A deck's frames that declare `[allowframebreaks]`, by the number their
+stages carry (`Ir.Doc.frameNumbers`, as the deck walk numbers them): such a
+frame accepts a continuation page, so its stage may scroll by declaration.
+`none` for a source that is not a deck. Read off the elaborated source, so
+no layout runs here. -/
+def breakableFrames (name src : String) : Option (Array String) := Id.run do
+  let file := s!"{name}.tex"
+  let (toks, lexDiags) := Lex.lex file src
+  let (raws, parseDiags) := Parse.parse file toks
+  let (doc, _) := Elab.runRaws file raws (lexDiags ++ parseDiags)
+  unless doc.docClass.record.model == .frame do return none
+  let nums := doc.frameNumbers
+  let mut out : Array String := #[]
+  for h : i in [0:doc.body.size] do
+    if let .frame _ _ _ true _ := doc.body[i] then
+      if let some (some n) := nums[i]? then out := out.push (toString n)
+  return some out
 
 /-- Copy a directory tree: every file `walkDir` lists, at the same path
 under `dst`. -/
@@ -1051,6 +1127,15 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         let log := r.stdout ++ r.stderr
         faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
         if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
+        -- A deck's stage premise: what its PDF build does not vouch for.
+        let src ← IO.FS.readFile e.path
+        if let some breakable := breakableFrames name src then
+          let pdf ← IO.Process.output
+            { cmd := leantexBin
+              args := #["-q", "--porcelain", "build", e.path.toString,
+                "-o", (work / "corpus" / (name ++ ".pdf")).toString] }
+          IO.FS.writeFile (work / "corpus" / (name ++ ".unfit"))
+            (String.intercalate " " (spilledFrames pdf.stdout ++ breakable).toList)
     let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"

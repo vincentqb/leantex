@@ -1,0 +1,204 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0
+font dir "fonts"
+font body "Open Sans"
+palette fg #292524
+palette bg #FDFCF9
+palette alert #0B66C2
+palette example #0F7A52
+palette muted #696664
+palette progressfg #0B66C2
+palette progressbg #CDDEEE
+palette separator #0B66C2
+palette standoutfg #FDFCF9
+palette standoutbg #0B66C2
+palette covered 38%
+token progressheight 1pt
+token frametitlepadding 840/1000em
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer right framenumber
+meta title "An Invented Table Deck"
+meta author "Pat Placeholder"
+frame golden
+  section* 0
+    text "An Invented Table Deck"
+  block before 800/1000em from separatorgap
+    rule separator 0.5pt from separatorheight
+  block before 800/1000em from separatorgap
+    para
+      text "Pat Placeholder"
+frame
+  title
+    text "Invented Measurements"
+  center
+    table l,r,r,r
+      rule 0 top
+      rule 1 mid
+      rule 12 bottom
+      row
+        cell
+        cell
+          text "Count"
+        cell
+          text "Early"
+        cell
+          text "Late"
+      row
+        cell
+          text "A placeholder row with a longer label"
+        cell
+          text "1,204"
+        cell
+          role later
+            step 2
+              text "0.01"
+        cell
+          role later
+            step 2
+              text "0.02"
+      row
+        cell
+          text "Short label"
+        cell
+          text "1,311"
+        cell
+          role later
+            step 2
+              text "0.03"
+        cell
+          role later
+            step 2
+              text "0.05"
+      row
+        cell
+          text "Another invented entry"
+        cell
+          text "1,418"
+        cell
+          role later
+            step 2
+              text "0.08"
+        cell
+          role later
+            step 2
+              text "0.13"
+      row
+        cell
+          text "Sample row"
+        cell
+          text "1,525"
+        cell
+          role later
+            step 2
+              text "0.21"
+        cell
+          role later
+            step 2
+              text "0.34"
+      row
+        cell
+          text "Fifth invented row"
+        cell
+          text "1,632"
+        cell
+          role later
+            step 2
+              text "0.55"
+        cell
+          role later
+            step 2
+              text "0.89"
+      row
+        cell
+          text "Placeholder"
+        cell
+          text "1,739"
+        cell
+          role later
+            step 2
+              text "1.44"
+        cell
+          role later
+            step 2
+              text "2.33"
+      row
+        cell
+          text "A plain row"
+        cell
+          text "1,846"
+        cell
+          role later
+            step 2
+              text "3.77"
+        cell
+          role later
+            step 2
+              text "6.10"
+      row
+        cell
+          text "An entry with a longer label still"
+        cell
+          text "1,953"
+        cell
+          role later
+            step 2
+              text "9.87"
+        cell
+          role later
+            step 2
+              text "15.97"
+      row
+        cell
+          text "Ninth invented row"
+        cell
+          text "2,060"
+        cell
+          role later
+            step 2
+              text "0.12"
+        cell
+          role later
+            step 2
+              text "0.23"
+      row
+        cell
+          styled bold
+            italicCorr maybe
+            text "A row in bold"
+          italicCorr maybe
+        cell
+          text "2,167"
+        cell
+          role later
+            step 2
+              text "0.34"
+        cell
+          role later
+            step 2
+              text "0.45"
+      row
+        cell
+          styled bold
+            italicCorr maybe
+            text "Last row"
+          italicCorr maybe
+        cell
+          text "2,274"
+        cell
+          role later
+            step 2
+              text "0.56"
+        cell
+          role later
+            step 2
+              text "0.67"
+-- diagnostics
+note[N0100] 6:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 6:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+note[N0100] 7:1 '\usepackage{booktabs}' → nothing: the engine does this itself
+note[N0100] 9:1 '\newcommand{\later}' → \define \later(a1: content) {...}

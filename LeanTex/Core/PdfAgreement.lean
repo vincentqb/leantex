@@ -46,6 +46,16 @@ public theorem features_agree (features : Ir.Features) :
   cases features with
   | mk kern => cases kern <;> simp [HtmlDoc.kernCssFor, Layout.kernEnabled]
 
+/-- **Both artifacts set a table cell on one side** (`_agree`): the
+`text-align` every HTML cell states (`HtmlDoc.cellAlignAttr`,
+`HtmlDoc.tableCellNode_align_projects`) is the side the page sets that
+cell's lines on (`Layout.cellSide`), both the one IR value `Ir.cellSpec`
+resolves — so the side of the scope the table stands in reaches neither. -/
+public theorem table_cell_side_agree (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
+    (i j : Nat) :
+    HtmlDoc.cellAlignAttr cols spans i j =
+      ("style", "text-align: " ++ (Layout.cellSide cols spans i j).align) := rfl
+
 /-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
 reserves and places a picture by `Layout.pictureBox`, and the SVG's
 `viewBox` is `HtmlDoc.pictureBoxOf` (`HtmlDoc.pictureViewBox_projects`);

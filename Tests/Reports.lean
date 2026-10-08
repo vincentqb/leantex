@@ -8,6 +8,8 @@ import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
 import Tests.TableContext
+import Tests.TableSide
+import LeanTex.Core.PdfAgreement
 import Tests.TableFlex
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
@@ -996,7 +998,16 @@ def reports : List Report := [
       thm% MathMl.formula_unnested_contract]
     accept := ["in the run that reverts R111's fix with this one, twenty of the fifty-four failing assertions are this report's: one root per label over nine invented labels, the corpus nesting census and ten structured label formulas",
       "a fresh build of a presentation deck ships no math element inside another, where the base build shipped seven"]
-    state := .guarded "c95d78db" .revert .author }
+    state := .guarded "c95d78db" .revert .author },
+  { id := "R113", date := "2026-10-08"
+    what := "a slide's formal table ran past the foot of its browser stage while its printed page held it, and its text column took the centring of its scope in the browser where the column spec sets it flush left"
+    pins := [check% Tests.tableSideChecks, check% Tests.tableLeadingChecks, check% censusChecks,
+      thm% HtmlDoc.tableCellNode_align_projects, thm% Pdf.table_cell_side_agree,
+      thm% HtmlDoc.printLeading_exact]
+    accept := ["the browser oracle's stage-fit row fails on the invented table deck, one stage 53 px past its foot, before table rows take the print leading, and passes after at the deck's own aspect",
+      "twenty typed tree, stylesheet and shipped page assertions fail before every cell states its spec's side and its rows the print leading, four of them the page's own text column set flush right under a right-set scope",
+      "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with its text column flush left, its printed pages unchanged"]
+    state := .guarded "fa516a82" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

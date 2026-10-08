@@ -174,6 +174,7 @@ import Tests.RecipeStructure
 import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
+import Tests.TableSide
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
@@ -375,6 +376,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recipeColModChecks ref
   tableContextChecks ref oneFace
   tableFlexChecks ref oneFace
+  Tests.tableSideChecks ref oneFace
+  Tests.tableLeadingChecks ref oneFace
   tableFlexOverflowChecks ref oneFace
   columnFlowChecks ref oneFace
   columnGeometryChecks ref oneFace

@@ -46,6 +46,11 @@ in this repo; refer to the private reference corpus abstractly.
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
+- `scripts/html-oracle.lean` when touching what a deck stage holds (type,
+  leading, gaps, tables): its `stage-fit` row holds every frame the PDF
+  page holds to its stage at the deck's own aspect in Chromium, the premise
+  — which frames continue on a further page (W0384) or declare
+  `[allowframebreaks]` — read off the PDF build and the source.
 - `scripts/cancel-diff.lean` when touching the cancellation geometry
   (`Math.cancelGeom` and the marks it lays) — an external LuaLaTeX
   (cancel.sty over FiraMath) vs leantex placement differential over an

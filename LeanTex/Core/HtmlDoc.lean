@@ -851,6 +851,25 @@ public theorem body_leading_in_band :
     Ir.leadingMilli ≤ bodyLeadingMilli ∧
     1200 ≤ bodyLeadingMilli ∧ bodyLeadingMilli ≤ 1450 := by decide
 
+/-- The print leading as a CSS `line-height` factor, per-mille:
+`Ir.leadingMilli` under the page's declared `\linespread`, the ratio
+`Ir.leadingFor` spaces every PDF baseline by. Lines a strut paces rather than
+running prose — a listing's, a table's rows (latex.ltx's `\@arstrutbox` is
+one `\baselineskip`) — set at it in both artifacts; prose keeps the screen's
+own lead (`bodyLeadingMilli`). Read as prose, a deck's table stood a fifth
+taller on its stage than on its page and ran off the stage's foot. -/
+public def printLeadingMilli (page : Ir.PageSpec) : Nat :=
+  Ir.leadingMilli * page.leading / 1000
+
+/-- **A strut-paced line sets the PDF's baseline distance** (`_exact`): at
+the default `\linespread`, the CSS line box the factor makes at any size is
+the baseline distance `Ir.leadingFor` gives the PDF at that size, to the
+scaled point. -/
+public theorem printLeading_exact (page : Ir.PageSpec) (size : Int) (h : page.leading = 1000) :
+    size * (printLeadingMilli page : Int) / 1000 = Ir.leadingFor size page.leading := by
+  simp only [printLeadingMilli, Ir.leadingFor, Ir.leadingMilli, h]
+  omega
+
 /-- A vertical gap of `k` screen rhythm quanta, as a rem value. The screen
 context's rhythm unit is its own body leading — `bodyLeadingMilli` over the
 1 rem base — as the print context's is its (`Ir.leadingFor`); the quantum
@@ -4606,13 +4625,16 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- its token (`--heavyrulewidth` etc. land in `tokenVars` when declared).
   -- Borders take `currentColor`, as the PDF path draws rules in `fg`. A
   -- header cell is a `th` for meaning only (`Ir.tableHeaderRows`): every
-  -- cell rule addresses both tags, and the UA's bold, centred `th` is
-  -- inherited away so the head sets exactly as its `td` did — the
-  -- authored `\textbf` is what makes a head bold, in both backends.
-  "table.booktabs { border-collapse: collapse; }\n" ++
+  -- cell rule addresses both tags, and the UA's bold `th` is inherited
+  -- away so the head sets exactly as its `td` did — the authored `\textbf`
+  -- is what makes a head bold, in both backends. Every cell states its own
+  -- side (`cellAlignAttr`), so neither the UA's centred `th` nor the
+  -- scope's `text-align` reaches one. The rows stand the print leading
+  -- apart (`printLeadingMilli`), as the PDF's do.
+  s!"table.booktabs \{ border-collapse: collapse; line-height: {decMilli (printLeadingMilli doc.page)}; }\n" ++
   s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {cssLength Ir.tabColSep});\n" ++
   "  vertical-align: top; }\n" ++
-  "table.booktabs th { font-weight: inherit; text-align: inherit; }\n" ++
+  "table.booktabs th { font-weight: inherit; }\n" ++
   "table.booktabs.nopadl tr > td:first-child,\n" ++
   "table.booktabs.nopadl tr > th:first-child { padding-left: 0; }\n" ++
   "table.booktabs.nopadr tr > td:last-child,\n" ++
@@ -5359,46 +5381,44 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
 private def usesContextUnit (xs : Array Inline) : Bool :=
   Ir.foldInlines contextUnitLeaf false xs
 
-/-- One table cell: its column's alignment as inline style (the PDF path
-reads the same `ColSpec.align`), the `bt-cmid` class when a `\cmidrule`
-spans its column, and — for a header cell — `scope=col`, the one scope a
-booktabs head declares (HTML §4.9.10: a `th` heading the cells below it).
-A `\multicolumn` head takes its own spec's alignment and `colspan` for the
-columns it covers (HTML §4.9.11), the layout's `spanBox`. Plain cells
-carry the same `inlines` a `td` carried; a cell whose emitted dimensions
-read `cqi` puts those inlines in its content-measure container. -/
-private def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
+/-- A cell's side as the inline style it carries: its spec's
+(`Ir.cellSpec`, the value the page's `Layout.cellSide` reads), on every cell
+— `left` included. A cell that stated only `center` and `right` inherited
+its scope's `text-align`, so a text column under `\centering` centred in
+HTML where the PDF set it flush left. -/
+@[expose] public def cellAlignAttr (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan) (i j : Nat) :
+    String × String :=
+  ("style", "text-align: " ++ (Ir.cellSpec cols spans i j).align.align)
+
+/-- One table cell: its side as inline style (`cellAlignAttr`), the
+`bt-cmid` class when a `\cmidrule` spans its column, and — for a header cell
+— `scope=col`, the one scope a booktabs head declares (HTML §4.9.10: a `th`
+heading the cells below it). A `\multicolumn` head sets by its own spec
+(`Ir.cellSpec`) and takes `colspan` for the columns it covers (HTML
+§4.9.11), the layout's `spanBox`. Plain cells carry the same `inlines` a
+`td` carried; a cell whose emitted dimensions read `cqi` puts those inlines
+in its content-measure container. -/
+public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
-  let sp := spans.find? fun s => s.row == i && s.col == j
-  let align : Ir.HAlign := match sp with
-    | some s => s.spec.align
-    | none => (cols[j]?.map (·.align)).getD .left
-  let al := match align with
-    | .center => #[("style", "text-align: center")]
-    | .right => #[("style", "text-align: right")]
-    | .left => #[]
-  let al := match sp with
-    | some s => if 2 ≤ s.n then al.push ("colspan", toString s.n) else al
-    | none => al
+  let spec := Ir.cellSpec cols spans i j
+  let span : Array (String × String) := match Ir.cellSpan? spans i j with
+    | some s => if 2 ≤ s.n then #[("colspan", toString s.n)] else #[]
+    | none => #[]
   -- A natural `l`/`c`/`r` column is left to CSS `auto`; its cells carry
   -- `bt-nowrap` so auto table layout cannot squeeze the column to
   -- min-content (the `:where(... td.bt-nowrap ...)` rule above). `white-space`
   -- on the `<col>` itself would do nothing (CSS Tables §17.3), so the class
   -- lands here, on the cell. Combined with `bt-cmid` into one class value, as
   -- a cell carries at most one `class` attribute.
-  let isNatural : Bool := match sp with
-    | some s => (s.spec.width matches .natural)
-    | none => ((cols[j]?.map (·.width)).getD .natural matches .natural)
+  let isNatural : Bool := spec.width matches .natural
   let cmid := cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
   let classes : Array String :=
     (if cmid then #["bt-cmid"] else #[]) ++ (if isNatural then #["bt-nowrap"] else #[])
-  let attrs := if classes.isEmpty then al
-    else al.push ("class", " ".intercalate classes.toList)
-  let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
-  let width : Ir.ColWidth := match sp with
-    | some s => s.spec.width
-    | none => (cols[j]?.map (·.width)).getD .natural
-  let child := match width with
+  let cls : Array (String × String) :=
+    if classes.isEmpty then #[] else #[("class", " ".intercalate classes.toList)]
+  let scope : Array (String × String) := if i < headerRows then #[("scope", "col")] else #[]
+  let attrs := #[cellAlignAttr cols spans i j] ++ (span ++ cls ++ scope)
+  let child := match spec.width with
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
     | .natural | .flex _ => cfg
@@ -5443,6 +5463,20 @@ public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     subst hj
     simp only [tableCellNode, Html.elem, Html.Node.tag?, Option.some.injEq]
     exact tableCellTag_th_iff headerRows i
+
+/-- **Every cell states its spec's side** (`_projects`): whatever its row,
+column, span, `\cmidrule` or head, a cell element's first attribute is
+`cellAlignAttr` — the `text-align` of `Ir.cellSpec`, the value the page's
+`Layout.cellSide` sets the cell's lines by (`Pdf.table_cell_side_agree`) —
+`left` included, so no cell inherits the side of the scope its table stands
+in. -/
+public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColSpec)
+    (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i j : Nat)
+    (cell : Array Inline) :
+    ∃ attrs kids, tableCellNode cfg cols cmids spans headerRows i j cell =
+      .elem (tableCellTag headerRows i) attrs kids ∧
+      attrs[0]? = some (cellAlignAttr cols spans i j) :=
+  ⟨_, _, rfl, by rw [Array.getElem?_append_left (by simp)]; rfl⟩
 
 /-- Project a relative track hint to CSS, falling back to the declared affine
 width or natural sizing. CSS table layout still measures content and padding. -/
@@ -6995,7 +7029,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       (((fontStyleDecls cfg.page.scale spec.fontSize (fontLengthCss cfg)).getD #[]).toList) ++
       (match spec.fontSize with
         | .fontSize .. => ""
-        | _ => s!" line-height: {decMilli (Ir.leadingMilli * cfg.page.leading / 1000)};") ++
+        | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
       (if spec.breakLines then " white-space: pre-wrap;" else "") ++
       (if paint.isEmpty then "" else " " ++ paint)

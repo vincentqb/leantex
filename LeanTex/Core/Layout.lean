@@ -10788,6 +10788,14 @@ public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Ar
         (cols.mapIdx fun j spec => colBase total #[] nats j spec) padL padR := by
   simp [tableColWidths]
 
+/-- The side a cell's lines set on in its column box: its spec's
+(`Ir.cellSpec`), whatever scope the table stands in. The HTML states the
+same value as the cell's `text-align` (`HtmlDoc.cellAlignAttr`;
+`Pdf.table_cell_side_agree`). -/
+@[expose] public def cellSide (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan) (i j : Nat) :
+    Ir.HAlign :=
+  (Ir.cellSpec cols spans i j).align
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -10847,6 +10855,10 @@ private def collectTable (r : Rd) (a0 : Acc)
       (help := "narrow the p{...} column widths, or widen the text block")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x0 : Sp := indent + side.boxOffset (max 0 (total - tableW))
+  -- The scope's side places the table box and stops there: a cell sets by
+  -- its own spec (`cellSide`), from no side of the scope's, as a minipage's
+  -- content does (`\@arrayparboxrestore`, `\@parboxrestore`).
+  let rc := { r with geom := { r.geom with flushRight := false } }
   -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
     let mut x := x0 + lead
@@ -10951,10 +10963,8 @@ private def collectTable (r : Rd) (a0 : Acc)
       for j in [0:row.size] do
         -- a `\multicolumn` head sets across the columns it covers, gaps
         -- included, by its own spec: a `p{…}` one wraps at its own width
-        let sp := spans.find? fun s => s.row == i && s.col == j
-        let spec := match sp with
-          | some s => s.spec
-          | none => cols[j]?.getD { width := .natural, align := .left }
+        let sp := Ir.cellSpan? spans i j
+        let spec := Ir.cellSpec cols spans i j
         let wj := match sp with
           | some s => spanBox colsep widths s
           | none => widths[j]?.getD 0
@@ -10973,13 +10983,13 @@ private def collectTable (r : Rd) (a0 : Acc)
             dispAlt := none }
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
-          let sub := match spec.align with
-            | .center => collectPara r sub cell x true size (leaf := leaf) (span := span)
+          let sub := match cellSide cols spans i j with
+            | .center => collectPara rc sub cell x true size (leaf := leaf) (span := span)
             | .right =>
               let nat := ((nats[i]?).bind (·[j]?)).getD 0
-              collectPara r sub cell (x + max 0 (wj - nat)) false size
+              collectPara rc sub cell (x + max 0 (wj - nat)) false size
                 (leaf := leaf) (span := span)
-            | .left => collectPara r sub cell x false size (leaf := leaf) (span := span)
+            | .left => collectPara rc sub cell x false size (leaf := leaf) (span := span)
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache

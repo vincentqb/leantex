@@ -466,6 +466,19 @@ def censusTable :
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?")]),
+  ("tables-deck", fun _ c => [
+    ("the title page, then a page per step of the table frame: no continuation page",
+      c.size == 3 && pageHas c 0 "An Invented Table Deck"),
+    ("the table frame's first page ships its head, first and last row",
+      pageHas c 1 "Count" && pageHas c 1 "A placeholder row with a longer label" &&
+        pageHas c 1 "Last row"),
+    ("the text column's cells start at one left edge under the centred scope",
+      (lineXOf c 1 "Short label").isSome &&
+        lineXOf c 1 "Short label" == lineXOf c 1 "A placeholder row with a longer label"),
+    ("the count column's cells end at one right edge",
+      (lineRightOf c 1 "1,204").isSome && lineRightOf c 1 "1,204" == lineRightOf c 1 "2,274"),
+    ("the later columns ship covered on the first step and revealed on the second",
+      pageCovered c 1 "15.97" && pageHas c 2 "15.97" && pageAllRevealed c 2)]),
   ("deck1610", fun geom c => [
     ("one page, the frame", c.size == 1),
     -- The stage a class option declares is the stage the pages ship on:

@@ -2902,6 +2902,7 @@ def pdfCensusTable :
   ("diagram-scm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-tikzset", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("tables-deck", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("subfigures", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("float-center", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

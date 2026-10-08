@@ -4813,6 +4813,23 @@ public structure ColSpan where
   spec : ColSpec
   deriving Repr, BEq, Inhabited
 
+/-- The `\multicolumn` head standing at cell `(i, j)`, if any. -/
+public def cellSpan? (spans : Array ColSpan) (i j : Nat) : Option ColSpan :=
+  spans.find? fun s => s.row == i && s.col == j
+
+/-- The spec a cell sets by, the one resolving site both backends read
+(`Layout.cellSide`, `HtmlDoc.cellAlignAttr`): a `\multicolumn` head's own
+spec, else its column's, else — a cell past the declared columns — a
+natural left one. The spec alone decides: a tabular sets each entry in a box
+of its own — an `l`/`c`/`r` entry an `\hfil`-padded `\hbox`, a `p` entry a
+`\vtop` whose `\@arrayparboxrestore` zeroes `\leftskip` and `\rightskip`
+(latex.ltx) — so the side of the scope the table stands in never reaches a
+cell. -/
+public def cellSpec (cols : Array ColSpec) (spans : Array ColSpan) (i j : Nat) : ColSpec :=
+  match cellSpan? spans i j with
+  | some s => s.spec
+  | none => cols[j]?.getD { width := .natural, align := .left }
+
 /-- The row index of the first `mid` rule in document order, if any: the
 List companion of the header scan below, so the two facts about it are
 inductions. -/
