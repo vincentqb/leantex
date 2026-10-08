@@ -54,6 +54,7 @@ import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.BlockBody
+import Tests.BlockGeometry
 import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
@@ -1041,6 +1042,31 @@ def reports : List Report := [
     accept := ["the lint gate's check of the staged tree against the clone's local denylist names locations at the broken commit and none after the scrub",
       "a scratch repository and a scratch clone with an invented denylist: the commit gate refuses an added line in UTF-8, Latin-1 or Windows-1252, a wrapped phrase, an accent command before a blank, an added or renamed path, and a binary naming a listed term in its own bytes or in what it inflates to (a PDF's stream or string, a PNG's compressed text, a gzip or zip member), under the default, no-prefix and mnemonic-prefix diff settings alike; the lint gate refuses an unpushed commit adding a term that a later commit removes, a message naming one in either encoding, and a clone keeping the list without the remote ref that bounds its unpushed commits; every finding prints a location, a path masked where it holds the term, and never the term",
       "an out-of-repo comparison with the private reference corpus finds none of its distinctive text, names or design values in the tree"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R117", date := "2026-10-08"
+    what := "The space between a slide block's heading and its body was far too large"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks,
+      thm% Layout.texBoxTop_between, thm% Layout.frame_opening_paint_covers,
+      thm% Ir.titledPadding_contract]
+    accept := ["thirty-five distances the reference engine measures on an invented probe fail before the block template's two colour boxes and hold within 0.02 points after, across painted, transparent, title-only and body-only blocks, titled and untitled; the heading-to-body distance was 22 points against 17.6",
+      "a wrapped heading painted only behind its last line, and heading and body text inset half an em from the measure, fail before; the paint now covers every heading line and reaches 0.75 ex beyond the measure, the text standing on it",
+      "two presentation decks built fresh by both engines keep the reference's page counts, which one overran before; their text-bodied blocks' bars and bodies match the reference within 0.1 points, and a code-bodied block's bar and seam match while its body differs by the code listing's own spacing"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R118", date := "2026-10-08"
+    what := "Consecutive slide blocks ran together as one box with no space around them"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks,
+      thm% HtmlDoc.blockGap_owner_contract]
+    accept := ["consecutive painted blocks stood one paragraph skip apart, or touched where the page declared none, against the reference's 10 points; they now stand the template's small and medium skips and line skip apart, and a paragraph after a block spends its own skip",
+      "on a presentation deck consecutive blocks stand exactly the reference engine's 10 points apart",
+      "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R119", date := "2026-10-08"
+    what := "Block colours did not look adjusted and their surface was a dull grey"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks, check% Tests.BlockBody.checks]
+    accept := ["the grey surface was the deck's own declared colour, which the reference engine paints too; with the decks' current declarations both engines paint every block bar and body in the same colours",
+      "nine shipped-colour assertions fail before: an empty colour value was refused, the theme's fill option was ignored in all three spellings, the alerted and example bodies did not inherit the block body, and a heading given only a bar took the page colour as ink",
+      "a covered block on a stepped frame kept its full bars under faded text; its bars and heading now take the step's cover, as the reference fades them",
+      "the theme's fill option now paints the reference engine's heading bar exactly and its bodies within one unit per channel"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author }
 ]
 

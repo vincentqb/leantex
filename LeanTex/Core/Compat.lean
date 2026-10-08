@@ -6398,6 +6398,45 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
+/-- moloch's `block` option (beamercolorthememoloch.sty, `/moloch/color/block`):
+`fill` paints the boxes from the page's own colours and `transparent`
+clears them — the theme's own declarations, `\moloch@block@fill` and
+`\moloch@block@transparent`, resolved like any `\setbeamercolor`. -/
+private def molochBlockColors : String → Option (List (String × String))
+  | "fill" => some [("block title", "use=normal text,bg=normal text.bg!80!fg"),
+      ("block body", "use={block title,normal text},bg=block title.bg!50!normal text.bg"),
+      ("block title alerted", "use=block title,bg=block title.bg"),
+      ("block title example", "use=block title,bg=block title.bg")]
+  | "transparent" => some [("block title", "bg="), ("block body", "bg="),
+      ("block title alerted", "bg="), ("block title example", "bg=")]
+  | _ => none
+
+/-- moloch's options (`\molochset` keys, `\usetheme[...]{moloch}`): the
+`block` option declares the theme's block colours, as the
+`setbeamercolor` arm hands them to the elaborator; every other key is
+theme configuration the engine does not have, named once. -/
+private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
+  let mut out := #[]
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | some (key, value) =>
+      let value := value.trimAscii.toString
+      match key, molochBlockColors value with
+      | "block", some decls =>
+        became s!"{cmd} block={value}" "moloch's block colours, declared with \\setbeamercolor" pos
+        for (element, body) in decls do
+          out := out ++ #[.ctrl BeamerColor.marker pos, .group (← synthAt element pos) pos,
+            .group (← synthAt body pos) pos]
+      | _, _ =>
+        sayOnce ("moloch:" ++ key) .W0104
+          s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
+          (help := "moloch's block option takes fill or transparent; \\palette and \\setbeamercolor declare colours directly")
+    | none =>
+      unless entry.trimAscii.toString.isEmpty do
+        sayOnce ("moloch:" ++ entry.trimAscii.toString) .W0104
+          s!"'{cmd}' option '{entry.trimAscii.toString}' is moloch configuration the engine does not have; skipped" pos
+  return out
+
 /-- The finite block-hook grammar: whitespace and the three standard skip
 commands, each read through its existing native translation. Unknown raws
 refuse the entire addition; a nested command is never executed here. -/
@@ -7554,7 +7593,7 @@ its value is skipped" pos
     became "\\footercontent" "\\runningfoot{...}" pos
     return some (← synthAt "\\runningfoot" pos, start)
   | "usetheme" =>
-    let (_, j) := takeOpt raws start
+    let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     let tname := themeAlias tname
@@ -7565,7 +7604,14 @@ its value is skipped" pos
     -- \alert keeps its unthemed bold stand-in.
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true }
-    return some (← synthAt native pos, k)
+    let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
+      else pure #[]
+    return some ((← synthAt native pos) ++ options, k)
+  | "molochset" | "metropolisset" =>
+    let (args, k) := takeGroups raws start 1
+    if h : args.size = 1 then
+      return some (← molochOptions s!"\\{name}" (rawSrc args[0]) pos, k)
+    else return none
   | "titlegraphic" =>
     -- Declared visual content for the title page, not configuration: the
     -- engine has nowhere to place it yet, so a non-empty declaration is a

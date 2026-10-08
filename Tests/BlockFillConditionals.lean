@@ -115,7 +115,8 @@ private def filledChecks (ref : IO.Ref (List String)) (label : String)
   let boxes := leaves.filter (·.box)
   check ref (label ++ ": one typed HTML body box with padding")
     (boxes.size == 1 && boxes.all (fun box => bodyPaint box &&
-      property box.styles "padding" == some (HtmlDoc.cssLength Ir.titledPadding)))
+      property box.styles "padding" ==
+        some s!"0 {HtmlDoc.cssLength Ir.titledPadding} {HtmlDoc.cssLength Ir.titledPadding}"))
   for text in #["HEADER", "OUTSIDE"] do
     let outside := leaves.filter (·.text == text)
     check ref (label ++ ": HTML " ++ text ++ " survives outside body box")

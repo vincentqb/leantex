@@ -10538,19 +10538,36 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
 public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
     (SurfaceLook.mk none none).resolve parent = parent := by rfl
 
-/-- The native block bar's existing half-body-em inset, shared by a filled
-title and body. This measures against the body font, not a leading quantum:
-PDF resolves the length in sp and HTML retains its em unit. Keeping the
-font-relative length here makes the inset independent of either renderer's
-line-spacing policy. -/
-@[expose] public def titledPadding : Length := { em := 500 }
+/-- beamer's block colour boxes' `colsep*=.75ex` (beamerinnerthemedefault.sty,
+`block begin`), shared by a painted title and body: such a box stands this
+far above and below its lines, and its paint reaches this far beyond the
+text measure on both sides while the text stays on the measure. The PDF
+resolves it against the face's x-height; HTML keeps the `ex`. -/
+@[expose] public def titledPadding : Length := { ex := 750 }
 
 public theorem titledPadding_contract (fontSize xHeight : Sp) :
-    titledPadding.resolve fontSize xHeight = fontSize / 2 := by
-  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv,
-    Int.add_zero]
-  change (500 * fontSize) / (500 * 2) = fontSize / 2
+    titledPadding.resolve fontSize xHeight = 3 * xHeight / 4 := by
+  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv]
+  have h : (750 : Int) * xHeight = 250 * (3 * xHeight) := by omega
+  rw [h, show (1000 : Int) = 250 * 4 by decide]
   exact Int.mul_ediv_mul_of_pos _ _ (by decide)
+
+/-- The block template's own skips (beamerinnerthemedefault.sty): `\par\vskip
+\medskipamount` before the title box and `\vskip\smallskipamount` after the
+body box, latex.ltx's two amounts. -/
+public def blockSkipAbove : SymGlue :=
+  { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
+
+public def blockSkipBelow : SymGlue :=
+  { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
+
+/-- A painted title meeting a painted body: `\nointerlineskip\vskip-0.5pt`,
+the body box overlapping the title box by half a point. -/
+public def blockSeam : Sp := Dim.pt 1 / 2
+
+/-- An unpainted body box opens on `\vskip-.25ex\vbox{}`: its first line is
+spaced from a box standing a quarter ex above the body box's own top. -/
+public def blockBodyRaise : Length := { ex := 250 }
 
 /-- Beamer's three body elements (`beamercolorthemedefault.sty`) start
 empty. Themes such as Moloch declare their fills and inheritance through
@@ -11194,10 +11211,13 @@ palette name) is covered too, exactly as beamer's transparent covering
 mutes coloured text — but covered means *the same colour, quieter*: each
 coloured run takes its own cover (`cover.of`), never a repaint to one
 constant that would make a covered alert and a covered example the same
-grey. Runs with no colour of their own take `cover.plain`; verbatim dims
-through its own `covered` field; section blocks carry no colour and stay
-(recorded in PLAN). Only colours change in either mode, so no step can
-reflow the slide — the cover-not-hide invariant, by construction. -/
+grey. Runs with no colour of their own take `cover.plain`; a titled
+block's heading has one, the block title's ink, which resolves at layout
+from the palette in force and takes its cover there with the block's
+boxes; verbatim dims through its own `covered` field; section blocks carry
+no colour and stay (recorded in PLAN). Only colours change in either mode,
+so no step can reflow the slide — the cover-not-hide invariant, by
+construction. -/
 private def dimBlockList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Block) :
     List Block → Array Block
   | [] => out
@@ -11219,11 +11239,7 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
   | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
   | .titled kind title body =>
-    .titled kind
-      (if pending then
-        if title.isEmpty then title
-        else #[.colored cover.plain none (dimInlineList cover k true #[] title.toList)]
-       else dimInlineList cover k false #[] title.toList)
+    .titled kind (dimInlineList cover k pending #[] title.toList)
       (dimBlockList cover k pending #[] body.toList)
   | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
   | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
@@ -12442,16 +12458,9 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .titled kind title body =>
     rw [dimBlock]
-    by_cases h : pending = true
-    · by_cases ht : title.isEmpty
-      · simp [h, ht, blockTextOne,
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-      · simp [h, ht, blockTextOne, plainText, plainTextList, plainTextOne,
-          dimInlineList_text cover k true title.toList #[],
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-    · simp [h, blockTextOne, plainText,
-        dimInlineList_text cover k false title.toList #[], plainTextList,
-        dimBlockList_text cover k false body.toList #[] _, blockTextList]
+    simp [blockTextOne, plainText,
+      dimInlineList_text cover k pending title.toList #[], plainTextList,
+      dimBlockList_text cover k pending body.toList #[] _, blockTextList]
   | .role n body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]

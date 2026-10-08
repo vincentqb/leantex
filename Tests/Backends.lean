@@ -688,7 +688,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr deck s!":where({lastList 1 ""}) \{ margin-top: {space "0.219"}; }")
   let web := page "{webpage}"
   t "html a webpage's lists keep the peer gap and its items a leading"
-    (!hasStr web "li + li:" && !hasStr web "--parskip:" &&
+    (!hasStr web "li + li:" && !hasStr web "dl > *) { --parskip:" &&
      hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
      hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
   -- The reference list's entries are the paragraphs the PDF walk sets a

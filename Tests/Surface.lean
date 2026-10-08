@@ -1599,7 +1599,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      ((elabStr (slidesPre "\\usetheme{m}")).1.palette.find? "frametitlebg" |>.isSome) &&
      warnCodes (slidesPre "\\usetheme{metropolis}") == [])
   t "compat beamer warnings name the native spelling"
-    ((elabStr (pre "\\setbeamercolor{structure}{fg=black}")).2.any fun d =>
+    ((elabStr (pre "\\setbeamercolor{palette primary}{fg=black}")).2.any fun d =>
       d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
   t "compat ifdefined resolves instead of skipping; untaken branch is silent"
     (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") == [])

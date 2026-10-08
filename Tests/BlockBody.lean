@@ -214,14 +214,16 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       ("fg", Ir.Color.black), ("bg", Ir.Color.white),
       ("blockbodybg", pale), ("examplebodybg", dark), ("examplebodyfg", Ir.Color.white)] }
     body := #[.titled .block #[] #[.titled .example #[] #[.para #[.text "NESTED"]]]] }
-  let pad := Ir.titledPadding.resolve nested.page.fontSize 0
-  check ref "block body nested: PDF outer includes inner padding"
-    ((layout fonts nested).pages.any fun page => page.fills.any fun outer =>
+  -- beamer's colour boxes are `\textwidth` wide at every depth, so a nested
+  -- box shares its parent's reach; the parent keeps the child's space above
+  -- it and its own inset, after the child's `\smallskipamount`, below.
+  let pad := Layout.titledPaddingOf fonts (Layout.Geom.ofPage nested.page)
+  check ref "block body nested: PDF outer encloses the inner box and its skips"
+    (0 < pad && (layout fonts nested).pages.any fun page => page.fills.any fun outer =>
       outer.color == pale && page.fills.any fun inner =>
-        inner.color == dark && outer.x + pad ≤ inner.x &&
-        outer.y + pad ≤ inner.y &&
-        inner.x + inner.w + pad ≤ outer.x + outer.w &&
-        inner.y + inner.h + pad ≤ outer.y + outer.h)
+        inner.color == dark && outer.x == inner.x && outer.w == inner.w &&
+        outer.y + Dim.pt 6 ≤ inner.y &&
+        inner.y + inner.h + Dim.pt 3 + pad == outer.y + outer.h)
   check ref "block body nested: HTML both surfaces enclose content"
     ((html nested).any fun leaf => leaf.text == "NESTED" &&
       leaf.nestedPaint pale.css dark.css Ir.Color.white.css)
@@ -231,12 +233,12 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     body := #[.para #[.text "BEFORE"], .titled .block #[] #[], .para #[.text "AFTER"]] }
   check ref "block body empty: PDF nonzero band between paragraphs"
     ((layout fonts empty).pages.any fun page => page.fills.any fun fill =>
-      fill.color == dark && fill.h ≥ 2 * pad &&
+      fill.color == dark && fill.h == pad &&
         page.lines.any (fun line => lineText line == "BEFORE" && line.y < fill.y) &&
         page.lines.any (fun line => lineText line == "AFTER" && fill.y + fill.h < line.y))
   check ref "block body empty: HTML padded band"
     ((html empty).any fun leaf =>
-      leaf.paddedBand dark.css (HtmlDoc.cssLength Ir.titledPadding))
+      leaf.paddedBand dark.css s!"0 {HtmlDoc.cssLength Ir.titledPadding} {HtmlDoc.cssLength Ir.titledPadding}")
   let spill : Ir.Doc := {
     page := {
       width := Dim.pt 200, height := Dim.pt 100, hmargin := Dim.pt 10

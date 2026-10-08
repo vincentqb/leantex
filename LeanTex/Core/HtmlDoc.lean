@@ -1269,6 +1269,22 @@ private def gapAfterLists : List GapRule :=
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
+/-- A block's own space above it (beamerinnerthemedefault.sty):
+`\medskipamount` and TeX's `\lineskip` between its title box and what
+stands above, the print length's screen multiple (`screenMilli`). -/
+private def blockAboveMilli (size : Int) : Nat :=
+  screenMilli size (Ir.blockSkipAbove.width.sp + Layout.inkClearance)
+
+/-- A block's boundaries: its space above, `\smallskipamount` below its
+body box — a paragraph after it spends its own `\parskip` too — and no
+`\parskip` inside the boxes (`\@arrayparboxrestore`). -/
+private def blockRules (size : Int) : List GapRule :=
+  let below := screenMilli size Ir.blockSkipBelow.width.sp
+  [.boundary "* + section.block" (milliRem (blockAboveMilli size)),
+   .boundary "section.block + *" s!"calc({milliRem below} + {peerGap})",
+   .boundary "section.block + section.block" (milliRem (below + blockAboveMilli size)),
+   .parskip "section.block > *" "0rem"]
+
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
 at zero specificity, so no element rule stands above a boundary rule —
@@ -1288,7 +1304,8 @@ consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists
+  gapResets ++ gapBeforeLists ++ blockRules size ++ thmRules l size ++ listRules l size tokens ++
+    gapAfterLists
 
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : String :=
   String.join ((blockGapRules l size tokens).map GapRule.render)
@@ -1337,11 +1354,14 @@ margin on an element it spaces is the text's to show, and
 public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
     ((blockGapRules l size tokens).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
     (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
-  have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists).all
-      (fun r => !r.isReset) = true := by
-    simp only [List.all_append, thmRules_noReset, listRules_noReset, Bool.and_true,
-      Bool.and_eq_true]
-    exact ⟨by decide, by decide⟩
+  have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
+  have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
+  have hblock : (blockRules size).all (fun r => !r.isReset) = true := by
+    simp [blockRules, GapRule.isReset]
+  have hall : (gapBeforeLists ++ blockRules size ++ thmRules l size ++ listRules l size tokens ++
+      gapAfterLists).all (fun r => !r.isReset) = true := by
+    simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
+      listRules_noReset, Bool.and_self]
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
@@ -1528,6 +1548,18 @@ font size, its length is exactly the PDF inset, independent of leading. -/
 public theorem titledPadding_agree (fontSize xHeight : Sp) :
     titledPadding.resolve fontSize xHeight = Layout.titledPadding fontSize xHeight := by rfl
 
+/-- A painted block colour box as CSS, `titledPadding` on every side and
+reaching it beyond the measure, so the text stays on the measure. A body
+box opens flush on its top, where its `\vbox{}` stands — beamer's
+`\vskip-.75ex` cancels that inset. `titledPadding` is one `ex` term, so
+its negation is a single length. -/
+public def titledBoxPaint : String :=
+  s!"padding: {cssLength titledPadding}; margin-inline: -{cssLength titledPadding};"
+
+public def titledBodyBoxPaint : String :=
+  s!"padding: 0 {cssLength titledPadding} {cssLength titledPadding}; " ++
+    s!"margin-inline: -{cssLength titledPadding};"
+
 /-- **The HTML declares every recorded ink on the ground it was realized
 for.** For every scope the stylesheet paints on an ink's ground, the
 scope's declarations carry that ink — the HTML half of
@@ -1633,6 +1665,12 @@ public def themeCss (doc : Doc) : String :=
   -- Paint is carried by each block's palette epoch. A document-level
   -- condition would miss body declarations that add or remove a bar.
   "section.block > header { font-weight: bold; }\n" ++
+  -- A colour box keeps the glue its list holds: no margin collapses
+  -- through its edge (beamer's boxes are TeX boxes). A frame's first
+  -- block spends its own space above at the frame's opening, where the
+  -- frame's `\vskip-\parskip` stands too: the opening's authored addend.
+  "section.block, section.block > .block-body { display: flow-root; }\n" ++
+  s!"section.block \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
@@ -6981,8 +7019,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
-  -- reader's own included) can address each. An untitled block keeps its
-  -- section and drops the header, as the PDF drops the bar.
+  -- reader's own included) can address each. Its two colour boxes stand
+  -- as on the page (`titledBoxPaint`): an untitled block keeps its empty
+  -- header, a painted band or one empty line, as beamer keeps the box.
   | .titled kind title body =>
     let d := Design.ofPalette cfg.pal
     let look := d.titledBody kind
@@ -6995,11 +7034,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let titleGround := titleLook.bar.getD parent.bg
     let titleInk := (d.inkOn (kind.name ++ "titlefg")
       { fg := titleLook.fg, bg := titleGround }).fg
+    let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c}; {titledBoxPaint}").getD ""
     let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
-      (titleLook.bar.map fun c =>
-        s!"background: {cssColor c}; padding: {cssLength titledPadding};").getD ""
-    let head : Array Html.Node := if title.isEmpty then #[] else
-      #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
+      barStyle
+    let head : Array Html.Node :=
+      if title.isEmpty then
+        #[Html.elem "header" #[] #[("style", if barStyle.isEmpty then "min-height: 1lh;" else barStyle)]]
+      else #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
     let bodyCfg := { cfg.into with
       listingFg := some paint.fg, listingGround := look.bg.or cfg.listingGround
       bodyGround := look.bg.or cfg.bodyGround
@@ -7010,7 +7051,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- title. Unfilled bodies keep their original child structure.
     let kids := match look.bg with
       | some bg => #[Html.elem "div" kids #[("class", "block-body"), ("style",
-          bodyStyle ++ s!"background: {cssColor bg}; padding: {cssLength titledPadding};")]]
+          bodyStyle ++ s!"background: {cssColor bg}; {titledBodyBoxPaint}")]]
       | none => kids
     let attrs := #[("class", s!"block block-{kind.name}")]
     let attrs := if look.bg.isNone && look.fg.isSome then attrs.push ("style", bodyStyle) else attrs

@@ -265,15 +265,14 @@ def censusRows1 :
       hasStr (censusText c) "The example body stands under its own title."),
     ("the untitled block ships its body alone",
       hasStr (censusText c) "An untitled block keeps its body and draws no bar."),
-    -- Only `blocktitlebg` is declared, so exactly the plain titled
-    -- block draws a bar: alert and example take their content colours
-    -- barless, and the untitled block and the bare default theme add
-    -- no fill.
-    ("the one declared title bar ships as a fill",
-      (c[0]?.map (·.fills)).getD 0 == 1),
-    ("a filled title uses the shared surface inset",
-      lineXOf c 0 "A Plain Statement" ==
-        some (geom.hmargin + Ir.titledPadding.resolve geom.fontSize 0)),
+    -- Only `blocktitlebg` is declared, so exactly the plain kind draws a
+    -- bar: alert and example take their content colours barless. beamer
+    -- keeps an untitled block's empty title box, so the untitled plain
+    -- block paints its 1.5ex band too, and the bare theme adds no fill.
+    ("the declared title bar ships on both plain blocks",
+      (c[0]?.map (·.fills)).getD 0 == 2),
+    ("a filled title stands on the measure, its paint reaching beyond it",
+      lineXOf c 0 "A Plain Statement" == some geom.hmargin),
     ("unfilled titles stand on the measure",
       lineXOf c 0 "A Loud Statement" == some geom.hmargin &&
       lineXOf c 0 "A Worked Instance" == some geom.hmargin)]),

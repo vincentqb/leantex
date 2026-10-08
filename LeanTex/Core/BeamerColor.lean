@@ -36,13 +36,19 @@ public def roles : List (String × String × String) :=
    ("page number in head/foot", "muted", "")]
 
 /-- These defaults are relationships, not copied theme colours. Moloch's
-colour theme declares the progress variants with `parent`; Beamer's default
-colour theme makes the frame subtitle inherit the frame title. -/
+colour theme declares the progress variants and the alerted and example
+block bodies with `parent`; Beamer's default colour theme makes the frame
+subtitle inherit the frame title, the block title `structure` and the
+alerted and example block titles their text roles. -/
 private def defaultParents : String → List String
   | "framesubtitle" => ["frametitle"]
   | "section title" => ["titlelike"]
   | "titlelike" => ["normal text"]
   | "progress bar in section page" | "title separator" => ["progress bar"]
+  | "block title" => ["structure"]
+  | "block title alerted" => ["alerted text"]
+  | "block title example" => ["example text"]
+  | "block body alerted" | "block body example" => ["block body"]
   | _ => []
 
 public inductive Value where
@@ -123,6 +129,16 @@ private def unbrace (s : String) : String :=
 private def names (s : String) : List String :=
   ((unbrace s).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
 
+/-- `key=value`, where an empty value is kept: beamer's `bg=` clears the
+channel as `bg={}` does (moloch's own block colours spell it so). -/
+private def entryOf (entry : String) : Option (String × String) :=
+  match entry.splitOn "=" with
+  | key :: value :: more =>
+    let k := key.trimAscii.toString
+    if k.isEmpty then none
+    else some (k, (String.intercalate "=" (value :: more)).trimAscii.toString)
+  | _ => none
+
 /-- Update only the keys that occur, except that the starred form first
 clears both channels and both relationships (beamerbasecolor.sty). -/
 public def State.declare (s : State) (name : String) (star : Bool) (src : String)
@@ -132,7 +148,7 @@ public def State.declare (s : State) (name : String) (star : Bool) (src : String
       span := span, declared := true }
   let mut unsupported := []
   for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+    match entryOf entry with
     | some (key, v) =>
       e := { e with sites := e.sites.filter (·.1 != key) ++ [(key, span)] }
       match key with
@@ -264,6 +280,15 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     | some none => p.erase key
     | some (some c) => p.declare key c) base
   let normalFg := (Design.ofPalette context).fg
+  -- beamer names these at the document's start (beamerbasecolor.sty:
+  -- `\usebeamercolor{normal text}` and the starred `structure`, `alerted
+  -- text`, `example text`), so any declaration may read them without `use`.
+  let context := ["normal text", "structure", "alerted text", "example text"].foldl
+    (fun p name =>
+      let r := read p [] es name
+      let d := Design.ofPalette p
+      (p.declare (name ++ ".fg") ((r.fg.bind (·.color)).getD d.fg)).declare (name ++ ".bg")
+        ((r.bg.bind (·.color)).getD d.bg)) context
   let rank (name : String) : Nat :=
     let i := s.elements.findIdx (·.name == name)
     if i < s.elements.length then i + 1 else 0
