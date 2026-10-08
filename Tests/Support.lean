@@ -1636,6 +1636,15 @@ def elemAttrsOne (want : String → Bool) (acc : Array (String × Array (String 
     (node : Html.Node) : Array (String × Array (String × String)) :=
   elemAttrsList want acc [node]
 
+/-- The formulas of an emitted tree, in document order: the elements that
+carry their source in `data-tex` — a paragraph's `math` root, a picture
+label's row inside its carrier. -/
+def formulaElems (body : Array Html.Node) : Array Html.Node :=
+  (elemNodesList (fun _ => true) #[] body.toList).filter fun n =>
+    match n with
+    | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "data-tex").isSome
+    | _ => false
+
 /-- Every value the elements `want` accepts declare for attribute `key`, in
 document order: `elemAttrsOne`'s elements, read for one attribute. -/
 def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=

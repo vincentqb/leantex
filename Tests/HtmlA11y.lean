@@ -392,37 +392,42 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- **No shipped page nests a MathML root or ships an error element.** Over
 every golden fixture's typed tree — the pages the corpus ships — no `math`
-element stands inside another (`HtmlDoc.mathFacts`, the judge
-`MathMl.unnested` names) and no `merror` appears: the driver resolves every
-formula a page paints, picture labels included, and a label's carrier is its
-formulas' one root. No path ships an `merror` a diagnostic names — an
-alphabet the face lacks is named (N0018) and resolves to its source glyphs —
-so the count owed is zero, not a count of named ones. Non-vacuous only while
-the corpus ships MathML, MathML inside a picture, and an alphabet there. -/
+element stands inside another and no `merror` appears, judged by the
+predicates the theorems state (`MathMl.unnested`, `MathMl.tagFree`): the
+driver resolves every formula a page paints, picture labels included, and a
+label's carrier is its formulas' one root. No path ships an `merror` a
+diagnostic names — an alphabet the face lacks is named (N0018) and resolves
+to its source glyphs — so the count owed is zero, not a count of named ones.
+The pages are emitted with no face, so with an empty alphabet coverage;
+resolution is alphabet-free under every coverage, which the IR theorem
+quantifies (`Ir.mathRequests_resolve_covers`). Non-vacuous only while the
+corpus ships MathML, MathML inside a picture, and an alphabet there. -/
 def htmlMathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut roots := 0
   let mut carried := 0
   for n in goldenNames do
     let (_, _, _, body, _) ← a11yCorpusPage n
-    let f := HtmlDoc.mathFacts body
-    roots := roots + f.roots
-    carried := carried + (HtmlDoc.mathFacts
-      (elemNodesList (· == "foreignObject") #[] body.toList)).roots
-    t s!"html math {n}: no math element stands inside another ({f.nested})"
-      (f.nested == 0 && body.all MathMl.unnested)
-    t s!"html math {n}: no merror ships ({f.errors})" (f.errors == 0)
+    let carriers := elemNodesList (· == "foreignObject") #[] body.toList
+    roots := roots + (elemNodesList (· == "math") #[] body.toList).size
+    carried := carried + (elemNodesList (· == "math") #[] carriers.toList).size
+    t s!"html math {n}: no math element stands inside another"
+      (MathMl.unnestedList body.toList)
+    t s!"html math {n}: no merror ships \
+({(elemNodesList (· == "merror") #[] body.toList).size})"
+      (MathMl.tagFreeList (· == "merror") body.toList)
   t s!"html math: the corpus ships MathML ({roots} roots)" (roots > 0)
   t s!"html math: the corpus ships MathML inside a picture ({carried} carriers)" (carried > 0)
   let (_, _, _, scm, _) ← a11yCorpusPage "diagram-scm"
   t "html math: the corpus ships a math alphabet inside a picture"
-    ((elemNodesList (· == "foreignObject") #[] scm.toList).any fun fo =>
-      (elemAttrsOne (fun _ => true) #[] fo).any fun (_, attrs) =>
-        HtmlDoc.attrOf? attrs "data-tex" == some "\\mathrm {rd}")
-  -- The judge, once each way: a nested root and an error element are seen.
+    ((formulaElems (elemNodesList (· == "foreignObject") #[] scm.toList)).any fun n =>
+      match n with
+      | .elem _ attrs _ => HtmlDoc.attrOf? attrs "data-tex" == some "\\mathrm {rd}"
+      | _ => false)
+  -- The predicates, once each way: a nested root and an error element are seen.
   let nestedRoot := Html.elem "math" #[Html.elem "mrow" #[Html.elem "math" #[]]]
   let framed := Html.elem "math" #[Html.elem "merror" #[Html.elem "mi" #[Html.text "x"]]]
   t "html math: the judge sees a root inside a root"
-    ((HtmlDoc.mathFacts #[nestedRoot]).nested == 1 && !MathMl.unnested nestedRoot)
+    (!MathMl.unnested nestedRoot && MathMl.tagFree (· == "merror") nestedRoot)
   t "html math: the judge sees an error element"
-    ((HtmlDoc.mathFacts #[framed]).errors == 1 && MathMl.unnested framed)
+    (!MathMl.tagFree (· == "merror") framed && MathMl.unnested framed)

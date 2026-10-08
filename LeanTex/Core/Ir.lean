@@ -4273,6 +4273,21 @@ public theorem Picture.box_declared_exact (p : Picture) (m : LabelMetric) (b : B
     (h : p.declared = some b) : p.box m = b := by
   simp [Picture.box, h]
 
+/-- **A label rewrite its measurement cannot see moves no box** (`_id`):
+every ink box, the natural box and so the picture's box stay where they
+were. What lets a pass rewrite label content after elaboration placed the
+picture — alphabet resolution does — without moving the box placement read. -/
+public theorem Picture.mapLabels_box_id (m : LabelMetric) (f : Array Inline → Array Inline)
+    (hm : ∀ content scale, m (f content) scale = m content scale) (p : Picture) :
+    (p.mapLabels f).box m = p.box m := by
+  have hboxes : (p.mapLabels f).inkBoxes m = p.inkBoxes m := by
+    simp only [Picture.inkBoxes, Picture.mapLabels, Array.map_map]
+    congr 1
+    funext s
+    cases s <;> simp [Shape.mapLabel, Shape.inkBox, hm]
+  simp only [Picture.box, Picture.natural, hboxes]
+  rfl
+
 /-- **Where a picture stands on its line**: how far above its box's bottom
 edge the declared baseline runs (pgf manual §12.2.1), held inside the box;
 with nothing declared, the bottom edge is on the line. The one value both
@@ -15148,44 +15163,6 @@ frames as an error and the page sets in the source glyphs. -/
     (pic : Pic.Picture) : Pic.Picture :=
   pic.mapLabels (mapInlines (resolveMathAlphaInline coverage))
 
-private def mathAlphaMissingStep (coverage : Math.MathAlphabetCoverage)
-    (out : Array Math.MathAlphabet) (x : Inline) : Array Math.MathAlphabet :=
-  match x with
-  | .formula _ _ body =>
-    (Math.missingMathAlphas coverage body).foldl (fun out a =>
-      if out.contains a then out else out.push a) out
-  | _ => out
-
-/-- `foldBlock` leaves listing captions, formatted references and picture
-labels to its block visitor. Their formulas are rewritten by `mapBlock`, so
-this census reads them through the same inline fold as every other formula
-region. -/
-private def mathAlphaMissingBlock (coverage : Math.MathAlphabetCoverage)
-    (out : Array Math.MathAlphabet) : Block → Array Math.MathAlphabet
-  | .verbatim _ _ spec =>
-    match spec.caption with
-    | some (_, caption) => foldInlines (mathAlphaMissingStep coverage) out caption
-    | none => out
-  | .bibliography _ _ items =>
-    items.foldl (fun acc item => foldInlines (mathAlphaMissingStep coverage) acc item.content) out
-  | .picture pic =>
-    pic.labelContents.foldl (fun acc content =>
-      foldInlines (mathAlphaMissingStep coverage) acc content) out
-  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
-  | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
-  | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
-  | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _ | .framefoot _
-  | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => out
-
-/-- Every alphabet whose used range the selected symbol face lacks,
-deduplicated in first-use order across the body and furniture, including
-the listing captions, formatted reference content and picture labels that
-`mapBlock` resolves. -/
-public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
-    (doc : Doc) : Array Math.MathAlphabet :=
-  foldDoc (mathAlphaMissingStep coverage) #[] doc (mathAlphaMissingBlock coverage)
-
 /-- A formula and the authored location enclosing it. The canonical formula
 text is not source evidence: the lexical trigger lives on the stored span. -/
 public structure MathRequest where
@@ -15261,6 +15238,22 @@ public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathReque
           | none => #[]) ++
         furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight
   furniture.foldl (fun out xs => foldCtxInlines mathRequestInlines (none, true) out xs) body
+
+/-- One request's missing alphabets onto a census that keeps first use
+and drops repeats. -/
+private def noteRequestAlphas (coverage : Math.MathAlphabetCoverage)
+    (out : Array Math.MathAlphabet) (r : MathRequest) : Array Math.MathAlphabet :=
+  (Math.missingMathAlphas coverage r.body).foldl (fun out a =>
+    if out.contains a then out else out.push a) out
+
+/-- Every alphabet whose used range the selected symbol face lacks,
+deduplicated in first-use order over the alphabet census's requests — the
+body and furniture, notes, style templates, listing captions, formatted
+references and picture labels: the requests each note takes its source
+from, so which alphabets are named and where cannot read two region lists. -/
+public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
+    (doc : Doc) : Array Math.MathAlphabet :=
+  (mathRequests .alphabets doc).foldl (noteRequestAlphas coverage) #[]
 
 /-- The first actual formula needing glyphs, before a face is selected.
 An unsourced request stays unsourced rather than borrowing a later site. -/
@@ -15384,7 +15377,9 @@ private theorem mapMathInlineElems_fixed_point (coverage : Math.MathAlphabetCove
 
 end
 
-private theorem mapMathInlines_fixed_point (coverage : Math.MathAlphabetCoverage) (xs : Array Inline) :
+/-- Resolving an inline region twice resolves it once. -/
+public theorem mapMathInlines_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (xs : Array Inline) :
     mapInlines (resolveMathAlphaInline coverage)
         (mapInlines (resolveMathAlphaInline coverage) xs)
       = mapInlines (resolveMathAlphaInline coverage) xs := by
@@ -15665,206 +15660,6 @@ public theorem resolveMathAlphas_fixed_point (coverage : Math.MathAlphabetCovera
       = (resolveMathAlphas coverage family doc).1 := by
   simp only [resolveMathAlphas]
   exact mapMathDoc_fixed_point coverage doc
-
-mutual
-
-private theorem foldMapMathInline_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (x : Inline) :
-    foldInline (mathAlphaMissingStep coverage) acc
-      (mapInline (resolveMathAlphaInline coverage) x) = acc := by
-  match x with
-  | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body =>
-    simp only [mapInline, foldInline, mathAlphaMissingStep,
-      mapInlineList_toList, List.nil_append]
-    exact foldMapMathInlineList_id coverage acc body.toList
-  | .altSteps _ active otherwise =>
-    simp only [mapInline, foldInline, mathAlphaMissingStep,
-      mapInlineList_toList, List.nil_append]
-    rw [foldMapMathInlineList_id coverage acc active.toList,
-      foldMapMathInlineList_id coverage acc otherwise.toList]
-  | .formula _ _ _ =>
-    simp only [mapInline, resolveMathAlphaInline, foldInline, mathAlphaMissingStep,
-      Math.missingMathAlphas_resolve_exact, Array.foldl_empty]
-  | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
-  | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => rfl
-
-private theorem foldMapMathInlineList_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : List Inline) :
-    foldInlineList (mathAlphaMissingStep coverage) acc
-      (xs.map (mapInline (resolveMathAlphaInline coverage))) = acc := by
-  match xs with
-  | [] => rfl
-  | x :: rest =>
-    rw [List.map_cons, foldInlineList, foldMapMathInline_id coverage acc x,
-      foldMapMathInlineList_id coverage acc rest]
-
-end
-
-private theorem foldMapMathInlines_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : Array Inline) :
-    foldInlineList (mathAlphaMissingStep coverage) acc
-      (mapInlines (resolveMathAlphaInline coverage) xs).toList = acc := by
-  simp only [mapInlines, mapInlineList_toList, List.nil_append]
-  exact foldMapMathInlineList_id coverage acc xs.toList
-
-private theorem foldMapMathCells_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (cells : List (Array Inline)) :
-    foldTableCells (mathAlphaMissingStep coverage) acc
-      (cells.map (mapInlines (resolveMathAlphaInline coverage))) = acc := by
-  induction cells generalizing acc with
-  | nil => rfl
-  | cons cell rest ih =>
-    rw [List.map_cons, foldTableCells, foldMapMathInlines_id, ih]
-
-private theorem foldMapMathRows_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (rows : List (Array (Array Inline))) :
-    foldTableRows (mathAlphaMissingStep coverage) acc
-      (rows.map (fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList)) = acc := by
-  induction rows generalizing acc with
-  | nil => rfl
-  | cons row rest ih =>
-    simp only [List.map_cons, foldTableRows, mapTableCells_toList, List.nil_append]
-    rw [foldMapMathCells_id, ih]
-
-private theorem foldMapMathAlgLines_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (lines : List AlgLine) :
-    foldAlgLines (mathAlphaMissingStep coverage) acc
-      (mapAlgLines (resolveMathAlphaInline coverage) #[] lines).toList = acc := by
-  simp only [mapAlgLines_toList, List.nil_append]
-  induction lines generalizing acc with
-  | nil => rfl
-  | cons line rest ih =>
-    cases hc : line.comment <;>
-      simp only [List.map_cons, foldAlgLines, hc, Option.map_none, Option.map_some,
-        foldMapMathInlines_id, ih]
-
-private theorem foldMapMathBibItems_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (items : List BibItem) :
-    (mapBibItems (resolveMathAlphaInline coverage) #[] items).foldl
-      (fun out item => foldInlines (mathAlphaMissingStep coverage) out item.content) acc = acc := by
-  rw [← Array.foldl_toList, mapBibItems_toList]
-  simp only [List.nil_append, List.foldl_map, foldInlines, foldMapMathInlines_id]
-  induction items with
-  | nil => rfl
-  | cons _ _ ih => exact ih
-
-mutual
-
-private theorem foldMapMathBlock_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (b : Block) :
-    foldBlock (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) b) = acc := by
-  match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .framefoot _ | .logo _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, foldMapMathInlines_id]
-  | .list _ items =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockItems_toList, List.nil_append]
-    exact foldMapMathItems_id coverage acc items.toList
-  | .columns cols =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockCols_toList, List.nil_append]
-    exact foldMapMathCols_id coverage acc cols.toList
-  | .center body | .ragged _ body | .quote body | .abstract body
-  | .role _ body | .link _ body | .spaced _ body | .onSteps _ body
-  | .only _ body | .nav _ body | .note body
-  | .titled _ _ body | .frame _ _ _ _ body | .float _ _ _ body _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, foldMapMathInlines_id,
-      mapBlockList_toList, List.nil_append]
-    exact foldMapMathBlockList_id coverage acc body.toList
-  | .altSteps _ active otherwise =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc active.toList,
-      foldMapMathBlockList_id coverage acc otherwise.toList]
-  | .table _ _ _ rows _ _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapTableRows_toList, List.nil_append]
-    exact foldMapMathRows_id coverage acc rows.toList
-  | .algorithm _ _ lines =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock]
-    exact foldMapMathAlgLines_id coverage acc lines.toList
-  | .verbatim _ _ spec =>
-    cases hc : spec.caption <;>
-      simp [mapBlock, foldBlock, mathAlphaMissingBlock, hc, foldInlines, foldMapMathInlines_id]
-  | .bibliography _ _ items =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock]
-    exact foldMapMathBibItems_id coverage acc items.toList
-  | .picture pic =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, resolveMathAlphaPicture,
-      Pic.Picture.labelContents_mapLabels, Array.foldl_map, foldInlines, foldMapMathInlines_id]
-    rw [← Array.foldl_toList]
-    generalize pic.labelContents.toList = regions
-    induction regions with
-    | nil => rfl
-    | cons _ _ ih => exact ih
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => rfl
-
-private theorem foldMapMathBlockList_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : List Block) :
-    foldBlockList (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (xs.map (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))) = acc := by
-  match xs with
-  | [] => rfl
-  | x :: rest =>
-    rw [List.map_cons, foldBlockList, foldMapMathBlock_id coverage acc x,
-      foldMapMathBlockList_id coverage acc rest]
-
-private theorem foldMapMathItems_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (items : List (Array Block)) :
-    foldBlockItems (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (items.map (fun item => mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] item.toList))
-      = acc := by
-  match items with
-  | [] => rfl
-  | item :: rest =>
-    simp only [List.map_cons, foldBlockItems, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc item.toList,
-      foldMapMathItems_id coverage acc rest]
-
-private theorem foldMapMathCols_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (cols : List (BoxWidth × Array Block)) :
-    foldBlockCols (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (cols.map (fun c => (c.1, mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList)))
-      = acc := by
-  match cols with
-  | [] => rfl
-  | (_, body) :: rest =>
-    simp only [List.map_cons, foldBlockCols, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc body.toList,
-      foldMapMathCols_id coverage acc rest]
-
-end
-
-/-- Resolution empties the alphabet census for every document and coverage,
-including listing captions, formatted references and running furniture. -/
-public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCoverage)
-    (family : String) (doc : Doc) :
-    missingMathAlphas coverage (resolveMathAlphas coverage family doc).1 = #[] := by
-  change foldDoc (mathAlphaMissingStep coverage) #[]
-    (mapDoc (mapInlines (resolveMathAlphaInline coverage))
-      (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)) doc) (mathAlphaMissingBlock coverage) = #[]
-  unfold foldDoc
-  rw [furnitureInlines_mapDoc, Array.foldl_map]
-  simp only [foldInlines, foldMapMathInlines_id]
-  change (furnitureInlines doc).foldl (fun acc _ => acc)
-    (foldBlockList (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) #[]
-      (mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] doc.body.toList).toList) = #[]
-  rw [mapBlockList_toList, List.nil_append,
-    foldMapMathBlockList_id coverage #[] doc.body.toList]
-  rw [← Array.foldl_toList]
-  have empty : ∀ xs : List (Array Inline),
-      xs.foldl (fun acc _ => acc) (#[] : Array Math.MathAlphabet) = #[] := by
-    intro xs
-    induction xs with
-    | nil => rfl
-    | cons _ _ ih => exact ih
-  exact empty _
-
-/-- Entry normalization can repeat without repeating N0018 diagnostics. -/
-public theorem resolveMathAlphas_diags_exact (coverage : Math.MathAlphabetCoverage)
-    (family : String) (doc : Doc) :
-    (resolveMathAlphas coverage family (resolveMathAlphas coverage family doc).1).2 = #[] := by
-  change (missingMathAlphas coverage (resolveMathAlphas coverage family doc).1).map _ = #[]
-  rw [missingMathAlphas_resolve_exact, Array.map_empty]
 
 /-- Every request a census holds asks for an alphabet-free formula. -/
 private def RequestsFree (out : Array MathRequest) : Prop :=
@@ -16165,6 +15960,32 @@ public theorem mathRequests_resolve_covers (scope : MathRequestScope)
         _ body
       simp only [RequestsFree] at this
       simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
+
+/-- Resolution empties the alphabet census for every document and coverage:
+the census reads the alphabet requests, and every one of them is
+alphabet-free after resolution (`mathRequests_resolve_covers`). -/
+public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc) :
+    missingMathAlphas coverage (resolveMathAlphas coverage family doc).1 = #[] := by
+  have spent : ∀ rs : List MathRequest, (∀ r ∈ rs, r.body.alphaFree = true) →
+      rs.foldl (noteRequestAlphas coverage) #[] = #[] := by
+    intro rs hrs
+    induction rs with
+    | nil => rfl
+    | cons r rest ih =>
+      simp only [List.foldl_cons, noteRequestAlphas,
+        Math.missingMathAlphas_alphaFree_exact coverage _ (hrs r (by simp)), Array.foldl_empty]
+      exact ih fun q hq => hrs q (by simp [hq])
+  rw [missingMathAlphas, ← Array.foldl_toList]
+  exact spent _ fun r hr =>
+    mathRequests_resolve_covers .alphabets coverage family doc r (by simpa using hr)
+
+/-- Entry normalization can repeat without repeating N0018 diagnostics. -/
+public theorem resolveMathAlphas_diags_exact (coverage : Math.MathAlphabetCoverage)
+    (family : String) (doc : Doc) :
+    (resolveMathAlphas coverage family (resolveMathAlphas coverage family doc).1).2 = #[] := by
+  change (missingMathAlphas coverage (resolveMathAlphas coverage family doc).1).map _ = #[]
+  rw [missingMathAlphas_resolve_exact, Array.map_empty]
 
 /-- The List companion of `linkBlocks`: one block link owns the whole body,
 so an authored wrapper cannot multiply with its inline leaves. -/

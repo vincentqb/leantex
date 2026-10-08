@@ -11364,10 +11364,17 @@ public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom
 
 /-- The measurement a picture's box is computed with: `labelInk` read as an
 `Ir.Pic.LabelMetric`, the seam the IR states its containment over. A label
-whose line breaks to nothing measures as nothing, which is what it inks. -/
+whose line breaks to nothing measures as nothing, which is what it inks.
+The content is set as the backends paint it, alphabets resolved against the
+set's own coverage: elaboration places a picture by this measure before the
+driver resolves the picture's alphabets, so measuring the source glyphs
+would stand outlines, anchors and edges around glyphs the page never sets
+(`labelMetric_resolve_id`). -/
 private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp) :
     Ir.Pic.LabelMetric := fun content scale =>
-  match labelInk fs imgs geom xHeight none content Ir.Color.black scale with
+  match labelInk fs imgs geom xHeight none
+      (Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets) content) Ir.Color.black
+      scale with
   | some (_, _, ink) => ink
   | none => {}
 
@@ -11532,6 +11539,27 @@ under the metric the driver hands it (`Pdf.picture_box_agree`). -/
 public def pictureBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
     (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
   pic.box (picMetric fs imgs geom xHeight)
+
+/-- **A label measures as it paints** (`_id`): the label measure reads a
+label's formulas as alphabet resolution leaves them, so a measure taken
+before resolution — elaboration places node outlines, anchors and edges
+then — and one taken after it agree, for every font set, image store,
+geometry, content and size. -/
+public theorem labelMetric_resolve_id (geom : Geom) (fs : FontSet) (imgs : Image.Store)
+    (content : Array Ir.Inline) (scale : Nat) :
+    labelMetric geom fs imgs
+        (Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets) content) scale =
+      labelMetric geom fs imgs content scale := by
+  simp only [labelMetric, picMetric, Ir.mapMathInlines_fixed_point]
+
+/-- **Resolving a picture's labels moves no box** (`_id`): under the
+driver's label measure, the picture elaboration placed and the picture both
+backends paint after alphabet resolution occupy one box. -/
+public theorem resolveMathAlphaPicture_box_id (geom : Geom) (fs : FontSet)
+    (imgs : Image.Store) (pic : Ir.Pic.Picture) :
+    (Ir.resolveMathAlphaPicture fs.mathAlphabets pic).box (labelMetric geom fs imgs) =
+      pic.box (labelMetric geom fs imgs) :=
+  Ir.Pic.Picture.mapLabels_box_id _ _ (labelMetric_resolve_id geom fs imgs) pic
 
 /-- At the document's resolved body x-height, picture placement reads the
 same IR box as a caller using the public label measurement. -/

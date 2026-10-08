@@ -14,7 +14,6 @@ example : HtmlDoc.Config → Ir.Doc → Array ByteArray →
     Except String HtmlDoc.ClosedPage × Array Diag := HtmlDoc.emitClosed
 example : HtmlDoc.Config → Array HtmlResource.Embedded := HtmlDoc.resources
 example : Bool → Bool → Array Html.Node → HtmlDoc.A11yFacts := HtmlDoc.a11yFacts
-example : Array Html.Node → HtmlDoc.MathFacts := HtmlDoc.mathFacts
 
 example (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
     ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
@@ -37,7 +36,6 @@ example : True := by
   fail_if_success have := HtmlDoc.listItem
   fail_if_success have := HtmlDoc.AlgTree
   fail_if_success have := HtmlDoc.a11yOne
-  fail_if_success have := HtmlDoc.mathFactsOne
   fail_if_success have := HtmlDoc.Config.fontsDir
   fail_if_success have := HtmlDoc.Config.assetsDir
   fail_if_success have := HtmlDoc.FontAsset

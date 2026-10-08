@@ -173,13 +173,23 @@ def alphabetLabelCases : Array String := #[
 def paragraphSource (content : String) : String :=
   "\\documentclass{article}\\begin{document}\n" ++ content ++ "\n\\end{document}"
 
-/-- The formulas of an emitted tree, in document order: the elements that
-carry their source in `data-tex` — a paragraph's `math`, a label's row. -/
-def formulaNodes (body : Array Html.Node) : Array Html.Node :=
-  (elemNodesList (fun _ => true) #[] body.toList).filter fun n =>
-    match n with
-    | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "data-tex").isSome
-    | _ => false
+/-- A drawn node around `content`, alone in its picture. -/
+def drawnNodeSource (content : String) : String :=
+  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
+  "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
+  "};\n\\end{tikzpicture}\n\\end{document}"
+
+/-- The node outline's width and the label's content and size in the one
+picture a document draws: what elaboration placed. -/
+def outlineOf (doc : Ir.Doc) : Option (Dim.Sp × Array Ir.Inline × Nat) := do
+  let pic ← (pictures doc)[0]?
+  let w ← pic.shapes.findSome? fun s => match s with
+    | .frame _ _ w _ _ _ => some w
+    | _ => none
+  let (content, scale) ← pic.shapes.findSome? fun s => match s with
+    | .label _ _ content _ scale _ => some (content, scale)
+    | _ => none
+  return (w, content, scale)
 
 end PictureMathLabels
 
@@ -191,8 +201,11 @@ scalars, and every shipped `math` element is its tree's only root. Before
 alphabet resolution reached picture labels, a label's alphabet shipped as an
 unresolved node — an `merror` around the source glyphs in HTML, which a
 browser frames in red on yellow, and the source italic on the page — and the
-label's carrier nested each formula's own `math` root. Reads `Layout.Out`
-and the emitted HTML tree, never an IR dump. Invented content. -/
+label's carrier nested each formula's own `math` root. The label is also
+measured as it paints, so the outline, anchors and edges elaboration placed
+around it stand around the glyphs the page sets. Reads `Layout.Out`, the
+emitted HTML tree and the placed picture, never an IR dump. Invented
+content. -/
 def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -209,18 +222,67 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
       ((PictureMathLabels.pictures label).size == 1)
     let (_, proseBody, _) := HtmlDoc.emitTree (cfgOf prose) prose
     let (_, labelBody, _) := HtmlDoc.emitTree (cfgOf label) label
-    let proseFormulas := PictureMathLabels.formulaNodes proseBody
-    let labelFormulas := PictureMathLabels.formulaNodes labelBody
+    let proseFormulas := formulaElems proseBody
+    let labelFormulas := formulaElems labelBody
     t (name ++ " paints the paragraph's MathML glyphs in its label")
       (!proseFormulas.isEmpty && proseFormulas.size == labelFormulas.size &&
         MathMl.nodeListChars #[] labelFormulas.toList ==
           MathMl.nodeListChars #[] proseFormulas.toList)
-    let facts := HtmlDoc.mathFacts labelBody
-    t (name ++ s!" ships no merror ({facts.errors})") (facts.errors == 0)
-    t (name ++ s!" ships one math root per formula tree ({facts.nested} nested)")
-      (facts.nested == 0 && facts.roots == 1 && labelBody.all MathMl.unnested)
+    t (name ++ s!" ships no merror \
+({(elemNodesList (· == "merror") #[] labelBody.toList).size})")
+      (MathMl.tagFreeList (· == "merror") labelBody.toList)
+    t (name ++ s!" ships one math root, unnested \
+({(elemNodesList (· == "math") #[] labelBody.toList).size} math elements)")
+      (MathMl.unnestedList labelBody.toList &&
+        (elemNodesList (· == "math") #[] labelBody.toList).size == 1)
+    -- Elaboration places the picture by the label's measure, before the
+    -- driver resolves its alphabets: the measure must be the one of what
+    -- paints, or a node's outline, its anchors and its edges stand around
+    -- glyphs the page never sets.
+    let metric := Layout.labelMetric (Layout.Geom.ofPage label.page) fs
+    let resolveLabel := Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets)
+    t (name ++ " is measured as it paints")
+      ((PictureMathLabels.pictures label).all fun pic => pic.shapes.all fun s =>
+        match s with
+        | .label _ _ content _ scale _ => metric content scale == metric (resolveLabel content) scale
+        | _ => true)
     let proseOut := layoutOf fs prose
     let labelOut := layoutOf fs label
     t (name ++ s!" sets the paragraph's scalars on the page \
 ({scalars labelOut} against {scalars proseOut})")
       (!(scalars proseOut).isEmpty && scalars labelOut == scalars proseOut)
+  -- **A drawn outline stands its inner sep clear of the glyphs that paint.**
+  -- The outline is placed at elaboration; the glyphs are the resolved
+  -- alphabet. Against a plain-text node, the outline's margin over the
+  -- painted label's measure is the same, to the rounding of a halved width.
+  let marginOf := fun (content : String) =>
+    let (doc, _) := elabMeasured fs (PictureMathLabels.drawnNodeSource content)
+    let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
+    (PictureMathLabels.outlineOf doc).map fun (w, label, scale) =>
+      w - (metric (Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets) label) scale).w
+  let plain := marginOf "W"
+  for content in #["$\\mathbf{W}$", "$\\mathrm{Fir}$", "$\\mathsf{Q}$", "$\\mathtt{k}$"] do
+    let alphabet := marginOf content
+    t s!"picture alphabet: a drawn node around {content} keeps the text node's margin \
+({alphabet} against {plain})"
+      (match plain, alphabet with
+       | some a, some b => (a - b).natAbs ≤ 2
+       | _, _ => false)
+  -- A display formula set in a carrier keeps its display style on the row:
+  -- the display root's children, `displaystyle` where the root declares
+  -- `display="block"`, and nothing for an inline row.
+  let (displayDoc, _) := elabStr (PictureMathLabels.paragraphSource "\\[\\frac{1}{2}\\]")
+  let displayBody := firstFormula displayDoc
+  t "picture alphabet: a display formula parses for the row probe" displayBody.isSome
+  if let some body := displayBody then
+    let render := fun (kids : Array Html.Node) => String.join (kids.toList.map (Html.render · 0))
+    t "picture alphabet: a display row carries the display root's children and style"
+      (match MathMl.formula true #[] body, MathMl.formulaRow true #[] body,
+          MathMl.formulaRow false #[] body with
+       | .elem "math" rootAttrs rootKids, .elem "mrow" rowAttrs rowKids,
+           .elem "mrow" inlineAttrs _ =>
+         HtmlDoc.attrOf? rootAttrs "display" == some "block" &&
+           HtmlDoc.attrOf? rowAttrs "displaystyle" == some "true" &&
+           (HtmlDoc.attrOf? inlineAttrs "displaystyle").isNone &&
+           render rowKids == render rootKids
+       | _, _, _ => false)

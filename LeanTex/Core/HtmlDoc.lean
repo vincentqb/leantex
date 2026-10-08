@@ -6377,7 +6377,8 @@ mutual
 holds, in either mode, its nodes carry no `math` element — a native run's
 text is `mtext`, a scope `mrow`, a formula its row (`MathMl.formulaRow`),
 an SVG run text or `tspan`. So the carrier `pictureKids` opens is the
-label's only root (`pictureKids_unnested_contract`). -/
+label's only root (`pictureKids_unnested_contract`). A fact of the artifact:
+MathML's one root per tree. -/
 public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node) (x : Inline)
     (mathCfg : Option Config)
     (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
@@ -6535,7 +6536,8 @@ element `pictureKids` emits stands inside another, for every picture,
 measure and configuration. A label holding a formula is one carrier whose
 `math` is the label's only root (`labelNodesList_mathFree_contract`); every
 other shape carries no MathML. The carrier once wrapped each formula's own
-root, a second root no engine defines the layout of. -/
+root, a second root no engine defines the layout of. A fact of the artifact,
+as `MathMl.formula_unnested_contract` is. -/
 public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
     (metric : Ir.Pic.LabelMetric) (cfg : Config) :
     ∀ n ∈ pictureKids pic px0 py1 metric cfg, MathMl.unnested n = true := by
@@ -8377,46 +8379,5 @@ public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = tr
     scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
   simp [blockNode, Config.inFrame, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
     frameName_contract]
-
-/-! ## The MathML a page ships -/
-
-/-- The MathML of a page, as counts over the emitted tree: `math` roots,
-`math` elements standing inside another — a second root, whose layout no
-engine defines (`MathMl.unnested`) — and `merror` elements, which a browser
-frames in red on yellow. No path through the driver ships either of the
-last two (`pictureKids_unnested_contract`, `MathMl.formula_merrorFree_contract`
-over `Ir.mathRequests_resolve_covers`); this judge is what reads the whole
-page for them. -/
-public structure MathFacts where
-  roots : Nat := 0
-  nested : Nat := 0
-  errors : Nat := 0
-  deriving Repr, BEq, Inhabited
-
-mutual
-
-/-- The facts of one node onto `acc`; `inMath` is whether an ancestor is a
-`math` element. The list companion keeps the recursion structural. -/
-private def mathFactsOne (inMath : Bool) (acc : MathFacts) : Node → MathFacts
-  | .text _ => acc
-  | .style _ => acc
-  | .script _ _ => acc
-  | .elem tag _ kids =>
-    let root := tag == "math"
-    let acc := if !root then acc
-      else if inMath then { acc with nested := acc.nested + 1 }
-      else { acc with roots := acc.roots + 1 }
-    let acc := if tag == "merror" then { acc with errors := acc.errors + 1 } else acc
-    mathFactsList (inMath || root) acc kids.toList
-
-private def mathFactsList (inMath : Bool) (acc : MathFacts) : List Node → MathFacts
-  | [] => acc
-  | k :: rest => mathFactsList inMath (mathFactsOne inMath acc k) rest
-
-end
-
-/-- The MathML facts of a page body. -/
-public def mathFacts (body : Array Node) : MathFacts :=
-  mathFactsList false {} body.toList
 
 end LeanTex.Core.HtmlDoc

@@ -1230,6 +1230,14 @@ theorem tagFree_paint (p : String → Bool) (ink : Option String) (n : Html.Node
 theorem leafTag_mem (cls : MathClass) (c : Char) : leafTag cls c ∈ contentTags := by
   cases cls <;> simp only [leafTag] <;> (try split) <;> simp [contentTags]
 
+/-- A tag outside the vocabulary selects none of its elements. -/
+theorem contentTags_beq_false {s : String} (hs : s ∉ contentTags) :
+    ∀ t ∈ contentTags, (t == s) = false := by
+  intro t ht
+  simp only [beq_eq_false_iff_ne]
+  rintro rfl
+  exact hs ht
+
 /-- The vocabulary, one fact per element, in the form `simp` rewrites with. -/
 theorem contentTags_false {p : String → Bool} (hp : ∀ t ∈ contentTags, p t = false) :
     p "mi" = false ∧ p "mn" = false ∧ p "mo" = false ∧ p "mtext" = false ∧
@@ -1383,7 +1391,7 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
     exact leafNode_tagFree p hp cls c _ _ rfl
   | .word _, _ => by simp [nucNode, tagFree, tagFreeList, contentTags_false hp]
   | .list body, hm => by
-    simp only [nucNode, tagFree, (contentTags_false hp).2.2.2.2.2.1, Bool.not_false,
+    simp only [nucNode, tagFree, hp "mrow" (by simp [contentTags]), Bool.not_false,
       Bool.true_and]
     exact listNodes_tagFree p hp mk disp none body #[]
       (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl
@@ -1413,7 +1421,7 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
   | .delim l r body, hm => by
     have hbody : p "merror" = true → body.alphaFree = true :=
       fun h => by simpa [MNucleus.alphaFree] using hm h
-    have hmrow := (contentTags_false hp).2.2.2.2.2.1
+    have hmrow := hp "mrow" (by simp [contentTags])
     cases l with
     | none =>
       have hb := listNodes_tagFree p hp mk disp none body #[] hbody rfl
@@ -1432,7 +1440,7 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
       (listNodes_tagFree p hp _ disp none body #[]
         (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl)
   | .grid kind rows, hm => by
-    simp only [nucNode, tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false,
+    simp only [nucNode, tagFree, hp "mtable" (by simp [contentTags]), Bool.not_false,
       Bool.true_and]
     exact rowsNodes_tagFree p hp _ _ kind rows #[]
       (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl
@@ -1458,7 +1466,7 @@ theorem rowNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t 
     apply rowNodes_tagFree p hp mk disp kind rest (k + 1) _
       (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).2)
     rw [tagFreeList_push, ha]
-    simp only [tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false, Bool.true_and]
+    simp only [tagFree, hp "mtd" (by simp [contentTags]), Bool.not_false, Bool.true_and]
     exact listNodes_tagFree p hp mk disp none cell #[]
       (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).1) rfl
 
@@ -1475,7 +1483,7 @@ theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t
     apply rowsNodes_tagFree p hp mk disp kind rest _
       (fun h => by simp [MRows.alphaFree] at hf; exact (hf h).2)
     rw [tagFreeList_push, ha]
-    simp only [tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false, Bool.true_and]
+    simp only [tagFree, hp "mtr" (by simp [contentTags]), Bool.not_false, Bool.true_and]
     exact rowNodes_tagFree p hp mk disp kind row 0 #[]
       (fun h => by simp [MRows.alphaFree] at hf; exact (hf h).1) rfl
 
@@ -1485,14 +1493,13 @@ end
 emitter's vocabulary has none, and `merror` is not one. -/
 public theorem formulaKids_mathFree_contract (display : Bool) (body : MList) (mk : Marks) :
     tagFreeList (· == "math") (formulaKids display body mk).toList = true :=
-  listNodes_tagFree (· == "math") (by intro t ht; simp [contentTags] at ht; rcases ht with
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl)
+  listNodes_tagFree (· == "math") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun h => by simp at h) rfl
 
 /-- **A formula's root is its tree's only root** (`_contract`): the `math`
 element `formula` builds has no `math` descendant, for every list, display
-mode and measure. -/
+mode and measure. A fact of the artifact: one root per tree is MathML's rule,
+not the IR's. -/
 public theorem formula_unnested_contract (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) : unnested (formula display extra body mk) = true := by
   simp only [formula, unnested, beq_self_eq_true, ↓reduceIte]
@@ -1500,7 +1507,8 @@ public theorem formula_unnested_contract (display : Bool) (extra : Array (String
 
 /-- **A formula set inside an open `math` element adds no root**
 (`_contract`): the row `formulaRow` builds holds no `math` element at all,
-so the carrier around it stays the only root. -/
+so the carrier around it stays the only root. A fact of the artifact, as
+`formula_unnested_contract` is. -/
 public theorem formulaRow_mathFree_contract (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     tagFree (· == "math") (formulaRow display extra body mk) = true := by
@@ -1509,13 +1517,13 @@ public theorem formulaRow_mathFree_contract (display : Bool) (extra : Array (Str
 
 /-- **A resolved formula carries no error element** (`_contract`): an
 alphabet-free list — every list the driver's alphabet pass returns
-(`Math.resolveMathAlphas_covers`) — emits no `merror`, root or row. -/
+(`Math.resolveMathAlphas_covers`) — emits no `merror`, root or row. The
+MathML projection of the IR's resolution fact, which reaches every formula a
+page paints (`Ir.mathRequests_resolve_covers`). -/
 public theorem formula_merrorFree_contract (display : Bool) (body : MList) (mk : Marks)
     (h : body.alphaFree = true) :
     tagFreeList (· == "merror") (formulaKids display body mk).toList = true :=
-  listNodes_tagFree (· == "merror") (by intro t ht; simp [contentTags] at ht; rcases ht with
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl)
+  listNodes_tagFree (· == "merror") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun _ => h) rfl
 
 end LeanTex.Core.MathMl
