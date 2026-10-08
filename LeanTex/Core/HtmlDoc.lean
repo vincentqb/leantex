@@ -77,6 +77,10 @@ public structure Config where
   model): the frame arm then realizes its declared vertical distribution
   with flex spacers, which every other class's flow has no use for. -/
   deck : Bool := false
+  /-- The deck takes beamer's frame geometry where its chrome may stand
+  (`Ir.Doc.chromeAllowed`), the PDF's own text area (`Layout.FrameArea`):
+  every frame but the title page opens its body as beamer's `\vbox{}`. -/
+  frameArea : Bool := false
   /-- The frame's numbered extent, used to project union selectors into
   finite HTML attribute tokens. It is read from the IR, never the surface. -/
   overlaySteps : Nat := 1
@@ -1548,6 +1552,20 @@ private def surfaceInkDecls (pal : Ir.Palette) (g : Ir.Color) : String :=
   String.join (roles.toList.filterMap fun role => (pal.find? role).map fun c =>
     s!"--{role}: {cssColor (d.inkOn role { fg := c, bg := g }).fg};")
 
+/-- The tallest type a footline band's slots set, per mille of the band's
+own step (`Ir.footline.step`): a named size inside a slot is the body's step,
+as the page sets it (`Layout.setBandSlot`), so the band's box is as tall as
+its tallest slot's type, which `footlineCss` reserves through `--foot-cap`.
+Nothing is declared for a band at its own step. -/
+private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot) :
+    List String :=
+  let step := (Ir.scaleStepIn scale 1000 Ir.footline.step).toNat
+  let sizeOf (m : Nat) (x : Inline) : Nat := match x with
+    | .styled (.size n) _ => max m (Ir.scaleStepIn scale 1000 n).toNat
+    | _ => m
+  let tallest := band.foldl (fun m s => Ir.foldInlines sizeOf m s.content) step
+  if tallest ≤ step then [] else [s!"--foot-cap: {milliFactor (tallest * 1000 / max step 1)};"]
+
 /-- The HTML body consumes the same resolved paint as the PDF body. -/
 @[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
     (parent : Ir.ColorPair) (parentRole : String) : Ir.ColorPair :=
@@ -1679,6 +1697,71 @@ screen keeps in proportion to the type, through the stylesheet's own
 print-to-screen projection (`screenMilli`). -/
 private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
 
+/-- The deck takes beamer's frame geometry: a frame-model class whose chrome
+may stand (`Ir.Doc.chromeAllowed`), the condition the PDF reads for its
+text area (`Layout.FrameArea`). -/
+private def deckArea (doc : Doc) : Bool :=
+  doc.docClass.record.model == .frame && doc.chromeAllowed
+
+/-- A stage length in the deck's unit, its share of the stage's height
+(`deckStageMilli`), as type and the frame opening are stated. -/
+private def stageVh (page : PageSpec) (x : Sp) : String :=
+  s!"{decMilli (deckStageMilli x page.height)}vh"
+
+/-- The frame title's step over the body, the size the PDF sets it at
+(`Layout.collectFrameTitle`): the `frametitle` style's font template's
+(`Ir.templateSize`), else the engine's Large. -/
+private def frameTitleStep (doc : Doc) : String :=
+  match (doc.styles.find? "frametitle").bind (·.font) with
+  | some tpl => milliFactor (Ir.templateSize (1000 : Dim.Sp) tpl).toNat
+  | none => stepFactor "Large"
+
+/-- moloch's frame-title box on the stage, as the PDF builds it
+(`Layout.frameBarHeight`): the title's first baseline `frametitlepadding`
+plus the title's strut (`Ir.frameTitleStrut`, seven tenths of its leading)
+below the bar's top, its last `frametitlepadding` above the bar's bottom —
+two struts no font's metrics enter, on the lines' own leading. -/
+private def frameTitleStrutCss : String :=
+  let pad := s!"var(--frametitlepadding, {decMilli (7 * Ir.leadingMilli / 10)}em)"
+  "section.slide > header h2::before { content: \"\"; display: inline-block;\n" ++
+  s!"  height: calc({pad} + {decMilli (7 * Ir.leadingMilli / 10)}em); }\n" ++
+  "section.slide > header h2::after { content: \"\"; display: inline-block;\n" ++
+  s!"  vertical-align: calc(-1 * {pad}); }\n"
+
+/-- moloch's footline on the stage (beamerouterthememoloch.sty, `footline`
+template, `Ir.footline`): the band stands on the stage's bottom edge, as wide
+as the paper, its slots inset from the paper's sides and their baseline its
+closing `\vskip4pt` above the edge; the text area ends `\footheight` above
+it — the band's box plus 4 pt, the PDF's floor (`Layout.frameFloor`). The
+box's height is the cap height of its tallest slot's type (`--foot-cap`, per
+`footCapDecl`) plus that skip: struts, so no font metric enters the
+baseline. -/
+private def footlineCss (page : PageSpec) : String :=
+  let sep := stageVh page Ir.footline.sep
+  let raise := stageVh page Ir.footline.raise
+  "section.slide > footer.slide-foot { position: relative;\n" ++
+  s!"  margin: {sep} calc(-1 * {safeareaVar}) calc(-1 * {sep}); line-height: 0;\n" ++
+  "  color: var(--muted); background: var(--footlinebg, transparent); }\n" ++
+  "footer.slide-foot::before { content: \"\"; display: inline-block;\n" ++
+  s!"  height: calc(var(--foot-cap, 1) * 1cap + {raise}); }\n" ++
+  s!"footer.slide-foot > .band-left \{ position: absolute; left: {stageVh page Ir.footline.left};\n" ++
+  "  bottom: 0; white-space: nowrap; }\n" ++
+  s!"footer.slide-foot > .band-right \{ position: absolute; right: {stageVh page Ir.footline.right};\n" ++
+  "  bottom: 0; white-space: nowrap; }\n" ++
+  "footer.slide-foot > :is(.band-left, .band-right)::before { content: \"\";\n" ++
+  s!"  display: inline-block; height: calc(1cap + {raise}); vertical-align: calc(-1 * {raise}); }\n"
+
+/-- beamer's text area on the stage: the frame opens at the stage's top edge
+(moloch's headline is empty) and ends 4 pt above its bottom edge where no
+footline stands — the footline, where one does, takes that gap back as its
+own (`footlineCss`). On paper the end spacer gives back nothing it would take
+from that area. -/
+private def deckAreaCss (doc : Doc) : String :=
+  if deckArea doc then
+    s!"section.slide \{ padding-top: 0; padding-bottom: {stageVh doc.page Ir.footline.sep}; }\n" ++
+    "@media print { section.slide::after { max-height: 0; } }\n"
+  else ""
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -1737,9 +1820,13 @@ public def themeCss (doc : Doc) : String :=
       "@media screen, print { section.slide > header { border-radius: 0;\n" ++
       -- The deck sets type on `main` in `vh`, so the bar retakes the title
       -- step in `em` to ride the stage rather than pinning to the root.
-      s!"  font-size: {stepFactor "Large"}em;\n" ++
-      s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
-      s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n"
+      s!"  font-size: {frameTitleStep doc}em;\n" ++
+      (if deckArea doc then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
+       else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
+      (if deckArea doc && (doc.tokens.find? "frametitlepadding").isSome then
+        s!"  padding: 0 {safeareaVar}; line-height: {decMilli Ir.leadingMilli}; } }\n" ++
+        frameTitleStrutCss
+       else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "") else
     "section.slide > header { color: var(--frametitlefg, var(--fg)); }\n" ++
     "section.slide > header h2 { color: inherit; }\n") ++
@@ -1818,6 +1905,15 @@ public def themeCss (doc : Doc) : String :=
     "  height: var(--progressheight, 1pt);\n" ++
     s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
     ".progress > div { background: var(--sectionprogressfg, var(--progressfg)); height: 100%; }\n" ++
+    -- moloch's section page closes on the subsection title's strut below
+    -- its bar, a subsection in force or not, and centres that whole box as
+    -- the PDF does (`Layout.collectSection`): the strut's baseline one
+    -- `\large` leading under the bar's top, its depth three tenths of it.
+    (if deckArea doc then
+      let sub := 13 * Ir.leadingMilli * (Ir.scaleStep (1000 : Dim.Sp) "large").toNat / 10000
+      s!"section.section-page::after \{ content: \"\"; flex: none; \
+height: calc({decMilli sub}em - var(--progressheight, 1pt)); }\n"
+     else "") ++
     -- The paged deck's own progress: a hairline across the viewport top,
     -- scaled by how far the reader has paged through the deck —
     -- declarative where the platform has scroll-driven animations
@@ -1847,17 +1943,19 @@ to { transform: scaleX(1) } }\n" ++
   -- one line (`min-height: 1lh`, CSS Values 4 §6.1.3: the element's own
   -- line-height); a colliding slot paints under or over by declared
   -- priority (`z-index` from `BandSlot.rank`, set per span), never moves.
-  (if doc.docClass.record.chrome && doc.foot.isNone &&
+  (if doc.chromeAllowed &&
       (doc.chrome.hasFooter || doc.body.any fun b => match b with
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
-    "section.slide > footer.slide-foot { position: relative;\n" ++
-    s!"  min-height: 1lh; margin-top: {quantaRem 2}; color: var(--muted);\n" ++
-    "  background: var(--footlinebg, transparent); }\n" ++
-    "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
-    "  white-space: nowrap; }\n" ++
-    "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
-    "  white-space: nowrap; }\n" ++
+    (if deckArea doc then footlineCss doc.page
+     else
+      "section.slide > footer.slide-foot { position: relative;\n" ++
+      s!"  min-height: 1lh; margin-top: {quantaRem 2}; color: var(--muted);\n" ++
+      "  background: var(--footlinebg, transparent); }\n" ++
+      "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
+      "  white-space: nowrap; }\n" ++
+      "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
+      "  white-space: nowrap; }\n") ++
     -- A named size inside a slot is the body's step, as TeX's size
     -- commands are absolute and as the page sets it
     -- (`Layout.setBandSlot`): the footer's own step is undone for it.
@@ -4873,8 +4971,12 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- bundles' standout template), never a re-spelled decimal.
   s!"section.slide.standout \{ background: var(--standoutbg, var(--fg, {cssColor defaults.standout.bg}));\n" ++
   s!"  color: var(--standoutfg, var(--bg, {cssColor defaults.standout.fg})); text-align: center;\n" ++
-  s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
+  -- Only its paragraphs set at that size, as the PDF sets them
+  -- (`Layout.collectStandout`): the footline sets at its own absolute step
+  -- and weight, never at the standout's.
+  s!"section.slide.standout > p \{ font-size: {scaleSize "Large" "em"}; font-weight: 600; }\n" ++
+  deckAreaCss doc ++
   sizeRules doc.page.scale ++
   -- The math face the document resolved, through its token — the `math`
   -- element selector reaches native MathML, whose engine default is the
@@ -7281,12 +7383,16 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let bodyCfg := { cfg.into with
       listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
     let kids := blockNodesInto bodyCfg #[] body.toList
-    let opening := !standout && !title.isEmpty
+    let hasTitle := !standout && !title.isEmpty
+    -- In beamer's geometry every frame but the title page opens its body
+    -- where the PDF opens it (`Layout.openFrameBody`): an untitled or
+    -- standout frame at the stage's top, past `[t]`'s `.2cm`.
+    let opening := hasTitle || (cfg.frameArea && !(valign matches .golden))
     let kids := if opening then frameBodyStart kids else kids
     let openingAttrs := if opening then
         let length := if cfg.deck then
-            s!"{decMilli (frameBodySkipMilli true valign cfg.page.fontSize cfg.page.height)}vh"
-          else cssLength (Length.ofSp ((Ir.frameBodySkip true valign).resolve cfg.page.fontSize 0))
+            s!"{decMilli (frameBodySkipMilli hasTitle valign cfg.page.fontSize cfg.page.height)}vh"
+          else cssLength (Length.ofSp ((Ir.frameBodySkip hasTitle valign).resolve cfg.page.fontSize 0))
         #[("style", s!"--frame-body-skip: {length}")]
       else #[]
     let kids := if cfg.deck then
@@ -7967,6 +8073,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
                         pal := doc.palette
                         tokens := doc.tokens
                         deck := doc.docClass.record.model == .frame
+                        frameArea := deckArea doc
                         page := doc.page
                         lengthBasis := lengthBasisOf doc }
   -- The chrome footer: every frame section closes with the section in
@@ -7976,8 +8083,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false
-  let chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
-    (doc.chrome.hasFooter || hasFrameFoot)
+  let chromeFoot := doc.chromeAllowed && (doc.chrome.hasFooter || hasFrameFoot)
   let (inner, sectionDiags) := if doc.docClass.record.model == .flow then
       sectionize cfg doc.body
     else if doc.docClass.record.model != .frame then
@@ -8110,7 +8216,7 @@ first; retitle one frame, or link to '#{id}'"))
                       ("style", s!"z-index: {s.rank}")])
                   #[("class", "slide-foot size-" ++ Ir.footline.step),
                     ("style", String.intercalate " "
-                      (paint ++ (look.bar.map fun ground =>
+                      (paint ++ footCapDecl doc.page.scale band ++ (look.bar.map fun ground =>
                         inkDecls design ground).getD []))]))
               | _, other => other
             else node

@@ -8025,6 +8025,13 @@ undeclared lengths from (`Layout.tableLength`, `HtmlDoc.tableLengthFallback`). -
 public def Doc.preambleFace (doc : Doc) : PreambleFace :=
   PreambleFace.ofClass doc.docClass.record doc.page.fontSize
 
+/-- Where a deck's chrome may stand: a class whose record draws it, with no
+`\runningfoot` owning the foot. The one condition both backends read for
+beamer's frame furniture and text area — the PDF's footer and floor
+(`Layout.FrameArea`), the HTML deck's footer and stage. -/
+public def Doc.chromeAllowed (doc : Doc) : Bool :=
+  doc.docClass.record.chrome && doc.foot.isNone
+
 /-- appendixnumberbeamer's numbering, exactly: split at the restart, the
 main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
 (`frameNumbers_gapless`) over each part. -/

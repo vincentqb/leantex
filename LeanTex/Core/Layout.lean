@@ -7696,7 +7696,9 @@ public structure Spacing.Page where
   private lastSource : Option Span := none
   /-- The next line opens at the page top, even though lines already stand
   on the page: a later column rewound to a fresh page's start must place
-  its first line where the first column placed its. -/
+  its first line where the first column placed its. A fact of the page
+  being built: every page boundary clears it, so a title page's slots,
+  each set as from the page's top, leave the next page's opening alone. -/
   private freshStart : Bool := false
   /-- `\vspace*`'s zero rule stands on the page being built with no box
   below it yet (`.anchorRule` on a page that held nothing): TeX's page
@@ -8241,7 +8243,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
-           pendingNotes := #[], notesH := 0, opened := false,
+           pendingNotes := #[], notesH := 0, opened := false, freshStart := false,
            diags := diags }
 
 /-- The shipped page records the IR lifecycle before shipment, and the
@@ -15774,7 +15776,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none,
                     openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
-                    frameBreak := none, frameSource := none, spillWarned := false, opened := false }
+                    frameBreak := none, frameSource := none, spillWarned := false, opened := false,
+                    freshStart := false }
   | .frameOpen br source opening =>
     b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
                   curFrame := opening.number, curFrameOrigin := opening.origin
@@ -19673,7 +19676,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- declared one — `\chrome` slots or a `\framefoot` note — and no
   -- \runningfoot overrides it, and only on slides: chrome is deck
   -- furniture. The frames decide which pages carry it (`collectFrameOpen`).
-  let footAllowed := doc.docClass.record.chrome && doc.foot.isNone
+  let footAllowed := doc.chromeAllowed
   -- The flow default article carries: plain's centred page number in the
   -- foot (`ClassRecord.pageNumbers`; article.cls initialises
   -- `\pagestyle{plain}`, classes.dtx), unless a `\runningfoot` already

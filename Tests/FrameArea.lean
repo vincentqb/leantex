@@ -38,6 +38,30 @@ private def deck : String :=
   "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
   "\\end{document}\n"
 
+/-- A templated title page — its title and author set as nodes, which the
+engine places as title slots — with a section page on its heels, a frame,
+and a second section page of the same title: invented words. -/
+private def slottedDeck : String :=
+  "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
+  "\\setbeamertemplate{title page}{%\n" ++
+  "  \\begin{tikzpicture}[remember picture,overlay]\n" ++
+  "    \\node[anchor=west, align=left, text width=0.86\\paperwidth]\n" ++
+  "      at ([xshift=1.05cm,yshift=0.15cm]current page.west) {%\n" ++
+  "      {\\raggedright\\usebeamerfont{title}\\inserttitle\\par}};\n" ++
+  "    \\node[anchor=south west, align=left, text width=0.86\\paperwidth]\n" ++
+  "      at ([xshift=1.05cm,yshift=0.8cm]current page.south west) {%\n" ++
+  "      {\\raggedright\\insertauthor\\par}};\n" ++
+  "  \\end{tikzpicture}%\n" ++
+  "  \\null\n}\n" ++
+  "\\title{Kilo lima}\n\\author{Mike November}\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[plain,noframenumbering]\n\\titlepage\n\\end{frame}\n" ++
+  "\\section{Hotel words}\n" ++
+  "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
+  "\\section{Hotel words}\n" ++
+  "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
+  "\\end{document}\n"
+
 /-- **Every frame stands its content box in beamer's text area**
 (`Layout.FrameArea`, `Layout.frameFloor_exact`). beamer's `\textheight` is
 the paper less `\footheight` — the footline's box plus 4 pt, the 4 pt alone
@@ -47,13 +71,16 @@ centres on the whole paper with its first box flush on that `\vbox{}`.
 Asserted over `Layout.Out` against lualatex's measurements of `deck` (TeX
 Live 2026; bp from the page top to the baseline): a standout frame's line
 at 142.951, the same frame with its note restored at 138.197 (the note's
-own baseline at 268.057), and the section page's title at 127.894. The
-lines are held to 0.5 bp: what remains is the standout size's leading,
+own baseline at 268.057), and the section page's title at 127.894, on a
+templated title page's heels (`slottedDeck`) as after a frame. The lines are
+held to 0.5 bp: what remains is the standout size's leading,
 17.28 pt on the engine's ladder against size10.clo's 18 pt, half of it
 after centring (0.36 bp). At `fa516a82` the standout frame stood 2.06 bp
 high, the restored note sent its line 9.12 bp low — the page took the
 note's band off a floor still at the slides margin, the paper's top still
-26.4 bp above its content — and the section page stood 9.99 bp low.
+26.4 bp above its content — and the section page stood 9.99 bp low; with
+the area alone, the section page after the title page stood 14.3 bp low,
+the title page's slots leaving the page fresh for the next page's opening.
 Invented words. -/
 def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -79,6 +106,18 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (at? 1 "Kilo" 138197 && at? 1 "Lima" 268057 true)
   t "frame area: a section page centres on the whole paper, as lualatex does"
     (at? 4 "Hotel" 127894)
+  -- A title page's slots each set as from its page's top; the next page,
+  -- a section page here, still opens as every section page does (lualatex
+  -- sets both of `slottedDeck`'s at 127.894).
+  let (sdoc, _) := elabStr slottedDeck
+  let sout := layoutOf fira sdoc (Layout.Geom.ofPage sdoc.page)
+  let sectionY (page : Nat) : Option Dim.Sp :=
+    sout.pages[page]?.bind fun p =>
+      (p.lines.find? fun l => hasStr (lineText l) "Hotel").map (·.y)
+  t "frame area: a section page on a title page's heels opens as every section page does"
+    (match sectionY 1, sectionY 3 with
+     | some a, some b => a == b && near a (bp 127894)
+     | _, _ => false)
   -- The floor itself, exactly: a bottom-aligned standout frame's content
   -- ends on it, the glyphs' depth below its last baseline (`B.contentEnd`),
   -- 4 pt above the paper's edge where no footline stands.
@@ -86,5 +125,92 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (((line 3 "Kilo").map fun l =>
       l.y + (Layout.segsInk fira l.segs).2 ==
         Layout.frameFloor geom.pageH Ir.footline.sep none).getD false)
+
+/-- The declarations of every rule a stylesheet carries for `sel`, nested
+at-rule blocks included (`artCssBlocks`). -/
+private def rulesFor (css sel : String) : List String :=
+  ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
+
+/-- The value one declaration of a rule gives `key`, if it declares one. -/
+private def declOf (decls key : String) : Option String :=
+  (decls.splitOn ";").findSome? fun d =>
+    match d.splitOn ":" with
+    | name :: rest =>
+      if name.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
+      else none
+    | [] => none
+
+/-- **The deck stands every frame in beamer's text area too**, the PDF's
+(`checks`): the stage opens at its top edge and its text area ends
+`\footheight` above its bottom edge — the 4 pt gap alone where no footline
+stands, which the footline takes back as its own where one does
+(`HtmlDoc.footlineCss`); the footline stands on the stage's bottom edge
+with its slots' baseline its closing skip above it, inset as moloch insets
+them, its box as tall as its tallest slot's cap height; the frame-title bar
+is moloch's strut box; an untitled or standout frame opens its body as the
+PDF does; a section page closes on its subsection strut; and only a standout
+frame's paragraphs set at the standout size, so its restored note keeps the
+footline's own. Asserted over the typed
+tree and the stylesheet it ships, on `deck`: lengths are the stage's shares
+of the PDF's own (`cssStageLength`, one printed milli-percent). At
+`fa516a82` the stage kept the 6vmin safe area above and below every frame,
+the footline stood that safe area and a 1.45 rem margin up with its slots
+at the safe area's edge, the bar was padded below its line box, untitled
+and standout frames paid a paragraph gap at their top, and a standout
+note set at 1.44 times its size in bold. Invented words. -/
+def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, _) := elabStr deck
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let css := treeCssList "" head.toList
+  let height := doc.page.height
+  let stage := rulesFor css "section.slide"
+  t "frame area html: the stage opens at its top edge and ends its gap above its bottom edge"
+    (stage.any fun d => declOf d "padding-top" == some "0" &&
+      cssStageLength d "padding-bottom" Ir.footline.sep height)
+  let sep := ((stage.find? fun d => declOf d "padding-top" == some "0").bind
+    (declOf · "padding-bottom")).getD "?"
+  let foot := rulesFor css "section.slide > footer.slide-foot"
+  t "frame area html: the footline takes the gap back and stands on the stage's bottom edge"
+    (foot.any fun d => declOf d "margin" ==
+      some s!"{sep} calc(-1 * var(--safearea, 6vmin)) calc(-1 * {sep})" &&
+      declOf d "line-height" == some "0")
+  let raised (d : String) : Bool :=
+    (declOf d "height").any fun h => hasStr h "1cap + " &&
+      cssStageLength s!"x: {((h.splitOn "1cap + ").getD 1 "").dropEnd 1}" "x"
+        Ir.footline.raise height
+  t "frame area html: the footline's box is its tallest cap height and its closing skip"
+    ((rulesFor css "footer.slide-foot::before").any fun d =>
+      raised d && hasStr ((declOf d "height").getD "") "var(--foot-cap, 1) * 1cap")
+  t "frame area html: each slot's baseline stands the closing skip above the stage's edge"
+    ((rulesFor css "footer.slide-foot > :is(.band-left, .band-right)::before").any fun d =>
+      raised d && hasStr ((declOf d "vertical-align").getD "") "calc(-1 * ")
+  t "frame area html: the slots stand inset from the paper's sides, as moloch's footline"
+    ((rulesFor css "footer.slide-foot > .band-left").any (cssStageLength · "left" Ir.footline.left height) &&
+     (rulesFor css "footer.slide-foot > .band-right").any (cssStageLength · "right" Ir.footline.right height))
+  t "frame area html: the frame-title bar is moloch's strut box"
+    ((rulesFor css "section.slide > header h2::before").any (hasStr · "height: calc(var(--frametitlepadding") &&
+     (rulesFor css "section.slide > header h2::after").any (hasStr · "vertical-align: calc(-1 * var(--frametitlepadding"))
+  let plainStage := (rulesFor css "section.slide.standout").all fun d =>
+    (declOf d "font-size").isNone && (declOf d "font-weight").isNone
+  let sizedParagraph := (rulesFor css "section.slide.standout > p").any fun d =>
+    (declOf d "font-size").isSome
+  t "frame area html: only a standout frame's paragraphs set at the standout size"
+    (plainStage && sizedParagraph)
+  -- The frames' own attributes: every frame of the deck opens its body
+  -- (`frame-body-start`), the untitled ones with no fixed skip of their own.
+  let sections := elemAttrsList (· == "section") #[] body.toList
+  let slides := sections.filter fun (_, attrs) =>
+    ((attrs.find? (·.1 == "class")).map (·.2.splitOn " " |>.contains "slide")).getD false
+  t "frame area html: every frame opens its body as beamer's content box"
+    (slides.size == 5 && slides.all fun (_, attrs) =>
+      ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--frame-body-skip")).getD false)
+  t "frame area html: a section page closes on its subsection strut below its bar"
+    ((rulesFor css "section.section-page::after").any fun d =>
+      ((declOf d "height").map (hasStr · "em - var(--progressheight")).getD false)
+  let feet := elemAttrsList (· == "footer") #[] body.toList
+  t "frame area html: a restored scriptsize note sizes its footline's box"
+    (feet.any fun (_, attrs) =>
+      ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--foot-cap: 1.400;")).getD false)
 
 end Tests.FrameArea
