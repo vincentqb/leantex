@@ -10,6 +10,7 @@ open Ir
 groups follow this internal marker; no author text is encoded into it. -/
 public def marker : String := " beamer color"
 public def starMarker : String := " beamer color*"
+public def standoutMarker : String := " beamer standout color"
 
 /-- Beamer's named elements with genuine native paint sites. In particular,
 the head/foot progress placement is absent: a section rule is not that site.
@@ -68,6 +69,37 @@ public structure Issue where
   message : String
   span : Span
 
+/-- A standout option's appended alias is read when the option runs,
+inside the group opened by the Moloch/Metropolis inner theme. -/
+public structure StandoutAlias where
+  name : String
+  source : String
+  span : Span
+
+/-- End the alias scope without discarding unrelated flow declarations. -/
+public def restoreAliases (opening : Palette) (current : Palette)
+    (names : List String) : Palette :=
+  names.foldl (fun pal name => pal.restore opening name) current
+
+/-- Every scoped name regains its opening value, including absence; every
+other name keeps the closing epoch's value. This is independent of colours,
+declaration order, duplicate aliases and intervening flow declarations. -/
+public theorem restoreAliases_contract (opening current : Palette)
+    (names : List String) (key : String) :
+    (restoreAliases opening current names).find? key =
+      if key ∈ names then opening.find? key else current.find? key := by
+  induction names generalizing current with
+  | nil => rfl
+  | cons name names ih =>
+    simp only [restoreAliases, List.foldl_cons] at *
+    rw [ih]
+    by_cases hm : key ∈ names
+    · simp [hm]
+    · by_cases he : key = name
+      · subst name
+        simp [hm, Palette.restore_exact]
+      · simp [hm, he, Palette.restore_keeps_others _ _ _ _ he]
+
 /-- Flow palette and named declarations share one elaborator state field.
 `opening` remembers the native values displaced by resolution, so a later
 parent update never inherits its own previously resolved result. -/
@@ -79,6 +111,7 @@ public structure State where
   reached : List String := []
   /-- Winning authored channels, rebuilt by `resolve` in native role order. -/
   origins : Array (String × Color × Span) := #[]
+  standoutAliases : List StandoutAlias := []
   deriving Inhabited
 
 private def unbrace (s : String) : String :=

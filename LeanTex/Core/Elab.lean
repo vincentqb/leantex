@@ -7541,6 +7541,60 @@ private def finishBeamerColors (ctx : Ctx) : EM Unit := do
         s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.span.pos
         (help := Compat.beamerNative.lookup "setbeamercolor") (trigger := "\\setbeamercolor")
 
+/-- One assignment, shared by native entries and scoped aliases. Keeping
+the name and source separate prevents an alias operand becoming entries. -/
+private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : String)
+    (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) : EM Palette := do
+  let mut pal := pal
+  if !key.toList.all Decl.isIdentChar then
+    diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
+      (help := "entries look like: name = #RRGGBB")
+  else if builtinNames.contains key || (escapeOf key).isSome then
+    diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
+  else if !aliasOnly && key == "covered" &&
+      (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
+    -- `covered = 38\%`: cover each colour to 38% of itself over the
+    -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
+    -- make a bare % unwritable, so the escaped spelling is the
+    -- declared one; the raw source shows it as `\%`. A colour value
+    -- stays accepted below as the cover of uncoloured runs.
+    let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
+      else (valueSrc.dropEnd 1).toString
+    match (digits.trimAscii.toString).toNat? with
+    | some n =>
+      if 1 ≤ n && n ≤ 99 then
+        pal := { pal with coveredFraction := some n }
+        noteDeclared ctx "palette" "covered"
+      else
+        diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
+          (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
+    | none =>
+      diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
+        (help := "a percentage like: covered = 38\\%")
+  else
+    let put (pal : Palette) (c : Color) : EM Palette := do
+      noteDeclared ctx "palette" key
+      recordColorDeclaration key c (ctx.sourceSpan pos)
+      unless aliasOnly do
+        modify fun st => { st with flowPalette := st.flowPalette.native key c }
+      return pal.declare key c decorative
+    match ← readColor ctx pal none valueSrc pos with
+    | .resolved c _ => pal := ← put pal c
+    | .rejected => pure ()
+    | .missing =>
+      match Decl.parseValue valueSrc with
+      | some (.ident other) =>
+        diag ctx .E0326 s!"'{other}' is not in the palette" pos
+          (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
+      | some v =>
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "palette" key
+            "a color like #7C3AED" v pos) }
+      | none =>
+        diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
+          (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
+  return pal
+
 /-- Native colour declarations update the same epoch as named Beamer
 colours. Later explicit native declarations retain their precedence. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
@@ -7552,51 +7606,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
       diag ctx .E0320 s!"invalid entry in '\\palette': {entry.quote}" pos
         (help := "entries look like: name = #RRGGBB")
     | some (key, valueSrc) =>
-      if !key.toList.all Decl.isIdentChar then
-        diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
-          (help := "entries look like: name = #RRGGBB")
-      else if builtinNames.contains key || (escapeOf key).isSome then
-        diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
-      else if key == "covered" && (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
-        -- `covered = 38\%`: cover each colour to 38% of itself over the
-        -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
-        -- make a bare % unwritable, so the escaped spelling is the
-        -- declared one; the raw source shows it as `\%`. A colour value
-        -- stays accepted below as the cover of uncoloured runs.
-        let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
-          else (valueSrc.dropEnd 1).toString
-        match (digits.trimAscii.toString).toNat? with
-        | some n =>
-          if 1 ≤ n && n ≤ 99 then
-            pal := { pal with coveredFraction := some n }
-            noteDeclared ctx "palette" "covered"
-          else
-            diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
-              (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
-        | none =>
-          diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
-            (help := "a percentage like: covered = 38\\%")
-      else
-        let put (pal : Palette) (c : Color) : EM Palette := do
-          noteDeclared ctx "palette" key
-          recordColorDeclaration key c (ctx.sourceSpan pos)
-          modify fun st => { st with flowPalette := st.flowPalette.native key c }
-          return pal.declare key c decorative
-        match ← readColor ctx pal none valueSrc pos with
-        | .resolved c _ => pal := ← put pal c
-        | .rejected => pure ()
-        | .missing =>
-          match Decl.parseValue valueSrc with
-          | some (.ident other) =>
-            diag ctx .E0326 s!"'{other}' is not in the palette" pos
-              (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
-          | some v =>
-            modify fun st => { st with
-              diags := st.diags.push (Decl.wrongType ctx.file "palette" key
-                "a color like #7C3AED" v pos) }
-          | none =>
-            diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
-              (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
+      pal ← applyPaletteEntry ctx pal key valueSrc entry pos decorative
   resolveBeamerColors ctx pal
 
 
@@ -11185,6 +11195,38 @@ private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
   modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
   return blocks.push (.setTokens tk)
 
+/-- The theme's standout option opens a group before its appended aliases.
+Use the same colour parser and dependent Beamer resolver as declarations,
+retaining their source expressions for resolution after the group closes. -/
+private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Block) :
+    EM (MCtx ctx × Array Block × Bool) := do
+  let aliases := (← get).flowPalette.standoutAliases
+  if !standout || aliases.isEmpty then
+    return (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, false)
+  let mut pal := ctx.palette
+  for alias in aliases do
+    let origin := { ctx with file := alias.span.file, callSite := none }
+    pal ← applyPaletteEntry origin pal alias.name alias.source alias.name
+      alias.span.pos (aliasOnly := true)
+    pal ← resolveBeamerColors origin pal
+  modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+                             flowGen := st.flowGen + 1 }
+  return (⟨{ ctx with palette := pal }, rfl, rfl, rfl, rfl⟩, blocks.push (.setPalette pal), true)
+
+private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
+    (title : Array Inline) (opts : FrameOpts) (inner : Array Block)
+    (aliasScope : Bool) : EM (Array Block) := do
+  recordFrameSource ctx pos blocks.size
+  let blocks := blocks.push (flattenFrame title opts.standout opts.valign opts.breakable inner)
+  if !aliasScope then return blocks
+  let colors := (← get).flowPalette
+  let pal := BeamerColor.restoreAliases ctx.palette (colors.current.getD ctx.palette)
+    (colors.standoutAliases.map (·.name))
+  let pal ← resolveBeamerColors ctx pal
+  modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+                             flowGen := st.flowGen + 1 }
+  return blocks.push (.setPalette pal)
+
 /-- Enter a fresh accumulator, consuming its scheduled splice offset.
 Length snapshots and the flow epoch are captured before its first token. -/
 private def openBlockScope (ctx : Ctx) (raws : Array Raw) :
@@ -11204,6 +11246,7 @@ private def closeBlockScope (ctx : Ctx) (savedLengths : Array (String × SymGlue
   return blocks
 
 seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
+  openStandoutPalette closeFramePalette
 
 mutual
 
@@ -11614,16 +11657,15 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- break before a group makes it content, which is where LaTeX's
     -- own argument scanning stops looking too.
     let opts ← frameOpts ctx body pos
-    let standout := opts.standout
-    let breakable := opts.breakable
-    let valign := opts.valign
+    let (⟨frameCtx, hm⟩, frameBlocks, aliasScope) ← openStandoutPalette ctx opts.standout blocks
+    blocks := frameBlocks
     let mut k := skipSpaces body opts.next
     let mut title : Array Inline := #[]
     if let some (.group t _) := body[k]? then
-      title ← elabInlines ctx t
+      title ← elabInlines frameCtx t
       k := k + 1
     -- \frametitle{...} anywhere in the frame names it too.
-    let (title2, ⟨rest, hrf⟩) ← frameRestGo ctx body k title #[] #[]
+    let (title2, ⟨rest, hrf⟩) ← frameRestGo frameCtx body k title #[] #[]
       (sliceWeight body k) (slicePars body k)
       (by simp [rawWeightList]) (by simp [nestedParsList])
     title := title2
@@ -11642,7 +11684,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- and the stashed notes are refused, named at the note that
     -- encloses them (E0359; the noteFlag decision, PLAN).
     modify fun st => { st with pendingNotes := #[] }
-    let mut inner ← elabBlockScope ctx rest
+    let mut inner ← elabBlockScope frameCtx rest
     let stash := (← get).pendingNotes
     modify fun st => { st with pendingNotes := #[] }
     if hnb : ctx.noteBody then
@@ -11653,7 +11695,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
           (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
     else
       have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
-      inner ← drainNotesGo ctx stash.toList inner
+      have hnf' : noteFlag frameCtx = 2 := hm.2.1.trans hnf
+      inner ← drainNotesGo frameCtx stash.toList inner
     -- **A page model nests no page.** `\titlepage` inside an author's own
     -- `\begin{frame}` is beamer's documented idiom and what every real deck
     -- writes, and the title arm opens a frame of its own for the golden
@@ -11665,8 +11708,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- the only producer of a titleless inner frame is the title arm, whose
     -- `.golden` distribution is the one to keep — as in beamer, where the
     -- title-page template's glue sits inside the frame the author opened.
-    recordFrameSource ctx pos blocks.size
-    blocks := blocks.push (flattenFrame title standout valign breakable inner)
+    blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
   else if n == "itemize" || n == "enumerate" || n == "description" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the
@@ -14648,6 +14690,7 @@ public inductive PDecl where
   | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
   | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
+  | standoutColor (name source : String) (pos : Pos)
   /-- A preamble page-ground selection, resolved where it stands. `none`
   is `\nopagecolor`; a concrete source is `\pagecolor`. -/
   | pageGround (source : Option String) (pos : Pos)
@@ -14913,14 +14956,16 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             out := out.push (.logoSlot (name == "logoleft") (some body) pos)
           | _ =>
             out := out.push (.logoSlot (name == "logoleft") none pos)
-        else if name == BeamerColor.marker || name == BeamerColor.starMarker then
+        else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
+            name == BeamerColor.standoutMarker then
           let j := skipSpaces preamble i
           let j2 := skipSpaces preamble (j + 1)
           match preamble[j]?, preamble[j2]? with
           | some (.group elem _), some (.group body _) =>
             i := j2 + 1
-            out := out.push (.beamerColor (rawSrc elem) (name == BeamerColor.starMarker)
-              (rawSrc body) pos)
+            out := out.push (if name == BeamerColor.standoutMarker then
+              .standoutColor (rawSrc elem) (rawSrc body) pos
+              else .beamerColor (rawSrc elem) (name == BeamerColor.starMarker) (rawSrc body) pos)
           | _, _ => out := out.push (.unknownCmd "setbeamercolor" none pos)
         else if name == "palette" then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
@@ -15427,6 +15472,11 @@ the built-in's heading and margins stand{replaced}"
   | .beamerColor name star src pos =>
     let pal ← applyBeamerColor s.ctx s.palette name star src pos
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
+  | .standoutColor name source pos =>
+    modify fun st => { st with flowPalette := { st.flowPalette with
+      standoutAliases := st.flowPalette.standoutAliases ++
+        [⟨name.trimAscii.toString, source, s.ctx.sourceSpan pos⟩] } }
+    return s
   | .palette opts body pos =>
     -- `\palette[decorative]{...}`: options read by the one door
     -- (`parsePaletteOpts`), the body arm's too.

@@ -2832,6 +2832,14 @@ private structure CondRead where
 private def keptWords (keep : Bool) : String :=
   if keep then "the branch before '\\else' is kept" else "only the '\\else' branch is kept"
 
+/-- The inner theme defines the option even when its package implementation
+is replaced by a native theme. Source: both inner themes' `beamerframe`
+`standout` key, inherited by the corresponding full themes. -/
+private def nativeStandoutDefined (st : St) : Bool :=
+  st.loads.pkgs.any fun (name, _) =>
+    ["beamerthememoloch", "beamerthememetropolis", "beamerthemem",
+     "beamerinnerthememoloch", "beamerinnerthememetropolis"].contains name
+
 /-- Read the head `h` at `raws[i]` against the state in force there. `neg`:
 an `\unless` stands before it, which reverses a two-way test (e-TeX) and is
 refused before `\ifcase`. -/
@@ -2858,7 +2866,10 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     match raws[k]? with
     | some (.ctrl n _) =>
       if st.picBound.contains n then return undecided
-      let v := st.binds.contains n
+      -- premise: standoutPaletteChecks — inherited, absent and later-loaded
+      -- hooks take different branches and ship the corresponding colours.
+      let v := st.binds.contains n ||
+        (n == "KV@beamerframe@standout" && nativeStandoutDefined st)
       if neg then return two v s!"\\{n}" "" (toString v) (k - i) none
       return { frame := .decided v, used := k - i,
                note := some (s!"ifdefined:{n}:{v}", condMsg n v) }
@@ -6443,6 +6454,15 @@ private def standoutFootBody (body : Array Raw) : Bool :=
        | _ => false)
   | _ => false
 
+/-- Scan only the finite appended alias grammar. Operands remain original
+groups; no patch code, callback or author text is reparsed. -/
+private def standoutAliasList (out : Array Raw) : List Raw → Option (Array Raw)
+  | [] => some out
+  | .ctrl "colorlet" pos :: .group name np :: .group source sp :: rest =>
+    standoutAliasList
+      (out ++ #[.ctrl BeamerColor.standoutMarker pos, .group name np, .group source sp]) rest
+  | _ => none
+
 /-- etoolbox's append succeeds for the known beamer standout option, so
 only its empty success callback runs. The failure callback is never read
 as executable input. All four arguments are owned even on refusal.
@@ -6455,16 +6475,24 @@ private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
   -- the supported shape changes the shipped standout note in both backends.
   if args.size == 4 && (← get).deck && (← docPreamble) &&
       ctrlName (args.getD 0 #[]) == some "KV@beamerframe@standout" &&
-      standoutFootBody (args.getD 1 #[]) && (args.getD 2 #[]).all (· matches .space) then
-    let native := "\\chrome{standout-note=true}"
-    became "\\apptocmd{\\KV@beamerframe@standout}" native pos
-    return some ((← synthAt native pos) ++ tail, k)
-  else
-    say .E0111 "'\\apptocmd' is dropped with its patch and callbacks: only the \
-standout explicit-footer restoration with an empty success callback is supported in a beamer preamble"
-      pos (help := "use '\\chrome{standout-note=true}' to restore explicit notes on standout frames")
-      (subject := some "ctrl:apptocmd")
-    return some (tail, k)
+      (args.getD 2 #[]).all (· matches .space) then
+    if standoutFootBody (args.getD 1 #[]) then
+      let native := "\\chrome{standout-note=true}"
+      became "\\apptocmd{\\KV@beamerframe@standout}" native pos
+      return some ((← synthAt native pos) ++ tail, k)
+    -- premise: standoutPaletteChecks — aliases change both artifacts only
+    -- on standout frames; unsupported patch bodies are refused whole.
+    if let some aliases := standoutAliasList #[]
+        ((args.getD 1 #[]).filter (!· matches .space)).toList then
+      if !aliases.isEmpty && nativeStandoutDefined (← get) then
+        became "\\apptocmd{\\KV@beamerframe@standout}" "frame-local colour aliases" pos
+        return some (aliases ++ tail, k)
+  say .E0111 "'\\apptocmd' is dropped with its patch and callbacks: only standout \
+colour aliases or explicit-footer restoration with an empty success callback are supported in a beamer preamble"
+    pos (help := "append '\\colorlet' aliases after loading the standout theme, or use \
+'\\chrome{standout-note=true}' to restore explicit notes")
+    (subject := some "ctrl:apptocmd")
+  return some (tail, k)
 
 /-- cleveref's range form (manual v0.21.4 §2, `\crefrange{key1}{key2}`):
 desugared to the pair the resolver renders — the first key carries the

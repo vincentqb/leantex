@@ -1,4 +1,5 @@
 import Tests.Support
+import Tests.StandoutPalette
 
 open LeanTex.Core
 
@@ -43,6 +44,7 @@ does. Unsupported bodies are consumed whole and named, never recovered as
 page content. The footer and error-control cases hold already-working
 compatibility alongside the live spacing regression. -/
 def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  Tests.StandoutPalette.standoutPaletteChecks ref fonts
   let t := check ref
   let hook (after : String) :=
     "\\addtobeamertemplate{block begin}{}{" ++ after ++ "}"
