@@ -17,6 +17,7 @@ import Tests.PackageCode
 import Tests.PackageImports
 import Tests.ParagraphMathRhythm
 import Tests.BeamerProof
+import Tests.MarkdownHtml
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -910,7 +911,20 @@ def reports : List Report := [
     accept := ["one hundred seventy focused assertions fail before the class admits its implicit theorem and math packages",
       "artifact checks cover ordinary proofs, named proofs, displayed math and nested blocks",
       "class options retain their source order, explicit opt-out remains effective, and repeated package loads preserve content once"]
-    state := .guarded "53f39495" .before .author }
+    state := .guarded "53f39495" .before .author },
+  { id := "R106", date := "2026-10-08"
+    what := "Markdown comments, disclosures and empty anchors were refused despite having typed representations"
+    pins := [check% markdownHtmlChecks,
+      thm% LeanTex.Core.Md.textRaws_covers,
+      thm% LeanTex.Core.Md.disclosureRaws_contract,
+      thm% LeanTex.Core.Md.anchorRaws_fixed_point,
+      thm% LeanTex.Core.Ir.labelAnchor_fixed_point,
+      thm% LeanTex.Core.Ir.labelAnchor_single_token]
+    accept := ["thirteen typed HTML and shipped layout assertions fail before the typed lowering",
+      "six Unicode anchor and four comment-boundary assertions fail before their corrections",
+      "comments remain invisible, disclosure content appears once in source order, and anchors retain their resolved names",
+      "disclosure expansion remains diagnosed and unsupported HTML remains refused"]
+    state := .guarded "53f39495295029ffd0fe47a1067e50fd07f7b053" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

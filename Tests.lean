@@ -90,6 +90,7 @@ import Tests.ListingHighlight
 import Tests.ListingProvider
 import Tests.PublicationPaths
 import Tests.Markdown
+import Tests.MarkdownHtml
 import Tests.MarkdownInput
 import Tests.InputUse
 import Tests.XparseProvide
@@ -247,6 +248,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   argTokenChecks ref
   anchorChecks ref
   markdownChecks ref
+  markdownHtmlChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref
