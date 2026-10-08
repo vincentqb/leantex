@@ -98,6 +98,7 @@ import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingStyleTable
 import Tests.ListingProvider
+import Tests.PygmentsLexers
 import Tests.PublicationPaths
 import Tests.Markdown
 import Tests.MarkdownHtml
@@ -240,7 +241,7 @@ import Tests.LinkColor
 import Tests.Privacy
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
-open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
+open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks svgAssetChecks svgToolChecks
   shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
@@ -301,6 +302,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingLanguageChecks ref
   mintedSettingsChecks ref
   listingHighlightChecks ref
+  pygmentsLexerChecks ref
   shellReplyChecks ref
   listingProviderChecks ref
   listingStyleTableChecks ref

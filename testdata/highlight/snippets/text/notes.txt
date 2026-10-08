@@ -1,0 +1,4 @@
+Plain text keeps every character: {braces}, "quotes", \backslashes,
+	tabs, and trailing   spaces.
+
+def looks_like_code(): but is text

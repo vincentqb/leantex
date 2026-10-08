@@ -1,0 +1,18 @@
+$ ls -la /srv/garden
+total 8
+drwxr-xr-x 2 gardener staff 4096 Jan  1 00:00 .
+$ echo "seeds: $COUNT" | tee log.txt
+seeds: 12
+gardener@greenhouse:~$ make plant \
+> TRAY=3
+planting tray 3
+[gardener@greenhouse beds]$ cat <<EOF
+> one
+> EOF
+one
+(venv) $ python -m sprout --dry-run
+dry run complete
+# whoami
+root
+% git status
+nothing to commit
