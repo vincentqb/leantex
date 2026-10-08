@@ -1,5 +1,8 @@
 import Tests.ShellHighlight
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.ListingHighlight
+import LeanTex.Cli.RunBounded
+import LeanTex.Cli.ToolProbe
 
 open LeanTex.Core LeanTex.Cli
 
@@ -26,14 +29,89 @@ def prepared (markdown : Bool) (input : String) : Elab.Prepared × Array Diag :=
     (raws, ld ++ pd)
   (Elab.prepare "listing" raws, ds)
 
+def invocationReply (kind : String) : String :=
+  ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson
+    (ListingReply.Request.ofSource "bash" "sample")
+    #[ShellHighlight.shellTokenJson 0 kind "sample\n"]]
+
+def invocationStub (replyName : String) : String :=
+  "#!/bin/sh\n\
+if [ \"$1\" != -I ] || [ \"$2\" != -B ] || [ \"$3\" != -c ]; then exit 2; fi\n\
+reply=\"${0%/*}/" ++ replyName ++ "\"\n\
+[ -r \"$reply\" ] || exit 3\n\
+exec /bin/cat \"$reply\"\n"
+
+-- The child owns PATH; the suite's environment and working directory stay put.
+def invocationProbe (dir : System.FilePath) : IO (List String) := do
+  let ref ← IO.mkRef ([] : List String)
+  let request := ListingReply.Request.ofSource "bash" "sample"
+  let expect (label : String) (kind : LeanTex.Core.ListingHighlight.Kind) : IO Unit := do
+    let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
+    check ref label (ds.isEmpty && answers.size == 1 && answers.all fun answer =>
+      answer.request == request && answer.tokens == #[#[{ kind, text := "sample" }]])
+  let selected := dir / "selected environment"
+  expect "selected symlink preserves its environment and source" .keyword
+  IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
+  expect "same request observes changed environment" .builtin
+  IO.FS.removeFile (selected / "reply.json")
+  let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
+  check ref "missing provider returns no answer and one keyed warning"
+    (answers.isEmpty && ds.size == 1 &&
+      ds.all fun d => d.code == "W0393" && d.subject == some "listing-language:bash")
+  IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
+  expect "restored provider retries the unchanged request" .builtin
+  IO.FS.writeFile (dir / "base-python") (invocationStub "replacement.json")
+  expect "same invocation observes a replaced interpreter" .number
+  return (← ref.get).reverse
+
 end Tests.ListingProvider
 
 namespace Tests
+
+/-- Invocation spelling selects the provider environment even when several
+paths resolve to one executable. Fresh fulfilments must observe environment
+and interpreter changes, including recovery after an unavailable provider. -/
+def listingProviderInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let some lean ← ToolProbe.onPath "lean" |
+    throw <| IO.userError "listing invocation checks require the Lean interpreter"
+  let lean := (← IO.currentDir) / lean
+  for mode in ["absolute", "relative", "empty"] do
+    IO.FS.withTempDir fun dir => do
+      let selected := dir / "selected environment"
+      IO.FS.createDir selected
+      IO.FS.writeFile (dir / "base-python") (ListingProvider.invocationStub "reply.json")
+      discard <| IO.Process.run {
+        cmd := "/bin/chmod",
+        args := #["+x", (dir / "base-python").toString] }
+      discard <| IO.Process.run {
+        cmd := "/bin/ln",
+        args := #["-s", (dir / "base-python").toString, (selected / "python3").toString] }
+      IO.FS.writeFile (selected / "reply.json")
+        (ListingProvider.invocationReply "Token.Keyword")
+      IO.FS.writeFile (selected / "replacement.json")
+        (ListingProvider.invocationReply "Token.Literal.Number")
+      let driver := dir / "invocation.lean"
+      IO.FS.writeFile driver <|
+        "import Tests.ListingProvider\n\
+def main (args : List String) : IO UInt32 := do\n\
+  let [dir] := args | throw (IO.userError \"expected one fixture directory\")\n\
+  let failures ← Tests.ListingProvider.invocationProbe dir\n\
+  for failure in failures do IO.println failure\n\
+  return if failures.isEmpty then 0 else 1\n"
+      let path := if mode == "absolute" then selected.toString
+        else if mode == "relative" then "selected environment" else ""
+      let result ← RunBounded.output {
+        cmd := lean.toString, args := #["--run", driver.toString, dir.toString],
+        cwd := if mode == "empty" then selected else dir,
+        env := #[("PATH", some path)] }
+      check ref s!"listing provider/{mode}: {result.stdout}{result.stderr}"
+        (result.exitCode == 0)
 
 /-- Checked replies must reach real frontend listings and both artifacts.
 Missing, stale, foreign and forged replies keep the source without class paint;
 completed refusals retain their typed, keyed diagnostic on re-elaboration. -/
 def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
+  listingProviderInvocationChecks ref
   let t := check ref
   let some bytes ← findFont | failures ref "listing provider: fixture font missing"
   let .ok font := Font.parse bytes | failures ref "listing provider: fixture font invalid"

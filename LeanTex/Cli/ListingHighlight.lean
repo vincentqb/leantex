@@ -113,7 +113,9 @@ public def fulfil (_file : String) (requests : Array ListingReply.Request) :
   try
     let some python ← ToolProbe.onPath "python3"
       | return failed requests .unavailable
-    let python ← IO.FS.realPath python
+    -- Python finds its virtual environment from the invocation spelling.
+    -- Anchor relative PATH entries before changing the child's directory.
+    let python := (← IO.currentDir) / python
     IO.FS.withTempDir fun dir => do
       let input := dir / "requests.json"
       IO.FS.writeFile input (ListingReply.encode requests)
