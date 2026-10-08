@@ -8904,6 +8904,39 @@ a palette key built from a parameter is worth as text. -/
 
 end
 
+mutual
+
+/-- The text the first page of an overlay sequence shows, onto `acc`:
+`plainText`'s reading, except that an alternation contributes only the group
+stored first — the one step 1 inks (`OverlaySpec.showsFirst_id`). Covered
+content still reads, since it dims on the page and never hides. A name is
+one page's reading: a frame's anchor and its accessible name read this,
+while the census (`plainText`) carries both groups because both ship — read
+as the census, `\textcolor<2>{c}{Word}` named its frame "WordWord".
+Hand-rolled because the generic fold visits both groups. -/
+-- conserves: none — one page's reading: an alternation's other group ships
+-- on the other pages, and the census (`plainText`) counts it there.
+public def firstPageTextOne (acc : String) (x : Inline) : String :=
+  match x with
+  | .altSteps _ firstPage _ => firstPageTextList acc firstPage.toList
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body
+  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body =>
+    firstPageTextList acc body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+    String.append acc (plainTextOne x)
+
+public def firstPageTextList (acc : String) : List Inline → String
+  | [] => acc
+  | x :: rest => firstPageTextList (firstPageTextOne acc x) rest
+
+end
+
+/-- The text the first page of an overlay sequence shows
+(`firstPageTextOne`), from nothing. -/
+public def firstPageText (xs : Array Inline) : String := firstPageTextList "" xs.toList
+
 /-- The words a picture's labels set, in shape order, joined: what a sighted
 reader reads in the drawing. The one reading a picture's name takes, whoever
 draws it — the SVG's accessible name (`HtmlDoc.pictureName`), and the text
@@ -9692,13 +9725,16 @@ private def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
 
 /-- An anchor id from a title's own text. Every static site generator derives
 ids this way, so an in-page `\href{#experience}` has a target by construction
-rather than by a label the author must remember to declare. Non-emptiness —
-the other half of HTML §3.2.6's requirement — is `sectionize`'s job: an
-all-separator title takes the id `section`. Not done, stated rather than
-hidden: Unicode normalisation (UAX #15 NFC) — a composed and a decomposed
-`é` make two different anchors; PLAN carries the debt. -/
+rather than by a label the author must remember to declare. The text is the
+title as its first page shows it (`firstPageText`): an overlay alternation
+names its title once, by the group step 1 inks — the census reading spelled
+both groups into one anchor. Non-emptiness — the other half of HTML §3.2.6's
+requirement — is `sectionize`'s job: an all-separator title takes the id
+`section`. Not done, stated rather than hidden: Unicode normalisation (UAX
+#15 NFC) — a composed and a decomposed `é` make two different anchors; PLAN
+carries the debt. -/
 public def slug (title : Array Inline) : String :=
-  String.ofList (slugGo #[] false (plainText title).toList).toList
+  String.ofList (slugGo #[] false (firstPageText title).toList).toList
 
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by

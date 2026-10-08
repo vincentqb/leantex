@@ -249,6 +249,11 @@ in this repo; refer to the private reference corpus abstractly.
 - HTML is built as a typed tree with a certified escaper, never by
   concatenating tag strings. Any new node type goes through the escaper by
   construction; if you find yourself writing `"<" ++ …`, stop.
+- A name read off content — an anchor, an accessible name — is one page's
+  reading (`Ir.firstPageText`), never the census (`plainText`), which
+  carries both groups of every overlay alternation because both ship: read
+  as the census, `\textcolor<2>{c}{Word}` anchored its frame `wordword`
+  (`frameAnchorChecks`, over every corpus deck).
 - No backend emits script to compensate for a platform. Say what the page
   means, declaratively, and let the platform — or the stylesheet framework a
   document chooses — decide how widely it works. Where a declarative feature

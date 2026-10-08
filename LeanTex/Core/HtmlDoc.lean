@@ -6678,23 +6678,25 @@ public def shownWordsList (acc : String) : List Node → String
 
 end
 
-/-- A deck stage's name: its title, or — untitled, as a title page or a
-standout statement is — the words it shows (`shownWordsList` over its
-emitted children: a speaker note or a hidden alternative never leaks into
-the name), or at the last the engine's word the untitled frame's anchor
-already starts from (`slide`). -/
+/-- A deck stage's name: its title as the frame's first page shows it
+(`Ir.firstPageText`, the reading its anchor takes too), or — untitled, as a
+title page or a standout statement is — the words it shows
+(`shownWordsList` over its emitted children: a speaker note or a hidden
+alternative never leaks into the name), or at the last the engine's word the
+untitled frame's anchor already starts from (`slide`). -/
 public def frameName (title : Array Inline) (kids : Array Node) : String :=
-  firstNonBlank (squashSpace (Ir.plainText title))
+  firstNonBlank (squashSpace (Ir.firstPageText title))
     (firstNonBlank (squashSpace (shownWordsList "" kids.toList)) "slide")
 
 public theorem frameName_contract (title : Array Inline) (kids : Array Node) :
     nonBlank (frameName title kids) = true :=
   firstNonBlank_contract _ _ (firstNonBlank_contract _ _ (by decide))
 
-/-- A themed section page's name: its title, else the engine's word its
-anchor would start from (`section`). -/
+/-- A themed section page's name: its title as its first page shows it
+(`Ir.firstPageText`), else the engine's word its anchor would start from
+(`section`). -/
 public def sectionPageName (title : Array Inline) : String :=
-  firstNonBlank (squashSpace (Ir.plainText title)) "section"
+  firstNonBlank (squashSpace (Ir.firstPageText title)) "section"
 
 public theorem sectionPageName_contract (title : Array Inline) :
     nonBlank (sectionPageName title) = true :=
@@ -7478,7 +7480,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
       cfg := cfg.advanceTokens tk
     | .section 1 _ _ title =>
       out := close out cur openId
-      let text := Ir.plainText title
+      let text := Ir.firstPageText title
       let base := slug title
       let base := if base.isEmpty then "section" else base
       let (id, clash) := claimId taken base text
@@ -7875,7 +7877,7 @@ via \\chrome is the sequence both backends share"))
           -- while the track's flow box always names the frame's place in
           -- the deck (CSS Scroll Snap 1 §6.2: fragment navigation snaps
           -- to the target's snap positions where it has them).
-          let text := Ir.plainText title
+          let text := Ir.firstPageText title
           let base := slug title
           let base := if base.isEmpty then "slide" else base
           let (id, clash) := claimId taken base text

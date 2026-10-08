@@ -175,6 +175,7 @@ import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
 import Tests.TableSide
+import Tests.FrameAnchors
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
@@ -546,6 +547,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   chromeFooterChecks ref oneFace
   numberingChecks ref oneFace
   slideLabelChecks ref oneFace
+  Tests.frameAnchorChecks ref
   composeChecks ref oneFace
   frameFootChecks ref oneFace
   scannerChecks ref

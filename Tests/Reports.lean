@@ -9,6 +9,7 @@ import Tests.RecipeStructure
 import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableSide
+import Tests.FrameAnchors
 import LeanTex.Core.PdfAgreement
 import Tests.TableFlex
 import Tests.ColumnFlow
@@ -1007,6 +1008,13 @@ def reports : List Report := [
     accept := ["the browser oracle's stage-fit row fails on the invented table deck, one stage 53 px past its foot, before table rows take the print leading, and passes after at the deck's own aspect",
       "twenty typed tree, stylesheet and shipped page assertions fail before every cell states its spec's side and its rows the print leading, four of them the page's own text column set flush right under a right-set scope",
       "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with its text column flush left, its printed pages unchanged"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R114", date := "2026-10-08"
+    what := "a slide whose title changes colour by overlay step was anchored and named by both alternatives of its title, each word doubled in its fragment and its accessible name"
+    pins := [check% Tests.frameAnchorChecks, thm% Ir.slug_no_whitespace]
+    accept := ["four anchor and name assertions fail before a title's anchor reads its first page, alternation, colour, alert and cover steps among them",
+      "every titled stage of the corpus decks is anchored and named by the words its title shows, every id held by one element",
+      "a presentation deck's doubled anchors read once, a repeated title numbered rather than doubled"]
     state := .guarded "fa516a82" .before .author }
 ]
 
