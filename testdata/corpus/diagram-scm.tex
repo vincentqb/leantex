@@ -1,7 +1,7 @@
 % Synthetic fixture: a miniature structural diagram through the node-shape
 % subset — circle and rectangle outlines with draw/fill/dashed/thick and
-% declared minimums, style bundles, math node bodies, transform shape.
-% Invented content and design.
+% declared minimums, style bundles, math node bodies (one in a math
+% alphabet, as an edge label), transform shape. Invented content and design.
 \documentclass{article}
 
 \fonts{ dir = "fonts", body = "Source Serif Pro" }
@@ -21,7 +21,7 @@
   \node[slab]   (o) at (4, 0) {out};
   \draw[-latex, thick] (a) -- (h);
   \draw[gray, dashed] (h) -- (o);
-  \draw (a) -- (o);
+  \draw (a) -- node[font=\small] {$\mathrm{rd}$} (o);
   \draw[dotted] (a) to[out=90,in=180] node[font=\small] {lift} (h);
 \end{tikzpicture}
 

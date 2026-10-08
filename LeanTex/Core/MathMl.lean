@@ -606,6 +606,14 @@ def rowsNodes (mk : Marks) (disp : Bool) (kind : GridKind) (acc : Array Html.Nod
 
 end
 
+/-- One formula's children: its list in the formula's own style, display
+or text — what the root (`formula`) and the in-context row (`formulaRow`)
+both carry. -/
+public def formulaKids (display : Bool) (body : MList) (mk : Marks := {}) :
+    Array Html.Node :=
+  listNodes { mk with style := if display then .display false else .text false }
+    display none #[] body
+
 /-- One formula as its `math` element: `display="block"` for display math
 (the user-agent stylesheet then gives it `math-style: normal` and centres
 the content box — MathML Core §2.1.1), absent for inline, which the same
@@ -615,8 +623,18 @@ public def formula (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "math"
     ((if display then #[("display", "block")] else #[]) ++ extra)
-    (listNodes { mk with style := if display then .display false else .text false }
-      display none #[] body)
+    (formulaKids display body mk)
+
+/-- One formula inside an element that already opened `math` — a picture
+label's carrier: the same children as `formula`, as a row. `math` is the
+root of a MathML tree (MathML Core §2.1.1), so a second one there would be
+a root nested in a root (`unnested`); `displaystyle`, an attribute every
+MathML element takes (§2.1.6), sets what a root's `display="block"` sets. -/
+public def formulaRow (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks := {}) : Html.Node :=
+  .elem "mrow"
+    ((if display then #[("displaystyle", "true")] else #[]) ++ extra)
+    (formulaKids display body mk)
 
 -- The glyph-text fold: what the emission's token leaves spell, in
 -- document order, as a pure fold over the AST — the exposed statement of
@@ -1085,7 +1103,15 @@ is pinned by test in `mathmlChecks`. -/
 public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
-  simp only [formula, nodeChars]
+  simp only [formula, formulaKids, nodeChars]
+  rw [listNodes_chars _ display none body #[] #[]]
+  rfl
+
+/-- The in-context row paints the same glyph text as the root. -/
+public theorem formulaRow_glyphs_agree (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks) :
+    nodeChars #[] (formulaRow display extra body mk) = listChars #[] body := by
+  simp only [formulaRow, formulaKids, nodeChars]
   rw [listNodes_chars _ display none body #[] #[]]
   rfl
 
@@ -1099,5 +1125,397 @@ public theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverag
       (formula display extra (Math.resolveMathAlphas coverage body) mk) =
       listChars #[] (Math.resolveMathAlphas coverage body) :=
   mathml_glyphs_agree display extra (Math.resolveMathAlphas coverage body) mk
+
+/-! ## The elements a formula is built of
+
+The content emitter's elements are one fixed vocabulary (`contentTags`), and
+`merror` only where an alphabet reached it unresolved. Two facts follow for
+every formula: its content holds no `math` element, so the root around it —
+its own, or a picture label's carrier — is the tree's only root
+(`formula_unnested_contract`, `formulaRow_mathFree_contract`); and a resolved
+formula, which is alphabet-free (`Math.resolveMathAlphas_covers`), holds no
+`merror`, the element browsers frame in red on yellow
+(`formula_merrorFree_contract`). -/
+
+mutual
+
+/-- No element of the tree carries a tag `p` selects. -/
+@[expose] public def tagFree (p : String → Bool) : Html.Node → Bool
+  | .text _ => true
+  | .elem t _ kids => !p t && tagFreeList p kids.toList
+  | .style _ => true
+  | .script _ _ => true
+
+/-- `tagFree` over a list of trees. -/
+@[expose] public def tagFreeList (p : String → Bool) : List Html.Node → Bool
+  | [] => true
+  | n :: rest => tagFree p n && tagFreeList p rest
+
+end
+
+mutual
+
+/-- No `math` element stands inside another. A `math` element is the root
+of a MathML tree (MathML Core §2.1.1); one inside another is a second root,
+whose layout no engine defines. -/
+@[expose] public def unnested : Html.Node → Bool
+  | .elem t _ kids =>
+    if t == "math" then tagFreeList (· == "math") kids.toList else unnestedList kids.toList
+  | .text _ => true
+  | .style _ => true
+  | .script _ _ => true
+
+/-- `unnested` over a list of trees. -/
+@[expose] public def unnestedList : List Html.Node → Bool
+  | [] => true
+  | n :: rest => unnested n && unnestedList rest
+
+end
+
+/-- Every element the content emitter builds but `merror`: token, layout,
+script, fraction, radical, table and padding elements, and the SVG a
+measured cancellation draws. `math` is not among them. -/
+public def contentTags : List String :=
+  ["mi", "mn", "mo", "mtext", "mspace", "mrow", "mstyle", "mpadded", "mfrac", "msqrt",
+    "mroot", "msub", "msup", "msubsup", "munder", "mover", "munderover", "mtable", "mtr",
+    "mtd", "svg", "polygon"]
+
+public theorem tagFreeList_append (p : String → Bool) (l1 l2 : List Html.Node) :
+    tagFreeList p (l1 ++ l2) = (tagFreeList p l1 && tagFreeList p l2) := by
+  induction l1 with
+  | nil => simp [tagFreeList]
+  | cons n rest ih => simp [tagFreeList, ih, Bool.and_assoc]
+
+public theorem tagFreeList_push (p : String → Bool) (acc : Array Html.Node) (n : Html.Node) :
+    tagFreeList p (acc.push n).toList = (tagFreeList p acc.toList && tagFree p n) := by
+  simp [Array.toList_push, tagFreeList_append, tagFreeList]
+
+mutual
+
+/-- A tree with no `math` element nests none. -/
+public theorem unnested_of_mathFree :
+    ∀ n : Html.Node, tagFree (· == "math") n = true → unnested n = true
+  | .text _, _ => rfl
+  | .elem t _ kids, h => by
+    simp only [tagFree, Bool.and_eq_true, Bool.not_eq_true'] at h
+    simp only [unnested, h.1, Bool.false_eq_true, ↓reduceIte]
+    exact unnestedList_of_mathFree kids.toList h.2
+  | .style _, _ => rfl
+  | .script _ _, _ => rfl
+
+/-- `unnested_of_mathFree` over a list of trees. -/
+public theorem unnestedList_of_mathFree :
+    ∀ ns : List Html.Node, tagFreeList (· == "math") ns = true → unnestedList ns = true
+  | [], _ => rfl
+  | n :: rest, h => by
+    simp only [tagFreeList, Bool.and_eq_true] at h
+    simp only [unnestedList, unnested_of_mathFree n h.1, unnestedList_of_mathFree rest h.2,
+      Bool.and_self]
+
+end
+
+theorem tagFree_paint (p : String → Bool) (ink : Option String) (n : Html.Node) :
+    tagFree p (paint ink n) = tagFree p n := by
+  cases n with
+  | elem t attrs kids =>
+    cases ink with
+    | none => rfl
+    | some css =>
+      simp only [paint]
+      split <;> rfl
+  | text s => rfl
+  | style s => rfl
+  | script a j => rfl
+
+theorem leafTag_mem (cls : MathClass) (c : Char) : leafTag cls c ∈ contentTags := by
+  cases cls <;> simp only [leafTag] <;> (try split) <;> simp [contentTags]
+
+/-- The vocabulary, one fact per element, in the form `simp` rewrites with. -/
+theorem contentTags_false {p : String → Bool} (hp : ∀ t ∈ contentTags, p t = false) :
+    p "mi" = false ∧ p "mn" = false ∧ p "mo" = false ∧ p "mtext" = false ∧
+    p "mspace" = false ∧ p "mrow" = false ∧ p "mstyle" = false ∧ p "mpadded" = false ∧
+    p "mfrac" = false ∧ p "msqrt" = false ∧ p "mroot" = false ∧ p "msub" = false ∧
+    p "msup" = false ∧ p "msubsup" = false ∧ p "munder" = false ∧ p "mover" = false ∧
+    p "munderover" = false ∧ p "mtable" = false ∧ p "mtr" = false ∧ p "mtd" = false ∧
+    p "svg" = false ∧ p "polygon" = false := by
+  refine ⟨hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_,
+    hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_,
+    hp _ ?_, hp _ ?_, hp _ ?_, hp _ ?_⟩ <;> simp [contentTags]
+
+section
+variable (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+include hp
+
+theorem leafNode_tagFree (cls : MathClass) (c : Char) (attrs : Array (String × String))
+    (kids : Array Html.Node) (hk : tagFreeList p kids.toList = true) :
+    tagFree p (.elem (leafTag cls c) attrs kids) = true := by
+  simp [tagFree, hp _ (leafTag_mem cls c), hk]
+
+theorem scriptNode_tagFree (limits : Bool) (base : Html.Node) (sub sup : Array Html.Node)
+    (subAttrs supAttrs : Array (String × String)) (hb : tagFree p base = true)
+    (hs : tagFreeList p sub.toList = true) (hu : tagFreeList p sup.toList = true) :
+    tagFree p (scriptNode limits base sub sup subAttrs supAttrs) = true := by
+  unfold scriptNode
+  cases limits <;> cases sup.isEmpty <;> cases sub.isEmpty <;>
+    simp [tagFree, tagFreeList, hb, hs, hu, contentTags_false hp]
+
+theorem radNode_tagFree (body deg : Array Html.Node) (degAttrs : Array (String × String))
+    (hb : tagFreeList p body.toList = true) (hd : tagFreeList p deg.toList = true) :
+    tagFree p (radNode body deg degAttrs) = true := by
+  unfold radNode
+  cases deg.isEmpty <;> simp [tagFree, tagFreeList, hb, hd, contentTags_false hp]
+
+theorem fracNode_tagFree (mk : Marks) (disp : Bool) (spec : FracSpec)
+    (num den : Array Html.Node) (hn : tagFreeList p num.toList = true)
+    (hd : tagFreeList p den.toList = true) :
+    tagFree p (fracNode mk disp spec num den) = true := by
+  rcases spec with ⟨l, r, rule, style⟩
+  cases l <;> cases r <;> cases style <;>
+    simp [fracNode, fracKids, sizedMo, tagFree, tagFreeList, hn, hd, contentTags_false hp]
+
+theorem accentNode_tagFree (mark : Char) (stretch : Bool) (body : Array Html.Node)
+    (hb : tagFreeList p body.toList = true) :
+    tagFree p (accentNode mark stretch body) = true := by
+  cases h : mark == '̅' <;>
+    simp [accentNode, h, tagFree, tagFreeList, hb, contentTags_false hp]
+
+theorem cancelNode_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
+    (struck vals : Array Html.Node) (shown : Bool) (hs : tagFreeList p struck.toList = true)
+    (hv : tagFreeList p vals.toList = true) :
+    tagFree p (cancelNode mk disp mark spec struck vals shown) = true := by
+  unfold cancelNode
+  cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
+    simp [tagFree, tagFreeList, tagFreeList_append, hs, hv, contentTags_false hp]
+
+theorem delimMo_tagFree (c : Char) : tagFree p (delimMo c) = true := by
+  simp [delimMo, tagFree, tagFreeList, contentTags_false hp]
+
+theorem cancelPolygons_tagFree (ink : String) (pad : Int) (ps : List (Array (Int × Int))) :
+    tagFreeList p (ps.map (cancelPolygon ink pad)) = true := by
+  induction ps with
+  | nil => rfl
+  | cons q ps ih => simp [cancelPolygon, tagFree, tagFreeList, ih, contentTags_false hp]
+
+theorem measuredCancelNode_tagFree (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
+    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool)
+    (hs : tagFreeList p struck.toList = true) (hv : tagFreeList p vals.toList = true) :
+    tagFree p (measuredCancelNode mk metric mark spec struck vals shown) = true := by
+  cases hm : mark == .to <;> cases shown <;>
+    simp [measuredCancelNode, hm, cancelAt, tagFree, tagFreeList, tagFree_paint,
+      Array.toList_map, cancelPolygons_tagFree p hp, hs, hv, contentTags_false hp]
+
+theorem cancelWithMetric_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark)
+    (spec : CancelSpec) (body value : MList) (struck vals : Array Html.Node) (shown : Bool)
+    (hs : tagFreeList p struck.toList = true) (hv : tagFreeList p vals.toList = true) :
+    tagFree p (cancelWithMetric mk disp mark spec body value struck vals shown) = true := by
+  unfold cancelWithMetric
+  split
+  · split
+    · exact measuredCancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
+    · exact cancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
+  · exact cancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
+
+end
+
+private theorem alphaFree_cons {x : MItem} {rest : MList}
+    (h : (MList.cons x rest).alphaFree = true) : x.alphaFree = true ∧ rest.alphaFree = true := by
+  simpa [MList.alphaFree] using h
+
+private theorem alphaFree_atom {cls : MathClass} {nuc : MNucleus} {sup sub : MList}
+    {lim : Bool} (h : (MItem.atom cls nuc sup sub lim).alphaFree = true) :
+    nuc.alphaFree = true ∧ sup.alphaFree = true ∧ sub.alphaFree = true := by
+  simpa [MItem.alphaFree] using h
+
+mutual
+
+/-- The content of a list builds only `contentTags` elements, and `merror`
+only for an unresolved alphabet: for any tag selection `p` that misses the
+vocabulary, and misses `merror` unless the list is alphabet-free, the
+emission carries no selected element. -/
+theorem listNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+    (mk : Marks) (disp : Bool) :
+    ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node),
+      (p "merror" = true → ml.alphaFree = true) →
+      tagFreeList p acc.toList = true →
+      tagFreeList p (listNodes mk disp ink acc ml).toList = true
+  | _, .nil, _, _, ha => ha
+  | _, .cons (.ink co n) rest, acc, hm, ha =>
+    listNodes_tagFree p hp mk disp _ rest acc (fun h => (alphaFree_cons (hm h)).2) ha
+  | ink, .cons (.space mu) rest, acc, hm, ha => by
+    show tagFreeList p (listNodes mk disp ink
+      (acc.push (paint ink (itemNode mk disp (.space mu)))) rest).toList = true
+    apply listNodes_tagFree p hp mk disp ink rest _ (fun h => (alphaFree_cons (hm h)).2)
+    rw [tagFreeList_push, tagFree_paint, ha,
+      itemNode_tagFree p hp mk disp (.space mu) (fun _ => rfl)]
+    rfl
+  | ink, .cons (.atom cls nuc sup sub lim) rest, acc, hm, ha => by
+    show tagFreeList p (listNodes mk disp ink
+      (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList = true
+    apply listNodes_tagFree p hp mk disp ink rest _ (fun h => (alphaFree_cons (hm h)).2)
+    rw [tagFreeList_push, tagFree_paint, ha,
+      itemNode_tagFree p hp mk disp _ (fun h => (alphaFree_cons (hm h)).1)]
+    rfl
+
+theorem itemNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+    (mk : Marks) (disp : Bool) :
+    ∀ (x : MItem), (p "merror" = true → x.alphaFree = true) →
+      tagFree p (itemNode mk disp x) = true
+  | .space _, _ => by simp [itemNode, tagFree, tagFreeList, contentTags_false hp]
+  | .ink _ _, _ => by simp [itemNode, tagFree, tagFreeList, contentTags_false hp]
+  | .atom cls nuc sup sub lim, hm => by
+    show tagFree p (scriptNode (lim && disp) (nucNode mk disp cls nuc)
+        (listNodes { mk with style := mk.style.sub } false none #[] sub)
+        (listNodes { mk with style := mk.style.sup } false none #[] sup) _ _) = true
+    exact scriptNode_tagFree p hp _ _ _ _ _ _
+      (nucNode_tagFree p hp mk disp cls nuc (fun h => (alphaFree_atom (hm h)).1))
+      (listNodes_tagFree p hp _ false none sub #[] (fun h => (alphaFree_atom (hm h)).2.2) rfl)
+      (listNodes_tagFree p hp _ false none sup #[] (fun h => (alphaFree_atom (hm h)).2.1) rfl)
+
+theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+    (mk : Marks) (disp : Bool) (cls : MathClass) :
+    ∀ (nuc : MNucleus), (p "merror" = true → nuc.alphaFree = true) →
+      tagFree p (nucNode mk disp cls nuc) = true
+  | .sym c, _ => by
+    simp only [nucNode]
+    exact leafNode_tagFree p hp cls c _ _ rfl
+  | .styled _ c, _ => by
+    simp only [nucNode]
+    exact leafNode_tagFree p hp cls c _ _ rfl
+  | .word _, _ => by simp [nucNode, tagFree, tagFreeList, contentTags_false hp]
+  | .list body, hm => by
+    simp only [nucNode, tagFree, (contentTags_false hp).2.2.2.2.2.1, Bool.not_false,
+      Bool.true_and]
+    exact listNodes_tagFree p hp mk disp none body #[]
+      (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl
+  | .alpha _ _ body, hm => by
+    have hne : p "merror" = false := by
+      cases h : p "merror" with
+      | false => rfl
+      | true => simpa [MNucleus.alphaFree] using hm h
+    simp only [nucNode, tagFree, hne, Bool.not_false, Bool.true_and]
+    exact listNodes_tagFree p hp mk disp none body #[] (fun h => by simp [hne] at h) rfl
+  | .frac spec num den, hm => by
+    have hf := hm
+    simp only [nucNode]
+    exact fracNode_tagFree p hp _ _ _ _ _
+      (listNodes_tagFree p hp _ false none num #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).1) rfl)
+      (listNodes_tagFree p hp _ false none den #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).2) rfl)
+  | .rad deg body, hm => by
+    have hf := hm
+    simp only [nucNode]
+    exact radNode_tagFree p hp _ _ _
+      (listNodes_tagFree p hp _ disp none body #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).2) rfl)
+      (listNodes_tagFree p hp _ false none deg #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).1) rfl)
+  | .delim l r body, hm => by
+    have hbody : p "merror" = true → body.alphaFree = true :=
+      fun h => by simpa [MNucleus.alphaFree] using hm h
+    have hmrow := (contentTags_false hp).2.2.2.2.2.1
+    cases l with
+    | none =>
+      have hb := listNodes_tagFree p hp mk disp none body #[] hbody rfl
+      cases r <;> simp only [nucNode, tagFree, tagFreeList_push, hb, delimMo_tagFree p hp,
+        hmrow, Bool.not_false, Bool.and_true]
+    | some c =>
+      have hb := listNodes_tagFree p hp mk disp none body #[delimMo c] hbody
+        (by simp [tagFreeList, delimMo_tagFree p hp])
+      cases r <;> simp only [nucNode, tagFree, tagFreeList_push, hb, delimMo_tagFree p hp,
+        hmrow, Bool.not_false, Bool.and_true]
+  | .big d _, _ => by
+    cases d <;> simp [nucNode, sizedMo, tagFree, tagFreeList, contentTags_false hp]
+  | .accent mark stretch body, hm => by
+    simp only [nucNode]
+    exact accentNode_tagFree p hp _ _ _
+      (listNodes_tagFree p hp _ disp none body #[]
+        (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl)
+  | .grid kind rows, hm => by
+    simp only [nucNode, tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false,
+      Bool.true_and]
+    exact rowsNodes_tagFree p hp _ _ kind rows #[]
+      (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl
+  | .cancel mark spec value body, hm => by
+    have hf := hm
+    simp only [nucNode]
+    exact cancelWithMetric_tagFree p hp _ _ _ _ _ _ _ _ _
+      (listNodes_tagFree p hp _ disp none body #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).2) rfl)
+      (listNodes_tagFree p hp _ _ none value #[]
+        (fun h => by simp [MNucleus.alphaFree] at hf; exact (hf h).1) rfl)
+
+theorem rowNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+    (mk : Marks) (disp : Bool) (kind : GridKind) :
+    ∀ (row : MRow) (k : Nat) (acc : Array Html.Node),
+      (p "merror" = true → row.alphaFree = true) →
+      tagFreeList p acc.toList = true →
+      tagFreeList p (rowNodes mk disp kind k acc row).toList = true
+  | .nil, _, _, _, ha => ha
+  | .cons cell rest, k, acc, hm, ha => by
+    have hf := hm
+    simp only [rowNodes]
+    apply rowNodes_tagFree p hp mk disp kind rest (k + 1) _
+      (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).2)
+    rw [tagFreeList_push, ha]
+    simp only [tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false, Bool.true_and]
+    exact listNodes_tagFree p hp mk disp none cell #[]
+      (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).1) rfl
+
+theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
+    (mk : Marks) (disp : Bool) (kind : GridKind) :
+    ∀ (rows : MRows) (acc : Array Html.Node),
+      (p "merror" = true → rows.alphaFree = true) →
+      tagFreeList p acc.toList = true →
+      tagFreeList p (rowsNodes mk disp kind acc rows).toList = true
+  | .nil, _, _, ha => ha
+  | .cons row rest, acc, hm, ha => by
+    have hf := hm
+    simp only [rowsNodes]
+    apply rowsNodes_tagFree p hp mk disp kind rest _
+      (fun h => by simp [MRows.alphaFree] at hf; exact (hf h).2)
+    rw [tagFreeList_push, ha]
+    simp only [tagFree, (contentTags_false hp).2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1, Bool.not_false, Bool.true_and]
+    exact rowNodes_tagFree p hp mk disp kind row 0 #[]
+      (fun h => by simp [MRows.alphaFree] at hf; exact (hf h).1) rfl
+
+end
+
+/-- A formula's content holds no `math` element, for every list: the
+emitter's vocabulary has none, and `merror` is not one. -/
+public theorem formulaKids_mathFree_contract (display : Bool) (body : MList) (mk : Marks) :
+    tagFreeList (· == "math") (formulaKids display body mk).toList = true :=
+  listNodes_tagFree (· == "math") (by intro t ht; simp [contentTags] at ht; rcases ht with
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl)
+    _ _ none body #[] (fun h => by simp at h) rfl
+
+/-- **A formula's root is its tree's only root** (`_contract`): the `math`
+element `formula` builds has no `math` descendant, for every list, display
+mode and measure. -/
+public theorem formula_unnested_contract (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks) : unnested (formula display extra body mk) = true := by
+  simp only [formula, unnested, beq_self_eq_true, ↓reduceIte]
+  exact formulaKids_mathFree_contract display body mk
+
+/-- **A formula set inside an open `math` element adds no root**
+(`_contract`): the row `formulaRow` builds holds no `math` element at all,
+so the carrier around it stays the only root. -/
+public theorem formulaRow_mathFree_contract (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks) :
+    tagFree (· == "math") (formulaRow display extra body mk) = true := by
+  simp only [formulaRow, tagFree, formulaKids_mathFree_contract, Bool.and_true]
+  rfl
+
+/-- **A resolved formula carries no error element** (`_contract`): an
+alphabet-free list — every list the driver's alphabet pass returns
+(`Math.resolveMathAlphas_covers`) — emits no `merror`, root or row. -/
+public theorem formula_merrorFree_contract (display : Bool) (body : MList) (mk : Marks)
+    (h : body.alphaFree = true) :
+    tagFreeList (· == "merror") (formulaKids display body mk).toList = true :=
+  listNodes_tagFree (· == "merror") (by intro t ht; simp [contentTags] at ht; rcases ht with
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl)
+    _ _ none body #[] (fun _ => h) rfl
 
 end LeanTex.Core.MathMl

@@ -754,6 +754,10 @@ def censusTable :
       (c[0]?.map (·.paths == 8)).getD false),
     ("the text node body ships", hasStr (censusText c) "out"),
     ("the curve's mid-path label ships", hasStr (censusText c) "lift"),
+    -- A label's alphabet resolves as a paragraph's: upright letters, never
+    -- the source italic an unresolved alphabet node set (𝑟𝑑).
+    ("the alphabet edge label ships upright",
+      hasStr (censusText c) "rd" && !hasStr (censusText c) "𝑟𝑑"),
     ("every node ships a glyph line",
       (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
   -- **A style reaches its picture wherever it was declared.** `ball` comes

@@ -6304,9 +6304,12 @@ inside italic) set what the PDF sets, where nested `bolder` and `italic`
 tspans could only add. A colour is a `<tspan>` of SVG's `fill`, through the
 palette role's custom property as prose's `color` is, and a role its
 class; neither touches the face. With a math configuration, runs are
-`mtext`, colour/role scopes are `mrow`, and parsed formulas use the same
-MathML emitter as prose. Text styles still reach only text runs, so a
-bold word does not bold its neighbouring formula. Every other inline is
+`mtext`, colour/role scopes are `mrow`, and parsed formulas are the same
+MathML emitter's content as prose, set as rows (`MathMl.formulaRow`): the
+carrier `pictureKids` opens is already the label's `math` root, and a
+formula's own root inside it would nest one
+(`labelNodesOne_mathFree_contract`). Text styles still reach only text runs,
+so a bold word does not bold its neighbouring formula. Every other inline is
 its plain text in the face in force — the node salvage produces none of
 them. Every string goes through the escaper by construction. -/
 public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
@@ -6316,7 +6319,7 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
   | .text s => acc.push (f.run s native)
   | .formula display src body =>
     match mathCfg with
-    | some cfg => acc.push (MathMl.formula display #[("class", "math"), ("data-tex", src)]
+    | some cfg => acc.push (MathMl.formulaRow display #[("class", "math"), ("data-tex", src)]
         body (mathMarks cfg))
     | none => acc.push (Html.elem "tspan" #[Html.text (labelPiece x)] #[("font-style", "italic")])
   | .math _ _ => acc.push (({ italic := true } : LabelFace).run (labelPiece x) native)
@@ -6357,7 +6360,76 @@ public theorem labelFormula_glyphs_agree (f : LabelFace) (cfg : Config)
         MathMl.listChars #[] body := by
   simpa only [labelNodesOne, Array.toList_push, List.nil_append,
     Array.toList_empty, MathMl.nodeListChars] using
-      MathMl.mathml_glyphs_agree display _ body (mathMarks cfg)
+      MathMl.formulaRow_glyphs_agree display _ body (mathMarks cfg)
+
+private theorem labelRun_mathFree (f : LabelFace) (s : String) (native : Bool) :
+    MathMl.tagFree (· == "math") (f.run s native) = true := by
+  unfold LabelFace.run
+  cases native with
+  | true => simp [Html.elem, Html.text, MathMl.tagFree, MathMl.tagFreeList]
+  | false =>
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    split <;> simp [Html.elem, Html.text, MathMl.tagFree, MathMl.tagFreeList]
+
+mutual
+
+/-- **A label's runs add no `math` root** (`_contract`): whatever the label
+holds, in either mode, its nodes carry no `math` element — a native run's
+text is `mtext`, a scope `mrow`, a formula its row (`MathMl.formulaRow`),
+an SVG run text or `tspan`. So the carrier `pictureKids` opens is the
+label's only root (`pictureKids_unnested_contract`). -/
+public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node) (x : Inline)
+    (mathCfg : Option Config)
+    (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
+    MathMl.tagFreeList (· == "math") (labelNodesOne f acc x mathCfg).toList = true := by
+  match x with
+  | .text s =>
+    simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
+  | .formula display src body =>
+    cases mathCfg with
+    | some cfg =>
+      simp only [labelNodesOne, MathMl.tagFreeList_push, ha,
+        MathMl.formulaRow_mathFree_contract, Bool.and_self]
+    | none =>
+      simp [labelNodesOne, MathMl.tagFreeList_append, ha, Html.elem, Html.text,
+        MathMl.tagFree, MathMl.tagFreeList]
+  | .math _ _ =>
+    simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
+  | .styled st body =>
+    simp only [labelNodesOne]
+    exact labelNodesList_mathFree_contract _ acc body.toList _ ha
+  | .colored c name body =>
+    have hk := labelNodesList_mathFree_contract f #[] body.toList mathCfg rfl
+    cases mathCfg <;> cases name <;>
+      simp [labelNodesOne, MathMl.tagFreeList_append, MathMl.tagFreeList, ha, Html.elem,
+        MathMl.tagFree, hk]
+  | .role n body =>
+    have hk := labelNodesList_mathFree_contract f #[] body.toList mathCfg rfl
+    cases mathCfg <;>
+      simp [labelNodesOne, MathMl.tagFreeList_append, MathMl.tagFreeList, ha, Html.elem,
+        MathMl.tagFree, hk]
+  | .located _ body =>
+    simp only [labelNodesOne]
+    exact labelNodesList_mathFree_contract f acc body.toList mathCfg ha
+  | .italicCorr _ => simpa only [labelNodesOne] using ha
+  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
+  | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+    simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
+
+/-- `labelNodesOne_mathFree_contract` over a list of inlines. -/
+public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Node)
+    (xs : List Inline) (mathCfg : Option Config)
+    (ha : MathMl.tagFreeList (· == "math") acc.toList = true) :
+    MathMl.tagFreeList (· == "math") (labelNodesList f acc xs mathCfg).toList = true := by
+  match xs with
+  | [] => simpa only [labelNodesList] using ha
+  | x :: rest =>
+    simp only [labelNodesList]
+    exact labelNodesList_mathFree_contract f _ rest mathCfg
+      (labelNodesOne_mathFree_contract f acc x mathCfg ha)
+
+end
 
 /-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
 py1))` the viewBox declares: the same evaluated shapes the PDF paints,
@@ -6457,6 +6529,33 @@ L {px t.x3} {py t.y3} Z"),
         | none => #[]
       Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
         ++ paint (some st) none)] ++ tipNodes) #[]
+
+/-- **A picture ships one MathML root per label** (`_contract`): no `math`
+element `pictureKids` emits stands inside another, for every picture,
+measure and configuration. A label holding a formula is one carrier whose
+`math` is the label's only root (`labelNodesList_mathFree_contract`); every
+other shape carries no MathML. The carrier once wrapped each formula's own
+root, a second root no engine defines the layout of. -/
+public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+    (metric : Ir.Pic.LabelMetric) (cfg : Config) :
+    ∀ n ∈ pictureKids pic px0 py1 metric cfg, MathMl.unnested n = true := by
+  intro n hn
+  simp only [pictureKids, Array.mem_map] at hn
+  obtain ⟨shape, _, rfl⟩ := hn
+  cases shape with
+  | label lx ly content color scale align =>
+    simp only []
+    split
+    · simp [Html.elem, MathMl.unnested, MathMl.unnestedList, MathMl.tagFree,
+        MathMl.tagFreeList, labelNodesList_mathFree_contract _ #[] content.toList _ rfl]
+    · apply MathMl.unnested_of_mathFree
+      simp [Html.elem, MathMl.tagFree, labelNodesList_mathFree_contract _ #[] content.toList _ rfl]
+  | edge segs st tip =>
+    apply MathMl.unnested_of_mathFree
+    cases tip <;> simp [Html.elem, MathMl.tagFree, MathMl.tagFreeList]
+  | rect _ _ _ _ _ | circle _ _ _ _ _ | frame _ _ _ _ _ _ =>
+    apply MathMl.unnested_of_mathFree
+    simp [Html.elem, MathMl.tagFree, MathMl.tagFreeList]
 
 /-- **Every emitted label baseline projects the IR's measured band**
 (`_projects`): SVG declares the alphabetic baseline at `labelBaseline`,
@@ -8278,5 +8377,46 @@ public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = tr
     scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
   simp [blockNode, Config.inFrame, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
     frameName_contract]
+
+/-! ## The MathML a page ships -/
+
+/-- The MathML of a page, as counts over the emitted tree: `math` roots,
+`math` elements standing inside another — a second root, whose layout no
+engine defines (`MathMl.unnested`) — and `merror` elements, which a browser
+frames in red on yellow. No path through the driver ships either of the
+last two (`pictureKids_unnested_contract`, `MathMl.formula_merrorFree_contract`
+over `Ir.mathRequests_resolve_covers`); this judge is what reads the whole
+page for them. -/
+public structure MathFacts where
+  roots : Nat := 0
+  nested : Nat := 0
+  errors : Nat := 0
+  deriving Repr, BEq, Inhabited
+
+mutual
+
+/-- The facts of one node onto `acc`; `inMath` is whether an ancestor is a
+`math` element. The list companion keeps the recursion structural. -/
+private def mathFactsOne (inMath : Bool) (acc : MathFacts) : Node → MathFacts
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag _ kids =>
+    let root := tag == "math"
+    let acc := if !root then acc
+      else if inMath then { acc with nested := acc.nested + 1 }
+      else { acc with roots := acc.roots + 1 }
+    let acc := if tag == "merror" then { acc with errors := acc.errors + 1 } else acc
+    mathFactsList (inMath || root) acc kids.toList
+
+private def mathFactsList (inMath : Bool) (acc : MathFacts) : List Node → MathFacts
+  | [] => acc
+  | k :: rest => mathFactsList inMath (mathFactsOne inMath acc k) rest
+
+end
+
+/-- The MathML facts of a page body. -/
+public def mathFacts (body : Array Node) : MathFacts :=
+  mathFactsList false {} body.toList
 
 end LeanTex.Core.HtmlDoc

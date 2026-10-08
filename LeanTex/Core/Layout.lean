@@ -19881,7 +19881,8 @@ private theorem resolveMathAlphas_plain_body (coverage : Math.MathAlphabetCovera
     (Ir.resolveMathAlphas coverage family doc).1.body = doc.body := by
   have aux : ∀ (bs : List Block) (acc : Array Block),
       (∀ b ∈ bs, ∃ xs, b = .para xs ∧ PlainInlines xs) →
-      Ir.mapBlockList id (Ir.resolveMathAlphaInline coverage) acc bs = acc ++ bs.toArray := by
+      Ir.mapBlockList (Ir.resolveMathAlphaPicture coverage) (Ir.resolveMathAlphaInline coverage)
+        acc bs = acc ++ bs.toArray := by
     intro bs
     induction bs with
     | nil => intro acc _; simp [Ir.mapBlockList]
@@ -19891,7 +19892,7 @@ private theorem resolveMathAlphas_plain_body (coverage : Math.MathAlphabetCovera
       rw [Ir.mapBlockList, ih _ (fun b hb => hp b (by simp [hb]))]
       apply Array.toList_inj.mp
       simp [Ir.mapBlock, resolveAlpha_plain_inlines coverage xs hx]
-  simpa [Ir.resolveMathAlphas, Ir.mapDoc, Ir.mapBlocks, Ir.mapBlocksPic] using
+  simpa [Ir.resolveMathAlphas, Ir.mapDoc, Ir.mapBlocksPic] using
     aux doc.body.toList #[] (by simpa using h)
 
 public def LineOut.glyphChars (line : LineOut) : List Char :=

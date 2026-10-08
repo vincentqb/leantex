@@ -2880,15 +2880,15 @@ public def missingMathAlphas (coverage : MathAlphabetCoverage)
 mutual
 
 /-- No unresolved alphabet boundary remains in this math tree. -/
-public def MList.alphaFree : MList → Bool
+@[expose] public def MList.alphaFree : MList → Bool
   | .nil => true
   | .cons x rest => x.alphaFree && rest.alphaFree
 
-def MItem.alphaFree : MItem → Bool
+@[expose] public def MItem.alphaFree : MItem → Bool
   | .atom _ nuc sup sub _ => nuc.alphaFree && (sup.alphaFree && sub.alphaFree)
   | .space _ | .ink _ _ => true
 
-def MNucleus.alphaFree : MNucleus → Bool
+@[expose] public def MNucleus.alphaFree : MNucleus → Bool
   | .sym _ | .word _ => true
   | .styled _ _ => true
   | .list body => body.alphaFree
@@ -2901,11 +2901,11 @@ def MNucleus.alphaFree : MNucleus → Bool
   | .grid _ rows => rows.alphaFree
   | .cancel _ _ value body => value.alphaFree && body.alphaFree
 
-def MRow.alphaFree : MRow → Bool
+@[expose] public def MRow.alphaFree : MRow → Bool
   | .nil => true
   | .cons cell rest => cell.alphaFree && rest.alphaFree
 
-def MRows.alphaFree : MRows → Bool
+@[expose] public def MRows.alphaFree : MRows → Bool
   | .nil => true
   | .cons row rest => row.alphaFree && rest.alphaFree
 

@@ -157,3 +157,70 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
       (!(admits (carrier #[] #[child])))
   t "picture mathematics: the carrier's own attributes are checked"
     (!(admits (carrier #[("onload", "alert(1)")] #[])))
+
+namespace PictureMathLabels
+
+/-- Invented contents a picture label and a paragraph both set: a math
+alphabet from each family the resolver distinguishes — text-sourced
+upright, bold, sans, italic and mono, symbol-sourced double-struck and
+script — and an alphabet under a colour and inside a text style. -/
+def alphabetLabelCases : Array String := #[
+  "$\\mathrm{Fir}$", "$\\mathbf{v}$", "$\\mathsf{Q}$", "$\\mathit{ab}$", "$\\mathtt{k}$",
+  "$\\mathbb{R}$", "$\\mathcal{A}$", "\\textcolor{red}{$\\mathrm{Fir}$}",
+  "\\textbf{Elm $\\mathrm{Fir}$}"]
+
+/-- The same content as a paragraph. -/
+def paragraphSource (content : String) : String :=
+  "\\documentclass{article}\\begin{document}\n" ++ content ++ "\n\\end{document}"
+
+/-- The formulas of an emitted tree, in document order: the elements that
+carry their source in `data-tex` — a paragraph's `math`, a label's row. -/
+def formulaNodes (body : Array Html.Node) : Array Html.Node :=
+  (elemNodesList (fun _ => true) #[] body.toList).filter fun n =>
+    match n with
+    | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "data-tex").isSome
+    | _ => false
+
+end PictureMathLabels
+
+/-- **A label's formula paints what the same formula paints in a
+paragraph**, on both artifacts. A math alphabet resolves in a picture label
+exactly as it resolves in prose: the typed HTML tree carries the paragraph's
+MathML glyph text and no `merror`, the native page ships the paragraph's
+scalars, and every shipped `math` element is its tree's only root. Before
+alphabet resolution reached picture labels, a label's alphabet shipped as an
+unresolved node — an `merror` around the source glyphs in HTML, which a
+browser frames in red on yellow, and the source italic on the page — and the
+label's carrier nested each formula's own `math` root. Reads `Layout.Out`
+and the emitted HTML tree, never an IR dump. Invented content. -/
+def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let fs ← mathSetOf oneFace
+  let cfgOf := fun (doc : Ir.Doc) => ({
+    fonts := some fs, page := doc.page
+    labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs } : HtmlDoc.Config)
+  let scalars := fun (out : Layout.Out) => String.ofList (shippedBodyGlyphs out |>.map (·.scalar)).toList
+  for content in PictureMathLabels.alphabetLabelCases do
+    let name := s!"picture alphabet: {content}"
+    let (prose, _) := elabMeasured fs (PictureMathLabels.paragraphSource content)
+    let (label, _) := elabMeasured fs (PictureMathLabels.mathLabelSource content "")
+    t (name ++ " elaborates one picture")
+      ((PictureMathLabels.pictures label).size == 1)
+    let (_, proseBody, _) := HtmlDoc.emitTree (cfgOf prose) prose
+    let (_, labelBody, _) := HtmlDoc.emitTree (cfgOf label) label
+    let proseFormulas := PictureMathLabels.formulaNodes proseBody
+    let labelFormulas := PictureMathLabels.formulaNodes labelBody
+    t (name ++ " paints the paragraph's MathML glyphs in its label")
+      (!proseFormulas.isEmpty && proseFormulas.size == labelFormulas.size &&
+        MathMl.nodeListChars #[] labelFormulas.toList ==
+          MathMl.nodeListChars #[] proseFormulas.toList)
+    let facts := HtmlDoc.mathFacts labelBody
+    t (name ++ s!" ships no merror ({facts.errors})") (facts.errors == 0)
+    t (name ++ s!" ships one math root per formula tree ({facts.nested} nested)")
+      (facts.nested == 0 && facts.roots == 1 && labelBody.all MathMl.unnested)
+    let proseOut := layoutOf fs prose
+    let labelOut := layoutOf fs label
+    t (name ++ s!" sets the paragraph's scalars on the page \
+({scalars labelOut} against {scalars proseOut})")
+      (!(scalars proseOut).isEmpty && scalars labelOut == scalars proseOut)
