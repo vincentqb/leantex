@@ -18,6 +18,7 @@ import Tests.PackageImports
 import Tests.ParagraphMathRhythm
 import Tests.BeamerProof
 import Tests.MarkdownHtml
+import Tests.MarkdownHeadings
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -924,7 +925,19 @@ def reports : List Report := [
       "six Unicode anchor and four comment-boundary assertions fail before their corrections",
       "comments remain invisible, disclosure content appears once in source order, and anchors retain their resolved names",
       "disclosure expansion remains diagnosed and unsupported HTML remains refused"]
-    state := .guarded "53f39495295029ffd0fe47a1067e50fd07f7b053" .before .author }
+    state := .guarded "53f39495295029ffd0fe47a1067e50fd07f7b053" .before .author },
+  { id := "R107", date := "2026-10-08"
+    what := "Markdown headings below the third level lost their distinct structural ranks"
+    pins := [check% markdownHeadingChecks,
+      thm% Ir.headingRank_between,
+      thm% Ir.headingRank_inj,
+      thm% Parse.headingControl_exact,
+      thm% MarkdownHeadings.heading_artifacts_agree,
+      thm% MarkdownHeadings.heading_marker_between]
+    accept := ["twelve artifact assertions fail before all six heading ranks are preserved",
+      "typed HTML and parsed PDF retain each heading rank independently of document titles and nesting",
+      "native section numbering and run-in headings preserve their existing behavior"]
+    state := .guarded "e1f84ab8e797e2a827415e683b79ce4e52d54b30" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -91,6 +91,7 @@ import Tests.ListingProvider
 import Tests.PublicationPaths
 import Tests.Markdown
 import Tests.MarkdownHtml
+import Tests.MarkdownHeadings
 import Tests.MarkdownInput
 import Tests.InputUse
 import Tests.XparseProvide
@@ -249,6 +250,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   anchorChecks ref
   markdownChecks ref
   markdownHtmlChecks ref
+  markdownHeadingChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref
