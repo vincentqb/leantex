@@ -1,8 +1,12 @@
-import LeanTex.Core.Font
-import LeanTex.Core.Elab
-import LeanTex.Core.Layout
-import LeanTex.Core.HtmlDoc
-import Tests.Support
+module
+
+public import LeanTex.Core.Font
+public import LeanTex.Core.Elab
+public import LeanTex.Core.Layout
+public import LeanTex.Core.HtmlDoc
+public import Tests.Support
+
+public section
 
 open LeanTex.Core
 

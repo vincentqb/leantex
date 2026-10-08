@@ -1,6 +1,10 @@
-import LeanTex.Cli.FontDiscovery
-import LeanTex.Cli.FontAssembly
-import Tests.FontMath
+module
+
+public import LeanTex.Cli.FontDiscovery
+public import LeanTex.Cli.FontAssembly
+public import Tests.FontMath
+
+public section
 
 namespace Tests
 

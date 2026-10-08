@@ -1,4 +1,8 @@
-import Tests.Artifact
+module
+
+public import Tests.Artifact
+
+public section
 
 open LeanTex.Core
 open LeanTex.Core.Dim (Sp pt)

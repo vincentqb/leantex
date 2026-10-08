@@ -1,6 +1,10 @@
-import LeanTex.Core.PdfWriteContract
-import LeanTex.Core.PdfCensus
-import LeanTex.Cli.DriverDiag
+module
+
+public import LeanTex.Core.PdfWriteContract
+public import LeanTex.Core.PdfCensus
+public import LeanTex.Cli.DriverDiag
+
+public section
 
 open LeanTex.Core
 

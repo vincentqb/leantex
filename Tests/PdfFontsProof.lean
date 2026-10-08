@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfFontsProof
+module
+
+public import LeanTex.Core.PdfFontsProof
+
+public section
 
 open LeanTex.Core
 

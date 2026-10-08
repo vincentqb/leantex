@@ -1,6 +1,11 @@
-import LeanTex.Cli.Compression
-import LeanTex.Cli.ConvCache
-import Tests.Support
+module
+
+public import LeanTex.Cli.Compression
+public import LeanTex.Cli.ConvCache
+public import Tests.Support
+public import Std.Sync.Mutex
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

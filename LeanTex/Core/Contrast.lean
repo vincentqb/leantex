@@ -84,7 +84,7 @@ its role: body and marker text on the page (SC 1.4.3, 4.5:1), code text on
 its tint (SC 1.4.3), and the focus indicator on the page (SC 1.4.11, 3:1).
 `rule` is pure decoration — a hairline under a heading conveys nothing the
 heading does not — and pure decoration is exempt by both criteria. -/
-public def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
+@[expose] public def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
   contrastMilli t.ink t.surface ≥ aaText
     && contrastMilli t.muted t.surface ≥ aaText
     && contrastMilli t.ink t.tint ≥ aaText

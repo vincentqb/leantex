@@ -1,5 +1,10 @@
-import Tests.ListingHighlight
-import LeanTex.Core.ListingReply
+module
+
+public import Tests.ListingHighlight
+public import LeanTex.Core.ListingReply
+public import Lean.Data.Json
+
+public section
 
 open LeanTex.Core
 

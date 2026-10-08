@@ -1,4 +1,8 @@
-import Tests.FontMath
+module
+
+public import Tests.FontMath
+
+public section
 
 open LeanTex.Core
 

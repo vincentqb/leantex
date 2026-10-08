@@ -1,5 +1,10 @@
-import Tests.Artifact
-import Lean.Data.Json.Parser
+module
+
+public import Tests.Artifact
+public import Lean.Data.Json.Parser
+public import Lean.Data.Json
+
+public section
 
 namespace Tests
 

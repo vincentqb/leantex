@@ -1,4 +1,8 @@
-import Tests.CancelMetric
+module
+
+public import Tests.CancelMetric
+
+public section
 
 open LeanTex.Core
 

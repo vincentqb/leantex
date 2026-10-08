@@ -1,7 +1,11 @@
-import LeanTex.Cli.ConvCache
-import LeanTex.Cli.ToolProbe
-import LeanTex.Cli.AtomicFile
-import Tests.Support
+module
+
+public import LeanTex.Cli.ConvCache
+public import LeanTex.Cli.ToolProbe
+public import LeanTex.Cli.AtomicFile
+public import Tests.Support
+
+public section
 
 open LeanTex.Cli
 

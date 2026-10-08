@@ -8,14 +8,12 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.Font
 public import LeanTex.Core.Hyphen
 public import LeanTex.Core.Ir
-import all LeanTex.Core.Ir
 import LeanTex.Core.Oklab
 import LeanTex.Core.Listing
 import LeanTex.Core.ListMark
 public import LeanTex.Core.Diag
 import all LeanTex.Core.Diag
 public import LeanTex.Core.Struct
-import all LeanTex.Core.Struct
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
@@ -610,7 +608,7 @@ public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
 /-- The distribution a frame's declaration names: a projection of the one
 IR table (`Ir.VAlign.shares`), so the PDF page cannot drift from the HTML
 deck's spacers. `golden` is the title page's composed 3618:2000. -/
-public def VDist.of (v : Ir.VAlign) : VDist :=
+@[expose] public def VDist.of (v : Ir.VAlign) : VDist :=
   ⟨v.shares.1, v.shares.2⟩
 
 /-- The standalone `golden` is the table's own: the literal and the
@@ -18874,7 +18872,7 @@ private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc) (cover : Ir.Cover
     (collectDocBlock rd doc cover frameSpans nums i hi st).1.leafNext =
       st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
   dsimp only [pure, Id]
   rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp]
   simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
@@ -18888,7 +18886,7 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
     (hn : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n) :
     (collectDocBlock rd doc cover frameSpans nums i hi st).1.SourceBound n := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
   dsimp only [pure, Id]
   rw [collectBlock]
   apply sourceBound_collectParaBlock
@@ -19185,7 +19183,7 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
         if pick (if xs.size == 0 then none else some (Spacing.Pending.leafNext st.1)) (!(Spacing.Context.inFloat rd))
         then inkCensus (Ir.plainText xs).toList else []) := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep]
+    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
   dsimp only [pure, Id]
   rw [collectBlock]
   split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick <;> exact ha

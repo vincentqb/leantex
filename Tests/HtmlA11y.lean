@@ -1,4 +1,8 @@
-import Tests.Backends
+module
+
+public import Tests.Backends
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

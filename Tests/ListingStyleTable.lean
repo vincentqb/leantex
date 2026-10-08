@@ -1,4 +1,8 @@
-import Tests.ListingProvider
+module
+
+public import Tests.ListingProvider
+
+public section
 
 open LeanTex.Core
 

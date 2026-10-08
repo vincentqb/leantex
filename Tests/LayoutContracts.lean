@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.Layout.FramePartition
+module
+
+public import Tests.Support
+public import LeanTex.Core.Layout.FramePartition
+
+public section
 
 namespace LeanTex.Tests.LayoutContracts
 

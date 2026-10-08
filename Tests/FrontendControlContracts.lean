@@ -1,4 +1,8 @@
-import LeanTex.Core.ControlContract
+module
+
+public import LeanTex.Core.ControlContract
+
+public section
 
 open LeanTex.Core
 

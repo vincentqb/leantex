@@ -1,4 +1,8 @@
-import Tests.RegressionSupport
+module
+
+public import Tests.RegressionSupport
+
+public section
 
 open LeanTex.Core
 

@@ -1,5 +1,10 @@
-import LeanTex.Cli.Batch
-import Tests.Support
+module
+
+public import LeanTex.Cli.Batch
+public import Std.Sync.Mutex
+public import Tests.Support
+
+public section
 
 open LeanTex.Cli
 

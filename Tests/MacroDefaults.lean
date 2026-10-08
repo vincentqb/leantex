@@ -1,4 +1,8 @@
-import Tests.Support
+module
+
+public import Tests.Support
+
+public section
 
 open LeanTex.Core
 

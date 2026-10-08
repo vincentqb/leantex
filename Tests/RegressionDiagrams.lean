@@ -1,5 +1,9 @@
-import Tests.RegressionSupport
-import Tests.CancelAlignment
+module
+
+public import Tests.RegressionSupport
+public import Tests.CancelAlignment
+
+public section
 
 open LeanTex.Core
 

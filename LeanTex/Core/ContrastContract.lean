@@ -3,7 +3,7 @@ module
 public import LeanTex.Core.Contrast
 import all LeanTex.Core.Contrast
 import all LeanTex.Core.Theme
-import all LeanTex.Core.Ir
+import LeanTex.Core.Ir
 import all LeanTex.Core.ContrastRatio
 import all LeanTex.Core.Oklab
 import all LeanTex.Core.Listing

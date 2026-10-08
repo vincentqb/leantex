@@ -1,6 +1,10 @@
-import LeanTex.Core.PdfRead
-import LeanTex.Core.PdfNameProof
-import LeanTex.Core.PdfStringProof
+module
+
+public import LeanTex.Core.PdfRead
+public import LeanTex.Core.PdfNameProof
+public import LeanTex.Core.PdfStringProof
+
+public section
 
 open LeanTex.Core
 

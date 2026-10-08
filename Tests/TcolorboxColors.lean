@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.Tcolorbox
+module
+
+public import Tests.Support
+public import LeanTex.Core.Tcolorbox
+
+public section
 
 open LeanTex.Core
 

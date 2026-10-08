@@ -1,5 +1,9 @@
-import Tests.Artifact
-import LeanTex.Cli.Render
+module
+
+public import Tests.Artifact
+public import LeanTex.Cli.Render
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

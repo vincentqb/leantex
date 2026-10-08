@@ -1,7 +1,11 @@
-import LeanTex.Cli.FontDiscovery
-import Tests.Support
-import Tests.LayoutInkContracts
-import Tests.ListingStyleTable
+module
+
+public import LeanTex.Cli.FontDiscovery
+public import Tests.Support
+public import Tests.LayoutInkContracts
+public import Tests.ListingStyleTable
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

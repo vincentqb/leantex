@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfStruct
+module
+
+public import LeanTex.Core.PdfStruct
+
+public section
 
 open LeanTex.Core
 

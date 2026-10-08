@@ -2,7 +2,7 @@ module
 
 public import LeanTex.Core.Elab
 import all LeanTex.Core.Elab
-import all LeanTex.Core.Ir
+import LeanTex.Core.Ir
 import all LeanTex.Core.Picture
 import all LeanTex.Core.Theme
 import all LeanTex.Core.Lex

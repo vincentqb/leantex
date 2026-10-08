@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Cli.FontAssembly
+module
+
+public import Tests.Support
+public import LeanTex.Cli.FontAssembly
+
+public section
 
 open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly
 

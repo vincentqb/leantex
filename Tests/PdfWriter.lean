@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.PdfFontContract
+module
+
+public import Tests.Support
+public import LeanTex.Core.PdfFontContract
+
+public section
 
 open LeanTex.Core
 

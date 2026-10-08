@@ -1,3 +1,5 @@
+module
+
 /-
 The construct-support vocabulary the tiers share: the rungs — one ladder for
 `coverage`, which reads a construct's rung off its probe, and `diagaudit`,
@@ -7,6 +9,8 @@ with. The readings (`rungOfLoss`, the coverage cut) stay with the tier that
 makes them; only the words, their order and the index's one reader live
 here, so no two tiers can mean different things by one word.
 -/
+public section
+
 /-- The support rungs, per construct, lowest first. Words, not numbers:
 `P0`–`P5` and R name the parity ladder's per-document levels, `L0`–`L2`
 the theorem layers, and `L3` also names LaTeX3, so numbering the rungs too

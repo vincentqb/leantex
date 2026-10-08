@@ -1,8 +1,12 @@
-import Tests.ShellHighlight
-import LeanTex.Cli.DriverDiag
-import LeanTex.Cli.ListingHighlight
-import LeanTex.Cli.RunBounded
-import LeanTex.Cli.ToolProbe
+module
+
+public import Tests.ShellHighlight
+public import LeanTex.Cli.DriverDiag
+public import LeanTex.Cli.ListingHighlight
+public import LeanTex.Cli.RunBounded
+public import LeanTex.Cli.ToolProbe
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

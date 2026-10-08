@@ -1,5 +1,9 @@
-import Tests.DriverAssets
-import Tests.Support
+module
+
+public import Tests.DriverAssets
+public import Tests.Support
+
+public section
 
 namespace Tests
 

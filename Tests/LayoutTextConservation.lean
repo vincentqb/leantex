@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.Layout.TextConservation
+module
+
+public import Tests.Support
+public import LeanTex.Core.Layout.TextConservation
+
+public section
 
 namespace LeanTex.Tests.LayoutTextConservation
 

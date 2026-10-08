@@ -726,6 +726,14 @@ public def nodeListChars (acc : Array Char) : List Html.Node → Array Char
 
 end
 
+/-- The list fold's two equations, for readers outside this module. -/
+public theorem nodeListChars_nil (acc : Array Char) : nodeListChars acc [] = acc := by
+  simp only [nodeListChars]
+
+public theorem nodeListChars_cons (acc : Array Char) (n : Html.Node) (rest : List Html.Node) :
+    nodeListChars acc (n :: rest) = nodeListChars (nodeChars acc n) rest := by
+  simp only [nodeListChars]
+
 theorem nodeListChars_append (c : Array Char) (l1 l2 : List Html.Node) :
     nodeListChars c (l1 ++ l2) = nodeListChars (nodeListChars c l1) l2 := by
   induction l1 generalizing c with

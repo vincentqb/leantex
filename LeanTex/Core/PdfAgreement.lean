@@ -3,7 +3,7 @@ module
 public import LeanTex.Core.Pdf
 public import LeanTex.Core.HtmlDoc
 import all LeanTex.Core.Pdf
-import all LeanTex.Core.Ir
+import LeanTex.Core.Ir
 import all LeanTex.Core.HtmlDoc
 
 /-! Agreement of the two backends over their shared IR and font environment.
@@ -16,8 +16,8 @@ open LeanTex.Core LeanTex.Core.Font LeanTex.Core.Layout
 
 /-- The undeclared contract is met by this writer (`_exact`): a document
 that declares no contract key gets no W0701 from its PDF. -/
-public theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
-  decide
+public theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] :=
+  Ir.OutputContract.unmet_default_exact profile
 
 /-- **The HTML ships the faces the PDF embeds: one `FontSet`, two
 projections.** Every face this writer would embed for these pages

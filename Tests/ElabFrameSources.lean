@@ -1,4 +1,8 @@
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.Elab
+
+public section
 
 open LeanTex.Core LeanTex.Core.Parse
 

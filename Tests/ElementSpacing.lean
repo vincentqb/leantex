@@ -1,5 +1,9 @@
-import LeanTex.Core.Layout.SpacingContract
-import Tests.Support
+module
+
+public import LeanTex.Core.Layout.SpacingContract
+public import Tests.Support
+
+public section
 
 namespace LeanTex.Tests.ElementSpacing
 

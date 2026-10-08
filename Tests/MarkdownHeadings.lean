@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.MarkdownDoc
+module
+
+public import Tests.Support
+public import LeanTex.Core.MarkdownDoc
+
+public section
 
 open LeanTex.Core
 

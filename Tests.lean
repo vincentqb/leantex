@@ -13,6 +13,7 @@ import Tests.ColourInterface
 import Tests.ContrastInterface
 import Tests.PresentationInterfaces
 import Tests.Support
+import Tests.BuildGraph
 import Tests.CliFoundationInterface
 import Tests.BoundaryInterface
 import Tests.DriverDiagInterface
@@ -749,6 +750,7 @@ def main (args : List String) : IO UInt32 := do
   diagnosticAggregationOriginChecks ref
   diagnosticPipelineOriginChecks ref
   sourceAnnotationChecks ref
+  buildGraphChecks ref
   inputOriginsChecks ref
   imageOriginsChecks ref
   lexChecks ref

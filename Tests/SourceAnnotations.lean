@@ -1,8 +1,12 @@
-import LeanTex.Core.Ir
-import LeanTex.Core.Struct
-import LeanTex.Core.Contrast
-import LeanTex.Core.MarkdownDoc
-import LeanTex.Core.HtmlDoc
+module
+
+public import LeanTex.Core.Ir
+public import LeanTex.Core.Struct
+public import LeanTex.Core.Contrast
+public import LeanTex.Core.MarkdownDoc
+public import LeanTex.Core.HtmlDoc
+
+public section
 
 open LeanTex.Core LeanTex.Core.Ir
 

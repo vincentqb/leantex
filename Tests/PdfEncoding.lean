@@ -1,4 +1,8 @@
-import LeanTex.Core.PdfEncoding
+module
+
+public import LeanTex.Core.PdfEncoding
+
+public section
 
 open LeanTex.Core.PdfRead
 

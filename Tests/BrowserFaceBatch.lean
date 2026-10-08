@@ -1,5 +1,10 @@
-import LeanTex.Cli.BrowserFaces
-import Tests.Support
+module
+
+public import LeanTex.Cli.BrowserFaces
+public import Tests.Support
+public import LeanTex.Cli.RunBounded
+
+public section
 
 namespace Tests.BrowserFaceBatch
 

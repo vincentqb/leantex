@@ -1,5 +1,9 @@
-import LeanTex.Cli.FontDiscovery
-import Tests.Support
+module
+
+public import LeanTex.Cli.FontDiscovery
+public import Tests.Support
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -84,7 +88,7 @@ which witnesses elaboration only. `censusChecks` fails when a fixture in
 witnessed by its golden alone. Facts are observable page claims: text
 shipped (or deliberately not, for a note), covered-coloured runs on step
 pages, rules and fills drawn, line positions for centring and columns. -/
-def censusTable :
+def censusRows0 :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("affine-lengths", fun _ c => [
     ("one page", c.size == 1),
@@ -234,7 +238,10 @@ def censusTable :
     ("the howpublished group ships with its year", hasStr (censusText c) "Online, 2020")]),
   ("declared", fun _ c => [
     ("one page, as the fixture asserts", c.size == 1),
-    ("the heading ships", hasStr (censusText c) "Declared geometry")]),
+    ("the heading ships", hasStr (censusText c) "Declared geometry")])]
+
+def censusRows1 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("redefine", fun _ c => [
     ("one page", c.size == 1),
     ("the refused redefinition leaves the built-in title shipping",
@@ -435,7 +442,10 @@ def censusTable :
   ("links", fun _ c => [
     ("one page", c.size == 1),
     ("the running foot resolves page number and count", hasStr (censusText c) "page 1 of 1"),
-    ("link underlines ship as rules", (c[0]?.map fun p => decide (p.rules ≥ 1)).getD false)]),
+    ("link underlines ship as rules", (c[0]?.map fun p => decide (p.rules ≥ 1)).getD false)])]
+
+def censusRows2 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("resume", fun _ c => [
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Alex Doe"),
@@ -572,7 +582,10 @@ def censusTable :
     ("the centred line sits past the margin",
       (lineXOf c 0 "One centred line.").any fun x => decide (x > geom.hmargin)),
     ("the standout line is centred",
-      (lineXOf c 1 "Questions?").any fun x => decide (x > geom.hmargin))]),
+      (lineXOf c 1 "Questions?").any fun x => decide (x > geom.hmargin))])]
+
+def censusRows3 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("columns", fun geom c => [
     ("three frames, three pages", c.size == 3),
     ("the narrow column sets right of the wide one",
@@ -682,7 +695,10 @@ def censusTable :
   ("lists-deck", fun _ c => [
     ("pages", c.size == 4),
     ("nesting shows through the theme", pageHas c 1 "– Nested under the stepped item"),
-    ("ordered marks on a slide", pageHas c 3 "1. First placeholder")]),
+    ("ordered marks on a slide", pageHas c 3 "1. First placeholder")])]
+
+def censusRows4 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   -- the census carries x and text, not y; the [t]/[c]/[b] geometry itself
   -- is pinned by vdistChecks over Layout.LineOut
   ("valign", fun _ c => [
@@ -772,7 +788,10 @@ def censusTable :
     ("the alphabet edge label ships upright",
       hasStr (censusText c) "rd" && !hasStr (censusText c) "𝑟𝑑"),
     ("every node ships a glyph line",
-      (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
+      (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)])]
+
+def censusRows5 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   -- **A style reaches its picture wherever it was declared.** `ball` comes
   -- from the preamble, `slab` from a `\tikzset` beside the picture inside
   -- the document body; both are applied by name, and their keys are what
@@ -965,7 +984,10 @@ def censusTable :
     ("the display sum ships as a glyph", hasStr (censusText c) "∑"),
     ("the fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1),
     ("prose after the display ships",
-      hasStr (censusText c) "The paragraph continues after the display")]),
+      hasStr (censusText c) "The paragraph continues after the display")])]
+
+def censusRows6 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("math-first", fun _ c => [
     ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
@@ -1068,7 +1090,10 @@ frame number holds across each frame's step pages",
   ("trio-page", fun _ c => [
     ("one page", c.size == 1),
     ("the studio name ships", hasStr (censusText c) "Cardamom Press"),
-    ("the shared section style draws its rules", (c[0]?.map (·.rules == 2)).getD false)]),
+    ("the shared section style draws its rules", (c[0]?.map (·.rules == 2)).getD false)])]
+
+def censusRows7 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("trio-deck", fun _ c => [
     ("pages", c.size == 4),
     ("the title ships", pageHas c 0 "Cardamom Press"),
@@ -1109,6 +1134,14 @@ frame number holds across each frame's step pages",
     ["Holding branch hidden.", "Failing branch hidden."]),
   ("cond-loaded", condBranchRow ["Loaded branch ships.", "Unloaded branch ships."]
     ["Loaded branch hidden.", "Unloaded branch hidden."])]
+
+/-- The census rows, in parts: one list literal's elaboration grows faster
+than its rows (all 86 as one literal took 23 s, the eight parts together
+under 5 s), and the suite's build waits on this module. -/
+def censusTable :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) :=
+  censusRows0 ++ censusRows1 ++ censusRows2 ++ censusRows3 ++
+    censusRows4 ++ censusRows5 ++ censusRows6 ++ censusRows7
 
 /-- The outline tier of the census: the PDF document outline is backend
 emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a

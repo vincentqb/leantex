@@ -1,4 +1,9 @@
-import LeanTex.Core.Elab
+module
+
+public import LeanTex.Core.Elab
+public import LeanTex.Core.PictureCensus
+
+public section
 
 open LeanTex.Core
 

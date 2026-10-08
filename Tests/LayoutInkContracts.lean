@@ -1,5 +1,9 @@
-import LeanTex.Core.Layout.InkOutput
-import Tests.Support
+module
+
+public import LeanTex.Core.Layout.InkOutput
+public import Tests.Support
+
+public section
 
 namespace Tests.LayoutInkContracts
 
