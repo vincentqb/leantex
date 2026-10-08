@@ -23,11 +23,13 @@ is the registry's rule and not a habit:
 * `W0307` (`pending`, floor `absent`) for a construct that ships nothing.
   One today: `md:thematic-break`, which has no block in this engine.
 * `W0392` (`degraded`, floor `content`) for a construct that ships,
-  diminished: `md:heading-depth`, `md:list-start`, `md:loose-list`,
+  diminished: `md:list-start`, `md:loose-list`,
   `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`,
-  `md:disclosure`. Each of
-  the first five once took `W0307`, and the census then read shipping
-  constructs as absent content.
+  `md:disclosure`. Shipping content cannot take an absent-content loss.
+
+All six heading ranks cross the native heading bridge as fixed names and
+grouped inline raws. Their shared IR rank reaches both artifacts unchanged;
+a body h1 remains distinct from document-title furniture.
 
 **No reader text reaches a re-parse.** Two surface constructs are read back
 from option text by the elaborator — a listing's `[language=…]` head and an
@@ -57,8 +59,8 @@ private def route (file : String) (subject : String) (what : String) (pos : Pos)
   Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
 
 /-- A `W0392`: the construct sets, with part of its declaration dropped —
-`degraded`, floor `content`, which is what the census must see for a heading
-that sets one level up or a link that sets without its title. -/
+`degraded`, floor `content`, which is what the census must see for a link
+that sets without its title or a disclosure whose body stays expanded. -/
 private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
     (help : Option String := none) : Diag :=
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
@@ -160,14 +162,6 @@ public theorem textRaws_covers (s : String) (pos : Pos) :
     split
     · exact hs
     · exact textOnly_word _ _ _ hs
-
-/-- The control name a heading level takes. Levels beyond the third are
-routed: the kernel has three sectioning levels, so a fourth is a level
-question, not a markdown one. -/
-private def sectionCtrl : Nat → String
-  | 0 | 1 => "section"
-  | 2 => "subsection"
-  | _ => "subsubsection"
 
 /-- An empty HTML target can use the native target only if its key reaches
 the page unchanged. An HTML fragment link names the original key, whereas
@@ -295,11 +289,7 @@ private def blkRaws (file : String) : Blk → Array Raw × Array Diag
     (rs.push (.par p), ds)
   | .heading level body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
-    let ds := if level > 3 then
-        ds.push (routeDegraded file "heading-depth"
-          "a markdown heading below the third level sets at the third" p)
-      else ds
-    (#[.ctrl (sectionCtrl level) p, .word "*" p, .group rs p], ds)
+    (Parse.headingRaws level rs p, ds)
   | .code info text p =>
     -- The info string's first word is the language, which the IR carries
     -- (`Ir.ListingSpec.language`) and both artifacts project — the HTML

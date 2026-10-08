@@ -130,12 +130,6 @@ sides. Hides: " ++ "; ".intercalate (droppedAttrs.map fun (a, h) => a ++ " — "
 differently; inside <pre> every byte is kept and compared. Hides: a \
 significant space outside <pre>, which no spec example depends on because \
 HTML itself would collapse it."),
-   ("heading level offset",
-    "the spec's `#` is <h1>; the engine's heading is a *section* in a \
-document whose own title is the <h1>, so it renders one level down. Both \
-sides are normalized to a level ordinal — the engine's tag minus its \
-measured base, the spec's minus one — so a wrong *relative* level still \
-fails. Hides: the absolute tag, which is the document class's decision."),
    ("one trailing newline in a code block",
     "the spec's expected HTML for a fenced or indented code block always \
 ends its <pre><code> content with a newline; this engine's verbatim block \
@@ -437,7 +431,7 @@ it costs. Read only to *attribute* an `owed` case to the gap that blocks it;
 a case these hide is never a `match` (`classify`). -/
 def gapSubjects : List String :=
   ["md:thematic-break", "md:list-start", "md:loose-list", "md:link-title",
-   "md:image-title", "md:image-alt", "md:heading-depth", "md:code-info"]
+   "md:image-title", "md:image-alt", "md:code-info"]
 
 def hLevelTag? (tag : String) : Option Nat :=
   match tag with
@@ -466,13 +460,13 @@ def dropOneTrailingNewline (s : String) : String :=
 
 mutual
 
-/-- One node canonicalized. `base` is the heading level the emitter starts
-sectioning at, subtracted so the two sides' ordinals line up; `pre` says
-whether whitespace is significant here. `gaps` are the IR gaps whose cost
+/-- One node canonicalized. Heading tags are compared exactly; a document
+title never offsets the body's ranks. `pre` says whether whitespace is
+significant here. `gaps` are the IR gaps whose cost
 is hidden — empty for the comparison that decides `match`, and the run's
 own routes only when *attributing* an `owed` case; `inLi` says the parent
 is a list item, where a loose list's `<p>` sits. -/
-def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) : String :=
+def canonG (gaps : List String) (pre inLi : Bool) (n : Html.Node) : String :=
   match n with
   | .text s => if pre then s else squeeze s
   -- A stylesheet or script node is compared as the element it prints as,
@@ -485,14 +479,8 @@ def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) :
   | .elem tag attrs kids =>
     if tag == "hr" && gaps.contains "md:thematic-break" then ""
     else if tag == "p" && inLi && gaps.contains "md:loose-list" then
-      canonGList gaps base pre false "" kids.toList
+      canonGList gaps pre false "" kids.toList
     else
-      let tag' :=
-        match hLevelTag? tag with
-        | some l =>
-          let ord := if l ≥ base then l - base + 1 else 1
-          "h#" ++ toString (if gaps.contains "md:heading-depth" then min ord 3 else ord)
-        | none => tag
       let costs (a : String) : Bool :=
         (a == "start" && gaps.contains "md:list-start")
           || (a == "title" && tag == "a" && gaps.contains "md:link-title")
@@ -505,26 +493,26 @@ def canonG (gaps : List String) (base : Nat) (pre inLi : Bool) (n : Html.Node) :
       let keep := keep.qsort (·.1 < ·.1)
       let as := keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) ""
       let pre' := pre || Html.preserveTags.contains tag
-      if Html.voidTags.contains tag then "<" ++ tag' ++ as ++ ">"
+      if Html.voidTags.contains tag then "<" ++ tag ++ as ++ ">"
       else
-        let body := canonGList gaps base pre' (tag == "li") "" kids.toList
+        let body := canonGList gaps pre' (tag == "li") "" kids.toList
         -- Text-node boundaries are not line boundaries. Normalize once on
         -- the assembled block code, leaving its child elements intact.
         let body := if pre && tag == "code" then dropOneTrailingNewline body else body
-        "<" ++ tag' ++ as ++ ">" ++ body ++ "</" ++ tag' ++ ">"
+        "<" ++ tag ++ as ++ ">" ++ body ++ "</" ++ tag ++ ">"
 
-def canonGList (gaps : List String) (base : Nat) (pre inLi : Bool) (acc : String) :
+def canonGList (gaps : List String) (pre inLi : Bool) (acc : String) :
     List Html.Node → String
   | [] => acc
-  | k :: rest => canonGList gaps base pre inLi (acc ++ canonG gaps base pre inLi k) rest
+  | k :: rest => canonGList gaps pre inLi (acc ++ canonG gaps pre inLi k) rest
 
 end
 
 /-- The comparison that decides `match`: no gap is hidden. -/
-def canon (base : Nat) (pre : Bool) (n : Html.Node) : String := canonG [] base pre false n
+def canon (pre : Bool) (n : Html.Node) : String := canonG [] pre false n
 
-def canonList (base : Nat) (pre : Bool) (acc : String) (ns : List Html.Node) : String :=
-  canonGList [] base pre false acc ns
+def canonList (pre : Bool) (acc : String) (ns : List Html.Node) : String :=
+  canonGList [] pre false acc ns
 
 -- ## What an IR gap costs, counted
 --
@@ -536,7 +524,7 @@ def canonList (base : Nat) (pre : Bool) (acc : String) (ns : List Html.Node) : S
 
 /-- One count per gap construct on a tree: thematic breaks, an ordered
 list's start other than 1, a link's title, an image's title, a code
-element's language class, and a heading below the third relative level —
+element's language class, and a heading below the third level —
 each beside the count of the element that carries it, so a construct lost
 with its carrier (a reference link the reader does not resolve drops its
 title *and* its link) is read as the carrier's defect, not the gap's. -/
@@ -556,7 +544,7 @@ structure GapInk where
 
 mutual
 
-def gapInkOne (base : Nat) (g : GapInk) (n : Html.Node) : GapInk :=
+def gapInkOne (g : GapInk) (n : Html.Node) : GapInk :=
   match n with
   | .elem tag attrs kids =>
     let has (a : String) : Bool := attrs.any (·.1 == a)
@@ -573,14 +561,14 @@ def gapInkOne (base : Nat) (g : GapInk) (n : Html.Node) : GapInk :=
     let g := match hLevelTag? tag with
       | some l =>
         let g := { g with headings := g.headings + 1 }
-        if l ≥ base && l - base + 1 > 3 then { g with deep := g.deep + 1 } else g
+        if l > 3 then { g with deep := g.deep + 1 } else g
       | none => g
-    gapInkList base g kids.toList
+    gapInkList g kids.toList
   | _ => g
 
-def gapInkList (base : Nat) (g : GapInk) : List Html.Node → GapInk
+def gapInkList (g : GapInk) : List Html.Node → GapInk
   | [] => g
-  | n :: rest => gapInkList base (gapInkOne base g n) rest
+  | n :: rest => gapInkList (gapInkOne g n) rest
 
 end
 
@@ -649,25 +637,6 @@ def mainList? : List Html.Node → Option (Array Html.Node)
 
 end
 
-mutual
-
-def firstHeadOne? (n : Html.Node) : Option Nat :=
-  match n with
-  | .elem tag _ kids =>
-    match hLevelTag? tag with
-    | some l => some l
-    | none => firstHeadList? kids.toList
-  | _ => none
-
-def firstHeadList? : List Html.Node → Option Nat
-  | [] => none
-  | n :: rest =>
-    match firstHeadOne? n with
-    | some l => some l
-    | none => firstHeadList? rest
-
-end
-
 -- ## The engine under test
 
 /-- The fragment a spec example is compared against: `<main>`'s content with
@@ -683,12 +652,6 @@ def engineFragment (src : String) : Array Html.Node × Array Diag :=
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)
-
-/-- The heading level the engine's sectioning starts at, measured from a
-one-heading probe rather than asserted: the offset the comparison
-normalizes by is then a fact about this build. -/
-def measuredBase : Nat :=
-  (firstHeadList? (engineFragment "# probe\n").1.toList).getD 2
 
 -- ## Verdicts
 
@@ -874,23 +837,20 @@ structure Judged where
   silent : Array String := #[]
   deriving Inhabited
 
-def classify (base : Nat) (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
-  -- The spec's own base is 1 (`#` is `<h1>`); the engine's is measured.
-  -- Subtracting one number from both sides collapsed h1 and h2 to the same
-  -- ordinal and reported every two-level heading document as owed.
+def classify (reviewed : Array (Nat × String)) (ex : Example) : Judged :=
   let wantNs := (hParse ex.html).toList
-  let want := canonList 1 false "" wantNs
+  let want := canonList false "" wantNs
   let (ns, diags) := engineFragment ex.md
-  let got := canonList base false "" ns.toList
+  let got := canonList false "" ns.toList
   let routes := routesOf diags
   let gaps := routes.toList.filter gapSubjects.contains
-  let wantG := canonGList gaps 1 false false "" wantNs
-  let gotG := canonGList gaps base false false "" ns.toList
+  let wantG := canonGList gaps false false "" wantNs
+  let gotG := canonGList gaps false false "" ns.toList
   let refusals := (refusalsOf diags).map fun r => (r, corroborated reviewed ex r)
   let (v, note) := judge want got wantG gotG refusals routes
     ((divergences.find? (·.1 == ex.id)).map (·.2))
   let silent := if !(diags.any (·.kind == .E0390)) then
-      silentGaps (gapInkList 1 {} wantNs) (gapInkList base {} ns.toList) routes
+      silentGaps (gapInkList {} wantNs) (gapInkList {} ns.toList) routes
     else #[]
   { verdict := v, note, want, got, refusals, routes, silent }
 
@@ -972,11 +932,10 @@ the judged values carry what the reports and the reviewed-list check read,
 so nothing reruns the engine. -/
 def classifyAll (exs : Array Example) (reviewed : Array (Nat × String)) :
     Array Row × Array Judged := Id.run do
-  let base := measuredBase
   let mut rows : Array Row := #[]
   let mut js : Array Judged := #[]
   for e in exs do
-    let j := classify base reviewed e
+    let j := classify reviewed e
     rows := rows.push { id := e.id, section_ := e.section_, verdict := j.verdict, note := j.note }
     js := js.push j
   return (rows, js)
@@ -1055,38 +1014,38 @@ def selftest : IO UInt32 := do
   -- The HTML reader and the canonical form. Every declared normalization is
   -- broken once here in both directions: it hides the difference it
   -- declares, and it does not hide the one next to it.
-  let cn (base : Nat) (s : String) : String := canonList base false "" (hParse s).toList
+  let cn (s : String) : String := canonList false "" (hParse s).toList
   let same (name a b : String) : Option String :=
-    if cn 1 a == cn 1 b then none else some s!"{name}: '{cn 1 a}' and '{cn 1 b}' differ"
+    if cn a == cn b then none else some s!"{name}: '{cn a}' and '{cn b}' differ"
   let differ (name a b : String) : Option String :=
-    if cn 1 a != cn 1 b then none else some s!"{name}: '{a}' and '{b}' compare equal"
+    if cn a != cn b then none else some s!"{name}: '{a}' and '{b}' compare equal"
   let cs : List (Option String) :=
-    [check "canon p" (cn 1 "<p>a <em>b</em></p>") "<p>a <em>b</em></p>",
-     check "canon void" (cn 1 "<p>a<br />b</p>") "<p>a<br>b</p>",
-     check "canon entity" (cn 1 "<p>&amp;&#65;</p>") "<p>&A</p>",
-     check "canon void container" (cn 1 "<p>a<br>b</p>") "<p>a<br>b</p>",
+    [check "canon p" (cn "<p>a <em>b</em></p>") "<p>a <em>b</em></p>",
+     check "canon void" (cn "<p>a<br />b</p>") "<p>a<br>b</p>",
+     check "canon entity" (cn "<p>&amp;&#65;</p>") "<p>&A</p>",
+     check "canon void container" (cn "<p>a<br>b</p>") "<p>a<br>b</p>",
      -- document chrome
      check "chrome: sections unwrap"
-       (canonList 1 false "" (unwrapList #[] (hParse "<section><p>a</p></section>").toList).toList)
+       (canonList false "" (unwrapList #[] (hParse "<section><p>a</p></section>").toList).toList)
        "<p>a</p>",
      check "chrome: a wrapper that is not a section stays"
-       (canonList 1 false "" (unwrapList #[] (hParse "<div><p>a</p></div>").toList).toList)
+       (canonList false "" (unwrapList #[] (hParse "<div><p>a</p></div>").toList).toList)
        "<div><p>a</p></div>",
      check "chrome: the fragment is <main>'s content"
-       (canonList 1 false ""
+       (canonList false ""
          ((mainList? (hParse "<header>h</header><main><p>a</p></main>").toList).getD #[]).toList)
        "<p>a</p>",
      check "chrome: <main>'s content is still compared"
-       (toString (canonList 1 false ""
+       (toString (canonList false ""
          ((mainList? (hParse "<header>h</header><main><p>a</p></main>").toList).getD #[]).toList
-         == canonList 1 false ""
+         == canonList false ""
          ((mainList? (hParse "<header>h</header><main><p>b</p></main>").toList).getD #[]).toList))
        "false",
      -- class and id: a language class is content, every other class and id is not
      same "class: a styling class is dropped" "<a class=\"x\" href=\"u\">t</a>" "<a href=\"u\">t</a>",
      same "id: a generated id is dropped" "<h2 id=\"x\">t</h2>" "<h2>t</h2>",
      check "class: a language token is kept, a styling one dropped"
-       (cn 1 "<code class=\"language-x numbered\">c</code>") "<code class=language-x>c</code>",
+       (cn "<code class=\"language-x numbered\">c</code>") "<code class=language-x>c</code>",
      differ "class: a missing language is a difference"
        "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>",
      -- style
@@ -1106,13 +1065,14 @@ def selftest : IO UInt32 := do
      -- inter-element whitespace: collapsed outside <pre>, compared inside it
      same "whitespace: collapsed outside pre" "<p>a\n  <em>b</em></p>" "<p>a <em>b</em></p>",
      differ "whitespace: kept inside pre" "<pre><code>a  b</code></pre>" "<pre><code>a b</code></pre>",
-     -- heading level offset: the absolute tag is normalized, the relative level is not
-     check "heading: offset by the base" (cn 2 "<h2>t</h2>") "<h#1>t</h#1>",
+     -- Heading ranks are content, including their absolute tag.
+     check "heading: the absolute rank is kept" (cn "<h2>t</h2>") "<h2>t</h2>",
+     differ "heading: h1 cannot compare as h2" "<h1>a</h1>" "<h2>a</h2>",
      differ "heading: a relative level still differs" "<h1>a</h1><h2>b</h2>" "<h1>a</h1><h3>b</h3>",
      -- one trailing newline in a code block: exactly one
-     check "pre: one trailing newline dropped" (cn 1 "<pre><code>a\n b\n</code></pre>")
+     check "pre: one trailing newline dropped" (cn "<pre><code>a\n b\n</code></pre>")
        "<pre><code>a\n b</code></pre>",
-     check "pre: an inner blank line is kept" (cn 1 "<pre><code>a\n\n</code></pre>")
+     check "pre: an inner blank line is kept" (cn "<pre><code>a\n\n</code></pre>")
        "<pre><code>a\n</code></pre>",
      differ "pre: a second trailing newline still differs"
        "<pre><code>a\n\n</code></pre>" "<pre><code>a\n</code></pre>",
@@ -1124,7 +1084,7 @@ def selftest : IO UInt32 := do
   -- Listing tokens may split text anywhere, including immediately after a
   -- newline. Only the code block's final newline is normalized, once.
   let code (kids : Array Html.Node) : String :=
-    canon 1 false (.elem "pre" #[] #[.elem "code" #[] kids])
+    canon false (.elem "pre" #[] #[.elem "code" #[] kids])
   for (raw, want) in [("", ""), ("\n", ""), ("<\n >\n", "<\n >"),
       ("aaa\n    ```\n", "aaa\n    ```"), ("α\t\nβ\n\n", "α\t\nβ\n"),
       ("a\n b", "a\n b"), ("a\n\nb\n", "a\n\nb")] do
@@ -1151,7 +1111,7 @@ def selftest : IO UInt32 := do
       [("inline code", "<p><code>a\n</code></p>", "<p><code>a\n</code></p>"),
        ("textarea", "<textarea>a\n</textarea>", "<textarea>a\n</textarea>")] do
     if let some m := check s!"{name}: final newline is not the code-block normalization"
-        (cn 1 source) want then bad := bad.push m
+        (cn source) want then bad := bad.push m
   -- The attribute table, broken row by row in both directions: each declared
   -- drop hides its own attribute and neither the text nor a compared
   -- attribute beside it; each attribute that decides whether content reaches
@@ -1166,7 +1126,7 @@ def selftest : IO UInt32 := do
         differ s!"{a}: an attribute beside it is still compared"
           s!"<a {a}=\"{v}\" href=\"u\">t</a>" s!"<a {a}=\"{v}\" href=\"w\">t</a>"] do
       if let some m := r then bad := bad.push m
-  let frag (s : String) : String := canonList 1 false "" (fragmentOf (hParse s)).toList
+  let frag (s : String) : String := canonList false "" (fragmentOf (hParse s)).toList
   unless frag "<main><section id=\"s\"><p>t</p></section></main>" == "<p>t</p>" do
     bad := bad.push "chrome: a section carrying only a declared drop was not unwrapped"
   for a in readerAttrs do
@@ -1181,13 +1141,13 @@ def selftest : IO UInt32 := do
     if frag s!"<div {a}=\"x\"><main><p>t</p></main></div>" == frag "<div><main><p>t</p></main></div>" then
       bad := bad.push s!"{a}: an element above main carrying it was looked through"
   -- A stylesheet or a script node is compared as what it prints, never dropped.
-  if canonList 1 false "" [Html.Node.style "p { color: red }"] == "" then
+  if canonList false "" [Html.Node.style "p { color: red }"] == "" then
     bad := bad.push "a style node was dropped from the comparison"
-  if canonList 1 false "" [Html.Node.script #[] "go()"] == "" then
+  if canonList false "" [Html.Node.script #[] "go()"] == "" then
     bad := bad.push "a script node was dropped from the comparison"
   -- The gap normalizations, used only to attribute an owed case: each hides
   -- its own gap's cost and nothing else.
-  let cg (gaps : List String) (s : String) : String := canonGList gaps 1 false false "" (hParse s).toList
+  let cg (gaps : List String) (s : String) : String := canonGList gaps false false "" (hParse s).toList
   let gs : List (Option String) :=
     [check "gap hr" (cg ["md:thematic-break"] "<p>a</p><hr /><p>b</p>") (cg [] "<p>a</p><p>b</p>"),
      check "gap start" (cg ["md:list-start"] "<ol start=\"3\"><li>a</li></ol>")
@@ -1195,20 +1155,33 @@ def selftest : IO UInt32 := do
      check "gap loose" (cg ["md:loose-list"] "<ul><li><p>a</p></li></ul>") (cg [] "<ul><li>a</li></ul>"),
      check "gap link title" (cg ["md:link-title"] "<a href=\"u\" title=\"t\">x</a>")
        (cg [] "<a href=\"u\">x</a>"),
-     check "gap depth" (cg ["md:heading-depth"] "<h4>x</h4>") (cg [] "<h3>x</h3>"),
+     check "gap depth cannot hide a supported rank"
+       (cg ["md:heading-depth"] "<h4>x</h4>") (cg [] "<h4>x</h4>"),
      check "gap code info" (cg ["md:code-info"] "<pre><code class=\"language-x\">c</code></pre>")
        (cg [] "<pre><code>c</code></pre>")]
   for c in gs do
     if let some m := c then bad := bad.push m
+  for a in [1:7] do
+    for b in [1:7] do
+      let left := cg ["md:heading-depth"] s!"<h{a}>x</h{a}>"
+      let right := cg [] s!"<h{b}>x</h{b}>"
+      unless (left == right) == (a == b) do
+        bad := bad.push s!"heading: ranks {a} and {b} were not compared exactly"
+    let marker := String.ofList (List.replicate a '#')
+    let j := classify #[]
+      { id := 0, section_ := "ATX headings",
+        md := marker ++ " Rank\n", html := s!"<h{a}>Rank</h{a}>\n" }
+    unless j.verdict == .match_ && j.routes.isEmpty do
+      bad := bad.push s!"heading: supported rank {a} was not an exact match without a route"
   if cg ["md:link-title"] "<a href=\"u\">x</a>" == cg ["md:link-title"] "<a href=\"v\">x</a>" then
     bad := bad.push "gap link title: it hid the destination too"
   if cg ["md:thematic-break"] "<p>a</p>" == cg ["md:thematic-break"] "<p>b</p>" then
     bad := bad.push "gap hr: it hid a paragraph's text too"
   -- Silence: a gap construct dropped with no route naming it is a fault,
   -- and naming it is exactly what clears it — each rule broken once.
-  let ink (base : Nat) (s : String) : GapInk := gapInkList base {} (hParse s).toList
+  let ink (s : String) : GapInk := gapInkList {} (hParse s).toList
   let sg (want got : String) (routes : Array String) : Array String :=
-    silentGaps (ink 1 want) (ink 2 got) routes
+    silentGaps (ink want) (ink got) routes
   let ss : List (Option String) :=
     [check "silence: a dropped rule, unnamed"
        (toString (sg "<p>a</p><hr /><p>b</p>" "<p>a</p><p>b</p>" #[]).toList)
@@ -1232,9 +1205,9 @@ def selftest : IO UInt32 := do
        (toString (sg "<pre><code class=\"language-x\">c</code></pre>" "<pre><code>c</code></pre>"
          #[]).toList) "[md:code-info]",
      check "silence: a fourth-level heading set at the third, unnamed"
-       (toString (sg "<h4>x</h4>" "<h4>x</h4>" #[]).toList) "[md:heading-depth]",
+       (toString (sg "<h4>x</h4>" "<h3>x</h3>" #[]).toList) "[md:heading-depth]",
      check "silence: a fourth-level heading the engine sets as its own fourth is not a loss"
-       (toString (sg "<h4>x</h4>" "<h5>x</h5>" #[]).toList) "[]"]
+       (toString (sg "<h4>x</h4>" "<h4>x</h4>" #[]).toList) "[]"]
   for c in ss do
     if let some m := c then bad := bad.push m
   -- The tier rows, in the scoreboard's own format: sorted, unique, two per
@@ -1326,27 +1299,27 @@ def selftest : IO UInt32 := do
     bad := bad.push "corroboration: another case's reviewed row corroborated this one"
   if corroborated #[(9, "md:indented-code")] (ex "x\n" "") ⟨"md:lazy-continuation", 1, 1⟩ then
     bad := bad.push "corroboration: a reviewed row for one class corroborated another"
-  let commentCase := classify measuredBase #[]
+  let commentCase := classify #[]
     (ex "Amber<!-- hidden -->Cedar\n" "<p>Amber<!-- hidden -->Cedar</p>\n")
   unless commentCase.verdict == .match_ && commentCase.refusals.isEmpty do
     bad := bad.push "typed HTML: a comment's invisible content still refuses a matching page"
-  let commentBoundaryCase := classify measuredBase #[]
+  let commentBoundaryCase := classify #[]
     (ex "Amber<!-- hidden --!>Willow<!-- tail -->Cedar\n"
       "<p>Amber<!-- hidden --!>Willow<!-- tail -->Cedar</p>\n")
   unless commentBoundaryCase.verdict == .rejected
       && !commentBoundaryCase.refusals.isEmpty do
     bad := bad.push "typed HTML: an alternate comment boundary hid a corroborated refusal"
-  let hiddenCase := classify measuredBase #[]
+  let hiddenCase := classify #[]
     (ex "<details hidden>\nVisible\n</details>\n" "<details hidden>\nVisible\n</details>\n")
   unless hiddenCase.verdict == .rejected && !hiddenCase.refusals.isEmpty do
     bad := bad.push "typed HTML: an unsupported visibility attribute lost its corroborated refusal"
   let disclosureMd := "<details>\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
-  let disclosureCase := classify measuredBase #[]
+  let disclosureCase := classify #[]
     (ex disclosureMd "<details>\n<summary>Amber</summary>\n<p>Cedar</p>\n</details>\n")
   unless disclosureCase.verdict == .owed && disclosureCase.refusals.isEmpty
       && disclosureCase.routes.contains "md:disclosure" do
     bad := bad.push "typed HTML: expanded disclosure content was certified as a CommonMark match"
-  let expandedCase := classify measuredBase #[]
+  let expandedCase := classify #[]
     (ex disclosureMd "<p><strong>Amber</strong></p><p>Cedar</p>")
   unless expandedCase.verdict == .owed && expandedCase.note == "blocked-by:md:disclosure" do
     bad := bad.push "typed HTML: agreeing expanded trees hid the disclosure's declared loss"
@@ -1682,7 +1655,7 @@ def main (argv : List String) : IO UInt32 := do
       | .ok v => pure v
       | .error e => return ← die 1 e
     let some ex := exs.find? (·.id == id) | return ← die 2 s!"commonmark: no case {id}"
-    explainOne ex (classify measuredBase reviewed ex)
+    explainOne ex (classify reviewed ex)
     let (_, ds) := engineFragment ex.md
     for d in ds do
       IO.println s!"  {d.code} {d.message}{match d.span with

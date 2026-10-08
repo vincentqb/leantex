@@ -137,10 +137,10 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
   return out
 
 /-- The heading marker a section level takes: as many `#` as the shared
-rank (`Ir.headingRank`, which carries the sourcing and the cap), so the
+rank (`Ir.headingRank`, whose type bounds it to six), so the
 marker and the HTML tag cannot drift; `heading_renderings_agree` in Tests
 states the agreement over every level. -/
-public def headingMarker (level : Nat) : String :=
+public def headingMarker (level : Ir.HeadingLevel) : String :=
   String.ofList (List.replicate (Ir.headingRank level) '#')
 
 mutual
@@ -684,15 +684,15 @@ mutual
 /-- `headingLevels` only accumulates: what its seed carries, its result
 carries. This is how the body's own level-0 heading is seen by the
 preamble's suppression check, whatever follows it. -/
-private theorem headingLevelList_mem (x : Nat) :
-    (l : List Block) → (out : Array Nat) → x ∈ out → x ∈ Ir.headingLevelList out l
+private theorem headingLevelList_mem (x : Ir.HeadingLevel) :
+    (l : List Block) → (out : Array Ir.HeadingLevel) → x ∈ out → x ∈ Ir.headingLevelList out l
   | [], _, h => h
   | b :: rest, out, h =>
     headingLevelList_mem x rest (Ir.headingLevelOne out b)
       (headingLevelOne_mem x b out h)
 
-private theorem headingLevelOne_mem (x : Nat) :
-    (b : Block) → (out : Array Nat) → x ∈ out → x ∈ Ir.headingLevelOne out b
+private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
+    (b : Block) → (out : Array Ir.HeadingLevel) → x ∈ out → x ∈ Ir.headingLevelOne out b
   | .section _ _ _ _, _, h => Array.mem_push_of_mem _ h
   | .para _, _, h => h
   | .equation _ _, _, h => h
@@ -727,16 +727,16 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .table _ _ _ _ _ _, _, h => h
   | .float _ _ _ body _, out, h => headingLevelList_mem x body.toList out h
 
-private theorem headingLevelItems_mem (x : Nat) :
-    (items : List (Array Block)) → (out : Array Nat) → x ∈ out →
+private theorem headingLevelItems_mem (x : Ir.HeadingLevel) :
+    (items : List (Array Block)) → (out : Array Ir.HeadingLevel) → x ∈ out →
       x ∈ Ir.headingLevelItems out items
   | [], _, h => h
   | item :: rest, out, h =>
     headingLevelItems_mem x rest (Ir.headingLevelList out item.toList)
       (headingLevelList_mem x item.toList out h)
 
-private theorem headingLevelColumns_mem (x : Nat) :
-    (cols : List (BoxWidth × Array Block)) → (out : Array Nat) → x ∈ out →
+private theorem headingLevelColumns_mem (x : Ir.HeadingLevel) :
+    (cols : List (BoxWidth × Array Block)) → (out : Array Ir.HeadingLevel) → x ∈ out →
       x ∈ Ir.headingLevelColumns out cols
   | [], _, h => h
   | (_, body) :: rest, out, h =>
@@ -777,11 +777,11 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (htn : ∀ c ∈ (inlineText ttl).toList, c ≠ '\n')
     (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
     ∃ q, emit doc = "# " ++ inlineText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
-  have h0 : (0 : Nat) ∈ Ir.headingLevels (Ir.keepFor "md" doc.body) := by
-    show (0 : Nat) ∈ Ir.headingLevelList #[] (Ir.keepFor "md" doc.body).toList
+  have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (Ir.keepFor "md" doc.body) := by
+    show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (Ir.keepFor "md" doc.body).toList
     rw [hbody]
     exact headingLevelList_mem 0 rest _ (by
-      show (0 : Nat) ∈ (#[] : Array Nat).push 0
+      show (0 : Ir.HeadingLevel) ∈ (#[] : Array Ir.HeadingLevel).push 0
       simp)
   have hbt : (Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0 = true :=
     Array.contains_eq_true_of_mem h0
@@ -790,7 +790,7 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
       blocksInto doc.info.locale ("> " ++ s ++ "\n\n") ""
         ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) rest := by
     rw [hbody]
-    exact rfl
+    simp [blocksInto, blockInto, headingMarker, Ir.headingRank]
   obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ s ++ "\n\n") ""
     ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) rest
   obtain ⟨q, hq⟩ := tighten_head (inlineText ttl) s w htn hsn

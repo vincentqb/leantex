@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Diag
+public import LeanTex.Core.Heading
 import Std.Data.HashMap
 
 /-! # The markdown surface: source → md AST
@@ -60,7 +61,7 @@ public instance : Inhabited Inl := ⟨.soft {}⟩
 /-- A block node. A list holds one `Array Blk` per item. -/
 public inductive Blk where
   | para (body : Array Inl) (pos : Pos)
-  | heading (level : Nat) (body : Array Inl) (pos : Pos)
+  | heading (level : Ir.HeadingLevel) (body : Array Inl) (pos : Pos)
   | code (info : String) (text : String) (pos : Pos)
   | rule (pos : Pos)
   | quote (body : Array Blk) (pos : Pos)
@@ -160,7 +161,7 @@ def rstrip (s : String) : String := s.trimAsciiEnd.toString
 
 /-- `#`×1–6 then a space or end of line: the level and the index past the
 marker, or `none`. -/
-def atxAt (cs : Array Char) (i : Nat) : Option (Nat × Nat) := Id.run do
+def atxAt (cs : Array Char) (i : Nat) : Option (Ir.HeadingLevel × Nat) := Id.run do
   let mut j := i
   let mut n := 0
   for _ in [0:7] do
@@ -168,10 +169,10 @@ def atxAt (cs : Array Char) (i : Nat) : Option (Nat × Nat) := Id.run do
       if cs[j] == '#' && n < 7 then
         n := n + 1
         j := j + 1
-  if n == 0 || n > 6 then return none
+  let some level := Ir.HeadingLevel.ofRank? n | return none
   match cs[j]? with
-  | none => return some (n, j)
-  | some c => if isSpaceOrTab c then return some (n, j + 1) else return none
+  | none => return some (level, j)
+  | some c => if isSpaceOrTab c then return some (level, j + 1) else return none
 
 /-- Three or more of one of `* - _`, nothing else but spaces and tabs. -/
 def thematicAt (cs : Array Char) (i : Nat) : Bool := Id.run do
@@ -249,14 +250,14 @@ def orderedAt (cs : Array Char) (i : Nat) : Option (Nat × Char × Nat) := Id.ru
 or tabs (§4.3). Returns the level. Spaces *inside* the run are not an
 underline: `Foo` over `- - -` is a paragraph and a thematic break, and
 accepting them set it as a heading. -/
-def setextAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+def setextAt (cs : Array Char) (i : Nat) : Option Ir.HeadingLevel := Id.run do
   let some c0 := cs[i]? | return none
   unless c0 == '=' || c0 == '-' do return none
   let mut j := i
   for _ in [0:cs.size + 1] do
     if cs[j]? == some c0 then j := j + 1 else break
   unless isBlankFrom cs j do return none
-  return some (if c0 == '=' then 1 else 2)
+  return some (if c0 == '=' then .h1 else .h2)
 
 -- ## Raw HTML, recognized rather than guessed
 --

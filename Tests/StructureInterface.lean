@@ -41,7 +41,7 @@ example : Repr Struct.Tree := inferInstance
 example : Ir.Doc → Struct.Tree := Struct.ofDoc
 example : Struct.Tree → String := Struct.Tree.text
 example : Struct.Tree → Array (Nat × Struct.Leaf) := Struct.Tree.leaves
-example : Struct.Tree → Array Nat := Struct.Tree.headings
+example : Struct.Tree → Array Ir.HeadingLevel := Struct.Tree.headings
 example : Struct.Tree → Array (Option String × Ir.Alt) := Struct.Tree.alts
 
 example (doc : Ir.Doc) : (Struct.ofDoc doc).text = Ir.blocksText doc.body :=

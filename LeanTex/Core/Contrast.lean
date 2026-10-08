@@ -670,7 +670,7 @@ size, which `sectionSize` does not serve. Judging at the size the page
 ships is what makes the large-scale call (WCAG 2.2 glossary: ≥ 18pt, or
 bold ≥ 14pt) the page's own: a re-spelled absolute here once judged a
 phantom 14 pt bold while a 9 pt base set its sections at 12.96 pt. -/
-private def headingCx (base : Sp) : Nat → UseCx
+private def headingCx (base : Sp) : Ir.HeadingLevel → UseCx
   | 0 => { base, size := scaleStep base "LARGE"
            bold := true }
   | l => { base, size := Layout.sectionSize { fontSize := base } l, bold := true }
@@ -684,10 +684,10 @@ derivation cannot drift back: the old 14 pt / 12 pt absolutes passed a
 14 pt bold, which is — the judge passing text the page fails, the exact
 defect class it exists to catch. -/
 private theorem contrast_judges_what_layout_sets (base : Sp) :
-    ∀ l : Nat, 0 < l →
+    ∀ l : Ir.HeadingLevel, l ≠ .title →
       (headingCx base l).size = Layout.sectionSize { fontSize := base } l
-  | _ + 1, _ => rfl
-  | 0, h => absurd h (Nat.lt_irrefl 0)
+  | .title, h => absurd rfl h
+  | .h1, _ | .h2, _ | .h3, _ | .h4, _ | .h5, _ | .h6, _ => rfl
 
 mutual
 

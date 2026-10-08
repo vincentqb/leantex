@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Lex
+public import LeanTex.Core.Heading
 
 namespace LeanTex.Core.Parse
 
@@ -17,6 +18,46 @@ public inductive Raw where
   | env (name : String) (body : Array Raw) (pos : Pos)
   | verb (env : String) (s : String) (pos : Pos)
   deriving Repr, BEq, Inhabited
+
+/-- A native heading bridge for surface readers. The space cannot occur in
+a control-word token, so source text cannot forge this internal name.
+Only fixed names cross the bridge; title content remains grouped raws. -/
+public def headingControl : Ir.HeadingLevel → String
+  | .title => "heading title"
+  | .h1 => "heading 1"
+  | .h2 => "heading 2"
+  | .h3 => "heading 3"
+  | .h4 => "heading 4"
+  | .h5 => "heading 5"
+  | .h6 => "heading 6"
+
+/-- Decode only the finite native heading vocabulary. -/
+public def headingControl? : String → Option Ir.HeadingLevel
+  | "heading title" => some .title
+  | "heading 1" => some .h1
+  | "heading 2" => some .h2
+  | "heading 3" => some .h3
+  | "heading 4" => some .h4
+  | "heading 5" => some .h5
+  | "heading 6" => some .h6
+  | _ => none
+
+/-- A surface reader's heading is always unnumbered. No text is reparsed:
+the group holds exactly the inline raws the reader supplied. -/
+public def headingRaws (level : Ir.HeadingLevel) (body : Array Raw) (p : Pos) :
+    Array Raw :=
+  #[.ctrl (headingControl level) p, .word "*" p, .group body p]
+
+/-- The bridge retains every typed level, without a depth fallback. -/
+public theorem headingControl_exact (level : Ir.HeadingLevel) :
+    headingControl? (headingControl level) = some level := by
+  cases level <;> rfl
+
+/-- The native bridge keeps the title group and its source position exact. -/
+public theorem headingRaws_contract (level : Ir.HeadingLevel)
+    (body : Array Raw) (p : Pos) :
+    headingRaws level body p =
+      #[.ctrl (headingControl level) p, .word "*" p, .group body p] := by rfl
 
 /-- Macro ancestry is present even when empty on a positioned raw. A space
 has no position and leaves the enclosing consumer's ancestry unchanged. -/

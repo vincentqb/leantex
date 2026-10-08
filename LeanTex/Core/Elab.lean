@@ -3588,6 +3588,17 @@ private def sectionLevel : String → Option Nat
   | "subsubsection" => some 3
   | _ => none
 
+/-- Block heading identity is separate from LaTeX's section counters.
+The native reader bridge carries body h1–h6 without changing the
+run-in meaning of `\paragraph` and `\subparagraph`. -/
+private def blockHeading? : String → Option Ir.HeadingLevel
+  | "section" => some .h2
+  | "subsection" => some .h3
+  | "subsubsection" => some .h4
+  | n => Parse.headingControl? n
+
+seal blockHeading?
+
 /-- `\thesection`/`\thesubsection`/`\thesubsubsection` to its level. -/
 private def theCounterLevel? (n : String) : Option Nat :=
   if n.startsWith "the" then sectionLevel (n.drop 3).toString else none
@@ -6524,7 +6535,7 @@ private def bodyIsBlockOne : Raw → Bool
       -- where the define door and the counter arm stand.
       || n == "define" || counterCtrl n
       || (Compat.lengthRestoreKeys? n).isSome
-      || ["section", "subsection", "subsubsection"].contains n
+      || (blockHeading? n).isSome
   | .par _ => true
   | .verb env _ _ => env != "verb"
   | .math display _ _ => display
@@ -10979,7 +10990,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
       linkWrapperTakesBlocks n raws i)
     || (n != "note" &&
-      ((sectionLevel n).isSome
+      ((blockHeading? n).isSome
         || declCtrl.contains n || runningCtrl.contains n || n == "define"
         || counterCtrl n
         || (match lookupUser ctx' sourceName with
@@ -12318,7 +12329,7 @@ when it is empty — '{}'")
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
-      blocks := blocks.push (.section level starred
+      blocks := blocks.push (.section ((blockHeading? n).getD .h2) starred
         (← sectionNumber ctx level starred) (← elabInlines ctx title))
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
@@ -12904,7 +12915,7 @@ unseal withBlockDecls wrapDeclAlign
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
-unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
+unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
 unseal parFollows displayAtBlock
@@ -14020,14 +14031,18 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
   -- format are declared once, upstream, instead of leaking into every use
   -- site. Positional, like every declaration: the `\define` stands first.
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
-    -- The per-level list spellings are elided from the help (a family, not
-    -- eleven names) to keep it inside the message-length lint.
-    let named := styleableElements.filter fun e =>
+    -- Compact the heading and list families without omitting their valid
+    -- suffixes; the empty suffix retains the base list spelling.
+    let named := (styleableElements.filter fun e =>
       !(e.startsWith "itemize" && e != "itemize") &&
-        !(e.startsWith "enumerate" && e != "enumerate")
+        !(e.startsWith "enumerate" && e != "enumerate") &&
+        e != "heading5" && e != "heading6").map fun e =>
+          if e == "heading1" then "heading{1,5,6}"
+          else if e == "itemize" then "itemize{,2..4}"
+          else if e == "enumerate" then "enumerate{,2..4}"
+          else e
     diag ctx .E0328 s!"'{element}' is not a styleable element or a '\\define'd name" pos
-      (help := s!"elements: {String.intercalate ", " named}; \
-list levels: itemize2..4, enumerate2..4")
+      (help := s!"elements: {String.intercalate ", " named}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
   -- The two value readers, over any source text: an entry's own value, or

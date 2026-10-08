@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Diag
+public import LeanTex.Core.Heading
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Decl
 public import LeanTex.Core.Image
@@ -5284,7 +5285,7 @@ public inductive Block where
   as its own structural piece (classes.dtx's `\@seccntformat`: number then
   `\quad`) and the HTML anchor still derives from the title text alone —
   numbering a section must not move its anchor. -/
-  | section (level : Nat) (starred : Bool) (number : Option String) (title : Array Inline)
+  | section (level : HeadingLevel) (starred : Bool) (number : Option String) (title : Array Inline)
   | list (ordered : Bool) (items : Array (Array Block))
   | center (body : Array Block)
   /-- Unjustified setting for a scope, hanging from the side it declares.
@@ -7002,7 +7003,8 @@ both backends). Beyond this list, a
 `\define` stands): the role's rhythm rides `before`/`after` on the page,
 and the whole style addresses the `u-<name>` class hook in HTML. -/
 public def styleableElements : List String :=
-  ["section", "subsection", "subsubsection", "abstract", "itemize", "enumerate",
+  ["section", "subsection", "subsubsection", "heading1", "heading5", "heading6",
+   "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
    "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo",
    "link", "url", "cite"]
@@ -11620,13 +11622,13 @@ outline, the fact the outline diagnostics and the markdown preamble read.
 A frame's body is walked (a deck's title heading stands inside the title
 frame); a note is a side channel and never ships a heading. The
 accumulator threads through, as every walk here does. -/
-@[expose] public def headingLevels (xs : Array Block) : Array Nat := headingLevelList #[] xs.toList
+@[expose] public def headingLevels (xs : Array Block) : Array HeadingLevel := headingLevelList #[] xs.toList
 
-@[expose] public def headingLevelList (out : Array Nat) : List Block → Array Nat
+@[expose] public def headingLevelList (out : Array HeadingLevel) : List Block → Array HeadingLevel
   | [] => out
   | b :: rest => headingLevelList (headingLevelOne out b) rest
 
-@[expose] public def headingLevelOne (out : Array Nat) : Block → Array Nat
+@[expose] public def headingLevelOne (out : Array HeadingLevel) : Block → Array HeadingLevel
   | .section level _ _ _ => out.push level
   | .para _ => out
   | .equation _ _ => out
@@ -11663,11 +11665,11 @@ accumulator threads through, as every walk here does. -/
   -- The References heading is its own .section block; the list holds none.
   | .bibliography _ _ _ => out
 
-@[expose] public def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
+@[expose] public def headingLevelItems (out : Array HeadingLevel) : List (Array Block) → Array HeadingLevel
   | [] => out
   | item :: rest => headingLevelItems (headingLevelList out item.toList) rest
 
-@[expose] public def headingLevelColumns (out : Array Nat) : List (BoxWidth × Array Block) → Array Nat
+@[expose] public def headingLevelColumns (out : Array HeadingLevel) : List (BoxWidth × Array Block) → Array HeadingLevel
   | [] => out
   | (_, body) :: rest => headingLevelColumns (headingLevelList out body.toList) rest
 
@@ -11812,31 +11814,22 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
 end
 
 /-- A heading level in the author's own vocabulary. -/
-private def levelName : Nat → String
-  | 0 => "the title"
-  | 1 => "'\\section'"
-  | 2 => "'\\subsection'"
-  | _ => "'\\subsubsection'"
+private def levelName : HeadingLevel → String
+  | .title => "the title"
+  | .h1 => "a rank-one heading"
+  | .h2 => "a rank-two heading"
+  | .h3 => "a rank-three heading"
+  | .h4 => "a rank-four heading"
+  | .h5 => "a rank-five heading"
+  | .h6 => "a rank-six heading"
 
 /-- The broken-outline diagnostic W0320 fires: named so the completeness
 theorem below can point at the pushed value's code. -/
-private def outlineGapDiag (p l : Nat) : Diag :=
+private def outlineGapDiag (p l : HeadingLevel) : Diag :=
   Diag.of .W0320
     s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
-    (help := some "descend one level at a time — here \\subsection \
-(HTML §4.3.11, WCAG G141); \
-a screen reader reads the gap as a broken outline")
-
-/-- The heading rank a section level takes, the one outline fact every
-text backend projects: level 0 is the document title, rank 1 — `h1` is
-"for a top-level section" (HTML §4.3.6), `#` its markdown twin — and each
-deeper level takes the next rank, capped at 4, the deepest level the
-elaborator produces plus one. An IR outline without gaps (`outlineWalk`'s
-judgement, below) therefore ships as a page outline without gaps (HTML
-§4.3.11's conformance rule); `heading_renderings_agree` in Tests states
-each backend's projection. -/
-public def headingRank (level : Nat) : Nat :=
-  min (level + 1) 4
+    (help := some "descend one rank at a time: 1, 2, 3, 4, 5, 6; \
+add the missing heading or promote the deeper one (HTML §4.3.11, WCAG G141)")
 
 private def outlineTitleDiag : Diag :=
   Diag.of .W0321
@@ -11850,11 +11843,11 @@ misplaced title — with one latch per code, so each fires once per
 document, in encounter order. Recursion over the `List` with a threaded
 accumulator, so `headings_no_skip_judged` can reason by induction where
 the imperative loop this replaces could not. -/
-private def outlineWalk (prev : Nat) (gapNamed titleNamed : Bool)
-    (out : Array Diag) : List Nat → Array Diag
+private def outlineWalk (prev : HeadingLevel) (gapNamed titleNamed : Bool)
+    (out : Array Diag) : List HeadingLevel → Array Diag
   | [] => out
   | l :: rest =>
-    if l > prev + 1 && !gapNamed then
+    if headingRank l > headingRank prev + 1 && !gapNamed then
       if l == 0 && !titleNamed then
         outlineWalk l true true
           ((out.push (outlineGapDiag prev l)).push outlineTitleDiag) rest
@@ -11868,9 +11861,9 @@ private def outlineWalk (prev : Nat) (gapNamed titleNamed : Bool)
 
 /-- Somewhere after a heading at `prev`, a heading exceeds its lead by
 more than one level: the broken-outline fact `outlineWalk` judges. -/
-private def outlineSkips (prev : Nat) : List Nat → Bool
+private def outlineSkips (prev : HeadingLevel) : List HeadingLevel → Bool
   | [] => false
-  | l :: rest => l > prev + 1 || outlineSkips l rest
+  | l :: rest => headingRank l > headingRank prev + 1 || outlineSkips l rest
 
 /-- The document's outline skips a level: the fact W0320 exists to name
 (HTML §4.3.11; WCAG technique G141). -/
@@ -11901,7 +11894,7 @@ public def outlineDiags (doc : Doc) : Array Diag :=
 
 /-- A diagnostic already collected survives the rest of the walk. -/
 private theorem outlineWalk_mem (d : Diag) :
-    ∀ (ls : List Nat) (prev : Nat) (gN tN : Bool) (out : Array Diag),
+    ∀ (ls : List HeadingLevel) (prev : HeadingLevel) (gN tN : Bool) (out : Array Diag),
       d ∈ out → d ∈ outlineWalk prev gN tN out ls
   | [], _, _, _, _, h => h
   | _ :: rest, _, _, _, _, h => by
@@ -11914,12 +11907,12 @@ private theorem outlineWalk_mem (d : Diag) :
         | exact Array.mem_push.mpr (Or.inl (Array.mem_push.mpr (Or.inl h))))
 
 private theorem outlineWalk_finds :
-    ∀ (ls : List Nat) (prev : Nat) (tN : Bool) (out : Array Diag),
+    ∀ (ls : List HeadingLevel) (prev : HeadingLevel) (tN : Bool) (out : Array Diag),
       outlineSkips prev ls = true →
       ∃ d ∈ outlineWalk prev false tN out ls, d.code = "W0320"
   | l :: rest, prev, tN, out, hskip => by
     unfold outlineWalk
-    by_cases hgap : l > prev + 1
+    by_cases hgap : headingRank l > headingRank prev + 1
     · refine ⟨outlineGapDiag prev l, ?_, by
         unfold outlineGapDiag
         rw [Diag.of_code_exact]

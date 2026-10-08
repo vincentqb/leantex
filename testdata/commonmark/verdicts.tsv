@@ -66,7 +66,7 @@
 59	Thematic breaks	match
 60	Thematic breaks	owed	blocked-by:md:thematic-break
 61	Thematic breaks	owed	blocked-by:md:thematic-break
-62	ATX headings	owed	blocked-by:md:heading-depth
+62	ATX headings	match
 63	ATX headings	match
 64	ATX headings	match
 65	ATX headings	match
@@ -76,7 +76,7 @@
 69	ATX headings	rejected	refused:md:indented-code
 70	ATX headings	match
 71	ATX headings	match
-72	ATX headings	owed	blocked-by:md:heading-depth
+72	ATX headings	match
 73	ATX headings	match
 74	ATX headings	match
 75	ATX headings	match

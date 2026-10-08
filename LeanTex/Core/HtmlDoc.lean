@@ -736,8 +736,10 @@ each depth — the depth-qualified selectors match the level defaults'
 specificity and, standing later in the sheet, win. -/
 public def styleRules (doc : Doc) : String × Array Diag :=
   let sel : String → Option String
-    | "titlepage" => some "h1"
+    | "titlepage" => some "h1:not(.body-heading)"
+    | "heading1" => some "h1.body-heading"
     | "section" => some "h2" | "subsection" => some "h3" | "subsubsection" => some "h4"
+    | "heading5" => some "h5" | "heading6" => some "h6"
     | "itemize" => some "ul" | "enumerate" => some "ol"
     | "itemize2" => some "ul ul" | "itemize3" => some "ul ul ul"
     | "itemize4" => some "ul ul ul ul"
@@ -923,7 +925,8 @@ here where the PDF walk gives that element its own larger gap. -/
 public def blockGapKinds : List (String × String) :=
   [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("dl", "peer"), ("pre", "peer"),
    ("table.booktabs", "peer"),
-   ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading")]
+   ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading"),
+   ("h5", "heading"), ("h6", "heading")]
 
 /-- The realized gap equals the emitted gap, in both formatting contexts:
 at a boundary whose upper side declares no margin, collapsing (block flow
@@ -1108,7 +1111,7 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
 frame title sets flush in its header band, which owns the title's space. -/
 private def gapResets : List GapRule :=
   [.reset "p, ul, ol, li, dl, dd, pre, blockquote" "0",
-   .reset "h1, h2, h3, h4" s!"0 0 {quantaRem (gapK "peer")}",
+   .reset "h1, h2, h3, h4, h5, h6" s!"0 0 {quantaRem (gapK "peer")}",
    .reset "section.slide > header h2" "0",
    .reset "figure.float" "0 auto"]
 
@@ -1155,7 +1158,7 @@ private def gapAfterLists : List GapRule :=
     -- skip when the frame has no spare space.
     .boundary "section.slide > .frame-body-start"
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
-    .boundary ":is(h1, h2, h3, h4) + *" "0"]
+    .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
@@ -1224,7 +1227,7 @@ margin on an element it spaces is the text's to show, and
 `htmlRhythmChecks` reads it off every golden page's sheet. -/
 public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
     ((blockGapRules l size tokens).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
-    (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+    (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists).all
       (fun r => !r.isReset) = true := by
     simp only [List.all_append, thmRules_noReset, listRules_noReset, Bool.and_true,
@@ -1234,7 +1237,7 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
     exact hall
-  · have hlast : gapAfterLists.getLast? = some (.boundary ":is(h1, h2, h3, h4) + *" "0") := by
+  · have hlast : gapAfterLists.getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
       decide
     simp only [blockGapRules, List.getLast?_append, hlast, Option.some_or]
 
@@ -4485,7 +4488,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- from it. Margins are not declared here or on any block element: the
   -- resets and every boundary's one emitter are `blockGapRules`, all at
   -- zero specificity, where an element rule here would outrank them.
-  "h1, h2, h3, h4 {\n" ++
+  "h1, h2, h3, h4, h5, h6 {\n" ++
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
   s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
@@ -4494,6 +4497,9 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
   s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
   s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
+  -- The deeper ranks share the layout's body-size floor. `em` follows
+  -- the local body scale, including a deck's stage-sized text.
+  s!"h4, h5, h6 \{ font-size: {scaleSize "normalsize" "em"}; }\n" ++
   -- hyphens follows the declared language: the browser's dictionaries on
   -- the same lang= tags the engine's patterns read — one declaration, two
   -- conforming hyphenators (the agreement is about tags, never breaks).
@@ -5646,7 +5652,7 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
 (`Ir.headingRank`, which carries the sourcing), so the tag and the
 markdown marker cannot drift; `heading_renderings_agree` in Tests states
 the agreement over every level. -/
-public def headingTag (level : Nat) : String :=
+public def headingTag (level : Ir.HeadingLevel) : String :=
   s!"h{Ir.headingRank level}"
 
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
@@ -6660,11 +6666,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   match b with
   | .para content => paragraphNode cfg content
   | .section level _ num title =>
-    let element := match level with
-      | 0 => "titlepage"
-      | 1 => "section"
-      | 2 => "subsection"
-      | _ => "subsubsection"
+    let element := level.element
     let tag := headingTag level
     let st := (cfg.styles.find? element).getD {}
     let st := if level == 0 then Ir.titleHeadingStyle st else st
@@ -6682,7 +6684,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
     let attrs := if cfg.deck && level == 1 then
       attrs.push ("style", "color: var(--sectiontitlefg, var(--fg))") else attrs
-    Html.elem tag kids attrs
+    let node := Html.elem tag kids attrs
+    if level == .h1 then withClass "body-heading" node else node
   | .list ordered items =>
     -- A description list (every item run in by its label) is HTML's own
     -- `<dl>`; the label reading is the page's (`Ir.descLabel?`).

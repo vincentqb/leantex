@@ -33,7 +33,7 @@ example : BeamerColor.State → Palette →
   BeamerColor.State.resolve
 
 example : Array Inline → String := MarkdownDoc.inlineText
-example : Nat → String := MarkdownDoc.headingMarker
+example : Ir.HeadingLevel → String := MarkdownDoc.headingMarker
 example : Doc → String := MarkdownDoc.emit
 
 example (v : Nat) : (Color.pdfMilli v).toList.all (· != ' ') = true :=

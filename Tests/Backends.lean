@@ -520,8 +520,8 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Verified load-bearing: putting a bottom margin back on blockquote
   -- fails here.
   t "html heading owns its band below, followers suppressed"
-    ((plainPage.splitOn ":where(h1, h2, h3, h4) { margin: 0 0 0.725rem; }").length == 2 &&
-     (plainPage.splitOn ":where(:is(h1, h2, h3, h4) + *) { margin-top: 0; }").length == 2)
+    ((plainPage.splitOn ":where(h1, h2, h3, h4, h5, h6) { margin: 0 0 0.725rem; }").length == 2 &&
+     (plainPage.splitOn ":where(:is(h1, h2, h3, h4, h5, h6) + *) { margin-top: 0; }").length == 2)
   t "html block elements' own margins are the emitter's zero-specificity resets"
     ((plainPage.splitOn ":where(p, ul, ol, li, dl, dd, pre, blockquote) { margin: 0; }").length == 2 &&
      (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
@@ -1028,14 +1028,11 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a cell containing a pipe keeps its row"
     (((MarkdownDoc.emit pipe).splitOn "| a\\|b | c |").length == 2)
 
-/-- One fact, three renderings, at every level: a heading's `#` count and
-its `h` number are both projections of the one shared rank,
-`Ir.headingRank`, held beside the outline walk it serves (the PDF side
-is the census assertion that the title
-text ships as furniture). Stated over the two functions the backends
-actually run, quantified over the level — the previous form was a `decide`
-over the four constants. -/
-theorem heading_renderings_agree (level : Nat) :
+/-- A heading's Markdown marker length and HTML tag both project the
+shared IR rank, quantified over every typed heading level. Tagged PDF's
+projection is `Pdf.heading_type_projects`; its written roles are checked
+by `markdownHeadingChecks`. -/
+theorem heading_renderings_agree (level : Ir.HeadingLevel) :
     HtmlDoc.headingTag level = "h" ++ toString (Ir.headingRank level) ∧
     (MarkdownDoc.headingMarker level).toList =
       List.replicate (Ir.headingRank level) '#' := by
@@ -4270,11 +4267,11 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         | _ => false
       t s!"struct {n}: the parent tree maps every identifier back to the element listing it"
         (ptOk && (root.get? "ParentTreeNextKey").bind PdfRead.Obj.int? == some (pageNums.size : Int))
-      -- The heading census: H<n> elements in preorder are the document's levels + 1.
+      -- The heading census: H<n> elements project the shared IR rank.
       let hs := tree.filterMap fun e =>
         if e.s.startsWith "H" && e.s.length > 1 then (e.s.drop 1).toString.toNat? else none
-      t s!"struct {n}: the heading elements are Ir.headingLevels, each one level up"
-        (hs == (Ir.headingLevels (Layout.pdfView doc).body).map (· + 1))
+      t s!"struct {n}: the heading elements project Ir.headingLevels exactly"
+        (hs == (Ir.headingLevels (Layout.pdfView doc).body).map Ir.headingRank)
       t s!"struct {n}: every element with a 2.0 type names the namespace"
         (tree.all fun e => e.ns.isSome || e.s == "Code" || e.s == "BlockQuote" || e.s == "Reference")
   t s!"struct: the corpus exercised the tree ({elems} elements, {mcids} marks)"

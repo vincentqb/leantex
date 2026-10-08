@@ -54,7 +54,7 @@ public inductive Kind where
   which `headingLevels` does not count. -/
   | title
   /-- An outline heading at its `\section` level. -/
-  | heading (level : Nat)
+  | heading (level : Ir.HeadingLevel)
   | paragraph
   | list (ordered : Bool)
   | item
@@ -138,7 +138,7 @@ skeleton and its leaf census both read. -/
 /-- What a kind contributes to the outline census on the way in: an outline
 heading its level, every other kind nothing. The one resolving site for
 "which kinds are the outline". -/
-def Kind.outlineEmit (out : Array Nat) : Kind → Array Nat
+def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLevel
   | .heading level => out.push level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
   | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
@@ -155,7 +155,7 @@ kind reads through. The one place a census declines a subtree. -/
 
 /-- The outline's contribution builds onto its accumulator: the classifier's
 half of the outline census's `Appends` witness. -/
-theorem Kind.outlineEmit_acc (out : Array Nat) (kind : Kind) :
+theorem Kind.outlineEmit_acc (out : Array Ir.HeadingLevel) (kind : Kind) :
     kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
   cases kind <;> simp [Kind.outlineEmit]
 
@@ -514,18 +514,18 @@ by exactly what the tree numbered. -/
 reads the speaker note it comes from — the one census that declines a
 subtree, and it declines it by the classification, not by a walk of its
 own. -/
-def headingsFold : NodeFold (Array Nat) where
+def headingsFold : NodeFold (Array Ir.HeadingLevel) where
   leaf := fun out _ _ => out
   enter := Kind.outlineEmit
   descends := Kind.outlineDescends
 
-public def headingsList (out : Array Nat) (ns : List Node) : Array Nat := foldNodeList headingsFold out ns
+public def headingsList (out : Array Ir.HeadingLevel) (ns : List Node) : Array Ir.HeadingLevel := foldNodeList headingsFold out ns
 
-public def headingsOne (out : Array Nat) (n : Node) : Array Nat := foldNode headingsFold out n
+public def headingsOne (out : Array Ir.HeadingLevel) (n : Node) : Array Ir.HeadingLevel := foldNode headingsFold out n
 
-public def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
+public def headings (ns : Array Node) : Array Ir.HeadingLevel := headingsList #[] ns.toList
 
-@[expose] public def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
+@[expose] public def Tree.headings (t : Tree) : Array Ir.HeadingLevel := Struct.headings t.children
 
 /-- Every non-text leaf's source and text alternative, in preorder. -/
 def altsFold : NodeFold (Array (Option String × Alt)) where
@@ -604,31 +604,31 @@ public theorem leavesOne_node_exact (out : Array (Nat × Leaf)) (kind : Kind) (k
 
 public theorem leaves_eq_exact (ns : Array Node) : leaves ns = leavesList #[] ns.toList := by rfl
 
-public theorem headingsList_nil_exact (out : Array Nat) : headingsList out [] = out := by rfl
+public theorem headingsList_nil_exact (out : Array Ir.HeadingLevel) : headingsList out [] = out := by rfl
 
-public theorem headingsList_cons_exact (out : Array Nat) (n : Node) (rest : List Node) :
+public theorem headingsList_cons_exact (out : Array Ir.HeadingLevel) (n : Node) (rest : List Node) :
     headingsList out (n :: rest) = headingsList (headingsOne out n) rest := by rfl
 
-public theorem headingsOne_leaf_exact (out : Array Nat) (id : Nat) (l : Leaf) :
+public theorem headingsOne_leaf_exact (out : Array Ir.HeadingLevel) (id : Nat) (l : Leaf) :
     headingsOne out (.leaf id l) = out := by rfl
 
 /-- The outline's descent equation, over any kind: the classification says
 whether the content is read and what the node ships, so a citation names no
 kind and carries no hypothesis. -/
-theorem headingsOne_node_exact (out : Array Nat) (kind : Kind) (kids : Array Node) :
+theorem headingsOne_node_exact (out : Array Ir.HeadingLevel) (kind : Kind) (kids : Array Node) :
     headingsOne out (.node kind kids)
       = match kind.outlineDescends with
         | true => headingsList (kind.outlineEmit out) kids.toList
         | false => kind.outlineEmit out := rfl
 
-public theorem headingsOne_heading_exact (out : Array Nat) (level : Nat) (kids : Array Node) :
+public theorem headingsOne_heading_exact (out : Array Ir.HeadingLevel) (level : Ir.HeadingLevel) (kids : Array Node) :
     headingsOne out (.node (.heading level) kids) = headingsList (out.push level) kids.toList := by
   rfl
 
-public theorem headingsOne_aside_exact (out : Array Nat) (kids : Array Node) :
+public theorem headingsOne_aside_exact (out : Array Ir.HeadingLevel) (kids : Array Node) :
     headingsOne out (.node .aside kids) = out := by rfl
 
-public theorem headingsOne_through_exact (out : Array Nat) (kind : Kind) (kids : Array Node)
+public theorem headingsOne_through_exact (out : Array Ir.HeadingLevel) (kind : Kind) (kids : Array Node)
     (hh : ∀ level, kind ≠ .heading level) (ha : kind ≠ .aside) :
     headingsOne out (.node kind kids) = headingsList out kids.toList := by
   cases kind
@@ -668,15 +668,15 @@ theorem leafTextList_push (acc : String) (out : Array Node) (n : Node) :
     leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n :=
   foldNodeList_push leafTextFold acc out n
 
-theorem headingsList_append (out : Array Nat) (a b : List Node) :
+theorem headingsList_append (out : Array Ir.HeadingLevel) (a b : List Node) :
     headingsList out (a ++ b) = headingsList (headingsList out a) b :=
   foldNodeList_append headingsFold out a b
 
-theorem headingsList_snoc (out : Array Nat) (l : List Node) (n : Node) :
+theorem headingsList_snoc (out : Array Ir.HeadingLevel) (l : List Node) (n : Node) :
     headingsList out (l ++ [n]) = headingsOne (headingsList out l) n :=
   foldNodeList_snoc headingsFold out l n
 
-theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
+theorem headingsList_push (out : Array Ir.HeadingLevel) (ns : Array Node) (n : Node) :
     headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n :=
   foldNodeList_push headingsFold out ns n
 
@@ -686,11 +686,11 @@ theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
 /-- The outline census builds onto its accumulator: the census of a list is
 the accumulator, then the list's own — the fact a projection proof needs of
 the walk, in place of its equations. -/
-public theorem headingsList_acc (out : Array Nat) (ns : List Node) :
+public theorem headingsList_acc (out : Array Ir.HeadingLevel) (ns : List Node) :
     headingsList out ns = out ++ headingsList #[] ns := by
   exact foldNodeList_acc headingsAppends out ns
 
-public theorem headingsOne_acc (out : Array Nat) (n : Node) :
+public theorem headingsOne_acc (out : Array Ir.HeadingLevel) (n : Node) :
     headingsOne out n = out ++ headingsOne #[] n := by
   exact foldNode_acc headingsAppends out n
 
@@ -1071,14 +1071,14 @@ public theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body :
 
 mutual
 
-theorem inlinesRaw_headings (hs : Array Nat) (out : Array Node) (xs : List Inline) :
+theorem inlinesRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (xs : List Inline) :
     headingsList hs (inlinesRaw out xs).toList = headingsList hs out.toList := by
   match xs with
   | [] => rfl
   | x :: rest =>
     rw [inlinesRaw, inlinesRaw_headings hs (inlineRaw out x) rest, inlineRaw_headings]
 
-theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
+theorem inlineRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (x : Inline) :
     headingsList hs (inlineRaw out x).toList = headingsList hs out.toList := by
   match x with
   | .text s => simp [inlineRaw, headingsList_snoc, headingsOne_leaf_exact]
@@ -1147,12 +1147,12 @@ theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
 
 end
 
-theorem inlinesRaw_headings_nil (hs : Array Nat) (xs : Array Inline) :
+theorem inlinesRaw_headings_nil (hs : Array Ir.HeadingLevel) (xs : Array Inline) :
     headingsList hs (inlinesRaw #[] xs.toList).toList = hs := by
   rw [inlinesRaw_headings]
   rfl
 
-theorem titleRaw_headings (hs : Array Nat) (title : Array Inline) :
+theorem titleRaw_headings (hs : Array Ir.HeadingLevel) (title : Array Inline) :
     headingsList hs (titleRaw title).toList = hs := by
   unfold titleRaw
   split
@@ -1161,7 +1161,7 @@ theorem titleRaw_headings (hs : Array Nat) (title : Array Inline) :
     Kind.outlineDescends, Kind.outlineEmit]
     exact inlinesRaw_headings_nil hs title
 
-theorem captionRaw_headings (hs : Array Nat) (caption : Array Inline) :
+theorem captionRaw_headings (hs : Array Ir.HeadingLevel) (caption : Array Inline) :
     headingsList hs (captionRaw caption).toList = hs := by
   unfold captionRaw
   split
@@ -1170,7 +1170,7 @@ theorem captionRaw_headings (hs : Array Nat) (caption : Array Inline) :
     Kind.outlineDescends, Kind.outlineEmit]
     exact inlinesRaw_headings_nil hs caption
 
-theorem cellsRaw_headings (hs : Array Nat) (out : Array Node) (cells : List (Array Inline)) :
+theorem cellsRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (cells : List (Array Inline)) :
     headingsList hs (cellsRaw out cells).toList = headingsList hs out.toList := by
   induction cells generalizing out with
   | nil => rfl
@@ -1179,7 +1179,7 @@ theorem cellsRaw_headings (hs : Array Nat) (out : Array Node) (cells : List (Arr
     simp only [headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit]
     rw [inlinesRaw_headings_nil]
 
-theorem rowsRaw_headings (hs : Array Nat) (out : Array Node) (rows : List (Array (Array Inline))) :
+theorem rowsRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (rows : List (Array (Array Inline))) :
     headingsList hs (rowsRaw out rows).toList = headingsList hs out.toList := by
   induction rows generalizing out with
   | nil => rfl
@@ -1189,7 +1189,7 @@ theorem rowsRaw_headings (hs : Array Nat) (out : Array Node) (rows : List (Array
     rw [cellsRaw_headings]
     rfl
 
-theorem bibRaw_headings (hs : Array Nat) (out : Array Node) (items : List BibItem) :
+theorem bibRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (items : List BibItem) :
     headingsList hs (bibRaw out items).toList = headingsList hs out.toList := by
   induction items generalizing out with
   | nil => rfl
@@ -1198,7 +1198,7 @@ theorem bibRaw_headings (hs : Array Nat) (out : Array Node) (items : List BibIte
     simp [headingsOne_leaf_exact, headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit,
       headingsList_nil_exact, headingsList_cons_exact]
 
-theorem algRaw_headings (hs : Array Nat) (out : Array Node) (lines : List AlgLine) :
+theorem algRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (lines : List AlgLine) :
     headingsList hs (algRaw out lines).toList = headingsList hs out.toList := by
   induction lines generalizing out with
   | nil => rfl
@@ -1210,7 +1210,7 @@ theorem algRaw_headings (hs : Array Nat) (out : Array Node) (lines : List AlgLin
 
 mutual
 
-theorem blocksRaw_headings (hs : Array Nat) (out : Array Node) (bs : List Block) :
+theorem blocksRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (bs : List Block) :
     headingsList hs (blocksRaw out bs).toList
       = headingLevelList (headingsList hs out.toList) bs := by
   match bs with
@@ -1219,7 +1219,7 @@ theorem blocksRaw_headings (hs : Array Nat) (out : Array Node) (bs : List Block)
     rw [blocksRaw, blocksRaw_headings hs (blockRaw out b) rest, blockRaw_headings hs out b,
       headingLevelList]
 
-theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
+theorem blockRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (b : Block) :
     headingsList hs (blockRaw out b).toList
       = headingLevelOne (headingsList hs out.toList) b := by
   match b with
@@ -1334,7 +1334,7 @@ theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
     simp only [blockRaw, headingLevelOne]
     exact bibRaw_headings hs out items.toList
 
-theorem itemsRaw_headings (hs : Array Nat) (out : Array Node) (items : List (Array Block)) :
+theorem itemsRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (items : List (Array Block)) :
     headingsList hs (itemsRaw out items).toList
       = headingLevelItems (headingsList hs out.toList) items := by
   match items with
@@ -1346,7 +1346,7 @@ theorem itemsRaw_headings (hs : Array Nat) (out : Array Node) (items : List (Arr
     rw [blocksRaw_headings]
     rfl
 
-theorem colsRaw_headings (hs : Array Nat) (out : Array Node)
+theorem colsRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node)
     (cols : List (BoxWidth × Array Block)) :
     headingsList hs (colsRaw out cols).toList
       = headingLevelColumns (headingsList hs out.toList) cols := by
@@ -1359,7 +1359,7 @@ end
 
 mutual
 
-theorem numberList_headings (hs : Array Nat) (k : Nat) (out : Array Node) (ns : List Node) :
+theorem numberList_headings (hs : Array Ir.HeadingLevel) (k : Nat) (out : Array Node) (ns : List Node) :
     headingsList hs (numberList k out ns).1.toList
       = headingsList (headingsList hs out.toList) ns := by
   match ns with
@@ -1368,7 +1368,7 @@ theorem numberList_headings (hs : Array Nat) (k : Nat) (out : Array Node) (ns : 
     rw [numberList, headingsList_cons_exact, numberList_headings hs _ _ rest, headingsList_push,
       numberOne_headings]
 
-theorem numberOne_headings (hs : Array Nat) (k : Nat) (n : Node) :
+theorem numberOne_headings (hs : Array Ir.HeadingLevel) (k : Nat) (n : Node) :
     headingsOne hs (numberOne k n).1 = headingsOne hs n := by
   match n with
   | .leaf id l => rfl

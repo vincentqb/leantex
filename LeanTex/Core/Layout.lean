@@ -10466,10 +10466,13 @@ article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
 hierarchy holds at every base size — the old 14/12-point constants
 made a 12 pt subsection equal its body and a >14 pt body outgrow its own
 sections. -/
-public def sectionSize (geom : Geom) : Nat → Sp
-  | 1 => Ir.scaleStep geom.fontSize "Large"
-  | 2 => Ir.scaleStep geom.fontSize "large"
-  | _ => geom.fontSize
+public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp
+  | .title | .h1 => Ir.scaleStep geom.fontSize "LARGE"
+  | .h2 => Ir.scaleStep geom.fontSize "Large"
+  | .h3 => Ir.scaleStep geom.fontSize "large"
+  -- Deeper ranks retain body size, rather than shrinking below readable
+  -- body text. Their structural rank remains distinct in both artifacts.
+  | .h4 | .h5 | .h6 => geom.fontSize
 
 /-- The applied scale is strictly monotone at every base size of at least
 one point: between each named step of `Ir.sizeScale` and the next, the
@@ -11788,7 +11791,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
       markerSegs := none, rule := none
       leaf := leaf, display := some dj }) } : Acc).closeDisplay r
 
-private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
+private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
   if level == 0 then
     -- The document title, a heading at level 0, through the one title
     -- door (`collectTitle`). Never a divider: it stands inside the
@@ -11860,9 +11863,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Nat) (num : Option String
   let a := if divider then a.pageBreak else a
   let a := if !r.inFrame && a.footAllowed then
       { a with ops := a.ops.push .frameClose } else a
-  let element := match level with
-    | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
-  let st := r.style element
+  let st := r.style level.element
   -- The resolved number stands before the title with a \quad between
   -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
   -- carried as the em-quad kern so no face is asked for a glyph.

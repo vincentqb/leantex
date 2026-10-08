@@ -19,7 +19,7 @@ namespace FrameHeadingScope
 progress-divider path and its fallback see the same three local headings;
 the empty chrome variant also exercises the frame reader without a band. -/
 def doc (progress footer : Bool) (valign : Ir.VAlign)
-    (levels : Array Nat := #[1, 2, 3]) : Ir.Doc :=
+    (levels : Array Ir.HeadingLevel := #[1, 2, 3]) : Ir.Doc :=
   let base := (elabStr (deck169 "\\theme{moloch}" "")).1
   let palette := if progress then base.palette else
     (["progressfg", "progressbg", "sectionprogressfg", "sectionprogressbg"].foldl
@@ -71,7 +71,7 @@ private def bodyShape : Html.Node → Array (String × String)
   | .style _ => #[]
   | .script _ _ => #[]
 
-private def expectedShape (valign : Ir.VAlign) (levels : Array Nat) :
+private def expectedShape (valign : Ir.VAlign) (levels : Array Ir.HeadingLevel) :
     Array (String × String) :=
   let (above, below) := Ir.VAlign.shares valign
   let spacer (n : Nat) := if n == 0 then #[] else #[("fill", s!"flex-grow: {n}")]

@@ -67,17 +67,21 @@ public structure StructElem where
   ns20 : Bool := true
   parent : Option Nat := none
   kids : Array StructKid := #[]
-  heading : Option Nat := none
+  heading : Option Ir.HeadingLevel := none
   alt : Option String := none
   lang : Option String := none
   actualText : Option String := none
   attrs : Array (String × PdfRead.Obj) := #[]
   deriving Repr, BEq, Inhabited
 
+/-- The PDF heading type projects the IR rank, exactly as HTML does. -/
+public def headingTag (level : Ir.HeadingLevel) : String :=
+  s!"H{Ir.headingRank level}"
+
 /-- The PDF 2.0 standard structure type of a tree node kind (ISO 32000-2
-§14.8.4). A heading at tree level `n` is `H{n+1}`: level 0 is the document
-title, the HTML's one `<h1>`, and the two artifacts number headings the
-same way. A `.title` is the title of a region, PDF 2.0's block-level
+§14.8.4). Heading ranks come from the bounded IR policy, so a document
+title and a body h1 both use H1 and every body rank remains representable.
+A `.title` is the title of a region, PDF 2.0's block-level
 `Title`. Generated furniture the census counts (`.artifact`) is
 `NonStruct`, a grouping of no structural significance whose leaves the
 page never attributes. A `.nav` ships no ink on the page (its links are
@@ -86,7 +90,7 @@ private def structTypeOf : Struct.Kind → String
   | .document => "Document"
   | .section => "Sect"
   | .title => "Title"
-  | .heading level => s!"H{level + 1}"
+  | .heading level => headingTag level
   | .paragraph => "P"
   | .list _ => "L"
   | .item => "LI"
@@ -109,6 +113,12 @@ private def structTypeOf : Struct.Kind → String
   | .reference _ => "Reference"
   | .artifact => "NonStruct"
 
+/-- The PDF type spelling projects the shared IR rank. The structure
+writer's heading arm reads this function; the artifact test reads `/S`
+back from the written PDF. -/
+public theorem heading_type_projects (level : Ir.HeadingLevel) :
+    headingTag level = "H" ++ toString (Ir.headingRank level) := by rfl
+
 /-- Is the kind's type in the PDF 2.0 namespace? PDF 2.0 dropped `Code`,
 `BlockQuote` and `Reference` from its standard set (ISO 32000-2 §14.8.4,
 Table 366 note on deprecated 1.7 types); those stand in the 1.7 namespace. -/
@@ -121,7 +131,7 @@ private def inPdf2Namespace : Struct.Kind → Bool
   | .link _ | .span _ | .artifact => true
 
 /-- The heading level a kind carries, for the census. -/
-private def headingLevelOf : Struct.Kind → Option Nat
+private def headingLevelOf : Struct.Kind → Option Ir.HeadingLevel
   | .heading level => some level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body | .table
   | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .aside | .nav
@@ -369,7 +379,7 @@ public def parentTreeOf (marks : Array (Array (Nat × Nat))) (owners : Array (Op
 /-! ## Theorems -/
 
 /-- The heading levels of an element array, in order. -/
-public def headingsOf (es : Array StructElem) : List Nat := es.toList.filterMap (·.heading)
+public def headingsOf (es : Array StructElem) : List Ir.HeadingLevel := es.toList.filterMap (·.heading)
 
 private theorem List.filterMap_modify_of {α β : Type} (g : α → Option β) (f : α → α)
     (hf : ∀ a, g (f a) = g a) (l : List α) (i : Nat) :
@@ -426,12 +436,12 @@ private theorem headingsOf_bibEntryElems (es : Array StructElem) (parent : Nat) 
 
 /-- `Struct.headingsList` with an accumulator is the accumulator then the
 census from empty: the list form of the census's own `headingsList_acc`. -/
-private theorem Struct.headingsList_out (l : List Struct.Node) (out : Array Nat) :
+private theorem Struct.headingsList_out (l : List Struct.Node) (out : Array Ir.HeadingLevel) :
     (Struct.headingsList out l).toList = out.toList ++ (Struct.headingsList #[] l).toList := by
   rw [Struct.headingsList_acc]
   simp
 
-private theorem Struct.headingsOne_out (n : Struct.Node) (out : Array Nat) :
+private theorem Struct.headingsOne_out (n : Struct.Node) (out : Array Ir.HeadingLevel) :
     (Struct.headingsOne out n).toList = out.toList ++ (Struct.headingsOne #[] n).toList := by
   rw [Struct.headingsOne_acc]
   simp

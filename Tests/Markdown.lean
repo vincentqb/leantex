@@ -69,7 +69,7 @@ def mdAccountsChecks (t : String → Bool → IO Unit) : IO Unit := do
   t "a spaced equals line under a paragraph is text, not a heading"
     (has1 "Foo\n= =\n" "= =" && !has1 "Foo\n= =\n" "<h")
   t "an unspaced dash line under a paragraph is still a heading"
-    (has1 "Foo\n---\n" "<h3>Foo</h3>")
+    (has1 "Foo\n---\n" "<h2>Foo</h2>")
   t "a list, a thematic break and another list are three blocks"
     (has1 "* Foo\n* * *\n* Bar\n" "<ul><li>Foo</li></ul><ul><li>Bar</li></ul>")
 where
@@ -102,13 +102,13 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a block after a list still ships"
     (has "- b\n\n> q\n" "<blockquote>")
   t "a heading after a list still ships"
-    (has "- b\n\n## h\n" "</ul><h3>h</h3>")
+    (has "- b\n\n## h\n" "</ul><section id=h><h2>h</h2></section>")
   -- Defect: a `---` line under a paragraph was read as a thematic break,
   -- which dropped the setext heading's title into the paragraph above.
   t "a dashed underline under a paragraph is a setext heading"
-    (has "Foo\n---\n" "<h3>")
+    (has "Foo\n---\n" "<h2>")
   t "an equals underline is a level-one setext heading"
-    (has "Foo\n===\n" "<h2>")
+    (has "Foo\n===\n" "<h1 class=body-heading>Foo</h1>")
   -- Defect: an indented line under an open paragraph was tested for block
   -- starts first, so `    # bar` became a heading instead of paragraph text.
   t "an indented line under a paragraph is continuation text"
@@ -160,7 +160,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (codeIs ("> a\n> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n"))
   t "a block after a quoted fence still ships"
     (has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n\nafter\n\n## h\n")
-      "</blockquote><p>after</p><h3>h</h3>")
+      "</blockquote><p>after</p><section id=h><h2>h</h2></section>")
   t "a quoted fence does not ship its quote marker as code"
     (!has ("> " ++ fence ++ "\n> code\n> " ++ fence ++ "\n") "<code>> code")
   t "a fence inside a nested list item closes"
@@ -225,8 +225,9 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- ships, `degraded` (floor content) where the construct ships diminished.
   t "a thematic break, which ships nothing, is pending"
     (routed "a\n\n***\n\nb\n" "md:thematic-break")
-  t "a heading below the third level, which ships, is degraded"
-    (degraded "#### h\n" "md:heading-depth")
+  t "a fourth-level heading ships at its declared rank without a loss"
+    (has "#### h\n" "<h4>h</h4>"
+      && !(dvMd "#### h\n").any (·.subject == some "md:heading-depth"))
   t "a loose list, which ships, is degraded"
     (degraded "- a\n\n- b\n" "md:loose-list")
   t "an ordered list's start number, whose list ships, is degraded"
