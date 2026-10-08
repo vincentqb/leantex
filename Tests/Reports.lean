@@ -89,6 +89,8 @@ import Tests.SlideLabels
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
+import Tests.HtmlA11y
+import Tests.FormulaFloor
 import Tests.PicturePathSyntax
 import Tests.PictureShrink
 import Tests.PictureBoundary
@@ -965,7 +967,28 @@ def reports : List Report := [
       "one hundred thirty-seven guard assertions fail with the fix reverted: the hole lexed as a keyword, weights composed as the resolved style rather than the lualatex chain, style colours beyond seven classes dropped, and the token-box diagnostic absent",
       "eight assertions fail with the hole lexing alone reverted: the hole as a bold keyword in both styles and both artifacts",
       "every standard token type of both shipped styles resolves and composes as the installed highlighter answers, from a table its generator regenerates"]
-    state := .guarded "9db3a0ec" .revert .author }
+    state := .guarded "9db3a0ec" .revert .author },
+  { id := "R111", date := "2026-10-08"
+    what := "A math alphabet in a picture label shipped unresolved: an error element framed in red on yellow in HTML, and the source italic on the page"
+    pins := [check% pictureAlphabetLabelChecks,
+      check% htmlMathChecks,
+      check% censusChecks,
+      thm% Ir.mathRequests_resolve_covers,
+      thm% MathMl.formula_merrorFree_contract]
+    accept := ["twenty-seven assertions fail with the fix reverted: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census and the diagram fixture's upright label",
+      "a fresh build of a presentation deck ships no error element, and its alphabet edge label sets upright in both artifacts as the reference build does"]
+    state := .guarded "04b2c321" .revert .author },
+  { id := "R112", date := "2026-10-08"
+    what := "Formulas in picture labels nested a second MathML root inside the label's own"
+    pins := [check% htmlMathChecks,
+      check% pictureAlphabetLabelChecks,
+      check% Tests.formulaFloorChecks,
+      thm% HtmlDoc.pictureKids_unnested_contract,
+      thm% HtmlDoc.labelNodesList_mathFree_contract,
+      thm% MathMl.formula_unnested_contract]
+    accept := ["twenty assertions fail with the fix reverted: one root per label over nine invented labels, the corpus nesting census and ten structured label formulas",
+      "a fresh build of a presentation deck ships no math element inside another, where the base build shipped seven"]
+    state := .guarded "04b2c321" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
