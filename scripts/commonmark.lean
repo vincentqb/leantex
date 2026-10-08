@@ -648,7 +648,7 @@ def fragmentOf (body : Array Html.Node) : Array Html.Node :=
 /-- One markdown source through the reader, the desugaring, the one
 elaborator and the HTML backend: the fragment tree and the diagnostics. -/
 def engineFragment (src : String) : Array Html.Node × Array Diag :=
-  let (raws, readDiags) := Md.read "case.md" src
+  let (raws, readDiags) := Surface.read .md "case.md" src
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)

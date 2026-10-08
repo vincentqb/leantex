@@ -204,10 +204,11 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
     | .center bs => bs.findSome? blockFormula
     | b => blockFormula b
 
-/-- A *markdown* source through the one elaborator: the reader, the
-desugaring, then `Elab.runRaws` — the same path `leantex doc.md` takes. -/
+/-- A *markdown* source through the one elaborator: the markdown door
+(`Surface.read`), then `Elab.runRaws` — the same path `leantex doc.md`
+takes. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Md.read "t.md" s
+  let (raws, ds) := Surface.read .md "t.md" s
   Elab.runRaws "t.md" raws ds
 
 /-- Diagnostics of a markdown source. -/
@@ -464,10 +465,9 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
 filename establishes the input directory even when the source itself is
 held in memory, so synthetic probes and file fixtures use the same path. -/
 def elabInputSrc (file src : String) : IO (Ir.Doc × Array Diag) := do
-  let (tokens, lexDs) := Lex.lex file src
-  let (raws, parseDs) := Parse.parse file tokens
+  let (raws, readDs) := Surface.read .tex file src
   let (executed, inputDs, _) ← Input.expandInputs file raws
-  return Elab.runExecuted file executed (lexDs ++ parseDs ++ inputDs)
+  return Elab.runExecuted file executed (readDs ++ inputDs)
 
 /-- A `testdata/corpus/sty-parity` fixture run the way the driver runs it: the
 input execution (`Input.expandInputs`) first, so a local `.sty` beside the

@@ -2,9 +2,13 @@ module
 
 public import LeanTex.Core.CompatContract
 public import LeanTex.Core.Elab
+public import LeanTex.Core.Surface
+public import LeanTex.Core.MdDesugarContract
 
 import all LeanTex.Core.Elab
 import all LeanTex.Core.Compat
+import all LeanTex.Core.Parse
+import all LeanTex.Core.Ir
 
 namespace LeanTex.Core.CompatContract
 
@@ -218,5 +222,273 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
       (by simpa only [hname] using hpart) (hnames part hpart).1 (hnames part hpart).2.1
   · simpa only [Compat.SourceTriggers.attribute_fixed_point] using
       runExecuted_reports_contract file _ earlier metric _ (hproducer.2 part hpart)
+
+/-! ## Including is transparent
+
+An included file reaches the elaborator wrapped once, as the file it came
+from (`Parse.inputEnv`, through `Surface.fragment`). The statements below
+say what the wrapper means: nothing but the file's name. An include
+standing as its own block sequence — a document body, or a frame body,
+that is just the include — produces exactly the blocks and the final state
+its raws produce as a body of their own under the file's name, with no
+call site. The host contributes only its display marking of a file that is
+exactly one display.
+
+Mid-sequence, the included blocks are the same, but the inner frame-source
+offsets shift by the blocks before the include, by design; that form is a
+stretch lemma, not a claim made here. Markdown meets the hypotheses by
+construction (`markdownInput_blocks_exact`): its desugaring is block-shaped
+and lowers into a vocabulary that holds no length-restore marker. -/
+
+open Parse Ir
+
+private theorem inputEnvFile?_inputEnv (f : String) :
+    Parse.inputEnvFile? (Parse.inputEnv f) = some f := by
+  have hs : ("input " ++ f).startsWith "input " = true := by
+    simp [String.toList_append]
+  simp only [Parse.inputEnvFile?, Parse.inputEnv, hs, ite_true, Option.some.injEq]
+  apply String.ext
+  simp [String.toList_append, show "input ".length = 6 by decide]
+
+private theorem inputEnv_ne_scopeEnv (f : String) : Parse.inputEnv f ≠ Parse.scopeEnv := by
+  intro h
+  have := congrArg (fun s => s.toList.head?) h
+  simp [Parse.inputEnv, Parse.scopeEnv] at this
+
+private theorem inputEnv_ne_linkedBoxRowMark (f : String) :
+    Parse.inputEnv f ≠ Compat.linkedBoxRowMark := by
+  intro h
+  have := congrArg (fun s => s.toList.head?) h
+  simp [Parse.inputEnv, Compat.linkedBoxRowMark] at this
+
+private theorem inputEnv_ne_tikzpicture (f : String) :
+    (Parse.inputEnv f != "tikzpicture") = true := by
+  simp only [bne_iff_ne, ne_eq]
+  intro h
+  have := congrArg (fun s => s.toList.head?) h
+  simp [Parse.inputEnv] at this
+
+private theorem pictureInSentence_input (ctx : Ctx) (f : String) (cur raws : Array Raw) (i : Nat)
+    (pos : Pos) : pictureInSentence ctx (Parse.inputEnv f) cur raws i pos = pure () := by
+  simp [pictureInSentence, inputEnv_ne_tikzpicture]
+
+private theorem openLengthScope_inert (ctx : Ctx) (raws : Array Raw)
+    (h : lengthScopeKeys? raws = none) :
+    openLengthScope ctx raws = (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩) := by
+  simp [openLengthScope, h]
+
+private theorem lengthScopeKeys?_back (body : Array Raw)
+    (h : ∀ n p, body.back? = some (.ctrl n p) → Compat.lengthRestoreKeys? n = none) :
+    lengthScopeKeys? body = none := by
+  unfold lengthScopeKeys?
+  split
+  · next n p heq => exact h n p heq
+  · rfl
+
+/-- The block spine at an include wrapper standing alone: no paragraph is
+open, nothing flushes, and the environment arm runs on an empty
+accumulator; the result is marked as a display would be, and the walk
+moves past the wrapper. -/
+private theorem elabBlocksGo_input_splice (ctx : Ctx) (st : ESt) (f : String) (body : Array Raw)
+    (pos : Pos) (gen : Nat) (hg : st.flowGen = gen)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
+    (hb : bodyIsBlock body = true) :
+    (elabBlocksGo ctx #[.env (Parse.inputEnv f) body pos] 0 #[] #[] gen).run st =
+      ((do
+        let bs ← elabEnvArm ctx (Parse.inputEnv f) body pos #[]
+        elabBlocksGo ctx #[.env (Parse.inputEnv f) body pos] 1
+          (Ir.markDisplay false false false 0 bs) #[] gen) : EM (Array Block)).run st := by
+  subst hg
+  rw [elabBlocksGo, run_get]
+  rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
+  simp only [pure_bind]
+  simp [inputEnv_ne_linkedBoxRowMark, inputEnvFile?_inputEnv, hb, pictureInSentence_input,
+    flushPara_empty ctx _ hm, Ir.flushedText, parFollows, Ir.markInParagraph]
+
+/-- The environment arm of an include wrapper: the file's raws in a fresh
+scope under the file's name, spliced at offset zero, and nothing else. -/
+private theorem elabEnvArm_input_scope (ctx : Ctx) (f : String) (body : Array Raw) (pos : Pos)
+    (hlen : lengthScopeKeys? body = none) :
+    elabEnvArm ctx (Parse.inputEnv f) body pos #[] =
+      splicedFrameScope (some 0) (elabBlockScope { ctx with file := f, callSite := none } body) := by
+  rw [elabEnvArm, openLengthScope_inert ctx body hlen]
+  simp [inputEnv_ne_scopeEnv, inputEnvFile?_inputEnv, closeLengthScope]
+  rfl
+
+/-- The block spine past its last raw, with no paragraph open and no
+macro role active: whatever the flow generation, it returns its blocks and
+leaves the state alone. -/
+private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (gen : Nat)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
+    (elabBlocksGo ctx raws i blocks #[] gen).run st = (blocks, st) := by
+  have hf : (flowCtx ctx st gen).macroRoles = ({file := ""} : Ctx).macroRoles := by
+    unfold flowCtx
+    split <;> exact hm
+  rw [elabBlocksGo, run_get]
+  simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte]
+  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara,
+    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
+  rfl
+
+private theorem closeBlockScope_base (ctx : Ctx) (base : Option Nat) (blocks : Array Block)
+    (st : ESt) :
+    (closeBlockScope ctx #[] base blocks).run st =
+      (blocks, { st with spans := { st.spans with frames := { st.spans.frames with base } } }) := by
+  simp [closeBlockScope, closeLengthScope, setFrameSourceBase]
+  rfl
+
+/-- A splice at offset zero, met where the frame base is zero, schedules
+exactly what a fresh body schedules: the included file's scope opens as
+`elabBlocks` opens it. -/
+private theorem splicedFrameScope_base (ctx : Ctx) (body : Array Raw) (st : ESt)
+    (h : st.spans.frames.base = some 0) :
+    (splicedFrameScope (some 0) (elabBlockScope ctx body)).run st =
+      (elabBlocks ctx body).run st := by
+  simp [splicedFrameScope, elabBlocks, FrameSources.offset, h]
+
+/-- The dispatch domain where a wrapped file splices. No macro expansion is
+open; the wrapper has a source position; the raws are block-shaped (a
+phrase joins the open paragraph, as TeX's `\input` of a phrase does); and
+no trailing length-restore marker closes them. Each conjunct is a fact of
+syntax and context, none a fact of the result. -/
+@[expose] public def InputSplice (ctx : Ctx) (body : Array Raw) (pos : Pos) : Prop :=
+  ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧ pos.origins = [] ∧ bodyIsBlock body = true ∧
+    ∀ n p, body.back? = some (.ctrl n p) → Compat.lengthRestoreKeys? n = none
+
+/-- **An include standing as its own block sequence is transparent.** Its
+raws produce exactly the blocks and final state they produce as a body of
+their own, under the file's name and no call site. The host contributes
+only its display marking of a file that is exactly one display. The
+statement is the whole state, not a census: diagnostics, counters, labels,
+frame sources and the flow epoch all agree. -/
+public theorem elabBlocks_input_exact (ctx : Ctx) (f : String) (body : Array Raw) (pos : Pos)
+    (st : ESt) (h : InputSplice ctx body pos) :
+    (elabBlocks ctx #[.env (Parse.inputEnv f) body pos]).run st =
+      let r := (elabBlocks { ctx with file := f, callSite := none } body).run st
+      (Ir.markDisplay false false false 0 r.1, r.2) := by
+  obtain ⟨hm, hp, hb, hl⟩ := h
+  have hlen := lengthScopeKeys?_back body hl
+  have hmF : ({ ctx with file := f, callSite := none } : Ctx).macroRoles =
+      ({file := ""} : Ctx).macroRoles := hm
+  rw [elabBlocks_scope ctx st _ hm (openLengthScope_inert _ _ rfl),
+    elabBlocks_scope _ st body hmF (openLengthScope_inert _ _ hlen)]
+  simp only [StateT.run_bind]
+  rw [elabBlocksGo_input_splice ctx (enterBodyScope st) f body pos st.flowGen rfl hm hp hb]
+  simp only [StateT.run_bind]
+  rw [elabEnvArm_input_scope ctx f body pos hlen,
+    splicedFrameScope_base _ body (enterBodyScope st) rfl,
+    elabBlocks_scope _ (enterBodyScope st) body hmF (openLengthScope_inert _ _ hlen)]
+  have he : enterBodyScope (enterBodyScope st) = enterBodyScope st := rfl
+  have hg : (enterBodyScope st).flowGen = st.flowGen := rfl
+  have hb0 : (enterBodyScope st).spans.frames.base = some 0 := rfl
+  rw [he, hg, hb0]
+  rcases hx : (elabBlocksGo { ctx with file := f, callSite := none } body 0 #[] #[]
+    st.flowGen).run (enterBodyScope st) with ⟨bs, s4⟩
+  have hend := fun s b => elabBlocksGo_end ctx s #[.env (Parse.inputEnv f) body pos] 1 b
+    st.flowGen hm (by simp)
+  simp only [StateT.run_bind, hx, closeBlockScope_base, hend]
+  rfl
+
+/-- The same at the document body: a body that is one include runs the
+document continuation — numbering, metadata, references — over exactly the
+blocks the included raws produce as a body of their own. -/
+public theorem runDocBody_input_exact (plan : DocBodyPlan) (f : String) (body : Array Raw)
+    (pos : Pos) (st : ESt) (hraws : plan.raws = #[.env (Parse.inputEnv f) body pos])
+    (h : InputSplice plan.ctx body pos) :
+    (runDocBody plan).run st =
+      let r := (elabBlocks { plan.ctx with file := f, callSite := none } body).run st
+      (finishDocBody plan (Ir.markDisplay false false false 0 r.1)).run r.2 := by
+  unfold runDocBody
+  rw [hraws]
+  simp only [StateT.run_bind]
+  rw [elabBlocks_input_exact plan.ctx f body pos st h]
+  rfl
+
+/-- Markdown's vocabulary against the elaborator's reserved names: its
+environments are the elaborator's own (a document cannot redefine them),
+and none of its controls is a length-restore marker. -/
+public theorem markdownVocabulary_contract :
+    (∀ n ∈ Md.vocabulary.envs, n ∈ builtinEnvNames) ∧
+    (∀ n ∈ Md.vocabulary.ctrls ++ Md.vocabulary.bridged, Compat.lengthRestoreKeys? n = none) := by
+  refine ⟨?_, ?_⟩
+  · intro n hn
+    simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
+    rcases hn with rfl | rfl | rfl <;> simp [builtinEnvNames, blockEnvs]
+  · intro n hn
+    rcases List.mem_append.mp hn with hn | hn
+    · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
+      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        simp [Compat.lengthRestoreKeys?]
+    · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
+      cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
+
+private theorem bodyIsBlockList_of_mem : (l : List Raw) → (r : Raw) → r ∈ l →
+    bodyIsBlockOne r = true → bodyIsBlockList l = true
+  | [], _, h, _ => absurd h List.not_mem_nil
+  | x :: rest, r, h, hr => by
+    simp only [bodyIsBlockList, Bool.or_eq_true]
+    rcases List.mem_cons.mp h with rfl | h
+    · exact Or.inl hr
+    · exact Or.inr (bodyIsBlockList_of_mem rest r h hr)
+
+private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
+    bodyIsBlockOne r = true := by
+  rcases h with ⟨p, rfl⟩ | ⟨n, p, rfl, hn⟩ | ⟨e, s, p, rfl, he⟩ | ⟨n, b, p, rfl, hn⟩
+  · simp [bodyIsBlockOne]
+  · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
+    cases level <;> simp [bodyIsBlockOne, blockHeading?, Parse.headingControl, Parse.headingControl?]
+  · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
+  · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
+    rcases hn with rfl | rfl | rfl <;> simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs]
+
+private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body, Md.BlockStart r) :
+    bodyIsBlock body = true := by
+  obtain ⟨r, hr, hs⟩ := h
+  exact bodyIsBlockList_of_mem body.toList r (Array.mem_toList_iff.mpr hr)
+    (bodyIsBlockOne_of_blockStart r hs)
+
+/-- A nonempty markdown file meets the splice domain wherever no macro
+expansion is open and the include has a source position: block-shaped by
+`Md.desugar_blockStart_mem`, and closed by no length-restore marker by
+`Md.desugar_vocabulary_mem` and `markdownVocabulary_contract`. -/
+private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
+    (hne : (Surface.read .md f t).1 ≠ #[]) :
+    InputSplice ctx (Surface.read .md f t).1 pos := by
+  have hread : (Surface.read .md f t).1 = (Md.desugar f t).1 := by
+    simp [Surface.read, Md.read_desugar_exact]
+  rw [hread] at hne ⊢
+  refine ⟨hm, hp, bodyIsBlock_of_blockStart _ (Md.desugar_blockStart_mem f t hne), ?_⟩
+  intro n p hback
+  have hmem : Raw.ctrl n p ∈ (Md.desugar f t).1 := by
+    rw [Array.back?_eq_getElem?] at hback
+    exact Array.mem_of_getElem? hback
+  have hadm := Md.desugar_vocabulary_mem f t _ hmem
+  simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
+  exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
+
+/-- **Markdown included in tex is markdown.** A nonempty markdown file read
+through its door and included where it stands as the block sequence gives
+exactly the blocks and state it gives alone, under its own name, up to the
+host's display marking; no hypothesis about the file's content remains. -/
+public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pos : Pos) (st : ESt)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
+    (hne : (Surface.read .md f t).1 ≠ #[]) :
+    (elabBlocks ctx (Surface.fragment .md f t pos).1).run st =
+      let r := (elabBlocks { ctx with file := f, callSite := none } (Surface.read .md f t).1).run st
+      (Ir.markDisplay false false false 0 r.1, r.2) :=
+  elabBlocks_input_exact ctx f _ pos st (markdownInput_splice ctx f t pos hm hp hne)
+
+/-- The census of the same: included markdown sets the text it sets alone. -/
+public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (pos : Pos) (st : ESt)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
+    (hne : (Surface.read .md f t).1 ≠ #[]) :
+    Ir.blocksText ((elabBlocks ctx (Surface.fragment .md f t pos).1).run st).1 =
+      Ir.blocksText
+        ((elabBlocks { ctx with file := f, callSite := none } (Surface.read .md f t).1).run st).1 := by
+  rw [markdownInput_blocks_exact ctx f t pos st hm hp hne]
+  exact Ir.markDisplay_text false false false 0 _
 
 end LeanTex.Core.Elab

@@ -4,9 +4,8 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Compat
 public import LeanTex.Core.Ir
-import LeanTex.Core.Lex
 import LeanTex.Core.Elab
-import LeanTex.Core.MdDesugar
+import LeanTex.Core.Surface
 import LeanTex.Core.Utf8
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
@@ -55,14 +54,19 @@ public def readSource (file : String) : IO (Except Diag ByteArray) := do
   | .error e => return .error (DriverDiag.unreadableInput file (reasonLine (toString e)))
 
 /-- Every included surface uses the document reader's UTF-8 and IO error
-contract. The surface reader returns a fragment of the same AST; its bytes
-are never converted to TeX source and parsed again. Filename normalization
+contract, and its one door (`Surface.fragment`): the file's reading is a
+fragment of the same AST, wrapped as the file it came from; its bytes are
+never converted to TeX source and parsed again. The wrapper carries the
+file's name and nothing else: an include standing as its block sequence
+elaborates as the file alone does (`Elab.elabBlocks_input_exact`;
+`Elab.markdownInput_blocks_exact` for markdown, with no hypothesis on its
+content). Mid-sequence the included blocks are the same and only the inner
+frame-source offsets shift, which no statement here claims. Filename normalization
 precedes the surface's extension policy: LaTeX's file-name sanitizer removes
 paired quotes and trims both ends when the name contains a dot, only the
 start otherwise (expl3-code.tex; quotedInputFilenameChecks). -/
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
-    (prefer : String → String) (command : String)
-    (reader : String → String → Array Parse.Raw × Array Diag) :
+    (prefer : String → String) (command : String) (surface : Surface) :
     IO (Array Parse.Raw × Array Diag) := do
   -- Do not turn an unmatched quote into an accepted, unquoted filename.
   let name := if name.toList.count '"' % 2 == 0 then
@@ -79,9 +83,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     | .ok bytes =>
       if let some err := Utf8.validate bytes then
         return (#[], #[err.toDiag path.toString])
-      let (sub, ds) := reader path.toString (String.fromUTF8! bytes)
-      -- The wrapper carries the source filename to the elaborator.
-      return (#[.env (Parse.inputEnv path.toString) sub pos], ds)
+      return surface.fragment path.toString (String.fromUTF8! bytes) pos
   else
     -- The span names `file`, the file the `\input` sits in — the reader
     -- goes to that line to fix it, and a directory has no line 5.
@@ -93,11 +95,7 @@ public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
   -- TeX's input scanner tries the default `.tex` suffix before the literal
   -- spelling, unless that spelling already ends in `.tex` (inputFileChecks).
   readFragment dir file name pos (fun name =>
-    if name.endsWith ".tex" then name else name ++ ".tex")
-    "input" fun path text =>
-      let (toks, lexDs) := Lex.lex path text
-      let (raws, parseDs) := Parse.parse path toks
-      (raws, lexDs ++ parseDs)
+    if name.endsWith ".tex" then name else name ++ ".tex") "input" .tex
 
 /-- `\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
 own rule (ltfiles.dtx `\@onefilewithoptions`: find `p.sty` on the input
@@ -117,8 +115,7 @@ public def expandLocalSty (dir : System.FilePath) (raws : Array Parse.Raw) :
     let path := dir / (name ++ ".sty")
     if ← path.pathExists then
       let text ← IO.FS.readFile path
-      let (toks, _) := Lex.lex (name ++ ".sty") text
-      let (sraws, _) := Parse.parse (name ++ ".sty") toks
+      let (sraws, _) := Surface.read .tex (name ++ ".sty") text
       stys := stys.push (name, sraws)
   if stys.isEmpty then return (raws, #[])
   return Compat.applyLocalSty raws stys
@@ -148,7 +145,7 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
           let prefer := fun name : String =>
             if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
           let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
-            "markdownInput" Md.read
+            "markdownInput" .md
           let ds := if request.options.isEmpty then ds else ds.push <|
             Diag.of .W0110 s!"'\\markdownInput' options '{request.options}' are not applied; \
 the file uses the Markdown document dialect" (some ⟨request.file, request.pos⟩)
@@ -188,8 +185,7 @@ the file uses the Markdown document dialect" (some ⟨request.file, request.pos�
           out := out ++ call
         | depth + 1 =>
           let text ← IO.FS.readFile path
-          let (toks, _) := Lex.lex (name ++ ".sty") text
-          let (raws, _) := Parse.parse (name ++ ".sty") toks
+          let (raws, _) := Surface.read .tex (name ++ ".sty") text
           let source := if request.file == root then none else some request.file
           modify fun log => { log with
             spliced := log.spliced.push (name ++ ".sty", source, request.pos) }

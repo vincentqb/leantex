@@ -14,11 +14,20 @@ never through generated tex text — generating text would put two parsers in
 the pipeline and destroy the `.md` provenance every diagnostic downstream
 carries.
 
-The asymmetry is one-directional by design: md ⊂ tex-expressible. Where the
-surface AST cannot express a markdown construct, the construct is *routed* —
-named by its own subject — rather than the elaborator being extended to meet
-markdown. The code a route takes is decided by what reaches the page, which
-is the registry's rule and not a habit:
+Markdown lowers into a declared vocabulary of the surface AST
+(`Md.vocabulary`): words, spaces, paragraph ends, a fixed list of controls,
+environments and verbatims, and the heading bridge — at every depth, for
+every md block and inline node (`desugar_vocabulary_mem`). Its output is
+also block-shaped (`desugar_blockStart_mem`), which is what makes a
+markdown file included in tex elaborate as it does alone
+(`Elab.markdownInput_blocks_exact`). The vocabulary exceeds what a
+tex source can spell in two named places: heading ranks h1, h5 and h6
+exist only through the bridge (a tex section command reaches h2–h4), and a
+word may hold `%`, `#`, `$` and `&`, which tex spells only as escapes.
+Where the surface AST cannot express a markdown construct, the construct is
+*routed* — named by its own subject — rather than the elaborator being
+extended to meet markdown. The code a route takes is decided by what
+reaches the page, which is the registry's rule and not a habit:
 
 * `W0307` (`pending`, floor `absent`) for a construct that ships nothing.
   One today: `md:thematic-break`, which has no block in this engine.

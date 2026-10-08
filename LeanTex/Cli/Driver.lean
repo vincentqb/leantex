@@ -8,9 +8,8 @@ import LeanTex.Core.Flate
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
 import LeanTex.Core.Image
-import LeanTex.Core.Lex
 import LeanTex.Core.Parse
-import LeanTex.Core.MdDesugar
+import LeanTex.Core.Surface
 import LeanTex.Core.Ir
 import LeanTex.Core.Struct
 import LeanTex.Core.Theme
@@ -553,22 +552,13 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     ui.phase "utf8" "valid" (← since t)
     let input := String.fromUTF8! bytes
     let t ← IO.monoMsNow
-    -- Which reader a path's extension selects. The markdown reader hands
-    -- back the same surface AST the tex reader does — one elaborator, one
-    -- place where meaning lives — so everything past this point is blind
-    -- to which surface the document was written in.
-    let (raws, frontDiags) ← do
-      if file.endsWith ".md" then
-        let (raws, ds) := Md.read file input
-        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
-        pure (raws, ds)
-      else
-        let (toks, lexDiags) := Lex.lex file input
-        ui.phase "lex" s!"{toks.size} tokens" (← since t)
-        let t ← IO.monoMsNow
-        let (raws, parseDiags) := Parse.parse file toks
-        ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
-        pure (raws, lexDiags ++ parseDiags)
+    -- Which surface a path's extension selects, read through its one door.
+    -- The markdown door hands back the same surface AST the tex door does —
+    -- one elaborator, one place where meaning lives — so everything past
+    -- this point is blind to which surface the document was written in.
+    let surface := Surface.ofPath file
+    let (raws, frontDiags) := surface.read file input
+    ui.phase surface.name s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
     let (executed, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file executed.raws
