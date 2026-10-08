@@ -214,6 +214,54 @@ def elabMd (s : String) : Ir.Doc × Array Diag :=
 /-- Diagnostics of a markdown source. -/
 def dvMd (s : String) : Array Diag := (elabMd s).2
 
+/-! ## The markdown doors
+
+Two ways a markdown file reaches the one elaborator: alone, as a document,
+and included in a tex host through `\markdownInput`. The door checks
+(`Tests/MarkdownDoors.lean`) and the CommonMark classifier
+(`scripts/commonmark.lean`) read these builders, one copy. -/
+
+/-- A reader that answers no request. -/
+def nullReader : Compat.InputReader Id := fun _ context => (none, context)
+
+/-- A markdown file as a document of its own: its door, then execution and
+elaboration as the driver runs a document. The null reader is exact here:
+a markdown file's raws lie in a vocabulary that holds no input or package
+request (`Md.desugar_vocabulary_mem`), so no request reaches a reader. -/
+def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .md f t
+  Elab.runExecuted f (Elab.executeInputs nullReader f raws) ds
+
+/-- The included door's reader, pure: `\markdownInput{name}` is answered
+with the markdown door's fragment of the file `files` maps the name to,
+resumed in the requesting context as the driver resumes it; every other
+request is left unanswered. The fragment's own diagnostics accumulate in
+the state, where the driver's input log keeps them. -/
+def mdFileReader (files : List (String × String × String)) :
+    Compat.InputReader (StateM (Array Diag)) := fun request context => do
+  if request.command != "markdownInput" then return (none, context)
+  match files.find? (·.1 == request.name.trimAscii.toString) with
+  | none => return (none, context)
+  | some (_, path, text) =>
+    let (sub, ds) := Surface.fragment .md path text request.pos
+    modify (· ++ ds)
+    let (answer, context) := Elab.resumeInput nullReader context request.file sub
+    return (some answer, context)
+
+/-- A tex host through its door, executed with the included door's reader:
+the host's reading diagnostics, then the reader's, the driver's order. -/
+def includedDoc (hostFile host : String) (files : List (String × String × String)) :
+    Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .tex hostFile host
+  let (executed, readDs) := (Elab.executeInputs (mdFileReader files) hostFile raws).run #[]
+  Elab.runExecuted hostFile executed (ds ++ readDs)
+
+/-- The neutral host: an article whose body is one `\markdownInput` and
+nothing else, so the include stands as the body's block sequence. -/
+def neutralHost (name : String) : String :=
+  "\\documentclass{article}\\usepackage{markdown}\\begin{document}\\markdownInput{" ++ name ++
+    "}\\end{document}"
+
 mutual
 
 /-- One node as its tag, attributes and text, flattened — with its closing

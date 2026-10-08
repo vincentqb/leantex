@@ -48,6 +48,7 @@ into the same shape, then both are canonicalized by `canon`. A string
 comparison would report the two emitters' indentation as content.
 -/
 import LeanTex
+import Tests.Support
 import scripts.Board
 
 open LeanTex.Core
@@ -652,6 +653,27 @@ def engineFragment (src : String) : Array Html.Node × Array Diag :=
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)
+
+-- ## The two doors
+
+/-- The case included in the neutral tex host, through the pure reader the
+driver's own is held to (`Tests/MarkdownDoors.lean`). -/
+def caseIncluded (src : String) : Ir.Doc × Array Diag :=
+  includedDoc "host.tex" (neutralHost "case.md") [("case.md", "case.md", src)]
+
+/-- The case as a document of its own, as the driver runs one. -/
+def caseAlone (src : String) : Ir.Doc × Array Diag := standaloneDoc "case.md" src
+
+/-- Do two doors read a case alike — the same document, and the same
+fragment the classifier compares? A case whose doors disagreed would hold
+a verdict that depends on which door read it. -/
+def doorsAgree (included standalone : String → Ir.Doc × Array Diag) (src : String) : Bool :=
+  let iDoc := (included src).1
+  let aDoc := (standalone src).1
+  let (_, iBody, _) := HtmlDoc.emitTree {} iDoc
+  let (_, aBody, _) := HtmlDoc.emitTree {} aDoc
+  iDoc == aDoc &&
+    canonList false "" (fragmentOf iBody).toList == canonList false "" (fragmentOf aBody).toList
 
 -- ## Verdicts
 
@@ -1354,6 +1376,15 @@ def selftest : IO UInt32 := do
     unless rs.size == 2 do bad := bad.push s!"verdict table: {rs.size} rows, want 2"
   if (parseVerdicts "1\tSec\tnearly\n").toOption.isSome then
     bad := bad.push "verdict table: an unknown verdict parsed"
+  -- The two doors: a case they read alike, and a planted door that drops a
+  -- block, which the comparison must see.
+  let dropsBlock : String → Ir.Doc × Array Diag := fun src =>
+    let (d, ds) := caseAlone src
+    ({ d with body := d.body.pop }, ds)
+  unless doorsAgree caseIncluded caseAlone "*a* b\n\n- c\n" do
+    bad := bad.push "doors: a case the two doors read alike was split"
+  if doorsAgree dropsBlock caseAlone "*a* b\n\n- c\n" then
+    bad := bad.push "doors: a planted door that drops a block was not seen"
   if bad.isEmpty then
     IO.println "commonmark --selftest: ok"
     return 0
@@ -1403,6 +1434,13 @@ def run (args : List String) : IO UInt32 := do
   let (exs, reviewed) ← match ← loadInputs with
     | .ok v => pure v
     | .error e => return ← die 1 e
+  -- The two markdown doors read every case alike, before any case is
+  -- judged: a verdict must not depend on which door read the case.
+  let split := exs.filter fun ex => !doorsAgree caseIncluded caseAlone ex.md
+  for ex in split do
+    IO.eprintln s!"commonmark: case {ex.id} ({ex.section_}) reads differently included in tex"
+  unless split.isEmpty do
+    return ← die 1 s!"commonmark: {split.size} cases read differently through the two doors"
   let t0 ← IO.monoMsNow
   let (rows, js) := classifyAll exs reviewed
   let ms := (← IO.monoMsNow) - t0
