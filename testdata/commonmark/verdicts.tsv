@@ -183,11 +183,11 @@
 176	HTML blocks	rejected	refused:md:raw-html
 177	HTML blocks	rejected	refused:md:raw-html
 178	HTML blocks	rejected	refused:md:raw-html
-179	HTML blocks	rejected	refused:md:raw-html
+179	HTML blocks	match
 180	HTML blocks	rejected	refused:md:raw-html
 181	HTML blocks	rejected	refused:md:raw-html
 182	HTML blocks	rejected	refused:md:raw-html
-183	HTML blocks	rejected	refused:md:indented-code,md:raw-html
+183	HTML blocks	rejected	refused:md:indented-code
 184	HTML blocks	rejected	refused:md:indented-code,md:raw-html
 185	HTML blocks	rejected	refused:md:raw-html
 186	HTML blocks	rejected	refused:md:raw-html
@@ -312,8 +312,8 @@
 305	Lists	match
 306	Lists	owed	blocked-by:md:loose-list
 307	Lists	owed
-308	Lists	rejected	refused:md:raw-html
-309	Lists	rejected	refused:md:indented-code,md:raw-html
+308	Lists	match
+309	Lists	rejected	refused:md:indented-code
 310	Lists	match
 311	Lists	owed	blocked-by:md:loose-list
 312	Lists	rejected	refused:md:lazy-continuation
@@ -629,8 +629,8 @@
 622	Raw HTML	owed	pending-decision:smart-punctuation
 623	Raw HTML	rejected	refused:md:raw-html
 624	Raw HTML	owed	pending-decision:smart-punctuation
-625	Raw HTML	rejected	refused:md:raw-html
-626	Raw HTML	rejected	refused:md:raw-html
+625	Raw HTML	owed
+626	Raw HTML	owed	pending-decision:smart-punctuation
 627	Raw HTML	rejected	refused:md:raw-html
 628	Raw HTML	rejected	refused:md:raw-html
 629	Raw HTML	rejected	refused:md:raw-html

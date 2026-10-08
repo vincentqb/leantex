@@ -17,7 +17,10 @@ as its subject:
 
 * `raw-html` — raw HTML passthrough. What keeps the injection-safety
   argument short is that document content can never become markup; a
-  passthrough is the one carve-out that would reopen it.
+  passthrough is the one carve-out that would reopen it. Comment-only
+  constructs, empty named targets, and attribute-free disclosures with a
+  plain-text summary are read into typed semantics instead. Disclosures
+  expand their content and name their lost collapse behaviour.
 * `indented-code` — a four-space indent as a code block. Measured
   ambiguity: the same indent means continuation inside a list and code
   outside one.
@@ -47,6 +50,7 @@ public inductive Inl where
   | strong (body : Array Inl) (pos : Pos)
   | link (dest : String) (title : String) (body : Array Inl) (pos : Pos)
   | image (dest : String) (title : String) (alt : Array Inl) (pos : Pos)
+  | anchor (key : String) (pos : Pos)
   | soft (pos : Pos)
   | hard (pos : Pos)
   deriving Repr, BEq
@@ -60,6 +64,7 @@ public inductive Blk where
   | code (info : String) (text : String) (pos : Pos)
   | rule (pos : Pos)
   | quote (body : Array Blk) (pos : Pos)
+  | disclosure (summary : Array Inl) (body : Array Blk) (pos : Pos)
   | list (ordered : Bool) (start : Nat) (tight : Bool) (items : Array (Array Blk))
       (pos : Pos)
   deriving Repr, BEq
@@ -281,6 +286,12 @@ def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
     j := j + 1
   return none
 
+/-- HTML also ends a comment at `--!>`. CommonMark's raw span can extend
+past that boundary, so it cannot be discarded as invisible content.
+Inspect only the consumed span, never the rest of the paragraph. -/
+private def commentOnly (cs : Array Char) (start stop : Nat) : Bool :=
+  (findLit (cs.extract start stop) 0 "--!>").isNone
+
 /-- What a raw-HTML scan over one stretch remembers: for each of the four
 constructs that close on a literal (comment, CDATA, processing instruction,
 declaration), the earliest position from which a search for that literal
@@ -402,6 +413,40 @@ def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMe
 /-- `htmlTagAtM` with nothing remembered: a block start reads one line. -/
 def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
 
+/-- An attribute-free, non-self-closing tag. The entire name must match:
+`details-extra` and an attribute that changes visibility are not this node. -/
+private def bareTagAt (cs : Array Char) (i : Nat) (name : String)
+    (closing : Bool := false) : Option Nat := do
+  guard (cs[i]? == some '<')
+  let start := if closing then i + 2 else i + 1
+  if closing then guard (cs[i + 1]? == some '/')
+  let stop ← tagNameAt cs start
+  guard ((sliceStr cs start stop).toLower == name)
+  let end_ := wsAt cs stop
+  guard (cs[end_]? == some '>')
+  return end_ + 1
+
+/-- Only an empty target, with exactly one `name` or `id` attribute.
+The desugaring checks that the existing target semantics preserve its key. -/
+private def emptyAnchorAt (cs : Array Char) (i : Nat) : Option (String × Nat) := do
+  guard (litAt cs i "<a")
+  let start := wsAt cs (i + 2)
+  guard (start > i + 2)
+  let stop ← tagNameAt cs start
+  let name := (sliceStr cs start stop).toLower
+  guard (name == "name" || name == "id")
+  let eq := wsAt cs stop
+  guard (cs[eq]? == some '=')
+  let value := wsAt cs (eq + 1)
+  let endValue ← attrValueAt cs value
+  let quoted := cs[value]? == some '"' || cs[value]? == some '\''
+  let key := sliceStr cs (if quoted then value + 1 else value)
+    (if quoted then endValue - 1 else endValue)
+  let endTag := wsAt cs endValue
+  guard (cs[endTag]? == some '>')
+  let next ← bareTagAt cs (endTag + 1) "a" true
+  return (key, next)
+
 /-- The tag names §4.6 condition 1 names: their block runs to a closing tag,
 not to a blank line. -/
 def htmlRawTags : List String := ["pre", "script", "style", "textarea"]
@@ -497,6 +542,7 @@ inductive ITok where
   | soft (pos : Pos)
   | hard (pos : Pos)
   | auto (dest : String) (text : String) (pos : Pos)
+  | anchor (key : String) (pos : Pos)
   | run (ch : Char) (len : Nat) (canOpen canClose : Bool) (pos : Pos)
   | bopen (image : Bool) (pos : Pos)
   | bclose (pos : Pos)
@@ -506,7 +552,7 @@ instance : Inhabited ITok := ⟨.soft {}⟩
 
 def ITok.pos : ITok → Pos
   | .txt _ p | .code _ p | .soft p | .hard p | .auto _ _ p
-  | .run _ _ _ _ p | .bopen _ p | .bclose p => p
+  | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p => p
 
 /-- A resolved link or image: the token indices of its brackets, whether it
 is an image, and its destination and title. -/
@@ -943,18 +989,25 @@ def scanInlines (file : String) (c : Chars) :
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          -- Raw HTML: refused by design, and the text is dropped. Only a
-          -- complete tag (§6.6) is raw HTML; anything else is text, which
-          -- is why `x <y for comparison` no longer fails the build.
-          let (tag, m) := htmlTagAtM c.cs i hmemo
-          hmemo := m
-          match tag with
-          | some next =>
-            diags := diags.push (refuse file .rawHtml p)
+          if let some (key, next) := emptyAnchorAt c.cs i then
+            toks := flush toks pending pendingPos
+            pending := ""
+            toks := toks.push (.anchor key p)
             i := next
-          | none =>
-            pending := pending.push '<'
-            i := i + 1
+          else
+            -- Only a complete tag (§6.6) is raw HTML; anything else is
+            -- literal text. A complete comment has no visible content.
+            let (tag, m) := htmlTagAtM c.cs i hmemo
+            hmemo := m
+            match tag with
+            | some next =>
+              -- premise: mdSurfaceChecks — comments hide only their own text.
+              unless litAt c.cs i "<!--" && commentOnly c.cs i next do
+                diags := diags.push (refuse file .rawHtml p)
+              i := next
+            | none =>
+              pending := pending.push '<'
+              i := i + 1
       else if ch == '\n' then
         -- Two or more trailing spaces before the break make it hard.
         let hard := pending.endsWith "  "
@@ -1216,6 +1269,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
     | .soft _ => acc := acc.push (.soft p)
     | .hard _ => acc := acc.push (.hard p)
     | .auto dest text _ => acc := acc.push (.link dest "" #[.text text p] p)
+    | .anchor key _ => acc := acc.push (.anchor key p)
     | .bclose _ =>
       if (bcloseAt[i]?).getD false then
         if let some f := frames.back? then
@@ -1273,6 +1327,44 @@ def charsOf (lines : Array (String × Pos)) : Chars := Id.run do
 
 def charsOfOne (s : String) (p : Pos) : Chars := charsOf #[(s, p)]
 
+/-- HTML text resolves the reader's known character references, but neither
+Markdown delimiters nor TeX controls. Unknown or unterminated references and
+numeric C1 references are refused: HTML's legacy decoding differs from the
+Markdown decoder there. Markup inside the summary is outside this subset. -/
+private def htmlText (s : String) : Option String := Id.run do
+  let c : Chars := { cs := s.toList.toArray, ps := #[] }
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:c.size + 1] do
+    if i ≥ c.size then break
+    if c.at? i == some '<' then return none
+    let entity := entityAt c i
+    let unsupported : Bool := match entity with
+      | some (v, _) => v.any (fun ch : Char => ch.toNat ≥ 0x80 && ch.toNat ≤ 0x9f)
+      | none => c.at? i == some '&' &&
+          ((c.at? (i + 1)).any fun ch => isAsciiAlpha ch || ch == '#')
+    if unsupported then return none
+    match entity with
+    | some (v, next) =>
+      out := out ++ v
+      i := next
+    | none =>
+      out := out.push ((c.at? i).getD ' ')
+      i := i + 1
+  return some out
+
+/-- A complete, attribute-free summary on one line. Requiring the closing
+tag and blank suffix prevents a supported prefix from swallowing markup or
+visible text outside it. -/
+private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl) := do
+  let start ← bareTagAt cs i "summary"
+  let closeEnd ← findLit cs start "</summary"
+  let stop := closeEnd - "</summary".length
+  let next ← bareTagAt cs stop "summary" true
+  guard (isBlankFrom cs next)
+  let text ← htmlText (sliceStr cs start stop)
+  return #[.text text { p with col := start + 1 }]
+
 end LeanTex.Core.Md
 
 
@@ -1292,6 +1384,7 @@ private inductive FKind where
   | quote
   | list (ordered : Bool) (start : Nat) (marker : Char)
   | item (indent : Nat)
+  | disclosure
   deriving Repr, BEq, Inhabited
 
 private structure Frame where
@@ -1300,6 +1393,7 @@ private structure Frame where
   outer : Array Blk := #[]
   items : Array (Array Blk) := #[]
   tight : Bool := true
+  summary : Option (Array Inl) := none
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
@@ -1316,6 +1410,7 @@ private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × A
     let rest := frames.pop
     match f.kind with
     | .quote => (rest, f.outer.push (.quote acc f.pos))
+    | .disclosure => (rest, f.outer.push (.disclosure (f.summary.getD #[]) acc f.pos))
     | .item _ =>
       match rest.back?.map Frame.kind with
       | some (FKind.list _ _ _) =>
@@ -1351,6 +1446,7 @@ private inductive Leaf where
   consumed to its §4.6 end, never re-read as markdown. Re-read, an indented
   line inside a `<table>` was refused a second time as indented code. -/
   | html (e : HtmlEnd)
+  | comment (pos : Pos)
   deriving Inhabited
 
 private def Leaf.isPara : Leaf → Bool
@@ -1457,7 +1553,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
               col := c2
               matched := matched + 1
             | none => ok := false
-        | some (FKind.list _ _ _) => matched := matched + 1
+        | some (FKind.list _ _ _) | some FKind.disclosure => matched := matched + 1
     -- An open fenced block, inside the containers that matched: its closer
     -- is tested on the line *after* the container prefixes, and its content
     -- lines keep neither those prefixes nor the opener's own indent (§4.5).
@@ -1493,6 +1589,19 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         | .lit _ =>
           if htmlEndsIn cs i e then leaf := .none
           continue
+    | .comment p =>
+      if !ok then
+        leaf := .none
+      else
+        let end_ := findLit cs i "-->"
+        -- A suffix or an earlier HTML terminator makes this a larger raw
+        -- block. Refuse it once, then consume it under the raw-block rules.
+        if !commentOnly cs i (end_.getD cs.size)
+            || end_.any (fun next => !isBlankFrom cs next) then
+          diags := diags.push (refuse file .rawHtml p)
+          leaf := if end_.isSome then .none else .html (.lit ["-->"])
+        else if end_.isSome then leaf := .none
+        continue
     | _ => pure ()
     let blank := isBlankFrom cs i
     -- Closing the open paragraph, wherever a branch below needs it done.
@@ -1522,6 +1631,9 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       leaf := .none
       for _ in [0:frames.size] do
         if frames.size > matched then
+          if let some f := frames.back? then
+            if f.kind == .disclosure then
+              diags := diags.push (refuse file .rawHtml f.pos)
           let (fs, a) := closeTop frames acc
           frames := fs
           acc := a
@@ -1655,6 +1767,13 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let htmlStart : Option HtmlEnd :=
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
+    let opensDetails := (bareTagAt cs j "details").any (isBlankFrom cs ·)
+    let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
+    let inDetails := frames.back?.map Frame.kind == some .disclosure
+    let summary :=
+      if inDetails && !leaf.isPara && acc.isEmpty
+          && (frames.back?.bind Frame.summary).isNone then summaryAt cs j lpos
+      else none
     if ind ≥ 4 && !leaf.isPara then
       diags := diags.push (refuse file .indentedCode lpos)
     else if ind ≥ 4 && leaf.isPara then
@@ -1664,6 +1783,25 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       leaf := .para (match leaf with
         | .para pls => pls.push (sliceStr cs j cs.size, { line := ln.no, col := j + 1 })
         | _ => #[(sliceStr cs j cs.size, { line := ln.no, col := j + 1 })])
+    else if opensDetails then
+      let (a, ds) := closePara leaf acc lpos
+      diags := diags ++ ds
+      leaf := .none
+      frames := frames.push
+        { kind := .disclosure, pos := { lpos with col := j + 1 }, outer := a }
+      acc := #[]
+    else if closesDetails && inDetails then
+      let (a, ds) := closePara leaf acc lpos
+      diags := diags ++ ds
+      leaf := .none
+      if let some f := frames.back? then
+        if f.summary.isNone then diags := diags.push (refuse file .rawHtml f.pos)
+      let (fs, a) := closeTop frames a
+      frames := fs
+      acc := a
+    else if let some ss := summary then
+      frames := frames.modify (frames.size - 1)
+        (fun f => { f with summary := some ss })
     else if let some (level, k) := atxAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1710,11 +1848,22 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       -- block inside a quote or an item starts after the container prefix,
       -- and a checker reading the refused text back from the source must
       -- land on the tag.
-      diags := diags.push (refuse file .rawHtml { line := ln.no, col := j + 1 })
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
-      leaf := if htmlEndsIn cs j e then .none else .html e
+      let p := { lpos with col := j + 1 }
+      -- premise: mdSurfaceChecks — only a comment-only block is consumed without loss.
+      if litAt cs j "<!--" then
+        let end_ := findLit cs (j + 2) "-->"
+        if !commentOnly cs j (end_.getD cs.size)
+            || end_.any (fun next => !isBlankFrom cs next) then
+          diags := diags.push (refuse file .rawHtml p)
+          leaf := if end_.isSome then .none else .html (.lit ["-->"])
+        else
+          leaf := if end_.isSome then .none else .comment p
+      else
+        diags := diags.push (refuse file .rawHtml p)
+        leaf := if htmlEndsIn cs j e then .none else .html e
     else
       let text := sliceStr cs j cs.size
       match leaf with
@@ -1730,8 +1879,11 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
   | .fenced _ _ finfo fpos _ flines =>
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
   | .html _ => pure ()
+  | .comment _ => pure ()
   | .none => pure ()
   for _ in [0:frames.size] do
+    if let some f := frames.back? then
+      if f.kind == .disclosure then diags := diags.push (refuse file .rawHtml f.pos)
     let (fs, a) := closeTop frames acc
     frames := fs
     acc := a

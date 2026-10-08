@@ -12,79 +12,6 @@ produced a plausible IR and shipped nothing.
 
 Each row is a regression floor: it names the invariant whose absence let the
 defect through, and it failed before the fix. -/
-mutual
-
-/-- One node as its tag, attributes and text, flattened — with its closing
-tag, so the string states *nesting* and not only presence. Without the
-closing tags a row could only ask whether a tag appeared anywhere: the
-weakest row here passed on the letter `h` occurring in the tree, while the
-heading it was about shipped inside the list item above it. The accumulator
-threads so the walk is linear. -/
-def mdFlattenOne (acc : String) (n : Html.Node) : String :=
-  match n with
-  | .text s => acc ++ s
-  | .style _ => acc
-  | .script _ _ => acc
-  | .elem tag attrs kids =>
-    let as := attrs.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) ""
-    if Html.voidTags.contains tag then acc ++ "<" ++ tag ++ as ++ ">"
-    else mdFlatten (acc ++ "<" ++ tag ++ as ++ ">") kids.toList ++ "</" ++ tag ++ ">"
-
-def mdFlatten (acc : String) : List Html.Node → String
-  | [] => acc
-  | n :: rest => mdFlatten (mdFlattenOne acc n) rest
-
-end
-
-/-- The tags and text a markdown source's page carries, in order: enough to
-state what shipped and where, which is what every defect below was about. -/
-def mdTreeOf (src : String) : String :=
-  let (doc, _) := elabMd src
-  let (_, body, _) := HtmlDoc.emitTree {} doc
-  mdFlatten "" body.toList
-
-mutual
-
-/-- Every `<pre>` of a tree, in document order, the accumulator threaded. -/
-def mdPresOne (acc : Array Html.Node) (n : Html.Node) : Array Html.Node :=
-  match n with
-  | .elem "pre" _ _ => acc.push n
-  | .elem _ _ kids => mdPresList acc kids.toList
-  | .text _ => acc
-  | .style _ => acc
-  | .script _ _ => acc
-
-def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
-  | [] => acc
-  | n :: rest => mdPresList (mdPresOne acc n) rest
-
-end
-
-/-- The attributes of an unconfigured fence's `<pre>`: the verbatim size,
-leading and tab settings, and a tab stop so a keyboard can reach and scroll it
-(`HtmlDoc.a11yFacts`). Named once, so a backend change fails the fence rows
-at this line rather than at four literals. The exact attribute check also
-rejects leaked language text or an attribute hiding the code. A bare fence
-sets at the ambient size — the document base, `1em` — as LaTeX's `verbatim`
-does (it selects the mono family and changes no size). -/
-def mdCodeBlockPreAttrs : Array (String × String) :=
-  #[("style", "font-size: 1em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
-
-/-- The page's code blocks, in order, each as the one text its `<code>`
-holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
-whose only child is a `<code>` with no attribute holding one text node, and
-`none` for any other shape: a node before or after the `<code>`, an
-attribute leaked onto either element, content split or nested. A needle
-anchored at `</code></pre>` passed a page whose every `<pre>` opened with
-leaked text. -/
-def mdCodeBlocks (src : String) : Array (Option String) :=
-  let (doc, _) := elabMd src
-  let (_, body, _) := HtmlDoc.emitTree {} doc
-  (mdPresList #[] body.toList).map fun n =>
-    match n with
-    | .elem "pre" attrs #[.elem "code" cattrs #[.text s]] =>
-      if attrs == mdCodeBlockPreAttrs && cattrs.isEmpty then some s else none
-    | _ => none
 
 /-- A generated family of documents that each end a list with a thematic
 break and then carry on: container context × list marker × break spelling ×
@@ -256,8 +183,12 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((dvMd "<a h*#ref=\"hi\">\n").all (·.kind != .E0390))
   t "a complete tag is still refused"
     (refusedWith "<span>x</span> in a line\n" "md:raw-html")
-  t "a comment is still refused"
-    (refusedWith "<!-- c -->\n" "md:raw-html")
+  t "a comment consumes no visible content and needs no refusal"
+    ((dvMd "<!-- c -->\n").all (·.kind != .E0390)
+      && mdTreeOf "<!-- c -->\n" == mdTreeOf "")
+  t "a comment with an earlier HTML terminator cannot hide visible content"
+    (refusedWith "Amber<!-- hidden --!>Willow<!-- tail -->Cedar\n" "md:raw-html"
+      && refusedWith "<!-- hidden\n--!>Willow\n" "md:raw-html")
   -- Defect: a block-level refusal named column one of its line, so inside a
   -- quote it pointed at the `>` and a checker reading the refused text back
   -- from the source read the container prefix instead of the tag.
@@ -440,8 +371,9 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!has "para\n<custom-tag>\nmore text\n" "</p><p>more")
   -- `<!-->` and `<!--->` are complete comments (0.31.2); searched for from
   -- the fourth character, `<!-->` read as the start of an unclosed one.
-  t "the shortest comment is a complete raw-HTML construct"
-    (refusedWith "a <!--> b\n" "md:raw-html")
+  t "the shortest comment is complete and invisible"
+    ((dvMd "a <!--> b\n").all (·.kind != .E0390)
+      && has "a <!--> b\n" "<p>a b</p>")
   -- A bare destination nests parentheses at most 32 deep (cmark's limit;
   -- the spec asks for at least three), which is what bounds each scan.
   let deep (k : Nat) : String :=

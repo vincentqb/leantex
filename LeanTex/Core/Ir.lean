@@ -16720,11 +16720,14 @@ elaborates to. Shape `_agree`. -/
 public theorem decl_spellings_agree (s : Style) (xs : Array Inline) :
     wrapDecls [.style s] xs = #[.styled s xs] := by rfl
 
-/-- One character of a label's anchor: word characters and the punctuation
-label keys conventionally carry (`fig:scm`, `eq.1`, `a-b`, `x_y`) survive
-verbatim; anything else — whitespace included — folds to a hyphen. -/
+/-- One character of a label's anchor: Unicode characters, ASCII word
+characters and the punctuation label keys conventionally carry (`fig:scm`,
+`eq.1`, `a-b`, `x_y`) survive verbatim. HTML ids permit non-ASCII characters;
+folding them would collapse distinct authored targets. Other ASCII
+characters — whitespace included — fold to a hyphen. -/
 private def labelAnchorChar (c : Char) : Char :=
-  if c.isAlpha || c.isDigit || c == ':' || c == '.' || c == '-' || c == '_' then c
+  if c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' ||
+      c == '-' || c == '_' then c
   else '-'
 
 /-- The id a `\label` key takes in the HTML page and a resolved reference
@@ -16738,12 +16741,31 @@ public def labelAnchor (key : String) : String :=
   | [] => "label"
   | l => String.ofList l
 
+/-- Every nonempty key in the supported alphabet keeps its exact spelling
+at the one resolving site both an anchor and its link read. In particular,
+distinct Unicode keys remain distinct, without relaxing ASCII safety. -/
+public theorem labelAnchor_fixed_point (key : String) (hne : key ≠ "")
+    (hkeep : ∀ c ∈ key.toList,
+      (c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' ||
+        c == '-' || c == '_') = true) :
+    labelAnchor key = key := by
+  have hm : key.toList.map labelAnchorChar = key.toList := by
+    have h := List.map_congr_left (l := key.toList) (f := labelAnchorChar) (g := id)
+      (fun c hc => by simp [labelAnchorChar, hkeep c hc])
+    simpa using h
+  unfold labelAnchor
+  rw [hm]
+  split
+  · rename_i he
+    exact False.elim (hne (String.toList_eq_nil_iff.mp he))
+  · exact String.ofList_toList
+
 /-- The sanitiser never lets a character through that the kept set refuses:
-whatever the key spelled, the anchor's characters are word characters, the
-kept punctuation, or the fold hyphen — never `bad`. -/
+whatever the key spelled, the anchor's characters are non-ASCII, word
+characters, the kept punctuation, or the fold hyphen — never `bad`. -/
 private theorem labelAnchorChar_not (c bad : Char)
-    (hbad : (bad.isAlpha || bad.isDigit || bad == ':' || bad == '.' ||
-      bad == '-' || bad == '_') = false) :
+    (hbad : (bad.toNat ≥ 0x80 || bad.isAlpha || bad.isDigit || bad == ':' ||
+      bad == '.' || bad == '-' || bad == '_') = false) :
     labelAnchorChar c ≠ bad := by
   unfold labelAnchorChar
   split <;> rintro rfl <;> simp_all

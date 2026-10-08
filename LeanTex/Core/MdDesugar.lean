@@ -2,8 +2,9 @@ module
 
 public import LeanTex.Core.MdParse
 public import LeanTex.Core.Parse
+public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
-import LeanTex.Core.Ir
+import LeanTex.Core.Loop
 
 /-! # Markdown's meaning: the desugaring into the surface AST
 
@@ -23,7 +24,8 @@ is the registry's rule and not a habit:
   One today: `md:thematic-break`, which has no block in this engine.
 * `W0392` (`degraded`, floor `content`) for a construct that ships,
   diminished: `md:heading-depth`, `md:list-start`, `md:loose-list`,
-  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`. Each of
+  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`,
+  `md:disclosure`. Each of
   the first five once took `W0307`, and the census then read shipping
   constructs as absent content.
 
@@ -97,7 +99,7 @@ public def altSource (t : String) : Option String :=
 non-space characters. Going through `word` rather than through generated
 source is also what lets markdown text carry `$`, `%` and `#` with no
 escape — they never become control tokens. -/
-private def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
+public def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
   let mut cur := ""
   let mut col := pos.col
@@ -117,6 +119,48 @@ private def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
   unless cur.isEmpty do out := out.push (.word cur { pos with col := wordCol })
   return out
 
+private def TextOnly (rs : Array Raw) : Prop :=
+  ∀ r ∈ rs, r = .space ∨ ∃ s p, r = .word s p
+
+private theorem textOnly_word (rs : Array Raw) (s : String) (p : Pos)
+    (h : TextOnly rs) : TextOnly (rs.push (.word s p)) := by
+  intro r hr
+  rcases Array.mem_push.mp hr with hr | hr
+  · exact h r hr
+  · exact Or.inr ⟨s, p, hr⟩
+
+private theorem textOnly_space (rs : Array Raw) (h : TextOnly rs) :
+    TextOnly (rs.push .space) := by
+  intro r hr
+  rcases Array.mem_push.mp hr with hr | hr
+  · exact h r hr
+  · exact Or.inl hr
+
+/-- Author text cannot introduce a surface control, group or option. This
+is a safety invariant over the actual lowering loop, before IR exists;
+it does not claim a character census or how much input was consumed. -/
+public theorem textRaws_covers (s : String) (pos : Pos) :
+    ∀ r ∈ textRaws s pos, r = .space ∨ ∃ t p, r = .word t p := by
+  change TextOnly (textRaws s pos)
+  unfold textRaws
+  refine Loop.bind_of_inv (fun (st : Array Raw × String × Nat × Nat) => TextOnly st.1)
+    (Q := TextOnly) _ _
+    (Loop.forIn_inv (fun (st : Array Raw × String × Nat × Nat) => TextOnly st.1)
+      _ _ _ ?_ ?_) ?_
+  · simp [TextOnly]
+  · intro ch _ st hs
+    dsimp only
+    split
+    · split
+      · exact textOnly_space _ hs
+      · exact textOnly_space _ (textOnly_word _ _ _ hs)
+    · split <;> exact hs
+  · intro st hs
+    dsimp only
+    split
+    · exact hs
+    · exact textOnly_word _ _ _ hs
+
 /-- The control name a heading level takes. Levels beyond the third are
 routed: the kernel has three sectioning levels, so a fourth is a level
 question, not a markdown one. -/
@@ -124,6 +168,35 @@ private def sectionCtrl : Nat → String
   | 0 | 1 => "section"
   | 2 => "subsection"
   | _ => "subsubsection"
+
+/-- An empty HTML target can use the native target only if its key reaches
+the page unchanged. An HTML fragment link names the original key, whereas
+native labels sanitise it; accepting a changed key would break that link. -/
+public def anchorRaws? (key : String) (p : Pos) : Option (Array Raw) :=
+  if Ir.labelAnchor key == key then
+    some #[.ctrl "hypertarget" p, .group #[.word key p] p, .group #[] p]
+  else none
+
+/-- A supported target's fragment remains the original key. -/
+public theorem anchorRaws_fixed_point (key : String) (p : Pos) (rs : Array Raw)
+    (h : anchorRaws? key p = some rs) : Ir.labelAnchor key = key := by
+  unfold anchorRaws? at h
+  split at h
+  · simpa using ‹(Ir.labelAnchor key == key) = true›
+  · contradiction
+
+/-- Disclosure framing, over the surface AST before IR exists. Its only
+new control is fixed; all summary raws stay inside one bold group, and the
+entire body follows it in order. -/
+public def disclosureRaws (summary body : Array Raw) (p : Pos) : Array Raw :=
+  #[.ctrl "textbf" p, .group summary p, .par p] ++ body
+
+/-- Framing cannot discard or reorder any body raw, or extract author text
+from the summary's group. These are facts of lowering, not backend layout. -/
+public theorem disclosureRaws_contract (summary body : Array Raw) (p : Pos) :
+    (disclosureRaws summary body p).toList.drop 3 = body.toList ∧
+    (disclosureRaws summary body p)[1]? = some (.group summary p) := by
+  simp [disclosureRaws, Array.getElem?_append]
 
 mutual
 
@@ -133,6 +206,7 @@ private def inlText1 : Inl → String
   | .code s _ => s
   | .soft _ => " "
   | .hard _ => " "
+  | .anchor _ _ => ""
   | .emph b _ => inlTextList "" b.toList
   | .strong b _ => inlTextList "" b.toList
   | .link _ _ b _ => inlTextList "" b.toList
@@ -156,6 +230,14 @@ private def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
   | .soft _ => (#[.space], #[])
   | .hard p => (#[.ctrl "\\" p], #[])
+  | .anchor key p =>
+    match anchorRaws? key p with
+    | some rs => (rs, #[])
+    | none =>
+      (#[], #[Diag.of .E0390
+        "this HTML target's key cannot be carried unchanged"
+        (some ⟨file, p⟩) (some "use letters, digits, :, ., - or _ in the target key")
+        (some "md:raw-html")])
   | .emph body p =>
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     (#[.ctrl "emph" p, .group rs p], ds)
@@ -246,6 +328,11 @@ without a language" p
   | .quote body p =>
     let (rs, ds) := blkListRaws file #[] #[] body.toList
     (#[.env "quote" rs p], ds)
+  | .disclosure summary body p =>
+    let (ss, sds) := inlListRaws file #[] #[] summary.toList
+    let (rs, ds) := blkListRaws file #[] #[] body.toList
+    (disclosureRaws ss rs p, (sds ++ ds).push (routeDegraded file "disclosure"
+      "a disclosure sets its summary and body expanded: collapse behaviour is not carried" p))
   | .list ordered start tight items p =>
     let (rs, ds) := itemsRaws file #[] #[] items.toList p
     let ds := if ordered && start != 1 then

@@ -20,21 +20,22 @@ example : Repr Md.Blk := inferInstance
 example (p : Pos) (body : Array Md.Inl) : Array Md.Inl :=
   #[.text "alpha" p, .code "beta" p, .emph body p, .strong body p,
     .link "https://example.org" "gamma" body p,
-    .image "figure.png" "delta" body p, .soft p, .hard p]
+    .image "figure.png" "delta" body p, .anchor "delta" p, .soft p, .hard p]
 
 example (p : Pos) (inlines : Array Md.Inl) (blocks : Array Md.Blk) : Array Md.Blk :=
   #[.para inlines p, .heading 2 inlines p, .code "text" "alpha" p,
-    .rule p, .quote blocks p, .list true 1 true #[blocks] p]
+    .rule p, .quote blocks p, .list true 1 true #[blocks] p,
+    .disclosure inlines blocks p]
 
 example (node : Md.Inl) : Pos :=
   match node with
   | .text _ p | .code _ p | .emph _ p | .strong _ p
-  | .link _ _ _ p | .image _ _ _ p | .soft p | .hard p => p
+  | .link _ _ _ p | .image _ _ _ p | .anchor _ p | .soft p | .hard p => p
 
 example (node : Md.Blk) : Pos :=
   match node with
   | .para _ p | .heading _ _ p | .code _ _ p | .rule p
-  | .quote _ p | .list _ _ _ _ p => p
+  | .quote _ p | .disclosure _ _ p | .list _ _ _ _ p => p
 
 example : True := by
   fail_if_success have := Md.Line

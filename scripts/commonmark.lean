@@ -1326,6 +1326,30 @@ def selftest : IO UInt32 := do
     bad := bad.push "corroboration: another case's reviewed row corroborated this one"
   if corroborated #[(9, "md:indented-code")] (ex "x\n" "") ⟨"md:lazy-continuation", 1, 1⟩ then
     bad := bad.push "corroboration: a reviewed row for one class corroborated another"
+  let commentCase := classify measuredBase #[]
+    (ex "Amber<!-- hidden -->Cedar\n" "<p>Amber<!-- hidden -->Cedar</p>\n")
+  unless commentCase.verdict == .match_ && commentCase.refusals.isEmpty do
+    bad := bad.push "typed HTML: a comment's invisible content still refuses a matching page"
+  let commentBoundaryCase := classify measuredBase #[]
+    (ex "Amber<!-- hidden --!>Willow<!-- tail -->Cedar\n"
+      "<p>Amber<!-- hidden --!>Willow<!-- tail -->Cedar</p>\n")
+  unless commentBoundaryCase.verdict == .rejected
+      && !commentBoundaryCase.refusals.isEmpty do
+    bad := bad.push "typed HTML: an alternate comment boundary hid a corroborated refusal"
+  let hiddenCase := classify measuredBase #[]
+    (ex "<details hidden>\nVisible\n</details>\n" "<details hidden>\nVisible\n</details>\n")
+  unless hiddenCase.verdict == .rejected && !hiddenCase.refusals.isEmpty do
+    bad := bad.push "typed HTML: an unsupported visibility attribute lost its corroborated refusal"
+  let disclosureMd := "<details>\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
+  let disclosureCase := classify measuredBase #[]
+    (ex disclosureMd "<details>\n<summary>Amber</summary>\n<p>Cedar</p>\n</details>\n")
+  unless disclosureCase.verdict == .owed && disclosureCase.refusals.isEmpty
+      && disclosureCase.routes.contains "md:disclosure" do
+    bad := bad.push "typed HTML: expanded disclosure content was certified as a CommonMark match"
+  let expandedCase := classify measuredBase #[]
+    (ex disclosureMd "<p><strong>Amber</strong></p><p>Cedar</p>")
+  unless expandedCase.verdict == .owed && expandedCase.note == "blocked-by:md:disclosure" do
+    bad := bad.push "typed HTML: agreeing expanded trees hid the disclosure's declared loss"
   -- The reviewed list: a malformed row is refused rather than skipped.
   match parseReviewed "7\tmd:indented-code\tthe item's content is indented code\n" with
   | .ok rs => unless rs == #[(7, "md:indented-code")] do bad := bad.push "reviewed: row misread"
