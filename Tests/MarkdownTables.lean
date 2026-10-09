@@ -1,4 +1,8 @@
-import Tests.Support
+module
+
+public import Tests.Support
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 
@@ -15,21 +19,21 @@ is invented. -/
 
 namespace Tests.MarkdownTables
 
-/-- One shipped table cell: its tag, its text, and the `text-align` its
-style declares, if any. -/
+/-- One shipped table cell: its tag, its text, and the side its class
+states (`HtmlDoc.cellSideClass`), if any. -/
 structure Cell where
   tag : String
   text : String
   align : Option String
   deriving BEq, Repr
 
-/-- The `text-align` a style attribute declares. -/
+/-- The side a cell's side class states: the `text-align` its rule sets
+(`HtmlDoc.cellSideRule`). -/
 def alignOf (attrs : Array (String × String)) : Option String :=
-  (attrs.find? (·.1 == "style")).bind fun (_, v) =>
-    (v.splitOn ";").findSome? fun decl =>
-      match decl.splitOn ":" with
-      | [k, a] => if k.trimAscii.toString == "text-align" then some a.trimAscii.toString else none
-      | _ => none
+  (attrs.find? (·.1 == "class")).bind fun (_, v) =>
+    (v.splitOn " ").findSome? fun c =>
+      [Ir.HAlign.left, .center, .right].findSome? fun h =>
+        if c == HtmlDoc.cellSideClass h then some h.align else none
 
 /-- A row group's rows, each its cells. -/
 def groupRows (kids : Array Html.Node) : Array (Array Cell) :=
@@ -77,8 +81,8 @@ shared in proportion to how much wider each column's widest line is — and
 the cells of a narrowed column wrap, ragged on the side their alignment
 names, with no hyphen; its HTML cells are left free to wrap the same way. A
 table whose words alone pass the measure keeps every word whole, no cell
-over another, and is named at its first cell. And every cell of a row
-stands on the row's baseline by its first line, whatever that line's
+over another, and sets a step smaller (`fitStepChecks`). And every cell of
+a row stands on the row's baseline by its first line, whatever that line's
 height. -/
 def wrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -154,9 +158,8 @@ its label, then counts them"
       let cs := cellsAt y
       cs.size == 10 && (cs.zip (cs.extract 1 cs.size)).all fun (a, b) => a.x + a.setWidth < b.x)
   let over := fout.diags.filter (·.kind == .W0338)
-  t s!"and it is named at its first cell, with a remedy markdown can write ({over.size})"
-    (over.size == 1 && over.all fun d => d.span.map (·.pos.line) == some 1
-      && (d.help.any fun h => hasStr h "split the table"))
+  t s!"and it fits at a smaller step, so nothing names it ({over.size})"
+    (over.isEmpty && (flines.all fun l => l.size < located.page.fontSize))
   -- One row, one baseline: a taller first line moves every cell's down.
   let rowOut := layoutOf fonts (elabStr (dvDoc ""
     "\\begin{tabular}{lll}\n\\toprule\nshort & {\\LARGE Tall} & low \\\\\n\\bottomrule\n\\end{tabular}")).1
@@ -165,6 +168,180 @@ its label, then counts them"
   t "the cells of a row stand on one baseline though one cell's first line is taller"
     ((baselineOf "Tall").isSome && baselineOf "short" == baselineOf "Tall"
       && baselineOf "low" == baselineOf "Tall")
+
+/-- The shipped lines that share a baseline, each sorted left to right. -/
+def rowsOfLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) :=
+  let ys := (lines.map (·.y)).toList.eraseDups.toArray
+  ys.map fun y => (lines.filter (·.y == y)).qsort (·.x < ·.x)
+
+/-- Do any two of a baseline's lines overlap: one cell's line running over
+the next cell's on the page? -/
+def rowOverlaps (row : Array Layout.LineOut) : Bool :=
+  (row.zip (row.extract 1 row.size)).any fun (a, b) => b.x < a.x + a.setWidth
+
+/-- **A narrowed cell sets its words inside its column.** A ragged line's
+stretch lives in its word spaces, so a line that holds one word, or one run
+of code broken where the url package breaks it, held none: the breaker
+priced every such line as infinitely bad and packed the cell's words onto
+one overfull line instead, across the next column's text. A narrowed cell's
+every line now carries plain TeX's ragged right skip (`Layout.narrowedSkip`):
+no two lines on one baseline overlap, none passes the table's right edge,
+and no line is overfull. Every word is invented. -/
+def narrowCellChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let why := "The ordering pass reads every widget it is handed and writes each \
+one back in the order of its name, then tallies them"
+  let src := "| Gadget family name | Handler method | Kind | Why |\n|---|---|---|---|\n\
+| Ordering pass | `_reorder_every_widget_name_` | LE | " ++ why ++ " |\n\
+| Folding with limits | `_fold_names_before_tallying_widgets_` | EQ in pass | For limited \
+pairs that do not reach every shelf, the folded names must equal the tallied ones |\n"
+  let (doc, _) := elabMd src
+  let out := layoutOf fonts doc
+  let lines := bodyLines out
+  let right := doc.page.width - doc.page.hmargin
+  t s!"no two cells' lines overlap on a baseline ({(rowsOfLines lines).size} baselines)"
+    (!lines.isEmpty && !(rowsOfLines lines).any rowOverlaps)
+  t "no cell line passes the table's right edge"
+    (lines.all fun l => l.x + l.setWidth ≤ right + Dim.pt 1)
+  t "and no line is overfull"
+    (!(out.diags.any (·.kind == .W0005)))
+  t "every word of the narrowed cells reaches the page"
+    (let painted := String.intercalate "\n" (lines.map lineText).toList
+     (why.splitOn " ").all (hasStr painted ·) && hasStr painted "_reorder_every_widget_name_")
+  -- Words that each fit their column, two of which do not: one per line,
+  -- the neighbouring column of prose taking the room.
+  let words := ["network", "protocol", "handler", "registry"]
+  let single := "| Words | Prose |\n|---|---|\n| " ++ " ".intercalate words ++ " | " ++
+    " ".intercalate (List.replicate 12 why) ++ " |\n"
+  let sout := layoutOf fonts (elabMd single).1
+  let slines := bodyLines sout
+  let yOf (w : String) : Option Dim.Sp :=
+    (slines.find? fun l => (lineRuns l).any (·.2.1 == w)).map (·.y)
+  let ys := words.filterMap yOf
+  t s!"a narrowed cell whose words fit its column one at a time sets one a line ({ys})"
+    (ys.length == 4 && ys.eraseDups.length == 4)
+  t "and overlaps no neighbour"
+    (!(rowsOfLines slines).any rowOverlaps && !(sout.diags.any (·.kind == .W0005)))
+  -- A tex `>{\raggedright}p` column keeps LaTeX's setting, hyphenation
+  -- included, never the narrowed cell's: set without its hyphens, its words
+  -- once packed onto one line over the next column.
+  let texDoc := (elabStr (dvDoc "\\usepackage{array}\n"
+    ("\\begin{tabular}{>{\\raggedright\\arraybackslash}p{2.1cm}l}\n" ++
+      " ".intercalate words ++ " & next \\\\\n\\end{tabular}"))).1
+  let texOut := layoutOf fonts texDoc (pats := Hyphen.forTag texDoc.info.locale.tag)
+  let tlines := bodyLines texOut
+  t s!"a tex ragged p column wraps inside its column, over no neighbour ({tlines.size} lines)"
+    (tlines.size ≥ 4 && !(rowsOfLines tlines).any rowOverlaps
+      && !(texOut.diags.any (·.kind == .W0005)))
+
+/-- **A markdown table too wide for its words stays on the page.** A table
+whose widest unbreakable runs alone pass the measure kept its body size and
+ran its last columns off the paper. It now sets at the largest of LaTeX's
+smaller steps at which its words fit (`Layout.tableFit`), and a table too
+wide even at the floor stands centred on the measure, overhanging both
+margins equally — on paper while it is no wider than the two together. The
+HTML states the same step as the table's font size and centres the same
+overhang on paper. A table that fits keeps its size. -/
+def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let row (k : Nat) : String := " | ".intercalate
+    ((List.range 9).map fun j => s!"{k}{j}.{4000 + 61 * j + k}")
+  let src (label : String) := "| label | p | q | r | s | t | u | v | w | z |\n\
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n" ++
+    s!"| {label} | {row 1} |\n| {label}x | {row 2} |\n"
+  let fitsAt (doc : Ir.Doc) := Layout.tableFit (Layout.Geom.ofPage doc.page) fonts {}
+    (Layout.tableLength none doc.preambleFace "tabcolsep")
+  let tableOf (doc : Ir.Doc) := doc.body.findSome? fun b => match b with
+    | .table cols padL padR rows _ spans => some (cols, padL, padR, rows, spans)
+    | _ => none
+  let decide (doc : Ir.Doc) : Option Layout.TableFit := (tableOf doc).map
+    fun (cols, padL, padR, rows, spans) => fitsAt doc cols padL padR rows spans
+  let sizes (out : Layout.Out) : List Dim.Sp :=
+    (((bodyLines out).filter fun l => (lineText l).any Char.isDigit).toList.map (·.size)).eraseDups
+  -- Fits at a smaller step.
+  let (mid, _) := elabMd (src "sorter")
+  let mout := layoutOf fonts mid
+  let mfit := decide mid
+  t s!"a table whose words pass the measure at its body size steps down ({repr mfit})"
+    (mfit.any fun f => f.step.isSome && f.overhang == 0)
+  let stepped := (mfit.bind (·.step)).map fun s =>
+    Ir.scaleStepIn mid.page.scale mid.page.fontSize s
+  t s!"and its cells set at that step on the page ({sizes mout})"
+    (stepped.isSome && sizes mout == stepped.toList)
+  let left := mid.page.hmargin
+  let right := mid.page.width - mid.page.hmargin
+  t "every glyph of the stepped table stays inside the measure"
+    ((bodyLines mout).all fun l => left - Dim.pt 1 ≤ l.x && l.x + l.setWidth ≤ right + Dim.pt 1)
+  -- Too wide even at the floor: centred, on paper, named.
+  let wide := src "sorter[alpha=500,beta=0.01,gamma=7,delta=2]"
+  let (big, _) := elabMd wide
+  let bout := layoutOf fonts big
+  let bfit := decide big
+  t s!"a table too wide at its floor sets at the floor and overhangs ({repr bfit})"
+    (bfit.any fun f => f.step == Layout.tableSteps.getLast? && f.overhang > 0)
+  let blines := bodyLines bout
+  let xs := blines.map (·.x)
+  let ends := blines.map fun l => l.x + l.setWidth
+  let lo := xs.foldl min (xs[0]?.getD 0)
+  let hi := ends.foldl max (ends[0]?.getD 0)
+  t s!"its overhang is centred across both margins ({left - lo} left, {hi - right} right)"
+    (lo < left && right < hi && (left - lo - (hi - right)).natAbs ≤ (Dim.pt 1).natAbs)
+  t "and every glyph stays on the paper"
+    (0 ≤ lo && hi ≤ big.page.width)
+  t "the page names the overhang at the table's first cell"
+    ((bout.diags.filter (·.kind == .W0338)).size == 1)
+  -- The HTML states the same decision.
+  let cfgOf (doc : Ir.Doc) : HtmlDoc.Config := { tableFit := fun cols padL padR rows spans =>
+    let f := fitsAt doc cols padL padR rows spans
+    (f.step, f.overhang > 0) }
+  let tableAttrs (doc : Ir.Doc) : Array (String × String) :=
+    let (_, body, _) := HtmlDoc.emitTree (cfgOf doc) doc
+    match ((elemNodesList (· == "table") #[] body.toList)[0]? : Option Html.Node) with
+    | some (.elem _ attrs _) => attrs
+    | _ => #[]
+  let styleOf (doc : Ir.Doc) := (HtmlDoc.attrOf? (tableAttrs doc) "style").getD ""
+  let classOf (doc : Ir.Doc) := (HtmlDoc.attrOf? (tableAttrs doc) "class").getD ""
+  -- The font size a style declares, in thousandths of an em.
+  let emMilli (style : String) : Option Nat :=
+    (style.splitOn ";").findSome? fun decl => match decl.splitOn ":" with
+      | [k, v] =>
+        if k.trimAscii.toString != "font-size" then none
+        else
+          let v := (v.trimAscii.toString.dropEnd "em".length).toString
+          match v.splitOn "." with
+          | [w, f] => some (w.toNat! * 1000 + ((f ++ "00").take 3).toString.toNat!)
+          | [w] => some (w.toNat! * 1000)
+          | _ => none
+      | _ => none
+  let stepMilli (doc : Ir.Doc) (fit : Option Layout.TableFit) : Option Nat :=
+    (fit.bind (·.step)).bind fun s => doc.page.scale.lookup s
+  t s!"the HTML table states the page's step as its font size ({styleOf mid})"
+    ((stepMilli mid mfit).isSome && emMilli (styleOf mid) == stepMilli mid mfit
+      && !hasStr (classOf mid) "bt-overhang")
+  t s!"and centres the floor's overhang on paper ({classOf big})"
+    ((stepMilli big bfit).isSome && emMilli (styleOf big) == stepMilli big bfit
+      && hasStr (classOf big) "bt-overhang")
+  -- A table that fits keeps its size, on both artifacts.
+  let (small, _) := elabMd "| a | b |\n|---|--:|\n| alpha | 12 |\n"
+  t "a table that fits keeps its body size and no overhang"
+    (decide small == some {} && !hasStr (styleOf small) "font-size"
+      && !hasStr (classOf small) "bt-overhang")
+  -- The fit is the table's own: included in a tex document, the same
+  -- fragment's table narrows its columns too.
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "fragment.md") (src "sorter")
+    let (host, _) ← elabInputSrc (dir / "host.tex").toString
+      (dvDoc "\\usepackage{markdown}\n" "Hostwords.\n\n\\markdownInput{fragment.md}\n")
+    let hlines := (bodyLines (layoutOf fonts host)).filter fun l =>
+      hasGlyphRun l && !hasStr (lineText l) "Hostwords"
+    let hl := host.page.hmargin
+    let hr := host.page.width - host.page.hmargin
+    let hlo := (hlines.map (·.x)).foldl min hr
+    let hhi := (hlines.map fun l => l.x + l.setWidth).foldl max hl
+    t s!"an included fragment's table steps down in its host and centres what overhangs \
+({repr (decide host)}; {hl - hlo} left, {hhi - hr} right)"
+      ((decide host).any (·.step.isSome) && !hlines.isEmpty
+        && (hl - hlo - (hhi - hr)).natAbs ≤ (Dim.pt 1).natAbs)
 
 def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -193,11 +370,12 @@ def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!hasStr reportTree "—" && !hasStr reportTree "–" && !hasStr reportTree "---")
   t "a right-aligned delimiter cell right-aligns its whole column, head included"
     ((tablesOf report).all fun (h, b) => (h ++ b).all fun r =>
-      r.toList.map (·.align) == [none, some "right", some "right", some "right", some "right"])
+      r.toList.map (·.align) ==
+        [some "left", some "right", some "right", some "right", some "right"])
   let aligned := "| a | b | c | d |\n| :-- | :-: | --: | --- |\n| e | f | g | h |\n"
   t "each delimiter cell's colons give its column's alignment"
     ((tablesOf aligned).all fun (h, b) => (h ++ b).all fun r =>
-      r.toList.map (·.align) == [none, some "center", some "right", none])
+      r.toList.map (·.align) == [some "left", some "center", some "right", some "left"])
   -- Rows split before inlines are read: an escaped pipe is a pipe, even in
   -- a code span; a cell's `&` and backslash are its text, never a column
   -- or a row of the table it desugars to.
@@ -269,5 +447,7 @@ def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the table has no outer pad: its first column starts at the text's left edge"
     (runLeft "Name" == some doc.page.hmargin)
   wrapChecks ref fonts
+  narrowCellChecks ref fonts
+  fitStepChecks ref fonts
 
 end Tests.MarkdownTables

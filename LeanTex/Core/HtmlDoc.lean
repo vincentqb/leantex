@@ -93,6 +93,15 @@ public structure Config where
   `emitTree`'s entry: what a table length a body `\tokens` declares is spelled
   against, as `tokenVars` spells the preamble's. -/
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
+  /-- How a narrowing table (`Ir.ColSpec.narrows`, a markdown table's) fits
+  the text block — the step it sets at and whether it still overhangs at
+  that step — read off its columns, pads, rows and spans by the page's own
+  decision (`Layout.tableFit`), which the driver hands over with the
+  document's faces: the HTML states the step as the table's font size and
+  centres an overhang across both margins on paper (`bt-overhang`). The
+  default fits every table as declared. -/
+  tableFit : Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) → Array Ir.ColSpan →
+    Option String × Bool := fun _ _ _ _ _ => (none, false)
   /-- The resolved local measurement context. A box replaces the horizontal
   measures while retaining the page's text height; outside a box, `none`
   reads the document's text area. Providers share the native vocabulary. -/
@@ -277,7 +286,7 @@ public def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
-   "bt-light-above", "bt-nowrap", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "bt-light-above", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
    "frame-body-start", "group", "icon",
@@ -5270,6 +5279,13 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- overruns the measure: only such a line moves, and every character
   -- reaches the sheet.
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
+  -- A markdown table whose words alone pass the column at its smallest
+  -- step stands centred on it, overhanging both margins equally, as its
+  -- page sets it (`Layout.tableFit`): on paper both margins are room, and
+  -- the right one alone ran its last columns off the sheet. On screen it
+  -- keeps the column's start, where a narrow viewport can still scroll to
+  -- its end.
+  "  table.booktabs.bt-overhang { position: relative; left: 50%; transform: translateX(-50%); }\n" ++
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
@@ -6097,8 +6113,11 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
       | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
     Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row)
       (if cls.isEmpty then #[] else #[("class", cls)])
+  -- A markdown table too wide for the text block sets at the page's step
+  -- and, still too wide at its floor, overhangs both margins on paper.
+  let (step, overhang) := cfg.tableFit cols padL padR rows spans
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
-    ++ (if padR then "" else " nopadr")
+    ++ (if padR then "" else " nopadr") ++ (if overhang then " bt-overhang" else "")
   let kids := Id.run do
     let mut kids := #[Html.elem "colgroup" colEls]
     if 0 < headerRows then
@@ -6106,9 +6125,15 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
     if headerRows < rows.size then
       kids := kids.push (Html.elem "tbody" (rowEls.extract headerRows rowEls.size))
     return kids
-  let attrs := match target with
-    | some t => #[("class", cls), ("style", "width: " ++ t.css)]
-    | none => #[("class", cls)]
+  let decls : List String :=
+    (match target with
+      | some t => ["width: " ++ t.css]
+      | none => []) ++
+    (match step with
+      | some st => ((fontStyleDecls cfg.page.scale (.size st)).getD #[]).toList
+      | none => [])
+  let attrs := if decls.isEmpty then #[("class", cls)]
+    else #[("class", cls), ("style", " ".intercalate decls)]
   Html.elem "table" kids attrs
 
 /-- A use of a role in the artifact references the role, not only its frozen

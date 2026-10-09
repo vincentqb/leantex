@@ -43,14 +43,17 @@ or Lua code; unsupported constructs produce diagnostics. A TeX installation
 is not required for native rendering.
 
 Markdown supports headings, emphasis, links, images, lists, quotes, fenced
-code and GitHub-style pipe tables, which set as booktabs tables; a table too
+code and GitHub-style pipe tables, which set as booktabs tables. A table too
 wide for the text block narrows its columns and wraps its cells to fit, as
-a browser sets it. A Markdown document sets on a wider text block
-than an article, with its code in the text face's matching monospaced face:
-code blocks at `\footnotesize`, two sizes below the text, with long lines
-wrapped to stay on the page, and inline code free to break after
-punctuation such as `_`, `.` or `/` where a line needs it. Include a
-Markdown fragment in TeX with:
+a browser sets it; one whose words alone are too wide sets a size or two
+smaller, centred across both margins if it still overhangs. A Markdown
+document sets on a wider text block than an article, with its code in the
+text face's matching monospaced face: code blocks at `\footnotesize`, two
+sizes below the text, with long lines wrapped to stay on the page, and
+inline code free to break after punctuation such as `_`, `.` or `/` where a
+line needs it. A Markdown fragment included in TeX keeps its tables' fit
+and takes its page, code and line breaks from the TeX document around it.
+Include one with:
 
 ```tex
 \usepackage{markdown}

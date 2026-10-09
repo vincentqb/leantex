@@ -1176,7 +1176,9 @@ def reports : List Report := [
       "the GFM specification's eight table examples are classified: seven match and one waits on the smart punctuation decision",
       "a long markdown report's summary table sets inside the measure under booktabs' three rules in both artifacts, where it ran forty points past it",
       "a table of prose descriptions keeps every word on the page in the PDF, on screen and in print, where its description column was cut at the page edge",
-      "a results table of single figures too wide for the page is named with a remedy rather than squeezed until its figures overlap"]
+      "fourteen more fail on the rebased branch with narrowed cells' ragged right skip, the step-down and the centred overhang reverted: one-word and code lines packed onto overfull lines over the next column, and a table whose words alone passed the measure kept its size and ran off the paper in both artifacts",
+      "one more fails with a tex ragged p column set unhyphenated, as a narrowed markdown cell sets: its words packed onto one line over the next column, where main's setting wraps them",
+      "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins on paper and is named, with a remedy markdown can write"]
     state := .guarded "fa516a82" .before .author },
   { id := "R129", date := "2026-10-08"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"

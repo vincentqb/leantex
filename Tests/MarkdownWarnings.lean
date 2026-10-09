@@ -1,6 +1,10 @@
-import Tests.Support
-import LeanTex.Cli.FontAssembly
-import LeanTex.Cli.SlotLoss
+module
+
+public import Tests.Support
+public import LeanTex.Cli.FontAssembly
+public import LeanTex.Cli.SlotLoss
+
+public section
 
 open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly
 

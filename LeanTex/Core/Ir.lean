@@ -274,7 +274,8 @@ for its documents: the text block (`textBlock`), how code sets
 (the driver's `FontDb.monoCompanion`). One decision, the path's extension
 (`ofPath`), read by the driver to pick the reader and by the elaborator to
 record the surface in the document; a markdown fragment a tex document
-includes is set as that document's surface sets it. -/
+includes is set as that document's surface sets it — but for its tables,
+whose fit is the construct's own (`ColSpec.narrows`), not a default. -/
 public inductive Surface where
   | tex
   | markdown
@@ -5562,11 +5563,13 @@ public def listingBreakIndent : Sp := pt 20
 /-- What a listing sets with before its own keys: on a tex document LaTeX's
 defaults, the ambient size and no wrapping. A markdown document declares no
 listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
-which the markdown measure holds 79 to 80 monospaced columns (the 0.6 em
-advance of every default typewriter face, to within 0.003 em) — the
+which the markdown page's measure holds 79 to 80 monospaced columns (the
+0.6 em advance of every default typewriter face, to within 0.003 em) — the
 80-column line most code is written to (PEP 8's limit is 79) — and wraps a
 longer line as listings does: paper has no scroll, so every character
-reaches the page, as the HTML print rule already promises. -/
+reaches the page, as the HTML print rule already promises. The HTML's
+`<pre>` keeps its padding inside the same measure, so a browser at 16 px
+holds about 72 of those columns and wraps the rest. -/
 public def Surface.listing : Surface → ListingSpec
   | .tex => {}
   | .markdown =>
