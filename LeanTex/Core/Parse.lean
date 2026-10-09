@@ -513,6 +513,12 @@ The space keeps this wrapper outside the environment names a document can
 spell, as with `inputEnv`. Serializing it restores ordinary TeX braces. -/
 public def scopeEnv : String := "scope "
 
+/-- The environment a markdown pipe table desugars to (`Md.tableRaws`): the
+booktabs `{tabular}` it means, its natural columns narrowing as a web
+table's do (`Ir.ColSpec.narrows`). The space keeps it outside the
+environment names a document can spell, as with `inputEnv`. -/
+public def markdownTableEnv : String := "markdown tabular"
+
 /-- The index past the leading run of `.space` raws at `i`: the one spaces
 scan over sibling raws, shared by every consumer of `Raw` — a caller never
 hand-rolls its own. -/

@@ -120,8 +120,11 @@ tokens are kept and compared on both sides: the one class a spec example \
 states as content, a fenced block's info string. Dropping `class` whole \
 once hid three lost languages the run had named with W0110"),
    ("id", "the ids the engine generates for headings and their sections"),
-   ("style", "the style=\"color: inherit\" the engine sets on a link from its \
-palette: styling"),
+   ("style", "the inline styling the engine writes: a link's palette \
+`color: inherit`, a code block's size, leading, tab and wrapping settings, a \
+table column's declared width, and every declaration of a table cell but its \
+`text-align`, which `cellAlignAttrs` reads into the compared `align` before \
+this row drops the rest"),
    ("tabindex",
     "the tab stop the HTML backend gives every code block, so a keyboard can \
 reach and scroll its <pre>: focus order, not content, and every reader gets \
@@ -174,8 +177,12 @@ them. Hides: nothing — HTML attribute order is not content."),
     "the GFM spec writes a cell's alignment as the `align` attribute, which \
 HTML lists as non-conforming (HTML §16, 'use CSS instead'); the engine writes \
 `text-align` in the cell's `style`. Both are read into one `align` value and \
-compared. Hides: the spelling alone — two different alignments, or an \
-alignment against none, still differ."),
+compared, a declared `left` read as none: a cell that declares no side sets on \
+the left, the side a `:--` delimiter cell declares, since every spec example's \
+page sets left to right and centres no scope around its table. Hides: the \
+spelling alone, and a left cell inside a scope that centres or right-aligns its \
+text, which no spec example has — two different alignments, or a centre or a \
+right alignment against none, still differ."),
    ("a column group of bare columns",
     "the engine opens every table with a `<colgroup>` of one `<col>` per \
 column; a column that carries no attribute adds nothing to the columns HTML's \
@@ -198,8 +205,8 @@ def textAlignOf (style : String) : Option String :=
       else none
     | _ => none
 
-/-- A cell's alignment as one `align` value, whichever spelling carried it:
-the declared normalization of a table cell's alignment. -/
+/-- A cell's alignment as one `align` value, whichever spelling carried it,
+`left` as none: the declared normalization of a table cell's alignment. -/
 def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     Array (String × String) :=
   if tag != "td" && tag != "th" then attrs
@@ -208,6 +215,7 @@ def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     let styled := (attrs.find? (·.1 == "style")).bind (textAlignOf ·.2)
     let rest := attrs.filter (·.1 != "align")
     match spelled.orElse fun _ => styled with
+    | some "left" => rest
     | some a => rest.push ("align", a)
     | none => rest
 
@@ -1559,6 +1567,14 @@ def selftest : IO UInt32 := do
        "<table><tr><td style=\"text-align: center\">a</td></tr></table>",
      differ "cell alignment: an alignment against none still differs"
        "<table><tr><td align=\"right\">a</td></tr></table>" "<table><tr><td>a</td></tr></table>",
+     same "cell alignment: a declared left is the side an undeclared cell sets on"
+       "<table><tr><td align=\"left\">a</td></tr></table>" "<table><tr><td>a</td></tr></table>",
+     same "cell alignment: an undeclared cell is a declared left one"
+       "<table><tr><td>a</td></tr></table>"
+       "<table><tr><td style=\"text-align: left\">a</td></tr></table>",
+     differ "cell alignment: a declared left against a right still differs"
+       "<table><tr><td align=\"left\">a</td></tr></table>"
+       "<table><tr><td style=\"text-align: right\">a</td></tr></table>",
      differ "cell alignment: the text beside it is still compared"
        "<table><tr><td style=\"text-align: right\">a</td></tr></table>"
        "<table><tr><td style=\"text-align: right\">b</td></tr></table>",

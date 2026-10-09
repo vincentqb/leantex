@@ -168,5 +168,20 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let shown := (Diag.foldRepeats overfull).filter (·.severity == .warning)
   t "the default log shows each overfull line, none folded into another"
     (shown.size == 4 && shown.all (·.sites == 1))
+  -- A markdown hard break is HTML's `<br>`: it ends a line and declares
+  -- nothing about the line it ends. Two builds apart, the page is its tex
+  -- twin's — the measure set equal, the break held, the long line before it
+  -- wrapped — and only the tex twin's `\\` names W0386; LaTeX names
+  -- neither.
+  let longLine := String.intercalate " " (List.replicate 40 "gadget")
+  let mdHard := (elabMd (longLine ++ "\\\nlast words\n")).1
+  let texHard := (elabStr (dvDoc "\\page{ hmargin = 114pt }" (longLine ++ "\\\\\nlast words"))).1
+  let mdOut := layoutOf split mdHard
+  let texOut := layoutOf split texHard
+  let texts (o : Layout.Out) := (bodyLines o).map lineText
+  t s!"a markdown hard break sets its tex twin's page, and only the tex twin names W0386 ({(texts mdOut).size} lines)"
+    (mdHard.page.hmargin == texHard.page.hmargin && texts mdOut == texts texOut
+      && (texts mdOut).size ≥ 3 && (texts mdOut).back? == some "last words"
+      && !mdOut.diags.any (·.kind == .W0386) && texOut.diags.any (·.kind == .W0386))
 
 end Tests.MarkdownWarnings

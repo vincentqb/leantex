@@ -4926,6 +4926,16 @@ public structure ColSpec where
   (latex.ltx) — and a declaration in the modifier sets those skips again
   inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
   ragged : Bool := false
+  /-- A natural column that narrows as a web table's does: a markdown
+  table's (`Parse.markdownTableEnv`), whose source declares no width and
+  whose page cannot scroll. Too wide for its measure, its table shares the
+  measure as a browser's automatic table layout shares it
+  (`Layout.fitColumns`), each such column keeping its widest unbreakable
+  run, and a cell its column cannot hold on one line wraps ragged on its
+  side (`Layout.narrowedCell`); the HTML cell then wraps too, carrying no
+  `bt-nowrap` (`HtmlDoc.cellClasses`). A tex `l`, `c` or `r` column never
+  narrows: LaTeX sets its every cell on one line. -/
+  narrows : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Relative table-track hints, in permille of the flexible target. Natural
@@ -10480,13 +10490,15 @@ end
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
 natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`. -/
+`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`; `<` a narrowing one
+(`ColSpec.narrows`), a markdown table's `l<`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
     | .right => "r"
   let al := if c.ragged then al ++ "~" else al
+  let al := if c.narrows then al ++ "<" else al
   match c.width with
   | .natural => al
   | .sized e =>

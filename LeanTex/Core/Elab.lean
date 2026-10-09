@@ -6601,7 +6601,7 @@ private def bodyIsBlockOne : Raw → Bool
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
       blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-        || n == "tabular" || n == "tabular*"
+        || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
@@ -9041,7 +9041,11 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   match body[k]? with
   | some (.group spec _) =>
     let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
-    cols := cs
+    -- A markdown table's natural columns narrow as a web table's do: its
+    -- source declares no width (`Ir.ColSpec.narrows`).
+    cols := if n == Parse.markdownTableEnv then
+        cs.map fun c => { c with narrows := c.width matches .natural }
+      else cs
     padL := pl
     padR := pr
     for (key, msg, help) in warns do
@@ -9360,6 +9364,7 @@ size commands; the current style stands" (some pos)
     lineStrut := env == "minted" && breakLines
     -- listings wraps with its own continuation indent; minted's fvextra
     -- wrap keeps the surface's (none on a tex document).
+    -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
@@ -11775,7 +11780,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
-  else if Compat.tableEnvs.contains n then
+  else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
@@ -12620,7 +12625,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
           blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-            || n == "tabular" || n == "tabular*"
+            || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n

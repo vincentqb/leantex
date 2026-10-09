@@ -800,6 +800,22 @@ public def forcedCost : Int := -10000
 line at a hyphen, against the badness scale the breaker shares with TeX. -/
 public def hyphenPenalty : Int := 50
 
+/-- Where a run may end a line after a character it sets, unhyphenated,
+and at what penalty — TeX's rule for prose: after an explicit hyphen, at
+`hyphenPenalty`. -/
+public def proseBreak (c : Char) : Option Nat :=
+  if c == '-' then some hyphenPenalty.toNat else none
+
+/-- url.sty's break table, the way `\path` sets text no hyphenation can
+break: after `. @ \ / ! _ | ; > ] ) , ? & ' + = #` (`\UrlBreaks`) at
+`\binoppenalty`, and after `:` (`\UrlBigBreaks`) at `\relpenalty` — 700
+and 500, latex.ltx's values; never after a hyphen (the package's default),
+never inside a run of letters or digits, and never drawing a hyphen. -/
+public def urlBreak (c : Char) : Option Nat :=
+  if ".@\\/!_|;>]),?&'+=#".contains c then some 700
+  else if c == ':' then some 500
+  else none
+
 public inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
   computed without re-measuring against the font. Each glyph carries its
@@ -1451,7 +1467,18 @@ public structure TextStyle where
   `Seg.run`, so the pair the contrast judge owes completeness over is
   declared, never recovered geometrically. -/
   ground : Option Ir.Color := none
+  /-- A typewriter run breaks as url.sty sets a path (`urlBreak`) rather
+  than as prose (`proseBreak`): a markdown document's code, which no
+  declaration can make breakable (`collectPara` sets it from the surface,
+  `Spacing.Context.surface`). Read by `explicitBreak`. -/
+  urlBreaks : Bool := false
   deriving Repr, BEq, Inhabited
+
+/-- Where a run of this style may end a line after a character, unhyphenated:
+a typewriter run (slot 2) under `urlBreaks` where url.sty's `\path` breaks,
+every other run after an explicit hyphen. -/
+private def TextStyle.explicitBreak (sty : TextStyle) : Char → Option Nat :=
+  if sty.slot == 2 && sty.urlBreaks then urlBreak else proseBreak
 
 /-- Snapshot the command-entry properties ulem uses for a through-line. -/
 private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
@@ -2774,10 +2801,12 @@ private theorem wordItemChars_letters (xs : List Char)
     simp [wordItemChars, hc, hcs]
 
 /-- One word → items: boxes split by hyphenation points (flagged penalties
-carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
-A scalar the styled face lacks is set from the precomputed fallback face
-(`FontSet.fallback`) at the same size — its own one-glyph box, since a box
-carries one face — or dropped when no face covers it. `missing` and `substs`
+carrying the hyphen glyph) and after each character `explicitBreak` prices
+(unflagged, no glyph: `proseBreak`'s explicit hyphen, or `urlBreak`'s table
+in a run that breaks as url.sty sets a path). A scalar the styled face
+lacks is set from the precomputed fallback face (`FontSet.fallback`) at the
+same size — its own one-glyph box, since a box carries one face — or
+dropped when no face covers it. `missing` and `substs`
 carry `(styled font, scalar)` so the diagnostic can name the family.
 `smallcaps` routes every glyph lookup — styled face and fallback alike —
 through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
@@ -2790,6 +2819,7 @@ original box: expansion must round from that same origin. Hyphenation,
 fallback faces and fixed spaces still start fresh boxes. The final array maps
 source scalars to the items that carry them, for zero-ink destinations. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
+    (explicitBreak : Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
@@ -2850,9 +2880,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             st := st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font c i
               (owners[i]?.getD attr) (origins[i]?.getD none)
             i := i + 1
-            if c == '-' then
+            if let some cost := explicitBreak c then
               st := st.flush fontIdx color link size leading decorations ground attr
-              st := { st with items := st.items.push (.pen 0 hyphenPenalty false fontIdx color #[]) }
+              st := { st with items := st.items.push (.pen 0 cost false fontIdx color #[]) }
     else
       break
   st := st.flush fontIdx color link size leading decorations ground attr
@@ -2866,15 +2896,15 @@ private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
 /-- Without automatic hyphenation, a clean word producer preserves its
 source scalars, except the explicitly nonpainting fixed spaces. The cursor
 invariant proves that the actual loop consumed the entire input. -/
-private theorem wordItems_none_chars (langKey : String)
+private theorem wordItems_none_chars (langKey : String) (explicitBreak : Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
-    let out := wordItems none langKey size leading fontIdx color ground link decorations
-      smallcaps attr fs font chars missing substs cache owners origins sites
+    let out := wordItems none langKey explicitBreak size leading fontIdx color ground link
+      decorations smallcaps attr fs font chars missing substs cache owners origins sites
     out.2.1 = #[] → out.2.2.1 = #[] →
       missing = #[] ∧ substs = #[] ∧
         out.1.toList.flatMap Item.boxChars = chars.toList.flatMap wordItemChars := by
@@ -2942,8 +2972,9 @@ private theorem wordItems_none_chars (langKey : String)
               simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf, hnb] using
                 (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans hpchars
             · simp only [hnb]
-              by_cases hh : (chars[i] == '-') = true
-              · simp only [hh, ↓reduceIte]
+              cases hh : explicitBreak chars[i] with
+              | some cost =>
+                simp only
                 refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
                 intro hc
                 have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
@@ -2957,7 +2988,8 @@ private theorem wordItems_none_chars (langKey : String)
                     (st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font
                       chars[i] i (owners[i]?.getD attr) (origins[i]?.getD none))).trans
                     (hg.2.trans (congrArg (· ++ [chars[i]]) hpchars))
-              · simp only [hh]
+              | none =>
+                simp only
                 refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
                 intro hc
                 have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
@@ -4695,10 +4727,11 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     -- A typewriter run (slot 2, `applyStyle`'s `.mono`) is never
     -- hyphenated: LaTeX's typewriter families set `\hyphenchar` to −1
     -- (t1cmtt.fd; tulmtt.fd, Latin Modern Mono under fontspec), so a hyphen
-    -- never appears inside an identifier.
+    -- never appears inside an identifier; where it may end a line instead
+    -- is its style's (`TextStyle.explicitBreak`).
     let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
-      wordItems wordPats (sty.lang.getD "") sz leading idx sty.color
+      wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
     -- The space before the word pairs with its first glyph. Read first,
@@ -5271,7 +5304,7 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
       patsOf_off, ite_self, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
     intro hc
-    have hw := wordItems_none_chars (sty.lang.getD "")
+    have hw := wordItems_none_chars (sty.lang.getD "") sty.explicitBreak
       (sty.metrics size xHeight textW textH).1
       (sty.metrics size xHeight textW textH).2
       (fs.lookup sty.slot sty.weight.css sty.italic) sty.color sty.ground sty.link
@@ -9817,6 +9850,11 @@ public structure Spacing.Paragraph where
   `\strut` in each code line): its box is the strut's at least
   (`Spacing.Page.placeLine`'s `strut`). -/
   private strut : Option Sp := none
+  /-- The paragraph's forced line ends declare its lines (W0386 names one
+  that did not hold, `ParagraphBreaks.Splits`): a tex `\\` does. A
+  markdown hard break is HTML's `<br>`: it ends a line and declares nothing
+  about the line it ends, so a markdown paragraph records only its own end. -/
+  private declaresLines : Bool := true
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10085,6 +10123,11 @@ public structure Spacing.Context where
   cover here, as beamer's `\opaqueness` covers every colour a covered step
   uses. -/
   private covering : Option Ir.Cover := none
+  /-- The surface the document was written in (`Ir.Doc.surface`): a
+  markdown document's code breaks as url.sty sets a path
+  (`TextStyle.urlBreaks`), and a remedy the walk names is one that surface
+  can write. -/
+  private surface : Ir.Surface := .tex
 
 private abbrev Rd := Spacing.Context
 
@@ -10574,7 +10617,8 @@ private def collectPara (r : Rd) (a : Acc)
   -- on a dark standout background.
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
-  let baseStyle := { baseStyle with ground := a.ground }
+  let baseStyle := { baseStyle with ground := a.ground
+                                    urlBreaks := r.surface == .markdown }
   let (items, ds, cache, extras, rawNotes, wordOffsets, anchors, itemSources) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
@@ -10704,7 +10748,9 @@ private def collectPara (r : Rd) (a : Acc)
       leaf := leaf
       keepNext := keepNext
       display := dispJob
-      rowStrut := rowStrut }) }
+      rowStrut := rowStrut
+      -- premise: markdownWarningChecks — a markdown paragraph whose long line ends in a hard break sets the page its tex twin sets, breaking there and wrapping the line before it, and only the tex twin names W0386, as LaTeX names nothing
+      declaresLines := r.surface != .markdown }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -11060,6 +11106,13 @@ states (`HtmlDoc.cellSideClassOf`). -/
 @[expose] public def cellParagraph (spec : Ir.ColSpec) : Bool × Bool × Bool :=
   (!spec.ragged, spec.ragged && spec.align == .right, spec.ragged && spec.align == .center)
 
+/-- How a natural cell sets when its narrowed column (`Ir.ColSpec.narrows`)
+cannot hold it on one line: a ragged paragraph on the cell's side, as a
+browser wraps a table cell, `(flushRight, center)` — hung from the right
+edge where the side is right, centred where it is centre. -/
+@[expose] public def narrowedCell (side : Ir.HAlign) : Bool × Bool :=
+  (side == .right, side == .center)
+
 /-- The strut every row of a table stands on: latex.ltx's `\@arstrutbox`,
 0.7 of the `\baselineskip` in force where the table opens above the
 baseline and the rest below it (`\strutbox`'s 0.3, so the two make the
@@ -11088,6 +11141,74 @@ never the table's own face or size. The stylesheet states the same default
     (name : String) : Sp :=
   declared.getD (face.resolve (Ir.tableLengthDefault name))
 
+/-- A cell's min-content width: the widest run of its items no break may
+split — boxes, images and rules summed between two legal breaks, interword
+glue or an unflagged penalty (an explicit hyphen, a url.sty break in code).
+A hyphenation point reads as no break: a fitted cell sets ragged and
+unhyphenated. -/
+private def itemsMinWidth (items : Array Item) : Sp := Id.run do
+  let mut widest : Sp := 0
+  let mut run : Sp := 0
+  for it in items do
+    match it with
+    | .box w .. => run := run + w
+    | .img _ w _ => run := run + w
+    | .rule w .. => run := run + w
+    | .glue _ | .decoratedGlue _ _ =>
+      widest := max widest run
+      run := 0
+    | .pen _ cost flagged _ _ _ =>
+      if !flagged && cost < 10000 then
+        widest := max widest run
+        run := 0
+    | .poly .. => pure ()
+  return max widest run
+
+/-- One narrowed column: its widest unbreakable run `mn`, and its share of the
+room left over beyond every column's run, `k` of `d`, in proportion to how
+much wider its widest line `w` is than that run. -/
+public def fitWidth (mn w k d : Int) : Int :=
+  if d ≤ 0 then w else mn + (w - mn) * k / d
+
+/-- A narrowed column stands between its widest unbreakable run and its
+natural width whenever the room shared is no more than the room wanted. -/
+public theorem fitWidth_between (mn w k d : Int) (hmw : mn ≤ w) (hk : 0 ≤ k)
+    (hkd : k ≤ d) : mn ≤ fitWidth mn w k d ∧ fitWidth mn w k d ≤ w := by
+  unfold fitWidth
+  split
+  · exact ⟨hmw, Int.le_refl w⟩
+  · rename_i hd
+    have hd : 0 < d := by omega
+    have h0 : 0 ≤ (w - mn) * k / d := Int.ediv_nonneg (Int.mul_nonneg (by omega) hk) (by omega)
+    have h1 : (w - mn) * k / d ≤ w - mn := by
+      apply Int.ediv_le_of_le_mul hd
+      exact Int.mul_le_mul_of_nonneg_left hkd (by omega)
+    omega
+
+/-- **A markdown table is a web table** (`collectTable`): its narrowing
+columns (`Ir.ColSpec.narrows`) share a measure too narrow for them as a
+browser's automatic table layout shares it (HTML 4.01 §B.5.2, the
+autolayout algorithm). Every such column keeps at least its widest
+unbreakable run (`mins`), and what the measure leaves beyond them all is
+shared in proportion to how much wider each column's widest line is than
+its run (`fitWidth`). A table that fits keeps its natural widths; one whose
+runs alone pass the measure takes them, and passes it by the rest. Any
+other column keeps its width, out of the room. -/
+public def fitColumns (cols : Array Ir.ColSpec) (avail : Sp) (natural mins : Array Sp) :
+    Array Sp :=
+  let isNat (j : Nat) : Bool :=
+    (cols[j]?.map fun c => c.narrows && (c.width matches .natural)).getD false
+  let lo (j : Nat) (w : Sp) : Sp := min ((mins[j]?).getD w) w
+  let sums := natural.zipIdx.foldl (fun (fx, mx, mn) (w, j) =>
+    if isNat j then (fx, mx + w, mn + lo j w) else (fx + w, mx, mn)) ((0 : Sp), (0 : Sp), (0 : Sp))
+  let (fixed, maxSum, minSum) := sums
+  let room := avail - fixed
+  if maxSum ≤ room then natural
+  else natural.mapIdx fun j w =>
+    if !isNat j then w
+    else if room ≤ minSum then lo j w
+    else fitWidth (lo j w) w (room - minSum) (maxSum - minSum)
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -11112,20 +11233,31 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- widths and for right-aligned placement). The measuring pass drops its
   -- diagnostics: the setting pass below emits them once.
   let mut nats : Array (Array Sp) := #[]
+  let mut mins : Array Sp := cols.map fun _ => 0
   let mut cache := a.hyphCache
-  for row in rows do
+  for (row, i) in rows.zipIdx do
     let mut rowNats : Array Sp := #[]
-    for cell in row do
+    for (cell, j) in row.zipIdx do
       -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
-        itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
+        itemsOfInlines r.pats size r.xHeight r.fs
+          { color := a.fg, ground := a.ground, urlBreaks := r.surface == .markdown } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step)
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
+      unless inSpan spans i j do
+        mins := mins.modify j (max · (itemsMinWidth items))
     nats := nats.push rowNats
   a := { a with hyphCache := cache }
-  let widths := tableColWidths colsep total size cols nats spans padL padR
+  let natural := tableColWidths colsep total size cols nats spans padL padR
+  -- A markdown table is a web table: too wide for the measure, it narrows
+  -- its narrowing columns as a browser does (`fitColumns`), and the cells
+  -- of a narrowed column wrap below.
+  let web := cols.any (·.narrows)
+  let widths := if web then
+      fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
+    else natural
   let lead : Sp := if padL then colsep else 0
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
@@ -11139,10 +11271,16 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- declared column widths; the honest fix is the author's, and the help
   -- names it. (The KP breaker's own rule is the same: shrink is spent only
   -- where the glue declared some.)
+  -- Named at its first located cell, with a remedy its source can write:
+  -- a markdown table declares no width, and its columns already narrowed
+  -- to their longest words.
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
       (s!"the table is {(tableW - total).toPtString}pt wider than the measure")
-      (help := "narrow the p{...} column widths, or widen the text block")) }
+      (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
+      (help := if web then
+          "shorten the longest word in each column, or split the table into narrower ones"
+        else "narrow the p{...} column widths, or widen the text block")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x0 : Sp := indent + side.boxOffset (max 0 (total - tableW))
   -- The scope's side places the table box and stops there: a cell sets by
@@ -11254,7 +11392,12 @@ private def collectTable (r : Rd) (a0 : Acc)
         pendBelow := none
       prev := 0
       let row := rows[i]
-      a := { a with ops := a.ops.push (.colOpen #[]) }
+      -- Every cell stands on the row's baseline by its first line, as an
+      -- `\halign` row stands its entries (a `p` entry is a `\vtop`, whose
+      -- reference point is its first baseline): a cell whose first line
+      -- is taller moves the row's baseline down for every cell, never its
+      -- own text alone.
+      a := { a with ops := a.ops.push (.colOpen (Array.replicate row.size .first)) }
       for j in [0:row.size] do
         -- a `\multicolumn` head sets across the columns it covers, gaps
         -- included, by its own spec: a `p{…}` one wraps at its own width
@@ -11279,16 +11422,25 @@ private def collectTable (r : Rd) (a0 : Acc)
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
           -- A wrapping cell is a paragraph its spec sets (`cellParagraph`);
-          -- a natural one is a single line its side places in the box.
+          -- a natural one is a single line its side places in the box. A
+          -- natural cell its narrowed column cannot hold on one line
+          -- (`Ir.ColSpec.narrows`, a markdown table's) wraps as a browser
+          -- wraps a table cell: ragged on its side and unhyphenated
+          -- (`narrowedCell`).
+          let nat := ((nats[i]?).bind (·[j]?)).getD 0
           let sub := if !(spec.width matches .natural) then
               let (justify, flushRight, center) := cellParagraph spec
               collectPara { rc with geom := { rc.geom with justify, flushRight } } sub cell x
                 center size (leaf := leaf) (span := span) (rowStrut := strut)
+            else if spec.narrows && nat > measureW then
+              let (flushRight, center) := narrowedCell (cellSide cols spans i j)
+              collectPara
+                { rc with pats := none, geom := { rc.geom with justify := false, flushRight } }
+                sub cell x center size (leaf := leaf) (span := span) (rowStrut := strut)
             else match cellSide cols spans i j with
             | .center =>
               collectPara rc sub cell x true size (leaf := leaf) (span := span) (rowStrut := strut)
             | .right =>
-              let nat := ((nats[i]?).bind (·[j]?)).getD 0
               collectPara rc sub cell (x + max 0 (wj - nat)) false size
                 (leaf := leaf) (span := span) (rowStrut := strut)
             | .left =>
@@ -14597,25 +14749,43 @@ public def isEndFill (items : Array Item) (k : Nat) : Bool :=
 
 /-- Read the actual item boundaries and the actual breaking task's result
 once, at paragraph placement. No page text or displayed frame counter is
-used to infer the authored segmentation afterwards. -/
+used to infer the authored segmentation afterwards. A paragraph whose
+forced ends declare no lines (`declares` false, a markdown paragraph's)
+records its own end alone: it declared one line shape, the paragraph's. -/
 public def paragraphBreaksOf (site : Nat) (leaf : Option Nat) (frame : Option FrameOrigin)
-    (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
+    (declares : Bool) (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
+  let forced := (Array.range items.size).filter (isForced items)
   { site := site, leaf := leaf, frame := frame
-    forced := (Array.range items.size).filter (isForced items)
+    forced := if declares then forced else forced.extract (forced.size - 1) forced.size
     chosen := breaks
     endFills := breaks.filter (isEndFill items) }
 
 public theorem paragraphBreaksOf_forced_mem (site : Nat) (leaf : Option Nat)
     (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame items breaks).forced ↔
+    k ∈ (paragraphBreaksOf site leaf frame true items breaks).forced ↔
       k < items.size ∧ isForced items k = true := by
-  simp only [paragraphBreaksOf, Array.mem_filter, Array.mem_range]
+  simp only [paragraphBreaksOf, ↓reduceIte, Array.mem_filter, Array.mem_range]
 
 public theorem paragraphBreaksOf_endFills_mem (site : Nat) (leaf : Option Nat)
-    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame items breaks).endFills ↔
+    (frame : Option FrameOrigin) (declares : Bool) (items : Array Item) (breaks : Array Nat)
+    (k : Nat) :
+    k ∈ (paragraphBreaksOf site leaf frame declares items breaks).endFills ↔
       k ∈ breaks ∧ isEndFill items k = true := by
   simp [paragraphBreaksOf]
+
+/-- A paragraph that declares no lines records no re-flow, whatever the
+breaker chose: the one end it records closes it, and only a declared end
+before the last can be split (`ParagraphBreaks.Splits`). -/
+public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Nat)
+    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) :
+    (paragraphBreaksOf site leaf frame false items breaks).reflows = #[] := by
+  simp only [ParagraphBreaks.reflows, paragraphBreaksOf, Bool.false_eq_true, ↓reduceIte]
+  generalize (Array.range items.size).filter (isForced items) = forced
+  have hpop : (forced.extract (forced.size - 1) forced.size).pop = #[] := by
+    apply Array.eq_empty_of_size_eq_zero
+    simp only [Array.size_pop, Array.size_extract]
+    omega
+  simp [hpop]
 
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
@@ -14681,7 +14851,7 @@ private theorem warnReflow_accounts (b : B) (declared shipped : Nat) (reflowed :
   split <;> simp_all
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   (breaks.foldl (placeParaLine fs j)
@@ -14833,15 +15003,15 @@ private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link :
   · intro x _ st hs
     exact WordAcc.glyph_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ st hs
 
-private theorem wordItems_none_prose (langKey : String)
+private theorem wordItems_none_prose (langKey : String) (explicitBreak : Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
-    ItemsProse (wordItems none langKey size leading fontIdx color ground link decorations
-      smallcaps attr fs font chars missing substs cache owners origins sites).1 := by
+    ItemsProse (wordItems none langKey explicitBreak size leading fontIdx color ground link
+      decorations smallcaps attr fs font chars missing substs cache owners origins sites).1 := by
   unfold wordItems
   dsimp only
   apply Loop.bind_of_inv
@@ -14868,7 +15038,7 @@ private theorem wordItems_none_prose (langKey : String)
               split
               · exact (itemsProse_push _ _).mpr
                   ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ _ hg, by
-                    simp [Item.Prose, forcedCost, hyphenPenalty]⟩
+                    unfold Item.Prose; exact ⟨by unfold forcedCost; omega, rfl, rfl⟩⟩
               · exact hg
       · exact hs
   · intro st hs
@@ -14909,7 +15079,7 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
       patsOf_off, ite_self]
     exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
-      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
+      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
   case space sty =>
     exact (itemsProse_push _ _).mpr ⟨hi, decoratedGlue_prose _ _ _ _ _⟩
 
@@ -18162,7 +18332,7 @@ private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     (placePara fs b j breaks).paragraphBreaks =
       b.paragraphBreaks.push
-        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks) :=
+        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks) :=
   (reflowStep_paraLines ..).1
 
 private theorem reflowStep_warnReflow (b : B) (declared shipped : Nat) (split : Bool) :
@@ -18181,7 +18351,7 @@ private theorem warnReflow_diag (b : B) (declared shipped : Nat) :
 private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (hb : b.ReflowsNamed) :
     (placePara fs b j breaks).ReflowsNamed := by
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   have appended : ReflowStep b { b with diags := b.diags ++ j.diags } :=
@@ -19354,7 +19524,8 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
     (collectPara r a xs indent false r.geom.fontSize
       (leaf := leaf) (span := span)).SourceBound n := by
   have hn := itemsOfInlines_plainNotes r.pats r.geom.fontSize r.xHeight r.fs
-    ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground } : TextStyle)
+    ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground
+       urlBreaks := r.surface == .markdown } : TextStyle)
     xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
     r.geom.textHeight true r.geom.scale r.step r.roleMetrics hp
@@ -19620,7 +19791,8 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
       (GlyphClean (Spacing.Paragraph.diags j) →
         inkCensus ((Spacing.Paragraph.items j).toList.flatMap Item.boxChars) =
           inkCensus (Ir.plainText xs).toList) := by
-  let style : TextStyle := { color := (Spacing.Pending.fg (a.flushGap r)), ground := (Spacing.Pending.ground (a.flushGap r)) }
+  let style : TextStyle := { color := (Spacing.Pending.fg (a.flushGap r)), ground := (Spacing.Pending.ground (a.flushGap r))
+                             urlBreaks := Spacing.Context.surface r == .markdown }
   have hn := itemsOfInlines_plainNotes (Spacing.Context.pats r) (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r)
     style xs (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
@@ -19984,7 +20156,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    pictureSpans := pictureSpans
                    headline := doc.headline
                    footGap := footGap
-                   cover := some cover }
+                   cover := some cover
+                   surface := doc.surface }
   let acc0 : Acc := { pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
@@ -21628,7 +21801,7 @@ private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
       exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
 
 private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)

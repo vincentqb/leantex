@@ -68,6 +68,104 @@ def head (src : String) : List (List String) :=
 def bodyRows (src : String) : List (List String) :=
   ((tablesOf src)[0]?.map (texts ·.2)).getD []
 
+/-- **A markdown table too wide for its measure fits it, as a web table
+does.** At its natural width a column of prose ran past the page edge and
+lost its words. A markdown table is a web table: too wide for the measure,
+its columns narrow as a browser's automatic table layout narrows them —
+each keeps its widest word, and what the measure leaves beyond them is
+shared in proportion to how much wider each column's widest line is — and
+the cells of a narrowed column wrap, ragged on the side their alignment
+names, with no hyphen; its HTML cells are left free to wrap the same way. A
+table whose words alone pass the measure keeps every word whole, no cell
+over another, and is named at its first cell. And every cell of a row
+stands on the row's baseline by its first line, whatever that line's
+height. -/
+def wrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let note := "Rewrites every gadget it is handed and writes each one back in the order of \
+its label, then counts them"
+  let wide := s!"| Key | Count of rewritten gadgets | Note |\n|---|--:|---|\n\
+| `--sort` | 12 | {note} |\n| `-q` | 3 | quiet |\n"
+  let (doc, _) := elabMd wide
+  let out := layoutOf fonts doc
+  let lines := bodyLines out
+  let left := doc.page.hmargin
+  let measure := doc.page.width - 2 * doc.page.hmargin
+  t "a markdown table too wide for its measure keeps every glyph inside it"
+    (!lines.isEmpty && (lines.flatMap lineRuns).all fun (_, _, x, w) =>
+      left - Dim.pt 1 ≤ x && x + w ≤ left + measure + Dim.pt 1)
+  let ruleWidths := lines.flatMap fun l => l.segs.filterMap fun s => match s with
+    | .rule w _ _ _ => some w
+    | _ => none
+  t s!"and its rules span the measure, the columns filling it ({ruleWidths})"
+    (ruleWidths.size == 3 && ruleWidths.all fun w => measure - 8 ≤ w && w ≤ measure)
+  let painted := String.intercalate "\n" (lines.map lineText).toList
+  t "every word of its narrowed cells reaches the page, unhyphenated"
+    ((note.splitOn " ").all (hasStr painted ·) && !hasStr painted "-\n")
+  let lineOf (needle : String) : Option Layout.LineOut :=
+    lines.find? fun l => (lineRuns l).any fun (_, s, _, _) => s == needle
+  let noteX := (lineOf "Rewrites").map (·.x)
+  let noteLines := lines.filter fun l => some l.x == noteX
+  t s!"a long cell wraps onto lines of its own column ({noteLines.size})"
+    (noteLines.size ≥ 4)
+  let some face := fonts.fonts[0]?
+    | t "the table face loads" false
+  let space : Dim.Sp := Dim.pt 10 * face.spaceAdvance / face.unitsPerEm
+  t "a wrapping cell is ragged: its word spaces keep their natural width"
+    (noteLines.all fun l => l.segs.all fun s => match s with
+      | .gap w _ => w ≤ space + Dim.pt 1 / 2
+      | _ => true)
+  -- One word per cell needs no narrowing: the first column keeps its words
+  -- whole, code included.
+  t "a column of single words keeps them whole and stands at the measure's edge"
+    ((lineOf "--sort").any (·.x == left) && (lineOf "Key").any (·.x == left))
+  let countRight := (lineOf "12").map fun l => l.x + l.setWidth
+  let countLines := lines.filter fun l => (lineRuns l).any fun (_, s, _, _) =>
+    ["Count", "rewritten", "gadgets", "12", "3"].contains s
+  t s!"a right-aligned column hangs every line of its wrapping head from its right edge ({countLines.size})"
+    (countLines.size ≥ 4 && countLines.all fun l => some (l.x + l.setWidth) == countRight)
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let cells := elemNodesList (fun tag => tag == "td" || tag == "th") #[] body.toList
+  let attrsOf (n : Html.Node) : Array (String × String) := match n with
+    | .elem _ attrs _ => attrs
+    | _ => #[]
+  let nowrap (n : Html.Node) : Bool := (attrsOf n).any fun (k, v) =>
+    k == "class" && hasStr v "bt-nowrap"
+  let (_, texBody, _) := HtmlDoc.emitTree {} (elabStr (dvDoc ""
+    "\\begin{tabular}{ll}\nKey & Note \\\\\n\\end{tabular}")).1
+  t "a markdown table's HTML cells may wrap, as its page's do; a tex table's natural cells may not"
+    (!cells.isEmpty && !cells.any nowrap
+      && (elemNodesList (· == "td") #[] texBody.toList).all nowrap)
+  -- Words alone too wide for the measure: whole, side by side, and named.
+  let nums (k : Nat) : String := String.intercalate " | "
+    ((List.range 9).map fun j => s!"{k}.{1000 + 37 * j + k}{j}")
+  let figures := "| label | a | b | c | d | e | f | g | h | i |\n\
+|---|---|---|---|---|---|---|---|---|---|\n" ++
+    s!"| sorter[a=500,b=0.01] | {nums 1} |\n| sorter[a=50,b=0.01] | {nums 2} |\n"
+  let (raws, readDiags) := Md.read "t.md" figures
+  let (located, _, _) := Elab.runRawsSpanned "t.md" raws readDiags
+  let fout := layoutOf fonts located
+  let flines := bodyLines fout
+  let rowYs := (flines.filterMap fun l => if (lineText l).startsWith "1." then some l.y else none)
+  let cellsAt (y : Dim.Sp) : Array Layout.LineOut :=
+    (flines.filter (·.y == y)).qsort (·.x < ·.x)
+  t s!"a table whose words alone pass the measure keeps each word whole, no cell over another ({rowYs.size})"
+    (!rowYs.isEmpty && (rowYs.eraseReps).all fun y =>
+      let cs := cellsAt y
+      cs.size == 10 && (cs.zip (cs.extract 1 cs.size)).all fun (a, b) => a.x + a.setWidth < b.x)
+  let over := fout.diags.filter (·.kind == .W0338)
+  t s!"and it is named at its first cell, with a remedy markdown can write ({over.size})"
+    (over.size == 1 && over.all fun d => d.span.map (·.pos.line) == some 1
+      && (d.help.any fun h => hasStr h "split the table"))
+  -- One row, one baseline: a taller first line moves every cell's down.
+  let rowOut := layoutOf fonts (elabStr (dvDoc ""
+    "\\begin{tabular}{lll}\n\\toprule\nshort & {\\LARGE Tall} & low \\\\\n\\bottomrule\n\\end{tabular}")).1
+  let baselineOf (needle : String) : Option Dim.Sp := (bodyLines rowOut).findSome? fun l =>
+    if hasStr (lineText l) needle then some l.y else none
+  t "the cells of a row stand on one baseline though one cell's first line is taller"
+    ((baselineOf "Tall").isSome && baselineOf "short" == baselineOf "Tall"
+      && baselineOf "low" == baselineOf "Tall")
+
 def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let basic := "| Name | Count |\n|------|------:|\n| alpha | 12 |\n| beta | 7 |\n"
@@ -170,5 +268,6 @@ def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
     (runLeft "alpha" == runLeft "beta" && runLeft "alpha" == runLeft "Name")
   t "the table has no outer pad: its first column starts at the text's left edge"
     (runLeft "Name" == some doc.page.hmargin)
+  wrapChecks ref fonts
 
 end Tests.MarkdownTables

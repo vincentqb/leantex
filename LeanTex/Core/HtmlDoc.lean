@@ -5036,6 +5036,13 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- the same lang= tags the engine's patterns read — one declaration, two
   -- conforming hyphenators (the agreement is about tags, never breaks).
   "p { hyphens: auto; }\n" ++
+  -- A markdown document's inline code may end a line where it would
+  -- otherwise overflow it, as its page breaks code after url.sty's break
+  -- characters (`Layout.urlBreak`): a browser breaks only an identifier
+  -- wider than the line, at whatever character it must, rather than let it
+  -- push the page sideways. A tex document's `\texttt` keeps LaTeX's rule.
+  (if doc.surface == .markdown then
+    ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   -- A list's items, a description's text under its label and a
   -- quotation's two edges stand their level's `\leftmargin` in, as the
   -- page sets them (`listIndentCss`).
@@ -5923,13 +5930,17 @@ left. -/
 `\cmidrule` spans its column, and `bt-nowrap` on a natural column's cell, so
 auto table layout cannot squeeze the column to min-content (the
 `:where(... td.bt-nowrap ...)` rule). `white-space` on the `<col>` itself would
-do nothing (CSS Tables §17.3), so the class lands on the cell. One `class`
+do nothing (CSS Tables §17.3), so the class lands on the cell. A narrowing
+column's cell (`Ir.ColSpec.narrows`, a markdown table's) carries none: the
+page fits its table as automatic table layout does (`Layout.fitColumns`),
+and the browser does the same once nothing forbids it. One `class`
 attribute carries them all. -/
 @[expose] public def cellClasses (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (i j : Nat) : List String :=
+  let spec := Ir.cellSpec cols spans i j
   cellSideClassOf cols spans i j ::
     ((if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b) then ["bt-cmid"] else []) ++
-      (if (Ir.cellSpec cols spans i j).width matches .natural then ["bt-nowrap"] else []))
+      (if (spec.width matches .natural) && !spec.narrows then ["bt-nowrap"] else []))
 
 /-- One table cell: its classes (`cellClasses`, its side first) and — for a
 header cell — `scope=col`, the one scope a booktabs head declares (HTML
@@ -7613,6 +7624,18 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
       (if spec.breakLines then " white-space: pre-wrap;" else "") ++
+      -- A wrapped line's continuation hangs `breakIndent` in, as listings
+      -- sets it on the page: CSS indents every line but the first after
+      -- each forced break (`hanging each-line`). It measures from the
+      -- block's edge, so an indented source line continues at the break
+      -- indent alone here, where the page adds the line's own indentation
+      -- (`breakautoindent`); a browser without the keywords sets the
+      -- continuation at the edge.
+      (match spec.breakIndent with
+        | some w =>
+          if spec.breakLines then s!" text-indent: {cssLength (.ofSp w)} hanging each-line;"
+          else ""
+        | none => "") ++
       (if paint.isEmpty then "" else " " ++ paint)
     let pre := Html.elem "pre" #[code]
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++

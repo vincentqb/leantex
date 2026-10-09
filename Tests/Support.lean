@@ -334,9 +334,10 @@ the fence rows at this line rather than at four literals. The exact
 attribute check also rejects leaked language text or an attribute hiding
 the code. A markdown fence sets as its surface's code does
 (`Ir.Surface.listing`): at `\footnotesize`, `0.8em`, wrapping its long
-lines. -/
+lines with their continuations hung 20 pt in. -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
-  #[("style", "font-size: 0.8em; line-height: 1.2; tab-size: 8; white-space: pre-wrap;"),
+  #[("style", "font-size: 0.8em; line-height: 1.2; tab-size: 8; white-space: pre-wrap; \
+text-indent: 20pt hanging each-line;"),
     ("tabindex", "0")]
 
 /-- The page's code blocks, in order, each as the one text its `<code>`

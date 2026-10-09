@@ -38,7 +38,9 @@ reaches the page, which is the registry's rule and not a habit:
 
 A GFM table is expressible, and crosses as the booktabs `{tabular}` it
 means, every cell's content inside a group of its own (`tableRaws_contract`),
-where the `{tabular}` reader looks for no cell or row end.
+where the `{tabular}` reader looks for no cell or row end. Its environment
+is the markdown table's own (`Parse.markdownTableEnv`): the one difference
+from a tex `{tabular}` is that its columns narrow as a web table's do.
 
 All six heading ranks cross the native heading bridge as fixed names and
 grouped inline raws. Their shared IR rank reaches both artifacts unchanged;
@@ -339,7 +341,11 @@ alignment between `@{}` at either edge, so the rules span the columns' text
 and no outer pad, as booktabs' own examples set a formal table
 (`@{}llr@{}`, booktabs manual); the header between `\toprule` and
 `\midrule` — what makes it the head (`Ir.tableHeaderRows`) — the data rows,
-then `\bottomrule`. Three rules and no vertical one. -/
+then `\bottomrule`. Three rules and no vertical one. The environment is the
+markdown table's own (`Parse.markdownTableEnv`), read as `{tabular}` is,
+its columns narrowing as a web table's do (`Ir.ColSpec.narrows`): a
+markdown table declares no widths, wherever it is read — alone, or
+included in a tex document. -/
 public def tableRaws (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
     Array Raw × Array Diag :=
@@ -348,7 +354,7 @@ public def tableRaws (file : String) (aligns : Array TableAlign)
   let head : Array Raw := #[.group #[.sym '@' p, .group #[] p, .word spec p,
     .sym '@' p, .group #[] p] p, .ctrl "toprule" p]
   let (body, ds) := rowsRaws file p ((head ++ hr).push (.ctrl "midrule" p)) hds rows.toList
-  (#[.env "tabular" (body.push (.ctrl "bottomrule" p)) p], ds)
+  (#[.env Parse.markdownTableEnv (body.push (.ctrl "bottomrule" p)) p], ds)
 
 /-- What a markdown table may put at a `{tabular}` body's top level: a
 group — the column spec or one cell —, the `&` between two cells, the `\\`
@@ -410,17 +416,17 @@ private theorem rowsRaws_tableTop (file : String) (p : Pos) (rows : List (Array 
     · exact hr x hx
 
 /-- **The lowering's shape: a cell's text is inside its cell's group.** A
-markdown table lowers to one `{tabular}` whose body holds, at its top
-level, nothing but groups — the column spec and one per cell —, the `&`
-and `\\` between them, and booktabs' rules; every word a cell holds sits
-inside that cell's group. What the shape buys rests on a premise of the
-elaborator's, not proved here: that the `{tabular}` reader splits a body
-into rows and cells only at its top level, never inside a group. The
-end-to-end check holds it — `markdownTableChecks` ships an `&` and a `\\`
-in a cell as that cell's text. -/
+markdown table lowers to one markdown `{tabular}` (`Parse.markdownTableEnv`)
+whose body holds, at its top level, nothing but groups — the column spec
+and one per cell —, the `&` and `\\` between them, and booktabs' rules;
+every word a cell holds sits inside that cell's group. What the shape buys
+rests on a premise of the elaborator's, not proved here: that the
+`{tabular}` reader splits a body into rows and cells only at its top level,
+never inside a group. The end-to-end check holds it — `markdownTableChecks`
+ships an `&` and a `\\` in a cell as that cell's text. -/
 public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
-    ∃ body, (tableRaws file aligns header rows p).1 = #[.env "tabular" body p] ∧
+    ∃ body, (tableRaws file aligns header rows p).1 = #[.env Parse.markdownTableEnv body p] ∧
       ∀ x ∈ body, TableTop p x := by
   unfold tableRaws
   have hh := rowRaws_tableTop file header p

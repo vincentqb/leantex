@@ -62,6 +62,68 @@ def firstGlyphX (l : Layout.LineOut) : Option Dim.Sp := Id.run do
 /-- A line's text with every space and no-break space removed. -/
 def bare (s : String) : String := (s.replace "\u00a0" "").replace " " ""
 
+/-- **Inline code breaks where url.sty's `\path` breaks.** A markdown
+document's code cannot declare a break, and set unbreakable in a justified
+paragraph it ran past the page edge or opened gaps of hundreds of points
+around itself. Its typewriter runs now end a line after url.sty's break
+characters (`. @ \ / ! _ | ; > ] ) , ? & ' + = #` at `\binoppenalty`, `:`
+at `\relpenalty`), never after a hyphen, never inside a run of letters or
+digits and never drawing one, and only where a line needs it — the
+penalties outbid any ordinary line. A tex document's `\texttt` keeps LaTeX's rule: it never
+breaks, and an identifier wider than the line is TeX's overfull box. The
+invariants are over `Layout.Out`. Every word here is invented. -/
+def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
+    (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let codes := ["alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_lambda_mu",
+    "Nu.xi_omicron.pi_rho.sigma_tau", "upsilon_phi.chi_psi_omega_alpha_beta_gamma_delta_epsilon",
+    "zeta/eta/theta/iota/kappa/lambda/mu/nu/xi/omicron"]
+  let words := ["the", "sorter", "reads", "every", "gadget", "and", "writes", "it", "back", "to",
+    "a", "store", "where", "each", "label", "waits", "for", "its", "turn"]
+  let prose (code : String → String) : String := String.intercalate " "
+    ((List.range 60).map fun k =>
+      if k % 7 == 3 then code (codes[(k / 7) % codes.length]!)
+      else words[(k * 5) % words.length]!)
+  let size := Dim.pt 10
+  let space : Dim.Sp := size * text.spaceAdvance / text.unitsPerEm
+  let md := prose fun c => "`" ++ c ++ "`"
+  let doc := (elabMd (md ++ "\n")).1
+  let out := layoutOf fonts doc
+  let lines := bodyLines out
+  let left := doc.page.hmargin
+  let measure := doc.page.width - 2 * doc.page.hmargin
+  -- A boundary glyph may hang into the margin (character protrusion), a
+  -- few points at most; an overfull line runs tens of points past it.
+  t s!"markdown inline code: every line fits the measure and none is overfull ({lines.size})"
+    (lines.size ≥ 6 && lines.all (fun l => left - Dim.pt 3 ≤ l.x
+        && l.x + l.setWidth ≤ left + measure + Dim.pt 3)
+      && !out.diags.any (·.kind == .W0005))
+  -- A line whose last run is code that no identifier ends with broke
+  -- inside the identifier.
+  let midCode (out : Layout.Out) : Array String := (bodyLines out).filterMap fun l =>
+    (lineRuns l).back?.bind fun (f, s, _, _) =>
+      if f == 1 && !codes.any (·.endsWith s) then some s else none
+  let breakChars := ".@\\/!_|;>]),?&'+=#:"
+  t s!"markdown inline code: a line ends inside code only after a break character, drawing no hyphen ({midCode out})"
+    (!(midCode out).isEmpty && (midCode out).all fun s => breakChars.contains s.back)
+  t "markdown inline code: every character reaches the page, in order"
+    (String.join (lines.toList.map (bare ∘ lineText)) == bare (md.replace "`" ""))
+  t "markdown inline code: no justified line opens a word space three of its own wide"
+    (lines.all fun l => l.segs.all fun s => match s with
+      | .gap w _ => w ≤ 3 * space
+      | _ => true)
+  -- A tex document's typewriter run keeps LaTeX's rule.
+  let tex := prose fun c => "\\texttt{" ++ c.replace "_" "\\_" ++ "}"
+  let texOut := layoutOf fonts (elabStr (dvDoc "" tex)).1
+  t s!"tex inline code: a typewriter run never breaks, and one wider than the line is overfull ({midCode texOut})"
+    ((midCode texOut).isEmpty && texOut.diags.any (·.kind == .W0005))
+  -- The screen: a browser breaks an inline identifier only where it would
+  -- push the page sideways.
+  let codeRule := ":where(:not(pre) > code) { overflow-wrap: break-word; }"
+  t "a markdown page's stylesheet lets inline code break where it would overflow; a tex page's keeps it whole"
+    (hasStr (HtmlDoc.baseCss {} doc) codeRule
+      && !hasStr (HtmlDoc.baseCss {} (elabStr (dvDoc "" tex)).1) codeRule)
+
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- The surface: one decision, read by the reader choice and the document.
@@ -157,5 +219,6 @@ numbers=left,basicstyle=\\ttfamily\\footnotesize]\n" ++ words ++ "\n\\end{lstlis
       | some a, some b => !(lineText b).any Char.isDigit &&
           firstGlyphX b == (glyphX a 'a').map (· + Ir.listingBreakIndent)
       | _, _ => false)
+  inlineCodeChecks ref text fonts
 
 end Tests.MarkdownCode
