@@ -98,6 +98,18 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     ("calc numeric sum and subtraction",
       "\\draw ($(1,2)+(2,-1)-(1,0)$) -- ($(3,1)+(1,2)$);",
       "\\draw (2,1) -- (4,3);", 1, 0),
+    -- TikZ manual §13.5: a factor before a term, a partway step by a
+    -- fraction or by a length, and a coordinate in lengths; a LuaLaTeX
+    -- probe places each explicit form.
+    ("calc partway",
+      "\\draw ($(0,0)!0.5!(4,2)$) -- (4,0);", "\\draw (2,1) -- (4,0);", 1, 0),
+    ("calc factors",
+      "\\draw ($2*(1,1)$) -- ($(1,0)+0.5*(2,2)$);", "\\draw (2,2) -- (2,1);", 1, 0),
+    ("calc partway by a length",
+      "\\draw ($(0,0)!1cm!(3,0)$) -- (3,1);", "\\draw (1,0) -- (3,1);", 1, 0),
+    ("coordinates in lengths",
+      "\\pgfmathsetlengthmacro{\\h}{0.5cm}\\draw (\\h,10mm) -- (2*\\h,1);",
+      "\\draw (0.5,1) -- (1,1);", 1, 0),
     ("calc bindings and relative chaining",
       "\\pgfmathsetmacro{\\d}{0.7}\\foreach \\u/\\v in {n/w} " ++
         "\\draw ($(\\u.west)+(-\\d,0)$) -- ++(0,1) |- ($(\\v.west)+(-\\d,0)$);",
@@ -194,7 +206,8 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       ("\\draw (\\missing) -- (e);", "E0333", "missing"),
       ("\\draw (0,0) -- (1/0,2);", "E0333", "zero"),
       ("\\draw (n) arc (e);", "W0334", "arc"),
-      ("\\draw ($(n)!0.5!(e)$) -- (s);", "W0334", "calc"),
+      ("\\draw ($(n)!0.5!90:(e)$) -- (s);", "W0334", "calc"),
+      ("\\draw ($(n)!(w)!(e)$) -- (s);", "W0334", "calc"),
       ("\\draw ($(n)+(0,1)*2$) -- (s);", "W0334", "calc"),
       ("\\draw (0,0) -- node {One} (2,1) node[midway] {Two};", "W0334", "multiple")] do
     t s!"path syntax: unsupported {word} stays diagnosed without a partial edge"

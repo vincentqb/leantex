@@ -169,7 +169,7 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       return (← FontEnv.resolveDocDirs "doc.tex" doc.fonts.dirs).2),
     (.W0379, fun dir => do
       match ← Boundary.coldPicture dir "lualatex"
-          (Ir.picHash "\\draw (0,0) circle (1);") (why := "no executable file by this name on PATH") with
+          (Ir.picHash "\\draw (0,0) parabola (1,1);") (why := "no executable file by this name on PATH") with
       | .error d => return #[d]
       | .ok _ => return #[]),
     -- The withdrawal chain as the driver runs it: the cold decision's own
@@ -178,7 +178,7 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
     -- picture's loss once, with why the boundary drew nothing.
     (.W0419, fun dir => do
       let src := dvDoc "" ("\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
-        "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}")
+        "\\pattern (0,0) rectangle (1,1);\\end{tikzpicture}")
       let (raws, _) := Parse.parse "t" (Lex.lex "t" src).1
       let (doc, _, spans) := Elab.runRawsSpanned "t" raws
       let some (id, _) := doc.pictureSrcs[0]? | return #[]
@@ -341,7 +341,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       "x\\footnote{an aside}\n\\end{document}")
   | .N0376 => dvE (dvDoc "" "\\includegraphics{chart.png}") ++
       Ir.picAltDiags (elabStr (dvDoc "\\pictures{ tool = lualatex }\n"
-          "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")).1
+          "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}")).1
         (fun _ => none) (fun _ => true)
   | .W0377 => dvE (dvDoc "" "\\href{https://example.org/x}{}")
   | .W0381 => dvE (dvDoc "" "\\qty{9.81}{\\banana}")
@@ -485,7 +485,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
       (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
        "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0334 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
-      "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
+      "\\draw (0,0) parabola (1,1);\n\\end{tikzpicture}"))
   | .W0335 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\fill (0,0) rectangle (40,1);\n\\end{tikzpicture}"))
   -- Two nodes one node distance apart by their centres, each label wider
@@ -624,7 +624,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""
-      "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+      "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}")
   | .N0025 => probed .N0025
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
@@ -1690,7 +1690,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- tree gets — carries its trust note, and is left to the driver's face
   -- (`picAltDiags`, judged once shipped), never named at elaboration.
   let (routed, routedDs) := elabStr (dvDoc ""
-    "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+    "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}")
   t "a default-routed boundary picture is counted, noted, and left to the driver's judge"
     ((Ir.imagesSansAlt routed).size == 1 &&
      routedDs.all (·.code != "N0376") && routedDs.any (·.code == "N0023"))
@@ -1708,7 +1708,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The picture face: judged by the driver after fulfilment, in the
   -- author's words (the source spelling is the engine's cache key).
   let door := "\\pictures{ tool = lualatex }\n"
-  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let pic := "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}"
   let (picDoc, picDs) := elabStr (dvDoc door pic)
   t "elaboration leaves a boundary picture to the driver's judge"
     (picDs.all (·.code != "N0376"))
@@ -1782,7 +1782,7 @@ placeholder box; every element has a diagnostic whose subject names it
 renders in the slice report. -/
 def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let pic := "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}"
   let body := "See \\ref{none} and \\cite{none}.\n\n\\includegraphics{absent.png}\n\n" ++ pic
   let (doc, ds) := elabStr (dvDoc "\\usepackage{pgfplots}\n" body)
   let named (ds : Array Diag) (ps : Array Ir.Pending) : Bool :=

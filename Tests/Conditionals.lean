@@ -128,8 +128,8 @@ def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- decides must be decided before the bytes are taken: two sites of one
   -- source under two states are two requests, never one cached answer.
   let bpic :=
-    "\\begin{tikzpicture}\\ifnum\\mode=1 \\draw (0,0) circle (1);\\else " ++
-    "\\draw (0,0) circle (2);\\fi\\end{tikzpicture}"
+    "\\begin{tikzpicture}\\ifnum\\mode=1 \\draw (0,0) parabola (1,1);\\else " ++
+    "\\draw (0,0) parabola (2,2);\\fi\\end{tikzpicture}"
   let (bdoc, _) := elabStr (dvDoc "" ("\\def\\mode{1}\n" ++ bpic ++ "\n\n\\def\\mode{2}\n" ++ bpic))
   t "two states of one boundary picture are two requests"
     (bdoc.pictureSrcs.size == 2)
@@ -367,7 +367,7 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a parameterized label redefined between pictures draws each site's text"
     (occurs wrapped "Ax" == 1 && occurs wrapped "Bx" == 1 &&
       (elabStr wrapSrc).2.all (·.severity == .note))
-  let bpic := "\\begin{tikzpicture}\\draw (0,0) circle (1) node {\\probeLabel};\\end{tikzpicture}"
+  let bpic := "\\begin{tikzpicture}\\draw (0,0) parabola (1,1) node {\\probeLabel};\\end{tikzpicture}"
   let (bdoc, _) := elabStr (dvDoc "\\newcommand\\probeLabel{Early}\n"
     (bpic ++ "\n\n\\renewcommand\\probeLabel{Late}\n" ++ bpic))
   t "two sites of one boundary picture under two label texts are two requests, each its own text"

@@ -110,7 +110,7 @@ example : String → Ir.Pic.Picture := placeholder
 
 example (gapped : Bool) (what : String)
     (h : (unreachedName gapped what).1 = .W0334) : gapped = true :=
-  unreachedName_accounts gapped what h
+  unreachedName_accounts gapped what _ _ h
 
 example : True := by
   fail_if_success

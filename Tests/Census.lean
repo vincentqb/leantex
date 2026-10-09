@@ -1057,6 +1057,31 @@ def censusRows5 :
   -- corner joins; the zero line width is the hairline, never no line; the
   -- dashed chain is one dashed path around its corner. The HTML face of the
   -- same row is `gfxStrokeCensusChecks`, over the typed SVG tree.
+  -- A tree grown upward and a sketch of dots: every construct the subset
+  -- once routed, drawn natively. Tree edges with their parent-end tips
+  -- (four, so eight marks — the edge with draw=none ships none), the
+  -- default-named edge and its tip, the coloured dot; then the line, two
+  -- dots, the ellipse and the two-ended arrow's line and tips.
+  ("diagram-tree", fun _ c => [
+    ("one page", c.size == 1),
+    ("no boundary box stands where the pictures are",
+      (c[0]?.map (·.images == 0)).getD false),
+    ("every edge, tip, dot and curve ships as a page path",
+      (c[0]?.map (·.paths == 18)).getD false),
+    ("every node label ships",
+      ["sum", "left", "right", "mid", "span"].all fun l => hasStr (censusText c) l),
+    ("the tree grows up: its children stand above the root",
+      (((lineYOf c 0 "sum").bind fun ys => (lineYOf c 0 "left").map fun yl =>
+        decide (yl < ys)).getD false)),
+    ("growing up turns the siblings: the first child stands right of the second",
+      (((lineXOf c 0 "left").bind fun xl => (lineXOf c 0 "right").map fun xr =>
+        decide (xr < xl)).getD false)),
+    ("the declared size sets the label after it smaller than the one before",
+      (((lineSizeOf c 0 "span").bind fun a => (lineSizeOf c 0 "mid").map fun b =>
+        decide (a < b)).getD false)),
+    ("the picture's font= sets its tree's labels below the body size",
+      (((lineSizeOf c 0 "sum").bind fun a => (lineSizeOf c 0 "mid").map fun b =>
+        decide (a < b)).getD false))]),
   ("diagram-strokes", fun _ c => [
     ("one page", c.size == 1),
     ("the three strokes ship as the picture's own marks, no page fill among them",

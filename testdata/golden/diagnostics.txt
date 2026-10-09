@@ -123,7 +123,6 @@
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
 ✖ [E0333] - \begin
   in '\fill', unknown macro '\nope'; the shape is not drawn
-  suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── E0334 (dropped) \begin{ifbackend} content addressed to no backend
 ✖ [E0334] - \begin
   this content is addressed to no backend; no output will carry it
@@ -529,8 +528,8 @@
   suggestion: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
 ⚠ [W0334] - \begin
-  '\draw' continues with 'circle', outside the rendered picture subset; the edge is not drawn
-  suggestion: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
+  '\draw' continues with 'parabola', outside the rendered picture subset; the edge is not drawn
+  suggestion: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 ⚠ [W0335]
   the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page
@@ -794,7 +793,7 @@
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
-  the rendered subset draws this picture in part: '\shade' is outside the rendered picture subset; not drawn
+  the rendered subset draws this picture in part: '\pattern' is outside the rendered picture subset; not drawn
   replaced by: the rendered subset's drawing
   suggestion: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
 ── W0420 (degraded) a .bib date or month biber does not read; it prints as written

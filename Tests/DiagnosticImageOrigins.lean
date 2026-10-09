@@ -197,7 +197,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "image origin: whitespace before the environment name still quotes only begin"
     (hasHeader spacedNativeWarnings "spaced-native.tex:2:1" "\\begin" &&
       spacedNativeWarnings.all (·.subject == some "picture#0"))
-  let boundarySource := pic "\\draw (0,0) circle (1);"
+  let boundarySource := pic "\\draw (0,0) parabola (1,1);"
   let (boundary, boundaryDs, boundarySpans) := imageOriginTex "boundary.tex" boundarySource
   let spanOf := Elab.ReqSpans.spanOf boundarySpans.images
   let shipped := Ir.picAltDiags boundary spanOf (fun _ => true)

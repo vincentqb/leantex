@@ -158,10 +158,13 @@ public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
 
 -- Expression evaluation: pgfmath's arithmetic over milli fixed point.
 
-/-- A `\foreach` binding's value: a number in milli, or the raw text of a
-list item that is not one (a label like `alpha`). -/
+/-- A `\foreach` binding's value: a number in milli, a length in sp — what
+pgfmath calls a value with units declared, a `\pgfmathsetlengthmacro`
+result, or a literal like `0.5cm` — or the raw text of a list item that is
+not one (a label like `alpha`). -/
 public inductive Val where
   | num (m : Int)
+  | len (sp : Sp)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
@@ -179,9 +182,33 @@ public def milliString (m : Int) : String :=
     let frs := ("".pushn '0' (3 - frs.length)) ++ frs
     s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
 
+/-- A length as pgf prints a length macro: its points, then `pt`. -/
+public def lenString (sp : Sp) : String := sp.toPtString ++ "pt"
+
 public def Val.text : Val → String
   | .num m => milliString m
+  | .len sp => lenString sp
   | .str s => s
+
+/-- A literal like `0.5cm` in an expression or a coordinate: its length in
+the engine's one unit system (`Decl.parseLength`, the reader every document
+length goes through), or `none` where the word is no absolute unit —
+font-relative units are the face's and stay out. -/
+public def unitLen? (m : Int) (u : String) : Option Sp :=
+  (Decl.parseLength (milliString m ++ u)).bind fun l =>
+    if l.em == 0 && l.ex == 0 then some l.sp else none
+
+/-- A unitless milli value read as points, where units are declared beside
+it: pgfmath's rule (`1cm+1` is a centimetre and a point). -/
+public def milliPt (m : Int) : Sp :=
+  let n := m * Dim.spPerPt
+  if n < 0 then -((-n + 500) / 1000) else (n + 500) / 1000
+
+/-- A length's points in milli: what a length means where a plain number
+is asked (`\pgfmathsetmacro{\x}{2*1cm}` is two centimetres' points). -/
+public def spMilliPt (sp : Sp) : Int :=
+  let n := sp * 1000
+  if n < 0 then -((-n + 32768) / 65536) else (n + 32768) / 65536
 
 /-- A token named for a diagnostic. -/
 private def tokText : Tok → String
@@ -243,7 +270,16 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
       match t with
       | .space => pure ()
       | .num m =>
-        out := out.push (.push (.num m))
+        -- A unit after a number makes it a length (pgfmath's units
+        -- declared): `0.5cm`, `1.5pt`.
+        match toks[i]? with
+        | some (.ident u) =>
+          match unitLen? m u with
+          | some sp =>
+            i := i + 1
+            out := out.push (.push (.len sp))
+          | none => out := out.push (.push (.num m))
+        | _ => out := out.push (.push (.num m))
         expectOperand := false
       | .ctrl name =>
         match env.lookup name with
@@ -340,26 +376,36 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
   -- itself. `ifthenelse` is pgfmath's: a nonzero condition picks the
   -- second argument, zero the third, and the branches may be strings.
   let mut stack : Array Val := #[]
-  let num (v : Val) : Except String Int :=
+  -- A value's number and whether units are declared on it: a length in sp,
+  -- a number in milli.
+  let q (v : Val) : Except String (Int × Bool) :=
     match v with
-    | .num m => .ok m
+    | .num m => .ok (m, false)
+    | .len sp => .ok (sp, true)
     | .str s => .error s!"'{s}' where a number is needed"
+  -- Two operands on one scale: where either is a length, both are, a
+  -- unitless one read as points (pgfmath's units declared).
+  let common (a b : Int × Bool) : Int × Int × Bool :=
+    if a.2 || b.2 then
+      ((if a.2 then a.1 else milliPt a.1), (if b.2 then b.1 else milliPt b.1), true)
+    else (a.1, b.1, false)
+  let mk (v : Int) (isLen : Bool) : Val := if isLen then .len v else .num v
   for r in out do
     match r with
     | .push v => stack := stack.push v
     | .neg =>
       match stack.back? with
       | some a =>
-        match num a with
-        | .ok m => stack := stack.pop.push (.num (-m))
+        match q a with
+        | .ok (m, l) => stack := stack.pop.push (mk (-m) l)
         | .error e => return .error e
       | none => return .error "misplaced '-'"
     | .fite =>
       match stack.back?, stack.pop.back?, stack.pop.pop.back? with
       | some no, some yes, some c =>
         let stack' := stack.pop.pop.pop
-        match num c with
-        | .ok m => stack := stack'.push (if m != 0 then yes else no)
+        match q c with
+        | .ok (m, _) => stack := stack'.push (if m != 0 then yes else no)
         | .error e => return .error e
       | _, _, _ => return .error "'ifthenelse' needs (condition, value, value)"
     | op =>
@@ -368,19 +414,25 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
         match stack.pop.back? with
         | some av =>
           let stack' := stack.pop.pop
-          match num av, num bv with
+          match q av, q bv with
           | .ok a, .ok b =>
+            let (x, y, l) := common a b
             match op with
-            | .add => stack := stack'.push (.num (a + b))
-            | .sub => stack := stack'.push (.num (a - b))
-            | .mul => stack := stack'.push (.num (a * b / 1000))
-            | .fmax => stack := stack'.push (.num (max a b))
-            | .fmin => stack := stack'.push (.num (min a b))
-            | .lt => stack := stack'.push (.num (if a < b then 1000 else 0))
-            | .gt => stack := stack'.push (.num (if a > b then 1000 else 0))
+            | .add => stack := stack'.push (mk (x + y) l)
+            | .sub => stack := stack'.push (mk (x - y) l)
+            | .mul =>
+              -- A length times a number scales it; two lengths multiply
+              -- their points, units still declared; two numbers in milli.
+              let v := if a.2 && b.2 then a.1 * b.1 / 65536 else a.1 * b.1 / 1000
+              stack := stack'.push (mk v (a.2 || b.2))
+            | .fmax => stack := stack'.push (mk (max x y) l)
+            | .fmin => stack := stack'.push (mk (min x y) l)
+            | .lt => stack := stack'.push (.num (if x < y then 1000 else 0))
+            | .gt => stack := stack'.push (.num (if x > y then 1000 else 0))
             | .div =>
-              if b == 0 then return .error "division by zero"
-              else stack := stack'.push (.num (a * 1000 / b))
+              if b.1 == 0 then return .error "division by zero"
+              else if a.2 && !b.2 then stack := stack'.push (.len (a.1 * 1000 / b.1))
+              else stack := stack'.push (.num (x * 1000 / y))
             | _ => return .error "malformed expression"
           | .error e, _ | _, .error e => return .error e
         | none => return .error "operator missing an operand"
@@ -390,10 +442,24 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
   | [] => return .error "empty expression"
   | _ => return .error "malformed expression"
 
-/-- An expression in a place that needs a number: a coordinate, a scale. -/
+/-- An expression in a place that needs a number: a scale, a count, a test.
+A length there is its points, as pgfmath reads it. -/
 private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
   match evalExpr env toks with
   | .ok (.num m) => .ok m
+  | .ok (.len sp) => .ok (spMilliPt sp)
+  | .ok (.str s) => .error s!"'{s}' where a number is needed"
+  | .error e => .error e
+
+/-- A coordinate's component: a number of the picture's unit vector, or a
+length where the expression declares units (TikZ manual §13.2.1: `(1cm,
+2pt)` is a point in lengths, `(1, 2)` one in units of the x and y vectors,
+and `(\h, 1)` mixes the two). -/
+private def evalComp (env : List (String × Val)) (toks : Array Tok) :
+    Except String (Int × Bool) :=
+  match evalExpr env toks with
+  | .ok (.num m) => .ok (m, false)
+  | .ok (.len sp) => .ok (sp, true)
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
@@ -491,6 +557,16 @@ private def condTakesNoTest (n : String) : Bool :=
   n == "iftrue" || n == "iffalse" || n == "ifmmode" || n == "ifhmode" ||
     n == "ifvmode" || n == "ifinner"
 
+/-- How a `\pgfmathset…macro` stores its value: as pgfmath prints it
+(`setmacro` — a length's points, units dropped), floored to a whole unit
+(`truncatemacro`), or as a length (`setlengthmacro`, where a unitless value
+reads as points). -/
+public inductive SetMode where
+  | plain
+  | trunc
+  | length
+  deriving Repr, BEq, Inhabited
+
 /-- One parsed picture statement. `fill` and `node` keep their tokenslices — coordinates and options are evaluated per loop iteration, where
 the bindings live. -/
 public inductive Stmt where
@@ -505,8 +581,9 @@ public inductive Stmt where
   box]`: a size declaration, not a drawing. The rectangle is the picture's
   box from here on (pgf manual §15.8). -/
   | bbox (toks : Array Tok)
-  /-- `\pgfmathsetmacro`, and `\pgfmathtruncatemacro` when `trunc`. -/
-  | set (name : String) (expr : Array Tok) (trunc : Bool)
+  /-- `\pgfmathsetmacro`, `\pgfmathtruncatemacro` and
+  `\pgfmathsetlengthmacro`, by `mode`. -/
+  | set (name : String) (expr : Array Tok) (mode : SetMode)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
   /-- `\ifnum <num><rel><num> ... \else ... \fi` and its siblings — TeX's
   conditionals. The test's tokens are kept for evaluation, because a macro
@@ -514,6 +591,20 @@ public inductive Stmt where
   `kind` says which test this is, because only the arithmetic ones are
   computable here. -/
   | cond (kind : CondKind) (test : Array Tok) (thenS : List Stmt) (elseS : List Stmt)
+  /-- `\coordinate (name) at (…);` — a node of no extent and no text
+  (TikZ manual §17.2.1, the `coordinate` shape): a name to place against. -/
+  | coordinate (toks : Array Tok)
+  /-- `\filldraw[…] …;` — `\path[fill, draw]`. -/
+  | filldraw (toks : Array Tok)
+  /-- A TeX group of statements — `{…}`, or `\textcolor{c}{…}` with the
+  colour it sets: what is declared inside stays inside (TeXbook ch. 5). -/
+  | grouped (color : Option (Array Tok)) (body : List Stmt)
+  /-- `\color{c}`: the current colour for the statements after it in its
+  group — every path's and node's default ink (pgf: the colour `.`). -/
+  | setColor (spec : Array Tok)
+  /-- A font declaration (`\bfseries`, `\small`): every node's text after
+  it in its group sets in it. -/
+  | setDecl (name : String)
   deriving Repr, Inhabited
 
 /-- The `;`-terminated statement kinds the machine collects. -/
@@ -523,6 +614,8 @@ private inductive StKind where
   | draw
   | path
   | bbox
+  | coordinate
+  | filldraw
   deriving Repr, BEq, Inhabited
 
 private def StKind.name : StKind → String
@@ -531,16 +624,18 @@ private def StKind.name : StKind → String
   | .draw => "draw"
   | .path => "path"
   | .bbox => "useasboundingbox"
+  | .coordinate => "coordinate"
+  | .filldraw => "filldraw"
 
 /-- What the statement machine is in the middle of. -/
 private inductive Mode where
   | top
   /-- Collecting a `\fill`/`\node`/`\draw` statement's tokens to its `;`. -/
   | stmt (kind : StKind) (acc : Array Tok)
-  /-- After `\pgfmathsetmacro` (or the truncating form), expecting `{\name}`. -/
-  | sname (trunc : Bool)
+  /-- After `\pgfmathsetmacro` (or a sibling, by `mode`), expecting `{\name}`. -/
+  | sname (mode : SetMode)
   /-- After `{\name}`, expecting the `{expr}` group. -/
-  | sexpr (name : String) (trunc : Bool)
+  | sexpr (name : String) (mode : SetMode)
   /-- After `\foreach`, collecting `\x` or `\x/\y` until `in`. -/
   | fvars (vars : Array String)
   /-- After `in`, expecting the `{list}` group. -/
@@ -548,6 +643,12 @@ private inductive Mode where
   /-- After the list, expecting the body: a group, a nested `\foreach`,
   or one `;`-terminated statement. -/
   | fbody (vars : Array String) (list : Array Tok)
+  /-- After `\textcolor`, expecting the colour's group. -/
+  | tcolor
+  /-- After `\textcolor{c}`, expecting the body's group. -/
+  | tbody (spec : Array Tok)
+  /-- After `\color`, expecting the colour's group. -/
+  | scolor
   /-- Recovering from a construct outside the subset: to the next `;`. -/
   | skip
   /-- After a conditional opener, collecting the test's tokens. TeX
@@ -584,6 +685,11 @@ private structure PSt where
   instead of one run of statements the evaluator cannot tell apart. -/
   conds : Array CondFrame := #[]
   mode : Mode := .top
+  /-- The font declarations a statement may stand among — the size switches
+  of the document's ladder and the elaborator's declarations, handed down
+  as `Cx.ladder` and `Cx.declStyles` are, so the walk keeps no table of its
+  own: each sets every node after it in its group (`Stmt.setDecl`). -/
+  declNames : List String := []
 
 /-- A `\draw`/`\path` statement's subpaths. A path ends at its last
 coordinate, so a `(` standing where an *operation* would begin starts a new
@@ -747,9 +853,14 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "draw" => { st with mode := .stmt .draw #[] }
     | .ctrl "path" => { st with mode := .stmt .path #[] }
     | .ctrl "useasboundingbox" => { st with mode := .stmt .bbox #[] }
+    | .ctrl "coordinate" => { st with mode := .stmt .coordinate #[] }
+    | .ctrl "filldraw" => { st with mode := .stmt .filldraw #[] }
+    | .ctrl "textcolor" => { st with mode := .tcolor }
+    | .ctrl "color" => { st with mode := .scolor }
     | .ctrl "foreach" => { st with mode := .fvars #[] }
-    | .ctrl "pgfmathsetmacro" => { st with mode := .sname false }
-    | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname true }
+    | .ctrl "pgfmathsetmacro" => { st with mode := .sname .plain }
+    | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname .trunc }
+    | .ctrl "pgfmathsetlengthmacro" => { st with mode := .sname .length }
     | .ctrl "else" => st.elseHere
     | .ctrl "fi" => st.fiHere
     | .ctrl name =>
@@ -758,7 +869,9 @@ private def step (t : Tok) (st : PSt) : PSt :=
         if condTakesNoTest name then
           { st with conds := st.conds.push { kind := k, test := #[] }, mode := .top }
         else { st with mode := .icond k #[] false }
-      | none => { (st.outside s!"'\\{name}'") with mode := .skip }
+      | none =>
+        if st.declNames.contains name then st.finish (.setDecl name)
+        else { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
     | .math _ _ _ => { (st.outside "math") with mode := .skip }
@@ -774,20 +887,22 @@ private def step (t : Tok) (st : PSt) : PSt :=
         | .draw => st.finishMany ((subpaths acc).toList.map Stmt.draw)
         | .path => st.finishMany ((subpaths acc).toList.map Stmt.path)
         | .bbox => st.finish (.bbox acc)
+        | .coordinate => st.finish (.coordinate acc)
+        | .filldraw => st.finish (.filldraw acc)
     | _ => { st with mode := .stmt kind (acc.push t) }
-  | .sname trunc =>
+  | .sname setMode =>
     match t with
     | .space => st
     | .group g =>
       match g.filter (· != .space) with
-      | [.ctrl name] => { st with mode := .sexpr name trunc }
+      | [.ctrl name] => { st with mode := .sexpr name setMode }
       | _ => { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
     | _ =>
       { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
-  | .sexpr name trunc =>
+  | .sexpr name setMode =>
     match t with
     | .space => st
-    | .group g => st.finish (.set name g.toArray trunc)
+    | .group g => st.finish (.set name g.toArray setMode)
     | _ =>
       { st.diag .E0333 s!"'\\pgfmathsetmacro' of '\\{name}' needs an expression group"
         with mode := .top }
@@ -819,6 +934,10 @@ private def step (t : Tok) (st : PSt) : PSt :=
       { st with pending := st.pending.push (vars, list), mode := .stmt .draw #[] }
     | .ctrl "path" =>
       { st with pending := st.pending.push (vars, list), mode := .stmt .path #[] }
+    | .ctrl "coordinate" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .coordinate #[] }
+    | .ctrl "filldraw" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .filldraw #[] }
     | .ctrl name =>
       match condKindOf name with
       | some k =>
@@ -834,6 +953,21 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | _ =>
       { (st.outside "this '\\foreach' body")
         with mode := .skip, pending := #[] }
+  | .tcolor =>
+    match t with
+    | .space => st
+    | .group spec => { st with mode := .tbody spec.toArray }
+    | _ => { (st.outside "a '\\textcolor' without its colour group") with mode := .skip }
+  -- `.group` never reaches here: `parseTok` owns that arm.
+  | .tbody _ =>
+    match t with
+    | .space => st
+    | _ => { (st.outside "a '\\textcolor' without its body group") with mode := .skip }
+  | .scolor =>
+    match t with
+    | .space => st
+    | .group spec => st.finish (.setColor spec.toArray)
+    | _ => { (st.outside "a '\\color' without its colour group") with mode := .skip }
   | .skip =>
     match t with
     | .sym ';' => { st with mode := .top }
@@ -885,8 +1019,14 @@ private def parseList : List Tok → PSt → PSt
 private def parseTok (t : Tok) (st : PSt) : PSt :=
   match st.mode, t with
   | .fbody vars list, .group g =>
-    let sub := parseList g {}
+    let sub := parseList g { declNames := st.declNames }
     { st with bad := st.bad ++ sub.bad }.finish (.foreach vars list sub.out.toList)
+  | .tbody spec, .group g =>
+    let sub := parseList g { declNames := st.declNames }
+    { st with bad := st.bad ++ sub.bad }.finish (.grouped (some spec) sub.out.toList)
+  | .top, .group g =>
+    let sub := parseList g { declNames := st.declNames }
+    { st with bad := st.bad ++ sub.bad }.finish (.grouped none sub.out.toList)
   | _, _ => step t st
 
 end
@@ -963,11 +1103,29 @@ public structure Cx where
   nothing, which is the pre-face behaviour (a node's extent is its declared
   minimum alone). -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- The current colour (pgf's `.`): what a path strokes and fills and a
+  node's text sets in where no key names a colour — black, until a
+  `\color` or a `\textcolor` group sets it. -/
+  ink : Ir.Color := Ir.Color.black
+  /-- The font declarations in force, innermost last (`Stmt.setDecl`): a
+  node's text sets in them before its own `font=`. -/
+  decls : Array String := #[]
+  /-- The translation in force, in sp (the shift part of pgf's coordinate
+  transformation): where a node with no `at` stands and what every point a
+  coordinate spells moves by — a tree child's position. A named node's
+  point is the canvas's and never moves. -/
+  shift : Sp × Sp := (0, 0)
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
 public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
   m * cx.scale * Dim.mm 10 / 1000000
+
+/-- A coordinate component in sp (`evalComp`): a number of the 1 cm unit
+vector, or a length — both through the declared scale, since a
+transformation moves every coordinate, with units or without. -/
+public def Cx.compSp (cx : Cx) (v : Int × Bool) : Sp :=
+  if v.2 then v.1 * cx.scale / 1000 else cx.toSp v.1
 
 /-- Split on a separator symbol at zero paren depth (groups are subtrees,
 so only `(`/`)` count). -/
@@ -1161,13 +1319,23 @@ public def keyName (ts : List Tok) : Option String := Id.run do
   let name := out.trimAscii.toString
   return if name.isEmpty then none else some name
 
+/-- The styles a tree reads by name (TikZ manual §21.4): `level` (with the
+level as its argument), `level <n>`, `edge from parent`, `every child` and
+`every child node`. -/
+private def treeStyleKey (n : String) : Bool :=
+  n == "level" || n == "edge from parent" || n == "every child" || n == "every child node" ||
+    (match n.splitOn " " with
+     | ["level", k] => !k.isEmpty && k.all Char.isDigit
+     | _ => false)
+
 /-- A key path this reader can honour: a single word, which an option
 bracket can apply by name, or one of the three `every X` levels the option
 loops read. Any other path (`every label`, a two-word name no bracket can
 spell) is left unread, so the line that wrote it names the loss — storing a
 bundle nothing will ever look up would drop it in silence. -/
 private def readableKey (n : String) : Bool :=
-  n == everyNodeKey || n == everyPathKey || n == everyTextKey || !n.contains ' '
+  n == everyNodeKey || n == everyPathKey || n == everyTextKey || treeStyleKey n ||
+    !n.contains ' '
 
 /-- One definition entry as a key path, a handler name, and the handler's
 group: `every node/.style={draw}` reads as `every node`, `style`, `draw`. -/
@@ -1255,6 +1423,26 @@ private def arrowTipName : List Tok → Option String
   | [.sym '-', t] => tipName [t]
   | _ => none
 
+/-- An arrow specification's two ends (pgf manual §16.2, `⟨start⟩-⟨end⟩`):
+the tip each end draws, `none` where it draws none — `<` and `>` the
+shorthand's own heads, so `<-` is a tip at the start and `<->` one at
+each end. `none` where the tokens are no arrow specification; a bare `-`
+is one, with no tip at either end. -/
+private def arrowSpec (ts : List Tok) : Option (Option String × Option String) :=
+  let isDash : Tok → Bool := fun t => t == .sym '-'
+  (ts.findIdx? isDash).bind fun k =>
+    let pre := ts.take k
+    let post := ts.drop (k + 1)
+    if post.any isDash then none else
+    let side (xs : List Tok) (head : Char) : Option (Option String) :=
+      match xs with
+      | [] => some none
+      | [.sym c] => if c == head then some (some (String.singleton c)) else none
+      | xs => (tipName xs).map some
+    match side pre '<', side post '>' with
+    | some a, some b => some (a, b)
+    | _, _ => none
+
 /-- Does a name draw as this subset's arrow head? A tip the document
 declared with `/.tip`, or one of the built-in kinds the plain head has
 always stood in for: `latex` (pgf manual §16.3, the `arrows` library) and
@@ -1264,7 +1452,7 @@ the shorthand itself. Anything else stays outside the subset and is named,
 which is what keeps a genuinely different tip kind a visible loss rather
 than a silent head of the wrong shape. -/
 private def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
-  n == ">" || n == "latex" || n == "Latex" || (styles.lookup (tipKey n)).isSome
+  n == ">" || n == "<" || n == "latex" || n == "Latex" || (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
 folds into the bundles, in source order so a later definition may name an
@@ -1515,6 +1703,7 @@ private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) 
         | .ok p => s := s ++ p
         | .error e => return .error e
       | some (.str v) => s := s ++ v
+      | some (.len _) => return .error s!"the length '\\{n}' in a colour"
       | none => return .error s!"unknown macro '\\{n}' in a colour"
     | t => return .error s!"{tokText t} in a colour"
   match cx.pal.resolve s with
@@ -2116,15 +2305,40 @@ subset; {cost}")
   if h : i2 < ts.size then
     return .error (.W0334, s!"{what} continues with {tokText ts[i2]}, outside the \
 rendered picture subset; {cost}")
-  let vals ← match evalNum env x1s, evalNum env y1s, evalNum env x2s, evalNum env y2s with
+  let vals ← match evalComp env x1s, evalComp env y1s, evalComp env x2s, evalComp env y2s with
     | .ok a, .ok b, .ok c, .ok d => pure (a, b, c, d)
     | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
       return .error (.E0333, s!"in {what}, {e}; {cost}")
-  let (x1m, y1m, x2m, y2m) := vals
-  let (x2m, y2m) := if relative then (x1m + x2m, y1m + y2m) else (x2m, y2m)
-  let (x1, y1) := (cx.toSp x1m, cx.toSp y1m)
-  let (x2, y2) := (cx.toSp x2m, cx.toSp y2m)
+  let (x1c, y1c, x2c, y2c) := vals
+  -- A relative corner adds in the unit it was written in, so two unitless
+  -- components round once, as they always have.
+  let addComp (a b : Int × Bool) : Sp :=
+    if !a.2 && !b.2 then cx.toSp (a.1 + b.1) else cx.compSp a + cx.compSp b
+  let (x1, y1) := (cx.compSp x1c, cx.compSp y1c)
+  let (x2, y2) := if relative then (addComp x1c x2c, addComp y1c y2c)
+    else (cx.compSp x2c, cx.compSp y2c)
   return .ok (min x1 x2, min y1 y2, max x1 x2, max y1 y2)
+
+/-- Whether a `\fill` is the one rectangle `evalFill` reads: its optional
+colour bracket, a corner, `rectangle`, the other corner, and nothing after.
+Any other fill is a path filled, the draw evaluator's. A malformed corner
+stays `evalFill`'s to name. -/
+private def fillIsRect (toks : Array Tok) : Bool := Id.run do
+  let ts := toks.filter (· != .space)
+  let mut i := 0
+  if ts[0]? == some (.sym '[') then
+    match ts.toList.findIdx? (· == .sym ']') with
+    | some j => i := j + 1
+    | none => return true
+  match readCoordBody ts i with
+  | .error _ => return true
+  | .ok (_, i1) =>
+    unless ts[i1]? == some (.ident "rectangle") do return false
+    let i2 := if ts[i1 + 1]? == some (.sym '+') && ts[i1 + 2]? == some (.sym '+') then i1 + 3
+      else i1 + 1
+    match readCoordBody ts i2 with
+    | .error _ => return true
+    | .ok (_, i3) => return i3 == ts.size
 
 /-- `\fill[colour] (x,y) rectangle ++(dx,dy);` — the one drawing shape of
 the subset (`++` relative, or a second absolute corner). The rectangle is
@@ -2133,7 +2347,7 @@ private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     Except PDiag Ir.Pic.Shape := Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
-  let mut color := Ir.Color.black
+  let mut color := cx.ink
   if ts[0]? == some (.sym '[') then
     let mut j := 1
     let mut inner : Array Tok := #[]
@@ -3334,6 +3548,21 @@ public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
   | .belowLeft => (-sep.2, -sep.1)
   | .belowRight => (sep.2, -sep.1)
 
+/-- The anchor a bare direction key stands on the node's coordinate, and
+the shift a length after it gives (TikZ manual §17.5.2): `above` is
+`anchor=south`, `below left=2pt` is `anchor=north east` two points down and
+left — the shift in both axes of a corner. -/
+public def dirAnchor (d : Dir) (len : Sp) : NodeAnchor × (Sp × Sp) :=
+  match d with
+  | .above => (.south, (0, len))
+  | .below => (.north, (0, -len))
+  | .left => (.east, (-len, 0))
+  | .right => (.west, (len, 0))
+  | .aboveLeft => (.southEast, (-len, len))
+  | .aboveRight => (.southWest, (len, len))
+  | .belowLeft => (.northEast, (-len, -len))
+  | .belowRight => (.northWest, (len, -len))
+
 /-- A node's placement after its coordinate expressions and options have
 been read. Relative placement names exactly one geometry to read; absolute
 placement reads none. Keeping that dependency explicit lets the resolver's
@@ -3605,15 +3834,15 @@ instead of dropped. A tip counts only where this subset can draw it
 (`drawsAsArrow`): an undrawable one is a real loss, and is named once at
 the line that declared it rather than at every edge that inherited it. -/
 private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
-  match arrowTipName opt.toList with
-  | some tip => drawsAsArrow styles tip
+  match arrowSpec opt.toList with
+  | some (a, b) => a.all (drawsAsArrow styles) && b.all (drawsAsArrow styles)
   | none =>
     match opt.toList with
     | .sym '>' :: .sym '=' :: rest =>
       match tipName rest with
       | some tip => drawsAsArrow styles tip
       | none => false
-    | ts => ["draw", "dashed", "dotted", "densely dotted",
+    | ts => ["draw", "dashed", "dotted", "densely dotted", "fill", "color",
         "auto", "swap", "'"].contains (keyPath ts) || toKeyNames.contains (keyPath ts) ||
         (readLineWidth ts).isSome
 
@@ -3627,15 +3856,21 @@ private def readsNodeOpt (opt : Array Tok) : Bool :=
   | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
       "inner sep", "inner xsep", "inner ysep", "outer sep", "outer xsep", "outer ysep",
-      "node contents", "font", "text height", "text depth", "align"].contains (keyPath ts) ||
-      (readLineWidth ts).isSome
+      "node contents", "font", "text height", "text depth", "align", "anchor"].contains
+        (keyPath ts) ||
+      (dirOf (keyPath ts)).isSome || (readLineWidth ts).isSome
+
+/-- The tree keys this subset reads. -/
+private def treeKeyNames : List String :=
+  ["grow", "grow'", "level distance", "sibling distance", "parent anchor", "child anchor",
+   "missing"]
 
 /-- An entry some statement of this subset reads: what a declaration made
 once for the document, or once for the picture, carries into the brackets
 below it. An entry no shape reads is honoured by nobody, so it stays a
 named loss at the line that wrote it. -/
 public def readsOpt (styles : List (String × Array Tok)) (opt : Array Tok) : Bool :=
-  readsPathOpt styles opt || readsNodeOpt opt
+  readsPathOpt styles opt || readsNodeOpt opt || treeKeyNames.contains (keyPath opt.toList)
 
 /-- The two outer brackets as the shape at hand reads them. Neither was
 written at this statement, so an entry for the other shape is not a loss
@@ -3747,7 +3982,9 @@ after `at`. -/
 public inductive Part where
   | brack (inner : Array Tok)
   | name (n : String)
-  | atCoord (xs ys : Array Tok)
+  /-- `at (…)`: the coordinate's contents — `x, y`, a node's name or anchor,
+  or a calc computation — read where the node is placed. -/
+  | atCoord (inner : Array Tok)
   deriving Repr, Inhabited
 
 /-- A node's prologue as read so far. -/
@@ -3757,8 +3994,8 @@ public structure Prologue where
   (`mergeOpts`) and is not this reader's to decide. -/
   brackets : Array (Array Tok) := #[]
   name : Option String := none
-  /-- The `at (x, y)` coordinate's two expression slices. -/
-  at? : Option (Array Tok × Array Tok) := none
+  /-- The `at (…)` coordinate's contents. -/
+  at? : Option (Array Tok) := none
   deriving Repr, Inhabited
 
 /-- Fold one part in. The shape is what makes the reader order-free by
@@ -3767,7 +4004,7 @@ part can be the one a position forgot. -/
 public def Prologue.step (p : Prologue) : Part → Prologue
   | .brack inner => { p with brackets := p.brackets.push inner }
   | .name n => { p with name := p.name.orElse fun _ => some n }
-  | .atCoord xs ys => { p with at? := some (xs, ys) }
+  | .atCoord inner => { p with at? := some inner }
 
 /-- **A name is the node's whichever side of the bracket it stands on, and
 a bracket is the node's whichever side of `at`.** Folding two different
@@ -3783,12 +4020,12 @@ private reference corpus read as a missing label. Stated as commutation
 rather than as a list of accepted orders, because the list is what the old
 reader was. -/
 public theorem prologue_swap_agree (p : Prologue) (inner : Array Tok) (n : String)
-    (xs ys : Array Tok) :
+    (at_ : Array Tok) :
     (p.step (.brack inner)).step (.name n) = (p.step (.name n)).step (.brack inner) ∧
-    (p.step (.brack inner)).step (.atCoord xs ys)
-      = (p.step (.atCoord xs ys)).step (.brack inner) ∧
-    (p.step (.name n)).step (.atCoord xs ys)
-      = (p.step (.atCoord xs ys)).step (.name n) := by
+    (p.step (.brack inner)).step (.atCoord at_)
+      = (p.step (.atCoord at_)).step (.brack inner) ∧
+    (p.step (.name n)).step (.atCoord at_)
+      = (p.step (.atCoord at_)).step (.name n) := by
   exact ⟨rfl, rfl, rfl⟩
 
 /-- Nothing a bracket said is lost to a later part: a fold step either
@@ -3820,6 +4057,278 @@ private def readName (ts : Array Tok) (i : Nat) : Option (String × Nat) := Id.r
   | some nm => if nm.contains ',' then return none else return some (nm, j + 1)
   | none => return none
 
+/-- A node's prologue from `i0`: `[keys]`, `(name)` and `at (…)`, in any
+order and any number of times (TikZ manual §17.2), folded through
+`Prologue.step` — whose `prologue_swap_agree` is why no position can be the
+one a part was forgotten in — and the index past it, the `{text}` body where
+the node has one. The one reader a node statement and a tree's walk read a
+node's name through (`nodeNameOf`). -/
+private def readPrologue (ts : Array Tok) (i0 : Nat) : Prologue × Nat × Option PDiag := Id.run do
+  let mut i := i0
+  let mut pro : Prologue := {}
+  let mut bad : Option PDiag := none
+  for _ in [0:ts.size + 1] do
+    if h : i < ts.size then
+      if ts[i] == .sym '[' then
+        let mut j := i + 1
+        let mut inner : Array Tok := #[]
+        for _ in [i+1:ts.size + 1] do
+          if h2 : j < ts.size then
+            if ts[j] == .sym ']' then break
+            inner := inner.push ts[j]
+            j := j + 1
+          else break
+        unless ts[j]? == some (.sym ']') do
+          bad := some (.E0333, "'\\node' options miss their ']'; the node is not drawn")
+          break
+        pro := pro.step (.brack inner)
+        i := j + 1
+      else if ts[i] == .ident "at" then
+        match readCoordBody ts (i + 1) with
+        | .error e =>
+          bad := some (.E0333, s!"in '\\node', {e}; the node is not drawn")
+          break
+        | .ok (inner, i2) =>
+          pro := pro.step (.atCoord inner)
+          i := i2
+      else
+        match readName ts i with
+        | some (nm, i2) =>
+          pro := pro.step (.name nm)
+          i := i2
+        | none => break
+    else break
+  return (pro, i, bad)
+
+/-- The name a node's tokens give it: the first `(name)` of its prologue. -/
+private def nodeNameOf (toks : Array Tok) : Option String :=
+  (readPrologue (toks.filter (· != .space)) 0).1.name
+
+/-- A name that resolved to nothing. Which refusal it is depends on *why*
+there is no such node: a declaration the walk could not reach is a gap in
+the rendered subset (`W0334`, `pending`), and a name nothing declared is the
+document's (`E0333`, `dropped`). Reporting both as the second is what made
+one unreadable conditional read as five separate errors, each naming a node
+the author had written.
+
+This is not a demotion of a loss but a correction of the code: the loss was
+always `pending` where the cause is a construct outside the subset, and the
+walk was classifying by the symptom — a missing name — rather than by the
+cause. The gate's premise is structural: `Ev.gapped` and `Cx.parseGap` are
+set only where a `W0334` naming that construct was raised, so the quiet
+answer can never be the whole story a reader gets.
+-- premise: unreachedName_accounts — the gate reads a flag set only beside a
+-- named gap, so a picture with no gap cannot take this path. -/
+public def unreachedName (gapped : Bool) (what : String) (site : String := "'\\draw'")
+    (cost : String := "the edge is not drawn") : PDiag :=
+  if gapped then
+    (.W0334, s!"{what} is declared inside a construct outside the rendered \
+picture subset, so no node carries it; {cost}")
+  else (.E0333, s!"in {site}, no node is named '{what}'; {cost}")
+
+/-- **A quiet refusal is paid for by a named gap.** The registered
+`_accounts` shape: the pending answer is reachable only when a construct
+outside the subset was named, so the two codes stay one code one meaning and
+the reader is never left with the softer of the two alone. -/
+public theorem unreachedName_accounts (gapped : Bool) (what site cost : String)
+    (h : (unreachedName gapped what site cost).1 = .W0334) : gapped = true := by
+  cases gapped
+  · simp only [unreachedName, Bool.false_eq_true] at h
+    exact absurd h (by simp)
+  · rfl
+
+/-- An endpoint of a `\draw` path: a named node, whose border anchors the
+segment, or a bare coordinate. -/
+private inductive Anchor where
+  | node (g : NodeGeom)
+  | point (x y : Sp)
+
+private def Anchor.center : Anchor → Sp × Sp
+  | .node g => (g.x, g.y)
+  | .point x y => (x, y)
+
+public inductive CoordMode where
+  | absolute
+  | offset
+  | advance
+  deriving BEq
+
+/-- TikZ §13.4.3: `+` leaves the relative reference unchanged; `++`
+updates it. Inputs already have the picture's scale, so addition does not
+scale a named anchor a second time. The result is endpoint, then reference. -/
+public def coordStep (mode : CoordMode) (base p : Int × Int) :
+    (Int × Int) × (Int × Int) :=
+  match mode with
+  | .absolute => (p, p)
+  | .offset => ((base.1 + p.1, base.2 + p.2), base)
+  | .advance =>
+    let q := (base.1 + p.1, base.2 + p.2)
+    (q, q)
+
+public theorem coordStep_offset_exact (base p : Int × Int) :
+    (coordStep .offset base p).1 = (base.1 + p.1, base.2 + p.2) ∧
+    (coordStep .offset base p).2 = base := by
+  simp [coordStep]
+
+/-- Chained advances consume each displacement exactly once, independently
+of how the parser grouped the chain. -/
+public theorem coordStep_advance_exact (base p q : Int × Int) :
+    coordStep .advance (coordStep .advance base p).2 q =
+      coordStep .advance base (p.1 + q.1, p.2 + q.2) := by
+  simp [coordStep, Int.add_assoc]
+
+/-- TikZ §14.2: `|-` takes x from its start and y from its end;
+`-|` takes the other pair. This is the corner the segment writer reads. -/
+public def orthogonalCorner (verticalFirst : Bool) (p q : Int × Int) : Int × Int :=
+  if verticalFirst then (p.1, q.2) else (q.1, p.2)
+
+public theorem orthogonalCorner_exact (verticalFirst : Bool) (p q : Int × Int) :
+    let c := orthogonalCorner verticalFirst p q
+    if verticalFirst then c.1 = p.1 ∧ c.2 = q.2
+    else c.1 = q.1 ∧ c.2 = p.2 := by
+  cases verticalFirst <;> simp [orthogonalCorner]
+
+private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (inner : Array Tok) (site : String := "'\\draw'") (cost : String := "the edge is not drawn")
+    (displacement : Bool := false) : Except PDiag Anchor := do
+  match (splitTop inner ',').toList with
+  | [xs, ys] =>
+    let x ← (evalComp env xs).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
+    let y ← (evalComp env ys).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
+    -- A point moves with the translation in force; a displacement does not.
+    let (sx, sy) := if displacement then (0, 0) else cx.shift
+    return .point (cx.compSp x + sx) (cx.compSp y + sy)
+  | _ =>
+    let mut expanded : Array Tok := #[]
+    for t in inner do
+      match t with
+      | .ctrl n =>
+        match env.lookup n with
+        | some v => expanded := expanded.push (.ident v.text)
+        | none =>
+          throw (.E0333, s!"in {site}, unknown macro '\\{n}' in a node name; {cost}")
+      | .ident _ | .num _ | .sym _ | .space => expanded := expanded.push t
+      | .math _ _ _ | .group _ | .other _ =>
+        throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
+picture subset; {cost}")
+    let nm := (nameOfToks expanded.toList).getD ""
+    match ev.nodes.lookup nm with
+    | some g => return .node g
+    | none =>
+      match splitAnchor nm with
+      | some (base, an) =>
+        match ev.nodes.lookup base with
+        | none => throw (unreachedName (ev.gapped || cx.parseGap) base site cost)
+        | some g =>
+          match nodeAnchorOf an with
+          | some a =>
+            let (x, y) := g.anchorPoint a
+            return .point x y
+          | none =>
+            throw (.W0334, s!"node anchor '{an}' is outside the rendered \
+picture subset; {cost}")
+      | none => throw (unreachedName (ev.gapped || cx.parseGap) nm site cost)
+
+/-- Where a calc term's factor ends (TikZ manual §13.5.1, `⟨factor⟩*⟨coordinate⟩`):
+the `*` standing before the term's coordinate at paren depth zero. `none`
+where the term opens with its coordinate — a `+`, `-` or `!` at depth zero
+comes first. -/
+private def factorEnd (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
+  let mut depth : Int := 0
+  for k in [i:ts.size] do
+    match ts[k]? with
+    | some (.sym '(') => depth := depth + 1
+    | some (.sym ')') => depth := depth - 1
+    | some (.sym '*') => if depth == 0 && ts[k + 1]? == some (.sym '(') then return some k
+    | some (.sym c) => if depth == 0 && (c == '+' || c == '-' || c == '!') then return none
+    | _ => pure ()
+  return none
+
+/-- The next `!` at paren depth zero from `i`: the end of a calc modifier. -/
+private def bangAt (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
+  let mut depth : Int := 0
+  for k in [i:ts.size] do
+    match ts[k]? with
+    | some (.sym '(') => depth := depth + 1
+    | some (.sym ')') => depth := depth - 1
+    | some (.sym '!') => if depth == 0 then return some k
+    | _ => pure ()
+  return none
+
+/-- Calc coordinates (TikZ manual §13.5): a sum or difference of terms, each
+an optional factor times a coordinate (`2*(a)`, `\x*(a)`), then any number
+of partway modifiers — `!t!(b)`, the point `t` of the way to `(b)`, or with
+a length, that far toward it (§13.5.3). Every coordinate goes through the
+one reader a plain endpoint does. The token count bounds the walk. -/
+private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (raw : List Parse.Raw) (site : String := "'\\draw'") (cost : String := "the edge is not drawn") :
+    Except PDiag Anchor := do
+  let ts := (ofRaws raw.toArray).filter (· != .space)
+  let mut i := 0
+  let mut point : Int × Int := (0, 0)
+  let mut subtract := false
+  let unsupported : PDiag := (.W0334, "this calc coordinate is outside the \
+rendered picture subset; use sums, differences, factors and '!t!' steps of \
+'(...)' coordinates")
+  let calcErr (e : String) : PDiag := (.E0333, s!"in a calc coordinate, {e}; {cost}")
+  for _ in [0:ts.size + 1] do
+    let mut factor : Int := 1000
+    if let some j := factorEnd ts i then
+      factor ← (evalNum env (ts.extract i j)).mapError calcErr
+      i := j + 1
+    unless ts[i]? == some (.sym '(') do throw unsupported
+    let (inner, next) ← (readCoordBody ts i).mapError calcErr
+    let mut p := (← anchorBody cx env ev inner site cost).center
+    i := next
+    for _ in [0:ts.size] do
+      unless ts[i]? == some (.sym '!') do break
+      let some k := bangAt ts (i + 1) | throw unsupported
+      let step := ts.extract (i + 1) k
+      -- `!(c)!` projects onto the line (§13.5.4), outside this reader.
+      if step[0]? == some (.sym '(') then throw unsupported
+      i := k + 1
+      unless ts[i]? == some (.sym '(') do throw unsupported
+      let (inner2, next2) ← (readCoordBody ts i).mapError calcErr
+      let q := (← anchorBody cx env ev inner2 site cost).center
+      i := next2
+      let dx := q.1 - p.1
+      let dy := q.2 - p.2
+      match ← (evalComp env step).mapError calcErr with
+      | (t, false) => p := (p.1 + dx * t / 1000, p.2 + dy * t / 1000)
+      | (d, true) =>
+        let n := isqrt (dx * dx + dy * dy)
+        let d := d * cx.scale / 1000
+        if n != 0 then p := (p.1 + dx * d / n, p.2 + dy * d / n)
+    let scaled := if factor == 1000 then p else (p.1 * factor / 1000, p.2 * factor / 1000)
+    point := (coordStep .advance point
+      (if subtract then (-scaled.1, -scaled.2) else scaled)).1
+    if i == ts.size then return .point point.1 point.2
+    match ts[i]? with
+    | some (.sym '+') => subtract := false
+    | some (.sym '-') => subtract := true
+    | _ => throw unsupported
+    i := i + 1
+  throw unsupported
+
+private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
+    (ts : Array Tok) (start : Nat) (base : Int × Int) :
+    Except PDiag (Anchor × Nat × (Int × Int)) := do
+  let mut i := start
+  let mut mode := CoordMode.absolute
+  if ts[i]? == some (.sym '+') then
+    i := i + 1
+    mode := .offset
+    if ts[i]? == some (.sym '+') then
+      i := i + 1
+      mode := .advance
+  let (inner, next) ← (readCoordBody ts i).mapError fun e =>
+    (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+  let a ← match inner.toList with
+    | [.math false raw _] => calcAnchor cx env ev raw
+    | _ => anchorBody cx env ev inner (displacement := mode != .absolute)
+  let (point, reference) := coordStep mode base a.center
+  return (if mode == .absolute then a else .point point.1 point.2, next, reference)
+
 /-- `\node[circle, draw, minimum size=8mm] at (x,y) {$X$};` — a centred
 label, its optional outline, optionally named (`\node (u) at ...`; the
 name is parsed and dropped: only an edge could consume it, and edges are
@@ -3829,14 +4338,22 @@ naming a declared style bundle expands to the bundle's own options, so a
 loss inside a bundle is named by its real spelling, never by the
 bundle's. -/
 private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
-    (ev : Ev) : Ev := Id.run do
+    (ev : Ev) (coordinate : Bool := false) (defaultName : Option String := none) : Ev :=
+    Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
-  let mut color := Ir.Color.black
+  let mut color := cx.ink
   -- `transform shape` opts the node into the picture's scale (pgf manual
   -- §25.4); `font=` then sets its size relative to that.
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
-  let mut scale : Nat := factor
+  -- The declarations in force where the node stands (`Stmt.setDecl`): a
+  -- size step of the document's ladder, or a font declaration.
+  let declSize : Option Nat := cx.decls.foldl (fun z n => (cx.ladder.lookup n).orElse fun _ => z) none
+  -- A size switch is a size step, every other declaration a style: what a
+  -- `font=` value's switches mean (`readFont`).
+  let baseStyles : Array Ir.Style := cx.decls.filterMap fun n =>
+    if (cx.ladder.lookup n).isSome then none else cx.declStyles.lookup n
+  let mut scale : Nat := (declSize.map fun k => k * factor / 1000).getD factor
   let mut ev := ev
   -- The node's outline, gathered from its options: shape kind (pgf's
   -- default node shape is a rectangle), whether it draws and/or fills,
@@ -3864,48 +4381,20 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut oxsep : Option Sp := none
   let mut oysep : Option Sp := none
   let mut own : Array (Array Tok) := #[]
+  -- The anchor a placement key stands on the node's coordinate, with its
+  -- shift: `above` is `anchor=south` (TikZ manual §17.5.2).
+  let mut anchorAt : Option (NodeAnchor × (Sp × Sp)) := none
   -- pgf reads `[keys]`, `(name)` and `at (coord)` in any order and any
   -- number of times, up to the `{text}` (TikZ manual §17.2). So the
   -- prologue is a loop over the three parts, folded through
   -- `Prologue.step` — whose `prologue_swap_agree` is why no position can
   -- be the one a part was forgotten in.
-  let mut pro : Prologue := {}
-  let mut bad : Option PDiag := none
-  for _ in [0:ts.size + 1] do
-    if h : i < ts.size then
-      if ts[i] == .sym '[' then
-        let mut j := i + 1
-        let mut inner : Array Tok := #[]
-        for _ in [i+1:ts.size + 1] do
-          if h2 : j < ts.size then
-            if ts[j] == .sym ']' then break
-            inner := inner.push ts[j]
-            j := j + 1
-          else break
-        unless ts[j]? == some (.sym ']') do
-          bad := some (.E0333, "'\\node' options miss their ']'; the node is not drawn")
-          break
-        pro := pro.step (.brack inner)
-        i := j + 1
-      else if ts[i] == .ident "at" then
-        match readCoord ts (i + 1) with
-        | .error e =>
-          bad := some (.E0333, s!"in '\\node', {e}; the node is not drawn")
-          break
-        | .ok ((xs, ys), i2) =>
-          pro := pro.step (.atCoord xs ys)
-          i := i2
-      else
-        match readName ts i with
-        | some (nm, i2) =>
-          pro := pro.step (.name nm)
-          i := i2
-        | none => break
-    else break
+  let (pro, i1, bad) := readPrologue ts i
+  i := i1
   if let some d := bad then return ev.diag d
   for inner in pro.brackets do
     own := own ++ expandOpts cx.styles inner
-  let nodeName : Option String := pro.name
+  let nodeName : Option String := pro.name.orElse fun _ => defaultName
   ev := { ev with readOpts := true }
   let dsc : Sp × Sp := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
   let mut place : Option (Dir × String × (Sp × Sp)) := none
@@ -3944,10 +4433,12 @@ is outside the rendered picture subset; the lines stay centred")
     | [.ident "circle"] => isCircle := true
     | [.ident "rectangle"] => isCircle := false
     | [.ident "draw"] => draw := some none
+    | [.ident "draw", .sym '=', .ident "none"] => draw := none
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => draw := some (some c)
       | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+    | [.ident "fill", .sym '=', .ident "none"] => fillCol := none
     | .ident "fill" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => fillCol := some c
@@ -4018,9 +4509,29 @@ is dropped")
       let (ls, ds) := nodeLabel cx env g
       contents := some ls
       ev := ds.foldl Ev.diag ev
+    -- `anchor=<name>`: the named anchor stands on the node's coordinate
+    -- (TikZ manual §17.5.1), every name the shape declares.
+    | .ident "anchor" :: .sym '=' :: rest =>
+      match nameOfToks rest >>= nodeAnchorOf with
+      | some a => anchorAt := some (a, (0, 0))
+      | none =>
+        ev := ev.diag (.W0334, s!"node option 'anchor={String.join (rest.map tokText)}' \
+names an anchor outside the rendered picture subset; the node is centred")
     | [] => pure ()
     | o :: rest =>
-      ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
+      -- `above`, `below left=2pt` and their siblings: the opposite anchor on
+      -- the coordinate, shifted by the length where one is given (§17.5.2).
+      match (keyName ((o :: rest).takeWhile (· != .sym '='))).bind dirOf with
+      | some d =>
+        let value := ((o :: rest).dropWhile (· != .sym '=')).drop 1
+        match (if value.isEmpty then .ok 0 else readDim value) with
+        | .ok len => anchorAt := some (dirAnchor d len)
+        | .error e =>
+          ev := ev.diag (.W0334, s!"in node option {optName (o :: rest)}, {e}; the \
+node is placed by its anchor alone")
+          anchorAt := some (dirAnchor d 0)
+      | none =>
+        ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
 picture subset; the option is dropped")
   -- pgf places a node with no `at` at the path's current point, which at
   -- the start of a node statement is the origin; a relative placement
@@ -4029,14 +4540,21 @@ picture subset; the option is dropped")
   -- declaration order does not decide it (`evalFixed`): a reference to a
   -- node written later resolves on the next run, and only a name no node
   -- carries — or a cycle — is refused, by that name.
-  let atCoord : Option (Array Tok × Array Tok) := pro.at?
+  -- `at (…)`: a point, a node or its anchor, or a calc computation — read
+  -- by the one reader every endpoint is.
+  let atAnchor : Option (Except PDiag Anchor) := pro.at?.map fun inner =>
+    match inner.toList with
+    | [.math false raw _] => calcAnchor cx env ev raw "'\\node'" "the node is not drawn"
+    | _ => anchorBody cx env ev inner "'\\node'" "the node is not drawn"
   let unresolved : Bool :=
-    atCoord.isNone && (match place with
+    (atAnchor matches some (.error _)) ||
+    (atAnchor.isNone && (match place with
       | some (_, target, _) => (ev.nodes.lookup target).isNone
-      | none => false)
+      | none => false))
   let dimF (d : Sp) : Sp :=
     if cx.transformShape then d * cx.scale / 1000 else d
   let bodyOf : Except PDiag (Array LabelLine × Array PDiag) :=
+    if coordinate then .ok (#[], #[]) else
     match ts[i]? with
     | some (.group body) =>
       if h : i + 1 < ts.size then
@@ -4049,7 +4567,7 @@ outside the rendered picture subset; the label is not drawn")
       | some c => .ok (c, #[])
       | none =>
         .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
-  let bodyOf := bodyOf.map fun (ls, ds) => (fontLines fontStyles ls, ds)
+  let bodyOf := bodyOf.map fun (ls, ds) => (fontLines (baseStyles ++ fontStyles) ls, ds)
   -- The label's lines set at the origin: the one set of shapes the node's
   -- extent, its baseline and its text box are all read off, through the
   -- face the driver resolved (`Cx.metric`) — the measurement the picture's
@@ -4082,8 +4600,9 @@ outside the rendered picture subset; the label is not drawn")
   -- resolved here and not a constant; its ex is the face's.
   let em : Sp := cx.bodySize * (scale : Int) / 1000
   let ex : Sp := (lineInks[0]?.map (·.2.ex)).getD 0
-  let sepX : Sp := xsep.getD (innerSep em)
-  let sepY : Sp := ysep.getD (innerSep em)
+  -- A coordinate is a point: no text, no separation, no extent.
+  let sepX : Sp := if coordinate then 0 else xsep.getD (innerSep em)
+  let sepY : Sp := if coordinate then 0 else ysep.getD (innerSep em)
   -- **The node's text box** (pgf's `\pgfnodeparttextbox`), around the
   -- node's centre: how far the glyphs of its lines reach above and below
   -- them, or the height and depth `text height`/`text depth` declare
@@ -4160,16 +4679,24 @@ outside the rendered picture subset; the label is not drawn")
       if isCircle then (max ox oy, max ox oy) else (ox, oy)
   let anchA : Sp := ownA + outA
   let anchB : Sp := ownB + outB
+  -- A placement anchor moves the centre so the named anchor stands on the
+  -- coordinate, the shift beyond it: the anchors of this node's own shape,
+  -- read where it stands at the origin.
+  let anchorShift : Sp × Sp := match anchorAt with
+    | some (an, (dx, dy)) =>
+      let p := ({ x := 0, y := 0, a := anchA, b := anchB, circle := isCircle, base } :
+        NodeGeom).anchorPoint an
+      (dx - p.1, dy - p.2)
+    | none => (0, 0)
   let placement : Except PDiag NodePlacement :=
-    match atCoord with
-    | some (xs, ys) =>
-      match evalNum env xs, evalNum env ys with
-      | .ok xm, .ok ym => .ok (.absolute (cx.toSp xm) (cx.toSp ym))
-      | .error e, _ | _, .error e =>
-        .error (.E0333, s!"in '\\node', {e}; the node is not drawn")
+    match atAnchor with
+    | some (.ok a) =>
+      let (x, y) := a.center
+      .ok (.absolute (x + anchorShift.1) (y + anchorShift.2))
+    | some (.error d) => .error d
     | none =>
       match place with
-      | none => .ok (.absolute 0 0)
+      | none => .ok (.absolute (cx.shift.1 + anchorShift.1) (cx.shift.2 + anchorShift.2))
       | some (dir, target, sep) => .ok (.relative dir target sep)
   let pos : Except PDiag (NodeGeom × List (String × NodeGeom)) := do
     let placement ← placement
@@ -4214,7 +4741,10 @@ this one against; the node is not drawn")
              (sx + ownA, sy + max (boxHi + sepY) declB))
         -- The resolver registered the same geometry the node now uses.
         -- pgf anchors on a named shape even when its path is never painted.
-        ev := { ev with borders := ev.borders.push border, nodes }
+        -- A coordinate adds no box of its own (pgf's `coordinate` shape
+        -- reaches no bounding box): it only names its point.
+        ev := if coordinate then { ev with nodes }
+          else { ev with borders := ev.borders.push border, nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. A declared extent is the declared minimum (pgf manual
         -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
@@ -4226,7 +4756,7 @@ this one against; the node is not drawn")
         -- (§25.4); the line width is graphic state and never scales.
         if draw.isSome || fillCol.isSome then
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
-            { color := c.getD Ir.Color.black
+            { color := c.getD cx.ink
               width := width
               dash := dash }
           match outline? with
@@ -4275,176 +4805,6 @@ private def sinDeg (d : Int) : Int :=
   sign * ((sinTable[d.toNat]?).getD 0)
 
 private def cosDeg (d : Int) : Int := sinDeg (d + 90)
-
-/-- A name that resolved to nothing. Which refusal it is depends on *why*
-there is no such node: a declaration the walk could not reach is a gap in
-the rendered subset (`W0334`, `pending`), and a name nothing declared is the
-document's (`E0333`, `dropped`). Reporting both as the second is what made
-one unreadable conditional read as five separate errors, each naming a node
-the author had written.
-
-This is not a demotion of a loss but a correction of the code: the loss was
-always `pending` where the cause is a construct outside the subset, and the
-walk was classifying by the symptom — a missing name — rather than by the
-cause. The gate's premise is structural: `Ev.gapped` and `Cx.parseGap` are
-set only where a `W0334` naming that construct was raised, so the quiet
-answer can never be the whole story a reader gets.
--- premise: unreachedName_accounts — the gate reads a flag set only beside a
--- named gap, so a picture with no gap cannot take this path. -/
-public def unreachedName (gapped : Bool) (what : String) : PDiag :=
-  if gapped then
-    (.W0334, s!"{what} is declared inside a construct outside the rendered \
-picture subset, so no node carries it; the edge is not drawn")
-  else (.E0333, s!"in '\\draw', no node is named '{what}'; the edge is not drawn")
-
-/-- **A quiet refusal is paid for by a named gap.** The registered
-`_accounts` shape: the pending answer is reachable only when a construct
-outside the subset was named, so the two codes stay one code one meaning and
-the reader is never left with the softer of the two alone. -/
-public theorem unreachedName_accounts (gapped : Bool) (what : String)
-    (h : (unreachedName gapped what).1 = .W0334) : gapped = true := by
-  cases gapped
-  · simp only [unreachedName, Bool.false_eq_true] at h
-    exact absurd h (by simp)
-  · rfl
-
-/-- An endpoint of a `\draw` path: a named node, whose border anchors the
-segment, or a bare coordinate. -/
-private inductive Anchor where
-  | node (g : NodeGeom)
-  | point (x y : Sp)
-
-private def Anchor.center : Anchor → Sp × Sp
-  | .node g => (g.x, g.y)
-  | .point x y => (x, y)
-
-public inductive CoordMode where
-  | absolute
-  | offset
-  | advance
-  deriving BEq
-
-/-- TikZ §13.4.3: `+` leaves the relative reference unchanged; `++`
-updates it. Inputs already have the picture's scale, so addition does not
-scale a named anchor a second time. The result is endpoint, then reference. -/
-public def coordStep (mode : CoordMode) (base p : Int × Int) :
-    (Int × Int) × (Int × Int) :=
-  match mode with
-  | .absolute => (p, p)
-  | .offset => ((base.1 + p.1, base.2 + p.2), base)
-  | .advance =>
-    let q := (base.1 + p.1, base.2 + p.2)
-    (q, q)
-
-public theorem coordStep_offset_exact (base p : Int × Int) :
-    (coordStep .offset base p).1 = (base.1 + p.1, base.2 + p.2) ∧
-    (coordStep .offset base p).2 = base := by
-  simp [coordStep]
-
-/-- Chained advances consume each displacement exactly once, independently
-of how the parser grouped the chain. -/
-public theorem coordStep_advance_exact (base p q : Int × Int) :
-    coordStep .advance (coordStep .advance base p).2 q =
-      coordStep .advance base (p.1 + q.1, p.2 + q.2) := by
-  simp [coordStep, Int.add_assoc]
-
-/-- TikZ §14.2: `|-` takes x from its start and y from its end;
-`-|` takes the other pair. This is the corner the segment writer reads. -/
-public def orthogonalCorner (verticalFirst : Bool) (p q : Int × Int) : Int × Int :=
-  if verticalFirst then (p.1, q.2) else (q.1, p.2)
-
-public theorem orthogonalCorner_exact (verticalFirst : Bool) (p q : Int × Int) :
-    let c := orthogonalCorner verticalFirst p q
-    if verticalFirst then c.1 = p.1 ∧ c.2 = q.2
-    else c.1 = q.1 ∧ c.2 = p.2 := by
-  cases verticalFirst <;> simp [orthogonalCorner]
-
-private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
-    (inner : Array Tok) : Except PDiag Anchor := do
-  match (splitTop inner ',').toList with
-  | [xs, ys] =>
-    let x ← (evalNum env xs).mapError fun e =>
-      (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
-    let y ← (evalNum env ys).mapError fun e =>
-      (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
-    return .point (cx.toSp x) (cx.toSp y)
-  | _ =>
-    let mut expanded : Array Tok := #[]
-    for t in inner do
-      match t with
-      | .ctrl n =>
-        match env.lookup n with
-        | some v => expanded := expanded.push (.ident v.text)
-        | none =>
-          throw (.E0333, s!"in '\\draw', unknown macro '\\{n}' in a node name; \
-the edge is not drawn")
-      | .ident _ | .num _ | .sym _ | .space => expanded := expanded.push t
-      | .math _ _ _ | .group _ | .other _ =>
-        throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
-picture subset; the edge is not drawn")
-    let nm := (nameOfToks expanded.toList).getD ""
-    match ev.nodes.lookup nm with
-    | some g => return .node g
-    | none =>
-      match splitAnchor nm with
-      | some (base, an) =>
-        match ev.nodes.lookup base with
-        | none => throw (unreachedName (ev.gapped || cx.parseGap) base)
-        | some g =>
-          match nodeAnchorOf an with
-          | some a =>
-            let (x, y) := g.anchorPoint a
-            return .point x y
-          | none =>
-            throw (.W0334, s!"node anchor '{an}' is outside the rendered \
-picture subset; the edge is not drawn")
-      | none => throw (unreachedName (ev.gapped || cx.parseGap) nm)
-
-/-- Additive calc (§13.5): each term uses the same coordinate and anchor
-reader. The token count bounds the walk; no general pgfmath parser or
-interpolation is implied by accepting this subset. -/
-private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
-    (raw : List Parse.Raw) : Except PDiag Anchor := do
-  let ts := (ofRaws raw.toArray).filter (· != .space)
-  let mut i := 0
-  let mut point : Int × Int := (0, 0)
-  let mut subtract := false
-  let unsupported : PDiag := (.W0334, "this calc coordinate is outside the \
-rendered picture subset; use sums or differences of '(...)' coordinates")
-  for _ in [0:ts.size + 1] do
-    unless ts[i]? == some (.sym '(') do throw unsupported
-    let (inner, next) ← (readCoordBody ts i).mapError fun e =>
-      (.E0333, s!"in a calc coordinate, {e}; the edge is not drawn")
-    let a ← anchorBody cx env ev inner
-    let p := a.center
-    point := (coordStep .advance point (if subtract then (-p.1, -p.2) else p)).1
-    i := next
-    if i == ts.size then return .point point.1 point.2
-    match ts[i]? with
-    | some (.sym '+') => subtract := false
-    | some (.sym '-') => subtract := true
-    | _ => throw unsupported
-    i := i + 1
-  throw unsupported
-
-private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
-    (ts : Array Tok) (start : Nat) (base : Int × Int) :
-    Except PDiag (Anchor × Nat × (Int × Int)) := do
-  let mut i := start
-  let mut mode := CoordMode.absolute
-  if ts[i]? == some (.sym '+') then
-    i := i + 1
-    mode := .offset
-    if ts[i]? == some (.sym '+') then
-      i := i + 1
-      mode := .advance
-  let (inner, next) ← (readCoordBody ts i).mapError fun e =>
-    (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
-  let a ← match inner.toList with
-    | [.math false raw _] => calcAnchor cx env ev raw
-    | _ => anchorBody cx env ev inner
-  let (point, reference) := coordStep mode base a.center
-  return (if mode == .absolute then a else .point point.1 point.2, next, reference)
 
 /-- Where a segment toward `q` leaves this anchor: the border for a node
 with extents (`circleBorder`/`rectBorder`), the point itself otherwise. -/
@@ -4618,6 +4978,77 @@ private inductive DrawOp where
   /-- `-- cycle`: the side back to the current subpath's start, closing it
   (pgf manual §14.2). -/
   | cycle
+  /-- `circle (r)`, `ellipse (a and b)`: a closed ellipse about the current
+  point, which stays where it was (pgf manual §14.6). -/
+  | ellipse (rx ry : Sp)
+
+/-- What a path statement paints of itself: `\draw` strokes, `\path`
+nothing (only what a key or an `edge` asks), `\fill` fills, `\filldraw`
+both (TikZ manual §14.1). -/
+private inductive PathMode where
+  | draw
+  | path
+  | fill
+  | filldraw
+  deriving BEq
+
+/-- The radii a `circle` or `ellipse` operation reads from token `i`:
+`(r)`, `(a and b)`, or the option form `[radius=r]` / `[x radius=a, y
+radius=b]` (TikZ manual §14.6) — each a number of the picture's unit or a
+length, through the picture's scale — and the index past them. -/
+private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
+    Except PDiag (Sp × Sp × Nat) := do
+  let err (e : String) : PDiag := (.E0333, s!"in a 'circle' radius, {e}; the path is not drawn")
+  if ts[i]? == some (.sym '[') then
+    let mut j := i + 1
+    let mut inner : Array Tok := #[]
+    for _ in [i+1:ts.size + 1] do
+      if h : j < ts.size then
+        if ts[j] == .sym ']' then break
+        inner := inner.push ts[j]
+        j := j + 1
+      else break
+    unless ts[j]? == some (.sym ']') do throw (err "the options miss their ']'")
+    let mut rx : Option Sp := none
+    let mut ry : Option Sp := none
+    for opt in splitTop inner ',' do
+      let key := keyPath opt.toList
+      let rest := ((opt.toList.dropWhile (· != .sym '=')).drop 1).toArray
+      let v ← (evalComp env rest).mapError err
+      if key == "radius" then
+        rx := some (cx.compSp v)
+        ry := some (cx.compSp v)
+      else if key == "x radius" then rx := some (cx.compSp v)
+      else if key == "y radius" then ry := some (cx.compSp v)
+      else throw (.W0334, s!"'circle' option '{key}' is outside the rendered picture \
+subset; the path is not drawn")
+    match rx.orElse (fun _ => ry), ry.orElse (fun _ => rx) with
+    | some a, some b => return (a, b, j + 1)
+    | _, _ => throw (err "no radius is given")
+  let (inner, next) ← (readCoordBody ts i).mapError err
+  match inner.toList.findIdx? (· == .ident "and") with
+  | none =>
+    let v ← (evalComp env inner).mapError err
+    return (cx.compSp v, cx.compSp v, next)
+  | some k =>
+    let va ← (evalComp env (inner.extract 0 k)).mapError err
+    let vb ← (evalComp env (inner.extract (k + 1) inner.size)).mapError err
+    return (cx.compSp va, cx.compSp vb, next)
+
+/-- A tip's filled triangle in the colour of the stroke it ends. -/
+private def tipNode (st : Ir.Pic.Stroke) (t : Ir.Pic.Tip) : Gfx.Node Empty :=
+  .draw (.path #[Ir.Pic.tipSubpath t]) (some (Ir.Pic.solidFill st.color)) none
+
+/-- An edge and its tips: the subset's edge shape where it has at most one
+tip (`Ir.Pic.Shape.edge`), else one group of the path and each tip. -/
+private def edgeWithTips (segs : Array Ir.Pic.PathSeg) (st : Ir.Pic.Stroke)
+    (tips : Array Ir.Pic.Tip) : Ir.Pic.Shape :=
+  match tips.toList with
+  | [] => .edge segs st none
+  | [t] => .edge segs st (some t)
+  | _ =>
+    let path : Gfx.Node Empty := .draw (.path (Ir.Pic.edgeSubpaths segs)) none (some (Ir.Pic.strokeOf st))
+    .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[path] ++ tips.map (tipNode st)))
 
 /-- A path node's resolved text and attachment. Separation is per axis,
 as in pgf's rectangle shape; an undeclared outer separation reads the
@@ -4701,7 +5132,7 @@ private def readEdgeLabel (cx : Cx) (env : List (String × Val))
     unless cx.everyNode.isEmpty do
       ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
 the rendered picture subset; the keys are dropped")
-    let mut mcolor := Ir.Color.black
+    let mut mcolor := cx.ink
     let mut mscale : Nat := factor
     let mut mstyles : Array Ir.Style := #[]
     -- `none` is "this label declared no placement": it then takes the
@@ -4820,17 +5251,24 @@ both the triangle tip), a colour, and declared style bundles; an in-path
 else outside the subset loses only itself where an option, and the edge
 by name where a path operation. -/
 private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
-    (ev : Ev) (isPath : Bool := false) : Ev := Id.run do
+    (ev : Ev) (mode : PathMode := .draw) : Ev := Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
   let mut ev := ev
-  let mut color := Ir.Color.black
+  let mut color := cx.ink
   let mut dash : Ir.Pic.Dash := .solid
   let mut width : Sp := Ir.Pic.thinWidth
-  let mut arrow := false
+  -- The tips each end draws (`arrowSpec`): `latex-` the start's, `->` the
+  -- end's, `<->` both.
+  let mut startArrow := false
+  let mut endArrow := false
   -- `\path` paints nothing of itself; an `edge` operation or an explicit
   -- `draw` key is what makes it stroke (pgf's `every edge` carries `draw`).
-  let mut strokes := !isPath
+  let mut strokes := mode == .draw || mode == .filldraw
+  -- `\fill` and `\filldraw` fill, as does a `fill` key; `fill=<colour>`
+  -- names the colour, else the path's own colour fills it.
+  let mut fills := mode == .fill || mode == .filldraw
+  let mut fillColor : Option Ir.Color := none
   -- Did one of the chain's operation brackets already declare a stroke?
   -- The subset draws one stroke per edge, so a second declaration is a
   -- loss to name rather than resolve in silence.
@@ -4862,11 +5300,15 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   ev := { ev with readOpts := true }
   let (gOuter, pOuter) := outerRead (readsPathOpt cx.styles) cx.global cx.opts
   for opt in mergeOpts gOuter pOuter cx.everyPath own do
-    match arrowTipName opt.toList with
-    | some tip =>
-      if drawsAsArrow cx.styles tip then arrow := true
-      else
-        ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
+    match arrowSpec opt.toList with
+    | some (st, en) =>
+      -- A later specification replaces an earlier one, end for end.
+      startArrow := st.any (drawsAsArrow cx.styles)
+      endArrow := en.any (drawsAsArrow cx.styles)
+      for tip in [st, en] do
+        if let some name := tip then
+          unless drawsAsArrow cx.styles name do
+            ev := ev.diag (.W0334, s!"arrow tip '{name}' is outside the rendered \
 picture subset; the edge is drawn without a head")
     | none =>
     match readLineWidth opt.toList with
@@ -4897,13 +5339,28 @@ picture subset; the edge is drawn without a head")
       | none =>
         ev := ev.diag (.W0334, "'>=' without a tip name is outside the rendered \
 picture subset; the option is dropped")
-    -- `draw=<colour>` and a bare colour both set the stroke, as in pgf
+    -- `draw=none` strokes nothing; `draw=<colour>` and a bare colour both
+    -- set the stroke, as in pgf
+    | [.ident "draw", .sym '=', .ident "none"] => strokes := false
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
       | .error e =>
         ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
       strokes := true
+    | [.ident "fill"] => fills := true
+    | [.ident "fill", .sym '=', .ident "none"] => fills := false
+    | .ident "fill" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => fillColor := some c
+      | .error e =>
+        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the fill colour is dropped")
+      fills := true
+    | .ident "color" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c => color := c
+      | .error e =>
+        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
     | [] => pure ()
     | o :: rest =>
       match toSpec.read env opt with
@@ -4946,6 +5403,12 @@ rendered picture subset; the option is dropped")
       else if ts[i]? == some (.ident "rectangle") then
         op := .rect
         i := i + 1
+      else if ts[i]? == some (.ident "circle") || ts[i]? == some (.ident "ellipse") then
+        match readRadii cx env ts (i + 1) with
+        | .ok (rx, ry, next) =>
+          op := .ellipse rx ry
+          i := next
+        | .error d => return ev.diag d
       else if ts[i]? == some (.ident "to") || ts[i]? == some (.ident "edge") then
         -- `edge` is `to` with `every edge`'s `draw` in force: the same
         -- operation, and the reason a `\path` of edges paints.
@@ -5041,6 +5504,11 @@ outside the rendered picture subset; the edge is not drawn")
         pts := pts.push first
         reference := first.center
         ops := ops.push (op, mid)
+      else if op matches .ellipse _ _ then
+        -- The current point stays: the centre stands in the next slot.
+        let here := (pts.back?.map Anchor.center).getD (0, 0)
+        pts := pts.push (.point here.1 here.2)
+        ops := ops.push (op, mid)
       else
         match readAnchor cx env ev ts i reference with
         | .error d => return ev.diag d
@@ -5069,10 +5537,15 @@ the rendered picture subset; the edge is not drawn")
       dash := dash }
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option Ir.Pic.Tip := none
+  let mut startTip : Option Ir.Pic.Tip := none
   let mut labels : Array Ir.Pic.Shape := #[]
   -- A rectangle's outline: a closed frame, which both backends stroke as
   -- one path with every corner joined.
   let mut frames : Array Ir.Pic.Shape := #[]
+  -- The same rectangles and the path's ellipses as geometry, for a path that
+  -- fills or holds an ellipse and so paints as one.
+  let mut rects : Array (Sp × Sp × Sp × Sp) := #[]
+  let mut ellipses : Array (Sp × Sp × Sp × Sp) := #[]
   -- Where the current subpath began (its index in `segs` and its first
   -- point) and where it stands now: what `cycle` closes back to.
   let mut subStart : Option (Nat × Sp × Sp) := none
@@ -5088,6 +5561,7 @@ the rendered picture subset; the edge is not drawn")
         if strokes then
           frames := frames.push (.frame (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
             (max y1 y2 - min y1 y2) (some stroke) none)
+        rects := rects.push (min x1 x2, min y1 y2, max x1 x2 - min x1 x2, max y1 y2 - min y1 y2)
         -- A node on a rectangle stands on its diagonal, as on a straight side.
         if let some label := mid then
           labels := labels ++ label.place cx width
@@ -5113,10 +5587,17 @@ the rendered picture subset; the edge is not drawn")
           subStart := none
           cur := some (sx, sy)
         | _, _ => pure ()
+      | .ellipse rx ry =>
+        let (x0, y0) := a.center
+        ellipses := ellipses.push (x0, y0, rx, ry)
+        if let some label := mid then
+          labels := labels ++ label.place cx width (x0, y0) (0, 0)
+        subStart := none
+        cur := some (x0, y0)
       | .straight | .orthogonal _ =>
         let labelCorner := match op with
           | .orthogonal vertical => some (orthogonalCorner vertical a.center c.center)
-          | .straight | .curve _ | .rect | .cycle => none
+          | .straight | .curve _ | .rect | .cycle | .ellipse _ _ => none
         -- An axis-aligned elbow is one straight segment. In particular,
         -- its zero final leg cannot swallow the arrival arrow or cause
         -- a named node to be approached from its own centre.
@@ -5125,11 +5606,22 @@ the rendered picture subset; the edge is not drawn")
         let corner := labelCorner.filter fun q => q != a.center && q != c.center
         let p1 := a.toward (corner.getD c.center)
         let p2 := c.toward (corner.getD a.center)
+        -- A tip at the start shortens the first side, pointing back at its
+        -- anchor, as one at the end shortens the last.
+        let startHit : Option (Ir.Pic.Tip × Sp × Sp) :=
+          if k == 0 && startArrow then
+            let ahead := corner.getD p2
+            tipAt p1.1 p1.2 (p1.1 - ahead.1) (p1.2 - ahead.2) stroke.width
+          else none
+        if let some (t, _, _) := startHit then startTip := some t
+        let p1 := match startHit with
+          | some (_, bx, byy) => (bx, byy)
+          | none => p1
         let first := segs.size
         if let some q := corner then
           segs := segs.push (.line p1.1 p1.2 q.1 q.2)
         let departure := corner.getD p1
-        if last && arrow then
+        if last && endArrow then
           match tipAt p2.1 p2.2 (p2.1 - departure.1) (p2.2 - departure.2) stroke.width with
           | some (t, bx, byy) =>
             segs := segs.push (.line departure.1 departure.2 bx byy)
@@ -5171,7 +5663,9 @@ the rendered picture subset; the edge is not drawn")
         segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
         if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
         cur := some p2
-        if last && arrow then
+        if k == 0 && startArrow then
+          startTip := (tipAt p1.1 p1.2 (p1.1 - c1.1) (p1.2 - c1.2) stroke.width).map (·.1)
+        if last && endArrow then
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
@@ -5188,9 +5682,440 @@ the rendered picture subset; the edge is not drawn")
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them. A chain of
   -- nothing but rectangles strokes no edge of its own.
-  let withEdge := if strokes && !segs.isEmpty then (ev.shapes ++ frames).push (.edge segs stroke tip)
-    else ev.shapes ++ frames
-  return { ev with shapes := withEdge ++ labels }
+  let tips : Array Ir.Pic.Tip := startTip.toArray ++ tip.toArray
+  let painted : Array Ir.Pic.Shape :=
+    if fills || !ellipses.isEmpty then
+      -- One path for a fill or an ellipse: every side, rectangle and
+      -- ellipse of the statement, filled by the nonzero rule and stroked
+      -- once — a lone rectangle or ellipse as its own geometry.
+      let segSubs := Ir.Pic.edgeSubpaths segs
+      let rectSubs := rects.map fun (x, y, w, h) => Gfx.Kit.rectPath x y w h
+      let ellSubs := ellipses.flatMap fun (ex, ey, rx, ry) => Gfx.Kit.ellipse ex ey rx ry
+      let geom : Gfx.Geom := match segs.isEmpty, rects.toList, ellipses.toList with
+        | true, [(x, y, w, h)], [] => .rect x y w h
+        | true, [], [(ex, ey, rx, ry)] => .ellipse ex ey rx ry
+        | _, _, _ => .path (segSubs ++ rectSubs ++ ellSubs)
+      let fill := if fills then some (Ir.Pic.solidFill (fillColor.getD color)) else none
+      let st := if strokes then some (Ir.Pic.strokeOf stroke) else none
+      if fill.isNone && st.isNone then #[] else
+      let draw : Gfx.Node Empty := .draw geom fill st
+      if tips.isEmpty || !strokes then #[.ink draw]
+      else #[.ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[draw] ++ tips.map (tipNode stroke)))]
+    else if strokes && !segs.isEmpty then frames.push (edgeWithTips segs stroke tips)
+    else frames
+  return { ev with shapes := ev.shapes ++ painted ++ labels }
+
+-- Trees (TikZ manual §21): `\node {root} child {node {a} child {…}} …;`.
+
+/-- One node of a tree as the flattening walk read it: its parent's index in
+the walk's array (`none` for the root), its level and its 1-based place among
+its siblings (pgf's `\tikznumberofcurrentchild`), what its `child [...]`
+carried, and the parts of its body. A body that names no node is a
+coordinate, pgf's `[shape=coordinate]{}`. -/
+public structure TreeItem where
+  parent : Option Nat := none
+  level : Nat := 0
+  index : Nat := 1
+  childOpts : Array Tok := #[]
+  /-- The node's own tokens after `node` (`[keys] (name) at (…) {text}`), or
+  a coordinate's after `coordinate`. -/
+  node : Array Tok := #[]
+  coordinate : Bool := true
+  /-- Options between the node and its children (`{root} [grow=up] child …`):
+  keys for the rest of its path — its children and its own edge. -/
+  pathOpts : Array Tok := #[]
+  /-- `edge from parent [...]`'s options, and the label nodes after it. -/
+  edgeOpts : Array Tok := #[]
+  edgeNodes : Array Tok := #[]
+  /-- How many children it has: pgf's `\tikznumberofchildren`. -/
+  children : Nat := 0
+  deriving Repr, Inhabited
+
+/-- Where the flattening walk stands in one body. -/
+private inductive TMode where
+  | start
+  /-- A node's prologue: inside a `[...]` or not, and the paren depth. -/
+  | prologue (bracket : Bool) (paren : Nat)
+  /-- A coordinate's prologue, at this paren depth. -/
+  | cprologue (paren : Nat)
+  | tail
+  | pathBracket
+  /-- After `child`: inside its `[...]` or not. -/
+  | child (bracket : Bool)
+  /-- After `edge`: how much of `from parent` was read (0–2). -/
+  | edge (stage : Nat)
+  | edgeBracket
+  | edgeNodes
+  /-- After a construct outside the subset, to the next `child`. -/
+  | skipping
+  deriving Repr, Inhabited
+
+private structure TSt where
+  items : Array TreeItem := #[{}]
+  /-- Did the walk read a `child` at all? -/
+  tree : Bool := false
+  cur : Nat := 0
+  mode : TMode := .start
+  pendingOpts : Array Tok := #[]
+  bad : Array PDiag := #[]
+  deriving Inhabited
+
+private def TSt.modifyCur (st : TSt) (f : TreeItem → TreeItem) : TSt :=
+  { st with items := st.items.modify st.cur f }
+
+private def TSt.diag (st : TSt) (d : PDiag) : TSt :=
+  if st.bad.any (·.2 == d.2) then st else { st with bad := st.bad.push d }
+
+/-- A child pushed under the current item, one past its siblings so far. -/
+private def TSt.pushChild (st : TSt) : TSt × Nat :=
+  let parent := st.cur
+  let p := st.items[parent]?.getD {}
+  let idx := p.children + 1
+  let item : TreeItem :=
+    { parent := some parent, level := p.level + 1, index := idx, childOpts := st.pendingOpts }
+  let items := (st.items.modify parent fun q => { q with children := idx }).push item
+  ({ st with items, pendingOpts := #[] }, items.size - 1)
+
+/-- A token of a body's tail: a path bracket, a `child`, an `edge from parent`. -/
+private def treeTail (t : Tok) (st : TSt) : TSt :=
+  match t with
+  | .space => st
+  | .sym '[' => { st with mode := .pathBracket }
+  | .ident "child" => { st with mode := .child false, pendingOpts := #[], tree := true }
+  | .ident "edge" => { st with mode := .edge 0 }
+  | t => { st.diag (.W0334, s!"a tree continues with {tokText t}, outside the rendered \
+picture subset; it is dropped") with mode := .skipping }
+
+/-- One step of the walk, every case but a child's body group. -/
+private def treeStep (t : Tok) (st : TSt) : TSt :=
+  let push (st : TSt) : TSt := st.modifyCur fun i => { i with node := i.node.push t }
+  match st.mode with
+  | .start =>
+    match t with
+    | .space => st
+    | .ident "node" =>
+      { st.modifyCur (fun i => { i with coordinate := false }) with mode := .prologue false 0 }
+    | .ident "coordinate" => { st with mode := .cprologue 0 }
+    | t => treeTail t { st with mode := .tail }
+  | .prologue true paren =>
+    if t == .sym ']' then { push st with mode := .prologue false paren } else push st
+  | .prologue false (paren + 1) =>
+    match t with
+    | .sym '(' => { push st with mode := .prologue false (paren + 2) }
+    | .sym ')' => { push st with mode := .prologue false paren }
+    | _ => push st
+  | .prologue false 0 =>
+    match t with
+    | .space => st
+    | .ident "child" | .ident "edge" => treeTail t { st with mode := .tail }
+    | .group _ => { push st with mode := .tail }
+    | .sym '[' => { push st with mode := .prologue true 0 }
+    | .sym '(' => { push st with mode := .prologue false 1 }
+    | _ => push st
+  | .cprologue (paren + 1) =>
+    match t with
+    | .sym '(' => { push st with mode := .cprologue (paren + 2) }
+    | .sym ')' => { push st with mode := .cprologue paren }
+    | _ => push st
+  | .cprologue 0 =>
+    match t with
+    | .space => st
+    | .ident "child" | .ident "edge" | .sym '[' => treeTail t { st with mode := .tail }
+    | .sym '(' => { push st with mode := .cprologue 1 }
+    | _ => push st
+  | .tail => treeTail t st
+  | .pathBracket =>
+    match t with
+    | .sym ']' =>
+      { st.modifyCur (fun i => { i with pathOpts := i.pathOpts.push (.sym ',') }) with mode := .tail }
+    | t => st.modifyCur fun i => { i with pathOpts := i.pathOpts.push t }
+  | .child true =>
+    match t with
+    | .sym ']' => { st with mode := .child false, pendingOpts := st.pendingOpts.push (.sym ',') }
+    | t => { st with pendingOpts := st.pendingOpts.push t }
+  | .child false =>
+    match t with
+    | .space => st
+    | .sym '[' => { st with mode := .child true }
+    | .ident "foreach" =>
+      { st.diag (.W0334, "'child foreach' is outside the rendered picture subset; those \
+children are not drawn") with mode := .skipping }
+    -- A child with no body is a coordinate (pgf's `\tikz@collect@child@code{}`).
+    | t => treeTail t { st.pushChild.1 with mode := .tail }
+  | .edge stage =>
+    match stage, t with
+    | _, .space => st
+    | 0, .ident "from" => { st with mode := .edge 1 }
+    | 1, .ident "parent" => { st with mode := .edge 2 }
+    | 2, .sym '[' => { st with mode := .edgeBracket }
+    | 2, .ident "node" =>
+      { st.modifyCur (fun i => { i with edgeNodes := i.edgeNodes.push t }) with mode := .edgeNodes }
+    | _, t => { st.diag (.W0334, s!"a tree's 'edge' continues with {tokText t}, outside the \
+rendered picture subset; it is dropped") with mode := .skipping }
+  | .edgeBracket =>
+    match t with
+    | .sym ']' =>
+      { st.modifyCur (fun i => { i with edgeOpts := i.edgeOpts.push (.sym ',') }) with mode := .edge 2 }
+    | t => st.modifyCur fun i => { i with edgeOpts := i.edgeOpts.push t }
+  | .edgeNodes => st.modifyCur fun i => { i with edgeNodes := i.edgeNodes.push t }
+  | .skipping =>
+    match t with
+    | .ident "child" => { st with mode := .child false, pendingOpts := #[] }
+    | _ => st
+
+mutual
+
+/-- Flatten a tree into its items in preorder: the one recursion into a
+child's body group, so the walk's totality is structural, as `parseList`'s
+is. A child's body is read under a state whose current item is the child,
+and the walk returns to its parent's tail after it. -/
+private def treeList : List Tok → TSt → TSt
+  | [], st =>
+    match st.mode with
+    | .child false => { st.pushChild.1 with mode := .tail }
+    | _ => st
+  | t :: rest, st => treeList rest (treeTok t st)
+
+private def treeTok (t : Tok) (st : TSt) : TSt :=
+  match st.mode, t with
+  | .child false, .group g =>
+    let parent := st.cur
+    let (st1, idx) := st.pushChild
+    let sub := treeList g { st1 with cur := idx, mode := .start }
+    { sub with cur := parent, mode := .tail }
+  | _, _ => treeStep t st
+
+end
+
+/-- A `\node` statement's tree: the root's node and every child below it, in
+preorder, or `none` where the statement reads no `child`. -/
+public def flattenTree (toks : Array Tok) : Option (Array TreeItem × Array PDiag) :=
+  let st := treeList (.ident "node" :: toks.toList) {}
+  if st.tree then some (st.items, st.bad) else none
+
+/-- The tree keys in force (tikz.code.tex's tree options): the growth
+direction in degrees, whether `grow'` turned the sibling order, the level
+`grow` was set at (pgf's `\tikz@special@level`, whose children are not
+spread), the two distances, the edge's anchors, and the entries that are no
+tree key — in force for every path and node of the subtree, as keys set in a
+scope are. -/
+private structure TreeCfg where
+  grow : Int := -90
+  swap : Bool := false
+  special : Int := -1
+  levelDist : Sp := Dim.mm 15  -- tikz.code.tex: \tikzleveldistance=15mm
+  siblingDist : Sp := Dim.mm 15  -- tikz.code.tex: \tikzsiblingdistance=15mm
+  parentAnchor : Option String := none
+  childAnchor : Option String := none
+  scope : Array (Array Tok) := #[]
+  deriving Inhabited
+
+/-- A growth direction (`\tikz@grow@direction@<name>`), or an integer angle. -/
+private def growAngle (env : List (String × Val)) (toks : List Tok) : Option Int :=
+  match keyName toks with
+  | some "down" | some "south" => some (-90)
+  | some "up" | some "north" => some 90
+  | some "left" | some "west" => some 180
+  | some "right" | some "east" => some 0
+  | some "north east" => some 45
+  | some "north west" => some 135
+  | some "south east" => some (-45)
+  | some "south west" => some (-135)
+  | _ =>
+    match evalNum env toks.toArray with
+    | .ok m => some (if m < 0 then -((-m) / 1000) else m / 1000)
+    | .error _ => none
+
+/-- A tree distance as `\pgfmathsetlength` reads it: a length, `em` and
+`ex` the face's, or pgfmath with units, a unitless value in points. -/
+private def treeLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Sp :=
+  match readNodeDim cx.bodySize (cx.metric #[.text "x"] 1000).ex toks with
+  | .ok d => .ok d
+  | .error _ =>
+    match evalComp env toks.toArray with
+    | .ok (v, true) => .ok v
+    | .ok (m, false) => .ok (milliPt m)
+    | .error e => .error e
+
+/-- One entry read as a tree key at `level`; `none` where it is none. A
+distance is a shift in the picture's coordinate system, so it scales with
+it. -/
+private def treeKey (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : TreeCfg)
+    (entry : Array Tok) : Option (Except PDiag TreeCfg) :=
+  let e := entry.toList.filter (· != .space)
+  let key := keyPath e
+  let value := (e.dropWhile (· != .sym '=')).drop 1
+  if key == "grow" || key == "grow'" then
+    some (match growAngle env value with
+      | some a => .ok { cfg with grow := a, swap := key == "grow'", special := level }
+      | none => .error (.W0334, s!"tree option {optName e} names a direction outside the \
+rendered picture subset; the tree grows as before"))
+  else if key == "level distance" || key == "sibling distance" then
+    some (match treeLen cx env value with
+      | .ok d =>
+        let d := d * cx.scale / 1000
+        .ok (if key == "level distance" then { cfg with levelDist := d }
+          else { cfg with siblingDist := d })
+      | .error err => .error (.E0333, s!"in '{key}', {err}; it is ignored"))
+  else if key == "parent anchor" || key == "child anchor" then
+    let set (a : Option String) : TreeCfg :=
+      if key == "parent anchor" then { cfg with parentAnchor := a } else { cfg with childAnchor := a }
+    some (match nameOfToks value with
+      | some "border" => .ok (set none)
+      | some a =>
+        if (nodeAnchorOf a).isSome then .ok (set (some a))
+        else .error (.W0334, s!"tree option {optName e} names an anchor outside the rendered \
+picture subset; the edge meets the border")
+      | none => .error (.E0333, s!"'{key}' needs an anchor name; it is ignored"))
+  else if key == "missing" then some (.ok cfg)
+  else none
+
+/-- A bracket's entries read at `level`: tree keys into the configuration,
+every other entry a shape reads into its scope, and an entry no shape reads
+named — a key set in a tree is never dropped in silence. -/
+private def applyTree (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : TreeCfg)
+    (entries : Array (Array Tok)) (ev : Ev) : TreeCfg × Ev := Id.run do
+  let mut cfg := cfg
+  let mut ev := ev
+  for entry in entries do
+    let e := entry.filter (· != .space)
+    unless e.isEmpty do
+      match treeKey cx env level cfg e with
+      | some (.ok c) => cfg := c
+      | some (.error d) => ev := ev.diag d
+      | none =>
+        if readsOpt cx.styles e then cfg := { cfg with scope := inheritOpts cfg.scope #[e] }
+        else ev := ev.diag (outsideOpt e.toList)
+  return (cfg, ev)
+
+/-- pgf's `\tikz@grow@direction`: a child's offset from its parent's centre.
+`level distance` along the growth direction, then — unless `grow` was set
+at this level — the `k`-th of `n` siblings `(k − (n+1)/2)` sibling distances
+along the direction turned +90° (−90° under `grow'`). -/
+public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Sp) (n k : Nat) : Sp × Sp :=
+  let along : Sp × Sp := (cosDeg grow * ld / 1000, sinDeg grow * ld / 1000)
+  if !spread then along else
+  let across := if swap then grow - 90 else grow + 90
+  let t : Int := (2 * (k : Int) - ((n : Int) + 1)) * sd / 2
+  (along.1 + cosDeg across * t / 1000, along.2 + sinDeg across * t / 1000)
+
+/-- The entries of a style the tree reads by name, `#1` its argument. -/
+private def treeStyle (cx : Cx) (name : String) (arg : Nat := 0) : Array (Array Tok) :=
+  match cx.styles.lookup name with
+  | none => #[]
+  | some body =>
+    let subst : Array Tok := Id.run do
+      let mut out : Array Tok := #[]
+      let mut k := 0
+      for _ in [0:body.size + 1] do
+        if h : k < body.size then
+          if body[k] == .sym '#' && body[k + 1]? == some (.num 1000) then
+            out := out.push (.num ((arg : Int) * 1000))
+            k := k + 2
+          else
+            out := out.push body[k]
+            k := k + 1
+        else break
+      return out
+    (splitTop (subst.filter (· != .space)) ',').filter (!·.isEmpty)
+
+/-- Entries as one option bracket, none where there are none. -/
+private def bracketOf (entries : Array (Array Tok)) : Array Tok := Id.run do
+  if entries.isEmpty then return #[]
+  let mut out : Array Tok := #[.sym '[']
+  let mut first := true
+  for e in entries do
+    unless first do out := out.push (.sym ',')
+    first := false
+    out := out ++ e
+  return out.push (.sym ']')
+
+/-- A node's name, and an anchor where one is given, as coordinate tokens. A
+name the engine gives holds a space, which no name a document writes can
+(`nameOfToks` drops every space), so the two never meet. -/
+private def nameCoord (name : String) (anchor : Option String) : Array Tok :=
+  #[.sym '(', .ident name] ++ ((anchor.map fun a => #[.sym '.', .ident a]).getD #[]) ++
+    #[.sym ')']
+
+/-- `\node … child {…} …;` — a tree, placed as pgf's default growth
+function places it (`growthOffset`), each child's `edge from parent` a
+`\path` from its parent to it through the `edge from parent` style and the
+options its `edge from parent [...]` gave, so its tips, dashes and colours
+are the one path reader's. Level styles are read for a level's children,
+`every child` and a child's own options for it, and the options between a
+node and its children for the rest of its path, the child's own edge
+included, as pgf runs that rest as the edge's path. The edges stand under
+the nodes, which pgf sets after the path. The items are in preorder, so a
+parent is placed before its children. A child's default name is pgf's own
+`<parent>-<k>`. -/
+private def evalTree (cx : Cx) (env : List (String × Val)) (items : Array TreeItem)
+    (bad : Array PDiag) (ev : Ev) : Ev := Id.run do
+  let mut ev := bad.foldl Ev.diag ev
+  let before := ev.shapes.size
+  let mut edges : Array Ir.Pic.Shape := #[]
+  -- The keys the document and the picture set: tree keys from them start
+  -- the configuration, at level 0 where pgf reads them.
+  let mut base : TreeCfg := {}
+  let outer := cx.global ++ cx.opts
+  for e in outer do
+    match treeKey cx env 0 base e with
+    | some (.ok c) => base := c
+    | some (.error d) => ev := ev.diag d
+    | none => pure ()
+  let edgeStyle : Array (Array Tok) :=
+    if (cx.styles.lookup "edge from parent").isSome then treeStyle cx "edge from parent"
+    else #[#[.ident "draw"]]
+  let childNode := bracketOf (treeStyle cx "every child node")
+  let mut names : Array String := #[]
+  let mut cfgs : Array TreeCfg := #[]
+  for it in items do
+    let own := expandOpts cx.styles it.pathOpts
+    match it.parent with
+    | none =>
+      let name := (nodeNameOf it.node).getD s!"tree {ev.nodes.length}"
+      ev := evalNode cx env it.node ev (coordinate := it.coordinate) (defaultName := some name)
+      let (c, ev2) := applyTree cx env 0 base own ev
+      ev := ev2
+      names := names.push name
+      cfgs := cfgs.push c
+    | some p =>
+      let pname := names[p]?.getD ""
+      let level := it.level
+      let childOpts := expandOpts cx.styles it.childOpts
+      let (c1, ev1) := applyTree cx env level (cfgs[p]?.getD base)
+        (treeStyle cx "level" level ++ treeStyle cx s!"level {level}") ev
+      let (c2, ev2) := applyTree cx env level c1 (treeStyle cx "every child" ++ childOpts) ev1
+      let missing := childOpts.any fun e =>
+        let e := e.toList.filter (· != .space)
+        e == [.ident "missing"] || e == [.ident "missing", .sym '=', .ident "true"]
+      let name := (nodeNameOf it.node).getD s!"{pname}-{it.index}"
+      ev := ev2
+      let (c3, ev3) := applyTree cx env level c2 own ev
+      ev := ev3
+      match ev.nodes.lookup pname with
+      -- A parent the walk refused names its own loss; nothing stands to
+      -- grow from.
+      | none => pure ()
+      | some g =>
+        unless missing do
+          let n := (items[p]?.map (·.children)).getD 1
+          let off := growthOffset c2.grow c2.swap ((level : Int) != c2.special) c2.levelDist
+            c2.siblingDist n it.index
+          let cxN := { cx with opts := inheritOpts cx.opts c2.scope, shift := (g.x + off.1, g.y + off.2) }
+          ev := evalNode cxN env (childNode ++ it.node) ev (coordinate := it.coordinate)
+            (defaultName := some name)
+          if (ev.nodes.lookup name).isSome then
+            let path := bracketOf (edgeStyle ++ expandOpts cx.styles it.edgeOpts) ++
+              nameCoord pname c3.parentAnchor ++ #[.sym '-', .sym '-'] ++ it.edgeNodes ++
+              nameCoord name c3.childAnchor
+            let drawn := evalDraw { cx with opts := inheritOpts cx.opts c3.scope } env path
+              { ev with shapes := #[] } (mode := .path)
+            edges := edges ++ drawn.shapes
+            ev := { drawn with shapes := ev.shapes }
+      names := names.push name
+      cfgs := cfgs.push c3
+  return { ev with shapes := ev.shapes.extract 0 before ++ edges ++
+    ev.shapes.extract before ev.shapes.size }
 
 /-- One `\foreach` list item: values (`1`, `2/3`, a word), or the `...`
 range marker. -/
@@ -5376,13 +6301,29 @@ mutual
 private def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | [], env, ev => (env, ev)
+  -- A colour or a font declared among statements holds for the rest of
+  -- their group, as TeX's own declarations do.
+  | .setColor spec :: rest, env, ev =>
+    match evalColor cx env spec with
+    | .ok c => evalList { cx with ink := c } rest env ev
+    | .error e =>
+      evalList cx rest env (ev.diag (.E0333, s!"in '\\color', {e}; the colour is dropped"))
+  | .setDecl n :: rest, env, ev => evalList { cx with decls := cx.decls.push n } rest env ev
   | s :: rest, env, ev =>
     let (env2, ev2) := evalOne cx s env ev
     evalList cx rest env2 ev2
+  -- A group's declarations change the context its statements read, so the
+  -- context is no fixed parameter and the measure is stated: a statement
+  -- list or a statement by its size, a loop by its body's and then the
+  -- items left, its body running first.
+  termination_by ss _ _ => (sizeOf ss, 0, 0)
 
 private def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
   | .fill toks, env, ev =>
+    -- A fill of anything but one rectangle is a path filled (`\fill` is
+    -- `\path[fill]`, TikZ manual §14.1): the draw evaluator's own.
+    if !fillIsRect toks then (env, evalDraw cx env toks ev (mode := .fill)) else
     match evalFill cx env toks with
     | .ok shape =>
       -- `\fill`'s bracket is a colour spelling, not a key list, so no
@@ -5393,9 +6334,31 @@ private def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
 rendered picture subset; the keys are dropped")
       (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
-  | .node toks, env, ev => (env, evalNode cx env toks ev)
+  | .node toks, env, ev =>
+    match flattenTree toks with
+    | some (items, bad) => (env, evalTree cx env items bad ev)
+    | none => (env, evalNode cx env toks ev)
+  | .coordinate toks, env, ev => (env, evalNode cx env toks ev (coordinate := true))
   | .draw toks, env, ev => (env, evalDraw cx env toks ev)
-  | .path toks, env, ev => (env, evalDraw cx env toks ev (isPath := true))
+  | .path toks, env, ev => (env, evalDraw cx env toks ev (mode := .path))
+  | .filldraw toks, env, ev => (env, evalDraw cx env toks ev (mode := .filldraw))
+  -- A group's declarations stay inside it, its macros too (TeXbook ch. 5).
+  | .grouped color body, env, ev =>
+    match color with
+    | none =>
+      let (_, ev2) := evalList cx body env ev
+      (env, ev2)
+    | some spec =>
+      match evalColor cx env spec with
+      | .ok c =>
+        let (_, ev2) := evalList { cx with ink := c } body env ev
+        (env, ev2)
+      | .error e =>
+        let (_, ev2) := evalList cx body env
+          (ev.diag (.E0333, s!"in '\\textcolor', {e}; the colour is dropped"))
+        (env, ev2)
+  | .setColor _, env, ev => (env, ev)
+  | .setDecl _, env, ev => (env, ev)
   | .bbox toks, env, ev =>
     match evalBBox cx env toks with
     | .ok b =>
@@ -5409,21 +6372,27 @@ rendered picture subset; the keys are dropped")
         | none => b
       (env, { ev with declared := some b })
     | .error d => (env, ev.diag d)
-  | .set name expr trunc, env, ev =>
-    match evalExpr env expr with
-    | .ok (.num m) =>
-      -- The truncating form floors toward zero to a whole unit, as
-      -- `\pgfmathtruncatemacro` does.
-      let m := if trunc then
-          (if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000))
-        else m
-      ((name, Val.num m) :: env, ev)
-    | .ok (.str s) =>
-      if trunc then
-        (env, ev.diag (.E0333, s!"in '\\pgfmathtruncatemacro' of '\\{name}', '{s}' \
+  | .set name expr setMode, env, ev =>
+    -- The truncating form floors toward zero to a whole unit, as
+    -- `\pgfmathtruncatemacro` does.
+    let floorUnit (m : Int) : Int := if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000)
+    match evalExpr env expr, setMode with
+    | .ok (.num m), .plain => ((name, Val.num m) :: env, ev)
+    | .ok (.num m), .trunc => ((name, Val.num (floorUnit m)) :: env, ev)
+    -- A unitless length is points (pgfmath's `\pgfmathsetlengthmacro{\r}{2}`
+    -- is `2.0pt`); a length kept by the plain form prints its points.
+    | .ok (.num m), .length => ((name, Val.len (milliPt m)) :: env, ev)
+    | .ok (.len sp), .plain => ((name, Val.num (spMilliPt sp)) :: env, ev)
+    | .ok (.len sp), .trunc => ((name, Val.num (floorUnit (spMilliPt sp))) :: env, ev)
+    | .ok (.len sp), .length => ((name, Val.len sp) :: env, ev)
+    | .ok (.str s), .plain => ((name, Val.str s) :: env, ev)
+    | .ok (.str s), .trunc =>
+      (env, ev.diag (.E0333, s!"in '\\pgfmathtruncatemacro' of '\\{name}', '{s}' \
 where a number is needed; the macro is not set"))
-      else ((name, Val.str s) :: env, ev)
-    | .error e =>
+    | .ok (.str s), .length =>
+      (env, ev.diag (.E0333, s!"in '\\pgfmathsetlengthmacro' of '\\{name}', '{s}' \
+where a length is needed; the macro is not set"))
+    | .error e, _ =>
       (env, ev.diag (.E0333, s!"in '\\pgfmathsetmacro' of '\\{name}', {e}; the macro \
 is not set"))
   | .foreach vars list body, env, ev =>
@@ -5508,6 +6477,7 @@ and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
           else
             let (_, ev2) := evalList cx elseS env ev
             (env, ev2)
+  termination_by s _ _ => (sizeOf s, 0, 0)
 
 /-- One body evaluation per item: the recursion is on the item list, the
 body a fixed subterm of its `\foreach`, so the unrolling is bounded by the
@@ -5518,6 +6488,7 @@ private def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
   | item :: rest, env, ev =>
     let (_, ev2) := evalList cx body (bindVars vars item env) ev
     evalForeach cx vars body rest env ev2
+  termination_by items _ _ => (sizeOf body, 1, sizeOf items)
 
 end
 
@@ -5587,7 +6558,7 @@ would need a picture language this walk does not have. Read off the one
 place the vocabulary lives (`step`), so the two cannot drift. -/
 public def walkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
-   "pgfmathtruncatemacro", "else", "fi"]
+   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "else", "fi"]
 
 /-- Does this walk give the name a meaning of its own? -/
 private def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
@@ -5604,7 +6575,8 @@ private def boundNames (ts : Array Tok) : List String := Id.run do
   for k in [0:ts.size] do
     match ts[k]? with
     | some (.ctrl "foreach") => inVars := true
-    | some (.ctrl "pgfmathsetmacro") | some (.ctrl "pgfmathtruncatemacro") =>
+    | some (.ctrl "pgfmathsetmacro") | some (.ctrl "pgfmathtruncatemacro")
+      | some (.ctrl "pgfmathsetlengthmacro") =>
       match ts[k+1]?, ts[k+2]? with
       | some (.group [.ctrl n]), _ => out := n :: out
       | some .space, some (.group [.ctrl n]) => out := n :: out
@@ -6013,7 +6985,9 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
           else diags := diags.push (outsideOpt (o :: rest))
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
-  let st := (parseList (toks.toList.drop i) {}).drain
+  -- `\selectfont` selects what the declarations before it chose.
+  let declNames := "selectfont" :: ladder.map (·.1) ++ declStyles.map (·.1)
+  let st := (parseList (toks.toList.drop i) { declNames }).drain
   let everyOf (n : String) : Array (Array Tok) :=
     match styles.lookup n with
     | some bundle => (splitTop bundle ',').filter fun e => !e.isEmpty

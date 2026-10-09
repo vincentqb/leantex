@@ -1,0 +1,68 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+palette leaf #2A6F4E
+meta title "Trees and Dots"
+meta author "Pat Placeholder"
+center
+  section* 0
+    text "Trees and Dots"
+  para
+    text "Pat Placeholder"
+section 1 number "1"
+  text "A grown tree"
+picture 11 shapes
+  border -3 -3 3 3
+  border 31.016 31.016 37.015 37.015
+  border 50.859 65.032 56.858 71.031
+  border 11.174 65.032 17.173 71.031
+  border -37.015 31.016 -31.016 37.015
+  group
+    draw path (6.394,6.394)--(31.016,31.016) stroke #000000 0.4
+    draw path (3,3)--(7.454,5.333)--(5.333,7.454) z fill #000000
+  group
+    draw path (38.184,41.162)--(52.108,65.032) stroke #000000 0.4
+    draw path (35.766,37.015)--(39.48,40.406)--(36.888,41.917) z fill #000000
+  group
+    draw path (-6.394,6.394)--(-31.016,31.016) stroke #000000 0.4
+    draw path (-3,3)--(-5.333,7.454)--(-7.454,5.333) z fill #000000
+  group
+    draw path (-34.016,41.815)--(-34.016,68.031) stroke #000000 0.4
+    draw path (-34.016,37.015)--(-32.516,41.815)--(-35.516,41.815) z fill #000000
+  label 0 0 #000000 900
+    text "sum"
+  label 34.016 34.016 #000000 900
+    text "left"
+  label 53.858 68.031 #000000 900
+    formula inline "p"
+      ord:𝑝
+  label 14.173 68.031 #000000 900
+    formula inline "q"
+      ord:𝑞
+  label -34.016 34.016 #000000 900
+    text "right"
+  group
+    draw path (50.859,66.87)--(-26.54,36.91) stroke #000000 0.4
+    draw path (-31.016,35.177)--(-25.998,35.511)--(-27.081,38.308) z fill #000000
+  draw ellipse -34.016 68.031 2 2 fill #2A6F4E
+section 1 number "2"
+  text "Dots on a line"
+picture 7 shapes
+  border 22.179 0 28.845 6.666
+  border 48.357 -22.341 53.69 -17.008
+  label 25.512 3.333 #000000 1000
+    text "mid"
+  group
+    draw path (0,0)--(51.024,0) stroke #000000 0.4
+  draw ellipse 0 0 1.5 1.5 fill #000000
+  draw ellipse 51.024 0 1.5 1.5 fill #000000
+  draw ellipse 25.512 0 25.512 8.504 stroke #000000 0.4
+  group
+    draw path (4.8,-17.008)--(46.224,-17.008) stroke #000000 0.4
+    draw path (0,-17.008)--(4.8,-18.508)--(4.8,-15.508) z fill #000000
+    draw path (51.024,-17.008)--(46.224,-15.508)--(46.224,-18.508) z fill #000000
+  label 51.024 -19.674 #000000 800
+    text "span"
+-- diagnostics
+(none)

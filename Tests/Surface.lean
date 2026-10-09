@@ -3945,9 +3945,9 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((picOf (wrap "\\fill (1,1) rectangle ++(1,1);")).map (·.shapes) ==
       some #[.rect cm cm cm cm Ir.Color.black])
   t "a construct outside the subset is W0334, and the rest still draws"
-    (warnCodes (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);") ==
+    (warnCodes (wrap "\\draw (0,0) parabola (1,1);\\fill (0,0) rectangle (1,1);") ==
         ["W0334"] &&
-      (picOf (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);")).map
+      (picOf (wrap "\\draw (0,0) parabola (1,1);\\fill (0,0) rectangle (1,1);")).map
         (·.shapes.size) == some 1)
   t "a zero-step range is E0333, not a hang"
     (errCodes (wrap "\\foreach \\x in {1,1,...,5}{\\fill (\\x,0) rectangle ++(1,1);}") ==
@@ -4052,8 +4052,8 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | some (segs, _, _) => segs.size == 2
           | none => false) == some true)
   t "a path operation outside the subset loses the edge by name"
-    ((elabStr (wrap "\\draw (0,0) circle (1);")).2.any fun d =>
-      d.code == "W0334" && hasStr d.message "'circle'")
+    ((elabStr (wrap "\\draw (0,0) parabola (1,1);")).2.any fun d =>
+      d.code == "W0334" && hasStr d.message "'parabola'")
   -- `to[out=,in=]` curves: control points 0.3915·‖d‖ along the declared
   -- tangents (pgf To-Path library), mid-path labels at the Bézier midpoint.
   t "a to[out,in] edge ships a cubic segment"
@@ -4087,7 +4087,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | some (segs, _, _) => segs.size == 2
           | none => false) == some true)
   t "one construct looped forty times is one diagnostic, not forty"
-    (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
+    (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) parabola (1,1);}") ==
       ["W0334", "W0362"])
   t "an empty tikzpicture ships no block and no diagnostic"
     ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
@@ -6376,7 +6376,7 @@ as whole-`Doc` agreement between the pinned and the undeclared
 spellings). -/
 def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let pic := "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}"
   let sets := "\\usetikzlibrary{arrows}\n" ++
     "\\tikzset{zz/.style={}}\n\\usepackage{pgfplots}\n"
   let (doc, ds) := elabStr (dvDoc sets pic)
@@ -6394,7 +6394,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some (_, w) =>
        hasStr w "\\documentclass{standalone}" && hasStr w "\\usepackage{tikz}" &&
        hasStr w "\\usetikzlibrary{arrows}" && hasStr w "\\tikzset{zz/.style={}}" &&
-       hasStr w "\\usepackage{pgfplots}" && hasStr w "\\draw (0,0) circle (1);"
+       hasStr w "\\usepackage{pgfplots}" && hasStr w "\\draw (0,0) parabola (1,1);"
      | none => false)
   t "the picture's identity is the author's bytes, not the request"
     (match doc.pictureSrcs[0]? with
@@ -6642,7 +6642,7 @@ it. An ordinary image keeps its natural size and LaTeX's honest overfull. -/
 def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (fitDoc, _) := elabStr (dvDoc ""
-    "\\begin{tikzpicture}\\draw (0,0) circle (40);\\end{tikzpicture}")
+    "\\begin{tikzpicture}\\draw (0,0) parabola (40,40);\\end{tikzpicture}")
   let fitSrc := ((Ir.imageRefs fitDoc).find? (·.startsWith Ir.picSrcPrefix)).getD ""
   let wideInfo : Image.Plan := { pxW := 2000, pxH := 200 }
   let store : Image.Store := { entries := #[{ src := fitSrc, info := some wideInfo }] }

@@ -293,22 +293,22 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!named eDs "W0334" && svgNames empty == #[some "Figure"] && figureAlts empty == #[none])
   -- At the boundary: the image carries the declared text, the standalone
   -- never meets the key, and the request's hash is the picture's without it.
-  let circle := "\\draw (0,0) circle (1);"
-  let (bWith, _) := elabStr (dvDoc "" (pic "[alt={A disc}, scale=0.5]" circle))
-  let (bSans, _) := elabStr (dvDoc "" (pic "[scale=0.5]" circle))
+  let outside := "\\draw (0,0) parabola (1,1);"
+  let (bWith, _) := elabStr (dvDoc "" (pic "[alt={A curve}, scale=0.5]" outside))
+  let (bSans, _) := elabStr (dvDoc "" (pic "[scale=0.5]" outside))
   t "a routed picture's image carries its declared alternative"
-    (imgAttr bWith "alt" == #[some "A disc"])
+    (imgAttr bWith "alt" == #[some "A curve"])
   t "the boundary's standalone never meets the key"
     (!bWith.pictureSrcs.isEmpty && bWith.pictureSrcs.all fun (_, src) => !hasStr src.body "alt=")
   t "the boundary's request hash is invariant under the key"
     (bWith.pictureSrcs.map (·.1) == bSans.pictureSrcs.map (·.1))
   let (mWith, _) := elabStr (dvDoc ""
-    (pic "[\n  alt={A disc},\n  scale=0.5, transform shape\n]" circle))
-  let (mSans, _) := elabStr (dvDoc "" (pic "[\n  scale=0.5, transform shape\n]" circle))
+    (pic "[\n  alt={A curve},\n  scale=0.5, transform shape\n]" outside))
+  let (mSans, _) := elabStr (dvDoc "" (pic "[\n  scale=0.5, transform shape\n]" outside))
   t "the hash is invariant when the key stands on its own line"
     (!mWith.pictureSrcs.isEmpty && mWith.pictureSrcs.map (·.1) == mSans.pictureSrcs.map (·.1))
   let (three, _) := elabStr (dvDoc ""
-    ("\\includegraphics{chart.png}\n\n" ++ pic "" square ++ "\n\n" ++ pic "" circle))
+    ("\\includegraphics{chart.png}\n\n" ++ pic "" square ++ "\n\n" ++ pic "" outside))
   let allSans := Ir.imagesSansAlt three
   let fileNative := Ir.altDiags three
   let boundary := Ir.picAltDiags three (fun _ => none) (fun _ => true)

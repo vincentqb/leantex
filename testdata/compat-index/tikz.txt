@@ -22,9 +22,16 @@
 # §17.8 (automatic placement: auto, swap and its ' shorthand, auto=left /
 # auto=right / auto=false — an in-path label stands beside the path on the
 # left of its direction, quantised to the four cardinal anchors a label
-# shape carries), §14 paths (\draw, \path, the -- line-to,
+# shape carries), §14 paths (\draw, \path, \fill and \filldraw, the --
+# line-to, §14.6 the circle and ellipse operations about the current point,
 # §14.13 to paths with out=/in= and the edge operation whose every edge
-# carries draw; the circle path operation is outside the subset),
+# carries draw), §13.5 calc (sums, factors and partway steps by a fraction
+# or a length), §13.2.1 coordinates in lengths, §16.2 arrow specifications
+# with a tip at either end, §17.2.1 coordinates, §21 trees (child, grow and
+# grow', level and sibling distance, the level, every child and edge from
+# parent styles, missing children, a child's default name), and the colour
+# and font declared around statements (\textcolor, \color, beamer's \alert,
+# a font or size declaration, each to the end of its group),
 # TeXbook chapter 20 for the conditionals a picture body may hold: every
 # \if... control word opens one (which is what \newif mints), \ifnum and
 # \ifdim carry the <number><relation><number> form this walk computes,
@@ -103,6 +110,25 @@ body refuse:W0334 \begin{tikzpicture}\ifnum\notamacro=1 \node (u) at (0,0) {x};\
 body refuse:W0334 \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (3,0) {y};\draw (u.mid) -- (v.mid west);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {\unknownmacro{x}};\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\node (u) {x \footnotesize y};\end{tikzpicture}
+body impl \begin{tikzpicture}\node {r} child {node {a}} child {node {b}};\end{tikzpicture}
+body impl \begin{tikzpicture}[level 1/.style={sibling distance=20mm}, edge from parent/.style={draw,latex-}]\node {r} [grow=up] child {node {a}} child[missing] child {node {b} edge from parent[draw=none]};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (r) {r} child {coordinate} child {node {b}};\draw (r-1) -- (r-2);\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\node {r} child foreach \x in {1,2} {node {\x}};\end{tikzpicture}
+body impl \begin{tikzpicture}\textcolor{red}{\draw (0,0) -- (1,0);}\end{tikzpicture}
+body impl \begin{tikzpicture}{\color{red}\draw (0,0) -- (1,0);}\draw (0,1) -- (1,1);\end{tikzpicture}
+body impl \begin{tikzpicture}{\small\node at (0,0) {x};}\end{tikzpicture}
+body impl \begin{tikzpicture}[font=\small]\node at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\coordinate (a) at (0,0);\draw (a) -- (1,1);\end{tikzpicture}
+body impl \begin{tikzpicture}\fill (0,0) circle (2pt);\end{tikzpicture}
+body impl \begin{tikzpicture}\filldraw[fill=yellow] (0,0) circle (1);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw (0,0) ellipse (1 and 0.5);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw (0,0) circle [radius=3mm];\end{tikzpicture}
+body impl \begin{tikzpicture}\pgfmathsetlengthmacro{\h}{0.5cm}\draw (0,0) -- (\h,\h);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw ($(0,0)!.5!(2,0)$) -- ($2*(1,1)$);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[<->] (0,0) -- (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[latex-] (0,0) -- (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[draw=none] (0,0) -- (1,0);\node[draw=none] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[above] at (0,0) {x};\node[below left=2pt] at (0,0) {y};\node[anchor=north] at (1,0) {z};\end{tikzpicture}
 body impl \tikz{\fill (0,0) rectangle (1,1);}
 body impl \tikz \fill (0,0) rectangle (1,1);
 body impl \tikz[scale=2] \fill (0,0) rectangle (1,1);

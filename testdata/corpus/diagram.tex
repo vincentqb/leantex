@@ -3,7 +3,7 @@
 % \pgfmathtruncatemacro arithmetic (max, *), labelled by \node with the
 % \k/\lbl pair form, the label colour picked by ifthenelse over a
 % comparison, under [scale=]. One construct outside the subset
-% (\draw ... circle) is deliberate: it must be diagnosed by name (W0334)
+% (\draw ... parabola) is deliberate: it must be diagnosed by name (W0334)
 % while every supported shape around it still draws. The boundary is open
 % by default and would route the whole picture, so the subset witness
 % declares the refusal. Invented content and design.
@@ -36,7 +36,7 @@ Before the diagram stands a paragraph, so the picture spaces below text.
     \pgfmathsetmacro{\lblcol}{ifthenelse(\k<3,"ink","white")}
     \node[font=\small, text=\lblcol] at (\k-0.55,\k-0.55) {\lbl};
   }
-  \draw (0,0) circle (1);
+  \draw (0,0) parabola (1,1);
 \end{tikzpicture}
 \end{center}
 

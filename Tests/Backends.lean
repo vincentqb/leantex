@@ -2937,6 +2937,7 @@ def pdfCensusTable :
   ("diagram-shapes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-tikzset", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-strokes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-tree", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-deck", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

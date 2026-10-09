@@ -1,0 +1,62 @@
+% Synthetic fixture: the constructs a computation graph and a sketch of
+% dots reach for — a tree grown upward with level styles, an edge style
+% whose tips point at the parent, a child with no edge, a coordinate child,
+% default child names an edge joins; a colour group around statements; a
+% length macro, calc partway and factor steps, circles and an ellipse, a
+% two-ended arrow and a size declaration among the statements, the tree's
+% labels set at the size its picture's font= names. Invented content and
+% design.
+\documentclass{article}
+
+\pictures{ tool = none }
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{
+  leaf = #2A6F4E,
+}
+
+\title{Trees and Dots}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{A grown tree}
+
+\begin{tikzpicture}[
+  font=\small,
+  level distance=12mm,
+  level 1/.style={sibling distance=24mm},
+  level 2/.style={sibling distance=14mm},
+  edge from parent/.style={draw, latex-}
+]
+  \node (top) {sum} [grow=up]
+    child {node {left}
+      child {node {$p$}}
+      child {node {$q$} edge from parent[draw=none]}}
+    child {node {right}
+      child {coordinate (tip)}};
+  \draw[->] (top-1-1) -- (top-2);
+  \textcolor{leaf}{\fill (tip) circle (2pt);}
+\end{tikzpicture}
+
+\section{Dots on a line}
+
+\begin{tikzpicture}
+  \pgfmathsetlengthmacro{\h}{0.6cm}
+  \pgfmathsetlengthmacro{\r}{1.5pt}
+  \coordinate (a) at (0,0);
+  \coordinate (b) at ($(a) + 3*(\h,0)$);
+  \coordinate (m) at ($(a)!.5!(b)$);
+  \node[above] at (m) {mid};
+  \draw (a) -- (b);
+  \fill (a) circle (\r);
+  \fill (b) circle (\r);
+  \draw (m) ellipse (0.9 and 0.3);
+  \draw[<->] ($(a) + (0,-\h)$) -- ($(b) + (0,-\h)$);
+  {\footnotesize \node[below] at ($(a)!2!(m) + (0,-\h)$) {span};}
+\end{tikzpicture}
+
+\end{document}

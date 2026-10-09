@@ -10069,12 +10069,12 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     modify fun st => if st.spans.declined.contains id then st
       else { st with spans := { st.spans with declined := st.spans.declined.push id } }
   for (code, msg) in pdiags do
-    -- A note names a decision, not a construct outside the subset, so the
-    -- subset's reach is no help to it.
-    let help : Option String := match code.loss with
-      | .info => none
-      | _ => some "the rendered subset is \\fill...rectangle, \\node at, \
-\\foreach, and \\pgfmath(truncate)setmacro"
+    -- Only a construct outside the subset is helped by the subset's reach;
+    -- a note names a decision, and an error the document's own mistake.
+    let help : Option String := match code with
+      | .W0334 => some "write it with paths, nodes, trees, \\foreach and pgfmath values, \
+which the rendered subset draws, or let a boundary tool draw it"
+      | _ => none
     -- A withdrawn or declined picture's refusals are keyed under the
     -- picture (`Ir.picFragmentKey`), so the driver folds them into its one
     -- line (`Cli.Boundary.foldLines`) and two such pictures never share one.

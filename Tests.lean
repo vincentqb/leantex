@@ -228,6 +228,7 @@ import Tests.FontDefaults
 import Tests.PictureContracts
 import Tests.PictureKeys
 import Tests.TikzCd
+import Tests.TikzCoverage
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
@@ -615,6 +616,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureRouteChecks ref oneFace
   tikzcdRouteChecks ref oneFace
   boundaryFidelityChecks ref
+  tikzTreeChecks ref oneFace
+  tikzScopeChecks ref oneFace
+  tikzPathChecks ref oneFace
   tikzInlineChecks ref oneFace
   pictureEveryLevelChecks ref oneFace
   pictureStyleHandlerChecks ref oneFace
