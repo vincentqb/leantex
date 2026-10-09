@@ -480,27 +480,6 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t s!"a declared body skip {name} sets the body's lines at its stretched length"
       (ps.size == 1 && near ps[0]! want)
 
-/-- **A deck's heading set in a named size takes the step's leading over its
-own size**, as the page leads a display's lines at the step's
-`\baselineskip` on the base the step scales: a `\small` frame title's
-element carries `lead-small`, whose line height is the page's 15.84 pt over
-the title's 14.4 pt. Before, the element kept the heading's own line height,
-about 17 bp per line against the page's 15.84. -/
-def headingLeadChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := check ref
-  let deckDoc := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
-    "\\begin{frame}{\\small " ++ longTitle ++ "}\nBody words.\n\\end{frame}\n" ++
-    "\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}\n\\end{document}")).1
-  let (_, nodes, _) := HtmlDoc.emitTree {} deckDoc
-  let leads := withClassIn nodes "lead-small"
-  t "a small frame title's element carries the step's leading"
-    (leads.size == 1 && leads.all (· matches .elem "h2" _ _))
-  let css := (HtmlDoc.emit {} deckDoc).1
-  t "a step's leading over a display's own size is the page's"
-    (hasStr css ".lead-small { line-height: 1.100; }")
-  t "a frame title under no size command keeps the heading's leading"
-    ((elemNodesList (· == "h2") #[] nodes.toList).size == 2)
-
 /-- A paragraph holding smaller inline runs on every line — a small, a
 footnotesize and a scriptsize word, a formula — between forced breaks:
 invented words only. -/
@@ -854,6 +833,99 @@ private def cascadeMarginTop (t : CTree) (rules : Array (String × String)) (i :
           | none => some (s, v)
   return best.map (·.2)
 
+/-- The value a declaration block states for `prop`, no shorthand read. -/
+private def declOf (decls prop : String) : Option String :=
+  (decls.splitOn ";").foldl (fun acc d =>
+    match d.splitOn ":" with
+    | k :: v :: more =>
+      if k.trimAscii.toString == prop then some (":".intercalate (v :: more)).trimAscii.toString
+      else acc
+    | _ => acc) none
+
+/-- The value the cascade gives element `i` for an inherited `prop`: its own
+`style` first, then the matching rule of highest specificity, the later of
+equals, and where neither states one, its parent's. -/
+private def cascadeInherited (t : CTree) (rules : Array (String × String)) (prop : String)
+    (i : Nat) : Option String := Id.run do
+  let mut at? : Option Nat := some i
+  for _ in [0:t.els.size + 1] do
+    match at? with
+    | none => return none
+    | some j =>
+      if let some own := (t.attr? j "style").bind (declOf · prop) then return some own
+      let mut best : Option ((Nat × Nat × Nat) × String) := none
+      for (sel, decls) in rules do
+        if let some v := declOf decls prop then
+          let matched := (cssSplit ',' sel).filter fun m => cssMatchChain 64 t none (cssChain m) j
+          unless matched.isEmpty do
+            let s := matched.foldl (fun b m =>
+              let s := cssSpec 64 m
+              if specLe b s then s else b) (0, 0, 0)
+            best := match best with
+              | some (bs, bv) => if specLe bs s then some (s, v) else some (bs, bv)
+              | none => some (s, v)
+      if let some (_, v) := best then return some v
+      at? := (t.el j).parent
+  return none
+
+/-- A unitless CSS number to the milli: `1.222` is 1222, `0` is 0. -/
+private def milliOf (v : String) : Option Int :=
+  match v.splitOn "." with
+  | [w] => w.toNat?.map fun n => ((n * 1000 : Nat) : Int)
+  | [w, f] =>
+    let f3 := (f ++ "000").take 3
+    match w.toNat?, f3.toString.toNat? with
+    | some a, some b => some ((a * 1000 + b : Nat) : Int)
+    | _, _ => none
+  | _ => none
+
+/-- **A deck's heading set in a named size leads at the page's leading**, as
+the page leads a display's lines at the step's `\baselineskip` on the base
+the step scales: the title's element carries `lead-<step>` and stands no
+line of its own, and the step's span inside it, at the step's size, takes
+the leading over that size — the page's own pitch over its own type, to the
+milli, for a step below the title's size and one above it. Before, the
+element took the leading over its own size and the span inherited that
+factor, so a step above the title's size stood every line that step's
+factor too loose: 37.3 bp per line for a `\Large` frame title the page sets
+at 25.9. -/
+def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for step in ["small", "Large"] do
+    let deckDoc := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}{\\" ++ step ++ " " ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
+      "Body words.\n\\end{frame}\n\\end{document}")).1
+    let (head, nodes, _) := HtmlDoc.emitTree {} deckDoc
+    let tree := CTree.of nodes
+    let rules := cssRules (treeCssList "" head.toList)
+    let has (i : Nat) (c : String) : Bool :=
+      (((tree.attr? i "class").getD "").splitOn " ").contains c
+    let heads := (List.range tree.els.size).filter fun i =>
+      (tree.el i).tag == "h2" && has i ("lead-" ++ step)
+    let inHead (i : Nat) : Bool := Id.run do
+      let mut at? := (tree.el i).parent
+      for _ in [0:tree.els.size] do
+        match at? with
+        | none => return false
+        | some j => if heads.contains j then return true else at? := (tree.el j).parent
+      return false
+    let spans := (List.range tree.els.size).filter fun i => has i ("size-" ++ step) && inHead i
+    let page := (sizedPitches (layoutOf oneFace deckDoc)).map fun (sz, p) => p * 1000 / sz
+    t s!"a {step} frame title's element carries the step's leading and stands no line"
+      (heads.length == 1 &&
+        heads.all fun i => cascadeInherited tree rules "line-height" i == some "0")
+    t s!"a {step} frame title's lines lead at the page's leading over their type"
+      (spans.length == 1 && !page.isEmpty && spans.all fun i =>
+        match (cascadeInherited tree rules "line-height" i).bind milliOf with
+        | some v => page.all fun q => (v - q).natAbs ≤ 1
+        | none => false)
+  let plain := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}\n\\end{document}")).1
+  let (_, plainNodes, _) := HtmlDoc.emitTree {} plain
+  t "a frame title under no size command keeps the heading's leading"
+    ((elemNodesList (· == "h2") #[] plainNodes.toList).size == 1 &&
+      Ir.sizeScale.all fun (n, _) => (withClassIn plainNodes ("lead-" ++ n)).isEmpty)
+
 /-- The flow blocks of each frame a deck's tree ships, seeing through overlay
 carriers and skipping the frame's furniture, each block's tag, its text and
 the `margin-top` the cascade gives it. -/
@@ -895,21 +967,31 @@ private def gapBlocks : List String :=
    "\\begin{block}{Kilo}Kilo words in a block.\\end{block}",
    "\\begin{itemize}\n\\item Dogwood item\n\\item Elm item\n\\end{itemize}",
    "Fir words follow the list.", "\\begin{quote}\nHazel words quoted.\n\\end{quote}",
-   "\\begin{block}{Lima}Lima words close a step.\\end{block}",
-   "Juniper words open the range.", "\\[ x + y = z \\]", "Larch words end the frame."]
+   "\\[ x + y = z \\]", "Juniper words follow the display.",
+   "\\begin{block}{Lima}Lima words close a step.\\end{block}", "Larch words end the frame."]
 
 /-- The same blocks with overlays between them: `\pause` twice, the second
-opening on a block, an open `\uncover` holding a paragraph, a quotation and a
-block it closes on, a closed range's `\uncover<2-3>` (its declared end a
-second carrier) holding a paragraph, a display and a paragraph. lualatex
-stands every line of its last step where the flat frame stands it. -/
+opening on a block, an open `\uncover` holding a paragraph and the quotation
+it closes on, and a closed range's `\uncover<2-3>` (its declared end a second
+carrier) opening on the display right after that quotation and closing on a
+block. lualatex stands every line of its last step where the flat frame
+stands it. -/
 private def gapOverlaid : String :=
   match gapBlocks with
-  | [a, b, c, k, l, f, q, m, j, d, e] =>
+  | [a, b, c, k, l, f, q, d, j, m, e] =>
     a ++ "\n\n" ++ b ++ "\n\\pause\n\n" ++ c ++ "\n\n\\pause\n" ++ k ++ "\n\n" ++ l ++ "\n\n" ++
-      "\\uncover<3->{" ++ f ++ "\n\n" ++ q ++ "\n\n" ++ m ++ "}\n\n" ++
-      "\\uncover<2-3>{" ++ j ++ "\n\n" ++ d ++ "\n\n" ++ e ++ "}"
+      "\\uncover<3->{" ++ f ++ "\n\n" ++ q ++ "}\n\n" ++
+      "\\uncover<2-3>{" ++ d ++ "\n\n" ++ j ++ "\n\n" ++ m ++ "}\n\n" ++ e
   | _ => ""
+
+/-- A one-item list of invented words. -/
+private def gapList (w : String) : String :=
+  "\\begin{itemize}\n\\item " ++ w ++ " item\n\\end{itemize}"
+
+/-- Two readings of a frame's flow agree block for block: tag, text and the
+cascade's `margin-top`. -/
+private def agree3 (a b : Array (String × String × Option String)) : Bool :=
+  !a.isEmpty && a.size == b.size && (a.zip b).all fun (x, y) => x == y
 
 /-- One frame of a deck whose paragraphs stand a declared `\parskip` apart. -/
 private def gapDeck (body : String) : String :=
@@ -920,8 +1002,10 @@ private def gapDeck (body : String) : String :=
 and without its `\pause`, `\uncover` and closed-range carriers, every flow
 block of the frame takes the same `margin-top` in the cascade — the
 declared `\parskip` between paragraphs, a list's and a quotation's space,
-the display's skip — and the page's last step stands every line where the
-flat frame does. A carrier is an element of its own (one element animates
+the display's skip — and every step of the page stands every line where the
+flat frame does: a display opening a carrier keeps the `\@endpe` the
+quotation before it left (`Ir.openAfterEnv`), and a covered display stays a
+display (`Ir.displayParts` reads through the cover's colour). A carrier is an element of its own (one element animates
 one opacity), so the sheet's sibling boundaries read through it
 (`HtmlDoc.GapRule.throughCarriers`, `HtmlDoc.blockGapThrough_owner_contract`);
 before, the first block in each carrier took no margin and the declared gap
@@ -947,22 +1031,113 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     ((ov.filter fun (tag, _, _) => tag == "p").all fun (_, _, m) => m.isSome)
   -- the judge sees the hole the carriers left: the same tree under the
   -- sheet read through no carriers
-  let d := HtmlDoc.carrierDepths ovDoc.body
+  let d := HtmlDoc.carrierPairs on
   let lists := ovDoc.docClass.record.lists
   let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d
   let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens
-  t "the overlay deck's carriers nest, so its sheet reads through them"
-    (0 < d.1 && hasStr ovCss through && through != plain)
+  t "the overlay deck's carriers stand between its blocks, so its sheet reads through them"
+    (!d.isEmpty && hasStr ovCss through && through != plain)
   t "without reading through carriers the judge finds the gaps that vanish"
     (!agree flat (frameFlow on (ovCss.replace through plain)))
-  -- the page: the last step of the overlaid frame is the flat frame
-  let lastPage (doc : Ir.Doc) : Array (String × Sp) :=
-    match (layoutOf oneFace doc).pages.back? with
-    | some p => (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
-    | none => #[]
-  t "the page's last step stands every line where the flat frame does"
-    (let a := lastPage flatDoc
-     let b := lastPage ovDoc
-     !a.isEmpty && a == b)
+  -- the page: every step of the overlaid frame is the flat frame, covered
+  -- or shown
+  let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
+    (layoutOf oneFace doc).pages.map fun p =>
+      (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
+  let flatPages := pages flatDoc
+  let ovPages := pages ovDoc
+  t "every step of the page stands every line where the flat frame does"
+    (!flatPages.isEmpty && ovPages.size == 3 * flatPages.size &&
+      (List.range ovPages.size).all fun i => ovPages[i]? == flatPages[i % flatPages.size]?)
+  -- an alternation: the page at each step is the flat frame of the group
+  -- it shows, and the screen with no snap shows the first; where the groups
+  -- end apart the block after them reads neither, where alike either
+  for (alike, label) in [(false, "a paragraph and a list"), (true, "two lists")] do
+    let groups := if alike then (gapList "Kilo", gapList "Lima")
+      else ("Kilo words in a paragraph.", gapList "Lima")
+    let around (mid : String) : String :=
+      "Alder words open the frame.\n\n" ++ mid ++ "\n\nLarch words end the frame."
+    let altDoc := (elabStr (gapDeck (around ("\\alt<2>{" ++ groups.2 ++ "}{" ++
+      groups.1 ++ "}")))).1
+    let firstDoc := (elabStr (gapDeck (around groups.1))).1
+    let otherDoc := (elabStr (gapDeck (around groups.2))).1
+    let (ah, an, _) := HtmlDoc.emitTree {} altDoc
+    let (fh1, fn1, _) := HtmlDoc.emitTree {} firstDoc
+    t s!"an alternation of {label} marks its pair alike exactly when its groups end alike"
+      ((withClassIn an "alt-alike").isEmpty == !alike && (withClassIn an "alt-pair").size == 1)
+    t s!"the screen with no snap gives an alternation of {label} the first group's gaps"
+      (agree3 (frameFlow fn1 (treeCssList "" fh1.toList)) (frameFlow an (treeCssList "" ah.toList)))
+    t s!"each step of an alternation of {label} is the flat frame of the group it shows"
+      (pages altDoc == (pages firstDoc ++ pages otherDoc) && (pages altDoc).size == 2)
+  -- the sheet reads the boundary shapes the tree has, not every depth its
+  -- carriers nest to: forty pauses read through the one link a single
+  -- pause does
+  let pausesDoc (n : Nat) : Ir.Doc :=
+    (elabStr (gapDeck ("\n\\pause\n".intercalate
+      ((List.range (n + 1)).map fun i => s!"Words of paragraph {i}.\n")))).1
+  let pausePairs (n : Nat) : List (Nat × Nat) :=
+    let (_, nodes, _) := HtmlDoc.emitTree {} (pausesDoc n)
+    HtmlDoc.carrierPairs nodes
+  t "forty nested pauses read through the boundary shapes one pause does"
+    (pausePairs 40 == pausePairs 1 && !(pausePairs 1).isEmpty)
+  let sheetOf (n : Nat) : String :=
+    let doc := pausesDoc n
+    HtmlDoc.blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens (pausePairs n)
+  t "a frame of forty pauses ships the gap sheet of one"
+    (sheetOf 40 == sheetOf 1)
+
+/-- Displays meeting an overlay carrier, each with its flat reading: a
+display opening a `\pause` or an `\uncover` after a list, opening a
+`\pause` inside a running paragraph or after a quotation, a `\pause` after
+a display inside a paragraph, and an `\uncover` holding a display in
+mid-paragraph. Invented words only. -/
+private def carrierDisplayCases : List (String × String × String) :=
+  [("a display opening a pause after a list",
+     gapList "Elm" ++ "\n\\pause\n\\[ a = b \\]\n\nAlder words stand here.",
+     gapList "Elm" ++ "\n\\[ a = b \\]\n\nAlder words stand here."),
+   ("a display opening an uncover after a list",
+     gapList "Elm" ++ "\n\\uncover<2->{\\[ a = b \\]}\n\nAlder words stand here.",
+     gapList "Elm" ++ "\n\\[ a = b \\]\n\nAlder words stand here."),
+   ("a display opening a pause inside a paragraph",
+     "Alder words stand here.\n\\pause\n\\[ a = b \\]\nBirch words stand here.",
+     "Alder words stand here.\n\\[ a = b \\]\nBirch words stand here."),
+   ("a pause after a display inside a paragraph",
+     "Alder words stand here.\n\\[ a = b \\]\n\\pause\nBirch words stand here.",
+     "Alder words stand here.\n\\[ a = b \\]\nBirch words stand here."),
+   ("a display opening a pause after a quotation",
+     "\\begin{quote}\nHazel quoted.\n\\end{quote}\n\\pause\n\\[ a = b \\]\n" ++
+       "Birch words stand here.",
+     "\\begin{quote}\nHazel quoted.\n\\end{quote}\n\\[ a = b \\]\nBirch words stand here."),
+   ("an uncover holding a display inside a paragraph",
+     "Alder words stand here.\n\\uncover<2->{\\[ a = b \\]}\nBirch words stand here.",
+     "Alder words stand here.\n\\[ a = b \\]\nBirch words stand here.")]
+
+/-- **A carrier stands its displays in their paragraph**
+(`Ir.carrierDisplays`): a display opening or closing a `\pause` or an
+`\uncover` stands, at every step of the page and on the screen, where it
+stands with no overlay there, as lualatex stands it — inside the paragraph
+its text runs on in, right after the environment end that left `\@endpe`,
+before the break that does or does not follow. Elaborated alone, the
+carrier's body saw neither side: a display after a list opened a new
+paragraph about 13 pt lower, one in a running paragraph about 8 pt, and
+every covered step set the display as a centred paragraph, the cover's
+colour hiding its shape (`Ir.displayParts`). -/
+def carrierDisplayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
+    (layoutOf oneFace doc).pages.map fun p =>
+      (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
+  for (label, overlaid, flat) in carrierDisplayCases do
+    let ovDoc := (elabStr (gapDeck overlaid)).1
+    let flatDoc := (elabStr (gapDeck flat)).1
+    let o := pages ovDoc
+    let f := pages flatDoc
+    t s!"{label} stands at every step where the flat frame stands it"
+      (!f.isEmpty && o.size == 2 * f.size &&
+        (List.range o.size).all fun i => o[i]? == f[i % f.size]?)
+    let (oh, on, _) := HtmlDoc.emitTree {} ovDoc
+    let (fh, fn, _) := HtmlDoc.emitTree {} flatDoc
+    t s!"{label} takes the flat frame's gaps on the screen"
+      (agree3 (frameFlow fn (treeCssList "" fh.toList)) (frameFlow on (treeCssList "" oh.toList)))
 
 end Tests.LineRhythm

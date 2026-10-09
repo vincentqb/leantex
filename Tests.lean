@@ -248,7 +248,6 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlRhythmChecks ref
   Tests.LineRhythm.htmlStepChecks ref
   Tests.LineRhythm.htmlGapChecks ref
-  Tests.LineRhythm.headingLeadChecks ref
   htmlListGapChecks ref
   htmlSectionGapChecks ref
   printLiftChecks ref
@@ -415,6 +414,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.LineRhythm.venueLadderChecks ref oneFace
   Tests.LineRhythm.inlineRunChecks ref oneFace
   Tests.LineRhythm.overlayGapChecks ref oneFace
+  Tests.LineRhythm.carrierDisplayChecks ref oneFace
+  Tests.LineRhythm.headingLeadChecks ref oneFace
   displayTexChecks ref oneFace
   titleBarChecks ref geom oneFace font
   slideChecks ref oneFace

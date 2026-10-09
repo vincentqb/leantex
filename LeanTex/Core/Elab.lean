@@ -9973,6 +9973,32 @@ private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
   | [] => false
   | r :: _ => r matches .par _
 
+/-- The paragraph state an overlay carrier standing at `raws[i]` opens in,
+`body` its content and `blocks` what stood before it once its opening
+flushed the paragraph: inside the paragraph whose text ran on to it with no
+break between (`inPar`), or else right after an environment end that left
+`\@endpe` (`endPe`) — what a display opening the carrier reads, as it
+reads it with no carrier there (`Ir.carrierDisplays`). Content opening on a
+paragraph break is in no paragraph. -/
+private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
+    (body : Array Raw) : Bool × Bool :=
+  let opensOnText := match body.toList.dropWhile (· matches .space) with
+    | .par _ :: _ => false
+    | _ => true
+  let ranOn := match (raws.extract 0 i).toList.reverse.dropWhile (· matches .space) with
+    | [] | .par _ :: _ => false
+    | _ :: _ => true
+  let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
+  (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe)
+
+/-- `\pause`'s carrier, the rest of the scope from `raws[i]` on, stood in
+its paragraph (`carrierOpening`): nothing follows it in the scope, so its
+last display keeps the break it found there. -/
+private def pauseDisplays (raws : Array Raw) (i : Nat) (blocks inner : Array Block) :
+    Array Block :=
+  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
+  Ir.carrierDisplays inPar endPe false inner
+
 /-- A display formula met between words, outside the knot: the open
 paragraph flushed, the display's own arm, and where the display stands in
 its paragraph (`Ir.markDisplay`) — text before it, and whether a paragraph
@@ -9991,7 +10017,7 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
 -- data to that process, never proof material, and unfolding it is what
 -- blows the elaboration budget. Sealed for the knot, unsealed right after.
 seal takeArgs mkPara finishPara flushPara stripMathMeta
-seal blockMacroStep
+seal blockMacroStep pauseDisplays
 seal closeBlockMacros blockControlContext
 seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
 seal declAlignOf
@@ -12331,7 +12357,11 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlockScope stepCtx ga
           let ib ← elabBlockScope ctx gb
-          blocks := blocks.push (.alternate spec ia ib)
+          let after := parFollows raws (j3 + 1)
+          let (pa, ea) := carrierOpening raws i blocks ga
+          let (pb, eb) := carrierOpening raws i blocks gb
+          blocks := blocks.push (.alternate spec (Ir.carrierDisplays pa ea after ia)
+            (Ir.carrierDisplays pb eb after ib))
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the
@@ -12371,6 +12401,8 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx gbody
+          let (inPar, endPe) := carrierOpening raws i blocks gbody
+          let inner := Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
@@ -12400,6 +12432,8 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx (raws.extract jg raws.size)
+          let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
+          let inner := Ir.carrierDisplays inPar endPe false inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨raws.size, by omega⟩)
@@ -12691,7 +12725,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
         let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
         let blocks := if inner.isEmpty then blocks
-          else blocks.push (.step (ctx'.stepBase + 2) none inner)
+          else blocks.push (.step (ctx'.stepBase + 2) none (pauseDisplays raws i blocks inner))
         have hend : sliceWeight raws raws.size = 0 :=
           sliceWeight_end raws (Nat.le_refl _)
         have hendp : slicePars raws raws.size = 0 :=
@@ -13017,7 +13051,7 @@ public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     ∃ r, (elabBlocks ctx raws).run st = r :=
   ⟨_, rfl⟩
 
-unseal blockMacroStep
+unseal blockMacroStep pauseDisplays
 unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
 unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix

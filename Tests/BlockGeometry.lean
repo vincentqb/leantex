@@ -635,8 +635,17 @@ private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
   check ref "block step wrappers HTML: a block a wrapper opens takes its space above inside it"
     (hasStr sheet "* + div:is(.step, .step-set, .alt-pair, [data-backend]):not(.frame-body-start) > section.block:first-child")
+  check ref "block step wrappers HTML: a frame a wrapped block closes passes its space below on"
+    (hasStr sheet "section.slide:has(section.block.frame-flow-end) > .frame-body-tail")
+  let closing := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}[t]{Steps}\n" ++
+    "\\begin{block}{Plain}Early words.\\end{block}\n" ++
+    "\\uncover<2->{\\begin{block}{Later}Late words.\\end{block}}\n\nClosing words.\n" ++
+    "\\end{frame}\n\\end{document}\n"
+  let (closingDoc, _) := Elab.run "block-steps-closing.tex" closing
+  let (closingHead, closingBody, _) := HtmlDoc.emitTree {} closingDoc
+  let (_, closingSheet) := listStyles (#[], "") (closingHead.toList ++ closingBody.toList)
   check ref "block step wrappers HTML: a wrapper a block closes passes its space below on"
-    (hasStr sheet ":has(> section.block:last-child) + *:not(")
+    (hasStr closingSheet ":has(> section.block:last-child) + *:not(")
   -- A frame opening on a stepped block: the opening rule reads the block's
   -- space above (`--frame-body-before`) on the frame's first body element,
   -- here the step's carrier, which therefore declares it.

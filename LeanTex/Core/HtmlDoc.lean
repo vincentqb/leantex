@@ -271,7 +271,8 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "alt-pair", "alt-alike",
+   "frame-body-tail", "frame-flow-end"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1347,99 +1348,201 @@ between its last block and the one after it, as it would with no carrier
 there. The boundaries are adjacent-sibling rules, which a carrier hides —
 its first block has no previous sibling, and the block after it follows the
 carrier, not the block the carrier ended on — so every boundary also reads
-through the carriers, down the chains of first and last children as deep as
-the document's carriers nest (`carrierDepths`): `X + Y` holds too where `Y`
-opens a chain of carriers after `X`, and where `X` closes one before `Y`.
-Each variant stands in its boundary's own rule, so it ranks where the
-boundary ranks (`blockGapThrough_owner_contract`). -/
+through the carriers, down the chains of first and last children the
+emitted tree stands its boundaries between (`carrierPairs`): `X + Y` holds
+too where `Y` opens a chain of carriers after `X`, and where `X` closes one
+before `Y`; and the spacer after a frame's body meets the block the
+frame's flow ends on through the frame's own marks (`frameBodyEnd`). The
+sheet grows with the shapes of the tree's boundaries, never with how deep
+its carriers nest: a frame of forty `\pause`s reads through the one link a
+frame of one does. Each variant stands in its boundary's own rule, so it
+ranks where the boundary ranks (`blockGapThrough_owner_contract`).
 
-/-- How a block stands in its flow on the HTML tree: a state change or a
-page-only fact ships no element (`blockNodesInto` skips it, or its arm ships
-an empty text, which no sibling combinator sees), a carrier ships its blocks
-one element down, and every other block is an element of the flow. -/
-private inductive FlowSlot where
-  | silent
-  | carrier
-  | element
+An alternation shows one group at a time, and which is a snap's `display`
+choice no selector reads; so its end is read through only where both
+groups end on the same element (`alt-alike`, `altEndsAlike`), and
+otherwise the block after the pair meets the pair itself. -/
 
-private def flowSlot : Block → FlowSlot
-  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .link .. | .quote _
-  | .titled .. | .equation .. | .abstract _ | .columns _ | .note _ | .spaced ..
-  | .verbatim .. | .algorithm .. | .rule .. | .frame .. | .nav .. | .picture _
-  | .table .. | .float .. | .bibliography .. => .element
-  | .role n _ => if Ir.pageMarkerRole n then .silent else .element
-  | .onSteps .. | .altSteps .. | .only .. => .carrier
-  | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _ | .logo _ => .silent
+/-- Whether a class value carries the class `c`. -/
+private def classHas (v c : String) : Bool := (v.splitOn " ").contains c
 
-mutual
+/-- An element's class value from its attributes, empty where it has none. -/
+private def attrsClass (attrs : Array (String × String)) : String :=
+  ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
 
-/-- How many carriers deep the first element a block list ships stands. -/
--- conserves: none — a depth of the tree a block list ships; it emits nothing.
-private def firstCarrierDepth : List Block → Nat
-  | [] => 0
-  | b :: rest => match flowSlot b with
-    | .silent => firstCarrierDepth rest
-    | .element => 0
-    | .carrier => carrierFirstDepth b
+private def classOfNode : Node → String
+  | .elem _ attrs _ => attrsClass attrs
+  | .text _ | .style _ | .script _ _ => ""
 
-/-- A carrier's depth down its first children: its one element — two for a
-range's declared end (`stepEndNodes`) and for an alternation's pair and
-group — over the carriers its first block opens. -/
--- conserves: none — the one-block face of `firstCarrierDepth`.
-private def carrierFirstDepth : Block → Nat
-  | .onSteps spec body =>
-    1 + (if spec.last.isSome then 1 else 0) + firstCarrierDepth body.toList
-  | .altSteps _ firstPage otherPage =>
-    2 + max (firstCarrierDepth firstPage.toList) (firstCarrierDepth otherPage.toList)
-  | .only _ body => 1 + firstCarrierDepth body.toList
-  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .role .. | .link ..
-  | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim .. | .algorithm ..
-  | .columns _ | .note _ | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _
-  | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
-  | .bibliography .. | .spaced .. => 0
+/-- A carrier one element of a chain: an overlay's step, its set and
+declared end, either group of an alternation, and a backend's transparent
+group. An alternation's pair (`isAltPair`) is a carrier too, read down
+both of its groups. -/
+private def isLinkCarrier : Node → Bool
+  | .elem "div" attrs _ =>
+    attrs.any (·.1 == "data-backend") ||
+      ["step", "step-set", "step-end", "alt"].any (classHas (attrsClass attrs) ·)
+  | .elem .. | .text _ | .style _ | .script _ _ => false
 
-end
+private def isAltPair : Node → Bool
+  | .elem "div" attrs _ => classHas (attrsClass attrs) "alt-pair"
+  | .elem .. | .text _ | .style _ | .script _ _ => false
+
+private def isCarrierNode (n : Node) : Bool := isLinkCarrier n || isAltPair n
 
 mutual
 
-/-- How many carriers deep the last element a block list ships stands, `acc`
-for the elements before. -/
--- conserves: none — a depth of the tree a block list ships; it emits nothing.
-private def lastCarrierDepth (acc : Nat) : List Block → Nat
+/-- The element a carrier ends on, down its last children: its tag and
+class, `none` where it ends on nothing or on an alternation whose groups
+end apart. A hand-rolled walk over the emitted tree, as the walks below:
+the sheet's selectors read that tree, and no IR fold sees it. -/
+private def carrierEndKey : Node → Option (String × String)
+  | .elem _ _ kids => endKeyList none kids.toList
+  | .text _ | .style _ | .script _ _ => none
+
+-- conserves: none — the list face of `carrierEndKey`; it emits nothing.
+private def endKeyList (acc : Option (String × String)) : List Node → Option (String × String)
   | [] => acc
-  | b :: rest => match flowSlot b with
-    | .silent => lastCarrierDepth acc rest
-    | .element => lastCarrierDepth 0 rest
-    | .carrier => lastCarrierDepth (carrierLastDepth b) rest
-
-/-- A carrier's depth down its last children, as `carrierFirstDepth` reads
-its first. -/
--- conserves: none — the one-block face of `lastCarrierDepth`.
-private def carrierLastDepth : Block → Nat
-  | .onSteps spec body =>
-    1 + (if spec.last.isSome then 1 else 0) + lastCarrierDepth 0 body.toList
-  | .altSteps _ firstPage otherPage =>
-    2 + max (lastCarrierDepth 0 firstPage.toList) (lastCarrierDepth 0 otherPage.toList)
-  | .only _ body => 1 + lastCarrierDepth 0 body.toList
-  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .role .. | .link ..
-  | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim .. | .algorithm ..
-  | .columns _ | .note _ | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _
-  | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
-  | .bibliography .. | .spaced .. => 0
+  | x :: rest =>
+    match x with
+    | .elem tag attrs _ =>
+      endKeyList (if isLinkCarrier x then carrierEndKey x
+        else if isAltPair x then
+          (if classHas (attrsClass attrs) "alt-alike" then carrierEndKey x else none)
+        else some (tag, attrsClass attrs)) rest
+    | .text _ => endKeyList acc rest
+    | .style _ | .script _ _ => endKeyList none rest
 
 end
 
-/-- The deepest chains of carriers a document's blocks open (down their
-first children) and close (down their last): how deep its sheet's
-boundaries read (`GapRule.throughCarriers`). A document with no overlay and
-no backend group reads none, and its sheet is the boundaries alone. -/
-public def carrierDepths (body : Array Block) : Nat × Nat :=
-  Ir.foldBlocks (fun d b => (max d.1 (carrierFirstDepth b), max d.2 (carrierLastDepth b)))
-    (fun d _ => d) (0, 0) body
+/-- Both groups of an alternation end on the same element, so the block
+after the pair meets one boundary whichever group a step shows. -/
+private def altEndsAlike (first other : Array Node) : Bool :=
+  match endKeyList none first.toList, endKeyList none other.toList with
+  | some a, some b => a == b
+  | _, _ => false
 
-/-- The carriers a top-level boundary reads through: an overlay's step, its
-set, an alternation's pair, and a backend's transparent group. -/
+mutual
+
+/-- The depths, counted in carriers from `n` down, at which the chains of
+first children `n` opens end on an element — `throughMembers`' `k`: one
+for the carrier's own first child, one more per carrier standing first in
+it, and down both groups of an alternation. -/
+private def downDepths : Node → List Nat
+  | .elem _ attrs kids =>
+    if classHas (attrsClass attrs) "alt-pair" then groupDownDepths [] kids.toList
+    else firstDepths kids.toList
+  | .text _ | .style _ | .script _ _ => []
+
+-- conserves: none — the list face of `downDepths`; it emits nothing.
+private def firstDepths : List Node → List Nat
+  | [] => []
+  | x :: rest =>
+    match x with
+    | .elem .. => if isCarrierNode x then (downDepths x).map (· + 1) else [1]
+    | .text _ => firstDepths rest
+    | .style _ | .script _ _ => [1]
+
+-- conserves: none — an alternation's groups for `downDepths`; it emits nothing.
+private def groupDownDepths (acc : List Nat) : List Node → List Nat
+  | [] => acc
+  | x :: rest =>
+    groupDownDepths (if classHas (classOfNode x) "alt"
+      then acc ++ (downDepths x).map (· + 1) else acc) rest
+
+end
+
+mutual
+
+/-- The depths of the chains of last children `n` closes, as `downDepths`
+reads first ones — `throughMembers`' `j`; an alternation's only where its
+groups end alike. -/
+private def upDepths : Node → List Nat
+  | .elem _ attrs kids =>
+    if classHas (attrsClass attrs) "alt-pair" then
+      (if classHas (attrsClass attrs) "alt-alike" then groupUpDepths [] kids.toList else [])
+    else lastDepths [] kids.toList
+  | .text _ | .style _ | .script _ _ => []
+
+-- conserves: none — the list face of `upDepths`; it emits nothing.
+private def lastDepths (acc : List Nat) : List Node → List Nat
+  | [] => acc
+  | x :: rest =>
+    match x with
+    | .elem .. => lastDepths (if isCarrierNode x then (upDepths x).map (· + 1) else [1]) rest
+    | .text _ => lastDepths acc rest
+    | .style _ | .script _ _ => lastDepths [1] rest
+
+-- conserves: none — an alternation's groups for `upDepths`; it emits nothing.
+private def groupUpDepths (acc : List Nat) : List Node → List Nat
+  | [] => acc
+  | x :: rest =>
+    groupUpDepths (if classHas (classOfNode x) "alt"
+      then acc ++ (upDepths x).map (· + 1) else acc) rest
+
+end
+
+/-- A slide's furniture after its body: the spacer the body's flow meets
+through the frame's own marks (`frameBodyEnd`), and the footer, logo and
+notes, which state or need no gap of their own. -/
+private def frameFurniture : Node → Bool
+  | .elem tag attrs _ =>
+    tag == "footer" || tag == "aside" ||
+      ["fill", "frame-body-tail", "slide-logo", "snap"].any (classHas (attrsClass attrs) ·)
+  | .text _ | .style _ | .script _ _ => false
+
+/-- The boundary shapes two adjacent siblings stand between: the chains
+`p` closes and `y` opens, zero for the element itself. A carrier closes no
+chain onto a slide's furniture: the spacer meets the flow's last block
+through the frame's marks, one member per boundary whatever depth the
+carriers nest to, and the rest states its own gap. -/
+private def pairDepths (p y : Node) : List (Nat × Nat) :=
+  let js := 0 :: (if isCarrierNode p && !frameFurniture y then upDepths p else [])
+  let ks := 0 :: (if isCarrierNode y then downDepths y else [])
+  js.flatMap fun j => ks.filterMap fun k => if j == 0 && k == 0 then none else some (j, k)
+
+/-- One element's children, pair by adjacent pair, text between them
+aside as sibling combinators set it aside. -/
+private def siblingPairs (acc : List (Nat × Nat)) (prev : Option Node) :
+    List Node → List (Nat × Nat)
+  | [] => acc
+  | x :: rest =>
+    match x with
+    | .text _ => siblingPairs acc prev rest
+    | .elem .. | .style _ | .script _ _ =>
+      siblingPairs (match prev with
+        | some p => (pairDepths p x).foldl (fun a q => if a.contains q then a else q :: a) acc
+        | none => acc) (some x) rest
+
+mutual
+
+private def treePairsOne (acc : List (Nat × Nat)) : Node → List (Nat × Nat)
+  | .elem _ _ kids => treePairsList (siblingPairs acc none kids.toList) kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+-- conserves: none — every element's children for `carrierPairs`; it emits nothing.
+private def treePairsList (acc : List (Nat × Nat)) : List Node → List (Nat × Nat)
+  | [] => acc
+  | x :: rest => treePairsList (treePairsOne acc x) rest
+
+end
+
+/-- The boundary shapes of an emitted tree (`pairDepths` at every pair of
+adjacent siblings), sorted: what its sheet's boundaries read through
+(`GapRule.throughCarriers`). A tree with no carrier has none, and its sheet
+is the boundaries alone. -/
+public def carrierPairs (nodes : Array Node) : List (Nat × Nat) :=
+  (treePairsList (siblingPairs [] none nodes.toList) nodes.toList).mergeSort
+    fun a b => a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
+
+/-- The carriers a boundary reads down from: an overlay's step, its set, an
+alternation's pair, and a backend's transparent group. -/
 private def carrierTop : String := "div:is(.step, .step-set, .alt-pair, [data-backend])"
+
+/-- The carriers a boundary reads up from: an alternation's pair only where
+its groups end alike. -/
+private def carrierTopUp : String :=
+  "div:is(.step, .step-set, .alt-pair.alt-alike, [data-backend])"
 
 /-- A carrier one element further down a chain of first children: any
 carrier standing first in the one above it, a range's declared end among
@@ -1447,9 +1550,11 @@ them, and either group of an alternation, one of which is hidden. -/
 private def carrierFirstLink : String :=
   ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):first-child, div.alt)"
 
-/-- `carrierFirstLink` down a chain of last children. -/
+/-- `carrierFirstLink` down a chain of last children, an alternation's pair
+only where its groups end alike. -/
 private def carrierLastLink : String :=
-  ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):last-child, div.alt)"
+  ":is(div:is(.step, .step-set, .step-end, .alt-pair.alt-alike, [data-backend]):last-child, " ++
+    "div.alt)"
 
 /-- `sel`'s parts at the separators `sep` no parenthesis encloses. -/
 private def splitTop (sep : Char) (sel : String) : List String := Id.run do
@@ -1479,48 +1584,53 @@ private def siblingMember? (m : String) : Option (String × String × String) :=
     else some (String.join (pre.reverse.map (· ++ " ")), x, y)
   | _ => none
 
-/-- A boundary member `X + Y` read through carriers of depth at most
-`(dr, dl)`: itself, with `Y` first in a chain of `k ≤ dr` carriers standing
-after `X` — save a frame's opening carrier, whose first block opens the frame
-— `X` last in a chain of `j ≤ dl` carriers standing before `Y`, and both. A
-lower side that is any element is no carrier: the carrier's first block takes
-the boundary, and a gap on both would stack in a flex column. An upper side
-that is any element already meets the carrier itself, and `:has()` does not
-nest. A document with no carriers keeps its member as written. -/
-private def throughMembers (dr dl : Nat) (m : String) : List String :=
+/-- A boundary member `X + Y` read through the boundary shapes `pairs`
+(`carrierPairs`): itself, and for each shape `(j, k)` the member with `X`
+last in a chain of `j` carriers standing before `Y`, `Y` first in a chain
+of `k` standing after `X` — save a frame's opening carrier, whose first
+block opens the frame — and, where `Y` is any element, the spacer after a
+frame whose flow ends on `X` through its carriers (`frameBodyEnd`). A lower side that is any element is no carrier: the
+carrier's first block takes the boundary, and a gap on both would stack in
+a flex column. An upper side that is any element already meets the carrier
+itself, and `:has()` does not nest. A tree with no carriers keeps its
+member as written. -/
+private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List String :=
   match siblingMember? m with
   | none => [m]
   | some (pre, x, y) =>
-    if dr == 0 && dl == 0 then [m] else
+    if pairs.isEmpty then [m] else
     let y := if y == "*" then s!"*:not({carrierTop})" else y
     let down (k : Nat) : String :=
       carrierTop ++ ":not(.frame-body-start)" ++
         String.join (List.replicate (k - 1) (" > " ++ carrierFirstLink)) ++
         " > " ++ y ++ ":first-child"
     let up (j : Nat) : String :=
-      carrierTop ++ ":has(> " ++
+      carrierTopUp ++ ":has(> " ++
         String.join (List.replicate (j - 1) (carrierLastLink ++ " > ")) ++ x ++ ":last-child)"
-    let ks := (List.range dr).map (· + 1)
-    let js := if x == "*" || (x.splitOn ":has(").length > 1 then []
-      else (List.range dl).map (· + 1)
-    (pre ++ x ++ " + " ++ y) :: (ks.map (fun k => pre ++ x ++ " + " ++ down k) ++
-      js.map (fun j => pre ++ up j ++ " + " ++ y) ++
-      js.flatMap (fun j => ks.map fun k => pre ++ up j ++ " + " ++ down k))
+    let upOk := !(x == "*" || (x.splitOn ":has(").length > 1)
+    let frameEnd := if upOk && pre.isEmpty && y == s!"*:not({carrierTop})" then
+        [s!"section.slide:has({x}.frame-flow-end) > .frame-body-tail"]
+      else []
+    (pre ++ x ++ " + " ++ y) :: (frameEnd ++ pairs.filterMap fun (j, k) =>
+      if j == 0 then (if k == 0 then none else some (pre ++ x ++ " + " ++ down k))
+      else if !upOk then none
+      else if k == 0 then some (pre ++ up j ++ " + " ++ y)
+      else some (pre ++ up j ++ " + " ++ down k))
 
-/-- A boundary read through `d`'s carriers (`throughMembers`): the same value
-over its members read through; a reset and a parskip rule stand as they are,
-and so does every rule of a document with no carriers. -/
-public def GapRule.throughCarriers (d : Nat × Nat) : GapRule → GapRule
+/-- A boundary read through the boundary shapes `pairs` (`throughMembers`):
+the same value over its members read through; a reset and a parskip rule
+stand as they are, and so does every rule of a tree with no carriers. -/
+public def GapRule.throughCarriers (pairs : List (Nat × Nat)) : GapRule → GapRule
   | .boundary sel v =>
-    if d.1 == 0 && d.2 == 0 then .boundary sel v
-    else .boundary (", ".intercalate ((splitTop ',' sel).flatMap (throughMembers d.1 d.2))) v
+    if pairs.isEmpty then .boundary sel v
+    else .boundary (", ".intercalate ((splitTop ',' sel).flatMap (throughMembers pairs))) v
   | .reset sel m => .reset sel m
   | .parskip sel v => .parskip sel v
 
 /-- Reading through carriers turns no rule into a reset and no reset into
 anything else. -/
-public theorem GapRule.throughCarriers_isReset (d : Nat × Nat) (r : GapRule) :
-    (r.throughCarriers d).isReset = r.isReset := by
+public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : GapRule) :
+    (r.throughCarriers pairs).isReset = r.isReset := by
   cases r with
   | boundary sel v =>
     simp only [GapRule.throughCarriers]
@@ -1528,10 +1638,10 @@ public theorem GapRule.throughCarriers_isReset (d : Nat × Nat) (r : GapRule) :
   | reset _ _ => rfl
   | parskip _ _ => rfl
 
-/-- The block-boundary sheet read through `d`'s carriers. -/
+/-- The block-boundary sheet read through a tree's boundary shapes. -/
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (d : Nat × Nat := (0, 0)) : String :=
-  String.join ((blockGapRules l size tokens).map fun r => (r.throughCarriers d).render)
+    (pairs : List (Nat × Nat) := []) : String :=
+  String.join ((blockGapRules l size tokens).map fun r => (r.throughCarriers pairs).render)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -1594,11 +1704,11 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
     simp only [blockGapRules, List.getLast?_append, hlast, Option.some_or]
 
 /-- **Reading through carriers keeps each boundary's emitter** (`_contract`):
-the sheet read through any carrier depths still stands its resets first and
+the sheet read through any boundary shapes still stands its resets first and
 alone and its heading's follower last, so every carrier variant ranks where
 its boundary ranks — each rides inside its boundary's own rule. -/
 public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
-    (tokens : Ir.Tokens) (d : Nat × Nat) :
+    (tokens : Ir.Tokens) (d : List (Nat × Nat)) :
     (((blockGapRules l size tokens).map (GapRule.throughCarriers d)).dropWhile
         GapRule.isReset).all (fun r => !r.isReset) = true ∧
       ((blockGapRules l size tokens).map (GapRule.throughCarriers d)).getLast? =
@@ -2723,22 +2833,25 @@ resolves the same runs through the same ladder (`Layout`'s flatten state).
 `em` rather than `rem`: sizes nest. On a deck a step's leading
 (`stepLineHeightMilli`, over the document's skip column, factor and body) is
 a class of its own, `lead-<step>`, carried by the block whose lines lead at
-the step: a heading or title the step sets, over the element's own size —
-the base the step scales — and a paragraph, item or cell set wholly in the
-step, which carries the step's size too and so takes the leading over that
-size (`.size-<step>.lead-<step>`). A size span states no line height: it
-inherits its block's unitless one, as the page leads a run at its
-paragraph's leading in its proportion to the paragraph's size
-(`Ir.runLead`), so a smaller span never moves its line. -/
+the step, over the size the step sets — a paragraph, item or cell set
+wholly in the step carries that size too (`.size-<step>.lead-<step>`), and a
+heading or title the step sets keeps its own size and its content's span,
+which carries the size and takes the leading (`.lead-<step> .size-<step>`):
+the heading itself stands no line height (0), so a strut of its own smaller
+type cannot stand the span's baseline off its leading, and its lines are
+the page's, the step's `\baselineskip` on the base the step scales. Any
+other size span states no line height: it inherits its block's unitless
+one, as the page leads a run at its paragraph's leading in its proportion
+to the paragraph's size (`Ir.runLead`), so a smaller span never moves its
+line. -/
 private def sizeRules (scale : List (String × Nat))
     (deck : Option (List (String × Nat) × Nat × Dim.Sp) := none) : String :=
   String.join (scale.map fun (name, k) =>
     match deck with
     | some (skips, factor, body) =>
       s!".size-{name} \{ font-size: {milliFactor k}em; }\n" ++
-      s!".lead-{name} \{ line-height: " ++
-        s!"{milliFactor (stepLineHeightMilli skips factor body name 1000)}; }\n" ++
-      s!".size-{name}.lead-{name} \{ line-height: " ++
+      s!":is(h1, h2, h3, h4, h5, h6).lead-{name} \{ line-height: 0; }\n" ++
+      s!".lead-{name} .size-{name}, .size-{name}.lead-{name} \{ line-height: " ++
         s!"{milliFactor (stepLineHeightMilli skips factor body name k)}; }\n"
     | none => s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
@@ -4965,7 +5078,7 @@ paddings, margins, radii and breakpoints are this stylesheet's own screen
 furniture — stated as the engine's choices, no external authority names
 them, and each is overridable by a reader stylesheet, which is the HTML
 backend's contract. -/
-public def baseCss (cfg : Config) (doc : Doc) : String :=
+public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   -- The two token sets are `Contrast.light`/`Contrast.dark`, not literals
   -- here: every pairing they create is proved legible over there
   -- (`light_contract`, `dark_contract`), and a value only a backend knows
@@ -5239,7 +5352,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens (carrierDepths doc.body) ++
+  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -6500,6 +6613,55 @@ private def frameBodyStart (kids : Array Node) : Array Node :=
       | .text _ | .style _ | .script .. => node)
   | none => kids
 
+mutual
+
+/-- The element a carrier's flow ends on, marked `frame-flow-end` down its
+last children — in both groups of an alternation whose groups end alike,
+and in neither of one whose groups end apart, which no sheet can read. -/
+private def markFlowEnd : Node → Node
+  | .elem tag attrs kids =>
+    if isLinkCarrier (.elem tag attrs kids) then .elem tag attrs (markLastList kids.toList).toArray
+    else if classHas (attrsClass attrs) "alt-pair" then
+      if classHas (attrsClass attrs) "alt-alike" then
+        .elem tag attrs (markGroupsList kids.toList).toArray
+      else .elem tag attrs kids
+    else withClass "frame-flow-end" (.elem tag attrs kids)
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+-- conserves: none — the last element of a carrier for `markFlowEnd`; it marks one class.
+private def markLastList : List Node → List Node
+  | [] => []
+  | x :: rest =>
+    if rest.any (· matches .elem ..) then x :: markLastList rest
+    else (match x with
+      | .elem .. => markFlowEnd x
+      | .text _ | .style _ | .script _ _ => x) :: rest
+
+-- conserves: none — an alternation's groups for `markFlowEnd`; it marks one class.
+private def markGroupsList : List Node → List Node
+  | [] => []
+  | x :: rest =>
+    (if classHas (classOfNode x) "alt" then markFlowEnd x else x) :: markGroupsList rest
+
+end
+
+/-- Where a frame's body ends on a carrier, mark the block its flow ends on,
+through the carriers, `frame-flow-end`, and answer that it did: the spacer
+after the body (`frame-body-tail`) then meets that block as it would with
+no carrier there, through one member per boundary (`throughMembers`) rather
+than a variant per depth of the carriers the body closes. A body ending on
+a block marks nothing, as the spacer already follows that block. Hidden
+speaker notes are no part of the flow. -/
+private def frameBodyEnd (kids : Array Node) : Array Node × Bool :=
+  match (kids.toList.zipIdx.reverse.find? fun (node, _) => match node with
+    | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
+    | .text _ | .style _ | .script .. => false) with
+  | some (node, i) =>
+    if isCarrierNode node then (kids.modify i markFlowEnd, true) else (kids, false)
+  | none => (kids, false)
+
 /-- One reference-list entry: the style's marker, the formatted content,
 and the anchor its citations link to. A numbered entry's content is one
 element beside its label, so the list's grid can hang the labels in one
@@ -7382,9 +7544,10 @@ private def stepNode (cfg : Config) (tag : String) (content : Array Inline) : No
   | none => Html.elem tag (inlines cfg content)
 
 /-- A deck's heading or title set in one named size (`Ir.paraStep?`) takes
-that step's leading over its own size (`lead-<step>`, `sizeRules`), as the
-page leads a display's lines at the step's `\baselineskip` on the base the
-step scales; the element keeps its own size and its content its spans. -/
+that step's leading (`lead-<step>`, `sizeRules`), as the page leads a
+display's lines at the step's `\baselineskip` on the base the step scales;
+the element keeps its own size and its content its spans, the step's span
+taking the leading over its own size. -/
 private def withLead (cfg : Config) (content : Array Inline) (node : Node) : Node :=
   if !cfg.deck then node else
   match Ir.paraStep? content with
@@ -7596,11 +7759,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- The block form of the inline alternation arm. The groups need one
     -- carrier each so a selector can reach each range (`alt_backend_agree`);
     -- the pair rides a container of its own because a block arm ships one
-    -- node, and the container carries nothing — no range, no side, no rule.
-    Html.elem "div"
-      (overlayAlternatives "div" cfg.overlaySteps spec
-        (blockNodesInto cfg.into #[] firstPage.toList) (blockNodesInto cfg.into #[] otherPage.toList))
-      #[("class", "alt-pair")]
+    -- node, and the container carries no range, no side and no rule — only
+    -- whether its groups end alike, which the gap sheet reads its end
+    -- through (`altEndsAlike`).
+    let first := blockNodesInto cfg.into #[] firstPage.toList
+    let other := blockNodesInto cfg.into #[] otherPage.toList
+    Html.elem "div" (overlayAlternatives "div" cfg.overlaySteps spec first other)
+      #[("class", if altEndsAlike first other then "alt-pair alt-alike" else "alt-pair")]
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck
     -- and in print.
@@ -7724,7 +7889,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       listingGround := Ir.frameGroundOf cfg.pal standout valign, listingFg }
     let kids := blockNodesInto bodyCfg #[] body.toList
     let opening := !standout && !title.isEmpty
-    let kids := if opening then frameBodyStart kids else kids
+    let (kids, endsOnCarrier) := frameBodyEnd (if opening then frameBodyStart kids else kids)
     let openingAttrs := if opening then
         let length := if cfg.deck then
             s!"{decMilli (frameBodySkipMilli true valign cfg.page.fontSize cfg.page.height)}vh"
@@ -7733,11 +7898,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       else #[]
     let kids := if cfg.deck then
         let (above, below) := vdistShares valign
-        let spacer (n : Nat) : Array Html.Node :=
+        let spacer (n : Nat) (cls : String) : Array Html.Node :=
           if n == 0 then #[] else
-            #[Html.elem "div" #[] #[("class", "fill"), ("style", s!"flex-grow: {n}")]]
-        let up := spacer above
-        let down := spacer below
+            #[Html.elem "div" #[] #[("class", cls), ("style", s!"flex-grow: {n}")]]
+        let up := spacer above "fill"
+        let down := spacer below (if endsOnCarrier then "fill frame-body-tail" else "fill")
         up ++ kids ++ down
       else kids
     Html.elem "section" (header ++ kids)
@@ -8384,8 +8549,13 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
   let faceRules := match cfg.fonts with
     | some fs => fontCss fs
     | none => ""
+  -- The base sheet reads the body's boundary shapes (`carrierPairs`), so
+  -- its slot is held here, in cascade order, and filled once the body is
+  -- built.
+  let cssCfg := cfg
+  let styleAt := head.size
   match cfg.css with
-  | .own => head := head.push (Node.style (faceRules ++ baseCss cfg doc ++ "\n" ++ themeCss doc ++ styled))
+  | .own => head := head.push (Node.style "")
   | .bulma =>
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
@@ -8738,6 +8908,9 @@ one in the article class"
       (imageAttrsList (some "data-image-index") #[] body.toList) do
     if let some en := cfg.imgs.get? k then
       diags := diags.push (undecodableDiag (resolvedSrc en) en.webError (some k))
+  if cssCfg.css == .own then
+    head := head.modify styleAt fun _ => Node.style (faceRules ++
+      baseCss cssCfg doc (carrierPairs body) ++ "\n" ++ themeCss doc ++ styled)
   return (head, body, diags)
 
 /-- Normalize the shared IR at the public entry, before any backend walk. -/

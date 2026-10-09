@@ -2847,7 +2847,9 @@ leads in the body's proportion to its smaller type, and its box stays inside
 the paragraph's strut whatever skip column the page reads
 (`runLead_between`). A unitless CSS line height is the same rule — the one
 an inline element inherits from the block it stands in, so the HTML's runs
-read this proportion too. -/
+read this proportion too. A run larger than its paragraph grows its box in
+the same proportion, as CSS's does, where TeX keeps the `\baselineskip`
+until the ink collides: pending work. -/
 @[expose] public def runLead (lead : Option Sp) (nominal size : Sp) (factor : Nat := 1000) :
     Sp :=
   match lead with
@@ -5959,14 +5961,17 @@ public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block)
 /-- Classify a display region without treating source annotations as
 content. `none` means another semantic inline was present; `some seen`
 records whether a formula was found among labels and empty annotations.
-Only diagnostic wrappers are traversed: a style or link still changes the
-semantic shape, so the general all-descendants fold is not this reader. -/
+Only diagnostic wrappers and colours are traversed: a colour is ink, not
+shape — a step's cover paints a covered display through one
+(`dimBlocks`), and covering reflows nothing — while a style or link still
+changes the semantic shape, so the general all-descendants fold is not
+this reader. -/
 -- conserves: none — a classifier; emits no document text.
 public def displayParts : List Inline → Bool → Option Bool
   | [], seen => some seen
   | .formula true _ _ :: rest, _ | .math true _ :: rest, _ => displayParts rest true
   | .label _ :: rest, seen => displayParts rest seen
-  | .located _ body :: rest, seen =>
+  | .located _ body :: rest, seen | .colored _ _ body :: rest, seen =>
     (displayParts body.toList seen).bind (displayParts rest)
   | _ :: _, _ => none
 termination_by xs _ => sizeOf xs
@@ -5998,13 +6003,17 @@ public def Block.partopsepEnv : Block → Bool
   | .role n _ => n == thmSpaceRole .kernel
   | _ => false
 
+mutual
+
 /-- A block whose end leaves TeX's `\@endpe` set (ltlists.dtx `\endtrivlist`,
 `\@doendpe`): a list, a quote, or any theorem-like trivlist. When a display
 opens a paragraph right after one — in vertical mode, possibly across a
 `\vspace` or a blank line but no intervening paragraph of text — the opening
 `\everypar` takes the indent box back, so TeX sets no empty line. One level
 of the in-paragraph wrapper (`inParagraphRole`) is seen through, as that is
-how a list opened mid-paragraph stands in the block stream. -/
+how a list opened mid-paragraph stands in the block stream; so is an
+overlay's carrier or a backend's group, which the page ends where its last
+block ends. -/
 public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
   | .role n body =>
@@ -6013,7 +6022,16 @@ public def Block.leavesEndPe : Block → Bool
         | #[.list ..] | #[.quote _] => true
         | #[.role m _] => (thmSpaceOf? m).isSome
         | _ => false)
+  | .onSteps _ body | .only _ body => leavesEndPeLast body.toList
   | _ => false
+
+/-- Whether the last of a carrier's blocks leaves `\@endpe` set. -/
+public def leavesEndPeLast : List Block → Bool
+  | [] => false
+  | [b] => b.leavesEndPe
+  | _ :: b :: rest => leavesEndPeLast (b :: rest)
+
+end
 
 /-- A list or a quote marked as opened inside a paragraph
 (`inParagraphRole`). Anything else stands as it is. -/
@@ -6113,6 +6131,49 @@ public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array 
     let c := { c with inPar, parEnd, afterEnv }
     blocks.pop.push (if c == {} then d else .role c.role #[d])
   | _, _ => blocks
+
+/-- A display in context `c`, wrapped in the role that names it — unwrapped
+in the default context, as `markDisplay` leaves it. -/
+public def withDisplayCtx (c : DisplayCtx) (d : Block) : Block :=
+  if c == {} then d else .role c.role #[d]
+
+/-- The opening half of `carrierDisplays`: a first block that is a display
+opening in vertical mode takes the state the carrier opened in. -/
+private def carrierOpenDisplay (inPar endPe : Bool) (blocks : Array Block) : Array Block :=
+  match blocks.toList with
+  | b :: rest =>
+    let (c, d) := displayCtxOf b
+    if d.isDisplay && !c.inPar && !c.afterEnv then
+      (withDisplayCtx { c with inPar := inPar, afterEnv := !inPar && endPe } d :: rest).toArray
+    else blocks
+  | [] => blocks
+
+/-- The closing half of `carrierDisplays`: a last block that is a display
+with no break after it inside the carrier takes the break after the
+carrier. -/
+private def carrierCloseDisplay (parEnd : Bool) (blocks : Array Block) : Array Block :=
+  match blocks.back? with
+  | some b =>
+    let (c, d) := displayCtxOf b
+    if d.isDisplay && !c.parEnd then
+      blocks.pop.push (withDisplayCtx { c with parEnd := parEnd } d)
+    else blocks
+  | none => blocks
+
+/-- **A carrier stands in its paragraph as its blocks would with no carrier
+there**: elaborated alone, an overlay's body sees neither the paragraph it
+opened in nor the break after it, so its first display would open a scope
+and its last end one. The first block, a display opening the carrier in
+vertical mode, takes the state the carrier opened in — inside the
+paragraph the text before it left open (`inPar`), or right after an
+environment end that left `\@endpe` (`endPe`, `Block.leavesEndPe`) — and
+the last, a display closing the carrier with no break inside it, the break
+that does or does not follow the carrier (`parEnd`). lualatex sets a display
+across `\pause` and `\uncover` exactly where it sets it with neither. Every
+other block stands as it is. -/
+public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
+    Array Block :=
+  carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
 
 /-- The frames the deck numbers: every `.frame` except a golden title page.
 The title is front matter; a standout is content whose footer is hidden,
@@ -12120,6 +12181,47 @@ private theorem displayCtxOf_text (acc : String) (b : Block) :
     · next hd => simp [blockTextOne, hd, blockTextList]
     · rfl
   · rfl
+
+/-- Placing a display in a context moves its placement, never its text. -/
+private theorem withDisplayCtx_text (acc : String) (c : DisplayCtx) (d : Block) :
+    blockTextOne acc (withDisplayCtx c d) = blockTextOne acc d := by
+  unfold withDisplayCtx
+  split
+  · rfl
+  · simp [blockTextOne, blockTextList]
+
+private theorem carrierOpenDisplay_text (inPar endPe : Bool) :
+    Conserves blocksText (carrierOpenDisplay inPar endPe) := fun xs => by
+  unfold carrierOpenDisplay
+  split
+  · next b rest h =>
+    dsimp only
+    split
+    · have hb := displayCtxOf_text "" b
+      simp only [blocksText, h, blockTextList] at hb ⊢
+      rw [withDisplayCtx_text, hb]
+    · rfl
+  · rfl
+
+private theorem carrierCloseDisplay_text (parEnd : Bool) :
+    Conserves blocksText (carrierCloseDisplay parEnd) := fun xs => by
+  unfold carrierCloseDisplay
+  split
+  · next b hb =>
+    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
+    dsimp only
+    split
+    · rw [Array.pop_push, blocksText_push, blocksText_push, withDisplayCtx_text,
+        displayCtxOf_text]
+    · rfl
+  · rfl
+
+/-- Standing a carrier's displays in its paragraph moves their placement,
+never their text. -/
+public theorem carrierDisplays_text (inPar endPe parEnd : Bool) :
+    Conserves blocksText (carrierDisplays inPar endPe parEnd) := fun xs => by
+  unfold carrierDisplays
+  rw [carrierCloseDisplay_text, carrierOpenDisplay_text]
 
 /-- Marking a display keeps the sequence's census: whatever context it
 records, the block pushed is the display itself or that display in a role. -/
