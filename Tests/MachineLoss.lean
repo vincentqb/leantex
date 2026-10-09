@@ -4,6 +4,7 @@ public import Tests.Support
 public import LeanTex.Cli.Boundary
 public import LeanTex.Cli.Publication
 public import Lean.Data.Json
+public import LeanTex.Cli.RunBounded
 
 public section
 
@@ -27,10 +28,6 @@ private def attrIn (tag name : String) : Option String :=
 private def labelled (tag : String) : Bool :=
   (attrIn tag "aria-label").any (!·.isEmpty)
 
-/-- A path quoted for `/bin/sh`. -/
-private def shQuoted (p : System.FilePath) : String :=
-  "'" ++ p.toString.replace "'" "'\\''" ++ "'"
-
 /-- A boundary renderer that names its version and draws by copying a
 committed PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
 holding nothing else still runs it. -/
@@ -40,7 +37,7 @@ private def fakeRenderer (pdf : System.FilePath) : String :=
   "  printf '%s\\n' 'synthetic boundary renderer 1'\n" ++
   "  exit 0\n" ++
   "fi\n" ++
-  "/bin/cp " ++ shQuoted pdf ++ " pic.pdf || exit 3\n" ++
+  "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
   "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
 
 /-- A PDF-to-SVG converter that names its version and converts by copying
@@ -51,11 +48,50 @@ private def fakeConverter (svg : System.FilePath) : String :=
   "  printf '%s\\n' 'synthetic converter 1' >&2\n" ++
   "  exit 0\n" ++
   "fi\n" ++
-  "/bin/cp " ++ shQuoted svg ++ " \"$3\" || exit 3\n"
+  "/bin/cp " ++ shQuote svg.toString ++ " \"$3\" || exit 3\n"
 
 /-- An SVG validator the machine kills before it answers. -/
 private def killedValidator : String :=
   "#!/bin/sh\nkill -9 $$\n"
+
+/-- An SVG validator a missing shared library cannot start: every check
+counts itself in `calls`, then exits 127 with the dynamic loader's line on
+its stderr. A real one could not answer `--version` either; its answer here
+stands in for the version memo an earlier build wrote while the library was
+still there. -/
+private def loaderBroken (calls : System.FilePath) : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = --version ]; then\n" ++
+  "  printf '%s\\n' 'xmllint: using libxml version 20900' >&2\n" ++
+  "  exit 0\n" ++
+  "fi\n" ++
+  "printf '%s\\n' check >> " ++ shQuote calls.toString ++ "\n" ++
+  "printf '%s\\n' 'xmllint: error while loading shared libraries: libsynthetic.so.0: \
+cannot open shared object file: No such file or directory' >&2\n" ++
+  "exit 127\n"
+
+/-- A converter that names its version and is never asked to convert. -/
+private def versionOnly (name : String) : String :=
+  "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' '" ++ name ++ " 1'; exit 0; fi\nexit 3\n"
+
+/-- A boundary renderer that names its version and refuses every picture,
+saying why in its log. -/
+private def refusingRenderer : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = --version ]; then\n" ++
+  "  printf '%s\\n' 'synthetic boundary renderer 1'\n" ++
+  "  exit 0\n" ++
+  "fi\n" ++
+  "printf '%s\\n' '! Synthetic refusal of an invented picture.' > pic.log\n" ++
+  "exit 1\n"
+
+/-- A picture outside the rendered subset whose failed render the document
+accepts. Invented content. -/
+private def acceptedSource (fonts : System.FilePath) : String :=
+  "\\documentclass{article}\n" ++
+  "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
+  "\\allow{E0382}\n\\begin{document}\nAn invented shading follows.\n\n" ++
+  "\\begin{tikzpicture}\n  \\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}\n\\end{document}\n"
 
 /-- An included SVG figure, by a generated file beside the document.
 Invented content. -/
@@ -93,6 +129,58 @@ private structure MachineCase where
   placeholders : Nat
   drawings : Nat
 
+/-- The child behind `legacySlotChecks`: a conversion with a synthetic tool
+fills its slot; the slot is replaced by one spelled as the v2 variant spells
+it, holding the refusal a run that never started read as there; and the next
+conversion of the same source must ask the tool again. Exit 0 when it does. -/
+private def legacySlotDriver : String :=
+  "import LeanTex.Cli.ConvCache\n" ++
+  "import LeanTex.Cli.ToolProbe\n" ++
+  "open LeanTex.Cli\n" ++
+  "def main (args : List String) : IO UInt32 := do\n" ++
+  "  let [dir] := args | return 2\n" ++
+  "  let tool := dir ++ \"/zz-legacy-tool\"\n" ++
+  "  let calls ← IO.mkRef 0\n" ++
+  "  let produce : IO (ConvCache.Result × Bool) := do\n" ++
+  "    calls.modify (· + 1)\n" ++
+  "    return ({ outcome := .drawn, bytes := \"drawn\".toUTF8 }, true)\n" ++
+  "  let source := \"an invented source\".toUTF8\n" ++
+  "  let recipe := \"zz-legacy-tool <input> <output>\"\n" ++
+  "  let first ← ConvCache.cachedResult source recipe #[tool] true produce\n" ++
+  "  let convs : System.FilePath := dir ++ \"/cache/leantex/convs\"\n" ++
+  "  let answers ← do\n" ++
+  "    let entries ← convs.readDir\n" ++
+  "    pure (entries.filter (·.fileName.endsWith \".answer\"))\n" ++
+  "  let memo ← IO.FS.readFile (convs / (\"tool-\" ++ LeanTex.Core.Flate.contentKey tool.toUTF8 ++ \".ver\"))\n" ++
+  "  let some (stamp, version) := PicCache.readVersionMemo memo | return 3\n" ++
+  "  let identity := tool ++ \"\\n\" ++ stamp ++ \"\\n\" ++ version\n" ++
+  "  let variant := LeanTex.Core.Flate.contentKey (String.intercalate \"\\u0000\"\n" ++
+  "    [\"vector-cache-v2\", LeanTex.version, recipe, identity]).toUTF8\n" ++
+  "  for e in answers do IO.FS.removeFile e.path\n" ++
+  "  IO.FS.writeBinFile (convs / (LeanTex.Core.Flate.contentKey source ++ \"-\" ++ variant ++ \".answer\"))\n" ++
+  "    (ConvCache.encode (.error \"zz-legacy-tool exited 127: zz-legacy-tool: error while loading shared libraries\"))\n" ++
+  "  let again ← ConvCache.cachedResult source recipe #[tool] true produce\n" ++
+  "  IO.println s!\"{answers.size} slot, {← calls.get} conversions\"\n" ++
+  "  return if answers.size == 1 && first.outcome == .drawn && again.outcome == .drawn &&\n" ++
+  "    (← calls.get) == 2 then 0 else 1\n"
+
+/-- **A slot the v2 variant wrote is never read.** v2 could hold a run that
+never started (exit 126 or 127) as the tool's refusal, so the slots moved to
+v3: in a child whose cache is its own, a v2 slot holding such a refusal
+leaves the next conversion to ask the tool again. -/
+def legacySlotChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let (lean, leanPath) ← leanChild "legacy slot checks"
+  IO.FS.withTempDir fun dir => do
+    let dir ← IO.FS.realPath dir
+    writeScript (dir / "zz-legacy-tool")
+      "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'zz-legacy-tool 1'; exit 0; fi\nexit 3\n"
+    let driver := dir / "legacy.lean"
+    IO.FS.writeFile driver legacySlotDriver
+    let result ← RunBounded.runBounded lean.toString #["--run", driver.toString, dir.toString] dir 30000 100
+      (env := #[("LEAN_PATH", some leanPath), ("XDG_CACHE_HOME", some (dir / "cache").toString)])
+    check ref s!"machine loss: a v2 slot holding a run that never started is not read ({repr result.ran}): {result.out}{result.err}"
+      (result.complete && result.ran == .exited 0)
+
 /-- **A tool this machine lacks, or a check it could not finish, degrades
 the HTML page instead of refusing it**, on the paths fixed here, and each
 such loss is named once, under its subject: a boundary picture no tool drew
@@ -100,11 +188,16 @@ such loss is named once, under its subject: a boundary picture no tool drew
 check did not finish (W0378, at the picture's span — and where the rendered
 subset draws the picture in part, the subset's drawing ships whichever step
 failed); an included SVG whose plan a missing or killed validator stopped
-(W0602, which names the PDF's placeholder and the page's at once); and a
-page icon whose check did not finish (W0605). The defects refused the page
-(E0606) and wrote nothing while the PDF shipped its placeholder. One path is
-not held here: a boundary render that started and did not finish stays
-E0382 and fails the run by design (`boundaryUnfinishedChecks`). The library
+(W0602, which names the PDF's placeholder and the page's at once), a
+validator that cannot start among them (exit 127 from a missing library,
+remembered nowhere, so the next build asks again); and a page icon whose
+check did not finish (W0605). The defects refused the page (E0606) and wrote
+nothing while the PDF shipped, and so did a refused render the document
+accepts (`\allow{E0382}`), which now ships the page's placeholder too. One
+path is not held here: a boundary render that did not finish — killed, a
+spawn that raised, or a nonzero exit with no log, a renderer that cannot
+start after naming its version among them — stays E0382 and fails the run
+by design (`boundaryUnfinishedChecks`). The library
 half holds the pure steps — a faceless boundary picture, or an include whose
 plan stopped, refuses the unmarked page and ships the marked one with no new
 diagnostic and the PDF unchanged, and an omitted face leaves a page that
@@ -219,9 +312,15 @@ def machineLossChecks (ref : IO.Ref (List String))
     let renderer := dir / "renderer"
     let converter := dir / "converter"
     let killed := dir / "killed"
-    for d in [bare, renderer, converter, killed] do IO.FS.createDirAll d
-    IO.FS.writeFile (killed / "xmllint") killedValidator
-    IO.setAccessRights (killed / "xmllint") { user := ⟨true, true, true⟩ }
+    let loader := dir / "loader"
+    let refusing := dir / "refusing"
+    for d in [bare, renderer, converter, killed, loader, refusing] do IO.FS.createDirAll d
+    for (file, body) in [(killed / "xmllint", killedValidator),
+        (loader / "xmllint", loaderBroken (loader / "calls")),
+        (loader / "rsvg-convert", versionOnly "synthetic converter"),
+        (refusing / "lualatex", refusingRenderer)] do
+      IO.FS.writeFile file body
+      IO.setAccessRights file { user := ⟨true, true, true⟩ }
     IO.FS.writeBinFile (dir / "square.svg") square
     let svgInclude := dir / "include.tex"
     IO.FS.writeFile svgInclude (includeSource (corpus / "fonts"))
@@ -234,6 +333,19 @@ def machineLossChecks (ref : IO.Ref (List String))
     let fallback := dir / "fallback.tex"
     IO.FS.writeFile fallback fallbackText
     let boundary := corpus / "diagram-boundary.tex"
+    let build (doc path : System.FilePath) (cache : String) (out : System.FilePath) : IO IO.Process.Output :=
+      IO.Process.output {
+        cmd := binary.toString, cwd := some dir
+        args := #[doc.toString, "-o", out.toString, "--porcelain"]
+        env := #[("PATH", some path.toString),
+          ("XDG_CACHE_HOME", some (dir / ("cache-" ++ cache)).toString),
+          ("LEANTEX_FONT", some font.toString)] }
+    let recordsOf (run : IO.Process.Output) : List Lean.Json :=
+      ((run.stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun line => (Lean.Json.parse line).toOption
+    let loaderCase : MachineCase :=
+      { name := "loader-broken SVG check", doc := svgInclude, path := loader, cache := "loader"
+        code := "W0602", subject := some "square.svg", located := true, placeholders := 1
+        drawings := 0 }
     -- Runs on one document share a cache: a missing tool, and a check that
     -- did not finish, are remembered nowhere, so each next machine asks again.
     for c in [
@@ -257,6 +369,7 @@ def machineLossChecks (ref : IO.Ref (List String))
         { name := "killed SVG check", doc := svgInclude, path := killed, cache := "include"
           code := "W0602", subject := some "square.svg", located := true, placeholders := 1
           drawings := 0 },
+        loaderCase,
         { name := "no icon check", doc := corpus / "webpage.tex", path := bare, cache := "webpage"
           code := "W0605", subject := some "favicon.svg", located := false, placeholders := 0
           drawings := 0 },
@@ -264,14 +377,8 @@ def machineLossChecks (ref : IO.Ref (List String))
           cache := "webpage", code := "W0605", subject := some "favicon.svg", located := false
           placeholders := 0, drawings := 0 }] do
       let out := dir / ((c.name.replace " " "-").replace "," "") / "page.html"
-      let run ← IO.Process.output {
-        cmd := binary.toString, cwd := some dir
-        args := #[c.doc.toString, "-o", out.toString, "--porcelain"]
-        env := #[("PATH", some c.path.toString),
-          ("XDG_CACHE_HOME", some (dir / ("cache-" ++ c.cache)).toString),
-          ("LEANTEX_FONT", some font.toString)] }
-      let records := ((run.stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun line =>
-        (Lean.Json.parse line).toOption
+      let run ← build c.doc c.path c.cache out
+      let records := recordsOf run
       let coded (codes : List String) := records.filter fun j =>
         j.getObjValAs? String "event" == .ok "diagnostic" &&
           codes.any fun code => j.getObjValAs? String "code" == .ok code
@@ -303,5 +410,38 @@ def machineLossChecks (ref : IO.Ref (List String))
           ((html.splitOn "<svg").length - 1 == c.drawings)
         t s!"machine loss CLI {c.name}: no image names a request key, and no icon is linked"
           (!hasStr html (" src=\"" ++ Ir.picSrcPrefix) && !hasStr html "rel=\"icon\"")
+    -- A validator a missing shared library cannot start said nothing of its
+    -- own: its run is remembered nowhere, so the next build asks it again.
+    let checks : IO Nat := do
+      return (((← IO.FS.readFile (loader / "calls")).splitOn "\n").filter (!·.isEmpty)).length
+    let before ← checks
+    let again ← build loaderCase.doc loaderCase.path loaderCase.cache (dir / "loader-again" / "page.html")
+    let after ← checks
+    t s!"machine loss CLI loader-broken SVG check: the next build asks the validator again ({before} then {after} checks)"
+      (again.exitCode == 0 && before ≥ 1 && after > before)
+    -- A refused render the document accepts: the faceless picture's loss is
+    -- that E0382, accepted once, and the page ships its placeholder.
+    let accepted := dir / "accepted.tex"
+    IO.FS.writeFile accepted (acceptedSource (corpus / "fonts"))
+    let acceptedOut := dir / "accepted" / "page.html"
+    let run ← build accepted refusing "accepted" acceptedOut
+    let records := recordsOf run
+    let event (j : Lean.Json) := (j.getObjValAs? String "event").toOption
+    let acceptedCodes := records.filterMap fun j =>
+      if event j == some "accepted" then (j.getObjValAs? (Array Lean.Json) "codes").toOption else none
+    let named := records.filterMap fun j =>
+      if event j == some "diagnostic" then (j.getObjValAs? String "code").toOption else none
+    t s!"machine loss CLI accepted refusal: the build ships (exit {run.exitCode})" (run.exitCode == 0)
+    t s!"machine loss CLI accepted refusal: the failed render is accepted once and no machine loss is named ({named})"
+      (acceptedCodes.any (·.any fun c => (c.getObjValAs? String "code").toOption == some "E0382" &&
+          (c.getObjValAs? Nat "count").toOption == some 1) &&
+        !named.any (["E0606", "W0378", "W0379", "W0602", "W0605"].contains ·))
+    match ← (IO.FS.readFile acceptedOut).toBaseIO with
+    | .error _ => t "machine loss CLI accepted refusal: the HTML page is written" false
+    | .ok html =>
+      let tags := placeholderTags html
+      t "machine loss CLI accepted refusal: one labelled placeholder, and no image names a request key"
+        (tags.length == 1 && tags.all labelled && !hasStr html (" src=\"" ++ Ir.picSrcPrefix))
+  legacySlotChecks ref
 
 end Tests

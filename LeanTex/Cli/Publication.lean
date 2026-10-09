@@ -90,7 +90,11 @@ public theorem svgVerdict_refuse_exact (o : PicCache.Outcome) :
 
 /-- **Only a check that never finished omits a resource** (`_exact`): the
 reading `Boundary.checkedFace_unfinished_exact` gives a boundary picture's
-face, so the driver withdraws exactly the faces this gate would omit. -/
+face. So the driver leaves unconverted exactly the faces this gate would
+omit, naming each by W0378 (and withdraws those the rendered subset draws in
+part), while its check and this one agree; where a check that finished
+there does not finish here, the face is omitted here and named by W0378
+with no span. -/
 public theorem svgVerdict_omit_exact (o : PicCache.Outcome) :
     svgVerdict o = .omit ↔ ∃ w, o = .inconclusive w := by
   cases o <;> simp [svgVerdict]

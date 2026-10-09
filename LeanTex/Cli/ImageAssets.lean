@@ -170,16 +170,24 @@ private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
         | _ => detail)
   if ran.exitCode != 0 then
     let stderr := ran.stderr.trimAscii.toString
-    -- Lean's POSIX exec failure has this exact exit and stderr pair.
-    -- A converter's own exit 255 is not evidence that it failed to start.
-    let unstarted := ran.exitCode == 255 &&
-        stderr == s!"could not execute external process '{tool}'"
+    -- Lean's POSIX exec failure has this exact exit and stderr pair, and
+    -- 127 is what the dynamic loader exits with when a shared library is
+    -- missing, and a shell when the command it was asked for is (126 when
+    -- that command cannot run). A converter's own exit 255 is not evidence
+    -- that it failed to start.
+    let unstarted := (ran.exitCode == 255 &&
+        stderr == s!"could not execute external process '{tool}'") ||
+      ran.exitCode == 126 || ran.exitCode == 127
     let said := if stderr.isEmpty then ran.stdout.trimAscii.toString else stderr
     let detail := s!"{tool} exited {ran.exitCode}" ++ (if said.isEmpty then "" else ": " ++ said) ++
       (if unstarted then "; " ++ recovery else "")
     -- The process API encodes signals as 128 + signal. High exits are
-    -- ambiguous even when the child logged before termination.
-    throw <| if ran.exitCode >= 128 || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
+    -- ambiguous even when the child logged before termination, and a run
+    -- that never started said nothing of its own, whatever its stderr holds:
+    -- neither is a verdict to remember.
+    -- premise: none — xmllint (0–11), xsltproc (0–11) and pdftocairo (0–4, 99) document
+    -- their exits, none at or above 126, and rsvg-convert documents none and exits 1 or 2
+    throw <| if ran.exitCode >= 126 || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
       then .inconclusive detail else .refused detail
   return ran.stdout
 

@@ -15,12 +15,9 @@ private def pictureAssetWrapped : String :=
 private def pictureAssetPdf (label : String) : ByteArray :=
   svgCanvasPdf ++ ("\n% synthetic picture tool: " ++ label ++ "\n").toUTF8
 
-private def pictureAssetQuote (text : String) : String :=
-  "'" ++ text.replace "'" "'\\''" ++ "'"
-
 private def pictureAssetToolBody (root : System.FilePath) (label : String) : String :=
-  "#!/bin/sh\nset -eu\nroot=" ++ pictureAssetQuote root.toString ++
-  "\nlabel=" ++ pictureAssetQuote label ++ "\n" ++
+  "#!/bin/sh\nset -eu\nroot=" ++ shQuote root.toString ++
+  "\nlabel=" ++ shQuote label ++ "\n" ++
   "if [ \"$1\" = --version ]; then\n\
   printf '%s\\n' version >> \"$root/$label.calls\"\n\
   printf '%s\\n' 'synthetic picture renderer 1'\n\

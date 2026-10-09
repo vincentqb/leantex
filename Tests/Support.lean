@@ -372,6 +372,10 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
   let libraries ← IO.FS.realPath ".lake/build/lib/lean"
   return (lean, libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD "")
 
+/-- `text` quoted as one word for `/bin/sh`. -/
+def shQuote (text : String) : String :=
+  "'" ++ text.replace "'" "'\\''" ++ "'"
+
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
 is not valid UTF-8, so the search is over bytes. -/

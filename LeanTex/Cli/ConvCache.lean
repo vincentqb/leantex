@@ -110,9 +110,12 @@ public theorem replay_decode_exact (bytes : ByteArray) (a : Except String ByteAr
           · simp at h
 
 public def slotName (source : ByteArray) (recipe identity : String) : String :=
-  -- v1 could remember an interrupted process as a refusal.
+  -- v1 could remember an interrupted process as a refusal, and v2 a run
+  -- that never started (exit 126 or 127). Boundary pictures' slots are named
+  -- here too, so v3 renders each picture once more; with no tool,
+  -- PictureAssets.previous still serves the drawing of any variant.
   let variant := Flate.contentKey (String.intercalate "\u0000"
-    ["vector-cache-v2", LeanTex.version, recipe, identity]).toUTF8
+    ["vector-cache-v3", LeanTex.version, recipe, identity]).toUTF8
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
 
 public def atomicWrite (target : System.FilePath) (bytes : ByteArray) : IO Unit :=

@@ -7,21 +7,22 @@ import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.PictureAssets
 
-/-! The boundary's host-free decisions. Whether a tool is runnable is a fact
-about the machine, and what a tool that ran said is that tool's own words —
-neither is this module's. What is this module's is the judgement taken once
-the answers are in. When "nothing ran", an earlier render of the same
-request serves, and where none exists the placeholder ships and the loss is
-named (`coldPicture`). When a request was refused either way, a picture the
+/-! The boundary's decisions. Whether a tool is runnable is a fact about the
+machine, and what a tool that ran said is that tool's own words — neither is
+this module's. What is this module's is the judgement taken once the answers
+are in. When "nothing ran", an earlier render of the same request serves,
+and where none exists the placeholder ships and the loss is named
+(`coldPicture`). When a request was refused either way, a picture the
 rendered subset draws in part is withdrawn from the boundary and drawn by
 the subset (`withdraw`); an attempt that never reached an answer is no
-refusal, and stands. A picture's HTML face is its PDF converted to SVG and
-checked as publication checks it (`htmlFace`); a picture left without one
-ships the page's labelled placeholder (`markFaceless`), as does an included
-image whose plan a fact about the machine stopped (`markUnplanned`). Each
-decision returns its diagnostics, so a test can run it rather than restate
-it, and a driver that stopped naming the loss fails the suite instead of
-passing it. -/
+refusal, and stands. One step here runs tools: a picture's HTML face is
+its PDF converted to SVG and checked as publication checks it (`htmlFace`,
+which runs the converter and the checks); a picture left
+without one ships the page's labelled placeholder (`markFaceless`), as does
+an included image whose plan a fact about the machine stopped
+(`markUnplanned`). Each decision returns its diagnostics, so a test can run
+it rather than restate it, and a driver that stopped naming the loss fails
+the suite instead of passing it. -/
 
 namespace LeanTex.Cli.Boundary
 
