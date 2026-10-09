@@ -39,6 +39,89 @@ def snippetPaths : IO (Array String) := do
 def aliasOf (path : String) : String :=
   ((path.splitOn "/").reverse.drop 1).headD ""
 
+/-- Python `re`'s answer found the way `re` finds it, by backtracking: the
+reference the session lexer's simulation is held to. -/
+def backtrack (s : Src) (lim : Nat) : Console.Re → Nat → (Nat → Option Nat) → Option Nat
+  | .empty, i, k => k i
+  | .cls p, i, k => if i < lim && s.sat i p then k (i + 1) else none
+  | .seq a b, i, k => backtrack s lim a i fun j => backtrack s lim b j k
+  | .alt a b, i, k => (backtrack s lim a i k).orElse fun _ => backtrack s lim b i k
+  | .star p true, i, k =>
+    (if _h : i < lim ∧ s.sat i p = true then backtrack s lim (.star p true) (i + 1) k
+     else none).orElse fun _ => k i
+  | .star p false, i, k =>
+    (k i).orElse fun _ =>
+      if _h : i < lim ∧ s.sat i p = true then backtrack s lim (.star p false) (i + 1) k else none
+termination_by re i => (sizeOf re, lim + 1 - i)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (apply Prod.Lex.left; omega)
+    | (apply Prod.Lex.right; omega)
+
+/-- Every string of at most `n` scalars drawn from `alphabet`. -/
+def strings (alphabet : Array Char) (n : Nat) : Array String := Id.run do
+  let mut level : Array String := #[""]
+  let mut out : Array String := #[""]
+  for _ in [0:n] do
+    let mut grown : Array String := #[]
+    for w in level do
+      for c in alphabet do
+        grown := grown.push (w.push c)
+    out := out ++ grown
+    level := grown
+  return out
+
+/-- A string of up to `n` scalars drawn from `alphabet`, threading the seed. -/
+def randomString (alphabet : Array Char) (n : Nat) (seed : UInt64) : String × UInt64 := Id.run do
+  let (len, s0) := rand seed (n + 1)
+  let mut s := s0
+  let mut out := ""
+  for _ in [0:len] do
+    let (i, s1) := rand s alphabet.size
+    s := s1
+    out := out.push (alphabet.getD i 'a')
+  return (out, s)
+
+/-- A pattern of the session lexer's shape, at most `depth` deep, over a
+few classes of `a`, `b` and newline. -/
+def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
+  let classes : Array (Char → Bool) :=
+    #[(· == 'a'), (· == 'b'), (fun c => c == 'a' || c == 'b'), (· != '\n')]
+  let (k, s) := rand seed (if depth == 0 then 3 else 6)
+  match depth, k with
+  | _, 0 => (.empty, s)
+  | _, 1 => let (i, s) := rand s classes.size; (.cls (classes.getD i (fun _ => false)), s)
+  | _, 2 =>
+    let (i, s) := rand s classes.size
+    let (g, s) := rand s 2
+    (.star (classes.getD i (fun _ => false)) (g == 0), s)
+  | d + 1, 3 | d + 1, 4 =>
+    let (a, s) := randomRe d s
+    let (b, s) := randomRe d s
+    (.seq a b, s)
+  | d + 1, _ =>
+    let (a, s) := randomRe d s
+    let (b, s) := randomRe d s
+    (.alt a b, s)
+  | 0, _ => (.empty, s)
+
+/-- The heredoc search the way the regex reads it: the delimiter's
+prefixes, longest first, each searched for from past its own length. -/
+def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
+  if !(s.is p '<' && s.is (p + 1) '<') then return none
+  let mut a := p + 2
+  if s.is a '-' then a := a + 1
+  a := s.run a spaceChar
+  if s.is a '\'' then a := a + 1
+  if s.is a '\\' then a := a + 1
+  let len := s.run a wordChar - a
+  let word := s.chars.extract a (a + len)
+  for i in [0:len] do
+    let k := len - i
+    if let some q := s.find (a + k + 1) word k then return some (q + k)
+  return none
+
 end PygmentsLexers
 
 /-- The native lexers against Pygments' own streams for the invented
@@ -99,5 +182,61 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pygments lexers: a language with no native lexer selects none"
     ((["ruby", "c", "lean3", "pycon", "", "py thon"] : List String).all
       fun n => (Lexer.ofName? n).isNone)
+
+/-- The session lexer's prompt match and the Bash heredoc search, which
+answer what Python's backtracking answers without backtracking, against
+that backtracking: every short line over the scalars the prompt pattern
+divides on, random longer ones, and random patterns of its shape. -/
+def pygmentsLinearChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let promptAnswer (line : String) : Option Nat × Option Nat :=
+    let s := Src.ofString (line ++ "\n")
+    (Console.promptEnd s 0 s.size, PygmentsLexers.backtrack s s.size Console.ps1 0 some)
+  let short := PygmentsLexers.strings #['[', ']', '(', ')', '@', '$', 's', 'h', 'a', '-', ' '] 5
+  let shortMiss := short.find? fun l => let (a, b) := promptAnswer l; a != b
+  t s!"pygments lexers: the prompt match is the backtracking one on every short line (first miss: {shortMiss.map repr})"
+    shortMiss.isNone
+  let wide := #['[', ']', '(', ')', '@', ':', '$', '#', '%', '❯', 's', 'h', 'a', 'é', '_', '-',
+    ' ', '\t', '\u00a0', '\u2028', '/', '~', '1']
+  let mut seed : UInt64 := 0x5eed0f1a
+  let mut longMiss : Option String := none
+  let mut prompted := 0
+  for _ in [0:20000] do
+    let (line, s1) := PygmentsLexers.randomString wide 40 seed
+    seed := s1
+    let (a, b) := promptAnswer line
+    if a.isSome then prompted := prompted + 1
+    if a != b && longMiss.isNone then longMiss := some line
+  t s!"pygments lexers: the prompt match is the backtracking one on random lines (first miss: {longMiss.map repr})"
+    (longMiss.isNone && prompted > 1000)
+  let mut reMiss : Option Nat := none
+  for n in [0:400] do
+    let (re, s1) := PygmentsLexers.randomRe 4 seed
+    seed := s1
+    let matcher := re.matcher
+    for _ in [0:60] do
+      let (text, s2) := PygmentsLexers.randomString #['a', 'b', 'c', '\n'] 9 seed
+      seed := s2
+      let s := Src.ofString text
+      for start in [0:s.size + 1] do
+        if matcher s start s.size != PygmentsLexers.backtrack s s.size re start some then
+          if reMiss.isNone then reMiss := some n
+  t s!"pygments lexers: a compiled pattern matches as backtracking does (first miss: pattern {reMiss})"
+    reMiss.isNone
+  let heads := #["<<", "<<-", "<< ", "<<'", "<<\\", "<<- '\\"]
+  let words := PygmentsLexers.strings #['a', 'b'] 3
+  let bodies := PygmentsLexers.strings #['a', 'b', 'x', '\n'] 6
+  let mut docMiss : Option String := none
+  let mut docHits := 0
+  for h in heads do
+    for w in words do
+      for b in bodies do
+        let s := Src.ofString (h ++ w ++ b)
+        let got := Bash.heredocEnd s 0
+        if got.isSome then docHits := docHits + 1
+        if got != PygmentsLexers.heredocByPrefixes s 0 && docMiss.isNone then
+          docMiss := some (h ++ w ++ b)
+  t s!"pygments lexers: the heredoc search is the delimiter-prefix one (first miss: {docMiss.map repr})"
+    (docMiss.isNone && docHits > 10000)
 
 end Tests

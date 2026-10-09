@@ -465,7 +465,7 @@ private def strState (esc : Esc) (q : Quote) (s : Src) (m : M) : Option M := Id.
   return none
 
 private def step (inner : Src → Array Raw) (s : Src) (m : M) : M :=
-  let next := match m.stack.back? with
+  let next := match m.top? with
     | some .root | none => root s m
     | some .fexpr => fexpr s m
     | some .fexprInner => fexprInner s m

@@ -405,8 +405,10 @@ def pyLine (d : Draw) : Draw :=
 def bashPart (d : Draw) : Draw :=
   let (k, d) := d.nat 9
   match k with
-  | 0 => ((d.oneOf #["<<", "<<-", "<< ", "<<'", "<<\\", "<<-'"]).oneOf #["EOF", "END", "E", "x1"]).times 3
-      (fun d => d.oneOf #["\nline", "\nEOF", "EOF", "\nEO", "\nE", " x", "'", "\nEND\n"])
+  | 0 => ((d.oneOf #["<<", "<<-", "<< ", "<<'", "<<\\", "<<-'"]).oneOf #["EOF", "END", "E", "x1",
+      "ABAB", "AAB", "MARKER"]).times 3
+      (fun d => d.oneOf #["\nline", "\nEOF", "EOF", "\nEO", "\nE", " x", "'", "\nEND\n", "AB",
+        "ABA", "AAAB", "MARK", "\nMARKER", "A"])
   | 1 => ((d.oneOf #["${", "${#"]).times 2 (fun d => d.oneOf #["x", ":-", "-", "y", "'a'", "\"b\"",
       "$z", "`c`", ":", "#", "/", "}"])).oneOf #["}", ""]
   | 2 => ((d.add "$((").times 4 (fun d => d.oneOf #["1", "2#101", "16#ff", "8# ", "8#", "0x1F",
@@ -428,7 +430,7 @@ def bashPart (d : Draw) : Draw :=
 
 def consoleLine (d : Draw) : Draw :=
   let d := d.maybe 3 fun d => d.oneOf #["(venv) ", "(env)", "(a b) ", "()"]
-  let (k, d) := d.nat 4
+  let (k, d) := d.nat 5
   let d := match k with
     | 0 => (d.oneOf #["$ ", "# ", "% ", "$", "user@host:~$ ", "[user@host dir]$ ", "sh-5.1$ ",
         "root@box:/# ", "(x) $ ", "[a]$", "u@h ~ % ", "a@b:c d $ ", "sh$x@y:z # ", "sh$ ",
@@ -436,6 +438,8 @@ def consoleLine (d : Draw) : Draw :=
         "(v) ❯ ", "u@h:~❯ "]).times 4 bashPart
     | 1 => (d.oneOf #["> ", ">", "> x"]).times 2 bashPart
     | 2 => d.oneOf #["output", "  out", "", "error: $x", "100%", "a # b", "x $ y"]
+    | 3 => d.times 24 fun d => d.oneOf #["a", "aa", "@", ":", "@a", ":a", " ", "[", "]", "(", ")",
+        "sh", "x$", "$", "-", "[a@b", "]x", "\t", "#", "❯"]
     | _ => ((d.oneOf #["$ ", "# "]).times 2 bashPart).add "\\"
   d.add "\n"
 

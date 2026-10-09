@@ -35,7 +35,9 @@ the mirror follows.
 
 The bridge also refuses a Pygments whose `words` lists stop meaning "the
 longest listed word the suffix admits", whose ASCII class members leave
-the lexers' fast paths, or whose `(?i)` prefixes fold beyond ASCII.
+the lexers' fast paths, whose `(?i)` prefixes fold beyond ASCII, or whose
+mirrored lexers have a `default` that pushes a state without reading,
+which the native drive (`Highlight.drive`) reads as no match.
 -/
 import Lean.Data.Json
 
@@ -225,6 +227,9 @@ def structure(cls, names):
             if isinstance(r, include):
                 out.append(f'    include {r}')
             elif isinstance(r, default):
+                if not (isinstance(r.state, str) and r.state.startswith('#pop')):
+                    raise SystemExit(f'{cls.__name__} {state}: default({r.state!r}) pushes without '
+                                     'reading, which the native drive reads as no match')
                 out.append(f'    default{transition(r.state)}')
             else:
                 rx, act = r[0], r[1]

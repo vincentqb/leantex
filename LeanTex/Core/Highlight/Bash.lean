@@ -27,10 +27,15 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
 private abbrev M := Machine St
 
 /-- `<<-?\s*(\'?)\\?(\w+)[\w\W]+?\2`. Only the delimiter's length can
-backtrack: giving back an optional mark leaves `\w+` facing that mark. The
-longest prefix of the delimiter that recurs after it wins, at its first
-recurrence. -/
-private def heredocEnd (s : Src) (p : Nat) : Option Nat := Id.run do
+backtrack: giving back an optional mark leaves `\w+` facing that mark. So
+the longest prefix of the delimiter that recurs past its own length wins,
+at its first recurrence. The Z-function of the delimiter, then one pass
+over the text after the delimiter's first scalar, gives each position's
+longest common prefix with the delimiter; the pass stops at the first
+whole recurrence. A heredoc costs the text up to its terminator; one whose
+delimiter never recurs whole costs the rest of the text, which Pygments
+reads once for every prefix. -/
+public def heredocEnd (s : Src) (p : Nat) : Option Nat := Id.run do
   if !(s.is p '<' && s.is (p + 1) '<') then return none
   let mut a := p + 2
   if s.is a '-' then a := a + 1
@@ -39,11 +44,40 @@ private def heredocEnd (s : Src) (p : Nat) : Option Nat := Id.run do
   if s.is a '\\' then a := a + 1
   let g := a
   let len := s.run g wordChar - g
-  let word := s.chars.extract g (g + len)
-  for i in [0:len] do
-    let k := len - i
-    if let some q := s.find (g + k + 1) word k then return some (q + k)
-  return none
+  if len == 0 then return none
+  let w := s.chars.extract g (g + len)
+  let mut zw : Array Nat := Array.replicate len 0
+  let mut l := 0
+  let mut r := 0
+  for i in [1:len] do
+    let mut k := if i < r then min (r - i) (zw.getD (i - l) 0) else 0
+    if i + k ≥ r then
+      for _ in [0:len] do
+        if i + k < len && w.getD k ' ' == w.getD (i + k) ' ' then k := k + 1 else break
+      if i + k > r then
+        l := i
+        r := i + k
+    zw := zw.setIfInBounds i k
+  l := 0
+  r := 0
+  let mut best := 0
+  let mut bestAt := 0
+  for q in [g + 1:s.size] do
+    let mut k := if q < r then min (r - q) (zw.getD (q - l) 0) else 0
+    if q + k ≥ r then
+      for _ in [0:len] do
+        if k < len && w.getD k ' ' == s.chars.getD (q + k) ' ' && q + k < s.size then k := k + 1
+        else break
+      if q + k > r then
+        l := q
+        r := q + k
+    let v := min k (q - g - 1)
+    if v > best then
+      best := v
+      bestAt := q
+    if best == len then break
+  if best == 0 then return none
+  return some (bestAt + best)
 
 /-- `(?s)\$?"(\\.|[^"\\$])*"`: a double-quoted string with nothing to
 interpolate, in one token. -/
@@ -194,7 +228,7 @@ private def backticks (s : Src) (m : M) : Option M :=
   if s.is m.pos '`' then some ((m.tok m.pos (m.pos + 1) Ty.stringBacktick).pop) else root s m
 
 private def step (s : Src) (m : M) : M :=
-  let next := match m.stack.back? with
+  let next := match m.top? with
     | some .root | none => root s m
     | some .string => string s m
     | some .curly => curly s m

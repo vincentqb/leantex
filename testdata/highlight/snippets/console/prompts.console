@@ -1,0 +1,18 @@
+user@host:/tmp$ echo hi
+hi
+sh-5.2$ true
+[admin@box ~]$ uptime
+ up 3 days
+[x]y$ ls
+a@b c@d $ echo spaced
+sh@x $ pwd
+(env) user@host:~% make
+❯❯ twice
+host:~ ❯ ls
+x $ y
+$
+#
+%rest
+[tag] not a prompt
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a@a
+[{"id":1,"tags":["a","b"]},{"id":2,"tags":["c"]}]

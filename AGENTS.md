@@ -65,7 +65,11 @@ is skipped.
   against the mirrors, token for token, over the snippets, seeded fuzz and
   local documents' listings; `--python` names an interpreter that imports
   the release `PygmentsLexData.pygmentsVersion` records, and `--record`
-  regenerates the hermetic fixtures `lake test` holds them to.
+  regenerates the hermetic fixtures `lake test` holds them to. A mirror
+  answers what Pygments' backtracking answers without backtracking: the
+  session prompt pattern once cost the cube of a line's length, so
+  `scripts/bench.lean --listings-only` holds every lexer linear over
+  invented adversarial lines as well as in lines.
 - `scripts/html-oracle.lean` when touching what a deck stage holds (type,
   leading, gaps, tables): its `stage-fit` row holds every frame the PDF
   page holds to its stage at the deck's own aspect in Chromium, not a pixel

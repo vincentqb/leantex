@@ -11,10 +11,11 @@ continuation of a backslash-ended command, or output. A block of prompted
 lines lexes as one Bash text, the prompts inserted back where they stood
 (do_insertions in pygments/lexer.py).
 
-The prompt pattern backtracks across several of its branches, so it is
-matched by the backtracking it is written for, over the pattern's own
-structure (`ps1`), first success in the pattern's order, as Python's `re`
-answers.
+The prompt pattern is answered as Python's `re` answers it, the first
+match in the pattern's own priority order, but not the way `re` finds it:
+its nested repeats make backtracking cost up to the cube of a line's
+length, so every way through the pattern advances together instead, one
+scalar at a time, and a line costs time linear in its length.
 
 Pygments emits a virtual-environment prefix's tokens before the code they
 precede, but reports offsets for them from an earlier block's start: the
@@ -23,40 +24,104 @@ own positions.
 -/
 namespace LeanTex.Core.Highlight.Console
 
-/-- A regular expression with no captures, in Python `re`'s priority order:
-`alt` tries its left branch first, `star` tries one more iteration first
-when greedy and last when lazy. -/
-private inductive Re where
+/-- A regular expression with no captures whose every repeat is of one
+scalar class, in Python `re`'s priority order: `alt` tries its left branch
+first; a greedy `star` tries one more scalar first, a lazy one the rest of
+the pattern first. -/
+public inductive Re where
   | empty
   | cls (p : Char → Bool)
   | seq (a b : Re)
   | alt (a b : Re)
-  | star (r : Re) (greedy : Bool)
+  | star (p : Char → Bool) (greedy : Bool)
   deriving Inhabited
 
-/-- The first end, in priority order, of a match of `re` from `i` within
-`lim` that the continuation `k` accepts. An iteration that consumes
-nothing ends its loop, as Python's `re` ends one. -/
-private def Re.run (s : Src) (lim : Nat) : Re → Nat → (Nat → Option Nat) → Option Nat
-  | .empty, i, k => k i
-  | .cls p, i, k => if i < lim && s.sat i p then k (i + 1) else none
-  | .seq a b, i, k => a.run s lim i fun j => b.run s lim j k
-  | .alt a b, i, k => (a.run s lim i k).orElse fun _ => b.run s lim i k
-  | .star r true, i, k =>
-    (r.run s lim i fun j =>
-      if _h : i < j ∧ j ≤ lim then (Re.star r true).run s lim j k else none).orElse fun _ => k i
-  | .star r false, i, k =>
-    (k i).orElse fun _ => r.run s lim i fun j =>
-      if _h : i < j ∧ j ≤ lim then (Re.star r false).run s lim j k else none
-termination_by re i => (sizeOf re, lim + 1 - i)
-decreasing_by
-  all_goals simp_wf
-  all_goals first
-    | (apply Prod.Lex.left; omega)
-    | (apply Prod.Lex.right; omega)
+/-- A compiled pattern's instruction: read one scalar of a class and go on
+at `next`, fork with `first` preferred, or accept. -/
+private inductive Inst where
+  | read (p : Char → Bool) (next : Nat)
+  | fork (first second : Nat)
+  | accept
+  deriving Inhabited
+
+/-- `r` compiled in front of the instruction `k`: its entry, and the
+program grown by its instructions. A fork only ever points below itself. -/
+private def Re.compile : Re → Nat → Array Inst → Nat × Array Inst
+  | .empty, k, prog => (k, prog)
+  | .cls p, k, prog => (prog.size, prog.push (.read p k))
+  | .seq a b, k, prog =>
+    let (eb, prog) := b.compile k prog
+    a.compile eb prog
+  | .alt a b, k, prog =>
+    let (ea, prog) := a.compile k prog
+    let (eb, prog) := b.compile k prog
+    (prog.size, prog.push (.fork ea eb))
+  | .star p greedy, k, prog =>
+    let reads := prog.size
+    let prog := prog.push (.read p (reads + 1))
+    (reads + 1, prog.push (if greedy then .fork reads k else .fork k reads))
+
+/-- A compiled pattern, and for each instruction the instructions its
+forks reach without reading — reads and the accept — in priority order,
+each once. -/
+private structure Prog where
+  insts : Array Inst
+  entry : Nat
+  reach : Array (Array Nat)
+
+/-- Every instruction's reach, upward: a fork's targets stand below it, so
+their reach is known when it is; a target above it would reach nothing. -/
+private def reaches (insts : Array Inst) : Array (Array Nat) := Id.run do
+  let mut out : Array (Array Nat) := Array.mkEmpty insts.size
+  for inst in insts do
+    match inst with
+    | .fork a b =>
+      let first := out.getD a #[]
+      out := out.push ((out.getD b #[]).foldl (init := first) fun acc q =>
+        if acc.contains q then acc else acc.push q)
+    | _ => out := out.push #[out.size]
+  return out
+
+private def Prog.of (r : Re) : Prog :=
+  let (entry, insts) := r.compile 0 #[.accept]
+  { insts, entry, reach := reaches insts }
+
+/-- The end of the match Python's `re.match` finds at `start`, the text
+ending at `lim`. The ways through the pattern advance one scalar at a
+time, kept in priority order. A way that reaches an instruction an earlier
+way already holds at that position is dropped, since what can follow is
+the same for both; and a way that accepts ends every way after it, so the
+last acceptance recorded is the first in priority order. -/
+private def Prog.firstEnd (g : Prog) (s : Src) (start lim : Nat) : Option Nat := Id.run do
+  let mut ways := g.reach.getD g.entry #[]
+  let mut found : Option Nat := none
+  let mut held : Array Nat := Array.replicate g.insts.size 0
+  for i in [start:lim + 1] do
+    let mut next : Array Nat := #[]
+    for pc in ways do
+      match g.insts[pc]? with
+      | some .accept =>
+        found := some i
+        break
+      | some (.read p k) =>
+        if i < lim && s.sat i p then
+          for q in g.reach.getD k #[] do
+            if held.getD q 0 != i + 1 then
+              held := held.setIfInBounds q (i + 1)
+              next := next.push q
+      | _ => pure ()
+    if next.isEmpty then break
+    ways := next
+  return found
+
+/-- `r` compiled once: where `re.match` ends a match of it at `start` in a
+text ending at `lim`, first in priority order. -/
+public def Re.matcher (r : Re) : Src → Nat → Nat → Option Nat :=
+  let g := Prog.of r
+  fun s start lim => g.firstEnd s start lim
 
 private def lit (c : Char) : Re := .cls (· == c)
-private def plus (r : Re) : Re := .seq r (.star r true)
+private def plus (p : Char → Bool) : Re := .seq (.cls p) (.star p true)
 private def opt (r : Re) : Re := .alt r .empty
 private def seqs : List Re → Re
   | [] => .empty
@@ -70,20 +135,26 @@ private def alts : List Re → Re
 /-- `_ps1rgx` without its final `\s*` and rest-of-line group, which always
 match: `(?:\[.*?\]|(?:\(\S+\))?(?:| |sh\S*?|\w+\S+[@:]\S+(?:\s+\S+)?|
 \[\S+[@:][^\n]+\].+))\s*[$#%❯]`. -/
-private def ps1 : Re :=
-  let dot := Re.cls (· != '\n')
-  let nonSpace := Re.cls (fun c => !spaceChar c)
-  let space := Re.cls spaceChar
+public def ps1 : Re :=
+  let dot : Char → Bool := (· != '\n')
+  let nonSpace : Char → Bool := fun c => !spaceChar c
   let atColon := Re.cls (fun c => c == '@' || c == ':')
   let bracketed := seqs [lit '[', .star dot false, lit ']']
   let venv := opt (seqs [lit '(', plus nonSpace, lit ')'])
   let shell := seqs [lit 's', lit 'h', .star nonSpace false]
-  let userHost := seqs [plus (.cls wordChar), plus nonSpace, atColon, plus nonSpace,
-    opt (.seq (plus space) (plus nonSpace))]
-  let bracketHost := seqs [lit '[', plus nonSpace, atColon, plus (.cls (· != '\n')), lit ']',
-    plus dot]
+  let userHost := seqs [plus wordChar, plus nonSpace, atColon, plus nonSpace,
+    opt (.seq (plus spaceChar) (plus nonSpace))]
+  let bracketHost := seqs [lit '[', plus nonSpace, atColon, plus dot, lit ']', plus dot]
   seqs [.alt bracketed (.seq venv (alts [.empty, lit ' ', shell, userHost, bracketHost])),
-    .star space true, .cls (fun c => c == '$' || c == '#' || c == '%' || c == '❯')]
+    .star spaceChar true, .cls (fun c => c == '$' || c == '#' || c == '%' || c == '❯')]
+
+/-- `ps1`, compiled once per process, on first use. -/
+private def prompt : Thunk Prog := Thunk.mk fun _ => Prog.of ps1
+
+/-- Where the prompt pattern's match at `start` ends, the line ending at
+`lim`. -/
+public def promptEnd (s : Src) (start lim : Nat) : Option Nat :=
+  prompt.get.firstEnd s start lim
 
 /-- What the session lexer writes: a type and a length, at the running
 position. -/
@@ -112,23 +183,21 @@ private def insertAll (tokens : Array Raw) (insertions : Array (Nat × Array Pie
     out := out ++ pieces
   return out
 
-private structure Block where
-  code : Array Char := #[]
-  insertions : Array (Nat × Array Piece) := #[]
-  continued : Bool := false
-
-private def Block.flush (b : Block) (out : Array Piece) : Array Piece :=
-  if b.insertions.isEmpty then out
-  else out ++ insertAll (Bash.lex ⟨b.code⟩) b.insertions
+private def flush (code : Array Char) (insertions : Array (Nat × Array Piece))
+    (out : Array Piece) : Array Piece :=
+  if insertions.isEmpty then out else out ++ insertAll (Bash.lex ⟨code⟩) insertions
 
 private def endsContinued (code : Array Char) : Bool :=
   code.size ≥ 2 && code[code.size - 2]? == some '\\' && code.back? == some '\n'
 
 /-- The raw token stream Pygments' `BashSessionLexer` writes, at the
-positions of the text it writes. -/
+positions of the text it writes. The block's code grows in place: nothing
+else holds it. -/
 public def lex (s : Src) : Array Raw := Id.run do
   let mut pieces : Array Piece := #[]
-  let mut b : Block := {}
+  let mut code : Array Char := #[]
+  let mut insertions : Array (Nat × Array Piece) := #[]
+  let mut continued := false
   let mut ls := 0
   for _ in [0:s.size + 1] do
     if ls ≥ s.size then break
@@ -140,33 +209,31 @@ public def lex (s : Src) : Array Raw := Id.run do
       let r := s.runTo (ls + 1) le (· != ')')
       if r < le && s.is r ')' then
         let w := s.runTo (r + 1) le spaceChar
-        b := { b with insertions := b.insertions.push (b.code.size, #[(Ty.genericPromptVirtualEnv, r + 1 - ls)]) }
+        insertions := insertions.push (code.size, #[(Ty.genericPromptVirtualEnv, r + 1 - ls)])
         if w > r + 1 then
-          b := { b with insertions := b.insertions.push (b.code.size, #[(Ty.text, w - (r + 1))]) }
+          insertions := insertions.push (code.size, #[(Ty.text, w - (r + 1))])
         v := w
-    match ps1.run s le v some with
+    match promptEnd s v le with
     | some e =>
       let prompt := s.runTo e le spaceChar
-      let tail := s.chars.extract prompt le
-      let code := b.code ++ tail
-      b := { b with insertions := b.insertions.push (b.code.size, #[(Ty.genericPrompt, prompt - v)])
-                    code, continued := endsContinued code }
+      insertions := insertions.push (code.size, #[(Ty.genericPrompt, prompt - v)])
+      code := code ++ s.chars.extract prompt le
+      continued := endsContinued code
     | none =>
-      if b.continued then
+      if continued then
         if v + 2 ≤ le && s.is v '>' && s.is (v + 1) ' ' then
-          let code := b.code ++ s.chars.extract (v + 2) le
-          b := { b with insertions := b.insertions.push (b.code.size, #[(Ty.genericPrompt, 2)])
-                        code, continued := endsContinued code }
+          insertions := insertions.push (code.size, #[(Ty.genericPrompt, 2)])
+          code := code ++ s.chars.extract (v + 2) le
         else
-          let tail := s.chars.extract v le
-          let code := b.code ++ tail
-          b := { b with code, continued := endsContinued code }
+          code := code ++ s.chars.extract v le
+        continued := endsContinued code
       else
-        pieces := b.flush pieces
+        pieces := flush code insertions pieces
         pieces := pieces.push (Ty.genericOutput, le - v)
-        b := {}
+        code := #[]
+        insertions := #[]
     ls := le
-  pieces := b.flush pieces
+  pieces := flush code insertions pieces
   let mut out : Array Raw := #[]
   let mut at_ := 0
   for (kind, len) in pieces do

@@ -32,7 +32,8 @@ on the same fixtures and requires identical artifacts and diagnostics.
 documents: ASCII or accented words, LF or CR LF line ends.
 `--listings-only` measures a build of the invented highlight snippets as
 minted listings, one copy and eight, and holds a listing's elaboration
-linear in its length.
+linear in its length, in lines and, over invented adversarial lines, in a
+line's length.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -219,10 +220,32 @@ def benchListings (n copies : Nat) : IO Unit := do
     bench n s!"leantex  listings, {copies} copies (HTML)" leantex
       #["-q", "build", input.toString, "-o", (dir / "listings.html").toString]
 
+/-- The median `elab` phase of `n` builds of a document holding one minted
+listing of `lang` with this body. A build that outlasts two minutes is a
+failure: a lexer that regressed to backtracking takes hours on these. -/
+def elabMs (n : Nat) (label lang body : String) : IO Nat := do
+  let leantex ← compiler
+  IO.FS.withTempDir fun tmp => do
+    let src := tmp / "long.tex"
+    IO.FS.writeFile src ("\\documentclass{article}\n\\usepackage{minted}\n\\begin{document}\n" ++
+      "\\begin{minted}{" ++ lang ++ "}\n" ++ body ++ "\\end{minted}\n\\end{document}\n")
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let out ← IO.Process.output
+        { cmd := "timeout", args := #["120", leantex, "-v", "build", src.toString, "-o",
+            (tmp / "long.pdf").toString] }
+      if out.exitCode == 124 then die s!"{label}: elaboration outlasted 120 s"
+      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {label}"
+      match phaseMs "elab" (out.stdout ++ out.stderr) with
+      | some ms => times := times.push ms
+      | none => die "no elab phase in the -v report"
+    let ms := median times
+    IO.println s!"{padRight s!"leantex  elab, {label}" 42} {padLeft (toString ms) 6} ms (median of {n})"
+    return ms
+
 /-- The `elab` phase of a document holding one Python listing of `lines`
 lines, drawn in turn from the invented snippets: the median of `n` runs. -/
 def listingElabMs (n lines : Nat) : IO Nat := do
-  let leantex ← compiler
   let mut pool : Array String := #[]
   let dir : System.FilePath := "testdata/highlight/snippets/python"
   for f in (← dir.readDir).qsort (·.fileName < ·.fileName) do
@@ -231,22 +254,18 @@ def listingElabMs (n lines : Nat) : IO Nat := do
   for i in [0:lines] do
     body := body ++ (pool.getD (i % max pool.size 1) "").trimAscii.toString
     body := body ++ "\n"
-  IO.FS.withTempDir fun tmp => do
-    let src := tmp / "long.tex"
-    IO.FS.writeFile src ("\\documentclass{article}\n\\usepackage{minted}\n\\begin{document}\n" ++
-      "\\begin{minted}{python}\n" ++ body ++ "\\end{minted}\n\\end{document}\n")
-    let mut times : Array Nat := #[]
-    for _ in [0:n] do
-      let out ← IO.Process.output
-        { cmd := leantex, args := #["-v", "build", src.toString, "-o", (tmp / "long.pdf").toString] }
-      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on a {lines}-line listing"
-      match phaseMs "elab" (out.stdout ++ out.stderr) with
-      | some ms => times := times.push ms
-      | none => die "no elab phase in the -v report"
-    let ms := median times
-    IO.println s!"{padRight s!"leantex  elab, one {lines}-line listing" 42} {padLeft (toString ms) 6} ms (median of {n})"
-    return ms
+  elabMs n s!"one {lines}-line listing" "python" body
 
+/-- Invented lines that once cost each native lexer more than linear time
+in their length `len`: the session prompt pattern's nested repeats, a
+heredoc delimiter's every prefix, and a state stack copied on every push. -/
+def adversarialLines (len : Nat) : List (String × String × String) :=
+  let rep (s : String) (k : Nat) : String := String.join (List.replicate k s)
+  [("console", "prompt", rep "a" (len / 2) ++ rep "@a" (len / 4) ++ "\n" ++
+      "$ fetch\n[" ++ rep "{\"k\":[0],\"v\":\"x\"}," (len / 20) ++ "]\n" ++ rep "a" len),
+   ("bash", "heredoc", "cat <<" ++ rep "a" (len / 2) ++ "\n" ++ rep (rep "a" (len / 4) ++ "b\n") 2),
+   ("lean4", "nesting", rep "/-" (len / 2) ++ rep "-/" (len / 2)),
+   ("python", "brackets", "x = " ++ rep "(" (len / 2) ++ rep ")" (len / 2))]
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
 def benchImageDeck (n frames : Nat) : IO Unit := do
@@ -878,16 +897,28 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
-/-- A listing's lexing is linear in its length: four times the lines may
-cost at most eight times the phase (linear is 4, quadratic 16). A lexer
-step that copied its token array on every token once made it quadratic. -/
-def listingGrowth (n : Nat) : IO Unit := do
-  let small ← listingElabMs n 2000
-  let big ← listingElabMs n 8000
+/-- Four times the input may cost at most eight times the phase (linear is
+4, quadratic 16). -/
+def growthBound (label : String) (small big : Nat) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
-  IO.println s!"{padRight "leantex  listing growth, 8000 / 2000 lines" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
   if big > 8 * max small 1 then
-    die s!"a listing's elaboration grew {ratio / 10}.{ratio % 10}× for 4× the lines (bound 8)"
+    die s!"{label}: the elaboration grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
+
+/-- A listing's lexing is linear in its length, in lines and within a line.
+A lexer step that copied its token array on every token once made it
+quadratic in the lines; backtracking over the session prompt pattern made
+it cubic in a line's length, a heredoc's delimiter search quadratic, and a
+state stack copied on every push quadratic in the nesting. -/
+def listingGrowth (n : Nat) : IO Unit := do
+  growthBound "8000 / 2000 lines" (← listingElabMs n 2000) (← listingElabMs n 8000)
+  let lines (len : Nat) : List (String × String × String) :=
+    (adversarialLines len).map fun (lang, what, line) =>
+      (lang, what, String.join (List.replicate 8 (line ++ "\n")))
+  for ((lang, what, small), (_, _, big)) in (lines 2000).zip (lines 8000) do
+    growthBound s!"{lang} {what}, 8000 / 2000"
+      (← elabMs n s!"{lang} {what}, 2000 scalars" lang small)
+      (← elabMs n s!"{lang} {what}, 8000 scalars" lang big)
 
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail

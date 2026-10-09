@@ -277,11 +277,14 @@ public def firstAlt {α : Type} (alts : Array (Array Char)) (s : Src) (i : Nat)
   return none
 
 /-- A lexer's state between rules: the tokens written, the position, and
-the state stack, whose bottom is always the root. -/
+the state stack, top first, whose last state is always the root. A step
+that keeps the machine it started from shares that stack, so the stack is a
+list, which a push or a pop never copies; `depth` counts its states. -/
 public structure Machine (σ : Type) where
   out : Array Raw
   pos : Nat
-  stack : Array σ
+  stack : List σ
+  depth : Nat
 
 namespace Machine
 
@@ -291,23 +294,29 @@ variable {σ : Type}
 @[inline] public def tok (m : Machine σ) (a b : Nat) (k : String) : Machine σ :=
   if a < b then { m with out := m.out.push ⟨a, b, k⟩, pos := b } else { m with pos := b }
 
-@[inline] public def push (m : Machine σ) (st : σ) : Machine σ := { m with stack := m.stack.push st }
+@[inline] public def push (m : Machine σ) (st : σ) : Machine σ :=
+  { m with stack := st :: m.stack, depth := m.depth + 1 }
 
 /-- `#pop`, which never empties the stack. -/
 @[inline] public def pop (m : Machine σ) : Machine σ :=
-  if m.stack.size > 1 then { m with stack := m.stack.pop } else m
+  match m.stack with
+  | _ :: rest@(_ :: _) => { m with stack := rest, depth := m.depth - 1 }
+  | _ => m
 
 /-- `#push`: the current state again. -/
 @[inline] public def dup (m : Machine σ) : Machine σ :=
-  match m.stack.back? with
-  | some st => m.push st
-  | none => m
+  match m.stack with
+  | st :: _ => m.push st
+  | [] => m
+
+/-- The state the next rule is drawn from. -/
+@[inline] public def top? (m : Machine σ) : Option σ := m.stack.head?
 
 /-- No rule matched: a newline resets to the root, anything else is one
 `Error` scalar. -/
 public def fallback (m : Machine σ) (s : Src) (root : σ) : Machine σ :=
   let p := m.pos
-  if s.is p '\n' then { m.tok p (p + 1) Ty.whitespace with stack := #[root] }
+  if s.is p '\n' then { m.tok p (p + 1) Ty.whitespace with stack := [root], depth := 1 }
   else m.tok p (p + 1) Ty.error
 
 private theorem fallback_pos (m : Machine σ) (s : Src) (root : σ) :
@@ -318,10 +327,10 @@ private theorem fallback_pos (m : Machine σ) (s : Src) (root : σ) :
 /-- Whether a step from `m` to `next` read a scalar or popped a state:
 what every rule of a terminating Pygments lexer does. -/
 private def advanced (m next : Machine σ) : Prop :=
-  m.pos < next.pos ∨ (next.pos = m.pos ∧ next.stack.size < m.stack.size)
+  m.pos < next.pos ∨ (next.pos = m.pos ∧ next.depth < m.depth)
 
 private instance (m next : Machine σ) : Decidable (advanced m next) :=
-  inferInstanceAs (Decidable (m.pos < next.pos ∨ (next.pos = m.pos ∧ next.stack.size < m.stack.size)))
+  inferInstanceAs (Decidable (m.pos < next.pos ∨ (next.pos = m.pos ∧ next.depth < m.depth)))
 
 /-- One step from `m`, starting from an empty token array; where the step
 would not advance, the fallback's instead. -/
@@ -337,21 +346,25 @@ private def advance (root : σ) (step : Src → Machine σ → Machine σ) (s : 
 
 end Machine
 
-/-- Run a lexer from its root state to the end of the text. A step that
-neither reads a scalar nor pops a state is a rule Pygments would apply
-forever; it is read as no match, and the fallback takes the scalar, so the
-run ends by well-founded recursion on the unread scalars, then the stack's
-depth. Each step's tokens join the stream after it. -/
+/-- Run a lexer from its root state to the end of the text. Each step's
+tokens join the stream after it. A port's step reads a scalar or pops a
+state when a rule matches, and takes the fallback when none does. A step
+that does neither is read as no match, the fallback taking the scalar: it
+is the one shape a port must not write, since Pygments applies a push
+without a read (`default` with a push target) once, where this would be
+an `Error` token. The generator refuses a mirrored lexer that has one, and
+the oracle would see the difference. So the run ends by well-founded
+recursion on the unread scalars, then the stack's depth. -/
 public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
     Array Raw :=
-  go { out := #[], pos := 0, stack := #[root] } #[]
+  go { out := #[], pos := 0, stack := [root], depth := 1 } #[]
 where
   go (m : Machine σ) (out : Array Raw) : Array Raw :=
     if _hlt : m.pos < s.size then
       match m.advance root step s with
       | ⟨next, _h⟩ => go next (out ++ next.out)
     else out
-  termination_by (s.size - m.pos, m.stack.size)
+  termination_by (s.size - m.pos, m.depth)
   decreasing_by
     simp only [Machine.advanced] at *
     rw [Prod.lex_def]

@@ -139,7 +139,7 @@ private def string (s : Src) (m : M) : Option M :=
   else none
 
 private def step (s : Src) (m : M) : M :=
-  let next := match m.stack.back? with
+  let next := match m.top? with
     | some .root | none => root s m
     | some .attr => attr s m
     | some .comment => comment s m
