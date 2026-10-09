@@ -24,7 +24,7 @@ is, so the list adds its pictures to the document's as the body's own are
 added. Two reports append in reading order. -/
 public structure FieldReport where
   diags : Array Diag := #[]
-  pictures : Array (String × String) := #[]
+  pictures : Array (String × Ir.PicSrc) := #[]
   deriving Inhabited, BEq
 
 public instance : Append FieldReport :=

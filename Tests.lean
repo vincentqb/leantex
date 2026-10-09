@@ -227,6 +227,7 @@ import Tests.PictureBoundary
 import Tests.FontDefaults
 import Tests.PictureContracts
 import Tests.PictureKeys
+import Tests.TikzCd
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
@@ -612,6 +613,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   phantomChecks ref oneFace
   pictureDefnReachChecks ref oneFace
   pictureRouteChecks ref oneFace
+  tikzcdRouteChecks ref oneFace
   tikzInlineChecks ref oneFace
   pictureEveryLevelChecks ref oneFace
   pictureStyleHandlerChecks ref oneFace

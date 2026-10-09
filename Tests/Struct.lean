@@ -299,7 +299,7 @@ def pictureAltChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a routed picture's image carries its declared alternative"
     (imgAttr bWith "alt" == #[some "A disc"])
   t "the boundary's standalone never meets the key"
-    (!bWith.pictureSrcs.isEmpty && bWith.pictureSrcs.all fun (_, src) => !hasStr src "alt=")
+    (!bWith.pictureSrcs.isEmpty && bWith.pictureSrcs.all fun (_, src) => !hasStr src.body "alt=")
   t "the boundary's request hash is invariant under the key"
     (bWith.pictureSrcs.map (·.1) == bSans.pictureSrcs.map (·.1))
   let (mWith, _) := elabStr (dvDoc ""

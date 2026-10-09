@@ -752,7 +752,7 @@ public structure ESt where
   /-- Boundary picture requests met in the body: content hash of each
   wrapped standalone source, with the source — deduplicated, so one
   picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
-  pictures : Array (String × String) := #[]
+  pictures : Array (String × Ir.PicSrc) := #[]
   /-- The salvage this elaboration recovered, in flow order: assembled onto
   `Doc.salvage`. Written at the recovery sites and read nowhere inside the
   elaborator — it is the attribution the census needs, not a decision the
@@ -4758,8 +4758,8 @@ its own labels set (`Ir.Pic.Picture.said`), as the subset's drawing would
 have been named. -/
 private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
     (block : Bool) : EM Ir.Inline := do
-  let src := Parse.rawSrc body
-  let id := Ir.picHash src
+  let src : Ir.PicSrc := { kind := .picture, body := Parse.rawSrc body }
+  let id := Ir.picHash src.source
   let tool := ctx.pic.tool.getD "lualatex"
   let img := Ir.picSrcPrefix ++ id
   modify fun st =>
@@ -4800,6 +4800,49 @@ picture only as a block" pos
     (help := "a boundary tool (lualatex) draws it in its line; standing in a \
 paragraph of its own, the rendered subset draws it")
   return none
+
+/-- The `tikzcd` a display holds alone, its body and position: the display's
+labels and tags are already stripped (`stripMathMeta`), and spaces are not
+content. Anything else beside the diagram is a formula the display sets,
+so a diagram mixed with other mathematics is not this shape. -/
+private def soleTikzcd (body : Array Raw) : Option (Array Raw × Pos) :=
+  match (body.filter fun r => !(r matches .space)).toList with
+  | [.env "tikzcd" b p] => some (b, p)
+  | _ => none
+
+/-- **A commutative diagram standing alone in a display is a picture.**
+`\[\begin{tikzcd}…\end{tikzcd}\]` is TikZ ink set as display mathematics,
+and no formula can carry it: the boundary draws it as its own request kind
+(`Ir.PicKind.cd`, the diagram's own environment, never wrapped in a
+`tikzpicture`), and the display ships the boundary's box with its skips
+(`Ir.displayPictureRole`). Recorded as a fallback the driver may withdraw:
+where no tool drew it, the second elaboration takes the other door —
+`none` here, and the display keeps the formula's text floor with its W0012,
+never a placeholder. The boundary closed (`\pictures{ tool = none }`) is
+that door from the start. -/
+private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Option Ir.Inline) := do
+  let some (b, _) := soleTikzcd body | return none
+  let src : Ir.PicSrc := { kind := .cd, body := Parse.rawSrc b }
+  let id := Ir.picHash src.source
+  -- premise: tikzcdRouteChecks — a diagram the boundary withdraws or a closed
+  -- door refuses keeps the text floor and its W0012, and a drawn one ships
+  -- the boundary's box with no floor.
+  if ctx.pic.tool.isNone || ctx.pic.withdrawn.contains id then return none
+  let tool := ctx.pic.tool.getD "lualatex"
+  let img := Ir.picSrcPrefix ++ id
+  modify fun st =>
+    let st := if st.pictures.any (fun p => p.1 == id) then st
+      else { st with pictures := st.pictures.push (id, src) }
+    if st.spans.fallbacks.contains id then st
+    else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
+  recordImageSpan ctx img pos
+  warnOnce ctx ("picture:boundary:" ++ id) .N0023
+    s!"this diagram is drawn by {tool} at the boundary; its text is not \
+in the document's census" pos
+    (help := "the box is measured and placed by the engine; a figure caption \
+names it for assistive technology")
+  return some (.role Ir.displayPictureRole #[.image img {} .undeclared])
 
 seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
@@ -9859,7 +9902,9 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
   let mut blocks := blocks
   let (body, qedAt) := dropQedHere body
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
-  let inl ← elabMathInline ctx true cleaned pos
+  let inl ← match ← tikzcdDisplay ctx cleaned pos with
+    | some pic => pure pic
+    | none => elabMathInline ctx true cleaned pos
   let qed ← match qedAt with
     | some p =>
       if tag.isNone && (!numbered || nonum) then qedHereTag ctx p
@@ -9912,7 +9957,12 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   let (cleaned, keys, _, tag) ← stripMathMeta ctx body
   for key in keys do
     recordLabel ctx key none pos
-  let inl ← elabMathEnv ctx n kind (numbered || tag.isSome) cleaned pos
+  -- A numbered row owes its number (W0015, `elabMathEnv`'s), so only an
+  -- unnumbered alignment's lone diagram takes the picture's door.
+  let pic ← if numbered || tag.isSome then pure none else tikzcdDisplay ctx cleaned pos
+  let inl ← match pic with
+    | some pic => pure pic
+    | none => elabMathEnv ctx n kind (numbered || tag.isSome) cleaned pos
   let content := keys.map (Ir.Inline.label ·) |>.push inl
   -- A display alignment: TeX spaces it with the long skips whatever line
   -- stands before it (tex.web §1206), its rows on amsmath's strut.

@@ -326,7 +326,7 @@ public structure Resolved where
   fieldInk : Array ((Ir.CiteField × Bool) × Array Ir.Inline) := #[]
   /-- The boundary pictures its citation ink sets (`citeLabel`, `fieldInk`),
   which the document's request carries as the body's own. -/
-  inkPictures : Array (String × String) := #[]
+  inkPictures : Array (String × Ir.PicSrc) := #[]
   deriving Repr
 
 /-- The entry a sort key and alpha's label read: as its `.bib` writes it,
@@ -2425,7 +2425,7 @@ private def citeFieldUses (doc : Ir.Doc) : Array (String × Ir.CiteField × Bool
 the title as written, starred or not, the URL a link, the year, and the
 entry as the style sets it, its closing period dropped. -/
 private def bibtexCiteField (cv : FieldText) (r : Resolved) (w : Ir.CiteField)
-    (rendered : Array (Ir.BibItem × FieldReport)) : Array Ir.Inline × Array (String × String) :=
+    (rendered : Array (Ir.BibItem × FieldReport)) : Array Ir.Inline × Array (String × Ir.PicSrc) :=
   match w with
   | .title => match r.entry.field? "title" with
     | some t => let read := cv t; (read.1, read.2.pictures)
@@ -2545,7 +2545,7 @@ is what lets the backends' `.cite` arms be dead code. `analyse` is the
 reading half — sources, style, the resolver and the reference list, with
 the diagnostics — and `apply` is that half followed by the one rewrite. -/
 private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading) :
-    CitePunct × Resolver × Array Ir.BibItem × Array Diag × Array (String × String) × Nat :=
+    CitePunct × Resolver × Array Ir.BibItem × Array Diag × Array (String × Ir.PicSrc) × Nat :=
     Id.run do
   let requested := Ir.bibRefs doc
   let declared := (Ir.bibStyleName doc).map fun name => (name, Style.named name)

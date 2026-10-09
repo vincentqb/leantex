@@ -6377,7 +6377,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      | none => false)
   t "the picture's identity is the author's bytes, not the request"
     (match doc.pictureSrcs[0]? with
-     | some (id, body) => id == Ir.picHash body && !hasStr body "standalone"
+     | some (id, src) => id == Ir.picHash src.source && !hasStr src.body "standalone"
      | none => false)
   -- The request is a projection of the document's design
   -- (`Ir.pictureRefs_design_projects`): the palette roles the body
@@ -6610,7 +6610,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A pruned picture asks for nothing: the request follows the tree, as a
   -- pruned bibliography's does.
   t "pictureRefs follows the shipped tree"
-    ((Ir.pictureRefs { pictureSrcs := #[("h", "src")] } : Array _).isEmpty)
+    ((Ir.pictureRefs { pictureSrcs := #[("h", { kind := .picture, body := "src" })] } :
+      Array _).isEmpty)
 
 /-- The boundary picture's measure fit, over `Layout.Out`: an unsized
 boundary picture wider than the measure lays out at exactly the measure —

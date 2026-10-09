@@ -258,9 +258,9 @@ the refusal, either way, one warning (`unread`), the marks kept. Each
 reading is a thunk, so a fallback runs only where the one before it
 refused. -/
 private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
-    (pics : Unit → Array (String × String))
+    (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
-    (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × String))
+    (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc))
     (plain : Unit → Array Ir.Inline × FieldReport) (unread : Option String → Diag) :
     Array Ir.Inline × FieldReport :=
   match ds.find? (·.severity == .error) with
@@ -276,9 +276,9 @@ private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
 reading and warning raise none: the inline reading's diagnostics pass only
 where none is an error, and the blocks' only where none of theirs is. -/
 private theorem settle_contract (inline : Unit → Array Ir.Inline) (ds : Array Diag)
-    (pics : Unit → Array (String × String))
+    (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
-    (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × String))
+    (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc))
     (plain : Unit → Array Ir.Inline × FieldReport) (unread : Option String → Diag)
     (hn : (notes ()).any (·.severity == .error) = false)
     (hm : marks.any (·.severity == .error) = false)
@@ -370,7 +370,7 @@ public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldRe
         | some [c] => if "&#^_".contains c then some c else none
         | _ => none
   -- The blocks the body would set, run into the entry as their text.
-  let blocks (_ : Unit) : Array Ir.Inline × Array Diag × Array (String × String) :=
+  let blocks (_ : Unit) : Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc) :=
     let (_, rebased, cds) := translated true
     let (bs, bst) := (Elab.elabBlocks ctx rebased).run d.st0
     (Ir.eraseLocationInlines (Ir.foldBlocks runIn (fun acc _ => acc) #[] bs),
@@ -378,7 +378,7 @@ public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldRe
       bst.pictures.extract d.st0.pictures.size bst.pictures.size)
   -- The boundary pictures the field set, as the body's are recorded: what
   -- the document's request carries for the image each one stands as.
-  let pics (_ : Unit) : Array (String × String) :=
+  let pics (_ : Unit) : Array (String × Ir.PicSrc) :=
     read.2.pictures.extract d.st0.pictures.size read.2.pictures.size
   settle (fun _ => Ir.eraseLocationInlines read.1) ds pics
     (fun _ => (syms ()).map (reservedNote span))

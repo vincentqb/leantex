@@ -372,8 +372,8 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (bpic ++ "\n\n\\renewcommand\\probeLabel{Late}\n" ++ bpic))
   t "two sites of one boundary picture under two label texts are two requests, each its own text"
     (bdoc.pictureSrcs.size == 2 &&
-      bdoc.pictureSrcs.any (fun p => hasStr p.2 "Early") &&
-      bdoc.pictureSrcs.any (fun p => hasStr p.2 "Late"))
+      bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Early") &&
+      bdoc.pictureSrcs.any (fun p => hasStr p.2.body "Late"))
 
 
 /-- **A definition no use the pass sees reaches is decided where the engine

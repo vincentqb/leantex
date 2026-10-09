@@ -2186,7 +2186,7 @@ carries the roles a picture mentions with their resolved values
 (`Ir.paletteDecls`), so a `\definecolor` and its `\palette` spelling
 state one request (the conservation oracle holds them equal). -/
 public def boundaryCtrls : List String :=
-  ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset"]
+  ["usetikzlibrary", "tikzset", "tikzcdset", "gtrset", "pgfplotsset"]
 
 /-- The set lines the engine reads *itself*: their key lists address the
 picture machinery, and the engine has picture machinery of its own
@@ -2204,7 +2204,16 @@ preamble (`boundaryDecls` carries each with its options) rather than being
 W0103's named loss — the real TeX at the edge is what reads them. A closed
 list, extended when a document brings the next one; a package with body
 commands outside pictures does not belong here. -/
-public def boundaryPkgs : List String := ["genealogytree", "pgfplots", "circuitikz"]
+public def boundaryPkgs : List String :=
+  ["genealogytree", "pgfplots", "circuitikz", "tikz-cd"]
+
+/-- The native packages whose loads ride to the boundary standalone too: the
+engine sets their mathematics itself, but a picture's labels and a
+diagram's cells are TeX's to set at the boundary, and amsmath's
+`\underset`, `\text` and `\substack`, or amssymb's `\mathbb`, are
+undefined in a standalone that never loaded them — the picture would fail
+for want of a package its document did load. -/
+public def boundaryMathPkgs : List String := ["amsmath", "amssymb", "amsfonts"]
 
 /-- The document refused the boundary: a `\pictures` block declaring
 `tool = none`. Read over the unrewritten preamble exactly as
@@ -2273,9 +2282,11 @@ public def classPackage (p : String) : Bool :=
   themePackage p || ((p.splitOn "beamer").length > 1 && p != "beamerarticle") || p == "pdfpc"
 
 /-- The package loads a boundary standalone carries: every one the engine
-does not set itself, except one of the class's own family (`classPackage`). -/
+does not set itself, and the native ones a picture's own TeX reads
+(`boundaryMathPkgs`), except one of the class's own family
+(`classPackage`). -/
 public def boundaryRides (p : String) : Bool :=
-  !p.isEmpty && !nativePackages.contains p && !classPackage p
+  !p.isEmpty && (!nativePackages.contains p || boundaryMathPkgs.contains p) && !classPackage p
 
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`

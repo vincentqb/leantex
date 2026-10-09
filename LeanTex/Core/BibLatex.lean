@@ -2365,7 +2365,7 @@ whole entry by its driver, every name given first (`\fullcite`'s
 `\DeclareNameAlias{sortname}{default}`) and no closing period. `extra` is
 its extradate letter. Beside the ink, the boundary pictures its fields set. -/
 public def bblCiteField (opts : BblOptions) (cv : FieldText) (months : Array String) (e : Entry)
-    (extra : String) (w : Ir.CiteField) (full : Bool) : Array Ir.Inline × Array (String × String) :=
+    (extra : String) (w : Ir.CiteField) (full : Bool) : Array Ir.Inline × Array (String × Ir.PicSrc) :=
   let run : BM Unit := match w with
     | .title => do
       let short := !full && (← has "shorttitle")
@@ -2397,7 +2397,7 @@ period a dot, for an article and the six types biblatex.def lists beside
 it, emphasized for every other. Beside the ink, the boundary pictures its
 fields set. -/
 public def bblCiteLabel (opts : BblOptions) (cv : FieldText) (months : Array String) (e : Entry) :
-    Array Ir.Inline × Array (String × String) :=
+    Array Ir.Inline × Array (String × Ir.PicSrc) :=
   let run : BM Unit := do
     let label ← if opts.cite == .authoryear then fld "label" else pure none
     match label with

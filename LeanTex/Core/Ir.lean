@@ -6346,6 +6346,13 @@ public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block)
   let (firstPage, otherPage) := spec.pageOrder active otherwise
   .altSteps spec firstPage otherPage
 
+/-- The role a picture standing alone in a display rides in: a commutative
+diagram is display mathematics (`\[\begin{tikzcd}…\end{tikzcd}\]`), set
+with the display's skips, but its ink is a picture, which no formula
+inline carries. A name no document command can spell (it carries a hyphen,
+as `inParagraphRole` does). -/
+public def displayPictureRole : String := "display-picture"
+
 /-- Classify a display region without treating source annotations as
 content. `none` means another semantic inline was present; `some seen`
 records whether a formula was found among labels and empty annotations.
@@ -6353,11 +6360,13 @@ Only diagnostic wrappers and colours are traversed: a colour is ink, not
 shape — a step's cover paints a covered display through one
 (`dimBlocks`), and covering reflows nothing — while a style or link still
 changes the semantic shape, so the general all-descendants fold is not
-this reader. -/
+this reader. A display picture (`displayPictureRole`) is its display's
+formula. -/
 -- conserves: none — a classifier; emits no document text.
 public def displayParts : List Inline → Bool → Option Bool
   | [], seen => some seen
   | .formula true _ _ :: rest, _ | .math true _ :: rest, _ => displayParts rest true
+  | .role n _ :: rest, _ => if n == displayPictureRole then displayParts rest true else none
   | .label _ :: rest, seen => displayParts rest seen
   | .located _ body :: rest, seen | .colored _ _ body :: rest, seen =>
     (displayParts body.toList seen).bind (displayParts rest)
@@ -9390,6 +9399,49 @@ key, so the accounting compares structured fields rather than parsing a
 message. -/
 @[expose] public def Recovered.subject (s : Recovered) : String := "ctrl:" ++ s.command
 
+/-- What a boundary request draws: a `tikzpicture` body, or a whole
+commutative diagram. tikz-cd opens its own picture around its matrix
+(tikzlibrarycd.code.tex: `\tikzcd` is `\tikzpicture` with the diagram's
+keys), so a diagram's source stands outside any `tikzpicture` and the
+standalone opens the diagram's own environment around it. -/
+public inductive PicKind where
+  | picture
+  | cd
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The environment a standalone opens around a request's body. -/
+@[expose] public def PicKind.env : PicKind → String
+  | .picture => "tikzpicture"
+  | .cd => "tikzcd"
+
+/-- The standalone's document opening, through the kind's environment
+opening: one literal per kind, so a picture's request is spelled as it
+always was (`wrapStandalone_picture_exact`). -/
+@[expose] public def PicKind.docOpen : PicKind → String
+  | .picture => "\\begin{document}\n\\begin{tikzpicture}"
+  | .cd => "\\begin{document}\n\\begin{tikzcd}"
+
+/-- The kind's environment closing, then the document's. -/
+@[expose] public def PicKind.docClose : PicKind → String
+  | .picture => "\\end{tikzpicture}\n\\end{document}\n"
+  | .cd => "\\end{tikzcd}\n\\end{document}\n"
+
+/-- One boundary request as the document wrote it: its kind and its body —
+everything between the environment's `\begin` and `\end`, the option
+bracket included. -/
+public structure PicSrc where
+  kind : PicKind
+  body : String
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The source a request's identity is the hash of: a picture's body as
+written, or a diagram's whole environment — so neither kind can share an
+identity with the other, and a picture's identity is what it always was. -/
+@[expose] public def PicSrc.source (s : PicSrc) : String :=
+  match s.kind with
+  | .picture => s.body
+  | .cd => "\\begin{" ++ s.kind.env ++ "}" ++ s.body ++ "\\end{" ++ s.kind.env ++ "}"
+
 public structure Doc where
   docClass : DocClass := .article
   /-- The surface the document was written in (`Surface.ofPath`). -/
@@ -9468,16 +9520,17 @@ public structure Doc where
   none }` is the declared refusal, under which the engine's own drawing
   ships with every loss named. -/
   figureConvert : Bool := true
-  /-- The boundary requests this document states: `(id, body)` — the
-  picture's identity is the content hash of the author's bytes, and the
-  body is the picture as written — the `bibRefs` shape. The request the
-  driver fulfils is formed at the request site (`pictureRefs`): the body
-  wrapped with `picturePreamble`, the document's font roles, and exactly
-  the palette roles its body and carried declarations mention, so its
-  colours and faces are the page's (`Design.ofDoc` reads the same palette).
-  The result embeds through the image path as a measured form XObject. The trust
-  label: the engine claims the *box*, never the contents. -/
-  pictureSrcs : Array (String × String) := #[]
+  /-- The boundary requests this document states: `(id, src)` — the
+  request's identity is the content hash of the author's bytes
+  (`PicSrc.source`), and `src` the picture or diagram as written, with its
+  kind — the `bibRefs` shape. The request the driver fulfils is formed at
+  the request site (`pictureRefs`): the body wrapped with
+  `picturePreamble`, the document's font roles, and exactly the palette
+  roles its body and carried declarations mention, so its colours and faces
+  are the page's (`Design.ofDoc` reads the same palette). The result embeds
+  through the image path as a measured form XObject. The trust label: the
+  engine claims the *box*, never the contents. -/
+  pictureSrcs : Array (String × PicSrc) := #[]
   /-- The preamble a boundary standalone needs beyond the document's
   design: non-native package loads and the tikz-family set lines, as
   written (`Compat.boundaryDecls`). Set once by the elaborator. -/
@@ -16501,11 +16554,22 @@ runs over one document state byte-identical requests, so the cache key
 means something. Determinism here is definitional — no theorem states a
 pure function's purity, and `boundaryChecks` checks the bytes agree. -/
 public def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
-    (macros : Array (String × String)) (body : String) : String :=
+    (macros : Array (String × String)) (src : PicSrc) : String :=
   "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
     colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ macroDeclLines macros ++
-    "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
-    "\\end{tikzpicture}\n\\end{document}\n"
+    src.kind.docOpen ++ src.body ++ src.kind.docClose
+
+/-- A picture's request is the standalone it always was: its kind opens
+the environment the wrapper wrote before diagrams had a kind of their own,
+so no picture's request — and so no picture's cache key — moved. -/
+public theorem wrapStandalone_picture_exact (preamble fonts : String)
+    (colors : Array (String × Color)) (macros : Array (String × String)) (body : String) :
+    wrapStandalone preamble fonts colors macros { kind := .picture, body } =
+      "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
+        colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ macroDeclLines macros ++
+        "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
+        "\\end{tikzpicture}\n\\end{document}\n" := by
+  simp only [wrapStandalone, PicKind.docOpen, PicKind.docClose]
 
 /-- The request one picture body states, formed from the finished
 document: the driver calls `pictureRefs` after contrast realization, so a
@@ -16514,16 +16578,16 @@ role the realizer moved is moved in the picture too — the picture's
 dependency roots: a TikZ style can name a macro or colour that the body
 never spells. The colour scan also reads every reachable macro definition,
 so the same closure that makes a macro travel makes its colours travel. -/
-public def pictureRequest (doc : Doc) (body : String) : String :=
-  let roots := doc.picturePreamble ++ body
+public def pictureRequest (doc : Doc) (src : PicSrc) : String :=
+  let roots := doc.picturePreamble ++ src.body
   let macros := macroDecls doc.pictureMacros roots
   wrapStandalone doc.picturePreamble (fontLines doc.fonts)
-    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) macros body
+    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) macros src
 
 /-- The document with boundary pictures `more` added to its request, each id
 once, its own first: what a reference list's fields set (`Bib.apply`), as
 the body's are recorded where they stand. -/
-@[expose] public def Doc.addPictures (doc : Doc) (more : Array (String × String)) : Doc :=
+@[expose] public def Doc.addPictures (doc : Doc) (more : Array (String × PicSrc)) : Doc :=
   { doc with pictureSrcs := more.foldl (init := doc.pictureSrcs) fun acc (h, b) =>
       if acc.any (·.1 == h) then acc else acc.push (h, b) }
 
@@ -16535,7 +16599,7 @@ document's design as both backends do. -/
 public def pictureRefs (doc : Doc) : Array (String × String) :=
   let srcs := imageRefs doc
   (doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)).map
-    fun (h, body) => (h, pictureRequest doc body)
+    fun (h, src) => (h, pictureRequest doc src)
 
 /-- **Referenced roles are covered.** A name the body spells that the
 palette resolves is declared in the request, with the palette's value. -/
@@ -16668,18 +16732,18 @@ this one: the PDF embeds the tool's drawing and the HTML embeds a
 rasterization of the same drawing — one fulfilment, two projections. -/
 public theorem pictureRefs_design_projects (doc : Doc) (id w : String)
     (h : (id, w) ∈ pictureRefs doc) :
-    ∃ body, (id, body) ∈ doc.pictureSrcs ∧
+    ∃ src, (id, src) ∈ doc.pictureSrcs ∧
       w = wrapStandalone doc.picturePreamble (fontLines doc.fonts)
         (paletteDecls doc.palette
-          (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ body)) ++
-            (doc.picturePreamble ++ body)))
-        (macroDecls doc.pictureMacros (doc.picturePreamble ++ body)) body := by
+          (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) ++
+            (doc.picturePreamble ++ src.body)))
+        (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) src := by
   unfold pictureRefs at h
   rw [Array.mem_map] at h
-  obtain ⟨⟨id', body⟩, hmem, heq⟩ := h
+  obtain ⟨⟨id', src⟩, hmem, heq⟩ := h
   simp only [Prod.mk.injEq] at heq
   obtain ⟨rfl, rfl⟩ := heq
-  exact ⟨body, (Array.mem_filter.mp hmem).1, rfl⟩
+  exact ⟨src, (Array.mem_filter.mp hmem).1, rfl⟩
 
 /-- **The boundary request is environment-free.** What a document requests
 at the boundary (`pictureRefs`) is a function of the document alone — the
@@ -19780,7 +19844,7 @@ public theorem pendingNodes_withListNotes (doc : Doc) (m : Nat) :
   simp only [pendingNodes, foldDoc, furnitureInlines, Doc.withListNotes]
 
 /-- A picture request added changes no census the regions carry. -/
-public theorem pendingNodes_addPictures (doc : Doc) (more : Array (String × String)) :
+public theorem pendingNodes_addPictures (doc : Doc) (more : Array (String × PicSrc)) :
     pendingNodes (doc.addPictures more) = pendingNodes doc := by
   simp only [pendingNodes, foldDoc, furnitureInlines, Doc.addPictures]
 
