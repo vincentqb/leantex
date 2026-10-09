@@ -125,18 +125,25 @@ public structure Classified where
   deriving BEq, Repr
 
 /-- Split token text at LF without losing blank lines or indentation.
-Empty chunks need no run. Validation below also checks the resulting lines,
-so this representation step is not a second trusted lexer. -/
+Empty chunks need no run, and adjacent chunks of one type share a token, as
+a native lexer's lines do (`ListingHighlight.tokenize`). Validation below
+also checks the resulting lines, so this representation step is not a second
+trusted lexer. -/
 private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.run do
   let mut lines : Array (Array Token) := #[#[]]
   for token in tokens do
+    let kind := Kind.ofPygments token.tokenClass
     let parts := token.text.splitOn "\n"
     for (part, i) in parts.zipIdx do
       if i > 0 then lines := lines.push #[]
       if !part.isEmpty then
         let last := lines.back!
-        lines := lines.set! (lines.size - 1)
-          (last.push { kind := Kind.ofPygments token.tokenClass, text := part })
+        let line := match last.back? with
+          | some prev =>
+            if prev.kind == kind then last.pop.push { prev with text := prev.text ++ part }
+            else last.push { kind, text := part }
+          | none => last.push { kind, text := part }
+        lines := lines.set! (lines.size - 1) line
   return lines
 
 /-- Offsets count Unicode characters, as Pygments does. Every token starts

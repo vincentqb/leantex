@@ -195,6 +195,16 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
         #["echo\t\"λ😀\"", "", "$HOME"] &&
       a.tokens.flatten.map (·.kind) ==
         #[.nameBuiltin, .text, ⟨"Literal.String.Double"⟩, ⟨"Name.Variable"⟩])
+  let split : ListingReply.Request := { language := "fish", source := "->x" }
+  let splitBody := ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson split #[
+    ShellHighlight.shellTokenJson 0 "Token.Operator" "-",
+    ShellHighlight.shellTokenJson 1 "Token.Operator" ">",
+    ShellHighlight.shellTokenJson 2 "Token.Name" "x"]]
+  t "listing reply: adjacent pieces of one type share a token, as a native lexer's lines do"
+    (match ListingReply.decode #[split] splitBody with
+      | .ok (as, ds) => ds.isEmpty && as.size == 1 && as.all fun a =>
+        a.tokens == #[#[{ kind := .operator, text := "->" }, { kind := ⟨"Name"⟩, text := "x" }]]
+      | .error _ => false)
   t "listing reply: lookup validates the original raw source"
     ((ListingReply.lookup answers " BASH " ("\n" ++ request.source ++ "\n")).isSome &&
       (ListingReply.lookup answers "sh" request.source).isNone &&
