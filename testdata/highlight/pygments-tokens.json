@@ -1,6 +1,6 @@
 {
   "pygments": "2.21.0",
-  "python": "3.14.8",
+  "python": "3.13.14",
   "cases": [
     {"path": "testdata/highlight/snippets/bash/deploy.sh", "tokens": [
       [0, "Comment.Hashbang", "#!/usr/bin/env bash\n"],

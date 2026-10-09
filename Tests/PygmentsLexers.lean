@@ -44,16 +44,17 @@ end PygmentsLexers
 /-- The native lexers against Pygments' own streams for the invented
 snippets, recorded by `scripts/highlight-diff.lean --record`: token for
 token, start, type and text. The record covers every snippet and every
-lexer, came from the Pygments the data was generated from, and the mirror
-implements the rule structure that data was read beside. -/
+lexer, came from the Pygments and the Python the data was generated under,
+and the mirror implements the rule structure that data was read beside. -/
 def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let json ← match Json.parse (← IO.FS.readFile PygmentsLexers.recorded) with
     | .ok j => pure j
     | .error e => do t s!"pygments lexers: the record does not parse: {e}" false; return
   let version := (json.getObjValAs? String "pygments").toOption.getD ""
-  t "pygments lexers: the record and the lexer data come from one Pygments"
-    (version == PygmentsLexData.pygmentsVersion)
+  let python := (json.getObjValAs? String "python").toOption.getD ""
+  t "pygments lexers: the record and the lexer data come from one Pygments under one Python"
+    (version == PygmentsLexData.pygmentsVersion && python == PygmentsLexData.pythonVersion)
   t "pygments lexers: the mirror implements the generated rule structure"
     (mirrorsRules == PygmentsLexData.rulesDigest)
   let cases := ((json.getObjVal? "cases").toOption.bind (·.getArr?.toOption)).getD #[]
