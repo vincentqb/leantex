@@ -1240,12 +1240,15 @@ def gates : List Gate := [
   breaks the theorem artifact_flag_free instead of growing the list.
   Fix: make it a document declaration (\\output) rather than a flag; a
   flag about where/when/how-loudly goes on the list, deliberately." },
-  { applies := fun f => f.startsWith "LeanTex/Core/"
+  { applies := fun f => f.startsWith "LeanTex/Core/" || f == "LeanTex/Cli/World.lean"
     flag := ioInCore
     what := fun f => s!"IO in {f}"
     help := "  Modules under LeanTex/Core/ do no IO: files
-  and fonts surface as request values the CLI driver fulfills.
-  Fix: return a request value and fulfill it under LeanTex/Cli/." },
+  and fonts surface as request values the CLI driver fulfills. World.lean
+  is the host's vocabulary, and a program over it is a value: Host.lean
+  alone answers its questions.
+  Fix: return a request value and fulfill it under LeanTex/Cli/, or ask
+  World's question and answer it in Host.lean." },
   { applies := (·.startsWith "LeanTex/Core/")
     flag := identityArm
     what := fun f => s!"identity catch-all arm (`| x => x`) in {f}"

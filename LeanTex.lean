@@ -87,5 +87,7 @@ public import LeanTex.Cli.FontFix
 public import LeanTex.Cli.SlotLoss
 public import LeanTex.Cli.Boundary
 public import LeanTex.Cli.PicCache
+public import LeanTex.Cli.World
+public import LeanTex.Cli.Host
 public import LeanTex.Cli.ToolProbe
 public import LeanTex.Cli.ConvCache

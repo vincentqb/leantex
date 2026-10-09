@@ -53,6 +53,7 @@ import Tests.BrowserFaceBatch
 import Tests.CacheIO
 import Tests.PictureAssets
 import Tests.ToolMemo
+import Tests.World
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.FrontendContracts
@@ -693,6 +694,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.cacheIdentityChecks ref
   Tests.pictureAssetsChecks ref
   Tests.toolMemoChecks ref
+  Tests.World.checks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref

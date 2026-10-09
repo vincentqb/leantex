@@ -231,6 +231,14 @@ is skipped.
   pre-commit hook enforces the boundary). Files, fonts,
   anything external surfaces as request values the CLI driver fulfills
   (effects as data).
+- The driver's own host access is a vocabulary too: `World.Ask` names the
+  questions (environment, stat, read, listing, bounded tool run, atomic
+  write), a `World.Prog` over them is a value, `World.lean` does no IO
+  (hook), and `Host.answer` is the one interpreter — a `BaseIO` action, so
+  every failure is reply data. New host access is a question added there,
+  not another `IO.FS`/`IO.Process` call site: a program's result is then
+  the replay of its trace (`Host.record_replay_exact`) and a world
+  assumption is a theorem's hypothesis about replies, never an axiom.
 - The artifact is a function of the document and the font environment;
   flags are not arguments to it. What to build is the document's to declare
   (`\output`); a flag says where output lands (`-o`), when (`--watch`), how
