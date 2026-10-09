@@ -113,7 +113,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- A markdown document cannot declare a typewriter face, so its undeclared
   -- slot takes the default text family's designed companion wherever the
   -- scan serves it whole and fixed-pitch (`FontDb.monoCompanion`, held to
-  -- the resolver call below by `monoCompanion_fixed`). Anywhere else — a
+  -- the resolver call below by `monoCompanion_contract`). Anywhere else — a
   -- tex document, or a scan without the companion — an undeclared slot
   -- falls to the body family, the loss W0390 names.
   -- premise: markdownMonoChecks — two builds of one markdown document, its companion in the scan and not, set code in different faces, and only the second names W0390

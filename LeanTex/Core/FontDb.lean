@@ -724,7 +724,7 @@ picks answers every corner, through the same resolver call the assembly
 makes, with its own face, unsubstituted and fixed-pitch: it can never turn
 an undeclared slot into a substitution warning (W0006) or a proportional
 face, and it is never a guess beyond the sourced rows. -/
-public theorem monoCompanion_fixed (faces : Array Face) (text family : String)
+public theorem monoCompanion_contract (faces : Array Face) (text family : String)
     (h : monoCompanion faces text = some family) :
     ∀ c ∈ corners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
       f.fixedPitch = true := by

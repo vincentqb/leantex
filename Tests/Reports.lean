@@ -1172,8 +1172,11 @@ def reports : List Report := [
     pins := [check% Tests.MarkdownTables.markdownTableChecks,
       thm% LeanTex.Core.Md.tableRaws_contract]
     accept := ["twenty-two typed HTML and shipped layout assertions fail before the reader reads pipe tables",
+      "eight more fail where every table set at its natural width: a table too wide for its measure narrows its columns as a browser's automatic table layout does, each keeping its widest word, its cells wrapping ragged with every word on the page in both artifacts; a table whose words alone pass the measure keeps them whole and is named at its first cell; and every cell of a row stands on one baseline",
       "the GFM specification's eight table examples are classified: seven match and one waits on the smart punctuation decision",
-      "a long markdown report's summary table renders under booktabs' three rules in both artifacts"]
+      "a long markdown report's summary table sets inside the measure under booktabs' three rules in both artifacts, where it ran forty points past it",
+      "a table of prose descriptions keeps every word on the page in the PDF, on screen and in print, where its description column was cut at the page edge",
+      "a results table of single figures too wide for the page is named with a remedy rather than squeezed until its figures overlap"]
     state := .guarded "fa516a82" .before .author },
   { id := "R129", date := "2026-10-08"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
@@ -1181,8 +1184,10 @@ def reports : List Report := [
       check% Tests.MarkdownCode.markdownCodeChecks]
     accept := ["eight shipped layout and HTML measure assertions fail before markdown pages take their own text block",
       "eight listing and shipped layout assertions fail before markdown code sets small and wraps as listings wraps",
+      "three more fail where inline code could not break: a justified markdown paragraph now breaks a long identifier after the url package's break characters, every line inside the measure and no word space three of its own wide, and the page's stylesheet lets a browser break one where it would overflow, while a tex document's typewriter run never breaks",
       "every shipped text face sets the markdown measure between seventy and ninety characters with the readable band judge quiet",
-      "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before"]
+      "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before",
+      "a wrapped code line continues twenty points in on screen as on paper"]
     state := .guarded "fa516a82" .before .author },
   { id := "R130", date := "2026-10-08"
     what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
@@ -1190,9 +1195,11 @@ def reports : List Report := [
       check% Tests.MarkdownWarnings.markdownMonoChecks,
       thm% Diag.foldRepeats_sum_exact,
       thm% Diag.foldRepeats_error_exact,
-      thm% FontDb.monoCompanion_fixed]
+      thm% FontDb.monoCompanion_contract,
+      thm% Layout.paragraphBreaksOf_undeclared_exact]
     accept := ["five assertions over the typewriter face, code line ends and the default log fail before markdown code takes its designed typewriter companion and repeated warnings fold",
-      "a long markdown report's two thousand four hundred sixty-six warning lines become six, each carrying its site count",
+      "one more fails where a markdown hard break was read as a declared line shape: the page sets as its tex twin's and names no re-flow, as LaTeX names none",
+      "a long markdown report's two thousand four hundred sixty-six warning lines become four, each carrying its site count",
       "with no DejaVu installed a markdown document's code sets in the URW typewriter face beside the URW sans, with no warning",
       "a tex document that declares no typewriter face keeps the body family and the one warning that names it",
       "two presentation decks render pixel-identical, their logs only folding a repeated glyph fallback"]

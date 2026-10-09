@@ -14,7 +14,7 @@ verbatim run in a document with no `\fonts{ mono = ... }` sets in body
 prose. The one exception cannot reach this report: a markdown document,
 which can declare nothing, takes its text family's designed typewriter
 companion where the scan serves it at every corner in fixed pitch
-(`FontDb.monoCompanion_fixed`), and a fixed-pitch slot is no loss — so
+(`FontDb.monoCompanion_contract`), and a fixed-pitch slot is no loss — so
 every slot this module reports was served by the body family. This module
 is the decision; the diagnostic is `DriverDiag.slotCollapsed` (W0390).
 
