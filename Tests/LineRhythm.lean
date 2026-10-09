@@ -124,6 +124,17 @@ private def longPara : String :=
   String.intercalate " " (List.replicate 6
     "Alder birch cedar dogwood elm fir hazel juniper larch maple oak pine rowan spruce")
 
+/-- Whether a ragged line holds every word that fits: the next line's first
+word, one space after this line's end, would stand past the measure. -/
+private def lineFillsTo (l : Layout.LineOut) (space : Sp) (next : Layout.LineOut)
+    (measure : Sp) : Bool :=
+  let first := (next.segs.toList.takeWhile fun sg => match sg with
+      | .gap _ _ | .decoratedGap _ _ _ => false
+      | _ => true).foldl (fun w sg => match sg with
+      | .run _ _ _ rw _ _ _ _ _ _ _ => w + rw
+      | _ => w) 0
+  measure < l.setWidth + space + first
+
 /-- **A beamer frame sets its text ragged right**, as beamer.cls's own
 `\raggedright` does for every frame (measured under lualatex: the lines
 of a frame paragraph end where their words end, none hyphenated), while an
@@ -144,6 +155,16 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a frame's lines end ragged, where their words end"
     (inner.any fun l => l.setWidth < measure - pt 2)
   t "a frame's lines end on whole words" (lines.all fun l => !(lineText l).endsWith "-")
+  -- LaTeX's `\raggedright` leaves no line loose (`\rightskip 0pt plus 1fil`),
+  -- and TeX keeps the latest of equal demerits: each line takes every word
+  -- that fits, so the next line's first word, after one space, would not.
+  t "a frame's lines take every word that fits, as LaTeX's raggedright sets them"
+    (lines.size ≥ 3 && (List.range (lines.size - 1)).all fun i =>
+      let l := lines[i]!
+      let space := l.segs.foldl (fun m sg => match sg with
+        | .gap w true => max m w
+        | _ => m) 0
+      lineFillsTo l space (lines[i + 1]!) measure)
   let (art, _) := elabStr (metricDoc longPara)
   let artMeasure := art.page.width - 2 * art.page.hmargin
   let artLines := bodyLines (layoutOf oneFace art)
@@ -154,6 +175,19 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (hasStr (HtmlDoc.emit {} deck).1 "p { hyphens: manual; }")
   t "an article's paragraphs keep the browser's hyphenation"
     (hasStr (HtmlDoc.emit {} art).1 "p { hyphens: auto; }")
+  -- ragged2e is not read: its declarations name the page key that sets a
+  -- deck's frames justified, and that key does.
+  let deck (pre : String) := "\\documentclass[10pt]{beamer}\n" ++ pre ++
+    "\\begin{document}\n\\begin{frame}[t]\n\\justifying\n" ++ longPara ++
+    "\n\\end{frame}\n\\end{document}"
+  t "ragged2e's justifying names the key that justifies a deck"
+    ((dvE (deck "\\usepackage{ragged2e}\n")).any fun d =>
+      d.code == "W0301" && hasStr (d.help.getD "") "\\page{ justify = on }")
+  let (onDoc, _) := elabStr (deck "\\page{ justify = on }\n")
+  let onLines := bodyLines (layoutOf oneFace onDoc)
+  t "a deck that declares its text justified sets its frames to the measure"
+    (onLines.size ≥ 3 && (onLines.extract 0 (onLines.size - 1)).all fun l =>
+      measure - pt 1 ≤ l.setWidth)
 
 /-- **A listing's lines stand at its size's leading, less what its package
 takes off each line**: a bare `verbatim` under `\\footnotesize` at the

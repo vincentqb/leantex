@@ -182,6 +182,12 @@ public structure PageSpec where
   the stretch justification needs, and forcing it gives the breaker only
   overfull answers. -/
   justify : Option Bool := none
+  /-- Whether the ragged setting `justify` turns off is LaTeX's
+  `\raggedright` (`\@flushglue`, `\rightskip 0pt plus 1fil`): lines fill
+  first, unhyphenated, as TeX breaks them when no line can be loose. On for
+  a frame — beamer.cls declares `\raggedright` among its defaults — and off
+  for the engine's own ragged page (`card`), which balances its lines. -/
+  raggedFil : Bool := false
   /-- Whether boundary glyphs protrude into the margin so the optical edge
   is straight — microtype's character protrusion (Thành, "Margin kerning
   and font expansion with pdfTeX", TUGboat 22(3); microtype manual §2),

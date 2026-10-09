@@ -67,7 +67,7 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   return (items, g)
 
 private def seqCost (items : Array Item) (target : Dim.Sp)
-    (protrude expand : Bool) (breaks : List Nat) : Option Int := Id.run do
+    (protrude expand fil : Bool) (breaks : List Nat) : Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
   let mut prevFlagged := false
@@ -85,7 +85,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
       if isForced items k then
         return none
     let m := measure items a b protrude
-    total := total + lineDemerits items m target b expand
+    total := total + lineDemerits items m target b expand fil
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
     if prevFlagged && b == items.size - 1 then
@@ -97,21 +97,35 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
     return none
   return some total
 
+/-- The brute-force minimum over every legal break sequence, and among the
+sequences that reach it the one TeX's line breaker keeps — each break's
+predecessor the latest of equal demerits (tex.web §855), which is the
+sequence greatest when compared from its end. -/
 private def bruteBest (items : Array Item) (target : Dim.Sp)
-    (protrude expand : Bool) : Option Int := Id.run do
+    (protrude expand fil : Bool) : Option (Int × List Nat) := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
-  let mut best : Option Int := none
+  let later (a b : List Nat) : Bool :=
+    let ra := a.reverse
+    let rb := b.reverse
+    let rec go : List Nat → List Nat → Bool
+      | x :: xs, y :: ys => if x != y then x > y else go xs ys
+      | _ :: _, [] => true
+      | [], _ => false
+    go ra rb
+  let mut best : Option (Int × List Nat) := none
   for mask in [0:2 ^ optional'.length] do
     let mut chosen : List Nat := []
     for (b, idx) in optional'.zipIdx do
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
-    if let some c := seqCost items target protrude expand (chosen ++ [n - 1]) then
+    let seq := chosen ++ [n - 1]
+    if let some c := seqCost items target protrude expand fil seq then
       match best with
-      | some b0 => if c < b0 then best := some c
-      | none => best := some c
+      | some (b0, s0) =>
+        if c < b0 || (c == b0 && later seq s0) then best := some (c, seq)
+      | none => best := some (c, seq)
   return best
 
 /-- `kp`'s prefix-sum measure must agree with the direct `measure` wherever
@@ -141,26 +155,33 @@ def main (args : List String) : IO UInt32 := do
     let (tw, g'') := g.next 200
     g := g''
     let target := Dim.pt (tw + 40)
-    -- Justified, and ragged as the fil-glue transform the card class uses:
-    -- the same breaker must be optimal over both item shapes — and with
-    -- the protrusion boundary term and the expansion flexibility on and
-    -- off, independently.
-    for shape in [items, raggedItems items] do
+    -- Justified, ragged as the finite transform the card class uses, and
+    -- LaTeX's `\raggedright` (TeX's own glue under a fil `\rightskip`): the
+    -- same breaker must be optimal over every item shape — with the
+    -- protrusion boundary term and the expansion flexibility on and off,
+    -- independently — and under the fil, where demerits tie, keep TeX's
+    -- own choice among the ties.
+    for (shape, fil) in [(items, false), (raggedItems items, false), (items, true)] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
-        let kpBreaks := (kp shape target protrude expand).toList
-        let kpCost := seqCost shape target protrude expand kpBreaks
-        let brute := bruteBest shape target protrude expand
-        unless kpCost.isSome && kpCost == brute do
+        let kpBreaks := (kp shape target protrude expand fil).toList
+        let kpCost := seqCost shape target protrude expand fil kpBreaks
+        let brute := bruteBest shape target protrude expand fil
+        unless kpCost.isSome && kpCost == brute.map (·.1) do
           failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}): \
-target={target} kp={kpCost} brute={brute}"
+          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}): \
+target={target} kp={kpCost} brute={brute.map (·.1)}"
           IO.eprintln s!"  breaks={kpBreaks}"
           IO.eprintln s!"  items={shape.size}"
+        if fil && kpCost == brute.map (·.1) && some kpBreaks != brute.map (·.2) then
+          failures := failures + 1
+          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}): \
+the fil tie keeps {kpBreaks}, TeX keeps {brute.map (·.2)}"
     unless measuresAgree items do
       failures := failures + 1
       IO.eprintln s!"FAIL case {i}: prefix-sum measure disagrees with direct measure"
   if failures == 0 then
-    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal (justified and ragged)"
+    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal (justified, ragged, and \
+LaTeX's fil ragged, its ties as TeX keeps them)"
     return 0
   else
     IO.eprintln s!"kp-fuzz: {failures} failures in {iters} cases"

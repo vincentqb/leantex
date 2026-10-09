@@ -142,6 +142,11 @@ public structure Geom where
   /-- The skip column in force (`Ir.PageSpec.skipScale`): every named
   step's `\baselineskip` row, which its lines lead from (`Ir.stepLead`). -/
   skips : List (String × Nat) := Ir.sizeSkipScale
+  /-- The ragged setting in force, where `justify` is off, is LaTeX's
+  `\@flushglue` (`Ir.PageSpec.raggedFil`; a `\raggedright` scope): lines
+  fill first (`Spacing.Paragraph.rightFil`), not the engine's balanced
+  ragged (`raggedItems`). -/
+  raggedFil : Bool := false
   /-- beamer's `\textheight` on the frame being walked, where its pages
   carry the footline: the paper less `\footheight` and `\headheight`
   (beamerbaseframecomponents.sty:178-180; moloch's headline is empty) —
@@ -1143,7 +1148,8 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     markThick := spec.markThickness
     trimInset := ((drawnTrim spec).map (·.1)).getD 0
     scale := spec.scale
-    skips := spec.skipScale }
+    skips := spec.skipScale
+    raggedFil := spec.raggedFil }
 
 /-- A path on the page, in layout coordinates (y down): what a picture's
 node outlines — and, as the subset grows, its edges — become. The
@@ -2980,22 +2986,23 @@ construction in this module writes `word`; the structure's default is
 private theorem interword_word_exact (size : Sp) (font : Font) :
     (interword size font).word = true := rfl
 
-/-- Ragged setting as an item transform, leaving the breaker untouched:
-interword glue keeps its natural width, never shrinks, and gains *finite*
-stretch — six times its own width, `displayItems`' em-relative pricing, so
-the two ragged tiers share one scale. Finite is the point: fil hides all
-looseness from the badness function (TeXbook ch. 14), so under fil glue
-every same-line-count break sequence ties at demerits and the tie-break
-decides the paragraph's shape — packing lines from the end and dumping the
-slack on the first line. Plain TeX's `\raggedright` prices looseness
-finitely for exactly this reason (TeXbook App. B, p. 356: `\rightskip 0pt
-plus2em`, fixed `\spaceskip`); LaTeX's `1fil` `\@flushglue` version is the
-documented wart ragged2e exists to fix (ragged2e manual §1, its
-`\RaggedRightRightskip 0pt plus 2em`). The paragraph's closing parfill and
-an author's own `\hfill` keep their fil: a body paragraph's last line is
-free (`\parfillskip 0pt plus 1fil`), and a declared fill means the margin.
-The lines are then set unjustified, so the stretch never widens a rendered
-space — it only prices the break. -/
+/-- The engine's own ragged setting (a `card`'s page) as an item transform,
+leaving the breaker untouched: interword glue keeps its natural width,
+never shrinks, and gains *finite* stretch — six times its own width,
+`displayItems`' em-relative pricing, so the two ragged tiers share one
+scale. Finite is the point: fil hides all looseness from the badness
+function (TeXbook ch. 14), so every same-line-count break sequence ties at
+demerits and the tie-break decides the paragraph's shape — TeX's keeps the
+latest, which fills each line first. That is LaTeX's own `\raggedright`
+(`\@flushglue`), which a document declaring it gets exactly, from the
+breaker's `fil` (`Spacing.Paragraph.rightFil`); plain TeX's prices
+looseness finitely instead (TeXbook App. B, p. 356: `\rightskip 0pt
+plus2em`, fixed `\spaceskip`), as ragged2e's `\RaggedRight` does (its
+manual §1), and so does this, where no document declared LaTeX's. The
+paragraph's closing parfill and an author's own `\hfill` keep their fil: a
+body paragraph's last line is free (`\parfillskip 0pt plus 1fil`), and a
+declared fill means the margin. The lines are then set unjustified, so the
+stretch never widens a rendered space — it only prices the break. -/
 public def raggedItems (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
@@ -5842,15 +5849,17 @@ public def overfullDemerits : Int := 100000000
 denominators grow by the boxes' own flexibility (`Measure.ex`): the form
 of the cost is unchanged, expansion is only more room (Thành tb71 —
 expansion gives a font "stretchability and shrinkability … used by the
-line-breaking engine"). -/
+line-breaking engine"). Under `fil` every line ends in LaTeX's
+`\rightskip 0pt plus 1fil` (`\@flushglue`, `\raggedright`'s), so no line
+is loose: its slack costs nothing, and only its shrink is priced. -/
 public def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat)
-    (expand : Bool := false) : Int :=
+    (expand : Bool := false) (fil : Bool := false) : Int :=
   let ex := m.ex expand
   let delta := target - m.natural
   let b : Int :=
     if delta == 0 then 0
     else if delta > 0 then
-      if m.fil then 0 else badness delta (m.stretch + ex)
+      if m.fil || fil then 0 else badness delta (m.stretch + ex)
     else
       if m.shrink + ex < -delta then -1  -- overfull marker
       else badness delta (m.shrink + ex)
@@ -5960,10 +5969,23 @@ private theorem arrayGetD_set_ne {α : Type} (xs : Array α) (i j : Nat) (x : α
 
 private abbrev KpEntry := Int × Nat
 
-/-- One candidate keeps the original strict demerit comparison and tie order. -/
-private def kpChoose (old : Option KpEntry) (candidate : KpEntry) : Option KpEntry :=
+/-- Whether break `p` stands after break `q` in a paragraph of `n` items,
+whose start node is `n` itself (`kpInit`), before every break. -/
+private def kpLater (n p q : Nat) : Bool :=
+  if q == n then p != n else p != n && q < p
+
+/-- One candidate keeps the original strict demerit comparison and tie order;
+under `latest` (the paragraph's item count) a tie goes to the later
+predecessor, as TeX's line breaker keeps the last of equal demerits over an
+active list in break order (tex.web §855, `d<=minimal_demerits`) — which,
+when no line is loose, fills each line first. -/
+private def kpChoose (old : Option KpEntry) (candidate : KpEntry) (latest : Option Nat := none) :
+    Option KpEntry :=
   match old with
-  | some best => if candidate.1 < best.1 then some candidate else old
+  | some best =>
+    if candidate.1 < best.1 ||
+        (candidate.1 == best.1 && latest.any (kpLater · candidate.2 best.2)) then some candidate
+    else old
   | none => some candidate
 
 private structure KpCandidates where
@@ -5980,7 +6002,7 @@ private def kpStart (items : Array Item) (p : Nat) : Nat :=
   lineStart items (if p == items.size then 0 else p + 1)
 
 private def kpCandidate (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool)
+    (target slack : Sp) (protrude expand fil : Bool)
     (best : Array (Option KpEntry)) (j p : Nat) (c : KpCandidates) : KpCandidates := Id.run do
   let n := items.size
   if p == n || p < j then
@@ -5994,13 +6016,14 @@ private def kpCandidate (items : Array Item) (sums : KpSums)
           doubleHyphenDemerits else 0
         let fin := if p != n && isFlagged items p && j == n - 1 then
           finalHyphenDemerits else 0
-        let d := d0 + lineDemerits items m target j expand + dbl + fin
-        let c := { c with here := kpChoose c.here (d, p) }
+        let d := d0 + lineDemerits items m target j expand fil + dbl + fin
+        let ties := if fil then some n else none
+        let c := { c with here := kpChoose c.here (d, p) ties }
         if m.natural - (m.shrink + m.ex expand) > target + slack then
           if p != n && isFlagged items p then
-            return { c with droppedFlagged := kpChoose c.droppedFlagged (d, p) }
+            return { c with droppedFlagged := kpChoose c.droppedFlagged (d, p) ties }
           else
-            return { c with droppedPlain := kpChoose c.droppedPlain (d, p) }
+            return { c with droppedPlain := kpChoose c.droppedPlain (d, p) ties }
         else
           return { c with survivors := c.survivors.push p }
       | none => return c
@@ -6019,8 +6042,8 @@ private def KpCandidates.Good (items : Array Item) (c : KpCandidates) : Prop :=
     (∃ e, c.droppedFlagged = some e ∧ kpStart items e.2 < items.size)
 
 private theorem kpChoose_all (P : KpEntry → Prop) (old : Option KpEntry) (candidate : KpEntry)
-    (ho : ∀ e, old = some e → P e) (hc : P candidate) :
-    ∀ e, kpChoose old candidate = some e → P e := by
+    {latest : Option Nat} (ho : ∀ e, old = some e → P e) (hc : P candidate) :
+    ∀ e, kpChoose old candidate latest = some e → P e := by
   cases old with
   | none => intro e he; cases he; exact hc
   | some b =>
@@ -6029,13 +6052,15 @@ private theorem kpChoose_all (P : KpEntry → Prop) (old : Option KpEntry) (cand
     · intro e he; cases he; exact hc
     · exact ho
 
-private theorem kpChoose_isSome (old : Option KpEntry) (candidate : KpEntry) :
-    (kpChoose old candidate).isSome = true := by
+private theorem kpChoose_isSome (old : Option KpEntry) (candidate : KpEntry)
+    {latest : Option Nat} :
+    (kpChoose old candidate latest).isSome = true := by
   cases old <;> simp [kpChoose]
   split <;> rfl
 
-private theorem kpChoose_eq_some (old : Option KpEntry) (candidate : KpEntry) :
-    ∃ e, kpChoose old candidate = some e := by
+private theorem kpChoose_eq_some (old : Option KpEntry) (candidate : KpEntry)
+    {latest : Option Nat} :
+    ∃ e, kpChoose old candidate latest = some e := by
   exact Option.isSome_iff_exists.mp (kpChoose_isSome old candidate)
 
 private def KpCandidates.Valid (items : Array Item) (best : Array (Option KpEntry))
@@ -6046,10 +6071,10 @@ private def KpCandidates.Valid (items : Array Item) (best : Array (Option KpEntr
   (∀ p ∈ c.survivors, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
 
 private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) :
-    (kpCandidate items sums target slack protrude expand best j p c).Valid items best j := by
+    (kpCandidate items sums target slack protrude expand fil best j p c).Valid items best j := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   simp only [kpCandidate, hpj, ite_true, pure, Id.run]
   split
@@ -6080,13 +6105,13 @@ private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
     · exact hc
 
 private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hj : j < items.size)
     (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : c.Good items ∨ kpStart items p < items.size) :
-    (kpCandidate items sums target slack protrude expand best j p c).Good items := by
+    (kpCandidate items sums target slack protrude expand fil best j p c).Good items := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
     by_cases ha : kpStart items p < j
@@ -6102,10 +6127,12 @@ private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
     · split
       · split
         · obtain ⟨e, he⟩ := kpChoose_eq_some c.droppedFlagged (_, p)
+            (latest := if fil then some items.size else none)
           refine Or.inr (Or.inr ⟨e, he, ?_⟩)
           exact kpChoose_all (fun e => kpStart items e.2 < items.size) _ _
             (fun e he => Nat.lt_of_le_of_lt (hc.2.2.1 e he).2.2 hj) hpg e he
         · obtain ⟨e, he⟩ := kpChoose_eq_some c.droppedPlain (_, p)
+            (latest := if fil then some items.size else none)
           refine Or.inr (Or.inl ⟨e, he, ?_⟩)
           exact kpChoose_all (fun e => kpStart items e.2 < items.size) _ _
             (fun e he => Nat.lt_of_le_of_lt (hc.2.1 e he).2.2 hj) hpg e he
@@ -6118,12 +6145,12 @@ private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
     · exact Or.inl ⟨p, Array.mem_push_self, hpg⟩
 
 private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : c.here.isSome = true ∨ kpStart items p ≤ j) :
-    (kpCandidate items sums target slack protrude expand best j p c).here.isSome = true := by
+    (kpCandidate items sums target slack protrude expand fil best j p c).here.isSome = true := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
     by_cases ha : kpStart items p < j
@@ -6144,23 +6171,23 @@ private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
     · simp [hg] at ha
 
 private theorem kpScan_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j : Nat) (ps : List Nat) : ∀ c,
     c.Valid items best j →
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).Valid
+      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).Valid
         items best j := by
   induction ps with
   | nil => intro c hc _; exact hc
   | cons p ps ih =>
     intro c hc hp
     simp only [List.forIn_cons, bind, pure]
-    exact ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
+    exact ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
       (fun q hq => hp q (by simp [hq]))
 
 private theorem kpScan_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j : Nat) (hj : j < items.size)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
@@ -6168,7 +6195,7 @@ private theorem kpScan_good (items : Array Item) (sums : KpSums)
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (c.Good items ∨ ∃ p ∈ ps, kpStart items p < items.size) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).Good
+      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).Good
         items := by
   induction ps with
   | nil =>
@@ -6177,22 +6204,22 @@ private theorem kpScan_good (items : Array Item) (sums : KpSums)
   | cons p ps ih =>
     intro c hc hp hg
     simp only [List.forIn_cons, bind, pure]
-    apply ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
+    apply ih _ (kpCandidate_valid _ _ _ _ _ _ _ _ _ _ _ hc (hp p (by simp)))
       (fun q hq => hp q (by simp [hq]))
     rcases hg with hg | ⟨q, hq, hqg⟩
-    · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ hj hc (hp p (by simp)) hf (Or.inl hg))
+    · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ _ hj hc (hp p (by simp)) hf (Or.inl hg))
     · rcases List.mem_cons.mp hq with rfl | hq
-      · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ hj hc (hp q (by simp)) hf (Or.inr hqg))
+      · exact Or.inl (kpCandidate_good _ _ _ _ _ _ _ _ _ _ _ hj hc (hp q (by simp)) hf (Or.inr hqg))
       · exact Or.inr ⟨q, hq, hqg⟩
 
 private theorem kpScan_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
     (j : Nat) (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (c.here.isSome = true ∨ ∃ p ∈ ps, kpStart items p ≤ j) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand best j p c))) : Id KpCandidates).here.isSome = true := by
+      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).here.isSome = true := by
   induction ps with
   | nil =>
     intro c _ hg
@@ -6202,9 +6229,9 @@ private theorem kpScan_here (items : Array Item) (sums : KpSums)
     simp only [List.forIn_cons, bind, pure]
     apply ih _ (fun q hq => hp q (by simp [hq]))
     rcases hg with hg | ⟨q, hq, hqg⟩
-    · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ (hp p (by simp)) hf (Or.inl hg))
+    · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ _ (hp p (by simp)) hf (Or.inl hg))
     · rcases List.mem_cons.mp hq with rfl | hq
-      · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ (hp q (by simp)) hf (Or.inr hqg))
+      · exact Or.inl (kpCandidate_here _ _ _ _ _ _ _ _ _ _ _ (hp q (by simp)) hf (Or.inr hqg))
       · exact Or.inr ⟨q, hq, hqg⟩
 
 private def KpTable (items : Array Item) (t : Nat) (best : Array (Option KpEntry)) : Prop :=
@@ -6318,11 +6345,11 @@ private theorem kpClose_here (j : Nat) (best : Array (Option KpEntry))
   exact hh
 
 private def kpPosition (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
+    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
   if !canBreakAt items j then return st
   let mut c : KpCandidates := {}
   for p in st.active do
-    c := kpCandidate items sums target slack protrude expand st.best j p c
+    c := kpCandidate items sums target slack protrude expand fil st.best j p c
   return kpClose j st.best c
 
 private theorem kpCandidates_empty (items : Array Item) (best : Array (Option KpEntry))
@@ -6330,49 +6357,49 @@ private theorem kpCandidates_empty (items : Array Item) (best : Array (Option Kp
   simp [KpCandidates.Valid]
 
 private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j) :
-    (kpPosition items sums target slack protrude expand j st).Valid items (j+1) := by
+    (kpPosition items sums target slack protrude expand fil j st).Valid items (j+1) := by
   by_cases hb : canBreakAt items j = true
   · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
       bind, pure, Id.run]
     apply kpClose_valid _ _ _ _ hj hs.1 hb
     rw [← Array.forIn_toList]
-    exact kpScan_valid _ _ _ _ _ _ _ _ _ _ (kpCandidates_empty _ _ _) (by simpa using hs.2)
+    exact kpScan_valid _ _ _ _ _ _ _ _ _ _ _ (kpCandidates_empty _ _ _) (by simpa using hs.2)
   · simp only [kpPosition, hb, Bool.not_eq_true', ↓reduceIte, pure, Id.run]
     exact ⟨kpTable_mono _ _ _ _ hs.1 (by omega),
       fun p hp => ⟨(hs.2 p hp).1.imp_right (by omega), (hs.2 p hp).2⟩⟩
 
 private theorem kpPosition_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : ∃ p ∈ st.active, kpStart items p < items.size) :
-    ∃ p ∈ (kpPosition items sums target slack protrude expand j st).active,
+    ∃ p ∈ (kpPosition items sums target slack protrude expand fil j st).active,
       kpStart items p < items.size := by
   by_cases hb : canBreakAt items j = true
   · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
       bind, pure, Id.run]
     apply kpClose_good
     rw [← Array.forIn_toList]
-    apply kpScan_good _ _ _ _ _ _ _ _ hj hf _ _ (kpCandidates_empty _ _ _)
+    apply kpScan_good _ _ _ _ _ _ _ _ _ hj hf _ _ (kpCandidates_empty _ _ _)
       (by simpa using hs.2)
     exact Or.inr (by simpa using hg)
   · simpa only [kpPosition, hb, Bool.not_eq_true', Bool.false_eq_true, ↓reduceIte,
       pure, Id.run] using hg
 
 private theorem kpPosition_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hb : canBreakAt items j = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : ∃ p ∈ st.active, kpStart items p ≤ j) :
-    (((kpPosition items sums target slack protrude expand j st).best.getD j none)).isSome = true := by
+    (((kpPosition items sums target slack protrude expand fil j st).best.getD j none)).isSome = true := by
   simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
     bind, pure, Id.run]
   apply kpClose_here _ _ _ (by rw [hs.1.1]; omega)
   rw [← Array.forIn_toList]
-  apply kpScan_here _ _ _ _ _ _ _ _ hf _ _ (by simpa using hs.2)
+  apply kpScan_here _ _ _ _ _ _ _ _ _ hf _ _ (by simpa using hs.2)
   exact Or.inr (by simpa using hg)
 
 private theorem kpRange_progress {β : Type} (P : Nat → β → Prop) (lo len : Nat)
@@ -6406,74 +6433,74 @@ private theorem kpInit_valid (items : Array Item) :
     simp [kpInit]
 
 private def kpForward (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (count : Nat) : KpState := Id.run do
+    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) : KpState := Id.run do
   let mut st := kpInit items.size
   for j in [0:count] do
-    st := kpPosition items sums target slack protrude expand j st
+    st := kpPosition items sums target slack protrude expand fil j st
   return st
 
 private theorem kpForward_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (count : Nat) (hc : count ≤ items.size) :
-    (kpForward items sums target slack protrude expand count).Valid items count := by
+    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) (hc : count ≤ items.size) :
+    (kpForward items sums target slack protrude expand fil count).Valid items count := by
   simp only [kpForward, bind, pure, Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
   simpa only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, pure, Id.run,
     Nat.zero_add] using
     kpRange_progress (KpState.Valid items) 0 count
-      (kpPosition items sums target slack protrude expand) (kpInit items.size)
+      (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
       (kpInit_valid items)
-      (fun i _ hi st hs => kpPosition_valid _ _ _ _ _ _ _ _ (by omega) hs)
+      (fun i _ hi st hs => kpPosition_valid _ _ _ _ _ _ _ _ _ (by omega) hs)
 
 private theorem kpForward_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (count : Nat) (hc : count ≤ items.size)
+    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) (hc : count ≤ items.size)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
-    ∃ p ∈ (kpForward items sums target slack protrude expand count).active,
+    ∃ p ∈ (kpForward items sums target slack protrude expand fil count).active,
       kpStart items p < items.size := by
   let P := fun i (st : KpState) => st.Valid items i ∧ ∃ p ∈ st.active, kpStart items p < items.size
   have h0 : P 0 (kpInit items.size) :=
     ⟨kpInit_valid items, items.size, by simp [kpInit], hg⟩
   have h := kpRange_progress P 0 count
-    (kpPosition items sums target slack protrude expand) (kpInit items.size) h0
-    (fun i _ hi st hs => ⟨kpPosition_valid _ _ _ _ _ _ _ _ (by omega) hs.1,
-      kpPosition_good _ _ _ _ _ _ _ _ (by omega) hs.1
+    (kpPosition items sums target slack protrude expand fil) (kpInit items.size) h0
+    (fun i _ hi st hs => ⟨kpPosition_valid _ _ _ _ _ _ _ _ _ (by omega) hs.1,
+      kpPosition_good _ _ _ _ _ _ _ _ _ (by omega) hs.1
         (fun a ha => hf a i ha (by omega)) hs.2⟩)
   simpa only [kpForward, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run] using h.2
 
 private theorem kpForward_succ (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool) (count : Nat) :
-    kpForward items sums target slack protrude expand (count+1) =
-      kpPosition items sums target slack protrude expand count
-        (kpForward items sums target slack protrude expand count) := by
+    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) :
+    kpForward items sums target slack protrude expand fil (count+1) =
+      kpPosition items sums target slack protrude expand fil count
+        (kpForward items sums target slack protrude expand fil count) := by
   simp only [kpForward, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run]
   rw [List.range'_1_concat]
   change (forIn _ _ (fun j st => pure (.yield
-    (kpPosition items sums target slack protrude expand j st))) : Id KpState) =
-    kpPosition items sums target slack protrude expand count
+    (kpPosition items sums target slack protrude expand fil j st))) : Id KpState) =
+    kpPosition items sums target slack protrude expand fil count
       (forIn _ _ (fun j st => pure (.yield
-        (kpPosition items sums target slack protrude expand j st))) : Id KpState)
+        (kpPosition items sums target slack protrude expand fil j st))) : Id KpState)
   have h1 := List.forIn_pure_yield_eq_foldl (m := Id)
     (l := List.range' 0 count ++ [count])
-    (kpPosition items sums target slack protrude expand) (kpInit items.size)
+    (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
   have h2 := List.forIn_pure_yield_eq_foldl (m := Id)
     (l := List.range' 0 count)
-    (kpPosition items sums target slack protrude expand) (kpInit items.size)
+    (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
   simp only [Nat.zero_add] at *
   rw [h1, h2]
   simp only [List.foldl_append, List.foldl_cons, List.foldl_nil, pure]
 
 private theorem kpForward_last (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand : Bool)
+    (target slack : Sp) (protrude expand fil : Bool)
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
-    (((kpForward items sums target slack protrude expand items.size).best.getD (items.size-1) none)).isSome = true := by
-  have h := kpPosition_here items sums target slack protrude expand (items.size-1)
-    (kpForward items sums target slack protrude expand (items.size-1)) (by omega)
-    (kpForward_valid _ _ _ _ _ _ _ (by omega)) hb
+    (((kpForward items sums target slack protrude expand fil items.size).best.getD (items.size-1) none)).isSome = true := by
+  have h := kpPosition_here items sums target slack protrude expand fil (items.size-1)
+    (kpForward items sums target slack protrude expand fil (items.size-1)) (by omega)
+    (kpForward_valid _ _ _ _ _ _ _ _ (by omega)) hb
     (fun a ha => hf a _ ha (by omega)) (by
-      obtain ⟨p, hp, hg⟩ := kpForward_good items sums target slack protrude expand
+      obtain ⟨p, hp, hg⟩ := kpForward_good items sums target slack protrude expand fil
         (items.size-1) (by omega) hf hg
       exact ⟨p, hp, by omega⟩)
   rw [← kpForward_succ] at h
@@ -6745,10 +6772,10 @@ current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
 retained so a solution exists even for unbreakable content). -/
 public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) : Array Nat :=
+    (expand : Bool := false) (fil : Bool := false) : Array Nat :=
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand items.size
+  let st := kpForward items sums target slack protrude expand fil items.size
   match (st.best.getD (items.size-1) none) with
   | none => #[]
   | some _ => kpBack items.size st.best (items.size-1)
@@ -6756,15 +6783,15 @@ public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
 /-- The actual breaker retains all box glyphs in source order. The domain
 allows arbitrary widths, costs and overflow; it excludes internal forced
 ends, whose independently authored segments need their own chain. -/
-private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand : Bool)
+private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand fil : Bool)
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ k, k+1 < items.size → isForced items k = false) :
-    (breakSpans items (kp items target protrude expand).toList).1 =
+    (breakSpans items (kp items target protrude expand fil).toList).1 =
       items.toList.flatMap Item.boxChars := by
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand items.size
-  have ht := (kpForward_valid items sums target slack protrude expand items.size
+  let st := kpForward items sums target slack protrude expand fil items.size
+  have ht := (kpForward_valid items sums target slack protrude expand fil items.size
     (Nat.le_refl _)).1
   have hz : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0 := by
     intro a j haj hj
@@ -6776,7 +6803,7 @@ private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand 
   | none =>
     have hg : ¬ kpStart items items.size < items.size := by
       intro hg
-      have h := kpForward_last items sums target slack protrude expand hn hb hz hg
+      have h := kpForward_last items sums target slack protrude expand fil hn hb hz hg
       change ((st.best.getD (items.size-1) none)).isSome = true at h
       rw [he] at h
       contradiction
@@ -6810,18 +6837,18 @@ hyphens rare — a paragraph that sets cleanly without them never
 hyphenates, whatever small demerit gain a hyphen could buy. Explicit
 hyphens (unflagged pens) and forced breaks keep their pens. -/
 public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) : Array Nat := Id.run do
+    (expand : Bool := false) (fil : Bool := false) : Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => false
-  if !items.any sealable then return kp items target protrude expand
+  if !items.any sealable then return kp items target protrude expand fil
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => it
-  let breaks := kp plain target protrude expand
-  if breaks.isEmpty then return kp items target protrude expand
+  let breaks := kp plain target protrude expand fil
+  if breaks.isEmpty then return kp items target protrude expand fil
   let mut prev := plain.size
   for j in breaks do
     let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
@@ -6830,11 +6857,11 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
     let delta := target - m.natural
     let bad : Int :=
       if delta == 0 then 0
-      else if delta > 0 then (if m.fil then 0 else badness delta (m.stretch + ex))
+      else if delta > 0 then (if m.fil || fil then 0 else badness delta (m.stretch + ex))
       else if m.shrink + ex < -delta then (pretolerance : Int) + 1
       else badness delta (m.shrink + ex)
     if bad > (pretolerance : Int) then
-      return kp items target protrude expand
+      return kp items target protrude expand fil
     prev := j
   return breaks
 
@@ -9640,6 +9667,11 @@ public structure Spacing.Paragraph where
   /-- Justified or ragged, from the page: ragged lines break free of
   stretch badness and are set at their natural width. -/
   private justify : Bool := true
+  /-- The ragged edge is LaTeX's `\@flushglue` (`\raggedright`,
+  `\raggedleft`, `\centering`): every line ends in `0pt plus 1fil`, so the
+  breaker prices no line's slack and fills each line first (`kp`'s `fil`),
+  and a line wider than the measure takes its glue's shrink. -/
+  private rightFil : Bool := false
   /-- Whether boundary glyphs protrude into the margin, from the page. -/
   private protrude : Bool := true
   /-- Whether font boxes may expand within ±`expandLimit`, from the page. -/
@@ -10403,8 +10435,14 @@ private def collectPara (r : Rd) (a : Acc)
     | .pen w cost flag f c gs =>
       .pen w (if cost ≤ forcedCost then cost else 10000) flag f c gs
     | item => item) else items
+  -- LaTeX's ragged settings (`\@flushglue`: `\raggedright`, `\raggedleft`,
+  -- `\centering`) leave every line's slack free: the items keep TeX's own
+  -- interword glue and the breaker reads the fil (`kp`'s `fil`). A display
+  -- keeps its balanced ragged, and the engine's own ragged page its
+  -- finite pricing (`raggedItems`).
+  let rightFil := !display && !literalLines && ((!r.geom.justify && r.geom.raggedFil) || center)
   let items :=
-    if r.geom.justify then items
+    if r.geom.justify || rightFil then items
     else if display then
       displayItems measure items
     else raggedItems items
@@ -10525,6 +10563,7 @@ private def collectPara (r : Rd) (a : Acc)
       paintPadding := paintPadding
       flushRight := r.geom.flushRight
       justify := r.geom.justify
+      rightFil := rightFil
       protrude := r.geom.protrude
       expand := r.geom.expand
       markerSegs := markerSegs, markerIndent := markerIndent, hangIndent := hangIndent
@@ -12826,7 +12865,7 @@ private def collectBlock (r : Rd) (a : Acc)
   -- picture or a table standing in a right-set scope reaches the same
   -- geometry its paragraphs do.
   | .ragged flush body =>
-    let g := { r.geom with justify := false, flushRight := flush.flushRight }
+    let g := { r.geom with justify := false, flushRight := flush.flushRight, raggedFil := true }
     collectBlocks { r with geom := g } a body indent
   -- A role is a name for the class hook; undeclared, the body collects
   -- exactly as it would unwrapped (roleLayoutChecks pins the zero-byte
@@ -13868,10 +13907,14 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   let lead := if first then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
+  -- A line LaTeX's `\@flushglue` ends that stands wider than the measure
+  -- takes its interword glue's shrink, as TeX sets it under a fil
+  -- `\rightskip`; every other ragged line keeps its natural width.
+  let shrinks := j.rightFil && width < (measure j.items a brk).natural
   let (segs0, w0, overfull, hang, exf) :=
     setLine j.items a brk width
-      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk)
-      j.protrude j.expand j.wordOffsets
+      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
+      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets
   -- Three horizontal origins, and the right one is the line's own natural
   -- width measured back from the far edge — the same arithmetic centring
   -- halves. It cannot be a justified line: filling the measure would put the
@@ -14137,8 +14180,8 @@ private theorem sourceBound_paraLineGeom {n : Nat} (fs : FontSet) (j : ParaJob)
     cases first <;>
       simpa only [paraLineGeom, Bool.false_eq_true,
         ite_false, ite_true, hj.marker, hj.rule] using
-        setLine_noGlyph j.items (j.lineStart _ prev) brk _ _ j.protrude
-          j.expand j.wordOffsets h
+        setLine_noGlyph j.items (j.lineStart _ prev) brk _ _ _
+          _ j.wordOffsets h
 
 private theorem sourceBound_openDisplayAt {n : Nat} (b : B) (j : ParaJob)
     (first : Bool) (x : Sp) (segs : Array Seg) (hb : b.SourceBound n) :
@@ -14508,9 +14551,9 @@ private theorem raggedItems_paraItems (items : Array Item) :
     raggedItems (paraItems items) = paraItems (raggedItems items) := by
   simp [raggedItems, paraItems]
 
-private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand : Bool)
+private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand fil : Bool)
     (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
-    kpTwoPass items target protrude expand = kp items target protrude expand := by
+    kpTwoPass items target protrude expand fil = kp items target protrude expand fil := by
   unfold kpTwoPass
   dsimp only
   split
@@ -14524,11 +14567,11 @@ private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude
     cases it <;> simp_all [Item.UnflaggedEmpty]
 
 private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
-    (protrude expand : Bool) (hp : ItemsProse items) :
-    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand).toList).1 =
+    (protrude expand fil : Bool) (hp : ItemsProse items) :
+    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand fil).toList).1 =
       (paraItems items).toList.flatMap Item.boxChars := by
-  rw [kpTwoPass_unflagged _ _ _ _ (itemsProse_unflagged items hp)]
-  exact kp_boxChars _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
+  rw [kpTwoPass_unflagged _ _ _ _ _ (itemsProse_unflagged items hp)]
+  exact kp_boxChars _ _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
     (paraItems_noEarlierForced items hp)
 
 private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target : Sp)
@@ -14714,12 +14757,12 @@ private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : L
     · rcases List.mem_singleton.mp hk with rfl
       exact hj
 
-private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand : Bool)
-    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand, k < items.size := by
+private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand fil : Bool)
+    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand fil, k < items.size := by
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand items.size
-  have ht := (kpForward_valid items sums target slack protrude expand items.size
+  let st := kpForward items sums target slack protrude expand fil items.size
+  have ht := (kpForward_valid items sums target slack protrude expand fil items.size
     (Nat.le_refl _)).1
   unfold kp
   change ∀ k ∈ (match (KpState.best st).getD (items.size-1) none with
@@ -14738,7 +14781,7 @@ private theorem paraLineGeom_chars {n : Nat} (fs : FontSet) (j : ParaJob)
       itemSpan (Spacing.Paragraph.items j) (j.lineStart first prev) brk := by
   cases first <;>
     simpa only [paraLineGeom, Bool.false_eq_true, ite_false, ite_true, (Spacing.Paragraph.SourceBound.marker hj), (Spacing.Paragraph.SourceBound.rule hj)] using
-      setLine_unflagged_chars (Spacing.Paragraph.items j) (j.lineStart _ prev) brk _ _ (Spacing.Paragraph.protrude j) (Spacing.Paragraph.expand j)
+      setLine_unflagged_chars (Spacing.Paragraph.items j) (j.lineStart _ prev) brk _ _ _ _
         (Spacing.Paragraph.wordOffsets j) hp
 
 private theorem census_warnOverfull (pick : Option Nat → Bool → Bool) (b : B)
@@ -14846,19 +14889,19 @@ private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
 compose without losing or adding glyphs. Collection establishes the job's
 plain-item shape; no alternate paragraph interpreter is used. -/
 private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool → Bool)
-    (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand : Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand fil : Bool)
     (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
     (hp : ItemsProse items) (he : Spacing.Paragraph.items j = paraItems items) :
     Spacing.Page.census pick (placePara fs b j
-      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand)) =
+      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand fil)) =
       Spacing.Page.census pick b ++ (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
         (Spacing.Paragraph.items j).toList.flatMap Item.boxChars else []) := by
   rw [census_placePara pick fs b j _ hj hb hh]
-  · rw [he, kpTwoPass_paraItems_chars _ _ _ _ hp]
+  · rw [he, kpTwoPass_paraItems_chars _ _ _ _ _ hp]
   · rw [he]
     exact itemsProse_unflagged items hp
-  · rw [he, kpTwoPass_unflagged _ _ _ _ (itemsProse_unflagged items hp)]
-    exact kp_members_lt _ _ _ _ (by simp [paraItems_size])
+  · rw [he, kpTwoPass_unflagged _ _ _ _ _ (itemsProse_unflagged items hp)]
+    exact kp_members_lt _ _ _ _ _ (by simp [paraItems_size])
 
 
 /-- Content with no physical placeholder survives the physical pass whole:
@@ -19005,7 +19048,7 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
         simpa only [hr] using
           (congrArg raggedItems he).trans (raggedItems_paraItems items)⟩
   · intro hd
-    change inkCensus ((if (Spacing.Context.geom r).justify then _ else raggedItems _).toList.flatMap _) = _
+    change inkCensus ((if _ then _ else raggedItems _).toList.flatMap _) = _
     split
     · simpa only [hr] using hc (by simpa only [hr, GlyphClean, Id.run, pure, Id] using hd)
     · rw [raggedItems_chars]
@@ -19388,7 +19431,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
-          (j.expand && j.justify && !j.center))
+          (j.expand && j.justify && !j.center) j.rightFil)
     | .regionOpen target => .regionOpen target
     | .regionClose => .regionClose
     | .colOpen p => .colOpen p
@@ -19575,6 +19618,7 @@ private def StagedOp.Prose : StagedOp → Prop
     kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j)
       (Spacing.Paragraph.protrude j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
       (Spacing.Paragraph.expand j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
+      (Spacing.Paragraph.rightFil j)
   | StagedOp.skip _ | StagedOp.skipAlt .. | StagedOp.anchorRule _ | StagedOp.anchor _ => True
   | _ => False
 
@@ -19624,7 +19668,7 @@ private theorem census_stepStaged {n : Nat} (pick : Option Nat → Bool → Bool
     simp only [stepStaged, Id.run, Id, pure]
     split
     all_goals
-      rw [ht, census_placePara_prose pick fs _ j items _ _ ho
+      rw [ht, census_placePara_prose pick fs _ j items _ _ _ ho
         (sourceBound_keepHeading (StepSt.b st) j _ hb) hh hi he,
         census_keepHeading pick _ j _ hb]
       rfl

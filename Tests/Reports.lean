@@ -978,7 +978,8 @@ def reports : List Report := [
   { id := "R111", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks]
-    accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading"]
+    accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading",
+      "the same slide's thirteen lines each ending at the reference engine's word, as its ragged right fills every line first"]
     state := .guarded "2b555dcfbad3803d9ebbb3d54fdc8571b36e9ea7" .before .author }
 ]
 

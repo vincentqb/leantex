@@ -4000,6 +4000,12 @@ a bracket run they meant as content. -/
 private def optionRunAdvice (optionRun : Bool) : String :=
   if optionRun then "; content, not options? start the '[' on the next line" else ""
 
+/-- ragged2e's alignment declarations (ragged2e manual §2): the package is
+not read, so a region's justification or raggedness it declares stays the
+page's own. -/
+private def raggedTwoE : List String :=
+  ["justifying", "RaggedRight", "RaggedLeft", "Centering"]
+
 /-- The help an unknown command's warning points at: the generic
 declaration route, except where the engine knows what the construct is
 usually for and can name the native key instead — `\AddToHook`'s shipout
@@ -4011,6 +4017,9 @@ private def unknownCmdHelp (name : String) (optionRun : Bool) : String :=
     if name == "AddToHook" || name == "AddToHookNext" then
       "a hook body cannot be interpreted; \\page{ marks = cut } declares \
 printer's cut marks, derived from the trim and bleed"
+    else if raggedTwoE.contains name then
+      "the text keeps its page's setting, a slide's ragged right; \
+\\page{ justify = on } or \\page{ justify = off } sets the whole document's"
     else "\\define \\name(...) {body} declares it"
   s!"{route}{optionRunAdvice optionRun}"
 
@@ -6431,8 +6440,8 @@ working minimum for justified text (Bringhurst, Elements 2.1.2) — ragged.
 A frame fills beamer's stage (`slidesStageOf`) with the slides margins,
 its text ragged right as beamer.cls declares among its defaults
 (`\raggedright`, measured under lualatex: no frame line is stretched to
-the measure, and no hyphen pays against `\raggedright`'s infinite
-stretch).
+the measure, each takes every word that fits, and no hyphen pays against
+`\raggedright`'s infinite stretch).
 Flow reads the `*paper`/`paper=` options against `pageSizes` and
 `landscape` swaps the axes — the reading the geometry package documents
 for exactly these options (geometry manual §5.2). A document that declared
@@ -6464,9 +6473,11 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
-    -- beamer.cls sets `\raggedright` among its defaults, for every frame.
+    -- beamer.cls sets `\raggedright` among its defaults, for every frame:
+    -- LaTeX's own, whose lines fill first (`raggedFil`).
     if page.justify.isNone then
       page := { page with justify := some false }
+    page := { page with raggedFil := true }
   else if record.model == .face then
     if page.width == dflt.width && page.height == dflt.height then
       let named :=
