@@ -1261,6 +1261,39 @@ public def Src.nameGlyph (s : Src) (name : String) : Option Nat :=
   | .glyfSrc .. => none
   | .opaque => none
 
+/-- A glyph's charset entry in a CFF: its string identifier, or in a
+CID-keyed font its CID. -/
+public def Src.charsetAt (s : Src) (g : Nat) : Option Nat :=
+  match s with
+  | .cffSrc _ c => c.charset[g]?
+  | .glyfSrc .. => none
+  | .opaque => none
+
+/-- **A CID selects the glyph that carries it** (`_agree`): the two
+readings of a CID-keyed CFF's charset — a CID to its glyph, which a PDF's
+`CIDFontType0` text selects by (§9.7.4.2), and a glyph to its CID — agree,
+so the glyph drawn for a CID is the one the font says it is. -/
+public theorem Src.cidCff_agree (s : Src) (cid g : Nat) (h : s.cidGlyph cid = some g) :
+    s.charsetAt g = some cid := by
+  cases s with
+  | cffSrc b c =>
+    simp only [Src.cidGlyph] at h
+    split at h
+    · obtain ⟨hg, hp, -⟩ := Array.findIdx?_eq_some_iff_getElem.mp h
+      simp only [Src.charsetAt, Array.getElem?_eq_getElem hg, Option.some.injEq]
+      simpa using hp
+    · simp at h
+  | glyfSrc => simp [Src.cidGlyph] at h
+  | «opaque» => simp [Src.cidGlyph] at h
+
+/-- **A bare CFF and the OpenType font it came from are one reading**
+(`_agree`): a PDF's `FontFile3` holding an OpenType font's `CFF ` table
+reads as the font set reads that font, so a glyph a figure carries draws
+exactly as the document's own face draws it. -/
+public theorem Src.bareCff_agree (b t : ByteArray) (n : Nat) (h : cffTable b = some t) :
+    Src.make b true n = Src.ofCff t := by
+  simp [Src.make, h]
+
 /-- The glyph a code selects through a name-keyed CFF's own encoding. -/
 public def Src.builtinGlyph (s : Src) (code : Nat) : Option Nat :=
   match s with

@@ -195,53 +195,61 @@ public def cmapRanges (cmap : ByteArray) : Array (Nat × Nat × Nat) × Array (N
 
 /-! ## Glyph selection in a TrueType program -/
 
-/-- The ranges of one cmap subtable, `(platform, encoding)`, formats 0, 4
-and 6: `(first code, last code, first glyph)`. -/
-public def cmapSub (b : ByteArray) (platform encoding : Nat) : Array (Nat × Nat × Nat) := Id.run do
-  let some t := Ink.findTable b "cmap" | return #[]
-  let n := Ink.u16 b (t.offset + 2)
-  let mut sub? : Option Nat := none
-  for k in [0:n] do
-    let e := t.offset + 4 + 8 * k
-    if sub?.isNone && Ink.u16 b e == platform && Ink.u16 b (e + 2) == encoding then
-      sub? := some (t.offset + Ink.u32 b (e + 4))
-  let some off := sub? | return #[]
-  let fmt := Ink.u16 b off
-  let mut out : Array (Nat × Nat × Nat) := #[]
-  if fmt == 0 then
-    for c in [0:256] do
-      let g := Ink.u8 b (off + 6 + c)
-      if g != 0 then out := out.push (c, c, g)
-  else if fmt == 6 then
-    let first := Ink.u16 b (off + 6)
-    let count := Ink.u16 b (off + 8)
-    for i in [0:count] do
-      let g := Ink.u16 b (off + 10 + 2 * i)
-      if g != 0 then out := out.push (first + i, first + i, g)
-  else if fmt == 4 then
-    let segX2 := Ink.u16 b (off + 6)
-    let seg := segX2 / 2
-    let endBase := off + 14
-    let startBase := endBase + segX2 + 2
-    let deltaBase := startBase + segX2
-    let rangeBase := deltaBase + segX2
-    for k in [0:seg] do
-      let endC := Ink.u16 b (endBase + 2 * k)
-      let startC := Ink.u16 b (startBase + 2 * k)
-      let delta := Ink.u16 b (deltaBase + 2 * k)
-      let rangeOff := Ink.u16 b (rangeBase + 2 * k)
-      if startC ≤ endC && endC - startC < 65536 then
-        for c in [startC:endC + 1] do
-          let g := if rangeOff == 0 then (c + delta) % 65536 else
-            let idx := rangeBase + 2 * k + rangeOff + 2 * (c - startC)
-            let g0 := Ink.u16 b idx
-            if g0 == 0 then 0 else (g0 + delta) % 65536
-          if g != 0 then out := out.push (c, c, g)
-  return out
+/-- One cmap subtable, `(platform, encoding)`, where it starts and its
+format (0, 4 or 6), or `none` when the font has no such subtable. Read in
+place: a code is looked up in the bytes (`Cmap.glyph?`), never expanded into
+one row per code, so a lying segment cannot make the reading's size more
+than the font's. -/
+public structure Cmap where
+  bytes : ByteArray
+  offset : Nat
+  format : Nat
 
-/-- A code's glyph in sorted `(code, code, glyph)` rows. -/
-private def rowGlyph (rows : Array (Nat × Nat × Nat)) (c : Nat) : Option Nat :=
-  (rows.find? fun (lo, hi, _) => lo ≤ c && c ≤ hi).map fun (lo, _, g) => g + (c - lo)
+/-- A font's cmap subtable for `(platform, encoding)`. -/
+public def cmapSub (b : ByteArray) (platform encoding : Nat) : Option Cmap := do
+  let t ← Ink.findTable b "cmap"
+  let n := Ink.u16 b (t.offset + 2)
+  let k ← (List.range (min n (b.size / 8))).find? fun k =>
+    let e := t.offset + 4 + 8 * k
+    Ink.u16 b e == platform && Ink.u16 b (e + 2) == encoding
+  let off := t.offset + Ink.u32 b (t.offset + 4 + 8 * k + 4)
+  let fmt := Ink.u16 b off
+  guard (fmt == 0 || fmt == 4 || fmt == 6)
+  return { bytes := b, offset := off, format := fmt }
+
+/-- **A code's glyph in a cmap subtable** (Apple's and Microsoft's `cmap`):
+format 0 its byte, format 6 its slot from the first code, format 4 the
+segment holding it — its delta, or its slot of the glyph array; `none` for
+glyph 0 or a code no table maps. The segments read are those the table's
+length holds. -/
+public def Cmap.glyph? (m : Cmap) (c : Nat) : Option Nat :=
+  let b := m.bytes
+  let off := m.offset
+  let g : Nat :=
+    if m.format == 0 then (if c < 256 then Ink.u8 b (off + 6 + c) else 0)
+    else if m.format == 6 then
+      let first := Ink.u16 b (off + 6)
+      let count := Ink.u16 b (off + 8)
+      if first ≤ c && c < first + count then Ink.u16 b (off + 10 + 2 * (c - first)) else 0
+    else
+      let segX2 := Ink.u16 b (off + 6)
+      let seg := min (segX2 / 2) (b.size / 8)
+      let endBase := off + 14
+      let startBase := endBase + 2 * seg + 2
+      let deltaBase := startBase + 2 * seg
+      let rangeBase := deltaBase + 2 * seg
+      match (List.range seg).find? (fun k => c ≤ Ink.u16 b (endBase + 2 * k)) with
+      | none => 0
+      | some k =>
+        let startC := Ink.u16 b (startBase + 2 * k)
+        let delta := Ink.u16 b (deltaBase + 2 * k)
+        let rangeOff := Ink.u16 b (rangeBase + 2 * k)
+        if c < startC then 0
+        else if rangeOff == 0 then (c + delta) % 65536
+        else
+          let g0 := Ink.u16 b (rangeBase + 2 * k + rangeOff + 2 * (c - startC))
+          if g0 == 0 then 0 else (g0 + delta) % 65536
+  if g == 0 then none else some g
 
 /-- An `sfnt`'s glyph count (`maxp`). -/
 public def glyphCount (b : ByteArray) : Nat :=
@@ -424,11 +432,12 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
     let uniRows := cmapSub b 3 1
     let symRows := cmapSub b 3 0
     let macRows := cmapSub b 1 0
+    let look (m : Option Cmap) (c : Nat) : Option Nat := m.bind (·.glyph? c)
     let glyphs := (Array.range 256).map fun c =>
-      let byUnicode := (scalarOf c).bind fun ch => rowGlyph uniRows ch.toNat
-      let bySymbol := (rowGlyph symRows (0xF000 + c)).orElse fun _ => rowGlyph symRows c
-      let byMac := rowGlyph macRows c
-      let g := if isSym || (uniRows.isEmpty && !symRows.isEmpty) then
+      let byUnicode := (scalarOf c).bind fun ch => look uniRows ch.toNat
+      let bySymbol := (look symRows (0xF000 + c)).orElse fun _ => look symRows c
+      let byMac := look macRows c
+      let g := if isSym || (uniRows.isNone && symRows.isSome) then
           bySymbol.orElse fun _ => byMac.orElse fun _ => byUnicode
         else byUnicode.orElse fun _ => bySymbol.orElse fun _ => byMac
       g.map GlyphRef.gid

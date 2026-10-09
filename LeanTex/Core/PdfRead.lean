@@ -1882,17 +1882,13 @@ public theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
   rw [Int.add_mul, Int.mul_comm (hi - lo) len]
   omega
 
-/-- Read a selected page of a PDF into an embeddable form, defaulting to
-page 1: the box (CropBox when declared, else MediaBox — pdfTeX's rule for
-PDF inclusion), the decoded content streams concatenated, and the resources
-graph copied and renumbered. Total over arbitrary bytes; anything the
-reader cannot follow is a named error. -/
-public def readForm (b : ByteArray) (page : PageSelection := .first) :
-    Except String { f : Form // f.wf } := do
-  let (r, selected) ← readPage b page
-  let page := selected.2
-  -- The box: CropBox over MediaBox, elements resolved one level and read
-  -- as numbers, corners normalized.
+/-- **A page's box** (§14.11.2): its CropBox when declared, else its
+MediaBox — pdfTeX's rule for PDF inclusion — each element followed one
+reference and read as a length, the corners ordered `(x0, y0, x1, y1)`;
+refused when it is not four numbers or encloses nothing. The one reading
+of the box the PDF backend places a page in and the figure importer draws
+it in. -/
+public def Doc.pageBox (r : Doc) (page : Page) : Except String (Sp × Sp × Sp × Sp) := do
   let some boxObj := page.cropBox.or page.mediaBox
     | throw "malformed PDF: the selected page has no /MediaBox"
   let boxObj ← r.deref boxObj
@@ -1914,9 +1910,19 @@ public def readForm (b : ByteArray) (page : PageSelection := .first) :
   let y1 := max (nums[1]?.getD 0) (nums[3]?.getD 0)
   if x0 == x1 || y0 == y1 then
     throw "malformed PDF: the page box is empty"
+  return (x0, y0, x1, y1)
+
+/-- Whether a page is drawn as it stands: a `/Rotate` other than 0 is
+refused, as neither reader turns a page. -/
+public def Doc.unrotated (r : Doc) (page : Page) : Except String Unit := do
   match (← r.deref (page.rotate.getD (.int 0))).int?.getD 0 with
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
+
+/-- A page's form but its box: the decoded content streams concatenated,
+and the resources graph copied and renumbered. -/
+private def formParts (b : ByteArray) (r : Doc) (page : Page) :
+    Except String (ByteArray × Array Chunk × Array XObjOut) := do
   let content ← r.content page
   -- The resources graph, copied whole and renumbered.
   let mut st : SerSt := {}
@@ -1949,10 +1955,58 @@ public def readForm (b : ByteArray) (page : PageSelection := .first) :
       objects := objects.push { chunks, stream := some raw }
   if qi < st.queue.size then
     throw "malformed PDF: the resource graph is larger than the file"
-  let f : Form := { x0, y0, x1, y1, content, resources := resChunks, objects }
+  return (content, resChunks, objects)
+
+/-- Read a selected page of a PDF into an embeddable form, defaulting to
+page 1: the box (`Doc.pageBox`), the decoded content streams concatenated,
+and the resources graph copied and renumbered. Total over arbitrary bytes;
+anything the reader cannot follow is a named error. -/
+public def readForm (b : ByteArray) (page : PageSelection := .first) :
+    Except String { f : Form // f.wf } := do
+  let (r, selected) ← readPage b page
+  let (x0, y0, x1, y1) ← r.pageBox selected.2
+  r.unrotated selected.2
+  let (content, resources, objects) ← formParts b r selected.2
+  let f : Form := { x0, y0, x1, y1, content, resources, objects }
   if h : f.wf then
     return ⟨f, h⟩
   else
     throw "malformed PDF: the resource graph did not close"
+
+/-- **The form's box is the page's** (`_exact`): a form read from a page
+stands in that page's box (`Doc.pageBox`) of the document the bytes are. -/
+public theorem readForm_box_exact (b : ByteArray) (sel : PageSelection) (f : { f : Form // f.wf })
+    (h : readForm b sel = .ok f) :
+    ∃ d n p, Doc.ofBytes b = .ok d ∧ d.page sel = .ok (n, p) ∧
+      d.pageBox p = .ok (f.1.x0, f.1.y0, f.1.x1, f.1.y1) := by
+  unfold readForm readPage at h
+  simp only [bind, Except.bind, pure, Except.pure] at h
+  cases hd : Doc.ofBytes b with
+  | error e => simp [hd] at h
+  | ok d =>
+    simp only [hd] at h
+    cases hs : selectPage d d.root sel with
+    | error e => simp [hs] at h
+    | ok sp =>
+      simp only [hs] at h
+      cases hb : d.pageBox sp.2 with
+      | error e => simp [hb] at h
+      | ok box =>
+        obtain ⟨x0, y0, x1, y1⟩ := box
+        simp only [hb] at h
+        cases hu : d.unrotated sp.2 with
+        | error e => simp [hu] at h
+        | ok u =>
+          simp only [hu] at h
+          cases hp : formParts b d sp.2 with
+          | error e => simp [hp] at h
+          | ok parts =>
+            obtain ⟨content, resources, objects⟩ := parts
+            simp only [hp] at h
+            split at h
+            · simp only [Except.ok.injEq] at h
+              subst h
+              exact ⟨d, sp.1, sp.2, rfl, by simp [Doc.page, hs], by simp [hb]⟩
+            · simp at h
 
 end LeanTex.Core.PdfRead

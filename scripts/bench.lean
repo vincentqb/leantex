@@ -35,6 +35,10 @@ minted listings, one copy and eight, and holds a listing's elaboration and
 layout linear in its length, in lines and, over invented adversarial
 listings, in the shapes that once made a lexer, painting or setting
 superlinear.
+`--pdf-pages-only <file.pdf>` embeds every page of a PDF, one build per
+page (`\includegraphics[page=k]`), and reports the warm images phase — the
+page read into its form — per page, its median over N runs, page 1 and the
+slowest page named; the file is the caller's and stays outside the tree.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -1044,6 +1048,43 @@ def benchBibGrowth (n : Nat) : IO Unit := do
     if big > 8 * max small 1 then
       die s!"the reference-list phase ({label}) grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
 
+/-- **Every page of a PDF, embedded**: one build per page of a document that
+includes it, warm (the second of each pair of runs over one private cache),
+its images phase — where the page is read into its form — the median of
+`n`. The pages are counted by the reader itself. -/
+def benchPdfPages (n : Nat) (pdf : System.FilePath) : IO Unit := do
+  let binary ← IO.FS.realPath (← compiler)
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
+  let source ← IO.FS.realPath pdf
+  let bytes ← IO.FS.readBinFile source
+  let d ← match LeanTex.Core.PdfRead.Doc.ofBytes bytes with
+    | .ok d => pure d
+    | .error e => die s!"the PDF does not read: {e}"
+  -- A page tree holds no more pages than the file holds objects.
+  let mut pages := 0
+  for k in [1:d.objectCount + 1] do
+    if (d.page (.number k)).isOk then pages := k else break
+  IO.FS.withTempDir fun dir => do
+    let cache := dir / "cache"
+    let mut times : Array (Nat × Nat) := #[]
+    for k in [1:pages + 1] do
+      let doc := dir / s!"page{k}.tex"
+      IO.FS.writeFile doc ("\\documentclass{article}\n\\fonts{ dir = \"" ++ fonts.toString ++
+        "\", body = \"Open Sans\" }\n\\begin{document}\n\\includegraphics[page=" ++ toString k ++
+        ", width=4cm]{" ++ source.toString ++ "}\n\\end{document}\n")
+      let mut warm : Array Nat := #[]
+      for _ in [0:n] do
+        let _ ← sample binary doc (dir / s!"page{k}.pdf") cache true
+        let second ← sample binary doc (dir / s!"page{k}.pdf") cache true
+        let some p := second.phase? "images" | die s!"page {k}: no images phase"
+        warm := warm.push p.ms
+      times := times.push (k, median warm)
+    let slowest := times.foldl (fun a b => if b.2 > a.2 then b else a) (0, 0)
+    let first := (times[0]?.map (·.2)).getD 0
+    IO.println s!"{padRight s!"leantex  pdf page 1 embedded (warm)" 42} {padLeft (toString first) 6} ms (median of {n})"
+    IO.println s!"{padRight s!"leantex  slowest page, {slowest.1} of {pages}" 42} {padLeft (toString slowest.2) 6} ms (median of {n})"
+    IO.println s!"leantex  pages under 150 ms: {(times.filter (·.2 < 150)).size} of {pages}"
+
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
@@ -1065,6 +1106,9 @@ def main (args : List String) : IO UInt32 := do
     benchListings n 1
     benchListings n 8
     listingGrowth n
+    return 0
+  if let ["--pdf-pages-only", file] := args then
+    benchPdfPages n file
     return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"

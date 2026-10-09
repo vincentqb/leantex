@@ -1,5 +1,6 @@
 import Tests.Support
 import Tests.GfxMatrix
+import Lean.Data.Json
 
 open LeanTex.Core LeanTex.Cli
 
@@ -459,3 +460,58 @@ def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "interpreter: a shading pattern that stops short is named"
     (lossesOf (shading (axial "1" "[false false]") "/Pattern cs /P0 scn 0 0 100 50 re f") ==
       .ok #[.resource "shading-unextended"])
+
+open Tests.PdfNative in
+/-- **PDF figures ship native web faces with no converter on the
+machine**: an invented cairo-made figure included by `\includegraphics`,
+and the corpus' boundary diagram whose lualatex answer is the committed
+reference PDF (a stand-in lualatex copies it in), build HTML with no
+converter on `PATH`. Neither W0605 nor W0378 fires, and the page embeds
+exactly the engine's own drawing of each page (`PdfFaces.svgOf`) — before
+faces were drawn natively, the first shipped a placeholder (W0605) and the
+second had no face at all (W0378). -/
+def nativeFigureBuildChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let corpus ← IO.FS.realPath "testdata/corpus/diagram-boundary.tex"
+  let chart ← fixture "cairo-chart.pdf"
+  let shade ← fixture "lualatex-shade.pdf"
+  let faceOf (pdf : ByteArray) : Option String :=
+    (PdfGfx.importPage pdf).toOption.map fun imp => HtmlResource.base64 (PdfFaces.svgOf imp.figure)
+  IO.FS.withTempDir fun dir => do
+    let tools := dir / "bin"
+    IO.FS.createDirAll tools
+    IO.FS.writeFile (tools / "lualatex") "#!/bin/sh\n\
+if [ \"$1\" = \"--version\" ]; then\n\
+  printf '%s\\n' 'synthetic lualatex'\n\
+  exit 0\n\
+fi\n\
+exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
+    let mode ← IO.Process.output { cmd := "chmod", args := #["+x", (tools / "lualatex").toString] }
+    unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the stand-in lualatex"
+    IO.FS.writeBinFile (dir / "chart.pdf") chart
+    IO.FS.writeBinFile (dir / "shade.pdf") shade
+    IO.FS.writeFile (dir / "figure.tex") (String.intercalate "\n" [
+      "\\documentclass{article}", "\\begin{document}",
+      "\\includegraphics[alt={An invented chart}]{chart.pdf}", "\\end{document}", ""])
+    let build (src out : System.FilePath) : IO (UInt32 × Array Lean.Json × String) := do
+      let r ← IO.Process.output {
+        cmd := binary.toString
+        args := #[src.toString, "-o", out.toString, "--porcelain"]
+        env := #[("PATH", some tools.toString), ("LEANTEX_FONT", some font.toString),
+          ("LEANTEX_NATIVE_PDF", some (dir / "shade.pdf").toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+      let records := ((r.stdout.splitOn "\n").filterMap fun line => (Lean.Json.parse line).toOption).toArray
+      let html ← if ← out.pathExists then IO.FS.readFile out else pure ""
+      return (r.exitCode, records, html)
+    let named (records : Array Lean.Json) (code : String) : Bool :=
+      records.any fun record => record.getObjValAs? String "code" == .ok code
+    for (name, src, out, pdf) in [("the cairo figure", dir / "figure.tex", dir / "figure.html", chart),
+        ("the boundary diagram", (corpus : System.FilePath), dir / "diagram.html", shade)] do
+      let (code, records, html) ← build src out
+      t s!"native faces: {name} builds HTML with no converter on PATH" (code == 0)
+      t s!"native faces: {name} names no missing face (W0605, W0378) and no loss (W0608)"
+        (!named records "W0605" && !named records "W0378" && !named records "W0608")
+      t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
+        ((faceOf pdf).any fun face => (html.splitOn face).length ≥ 2)

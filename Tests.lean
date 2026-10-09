@@ -898,6 +898,7 @@ def main (args : List String) : IO UInt32 := do
   buildGraphChecks ref
   inputOriginsChecks ref
   imageOriginsChecks ref
+  nativeFigureBuildChecks ref
   lexChecks ref
   braceEolChecks ref
   nfcChecks ref

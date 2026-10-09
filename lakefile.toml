@@ -72,6 +72,12 @@ root = "scripts.cites"
 name = "scoreboard"
 root = "scripts.scoreboard"
 
+# The image and PDF figure fuzz oracle, compiled: its importer classes read
+# fifty thousand files, which the interpreter takes hours over.
+[[lean_exe]]
+name = "imgFuzz"
+root = "scripts.«img-fuzz»"
+
 [[lean_exe]]
 name = "parity"
 root = "scripts.parity"

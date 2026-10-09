@@ -967,6 +967,14 @@ public theorem Entered.push_room_between {d : Doc} (e : Entered d) (n : Nat) (hn
   simp only [Entered.room, Entered.push, List.length_cons] at hle ⊢
   omega
 
+/-- **The nesting a reading can reach is bounded** (`_between`): the forms,
+Type 3 glyph procedures and tiling cells a reading is inside — each entered
+inside the one before — are distinct objects the document lists, so there
+are between none and the document's object count of them. -/
+public theorem forms_between {d : Doc} (e : Entered d) :
+    0 ≤ e.list.length ∧ e.list.length ≤ d.objectNumbers.length :=
+  ⟨Nat.zero_le _, nodup_length_le e.nodup e.listed⟩
+
 /-- The initial state of a stream's reading under a graphics state. -/
 private def St.initial (gs : GState) (store : Store) : St :=
   { gs, saved := #[], frames := #[{ xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := #[] }]
@@ -1440,15 +1448,50 @@ private def stampGlyph (cx : Ctx) (st : St) (outline : Nat) (gm : Affine) (rule 
 /-- The most tiles a tiling pattern paints one region with. -/
 public def tileCap : Nat := 4096
 
-/-- The subpaths a Type 3 `d1` procedure fills: every draw's geometry, an
-ellipse as its arcs, a rectangle as its path. -/
-private def filledSubpaths (body : Array (Node Run)) : Array Subpath :=
-  body.foldl (fun acc nd => match nd with
-    | .draw g _ _ => acc ++ (match g.normal with
-        | .path ss => ss
-        | .rect x y w h => #[Kit.rectPath x y w h]
-        | .ellipse _ _ _ _ => #[])
-    | _ => acc) #[]
+/-- A geometry as the subpaths it fills: an ellipse as its arcs, a
+rectangle as its path. -/
+public def subpathsOf (g : Geom) : Array Subpath :=
+  match g.normal with
+  | .path ss => ss
+  | .rect x y w h => #[Kit.rectPath x y w h]
+  | .ellipse _ _ _ _ => #[]
+
+/-- **What a Type 3 procedure stamps** (§9.6.4): the outline of its one
+fill, when it is a `d1` procedure — whose colour is the text's — whose one
+painting is a fill by the nonzero rule and no stroke. One fill is what a
+stamp painted in the text's fill reproduces: several fills are not one
+path's nonzero fill where their windings meet, so they stay a symbol. -/
+public def type3Stamp? (isD1 : Bool) (body : Array (Node Run)) : Option (Array Subpath) :=
+  if !isD1 then none else
+  match (body.filter fun nd => match nd with
+      | .words _ => false
+      | .draw _ _ _ | .group _ _ _ _ | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ => true).toList with
+  | [.draw g (some fl) none] => if fl.rule = .nonzero then some (subpathsOf g) else none
+  | _ => none
+
+/-- **A Type 3 glyph is stamped only where the stamp is its procedure**
+(`_exact`): a stamp comes of a `d1` procedure whose one painting is one
+nonzero fill without a stroke, and its outline is that fill's geometry. -/
+public theorem type3_exact (isD1 : Bool) (body : Array (Node Run)) (subs : Array Subpath)
+    (h : type3Stamp? isD1 body = some subs) :
+    isD1 = true ∧ ∃ g fl, (body.filter fun nd => match nd with
+        | .words _ => false
+        | .draw _ _ _ | .group _ _ _ _ | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ => true).toList =
+        [.draw g (some fl) none] ∧ fl.rule = .nonzero ∧ subs = subpathsOf g := by
+  unfold type3Stamp? at h
+  cases isD1 with
+  | false => simp at h
+  | true =>
+    refine ⟨rfl, ?_⟩
+    simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte] at h
+    split at h
+    · next g fl heq =>
+      split at h
+      · next hr =>
+        simp only [Option.some.injEq] at h
+        exact ⟨g, fl, heq, hr, h.symm⟩
+      · simp at h
+    · simp at h
 
 mutual
 
@@ -1782,11 +1825,11 @@ private def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St)
 termination_by (e.room, 1, 0)
 
 /-- A Type 3 glyph (§9.6.4): its procedure read in glyph space with the
-colours in force — a `d1` procedure that only fills by the nonzero rule is
-read once, a stamp of what it fills painted in the current fill; any other
-a symbol of what it paints, read once per inherited colour, since a `d0`
-glyph paints what it does not set itself, and a stencil mask the fill, in
-the colour of the text that shows it. -/
+colours in force — a `d1` procedure of one nonzero fill is read once, a
+stamp of what it fills painted in the current fill (`type3Stamp?`); any
+other a symbol of what it paints, read once per inherited colour, since a
+`d0` glyph paints what it does not set itself, and a stencil mask the
+fill, in the colour of the text that shows it. -/
 private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (key : Nat)
     (proc : String) (fm : Affine) (st : St) : St :=
   let symKey := s!"t3|{key}|{proc}|{inkKey st.gs}"
@@ -1820,13 +1863,10 @@ private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (
               let isD1 := toks.any fun t => match t with
                 | .op "d1" => true
                 | _ => false
-              let fillsOnly := body.all fun nd => match nd with
-                | .draw _ (some fl) none => fl.rule == .nonzero
-                | .words _ => true
-                | _ => false
-              let stamp := isD1 && fillsOnly
+              let stamped := type3Stamp? isD1 body
+              let stamp := stamped.isSome
               let store := inner.store
-              let subs := filledSubpaths body
+              let subs := stamped.getD #[]
               -- A procedure that paints nothing (a space) is a glyph with no ink.
               if stamp && subs.isEmpty || body.isEmpty then
                 { st with store := { store with type3 := store.type3.insert (key, proc) none } }
@@ -1942,20 +1982,6 @@ private def offGroups (doc : Doc) : Array Nat :=
     | none => #[]
   | none => #[]
 
-/-- A page box in sp, its corners ordered. -/
-private def boxOf (doc : Doc) (o : Obj) : Option Box := do
-  let xs ← match (doc.deref o).toOption with
-    | some (.arr xs) => some xs
-    | _ => none
-  let v := xs.filterMap fun x => (doc.deref x).toOption.bind Obj.sp?
-  guard (v.size == 4)
-  let x0 := min (v[0]?.getD 0) (v[2]?.getD 0)
-  let x1 := max (v[0]?.getD 0) (v[2]?.getD 0)
-  let y0 := min (v[1]?.getD 0) (v[3]?.getD 0)
-  let y1 := max (v[1]?.getD 0) (v[3]?.getD 0)
-  guard (x0 < x1 && y0 < y1)
-  return ((x0, y0), (x1, y1))
-
 /-- What importing a page returns: the figure, and the page's one-based
 number. -/
 public structure Imported where
@@ -1963,10 +1989,22 @@ public structure Imported where
   page : Nat
   deriving Inhabited
 
-/-- **A PDF page as a figure** (ISO 32000-2 §8, §9): its box — CropBox, else
-MediaBox, as the PDF backend places it (`PdfRead.readForm`) — clipping, its
-content read in the page's default space, its losses named. A rotated page
-is refused, as the PDF backend refuses it. -/
+/-- A page's content read in its default space as a figure in `box`,
+clipped to it, its losses named. -/
+private def figureOf (doc : Doc) (page : PdfRead.Page) (box : Box) (content : ByteArray) : Figure Run :=
+  let res := ((page.resources.map fun r => (doc.deref r).toOption.getD .null)).getD (.dict #[])
+  let cx : Ctx := { doc, res, base := Affine.unit, off := offGroups doc, box }
+  let toks := PdfContentLex.scan content
+  let e : Entered doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  let st := runToks cx e toks 0 (St.initial (GState.initial Affine.unit) Store.empty)
+  let s := st.store
+  { box, clipToBox := true, nodes := st.finish, outlines := s.outlines, symbols := s.symbols
+    rasters := s.rasters, title := none, losses := s.losses }
+
+/-- **A PDF page as a figure** (ISO 32000-2 §8, §9): its box — the page's
+(`Doc.pageBox`), as the PDF backend places it (`PdfRead.readForm`) —
+clipping, its content read in the page's default space, its losses named.
+A rotated page is refused, as the PDF backend refuses it. -/
 public def importPage (bytes : ByteArray) (sel : PdfRead.PageSelection := .first) :
     Except String Imported := do
   let doc ← Doc.ofBytes bytes
@@ -1975,22 +2013,64 @@ public def importPage (bytes : ByteArray) (sel : PdfRead.PageSelection := .first
   if (doc.trailer.get? "Encrypt").isSome then
     throw "the PDF is encrypted; its content cannot be read"
   let (num, page) ← doc.page sel
-  let some boxObj := page.cropBox.or page.mediaBox
-    | throw "malformed PDF: the selected page has no /MediaBox"
-  let some box := boxOf doc boxObj | throw "malformed PDF: the page box is not four numbers"
-  match (doc.deref (page.rotate.getD (.int 0))).toOption.bind Obj.int? with
-  | some 0 | none => pure ()
-  | some rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
+  let (x0, y0, x1, y1) ← doc.pageBox page
+  doc.unrotated page
   let content ← doc.content page
-  let res := ((page.resources.map fun r => (doc.deref r).toOption.getD .null)).getD (.dict #[])
-  let cx : Ctx := { doc, res, base := Affine.unit, off := offGroups doc, box }
-  let toks := PdfContentLex.scan content
-  let e : Entered doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
-  let st := runToks cx e toks 0 (St.initial (GState.initial Affine.unit) Store.empty)
-  let nodes := st.finish
-  let s := st.store
-  return { page := num
-           figure := { box, clipToBox := true, nodes, outlines := s.outlines, symbols := s.symbols
-                       rasters := s.rasters, title := none, losses := s.losses } }
+  return { page := num, figure := figureOf doc page ((x0, y0), (x1, y1)) content }
+
+/-- **The figure's box is the page's** (`_exact`): an imported figure
+stands in the page box (`Doc.pageBox`) of the page it was read from. -/
+public theorem import_box_exact (b : ByteArray) (sel : PdfRead.PageSelection) (imp : Imported)
+    (h : importPage b sel = .ok imp) :
+    ∃ d n p, Doc.ofBytes b = .ok d ∧ d.page sel = .ok (n, p) ∧
+      d.pageBox p = .ok (imp.figure.box.1.1, imp.figure.box.1.2, imp.figure.box.2.1, imp.figure.box.2.2) := by
+  unfold importPage at h
+  simp only [bind, Except.bind, pure, Except.pure] at h
+  cases hd : Doc.ofBytes b with
+  | error e => simp [hd] at h
+  | ok d =>
+    simp only [hd] at h
+    split at h
+    · simp at h
+    · cases hp : d.page sel with
+      | error e => simp [hp] at h
+      | ok np =>
+        obtain ⟨n, p⟩ := np
+        simp only [hp] at h
+        cases hb : d.pageBox p with
+        | error e => simp [hb] at h
+        | ok box =>
+          obtain ⟨x0, y0, x1, y1⟩ := box
+          simp only [hb] at h
+          cases hu : d.unrotated p with
+          | error e => simp [hu] at h
+          | ok u =>
+            simp only [hu] at h
+            cases hc : d.content p with
+            | error e => simp [hc] at h
+            | ok c =>
+              simp only [hc, Except.ok.injEq] at h
+              subst h
+              exact ⟨d, n, p, rfl, hp, by simp [figureOf, hb]⟩
+
+/-- **A PDF figure's two faces stand in one box** (`_agree`): the box the
+PDF backend places the page's form in (`PdfRead.readForm`) and the box the
+web face's figure is drawn in — its standalone SVG's viewBox — are one
+reading of the page (`Doc.pageBox`), so the two artifacts reserve the same
+extent and aspect for the figure. -/
+public theorem _root_.LeanTex.Core.Gfx.pdfHtml_box_agree (b : ByteArray) (sel : PdfRead.PageSelection)
+    (f : { f : PdfRead.Form // f.wf }) (imp : Imported)
+    (hf : PdfRead.readForm b sel = .ok f) (hi : importPage b sel = .ok imp) :
+    imp.figure.box = ((f.1.x0, f.1.y0), (f.1.x1, f.1.y1)) := by
+  obtain ⟨d, n, p, hd, hp, hb⟩ := PdfRead.readForm_box_exact b sel f hf
+  obtain ⟨d', n', p', hd', hp', hb'⟩ := import_box_exact b sel imp hi
+  rw [hd] at hd'
+  cases hd'
+  rw [hp] at hp'
+  cases hp'
+  rw [hb] at hb'
+  simp only [Except.ok.injEq, Prod.mk.injEq] at hb'
+  obtain ⟨h1, h2, h3, h4⟩ := hb'
+  ext <;> simp [h1, h2, h3, h4]
 
 end LeanTex.Core.PdfGfx
