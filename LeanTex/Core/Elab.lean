@@ -4748,6 +4748,24 @@ formula {floorWording (Parse.rawSrc raws)}")])
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
     (locate := fun pos => some (ctx.sourceSpan pos))
 
+/-- The size switch in force where a picture stands, by its ladder name,
+when it is not `normalsize` — the declaration scope a paragraph's text
+reads (`blockDecls`), resolved as a listing's size is. An explicit
+`\fontsize` names no ladder step and stands as the body size. -/
+private def pictureSizeInForce : EM (Option String) := do
+  let size := (← get).scope.blockDecls.foldl (fun size decl => match decl with
+    | .style (.size s) => some s
+    | .style (.fontSize _ _) => none
+    | _ => size) none
+  return size.filter (· != "normalsize")
+
+/-- A `tikzpicture` body's request where it stands: the body as written and
+the size in force. Every site that asks whether a picture's request was
+withdrawn reads its identity here, so the identity a withdrawal names is the
+one the request was stated under. -/
+private def pictureSrcAt (body : Array Raw) : EM Ir.PicSrc := do
+  return { kind := .picture, body := Parse.rawSrc body, size := ← pictureSizeInForce }
+
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
 (`ReqSpans.fallbacks`) where it stands as a block (`block`) — the subset
@@ -4758,7 +4776,7 @@ its own labels set (`Ir.Pic.Picture.said`), as the subset's drawing would
 have been named. -/
 private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
     (block : Bool) : EM Ir.Inline := do
-  let src : Ir.PicSrc := { kind := .picture, body := Parse.rawSrc body }
+  let src ← pictureSrcAt body
   let id := Ir.picHash src.source
   let tool := ctx.pic.tool.getD "lualatex"
   let img := Ir.picSrcPrefix ++ id
@@ -4787,7 +4805,7 @@ drawn — never the false "not implemented" of an unknown environment. -/
 private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let (alt, body) := splitPictureAlt body pos
-  let id := Ir.picHash (Parse.rawSrc body)
+  let id := Ir.picHash (← pictureSrcAt body).source
   -- premise: pictureInlineLineChecks — a picture in a line either ships the
   -- boundary's image there or names that it is not drawn, and a withdrawn
   -- request takes the second door.
@@ -4823,7 +4841,8 @@ that door from the start. -/
 private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let some (b, _) := soleTikzcd body | return none
-  let src : Ir.PicSrc := { kind := .cd, body := Parse.rawSrc b }
+  let src : Ir.PicSrc :=
+    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
   let id := Ir.picHash src.source
   -- premise: tikzcdRouteChecks — a diagram the boundary withdraws or a closed
   -- door refuses keeps the text floor and its W0012, and a drawn one ships
@@ -10034,8 +10053,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   -- in part shipping with its refusals folded into one line as a withdrawn
   -- picture's are. The trust label: the engine claims placement and
   -- measurement of the returned box, never its contents.
-  let src := Parse.rawSrc body
-  let id := Ir.picHash src
+  let id := Ir.picHash (← pictureSrcAt body).source
   -- premise: pictureRouteChecks — a routed picture's losses are never dropped
   -- in silence: a drawn request ships the boundary's box, and a withdrawn one
   -- the refused door's drawing with the refused door's refusals in its line.
@@ -17456,6 +17474,36 @@ private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
     | _ => return none
   | _ => return none
 
+/-- amsmath's operator definer, `\DeclareMathOperator{\name}{text}` and its
+starred limits form: re-emitted through `\operatorname`, guarded as a LaTeX
+definer is, so a standalone whose packages already own the name still
+reads the document's operator. -/
+private def operatorDefiner? (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := do
+  let star := raws[i]? matches some (.word "*" _)
+  let i := skipStar raws i
+  let name ← definerName? raws i
+  let j := skipSpaces raws (i + 1)
+  match raws[j]? with
+  | some (.group body _) =>
+    let op := if star then "\\operatorname*" else "\\operatorname"
+    some ((name, s!"\\providecommand\{\\{name}}\{}\
+\\renewcommand\{\\{name}}\{{op}\{{rawSrc body}}}"), j + 1)
+  | _ => none
+
+/-- A length's value, `\setlength{\name}{value}`: re-emitted with the
+declaration the document made of it, guarded so a length the standalone
+already owns is set and never declared twice. -/
+private def lengthDefiner? (raws : Array Raw) (i : Nat) :
+    Option ((String × String) × Nat) := do
+  let name ← definerName? raws i
+  let j := skipSpaces raws (i + 1)
+  match raws[j]? with
+  | some (.group body _) =>
+    some ((name, s!"\\ifdefined\\{name}\\else\\newlength\{\\{name}}\\fi\
+\\setlength\{\\{name}}\{{rawSrc body}}"), j + 1)
+  | _ => none
+
 /-- The native `\define \name(sig) {body}`, so the LaTeX spelling and the
 native one carry the same definition to the boundary — a document that
 writes `\define` itself is not a document whose pictures lose their macros.
@@ -17506,6 +17554,8 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
       else if xparseDefiners.contains name then xparseDefiner? raws (i + 1)
       else if texDefiners.contains name then texDefiner? name raws (i + 1)
       else if name == "define" then nativeDefiner? raws (i + 1)
+      else if name == "DeclareMathOperator" then operatorDefiner? raws (i + 1)
+      else if name == "setlength" then lengthDefiner? raws (i + 1)
       else none
     match read? with
     | some (entry, k) =>

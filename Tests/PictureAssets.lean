@@ -30,6 +30,7 @@ printf '%s\\n' render >> \"$root/$label.calls\"\n\
 printf '%s\\n' \"$0\" >> \"$root/$label.argv0\"\n\
 mode=$(/bin/cat \"$root/mode\")\n\
 case \"$mode\" in\n\
+  inputs) [ -f figures/thumb.png ] && [ -f ../up.png ] || exit 95;;\n\
   inconclusive) exit 17;;\n\
   refused) printf '%s\\n' 'synthetic picture refusal' > pic.log; exit 17;;\n\
 esac\n\
@@ -233,5 +234,28 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     IO.FS.writeBinFile (history / name) encoded
     t "picture assets: previous returns only the matching checked success bytes"
       ((← PictureAssets.previous history sourceKey) == some expected)
+
+    -- A request's files stand where its standalone spells them, inside the
+    -- scratch, and their bytes are part of the request's key.
+    IO.FS.writeFile (root / "mode") "inputs"
+    let inputs : Array (String × ByteArray) :=
+      #[("figures/thumb.png", "thumbnail bytes".toUTF8), ("../up.png", "upper bytes".toUTF8)]
+    let staged ← PictureAssets.fulfil none tool stamp version pictureAssetWrapped inputs
+    t "picture assets: a request's inputs stand where its standalone spells them"
+      (pictureAssetDrawn staged expected false)
+    let bare ← PictureAssets.fulfil none tool stamp version pictureAssetWrapped
+    t "picture assets: the same tool finds nothing where no input was staged"
+      (bare.result.outcome != .drawn)
+    let changed : Array (String × ByteArray) :=
+      #[("figures/thumb.png", "edited thumbnail".toUTF8), ("../up.png", "upper bytes".toUTF8)]
+    t "picture assets: an input's bytes are part of its request's key"
+      (PictureAssets.keyed pictureAssetWrapped #[] == pictureAssetWrapped &&
+        PictureAssets.slotName (PictureAssets.keyed pictureAssetWrapped inputs) tool stamp version !=
+          PictureAssets.slotName (PictureAssets.keyed pictureAssetWrapped changed) tool stamp version)
+    t "picture assets: a path the scratch cannot hold is never staged"
+      (PictureAssets.stagePath "/elsewhere/x.png" == none &&
+        PictureAssets.stagePath "a/../../x.png" == none &&
+        PictureAssets.stagePath "../a/b.png" == some (1, ["a", "b.png"]) &&
+        PictureAssets.stagePath "./figures/x.png" == some (0, ["figures", "x.png"]))
 
 end Tests

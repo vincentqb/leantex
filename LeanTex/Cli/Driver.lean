@@ -237,11 +237,30 @@ excludes repeated keys within a batch (`Batch.plan_keys_nodup`); owned
 scratch and atomic cache publication also protect independent compiler runs.
 Unfinished attempts remain distinct from refusals, so machine failures
 cannot silently select the native subset's drawing. -/
-def resolvePictures (ui : Ui) (doc : Ir.Doc)
+def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
   let refs := Ir.pictureRefs doc
   if refs.isEmpty then return (#[], #[])
+  -- The files each request reads (`Ir.pictureInputs`), resolved as an
+  -- image of the document is — against its own directory, through
+  -- graphicx's extensions — and read once: staged beside the standalone and
+  -- keyed by their bytes (`PictureAssets.keyed`). One the document's
+  -- directory does not hold is left for the tool to name.
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let inputsOf (wrapped : String) : IO (Array (String × ByteArray)) := do
+    let mut out : Array (String × ByteArray) := #[]
+    for p in Ir.pictureInputs wrapped do
+      for cand in Image.sourceCandidates p do
+        let path := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
+          else dir / cand
+        if ← path.pathExists then
+          if let .ok bytes ← (IO.FS.readBinFile path).toBaseIO then
+            out := out.push (cand, bytes)
+          break
+    return out
+  let keyedRefs ← refs.mapM fun (id, wrapped) => do
+    return (id, wrapped, ← inputsOf wrapped)
   let spanFor (hash : String) : Option Span :=
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
@@ -253,14 +272,15 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       ToolProbe.identify (dir / PicCache.versionName (Ir.picHash tool))
         stamp (ToolProbe.probeVersion tool)
     | none => ToolProbe.probeVersion tool
-  let fulfil (request : String × String) : IO PicAttempt := do
-    let (id, wrapped) := request
+  let fulfil (request : String × String × Array (String × ByteArray)) : IO PicAttempt := do
+    let (id, wrapped, inputs) := request
     let src := Ir.picSrcPrefix ++ id
     -- The cache key is the *request* — the body wrapped with the design it
-    -- reads — so a palette or font edit a picture mentions re-renders it
-    -- and one it does not mention leaves it warm
-    -- (`Ir.paletteDecls_local_exact`); the id stays the author's bytes.
-    let key := PictureAssets.key wrapped
+    -- reads, and the bytes of the files it reads — so a palette or font
+    -- edit a picture mentions re-renders it and one it does not mention
+    -- leaves it warm (`Ir.paletteDecls_local_exact`); the id stays the
+    -- author's bytes.
+    let key := PictureAssets.key (PictureAssets.keyed wrapped inputs)
     match found with
     | .absent why =>
       -- No tool: the cold decision is `Boundary.coldPicture`'s — an earlier
@@ -281,7 +301,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           detail := s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
           elapsed := ← since t0 }
     | .present version =>
-      let answer ← PictureAssets.fulfil picDir tool stamp version wrapped
+      let answer ← PictureAssets.fulfil picDir tool stamp version wrapped inputs
       let outcome := answer.result.outcome
       let bytes := answer.result.bytes
       let result := match outcome with
@@ -299,7 +319,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
         undrawn := (Boundary.undrawnOf tool outcome (spanFor id) src).map (src, ·) }
   -- Four TeX processes bound peak memory on a laptop; this changes
   -- scheduling alone, never the request or its cache key.
-  let attempts ← Batch.map 4 (fun (_, wrapped) => PictureAssets.key wrapped) fulfil refs
+  let attempts ← Batch.map 4 (fun (_, wrapped, inputs) =>
+    PictureAssets.key (PictureAssets.keyed wrapped inputs)) fulfil keyedRefs
   let mut results := #[]
   let mut undrawn := #[]
   for attempt in attempts do
@@ -732,7 +753,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
     let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
     let (pics, undrawn) ← if failing then pure (#[], #[])
-      else resolvePictures ui front.doc front.spans.images
+      else resolvePictures ui file front.doc front.spans.images
     let w := Boundary.withdraw front.spans.fallbacks undrawn
     let front ← if w.ids.isEmpty then pure front else do
       let t ← IO.monoMsNow

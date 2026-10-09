@@ -9414,12 +9414,15 @@ public inductive PicKind where
   | .picture => "tikzpicture"
   | .cd => "tikzcd"
 
-/-- The standalone's document opening, through the kind's environment
-opening: one literal per kind, so a picture's request is spelled as it
-always was (`wrapStandalone_picture_exact`). -/
-@[expose] public def PicKind.docOpen : PicKind → String
-  | .picture => "\\begin{document}\n\\begin{tikzpicture}"
-  | .cd => "\\begin{document}\n\\begin{tikzcd}"
+/-- The standalone's document opening, through the size switch in force
+where the picture stands (`switch`, spelled by `pictureSwitch`) and the
+kind's environment opening: one literal per kind where no switch stands, so
+a picture's request is spelled as it always was
+(`wrapStandalone_picture_exact`). -/
+@[expose] public def PicKind.docOpen : PicKind → Option String → String
+  | .picture, none => "\\begin{document}\n\\begin{tikzpicture}"
+  | .cd, none => "\\begin{document}\n\\begin{tikzcd}"
+  | k, some sw => "\\begin{document}\n" ++ sw ++ "\n\\begin{" ++ k.env ++ "}"
 
 /-- The kind's environment closing, then the document's. -/
 @[expose] public def PicKind.docClose : PicKind → String
@@ -9428,19 +9431,28 @@ always was (`wrapStandalone_picture_exact`). -/
 
 /-- One boundary request as the document wrote it: its kind and its body —
 everything between the environment's `\begin` and `\end`, the option
-bracket included. -/
+bracket included — and the size switch in force where it stands, by its
+ladder name, when that is not `normalsize`: TeX sets a picture's text at
+the size in force (a `\large` before a display sets the diagram's cells
+large), so the standalone switches to it before the picture. -/
 public structure PicSrc where
   kind : PicKind
   body : String
+  size : Option String := none
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The source a request's identity is the hash of: a picture's body as
-written, or a diagram's whole environment — so neither kind can share an
-identity with the other, and a picture's identity is what it always was. -/
+written, or a diagram's whole environment, after the size switch in force
+— so neither kind can share an identity with the other, one body at two
+sizes is two pictures, and a picture at the body size has the identity it
+always had. -/
 @[expose] public def PicSrc.source (s : PicSrc) : String :=
-  match s.kind with
-  | .picture => s.body
-  | .cd => "\\begin{" ++ s.kind.env ++ "}" ++ s.body ++ "\\end{" ++ s.kind.env ++ "}"
+  let core := match s.kind with
+    | .picture => s.body
+    | .cd => "\\begin{" ++ s.kind.env ++ "}" ++ s.body ++ "\\end{" ++ s.kind.env ++ "}"
+  match s.size with
+  | none => core
+  | some z => "\\" ++ z ++ " " ++ core
 
 public structure Doc where
   docClass : DocClass := .article
@@ -16553,23 +16565,66 @@ packages above spell. The request is a pure function of the document: two
 runs over one document state byte-identical requests, so the cache key
 means something. Determinism here is definitional — no theorem states a
 pure function's purity, and `boundaryChecks` checks the bytes agree. -/
-public def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
-    (macros : Array (String × String)) (src : PicSrc) : String :=
-  "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
-    colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ macroDeclLines macros ++
-    src.kind.docOpen ++ src.body ++ src.kind.docClose
+public def wrapStandalone (head preamble fonts : String) (colors : Array (String × Color))
+    (shims : String) (macros : Array (String × String)) (switch : Option String)
+    (src : PicSrc) : String :=
+  head ++ preamble ++ fonts ++
+    colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ shims ++ macroDeclLines macros ++
+    src.kind.docOpen switch ++ src.body ++ src.kind.docClose
 
-/-- A picture's request is the standalone it always was: its kind opens
-the environment the wrapper wrote before diagrams had a kind of their own,
-so no picture's request — and so no picture's cache key — moved. -/
+/-- The class line and the TikZ load a standalone opens with: the class takes
+the document's body size where it has an option for it (`size11.clo`,
+`size12.clo`), so a picture's text — and every size switch inside it — sets
+on the document's own ladder. Any other body size is the switch's to set
+(`pictureSwitch`). -/
+@[expose] public def standaloneHead (body : Sp) : String :=
+  if body == Dim.pt 11 then "\\documentclass[11pt]{standalone}\n\\usepackage{tikz}\n"
+  else if body == Dim.pt 12 then "\\documentclass[12pt]{standalone}\n\\usepackage{tikz}\n"
+  else "\\documentclass{standalone}\n\\usepackage{tikz}\n"
+
+/-- A ten-point document's standalone opens as it always did. -/
+public theorem standaloneHead_ten_exact :
+    standaloneHead (Dim.pt 10) = "\\documentclass{standalone}\n\\usepackage{tikz}\n" := by
+  decide
+
+/-- The size switch a request's standalone sets before its picture: the
+size in force by its ladder name, on a body size the class's own ladder
+holds (`standaloneHead`); on any other body size, the size the engine's
+ladder gives it, spelled as `\fontsize` at the engine's leading, the body
+size included — the class's ten-point ladder would set it wrong. -/
+public def pictureSwitch (page : PageSpec) (size : Option String) : Option String :=
+  if page.fontSize == Dim.pt 10 || page.fontSize == Dim.pt 11 || page.fontSize == Dim.pt 12 then
+    size.map ("\\" ++ ·)
+  else
+    let sz := scaleStepIn page.scale page.fontSize (size.getD "normalsize")
+    some s!"\\fontsize\{{sz.toPtString}pt}\{{(leadingFor sz).toPtString}pt}\\selectfont"
+
+/-- A picture's request at the body size is the standalone it always was:
+its kind opens the environment the wrapper wrote before diagrams had a kind
+of their own, so no such picture's request — and so no cache key — moved. -/
 public theorem wrapStandalone_picture_exact (preamble fonts : String)
     (colors : Array (String × Color)) (macros : Array (String × String)) (body : String) :
-    wrapStandalone preamble fonts colors macros { kind := .picture, body } =
+    wrapStandalone "\\documentclass{standalone}\n\\usepackage{tikz}\n" preamble fonts colors ""
+        macros none { kind := .picture, body } =
       "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
-        colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ macroDeclLines macros ++
+        colors.foldl (fun s c => s ++ colorDeclLine c) "" ++ "" ++ macroDeclLines macros ++
         "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
         "\\end{tikzpicture}\n\\end{document}\n" := by
   simp only [wrapStandalone, PicKind.docOpen, PicKind.docClose]
+
+/-- beamer's `\alert`, for a slides document's standalone whose picture
+spells it: the standalone is no beamer, so the name is undefined there. It
+sets as the engine sets an alert (`Compat.alertStyled`): the theme's alert
+colour where the palette holds one, bold outside mathematics, an overlay
+specification read and spent — a picture is one step. -/
+public def slideShims (doc : Doc) (roots : String) : String :=
+  if doc.docClass != .slides || !(ctrlNames roots).contains "alert" then ""
+  else if (doc.palette.find? "alert").isSome then
+    "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
+{\\textcolor{alert}{\\ifmmode#2\\else\\bfseries#2\\fi}}\n"
+  else
+    "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
+{\\ifmmode#2\\else{\\bfseries#2}\\fi}\n"
 
 /-- The request one picture body states, formed from the finished
 document: the driver calls `pictureRefs` after contrast realization, so a
@@ -16581,8 +16636,9 @@ so the same closure that makes a macro travel makes its colours travel. -/
 public def pictureRequest (doc : Doc) (src : PicSrc) : String :=
   let roots := doc.picturePreamble ++ src.body
   let macros := macroDecls doc.pictureMacros roots
-  wrapStandalone doc.picturePreamble (fontLines doc.fonts)
-    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) macros src
+  wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble (fontLines doc.fonts)
+    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) (slideShims doc roots) macros
+    (pictureSwitch doc.page src.size) src
 
 /-- The document with boundary pictures `more` added to its request, each id
 once, its own first: what a reference list's fields set (`Bib.apply`), as
@@ -16600,6 +16656,60 @@ public def pictureRefs (doc : Doc) : Array (String × String) :=
   let srcs := imageRefs doc
   (doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)).map
     fun (h, src) => (h, pictureRequest doc src)
+
+/-- Blanks a standalone's spelling sets between a command and its operand. -/
+private def skipBlanksL : List Char → List Char
+  | [] => []
+  | c :: rest => if c == ' ' || c == '\n' then skipBlanksL rest else c :: rest
+
+/-- What follows an option bracket `[…]`, braces nesting inside it. -/
+private def afterBracketL : Nat → List Char → List Char
+  | _, [] => []
+  | 0, ']' :: rest => rest
+  | d, '{' :: rest => afterBracketL (d + 1) rest
+  | d, '}' :: rest => afterBracketL (d - 1) rest
+  | d, _ :: rest => afterBracketL d rest
+
+/-- A braced operand's text, braces nesting inside it; `none` where it never
+closes. -/
+private def groupTextL : Nat → List Char → List Char → Option String
+  | _, _, [] => none
+  | 0, acc, '}' :: _ => some (String.ofList acc.reverse)
+  | d + 1, acc, '}' :: rest => groupTextL d ('}' :: acc) rest
+  | d, acc, '{' :: rest => groupTextL (d + 1) ('{' :: acc) rest
+  | d, acc, c :: rest => groupTextL d (c :: acc) rest
+
+/-- The file one `\includegraphics` call names, read from just after its
+control word: the starred form, an option bracket, then the braced file. -/
+private def includedFileL (cs : List Char) : Option String :=
+  let cs := if cs.head? == some '*' then cs.drop 1 else cs
+  let cs := skipBlanksL cs
+  let cs := if cs.head? == some '[' then skipBlanksL (afterBracketL 0 (cs.drop 1)) else cs
+  match cs with
+  | '{' :: rest => (groupTextL 0 [] rest).map (·.trimAscii.toString)
+  | _ => none
+
+/-- **The files a boundary request reads**: the operand of every
+`\includegraphics` the standalone spells, deduplicated in first-seen order —
+a diagram's cell may hold a thumbnail, and the tool runs where the
+document's directory is not. The driver stages each beside the standalone
+and keys the request on its bytes, so a changed figure re-renders and a
+missing one fails in the tool's own words. A control word whose name only
+begins with `includegraphics` names nothing; an operand still holding a
+macro is the tool's to expand and stays out. A total scan of the request's
+characters. -/
+public def pictureInputs (request : String) : Array String := Id.run do
+  let pieces := request.splitOn "\\includegraphics"
+  let mut out : Array String := #[]
+  for piece in pieces.drop 1 do
+    let cs := piece.toList
+    if cs.head?.any Char.isAlpha then continue
+    match includedFileL cs with
+    | some f =>
+      if !f.isEmpty && !f.contains '\\' && !f.contains '#' && !out.contains f then
+        out := out.push f
+    | none => pure ()
+  return out
 
 /-- **Referenced roles are covered.** A name the body spells that the
 palette resolves is declared in the request, with the palette's value. -/
@@ -16733,11 +16843,14 @@ rasterization of the same drawing — one fulfilment, two projections. -/
 public theorem pictureRefs_design_projects (doc : Doc) (id w : String)
     (h : (id, w) ∈ pictureRefs doc) :
     ∃ src, (id, src) ∈ doc.pictureSrcs ∧
-      w = wrapStandalone doc.picturePreamble (fontLines doc.fonts)
+      w = wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble
+        (fontLines doc.fonts)
         (paletteDecls doc.palette
           (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) ++
             (doc.picturePreamble ++ src.body)))
-        (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) src := by
+        (slideShims doc (doc.picturePreamble ++ src.body))
+        (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body))
+        (pictureSwitch doc.page src.size) src := by
   unfold pictureRefs at h
   rw [Array.mem_map] at h
   obtain ⟨⟨id', src⟩, hmem, heq⟩ := h

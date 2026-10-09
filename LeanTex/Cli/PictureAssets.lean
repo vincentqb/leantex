@@ -16,11 +16,35 @@ namespace LeanTex.Cli.PictureAssets
 
 open LeanTex.Core
 
+/-- A request as its cache knows it: the standalone, then one line per file it
+reads (`Ir.pictureInputs`, staged beside it), by the path it spells and the
+content key of its bytes — so a changed figure is a changed request, and a
+request that reads none is keyed by its standalone alone, as it always was. -/
+public def keyed (wrapped : String) (inputs : Array (String × ByteArray)) : String :=
+  inputs.foldl (fun s (p, b) => s ++ s!"% input {p} {Flate.contentKey b}\n") wrapped
+
 public def key (wrapped : String) : String := Flate.contentKey wrapped.toUTF8
 
 public def slotName (wrapped tool stamp version : String) : String :=
   ConvCache.slotName wrapped.toUTF8 "standalone-picture"
     (String.intercalate "\u0000" [tool, stamp, version])
+
+/-- Where an input stands relative to the standalone: its leading `..` steps
+and the components after them, or `none` for a path the scratch cannot
+hold — absolute (the tool reads it where it is), or stepping up again
+after descending. -/
+public def stagePath (p : String) : Option (Nat × List String) :=
+  if p.startsWith "/" then none else
+  let comps := (p.splitOn "/").filter fun c => !c.isEmpty && c != "."
+  let ups := (comps.takeWhile (· == "..")).length
+  let rest := comps.drop ups
+  if rest.isEmpty || rest.contains ".." then none else some (ups, rest)
+
+/-- The scratch directory `levels` steps below `root`: where a standalone
+runs whose inputs step up that far, so every one of them lands inside the
+scratch. -/
+private def below (root : System.FilePath) (levels : Nat) : System.FilePath :=
+  (List.replicate levels "s").foldl (fun (p : System.FilePath) (c : String) => p / c) root
 
 public structure Answer where
   result : ConvCache.Result
@@ -56,14 +80,27 @@ private def logTail (log : String) : String :=
   let picked := if bangs.isEmpty then lines.reverse.take 1 else bangs.take 3
   String.intercalate " · " (picked.map (·.trimAscii.toString))
 
-private def produce (tool wrapped : String) : IO ConvCache.Result := do
+private def produce (tool wrapped : String) (inputs : Array (String × ByteArray)) :
+    IO ConvCache.Result := do
   try
     -- Anchor relative paths to the caller, preserving the invoked alias:
     -- TeX engines use that name to choose their format.
     let command ← if tool.contains '/' && (System.FilePath.mk tool).isRelative then
         pure ((← IO.currentDir) / tool).toString
       else pure tool
-    Host.withScratch fun work => do
+    Host.withScratch fun scratch => do
+      -- Each input stands where the standalone's own spelling finds it,
+      -- inside the scratch: the run directory sits as deep as the inputs
+      -- step up.
+      let staged := inputs.filterMap fun (p, b) => (stagePath p).map (·, b)
+      let depth := staged.foldl (fun d ((ups, _), _) => max d ups) 0
+      let work := below scratch depth
+      IO.FS.createDirAll work
+      for ((ups, rest), bytes) in staged do
+        let target := rest.foldl (fun (p : System.FilePath) (c : String) => p / c)
+          (below scratch (depth - ups))
+        if let some parent := target.parent then IO.FS.createDirAll parent
+        IO.FS.writeBinFile target bytes
       IO.FS.writeFile (work / "pic.tex") wrapped
       let ended ← RunBounded.runBounded command
         #["-interaction=batchmode", "-halt-on-error", "pic.tex"] work 120000
@@ -86,15 +123,15 @@ private def produce (tool wrapped : String) : IO ConvCache.Result := do
 before cleanup, then publishes one integrity-checked answer by atomic rename.
 Cache failures leave the produced answer intact; unfinished attempts write
 nothing (`ConvCache.inconclusive_retried_exact`). -/
-public def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : String) :
-    IO Answer := do
+public def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : String)
+    (inputs : Array (String × ByteArray) := #[]) : IO Answer := do
   let slot ← if !stamp.isEmpty && !version.isEmpty && (← ToolProbe.witness tool) == stamp then
-      pure (dir.map (· / slotName wrapped tool stamp version))
+      pure (dir.map (· / slotName (keyed wrapped inputs) tool stamp version))
     else pure none
   if let some path := slot then
     if let some answer ← readAnswer path then
       return { result := ConvCache.Result.replay answer, cached := true }
-  let result ← produce tool wrapped
+  let result ← produce tool wrapped inputs
   if let some path := slot then
     if (← ToolProbe.witness tool) == stamp then
       if let some answer := result.record? then

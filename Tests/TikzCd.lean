@@ -93,3 +93,62 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ("\\begin{align}" ++ cdDiagram ++ "\\end{align}"))
   t "a numbered alignment's diagram keeps the formula's door, named"
     ((Ir.pictureRefs numbered).isEmpty && numberedDs.any (·.code == "W0012"))
+
+/-- **A boundary standalone compiles what its document compiled, at the size
+its picture stands at.** The invariant whose absence withdrew seven of the
+reference talks' ten diagrams to their text floor: the standalone met an
+operator the document declared with `\DeclareMathOperator`, a length it
+declared and set, and beamer's `\alert`, none of which it had — and set
+every diagram at ten points under a `\large` in an eleven-point deck. Each
+door is held over the request the driver fulfils (`Ir.pictureRefs`), its
+inputs over `Ir.pictureInputs`; invented content. -/
+def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let firstPass (src : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
+    let (toks, lds) := Lex.lex "t" src
+    let (raws, pds) := Parse.parse "t" toks
+    Elab.runRawsSpanned "t" raws (lds ++ pds)
+  let reqOf (src : String) : String :=
+    (((Ir.pictureRefs (firstPass src).1)[0]?).map (·.2)).getD ""
+  let pre := "\\usepackage{amsmath}\n\\usepackage{tikz-cd}\n"
+  let display (body : String) : String := "\\[" ++ body ++ "\\]"
+  -- The class takes the document's body size; ten points opens as it did.
+  let ten := reqOf (dvDoc pre (display cdDiagram))
+  let eleven := reqOf ("\\documentclass[11pt]{article}\n" ++ pre ++
+    "\\begin{document}\n" ++ display cdDiagram ++ "\n\\end{document}")
+  t "a ten-point document's standalone opens as it always did"
+    (hasStr ten "\\documentclass{standalone}\n\\usepackage{tikz}\n")
+  t "an eleven-point document's standalone takes its body size"
+    (hasStr eleven "\\documentclass[11pt]{standalone}")
+  -- The size in force where the diagram stands is the standalone's.
+  let largeSrc := dvDoc pre ("{\\large\n" ++ display cdDiagram ++ "\n}")
+  let large := reqOf largeSrc
+  t "a diagram under a size switch is drawn at that size"
+    (hasStr large "\\begin{document}\n\\large\n\\begin{tikzcd}")
+  t "one diagram at two sizes is two requests"
+    (((firstPass largeSrc).1.pictureSrcs.map (·.1)) !=
+      ((firstPass (dvDoc pre (display cdDiagram))).1.pictureSrcs.map (·.1)))
+  t "a body size the class holds no option for is set by its own switch"
+    (Ir.pictureSwitch { fontSize := Dim.pt 9 } none ==
+      some s!"\\fontsize\{{(Dim.pt 9).toPtString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toPtString}pt}\\selectfont")
+  -- The document's own operators and lengths ride to the standalone.
+  let ops := reqOf (dvDoc (pre ++ "\\DeclareMathOperator{\\gradient}{grad}\n" ++
+      "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
+    (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\"] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
+  t "an operator the document declared is the standalone's"
+    (hasStr ops "\\renewcommand{\\gradient}{\\operatorname{grad}}")
+  t "a length the document declared and set is the standalone's, guarded"
+    (hasStr ops "\\ifdefined\\thumbside\\else\\newlength{\\thumbside}\\fi\\setlength{\\thumbside}{.5in}")
+  -- beamer's alert is a slides document's, and its colour rides with it.
+  let alerted := reqOf ("\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++
+    display "\\begin{tikzcd} A \\arrow[r] & \\alert{B} \\end{tikzcd}" ++ "\n\\end{frame}\n\\end{document}")
+  t "a slides document's diagram that alerts carries the alert and its colour"
+    (hasStr alerted "\\RenewDocumentCommand{\\alert}{d<>m}" && hasStr alerted "\\definecolor{alert}")
+  t "an article's standalone carries no alert of beamer's"
+    (!hasStr ten "\\alert")
+  -- The files a request reads, as its standalone spells them.
+  let inputs := Ir.pictureInputs ("\\includegraphics [keepaspectratio,width=\\thumbside ]" ++
+    "{figures/thumb.png}\\includegraphics{plain}\\includegraphicsx{other}" ++
+    "\\includegraphics*{figures/thumb.png}\\newcommand\\pic[1]{\\includegraphics{#1}}")
+  t "a request's inputs are the files its \\includegraphics calls name, once each"
+    (inputs == #["figures/thumb.png", "plain"])
