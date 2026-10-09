@@ -158,11 +158,12 @@ public structure PicCtx where
   subset a picture body reaches. -/
   macros : Array (String × String) := #[]
   /-- The key lists the document's `\tikzset` lines wrote, in source order
-  and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
-  definitions are what every picture's own option block starts from, so a
-  style reaches its picture whether it was declared in the preamble or
-  beside the figure. Set once by the elaborator, as `preamble` is. -/
-  sets : Array (Array Raw) := #[]
+  and wherever they stood, each beside the span of its line in the file
+  that holds it (`Compat.tikzsetKeys`). Their `/.style` definitions are
+  what every picture's own option block starts from, so a style reaches its
+  picture whether it was declared in the preamble or beside the figure.
+  Set once by the elaborator, as `preamble` is. -/
+  sets : Array (Span × Array Raw) := #[]
   /-- How a node label's content measures at a per-mille size: the face,
   arriving as a function rather than a font set, because the elaborator has
   no face of its own and does not acquire one by knowing this. The driver
@@ -4506,7 +4507,9 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
 the one elaboration both the block arm and the in-line arm read, so the
 two cannot disagree about what the subset draws. A label's formula is
 located at its opener, as `sourceInline` locates a paragraph's, so the notes
-the formula census raises after elaboration name the label. -/
+the formula census raises after elaboration name the label; one a document
+style sets is located in the file that wrote the style
+(`Picture.ofSetting`). -/
 private def subsetPicture (ctx : Ctx) (body : Array Raw) :
     Ir.Pic.Picture × Array Picture.PDiag :=
   let mathOf (d : Bool) (raws : Array Parse.Raw) :
@@ -16466,28 +16469,29 @@ public def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
 /-- The style table before the next picture setting. This is the same
 one-pass interpretation used by the drawing's `Picture.documentStyles`. -/
 public def pictureSettingStyles (styles : List (String × Array Picture.Tok))
-    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) :=
-  (Picture.readStyleList styles (Picture.ofRaws setting.2)).1
+    (setting : Span × Array Raw) : List (String × Array Picture.Tok) :=
+  (Picture.readStyleList styles (Picture.ofSetting setting)).1
 
-/-- Account for a key at the setting that declares it. -/
-private def pictureKeyState (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) : ESt :=
-  warnOnceState ctx ("picture:set:" ++ key) .W0334
-    s!"picture key {key} is outside the rendered picture subset; the key is dropped"
-    pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
+/-- Account for a key at the setting that declares it, in the file that
+holds the setting's line. -/
+private def pictureKeyState (ctx : Ctx) (span : Span) (st : ESt) (key : String) : ESt :=
+  warnOnceState { ctx with file := span.file, callSite := none } ("picture:set:" ++ key)
+    .W0334 s!"picture key {key} is outside the rendered picture subset; the key is dropped"
+    span.pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
 
 /-- One real reporting loop, over the keys this setting leaves unread.
 The style table is advanced only after the setting has been interpreted. -/
 private def pictureSettingState (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt)
-    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
+    (setting : Span × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
   let mut st := acc.2
-  for key in Picture.unreadKeys acc.1 (Picture.ofRaws setting.2) do
+  for key in Picture.unreadKeys acc.1 (Picture.ofSetting setting) do
     st := pictureKeyState ctx setting.1 st key
   return (pictureSettingStyles acc.1 setting, st)
 
 /-- Interpret and report every prepared picture setting, in declaration
 order, carrying the earlier style definitions into each later setting. -/
-public def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+public def reportPictureKeys (ctx : Ctx) (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
   Id.run do
     let mut acc := (([] : List (String × Array Picture.Tok)), st)
     for setting in sets do
@@ -16505,7 +16509,7 @@ public structure PictureReportContext where
 Later document judges keep their diagnostic order: picture losses are
 inserted at the position captured immediately after body elaboration. -/
 public def finishPictureKeys (report : PictureReportContext) (doc : Doc)
-    (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+    (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
   -- premise: pictureKeyGateChecks — only an engine-rendered picture loses
   -- these keys; a configured boundary alone cannot silence that loss.
   if 0 < enginePictures doc.body then
@@ -16666,7 +16670,7 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
   · exact recovered_para_census plan.ctx wordPos word lang ds
 
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -16725,7 +16729,7 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
     { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
-                        sets := picSets.map (·.2) } } }
+                        sets := picSets } } }
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -17114,7 +17118,7 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
   rw [h]
 
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -17126,7 +17130,7 @@ private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "
 /-- Elaborate a document and account for every unread setting of its
 engine pictures. The output gate is read from the completed body. -/
 public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -17177,7 +17181,7 @@ sources, and nothing would state they agree. -/
 public structure Prepared where
   raws : Array Raw
   picPre : String
-  picSets : Array (Pos × Array Raw)
+  picSets : Array (Span × Array Raw)
   picMacros : Array (String × String)
   warned : Array String
   compatDiags : Array Diag
@@ -17308,7 +17312,7 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
 see the fulfilled surface, and compatibility translation continues from
 that execution's state rather than replaying any effects. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
-  let picScan := Compat.boundaryScan executed.raws
+  let picScan := Compat.boundaryScan file executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
     (Compat.rewriteExecuted executed) executed.inputAttempts
@@ -17358,7 +17362,7 @@ option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
-  let picScan := Compat.boundaryScan raws
+  let picScan := Compat.boundaryScan file raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
     (provideKeeps := renderedBuiltins ++ structuralNames ++

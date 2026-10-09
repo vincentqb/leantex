@@ -31,7 +31,7 @@ for the contract. -/
 public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runExecuted file executed earlier metric =
-      runRewriteFinal file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+      runRewriteFinal file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
         executed.sourceTriggers #[] earlier metric (Compat.beginRewrite executed)
         executed.inputAttempts := by rfl
 
@@ -516,7 +516,7 @@ public theorem runExecuted_meaningFree_contract (file : String) (executed : Comp
     (input : ControlDocument executed name arity) :
     runExecuted file executed earlier metric =
       runPreparedFinal file
-        (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+        (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
           executed.sourceTriggers #[]
           (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
             name note input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
@@ -537,7 +537,7 @@ public theorem runExecuted_configSkip_contract (file : String) (executed : Compa
     (input : ControlDocument executed name arity) :
     runExecuted file executed earlier metric =
       runPreparedFinal file
-        (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+        (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
           executed.sourceTriggers #[]
           (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
             name msg help input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
@@ -573,7 +573,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
       ∀ input : ControlDocument executed row.1 row.2.1,
         runExecuted file executed earlier metric =
           runPreparedFinal file
-            (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+            (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
               executed.sourceTriggers #[]
               (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
                 row.1 row.2.2 input.pos input.docPos
@@ -583,7 +583,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
       ∀ input : ControlDocument executed row.1 row.2.1,
         runExecuted file executed earlier metric =
           runPreparedFinal file
-            (prepareRewritten file (Compat.boundaryScan executed.raws) (macroScan executed.raws)
+            (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
               executed.sourceTriggers #[]
               (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
                 row.1 row.2.2.1 row.2.2.2 input.pos input.docPos

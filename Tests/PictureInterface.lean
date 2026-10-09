@@ -21,9 +21,11 @@ example : Repr NodeGeom := inferInstance
 example : BEq NodeGeom := inferInstance
 
 example (body : List Tok) : Tok := .group body
-example (display : Bool) (body : List Parse.Raw) (pos : Pos) : Tok :=
-  .math display body pos
+example (display : Bool) (body : List Parse.Raw) (site : Option Span) : Tok :=
+  .math display body site
 example : Array Parse.Raw → Array Tok := ofRaws
+example : (Pos → Option Span) → Array Parse.Raw → Array Tok := ofRawsAt
+example : Span × Array Parse.Raw → Array Tok := ofSetting
 example : Int → String := milliString
 example : Val → String := Val.text
 example : Array PDiag → Bool := namesLoss
@@ -98,7 +100,7 @@ example (cx : Cx) (statements : List Stmt) (baseline : Option Sp) : Ir.Pic.Pictu
 
 example (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag)
-    (sets : Array (Array Parse.Raw)) (metric : Ir.Pic.LabelMetric)
+    (sets : Array (Span × Array Parse.Raw)) (metric : Ir.Pic.LabelMetric)
     (macros : Array (String × String)) (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
     (bodySize : Sp) : Ir.Pic.Picture × Array PDiag :=

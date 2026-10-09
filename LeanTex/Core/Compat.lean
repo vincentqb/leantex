@@ -2169,12 +2169,14 @@ public def picWalkCtrls : List String :=
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`
 is the same collection read natively — one entry per `nativeSetCtrls`
-line, its key list beside the position of the line that wrote it. One
-accumulator, so the two readings cannot disagree about which definitions
-reached a picture. -/
+line, its key list beside the span of the line that wrote it: the line's
+own file, which an `\input` wrapper names, as it names the file the
+elaborator reads the line in (`tikzsetKeys_input_exact`). One accumulator,
+so the two readings cannot disagree about which definitions reached a
+picture. -/
 public structure BoundaryScan where
   pre : String := ""
-  sets : Array (Pos × Array Raw) := #[]
+  sets : Array (Span × Array Raw) := #[]
 
 mutual
 
@@ -2192,10 +2194,10 @@ order. -/
 -- of lines a picture's renderer must read and drops everything else by
 -- design, so no census equality can hold. What it must conserve is stated
 -- where it pays: `boundaryDecls_covers` and `tikzsetKeys_covers`.
-private def boundaryLevel (raws : Array Raw) (out : BoundaryScan) :
+private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan) :
     List Raw → Nat → Nat → BoundaryScan
   | [], _, _ => out
-  | _ :: rest, i, skip + 1 => boundaryLevel raws out rest (i + 1) skip
+  | _ :: rest, i, skip + 1 => boundaryLevel file raws out rest (i + 1) skip
   | .ctrl name p :: rest, i, 0 =>
     if name == "usepackage" || name == "RequirePackage" then
       let (opt, j) := takeOpt raws (i + 1)
@@ -2208,28 +2210,29 @@ private def boundaryLevel (raws : Array Raw) (out : BoundaryScan) :
           let o := match opt with | some o => s!"[{o}]" | none => ""
           let line := s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
           { out with pre := out.pre ++ line }
-      boundaryLevel raws out rest (i + 1) (k - (i + 1))
+      boundaryLevel file raws out rest (i + 1) (k - (i + 1))
     else if boundaryCtrls.contains name then
       let (args, k) := takeGroups raws (i + 1) 1
       let groups := String.join (args.toList.map fun g => s!"\{{rawSrc g}}")
       let out := { out with pre := out.pre ++ s!"\\{name}" ++ groups ++ "\n" }
       let out :=
         if nativeSetCtrls.contains name then
-          { out with sets := out.sets.push (p, args.getD 0 #[]) }
+          { out with sets := out.sets.push (⟨file, p⟩, args.getD 0 #[]) }
         else out
-      boundaryLevel raws out rest (i + 1) (k - (i + 1))
-    else boundaryLevel raws out rest (i + 1) 0
-  | r :: rest, i, 0 => boundaryLevel raws (boundaryRaw out r) rest (i + 1) 0
+      boundaryLevel file raws out rest (i + 1) (k - (i + 1))
+    else boundaryLevel file raws out rest (i + 1) 0
+  | r :: rest, i, 0 => boundaryLevel file raws (boundaryRaw file out r) rest (i + 1) 0
 
 /-- Descend into a group or an environment. Split from the list walk so
 the recursion is structural on `Raw`: the body is a field of the head, not
-a tail of the list — `rewriteList`/`rewriteRaw`'s shape. -/
-private def boundaryRaw (out : BoundaryScan) : Raw → BoundaryScan
-  | .group body _ => boundaryLevel body out body.toList 0 0
+a tail of the list — `rewriteList`/`rewriteRaw`'s shape. An `\input`
+wrapper's body is read in its own file. -/
+private def boundaryRaw (file : String) (out : BoundaryScan) : Raw → BoundaryScan
+  | .group body _ => boundaryLevel file body out body.toList 0 0
   | .env n body _ =>
     if pictureEnvs.contains n then out
-    else boundaryLevel body out body.toList 0 0
-  | .math _ body _ => boundaryLevel body out body.toList 0 0
+    else boundaryLevel ((Parse.inputEnvFile? n).getD file) body out body.toList 0 0
+  | .math _ body _ => boundaryLevel file body out body.toList 0 0
   | .word _ _ => out
   | .space => out
   | .par _ => out
@@ -2244,8 +2247,8 @@ preamble text the boundary standalone needs, and the key lists the engine
 reads itself, each with the position of the line it came from (a
 diagnostic about a key belongs to the line that wrote it, not to whichever
 picture first met it). -/
-public def boundaryScan (raws : Array Raw) : BoundaryScan :=
-  boundaryLevel raws {} raws.toList 0 0
+public def boundaryScan (file : String) (raws : Array Raw) : BoundaryScan :=
+  boundaryLevel file raws {} raws.toList 0 0
 
 /-- The preamble declarations a boundary standalone needs, collected from
 the *unrewritten* tree — the compat rewrite drops package loads, so
@@ -2263,18 +2266,19 @@ so the boundary failed and the page shipped an empty box. The walk
 therefore descends the whole tree; only a picture environment is left
 closed (`pictureEnvs`), its body being its own standalone's already. Pure
 and total; `\input` wrappers open as any other environment does. -/
-public def boundaryDecls (raws : Array Raw) : String :=
-  (boundaryScan raws).pre
+public def boundaryDecls (file : String) (raws : Array Raw) : String :=
+  (boundaryScan file raws).pre
 
 /-- The key lists the engine reads itself, in source order, each with the
-position of the `\tikzset` that wrote it. Read from the *unrewritten* tree
-for the same reason `boundaryDecls` is, and from the whole tree for the
-same reason: where the author wrote a definition says nothing about which
-pictures need it. The one consumer is the elaborator, which folds the
+span of the `\tikzset` that wrote it, in the file that holds it
+(`tikzsetKeys_input_exact`). Read from the *unrewritten* tree for the same
+reason `boundaryDecls` is, and from the whole tree for the same reason:
+where the author wrote a definition says nothing about which pictures need
+it. The one consumer is the elaborator, which folds the
 `/.style` entries into every picture's bundles (`Picture.readStyleList`)
 and names what it could not read at the line above. -/
-public def tikzsetKeys (raws : Array Raw) : Array (Pos × Array Raw) :=
-  (boundaryScan raws).sets
+public def tikzsetKeys (file : String) (raws : Array Raw) : Array (Span × Array Raw) :=
+  (boundaryScan file raws).sets
 
 /-- **A set line reaches the boundary wherever it stands.** Wrapping a run
 of declarations in the document environment leaves the standalone's
@@ -2283,18 +2287,34 @@ the preamble-only walk returned nothing for this tree, so a `\tikzset`
 written beside its picture (a figure kept in its own file) never reached
 pgf, the boundary failed on an arrow tip or a shape it had no definition
 for, and the page shipped an empty box. -/
-public theorem boundaryDecls_covers (raws : Array Raw) (p : Pos) :
-    boundaryDecls #[.env "document" raws p] = boundaryDecls raws := by
-  simp [boundaryDecls, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
+public theorem boundaryDecls_covers (file : String) (raws : Array Raw) (p : Pos) :
+    boundaryDecls file #[.env "document" raws p] = boundaryDecls file raws := by
+  simp [boundaryDecls, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs,
+    Parse.inputEnvFile?, String.startsWith_string_iff]
 
 /-- **And it reaches the engine's own renderer wherever it stands**, which
 is the same claim for the native reading: a style defined beside its
 picture, inside the document body, is the style that picture draws with.
 Stated over the same walk the boundary's copy comes from, so neither
 reading can gain a definition the other lost. -/
-public theorem tikzsetKeys_covers (raws : Array Raw) (p : Pos) :
-    tikzsetKeys #[.env "document" raws p] = tikzsetKeys raws := by
-  simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs]
+public theorem tikzsetKeys_covers (file : String) (raws : Array Raw) (p : Pos) :
+    tikzsetKeys file #[.env "document" raws p] = tikzsetKeys file raws := by
+  simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs,
+    Parse.inputEnvFile?, String.startsWith_string_iff]
+
+/-- **A setting an included file wrote is that file's.** The scan reads an
+`\input` wrapper's body under the file the wrapper names, as the elaborator
+reads it, so a setting's span is the one the elaborator gives its line: a
+note about its keys, or a formula a style of it sets, names that file and
+never the including file's line of the same number. -/
+public theorem tikzsetKeys_input_exact (caller file name : String) (body : Array Raw)
+    (pos : Pos) (h : Parse.inputEnvFile? name = some file) :
+    tikzsetKeys caller #[.env name body pos] = tikzsetKeys file body := by
+  have hp : name ∉ pictureEnvs := by
+    intro hm
+    simp only [pictureEnvs, List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with rfl | rfl <;> simp [Parse.inputEnvFile?, String.startsWith_string_iff] at h
+  simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, hp, h]
 
 /-- The `*` of a starred LaTeX form, standing between the command and its
 arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)

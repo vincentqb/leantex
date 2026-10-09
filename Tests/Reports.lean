@@ -975,6 +975,7 @@ def reports : List Report := [
       check% censusChecks,
       check% labelSettleChecks,
       check% mathDiagnosticOriginChecks,
+      thm% Compat.tikzsetKeys_input_exact,
       thm% Ir.mathRequests_resolve_covers,
       thm% MathMl.formula_merrorFree_contract,
       thm% Layout.labelMetric_resolve_id,
@@ -982,6 +983,7 @@ def reports : List Report := [
     accept := ["in a run with the fix reverted — the alphabet pass skipping picture labels, the label measure reading source glyphs, and each label formula its own math root — fifty-four assertions fail, thirty-four of them this report's: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census, the diagram fixture's upright label, the alphabet note a label's formula owes in both text families, and the driver taking a face that lacks a label's alphabet for one that measures it",
       "on the same tree, five assertions fail with the label measure alone reverted: four drawn outlines on the shipped page, each up to half a point off a text node's inner sep around the glyphs the page sets, and the settle check",
       "on the same tree, nine assertions fail with the driver probing the resolved document's labels and label formulas left unlocated: the settle check, and in both text families the face and alphabet notes of a label's formula naming no source",
+      "on 40c926f8, before a label's formula was sited where its opener was written, twenty-five assertions fail: twenty in both text families, a formula the picture walk read out of a macro's definition text naming a position that text invents in the picture's file; four, a formula a style sets naming the file that includes the style or the picture rather than the file that wrote the style; and one, a setting's unread key named at the including file's line of that number",
       "a fresh build of a presentation deck ships no error element, and its alphabet edge label sets upright in both artifacts as the reference build does"]
     state := .guarded "c95d78db" .revert .author },
   { id := "R112", date := "2026-10-08"
