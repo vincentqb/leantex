@@ -92,6 +92,29 @@ def largeReads : List (String × List String) :=
    ("Tests.Layout", []),
    ("Tests.Surface", [])]
 
+/-- Whose builds read each large file's private part: a private edit to the
+file — a comment, a proof — rebuilds exactly these and the shims. Every
+large file has a row, and the row is exactly its readers, so a new reader
+is a decision written here. Reads chain through `import all`: the contracts
+that read Theme whole read Ir whole through it, and their kernel `decide`s
+evaluate Ir's private bodies, so ContrastContract's 28 seconds follow every
+comment in Ir. -/
+def largeReaders : List (String × List String) :=
+  [("LeanTex.Core.Compat", ["LeanTex.Core.ControlContract", "LeanTex.Core.InputContract"]),
+   ("LeanTex.Core.Elab", ["LeanTex.Core.ControlContract", "LeanTex.Core.ElabRegistryContract",
+     "LeanTex.Core.InputContract", "LeanTex.Core.PictureContract", "LeanTex.Core.TitleContract"]),
+   ("LeanTex.Core.HtmlDoc", ["LeanTex.Core.PdfAgreement"]),
+   ("LeanTex.Core.Ir", ["LeanTex.Core.BibContract", "LeanTex.Core.ColorContract",
+     "LeanTex.Core.ContrastContract", "LeanTex.Core.ControlContract",
+     "LeanTex.Core.ElabRegistryContract", "LeanTex.Core.Pending", "LeanTex.Core.PictureCensus",
+     "LeanTex.Core.Theme"]),
+   ("LeanTex.Core.Layout", ["LeanTex.Core.Layout.FramePartition",
+     "LeanTex.Core.Layout.InkContract", "LeanTex.Core.Layout.InkOutput",
+     "LeanTex.Core.Layout.MathRhythm", "LeanTex.Core.Layout.SpacingContract"]),
+   ("LeanTex.Core.Picture", ["LeanTex.Core.ElabRegistryContract"]),
+   ("Tests.Layout", []),
+   ("Tests.Surface", [])]
+
 /-- The maintained Lean sources: the library, the suite and the two roots
 beside them. Tools under `scripts/` build on their own. -/
 def sources : IO (Array (String × String)) := do
@@ -123,20 +146,24 @@ def judge (files : Array (String × String)) : IO (List (String × Bool)) := do
      (s!"the files outside the module system are exactly {legacyFiles} (found {legacy.toList})",
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
-      largeReads.all fun (n, _) => graph.contains n)]
+      (largeReads ++ largeReaders).all fun (n, _) => graph.contains n)]
+  let moduleReads := (headers.filter (·.isModule)).map fun h => (h.name, privateReads graph h)
   for (name, text) in files do
     let size := (text.splitOn "\n").length
     let large := size ≥ largeLines
-    let row := largeReads.lookup name
-    if large || row.isSome then
-      let reads := ((graph.get? name).map (privateReads graph) |>.getD #[]).toList
-      facts := facts ++ [match row with
-        | some r =>
-          if large then (s!"{name} ({size} lines) reads exactly the private parts {r} \
-(found {reads})", r == reads)
-          else (s!"{name} keeps a largeReads row at {size} lines, under {largeLines}", false)
-        | none => (s!"{name} ({size} lines) declares what it reads in largeReads \
-(found {reads})", false)]
+    let reads := ((graph.get? name).map (privateReads graph) |>.getD #[]).toList
+    let readers := (((moduleReads.filter (·.2.contains name)).map (·.1)).qsort (· < ·)).toList
+    for (table, rows, what, found) in
+        [("largeReads", largeReads, "the private parts it reads", reads),
+         ("largeReaders", largeReaders, "the modules reading it whole", readers)] do
+      let row := rows.lookup name
+      if large || row.isSome then
+        facts := facts ++ [match row with
+          | some r =>
+            if large then (s!"{name} ({size} lines): {what} are exactly its {table} row {r} \
+(found {found})", r == found)
+            else (s!"{name} keeps a {table} row at {size} lines, under {largeLines}", false)
+          | none => (s!"{name} ({size} lines) declares {what} in {table} (found {found})", false)]
   return facts
 
 /-- The model on an invented graph, both ways: a legacy file reads its whole
@@ -144,8 +171,9 @@ closure, a module reads only through `import all`, and `import all` is
 transitive only through further `import all`; the header as Lake reads it —
 a comment anywhere in it, a nested one, one ending an import line, one
 before `module` — and a header Lake refuses is a failing fact, never a
-skipped file; and the table both ways: a large file needs a row, and a row
-needs a large file. -/
+skipped file; and the tables both ways: a large file needs a row, a row
+needs a large file, and a reader through a chain of `import all` is a
+reader. -/
 def selfTest : IO (List (String × Bool)) := do
   let g : List (String × String) :=
     [("A", "module\n\nimport all B\nimport C\n\nnamespace A\n\nimport all G"),
@@ -165,6 +193,9 @@ def selfTest : IO (List (String × Bool)) := do
   let unrowed ← judge #[("Synthetic.Big", big)]
   let smallRow ← judge #[("LeanTex.Core.Compat", "module\n")]
   let refused ← judge #[("Synthetic.Bad", "import all G\n")]
+  let chained ← judge #[("LeanTex.Core.Picture", big),
+    ("Synthetic.Mid", "module\nimport all LeanTex.Core.Picture\n"),
+    ("Synthetic.Contract", "module\nimport all Synthetic.Mid\n")]
   return [("an import all reads through further import all, never through a plain import",
      reads "A" == #["B", "D"]),
    ("a plain import reads no private part", reads "D" == #[]),
@@ -181,7 +212,9 @@ def selfTest : IO (List (String × Bool)) := do
    ("a large file without a declared row fails",
      unrowed.any fun (n, ok) => !ok && hasStr n "Synthetic.Big"),
    ("a declared row on a small file fails",
-     smallRow.any fun (n, ok) => !ok && hasStr n "keeps a largeReads row")]
+     smallRow.any fun (n, ok) => !ok && hasStr n "keeps a largeReads row"),
+   ("a large file read whole through a chain of import all fails, naming the reader",
+     chained.any fun (n, ok) => !ok && hasStr n "largeReaders" && hasStr n "Synthetic.Contract")]
 
 end Tests.BuildGraph
 

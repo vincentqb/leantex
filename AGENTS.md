@@ -321,16 +321,16 @@ in this repo; refer to the private reference corpus abstractly.
   a body reads an `@[expose]`d definition or a public lemma beside it, and
   `import all` is for small readers whose rebuild costs seconds, such as a
   proof or contract companion beside what it reads. Private reads chain:
-  ContrastContract reads Theme whole and, through Theme's `import all Ir`,
-  Ir's private part, so a 28-second contract rebuilds on every Ir edit —
-  the standing exception, while Theme's contracts and install proofs
-  unfold lookups Ir does not expose. Every library and test file is a
-  `module` but the declared shims (`buildGraphChecks` reads each header
-  with Lake's own reader and holds the shims and each large file's
-  private reads to declared lists). One comment line appended to Ir once
-  rebuilt 184 modules in 6½ minutes, through Layout's and HtmlDoc's
-  `import all` and 172 test files outside the module system. Order
-  matters inside a large module too: a `structure`,
+  ContrastContract and ElabRegistryContract read Theme whole and, through
+  Theme's `import all Ir`, Ir's private part, which their kernel `decide`s
+  evaluate, so a 28-second contract rebuilds on every Ir edit — the
+  standing exception. Every library and test file is a `module` but the
+  declared shims (`buildGraphChecks` reads each header with Lake's own
+  reader and holds to declared lists the shims, each large file's private
+  reads, and each large file's private readers). One comment line
+  appended to Ir once rebuilt 184 modules in 6½ minutes, through Layout's
+  and HtmlDoc's `import all` and 172 test files outside the module
+  system. Order matters inside a large module too: a `structure`,
   `inductive` or multi-definition `mutual` block is added synchronously
   and waits for the elaboration and kernel check of every theorem before
   it (Layout loses about 100 of its 136 seconds this way), and a kernel

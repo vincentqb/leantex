@@ -1025,7 +1025,7 @@ def reports : List Report := [
   { id := "R115", date := "2026-10-08"
     what := "building the engine had become very slow: one comment line in the IR module cost over six minutes, both backends and every test module elaborating again, and one edit to a large module still costs over a minute"
     pins := [check% buildGraphChecks, check% censusChecks, thm% HtmlDoc.emitTree_resolve_agree]
-    accept := ["on the base tree the build-graph check fails five ways: one hundred seventy-two test files outside the module system, both backends reading the IR's private part, and the two largest test files reading every module",
+    accept := ["on the base tree the build-graph check fails six ways: one hundred seventy-two test files outside the module system, both backends reading the IR's private part, the IR's private readers beyond its declared list (both backends, the markdown emitter and the colour space among them), and the two largest test files reading every module",
       "the check reads each header with the build tool's own reader: its model cases fail five ways under the line-by-line reader it replaced, which a comment in a header blinded",
       "one comment line appended to the IR module rebuilt 184 modules in 386 seconds before and 12 in 101 seconds after",
       "one comment line appended to the layout module rebuilt 171 modules in 230 seconds before and 9 in 146 seconds after",
