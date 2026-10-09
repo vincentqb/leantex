@@ -86,10 +86,11 @@ no paint.** `finishBeamerColors` names a declared element no supported site
 reaches (W0104); its premise, checked here two builds apart under beamer's
 default colour theme and moloch: for every element the engine models a site
 or a relationship of — and two it models neither of — a declaration of
-both channels is named unused if and only if both artifacts are the ones
-without it. moloch's block title overrides both channels of its
-`structure` parent, so there a `structure` declaration reaches nothing and
-is named; under the default theme it paints the frame and block titles. -/
+both channels is named unused if and only if the shipped pages are the
+pages without it, and a named one leaves the HTML as it was too. moloch's
+block title overrides both channels of its `structure` parent, so there a
+`structure` declaration reaches nothing and is named; under the default
+theme it paints the frame and block titles. -/
 def beamerReachChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let artifacts (src : String) : String × String × Array Diag :=
@@ -104,9 +105,10 @@ def beamerReachChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let (p, h, ds) := artifacts (siteDeck theme
         s!"\\setbeamercolor\{{element}}\{fg=ProbeInk,bg=ProbePaper}")
       let named := colorLoss ds s!"element '{element}' has no supported paint site"
-      let same := p == pages && h == html
-      t s!"beamer reach: under {themeName}, '{element}' is named unused exactly when no artifact changes ({named}, {p == pages}, {h == html})"
-        (named == same)
+      t s!"beamer reach: under {themeName}, '{element}' is named unused exactly when the shipped pages do not change ({named}, {p == pages})"
+        (named == (p == pages))
+      t s!"beamer reach: under {themeName}, a named '{element}' changes no HTML either"
+        (!named || h == html)
 
 /-- Source-based paint invariants for Beamer colour inheritance and the
 bounded native furniture sites. The synthetic LuaLaTeX oracle uses

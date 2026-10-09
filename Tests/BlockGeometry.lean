@@ -337,6 +337,64 @@ private def strutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       | some a, some b => a < b
       | _, _ => false))
 
+/-- A tcolorbox is tcolorbox's box (tcolorbox.sty, `size=normal` under the
+reset style's `beforeafter skip balanced=0.5\baselineskip plus 2pt`), not
+beamer's: lualatex's baselines on this article (OpenSans, 10 pt), in
+thousandths of a TeX point. The title segment stands the frame's rule and
+`boxsep` inside the box's top, which stands `.3\baselineskip` and the
+balanced skip below the line above; `boxsep`, the title rule, `boxsep` and
+`top` separate the title from the body; `bottom`, `boxsep` and the rule
+close it, and the next line stands the balanced skip and `.7\baselineskip`
+below; consecutive boxes stand the skip apart; an untitled box has no title
+segment at all; text stands 5.5 mm inside the box. -/
+private def tcolorboxSource : String :=
+  "\\documentclass[10pt]{article}\n\\usepackage{tcolorbox}\n\\begin{document}\n" ++
+  "Lead paragraph above the boxes.\n\n" ++
+  "\\begin{tcolorbox}[title=Probe heading words]\nTitled box body words.\n\n" ++
+  "Second body paragraph.\n\\end{tcolorbox}\n\nMiddle paragraph between.\n\n" ++
+  "\\begin{tcolorbox}\nUntitled box body words.\n\\end{tcolorbox}\n" ++
+  "\\begin{tcolorbox}\nConsecutive box words.\n\\end{tcolorbox}\n\n" ++
+  "Trailing paragraph below.\n\\end{document}\n"
+
+private def tcolorboxMeasured : Array (String × String × Int) := #[
+  ("Lead paragraph above the boxes.", "Probe heading words", 21466),
+  ("Probe heading words", "Titled box body words.", 22804),
+  ("Titled box body words.", "Second body paragraph.", 12000),
+  ("Second body paragraph.", "Middle paragraph between.", 26761),
+  ("Middle paragraph between.", "Untitled box body words.", 27156),
+  ("Untitled box body words.", "Consecutive box words.", 35917),
+  ("Consecutive box words.", "Trailing paragraph below.", 24500)]
+
+private def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let (out, diags) := layout fonts tcolorboxSource
+  let page := out.pages[0]?.getD {}
+  let line (text : String) :=
+    page.lines.find? fun l => !l.furniture && lineText l false == letters text
+  for (a, b, want) in tcolorboxMeasured do
+    match line a, line b with
+    | some la, some lb =>
+      check ref s!"tcolorbox geometry: '{a}' to '{b}' {want} (lualatex) got {milliOf (lb.y - la.y)}"
+        ((milliOf (lb.y - la.y) - want).natAbs ≤ tolerance.toNat)
+    | _, _ => check ref s!"tcolorbox geometry: '{a}' and '{b}' ship" false
+  let (doc, _) := Elab.run "tcolorbox-geometry.tex" tcolorboxSource
+  let geom := Layout.Geom.ofPage doc.page
+  check ref "tcolorbox geometry: text stands the rule, boxsep and left inside the box"
+    (["Probe heading words", "Titled box body words.", "Untitled box body words."].all fun t =>
+      (line t).any (·.x == geom.hmargin + Ir.tcbInset))
+  check ref "tcolorbox geometry: the article raises no error"
+    (diags.all (·.severity != .error))
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let boxes := (elemAttrsList (· == "section") #[] body.toList).filter fun (_, attrs) =>
+    attrs.contains ("class", "tcolorbox")
+  let headers := (elemAttrsList (· == "header") #[] body.toList).size
+  check ref "tcolorbox geometry HTML: three boxes, one header: an untitled box has no title"
+    (boxes.size == 3 && headers == 1)
+  let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
+  check ref "tcolorbox geometry HTML: the stylesheet pads the title and the upper part"
+    (hasStr sheet "section.tcolorbox > header { padding: " &&
+      hasStr sheet "section.tcolorbox > .tcolorbox-body { padding: " &&
+      hasStr sheet ":where(* + section.tcolorbox) { margin-top: ")
+
 /-- moloch 2.1.0 loads with no `block` option: its alerted and example
 titles only `use` the block title and their text role
 (`\moloch@setup@block@colors`), keeping the default theme's `parent=alerted
@@ -463,10 +521,10 @@ private def coveredItemChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
 reach it: lualatex on this frame (16:9, 10 pt) spans every bar across the
 text block and `.75ex` beyond it, and starts every block line on the text
 block's edge, the item and quoted text keeping their indents. Owed, both
-ways: the engine's titled block also carries tcolorbox's lowering
-(`Tcolorbox.lower`), whose box LaTeX sets `\linewidth` wide, inside the
-indent; until the two are told apart, a block stands on its list's
-indent. -/
+ways. The kinds are told apart now — tcolorbox's box (`Ir.TitledKind.box`)
+is `\linewidth` wide inside the indent, as LaTeX sets it — but a beamer
+block still stands on its list's indent in both artifacts, and the HTML has
+no length for an enclosing list's total indent to stand outside. -/
 private def listedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
     "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
@@ -653,6 +711,7 @@ def blockGeometryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   colorChecks ref fonts
   textGroundChecks ref fonts
   strutChecks ref fonts
+  tcolorboxChecks ref fonts
   parentChecks ref fonts
   coveredChecks ref fonts
   coveredItemChecks ref fonts

@@ -246,9 +246,9 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
         String.ofList ((glyphs.filter (·.face == 2)).toList.map (·.scalar)) == "spareenvelope")
   let boxes := (elemNodesList (· == "section") #[] a.body.toList).filter fun n =>
     match n with
-    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "block block-block"
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "tcolorbox"
     | _ => false
-  t "tcolorbox remains one titled native block" (boxes.size == 1)
+  t "tcolorbox remains one titled box" (boxes.size == 1)
   for box in boxes do
     t "box title remains bold and separate from its body"
       ((elemNodesOne (· == "header") #[] box).any fun n =>

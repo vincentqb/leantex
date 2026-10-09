@@ -27,7 +27,7 @@ private def preparedChecksAgainst (ref : IO.Ref (List String))
   let (doc, ds) := Elab.runRaws "t" wrapped
   let actual := layoutOf fonts doc
   let (head, tree, hds) := HtmlDoc.emitTree {} doc
-  let (controlDs, expected, expectedHtml, _) := sourceArtifacts fonts (document "" control)
+  let (controlDs, expected, expectedHtml, _) := boxedSourceArtifacts fonts (document "" control)
   let t := check ref
   t s!"tcolorbox colors: {label}: native control supported"
     (controlDs.all (·.severity == .note))
@@ -85,7 +85,7 @@ PDF page models and typed HTML. No color or macro wrapper is normalized away. -/
 private def caseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label pre body control : String) (refused : Array String := #[]) : IO Unit := do
   let (ds, actual, html, _) := sourceArtifacts fonts (document pre body)
-  let (controlDs, expected, expectedHtml, _) := sourceArtifacts fonts (document "" control)
+  let (controlDs, expected, expectedHtml, _) := boxedSourceArtifacts fonts (document "" control)
   let t := check ref
   t s!"tcolorbox colors: {label}: native control supported"
     (controlDs.all (·.severity == .note))

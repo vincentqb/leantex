@@ -782,7 +782,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let look := titledLook acc.pal kind
     let titleCx := { cx with
       bold := true
-      cur := some (some (kind.name ++ "titlefg"), look.fg, acc.runs)
+      cur := some (some (kind.roleStem ++ "titlefg"), look.fg, acc.runs)
       ground := look.bar.or cx.ground
       groundName := (look.bar.map (fun _ => "the block-title bar")).or cx.groundName }
     let d := Design.ofPalette acc.pal
@@ -791,7 +791,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let inherited := cx.cur.getD (some defaultInk.1, defaultInk.2, acc.runs + 1)
     let parent : ColorPair := { fg := inherited.2.1, bg := cx.ground.getD (surfaceOf acc.pal) }
     let bodyCx := { cx with
-      cur := some (if bodyLook.fg.isSome then some (kind.name ++ "bodyfg") else inherited.1,
+      cur := some (if bodyLook.fg.isSome then some (kind.roleStem ++ "bodyfg") else inherited.1,
         (bodyLook.resolve parent).fg, acc.runs + 1)
       inkEpoch := some acc.epochs.size
       ground := bodyLook.bg.or cx.ground
@@ -1105,22 +1105,22 @@ private def blockTitleStep (site : ColorSite) (s : Judged) (kp : TitledKind × P
   let look := titledLook pal kind
   let ground := titledGround pal kind
   let milli := contrastMilli look.fg ground
-  if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
+  if milli < aaText && !pal.decorative.contains s!"{kind.roleStem}titlefg" then
     match realize aaText ground look.fg with
     | some c' =>
       { s with
-        diags := s.diags.push (realizedNote s!"{kind.name}titlefg" ground
+        diags := s.diags.push (realizedNote s!"{kind.roleStem}titlefg" ground
           (look.bar.map fun _ => "the block-title bar") look.fg c' aaText
-          ((site pal (some s!"{kind.name}titlefg") look.fg).map (·.2)))
+          ((site pal (some s!"{kind.roleStem}titlefg") look.fg).map (·.2)))
         palWrites := s.palWrites.push
-          { pal := pal, key := s!"{kind.name}titlefg", ground := ground, value := c' } }
+          { pal := pal, key := s!"{kind.roleStem}titlefg", ground := ground, value := c' } }
     | none =>
       { s with diags := s.diags.push (Diag.of .W0345
         (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
           s!"{hexOf ground} at {ratioString milli}, below the " ++
           s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-        (span := (site pal (some s!"{kind.name}titlefg") look.fg).map (·.2))
-        (help := some (lowHelp s!"{kind.name}titlefg" aaText ground look.fg))) }
+        (span := (site pal (some s!"{kind.roleStem}titlefg") look.fg).map (·.2))
+        (help := some (lowHelp s!"{kind.roleStem}titlefg" aaText ground look.fg))) }
   else s
 
 private def frameTitleStep (site : ColorSite) (doc : Doc) (s : Judged) (pal : Palette) : Judged :=

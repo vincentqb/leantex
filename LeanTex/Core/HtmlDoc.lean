@@ -271,7 +271,7 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1297,10 +1297,16 @@ registers in force, and no `\parskip` inside the boxes
 private def blockRules (size : Int) (tokens : Ir.Tokens) : List GapRule :=
   let above := blockAboveMilli size tokens
   let below := screenMilli size (skipSp size tokens "smallskipamount")
+  -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`: half a leading
+  -- between the box and the line boxes beside it, `\parskip` taken in.
+  let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
   [.boundary s!"* + {blockAt "first-child"}" (milliRem above),
    .boundary s!"{blockAt "last-child"} + *" s!"calc({milliRem below} + {peerGap})",
    .boundary s!"{blockAt "last-child"} + {blockAt "first-child"}" (milliRem (below + above)),
-   .parskip "section.block > *" "0rem"]
+   .parskip "section.block > *" "0rem",
+   .boundary "* + section.tcolorbox" balanced,
+   .boundary "section.tcolorbox + *" balanced,
+   .parskip "section.tcolorbox > *" "0rem"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
@@ -1518,9 +1524,10 @@ private def inkScopes (d : Design) : List (String × Ir.Color) :=
     (d.footline.bar.map fun bg => ("footer.slide-foot", bg)).toList ++
     [("section.slide.standout", d.standout.bg)] ++
     (d.titlepage.map fun p => ("section.slide.title-page", p.bg)).toList ++
-    ([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
+    (([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
         (.example, d.exampleTitle)] : List (Ir.TitledKind × Ir.TitledLook)).filterMap
-      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)
+      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)) ++
+    (d.blockTitle.bar.map fun bar => ("section.tcolorbox > header", bar)).toList
 
 /-- One recorded ink as the scoped custom property that re-points its role's
 token on its ground: a run's `var(--role)` there resolves to the ink the PDF
@@ -1666,6 +1673,12 @@ public def titleSlotCss (doc : Doc) : String :=
   "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
 
+/-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
+length at the body size, as the print walk spends it — millimetres the
+screen keeps in proportion to the type, through the stylesheet's own
+print-to-screen projection (`screenMilli`). -/
+private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -1689,6 +1702,15 @@ public def themeCss (doc : Doc) : String :=
   -- declared where the opening rule reads it — on the block, or on the
   -- overlay step's carrier the block opens (`blockAt`).
   "section.block, section.block > .block-body { display: flow-root; }\n" ++
+  -- tcolorbox's box (`Ir.tcb…`): the title's rule and `boxsep` above it,
+  -- `boxsep` and the title rule below; the upper part's `boxsep` and `top`
+  -- above its text (the frame's rule too, untitled), `bottom`, `boxsep`
+  -- and the rule below; the text the rule, `boxsep` and `left`/`right`
+  -- inside the box's edges.
+  "section.tcolorbox, section.tcolorbox > .tcolorbox-body { display: flow-root; }\n" ++
+  s!"section.tcolorbox > header \{ padding: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep)} {tcbLength Ir.tcbInset}; }\n" ++
+  s!"section.tcolorbox > .tcolorbox-body \{ padding: {tcbLength (Ir.tcbBoxsep + Ir.tcbTop)} {tcbLength Ir.tcbInset} {tcbLength (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule)}; }\n" ++
+  s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
   s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
@@ -7048,10 +7070,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let parent : Ir.ColorPair :=
       { fg := inherited.2, bg := cfg.listingGround.getD d.bg }
     let paint := titledBodyPaint cfg.pal kind parent inherited.1
-    let role := if look.fg.isSome then kind.name ++ "bodyfg" else inherited.1
+    let role := if look.fg.isSome then kind.roleStem ++ "bodyfg" else inherited.1
     let titleLook := Ir.titledLook cfg.pal kind
     let titleGround := titleLook.bar.getD parent.bg
-    let titleInk := (d.inkOn (kind.name ++ "titlefg")
+    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
       { fg := titleLook.fg, bg := titleGround }).fg
     let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c}; {titledBoxPaint}").getD ""
     let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
@@ -7066,6 +7088,20 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       bodyInk := some (role, (look.resolve parent).fg) }
     let kids := blockNodesInto bodyCfg #[] body.toList
     let bodyStyle := s!"color: {cssColor paint.fg};" ++ surfaceInkDecls cfg.pal paint.bg
+    if kind == .box then
+      -- tcolorbox's box: its title and upper part are its own segments, each
+      -- padded by the stylesheet (`themeCss`) and painted from the plain
+      -- block's roles, an untitled box no title at all.
+      let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c};").getD ""
+      let head : Array Html.Node := if title.isEmpty then #[] else
+        #[Html.elem "header" (inlines cfg title)
+          #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
+            barStyle)]]
+      let bodyPaint := (look.bg.map fun bg => s!"background: {cssColor bg};").getD ""
+      Html.elem "section" (head.push (Html.elem "div" kids
+          #[("class", "tcolorbox-body"), ("style", bodyStyle ++ bodyPaint)]))
+        #[("class", "tcolorbox")]
+    else
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.
     let kids := match look.bg with

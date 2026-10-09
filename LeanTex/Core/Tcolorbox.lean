@@ -12,6 +12,12 @@ The space cannot occur in an authored control word, so the namespaces
 remain distinct without another definition store. -/
 public def bindingName (name : String) : String := "tcolorbox " ++ name
 
+/-- The environment a lowered box stands in: the native block surface,
+elaborated as tcolorbox's own box (`Ir.TitledKind.box`), not as beamer's
+`{block}`. The space keeps it outside the environment names a document can
+spell, as `Parse.inputEnv`'s does. -/
+public def boxEnv : String := "tcolorbox box"
+
 /-- The inverse of the reserved binding spelling. -/
 public def boundName? (name : String) : Option String :=
   name.dropPrefix? "tcolorbox " |>.map (·.toString)
@@ -216,7 +222,7 @@ public theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
 
 /-- Assemble the already-selected fields around the original body. -/
 public def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowered :=
-  let block := Raw.env "block"
+  let block := Raw.env boxEnv
     #[.group s.title pos, .group (s.bodyDecls ++ body) pos] pos
   let before := gap s.before pos
   let after := gap s.after pos
@@ -234,7 +240,7 @@ public def lower (options body : Array Raw) (pos : Pos) : Lowered :=
 declarations. This is a surface property, before an IR exists; the native
 elaborator and both emitters are exercised by the artifact checks. -/
 @[expose] public def CarriesBody (rs body : Array Raw) (pos : Pos) : Prop :=
-  ∃ title decls, Raw.env "block"
+  ∃ title decls, Raw.env boxEnv
     #[.group title pos, .group (decls ++ body) pos] pos ∈ rs.toList
 
 /-- Every option combination retains the original body verbatim in the

@@ -6416,6 +6416,14 @@ private def blockEnvs : List String :=
    "thebibliography", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
+/-- The titled block an environment opens: beamer's three, and tcolorbox's
+box, which its lowering hands the same surface (`Tcolorbox.boxEnv`). -/
+private def titledKind? : String → Option Ir.TitledKind
+  | "block" => some .block
+  | "alertblock" => some .alert
+  | "exampleblock" => some .example
+  | n => if n == Tcolorbox.boxEnv then some .box else none
+
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
 public def builtinEnvNames : List String :=
@@ -6555,7 +6563,7 @@ private def bodyIsBlockOne : Raw → Bool
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
-      blockEnvs.contains n || isMathEnv n
+      blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
         || n == "tabular" || n == "tabular*"
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
@@ -11834,17 +11842,13 @@ the text width; the box takes the whole measure" pos
         = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
     blocks := blocks.push
       (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
-  else if n == "block" || n == "alertblock" || n == "exampleblock" then
+  else if let some kind := titledKind? n then
     -- beamer's titled blocks (user guide §12.3): the {title} group on
     -- the `\begin` line is the title — beamer's own mandatory argument,
     -- so an empty group is the documented untitled block, whose title box
     -- beamer still sets, empty, and a missing group is named (E0304). A
     -- paragraph break before a group makes it content, as the frame's
-    -- title rule reads it.
-    let kind : Ir.TitledKind :=
-      if n == "alertblock" then .alert
-      else if n == "exampleblock" then .example
-      else .block
+    -- title rule reads it. A lowered tcolorbox arrives the same way.
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos
     let mut title : Array Inline := #[]
@@ -12531,7 +12535,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let isB : Bool :=
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
-          blockEnvs.contains n || isMathEnv n
+          blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
             || n == "tabular" || n == "tabular*"
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"

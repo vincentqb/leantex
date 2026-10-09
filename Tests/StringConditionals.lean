@@ -13,12 +13,14 @@ branch in the caller's scope. Native controls retain complete page geometry
 and the serialized typed HTML, including macro ownership and whitespace. -/
 private def stringConditionalArtifacts (ref : IO.Ref (List String))
     (fonts : Font.FontSet) (label pre body control : String)
-    (controlPre : Option String := none) : IO Unit := do
+    (controlPre : Option String := none) (boxed : Bool := false) : IO Unit := do
   let source := dvDoc ("\\pagestyle{empty}\\usepackage{etoolbox}" ++ pre) body
   let expectedSource := dvDoc
     ("\\pagestyle{empty}\\usepackage{etoolbox}" ++ controlPre.getD pre) control
   let (ds, actual, html, text) := sourceArtifacts fonts source
-  let (cds, expected, expectedHtml, expectedText) := sourceArtifacts fonts expectedSource
+  -- A tcolorbox's control writes the box it lowers to as a `{block}`.
+  let (cds, expected, expectedHtml, expectedText) :=
+    (if boxed then boxedSourceArtifacts else sourceArtifacts) fonts expectedSource
   let t := check ref
   t s!"string conditional {label}: source supported" (ds.all (·.severity == .note))
   t s!"string conditional {label}: native control supported" (cds.all (·.severity == .note))
@@ -123,6 +125,6 @@ def stringConditionalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
         "\\newtcolorbox{panel}[1]{title={\\headingprobe{#1}}}")
       ("\\begin{panel}{" ++ argument ++ "}Body\\end{panel}")
       ("\\begin{block}{\\headingprobe{" ++ title ++ "}}Body\\end{block}")
-      (some "\\define\\headingprobe(a: content){\\a}")
+      (some "\\define\\headingprobe(a: content){\\a}") (boxed := true)
 
 end Tests

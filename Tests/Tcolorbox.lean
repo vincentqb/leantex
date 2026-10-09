@@ -29,8 +29,10 @@ private def htmlFacts (doc : Ir.Doc) :
   let (_, tree, _) := HtmlDoc.emitTree {} doc
   (elemAttrsList (fun _ => true) #[] tree.toList, nodeTextList "" tree.toList)
 
+/-- The control a lowering is judged against: the native block written as
+the box it stands for (`boxedRaws`). -/
 private def nativeDoc (source : String) : Ir.Doc :=
-  (Elab.runRaws "probe" (wrap (raws source))).1
+  (Elab.runRaws "probe" (wrap (boxedRaws #[] (raws source).toList))).1
 
 private def samePages (fonts : Font.FontSet) (a b : Ir.Doc) : Bool :=
   reprStr (layoutOf fonts a).pages == reprStr (layoutOf fonts b).pages &&
@@ -118,11 +120,15 @@ including fonts, positions, grouping and whitespace. A permitted loss still
 needs a keyed diagnostic; permitting it cannot make a missing diagnostic pass. -/
 private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label pre body control : String) (loss : Option DiagCode := none)
-    (trigger : Option String := none) (subject : Option String := none) : IO Unit := do
+    (trigger : Option String := none) (subject : Option String := none)
+    (boxed : Bool := true) : IO Unit := do
   let doc (p b : String) := "\\documentclass{beamer}\\theme{default}" ++ p ++
     "\\begin{document}\\begin{frame}[t]{}" ++ b ++ "\\end{frame}\\end{document}"
   let (ds, actual, html, _) := sourceArtifacts fonts (doc pre body)
-  let (controlDs, expected, expectedHtml, _) := sourceArtifacts fonts (doc "" control)
+  -- The control's `{block}`s stand for the boxes the source lowers to;
+  -- where the source's own blocks are beamer's, they stay beamer's.
+  let (controlDs, expected, expectedHtml, _) :=
+    (if boxed then boxedSourceArtifacts else sourceArtifacts) fonts (doc "" control)
   let t := check ref
   t s!"tcolorbox source: {label}: native control is supported"
     (controlDs.all (·.severity == .note))
@@ -157,11 +163,11 @@ def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   sourceCaseChecks ref fonts "global definition witness" ""
     ("\\begin{block}{Heading}{\\gdef\\hiddenprobe{Leaked}}" ++
       defined ++ "\\end{block}" ++ defined)
-    "\\begin{block}{Heading}Leaked\\end{block}Leaked"
+    "\\begin{block}{Heading}Leaked\\end{block}Leaked" (boxed := false)
   sourceCaseChecks ref fonts "local flag witness" "\\newif\\ifchoiceprobe"
     ("\\begin{block}{Heading}\\choiceprobetrue" ++ chosen ++
       "\\end{block}" ++ chosen)
-    "\\begin{block}{Heading}Chosen\\end{block}Default"
+    "\\begin{block}{Heading}Chosen\\end{block}Default" (boxed := false)
   sourceCaseChecks ref fonts "unsupported global definition is inert"
     "\\newtcolorbox{panel}{title={Heading},unknown={\\global\\def\\hiddenprobe{Leaked}}}"
     ("\\begin{panel}" ++ defined ++ "\\end{panel}" ++ defined)

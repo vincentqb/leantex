@@ -9729,6 +9729,21 @@ public theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int
   dsimp only
   constructor <;> omega
 
+/-- Where an empty box (`Op.boxAnchor`) stands below the band above. -/
+private inductive AnchorRule where
+  /-- TeX's interline rule for a box `h` tall (`texBoxTop`). -/
+  | tex (h : Sp)
+  /-- `\nointerlineskip`: on the band's bottom. -/
+  | flush
+  /-- tcolorbox's balanced skip `s` (tcolorbox.sty, `before skip balanced`):
+  `\addvspace{s + .3\baselineskip - \prevdepth - \parskip}`, where the band
+  above is no deeper than `.3\baselineskip`, else `\addvspace{s - \parskip}`,
+  then `\nointerlineskip` and the box's own paragraph's `\parskip` — the box
+  `max(depth, .3\baselineskip) + s` below the band's baseline, a pending
+  skip taken in as `\addvspace` takes one, by the larger. -/
+  | balanced (s : Sp)
+  deriving Inhabited
+
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
 does not depend on task scheduling. -/
@@ -9780,14 +9795,13 @@ private inductive Op where
   `.brk` inside its body only closes a physical page. -/
   | frameClose
   /-- beamer's `\vbox{}` opening a block body's colour box, or an untitled
-  block's empty title (beamerinnerthemedefault.sty, `block begin`): an
-  empty box the next band is spaced below (`Spacing.Page.anchorAt`). It
-  stands where TeX's interline rule puts the top of a box `h` tall below
-  the band above (`interline = some h`, `texBoxTop`), or on that band's
-  bottom (`none`, `\nointerlineskip`), then `shift`. Inside paint
-  (`paints`) it ships as an empty line, the painted box's own edge
-  (`RegionKind.surface`), as a strut does. -/
-  | boxAnchor (interline : Option Sp) (shift : Sp) (paints : Bool)
+  block's empty title (beamerinnerthemedefault.sty, `block begin`), or a
+  tcolorbox's edge: an empty box the next band is spaced below
+  (`Spacing.Page.anchorAt`). It stands where its rule puts it below the
+  band above (`AnchorRule`), then `shift`. Inside paint (`paints`) it ships
+  as an empty line, the painted box's own edge (`RegionKind.surface`), as
+  a strut does. -/
+  | boxAnchor (rule : AnchorRule) (shift : Sp) (paints : Bool)
   /-- A full-measure horizontal rule as its own line: the title page's
   separator. Placed through `placeLine`, so it spaces, breaks pages, and
   distributes exactly as a line of text does. -/
@@ -12352,14 +12366,14 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
   let look := Ir.titledLook a.pal kind
   let a := a.flushGap r
   match look.bar, title.isEmpty with
-  | none, true => a.pushOp (.boxAnchor (some 0) 0 false)
+  | none, true => a.pushOp (.boxAnchor (.tex 0) 0 false)
   | some bar, true =>
     ((a.pushOp (.regionOpen (.surface (r.shown bar) pad x w false))).pushOp
-      (.boxAnchor (some (2 * pad)) 0 true)).pushOp .regionClose
+      (.boxAnchor (.tex (2 * pad)) 0 true)).pushOp .regionClose
   | bar, false =>
     let saved := (a.fg, a.ground)
     let d := Ir.Design.ofPalette a.pal
-    let titleInk := (d.inkOn (kind.name ++ "titlefg")
+    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
       { fg := look.fg, bg := bar.getD (a.ground.getD d.bg) }).fg
     let a := match bar with
       | some c => a.pushOp (.regionOpen (.surface (r.shown c) pad x w false))
@@ -12371,6 +12385,74 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
       (paintPadding := bar.map fun _ => pad)
     let a := if bar.isSome then a.pushOp .regionClose else a
     { a with fg := saved.1, ground := saved.2 }
+
+/-- tcolorbox's box opening (tcolorbox.sty's `size=normal`, under its reset
+style's `beforeafter skip balanced=0.5\baselineskip plus 2pt`): the box
+`\linewidth` wide on the measure, its top the balanced skip below the band
+above (`AnchorRule.balanced`). A titled box opens its title segment there —
+the frame's rule and `boxsep` above the title's lines, which stand on
+their own height (`\nointerlineskip`), set regular as `fonttitle` leaves
+them — and closes it `boxsep` and the title rule below them; the upper
+segment then opens on that edge, an untitled one on the box's top below
+the frame's rule. Its `boxsep` and `top` stand above the body's first line,
+which stands on its own height too. Text is inset the rule, `boxsep` and
+`left`/`right` from the box's edges (`Ir.tcbInset`). Paint is the plain
+block's roles, where the lowering declares its colours: the title bar and
+the body fill, each from edge to edge of the box. Returns the opened state
+and the body's indent; the measure narrows with it. -/
+private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : Sp)
+    (bodyBg : Option Ir.Color) : Acc × Sp :=
+  let look := Ir.titledLook a.pal .box
+  let x := r.geom.hmargin + indent
+  let measure := a.measure.getD r.geom.textWidth
+  let w := measure - indent
+  let s := Ir.leadingFor r.geom.fontSize r.geom.leading / 2
+  let bodyOpen (a : Acc) (rule : AnchorRule) (shift above : Sp) : Acc :=
+    let a := match bodyBg with
+      | some c => a.pushOp (.regionOpen (.surface (r.shown c)
+          (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule) x w true))
+      | none => a
+    ((a.pushOp (.boxAnchor rule shift bodyBg.isSome)).pushOp .noInterline).vskip { width := above }
+  let a := { a with wantDefault := false }.flushGap r
+  let a := if title.isEmpty then
+      bodyOpen a (.balanced s) 0 (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)
+    else
+      let d := Ir.Design.ofPalette a.pal
+      let titleInk := (d.inkOn (TitledKind.box.roleStem ++ "titlefg")
+        { fg := look.fg, bg := look.bar.getD (a.ground.getD d.bg) }).fg
+      let a := match look.bar with
+        | some c => a.pushOp (.regionOpen (.surface (r.shown c) (Ir.tcbBoxsep + Ir.tcbRule) x w true))
+        | none => a
+      let a := ((a.pushOp (.boxAnchor (.balanced s) 0 look.bar.isSome)).pushOp .noInterline).vskip
+        { width := Ir.tcbRule + Ir.tcbBoxsep }
+      let saved := (a.fg, a.ground)
+      let a := { a with fg := r.shown titleInk, ground := look.bar.orElse fun _ => a.ground
+                        measure := some (measure - Ir.tcbInset) }
+      let (a, leaf) := a.leafRange (leafCount title)
+      let a := collectDisplay r a title (indent + Ir.tcbInset) false r.geom.fontSize
+        (leaf := leaf) (span := leafCount title)
+      let a := { a with fg := saved.1, ground := saved.2, measure := some measure }
+      -- The title rule and `boxsep` close the bar's region; unpainted, the
+      -- upper segment's edge stands that far below the title's last line.
+      let a := if look.bar.isSome then a.pushOp .regionClose else a
+      bodyOpen a .flush (if look.bar.isSome then 0 else Ir.tcbBoxsep + Ir.tcbRule)
+        (Ir.tcbBoxsep + Ir.tcbTop)
+  ({ a with measure := some (measure - Ir.tcbInset) }, indent + Ir.tcbInset)
+
+/-- tcolorbox's box closing: the upper segment's `bottom`, `boxsep` and the
+frame's rule below the body's last line (the body region's pad, or the
+same distance unpainted), then its `after skip balanced`:
+`\prevdepth=.3\baselineskip` and `\addvspace{s - \parskip}` — the band's
+reference `.3\baselineskip` above the box's bottom, the skip owed below
+it, and the next paragraph's own `\parskip` after that. -/
+private def collectBoxClose (r : Rd) (done : Acc) (bodyBg : Option Ir.Color) : Acc :=
+  let bs := Ir.leadingFor r.geom.fontSize r.geom.leading
+  let done := { done with wantDefault := false }.flushGap r
+  let done := match bodyBg with
+    | some _ => (done.pushOp .regionClose).pushOp (.boxAnchor .flush (-(bs * 3 / 10)) false)
+    | none => done.pushOp (.boxAnchor .flush
+        (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule - bs * 3 / 10) false)
+  { done.vskip { width := bs / 2 - r.parskip.width } with wantDefault := true }
 
 /-- The abstract's heading word: class furniture, generated here exactly as
 the HTML backend generates its `<h2>`, and its style is the section
@@ -13013,7 +13095,24 @@ private def collectBlock (r : Rd) (a : Acc)
     let inherited := a.bodyInk.getD ("fg", a.fg)
     let parent : Ir.ColorPair := { fg := inherited.2, bg := a.ground.getD d.bg }
     let paint := titledBodyPaint a.pal kind parent inherited.1
-    let role := if look.fg.isSome then kind.name ++ "bodyfg" else inherited.1
+    let role := if look.fg.isSome then kind.roleStem ++ "bodyfg" else inherited.1
+    let restore (done : Acc) : Acc :=
+      { done with measure := a.measure, bodyGround := a.bodyGround
+                  bodyInk := if done.paletteEpoch == a.paletteEpoch then a.bodyInk else none
+                  fg := if done.paletteEpoch == a.paletteEpoch then a.fg else fgOf done.pal
+                  ground := if done.paletteEpoch == a.paletteEpoch then a.ground
+                    else a.bodyGround.or (done.pal.find? "bg") }
+    -- `\@arrayparboxrestore`, as both boxes' bodies run: no `\parskip`.
+    let rb := { r with geom := { r.geom with parskip := {}, texParskip := {} } }
+    if kind == .box then
+      let (opened, bodyIndent) := collectBoxOpen r a title indent (look.bg.map r.shown)
+      let inner := { opened with
+        fg := r.shown paint.fg
+        ground := look.bg.or a.ground
+        bodyGround := look.bg.or a.bodyGround
+        bodyInk := some (role, (look.resolve parent).fg) }
+      restore (collectBoxClose r (collectBlocks rb inner body bodyIndent) (look.bg.map r.shown))
+    else
     -- beamerinnerthemedefault.sty's `block begin`/`block end`: two colour
     -- boxes, the text on the measure and the paint `pad` beyond it.
     let pad := titledPadding r.geom.fontSize r.xHeight
@@ -13036,28 +13135,21 @@ private def collectBlock (r : Rd) (a : Acc)
     let opened := match look.bg with
       | some bg =>
         (opened.pushOp (.regionOpen (.surface (r.shown bg) pad x w true))).pushOp
-          (if (Ir.titledLook a.pal kind).bar.isSome then .boxAnchor none (-Ir.blockSeam) true
-           else .boxAnchor (some (bs + pad)) 0 true)
-      | none => opened.pushOp (.boxAnchor (some (bs - raise)) (-raise) false)
+          (if (Ir.titledLook a.pal kind).bar.isSome then .boxAnchor .flush (-Ir.blockSeam) true
+           else .boxAnchor (.tex (bs + pad)) 0 true)
+      | none => opened.pushOp (.boxAnchor (.tex (bs - raise)) (-raise) false)
     let inner := { opened with
       fg := r.shown paint.fg
       ground := look.bg.or a.ground
       bodyGround := look.bg.or a.bodyGround
       bodyInk := some (role, (look.resolve parent).fg) }
-    -- `\@arrayparboxrestore`: the boxes' paragraphs spend no `\parskip`.
-    let rb := { r with geom := { r.geom with parskip := {}, texParskip := {} } }
     let done := collectBlocks rb inner body indent
     -- A painted box keeps the glue its list ends on.
     let done := if look.bg.isSome then
         ({ done with wantDefault := false }.flushGap r).pushOp .regionClose
       else done
     -- `\vskip\smallskipamount`; a paragraph after it spends its own `\parskip`.
-    { done with measure := a.measure, bodyGround := a.bodyGround
-                bodyInk := if done.paletteEpoch == a.paletteEpoch then a.bodyInk else none
-                fg := if done.paletteEpoch == a.paletteEpoch then a.fg else fgOf done.pal
-                ground := if done.paletteEpoch == a.paletteEpoch then a.ground
-                  else a.bodyGround.or (done.pal.find? "bg") }.vskip
-      (r.resolve (Ir.skipAmount done.tokens "smallskipamount"))
+    (restore done).vskip (r.resolve (Ir.skipAmount done.tokens "smallskipamount"))
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading (`collectAbstractHead`), then the body on quotation margins.
@@ -14997,7 +15089,7 @@ private inductive StagedOp where
   | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
   | frameOpen (breakable : Bool) (source : Option Span) (opening : FrameOpening)
   | frameClose
-  | boxAnchor (interline : Option Sp) (shift : Sp) (paints : Bool)
+  | boxAnchor (rule : AnchorRule) (shift : Sp) (paints : Bool)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
@@ -15461,16 +15553,19 @@ private theorem alignRow_shipped_id (b : B) (save : ColSave) :
     (b.alignRow save).docBg = b.docBg ∧ (b.alignRow save).noBreak = b.noBreak := by
   simp [Spacing.Page.alignRow]
 
-/-- Place `Op.boxAnchor` where TeX's interline rule puts the top of a box
-below the band above (`texBoxTop`), or on that band's bottom, then the
-shift: inside paint an empty line commits there, else the band's
-reference moves there with the pending glue still owed below it. What
-follows is spaced below it either way (`anchorAt`'s state). -/
-private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (interline : Option Sp)
+/-- Place `Op.boxAnchor` where its rule puts it below the band above
+(`AnchorRule`), then the shift: inside paint an empty line commits there,
+else the band's reference moves there with the pending glue still owed
+below it — the balanced rule's rise already counts what of that glue the
+skip absorbs. What follows is spaced below it either way (`anchorAt`'s
+state). -/
+private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (rule : AnchorRule)
     (shift : Sp) (paints : Bool) : B :=
-  let rise (b : B) : Sp := match interline with
-    | some h => texBoxTop (Ir.leadingFor b.geom.fontSize b.geom.leading) b.boxDepth h
-    | none => b.boxDepth
+  let bs (b : B) : Sp := Ir.leadingFor b.geom.fontSize b.geom.leading
+  let rise (b : B) : Sp := match rule with
+    | .tex h => texBoxTop (bs b) b.boxDepth h
+    | .flush => b.boxDepth
+    | .balanced s => max b.boxDepth (bs b * 3 / 10) + max 0 (s - b.skip.width)
   let mk (y : Sp) : LineOut :=
     { x := b.geom.hmargin, y := y, size := 0, segs := #[], setWidth := 0
       regionExtent := some (0, 0) }
@@ -15659,7 +15754,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                                         h := h, color := color }]) with
             curBand := some (max h (b.curBand.getD 0)) }
       | _, _ => b
-  | .boxAnchor interline shift paints => b := b.placeAnchor fs interline shift paints
+  | .boxAnchor rule shift paints => b := b.placeAnchor fs rule shift paints
   | .hrule color th =>
     -- A line whose only seg is the rule: the full line machinery decides
     -- its place, so skips, page breaks, and the vertical distribution
@@ -15738,7 +15833,7 @@ private theorem stepStaged_regionClose_b (fs : FontSet) (imgs : Image.Store) (st
     (stepStaged fs imgs st .regionClose).b = st.b.closeRegion fs := rfl
 
 private theorem stepStaged_boxAnchor_b (fs : FontSet) (imgs : Image.Store) (st : StepSt)
-    (h : Option Sp) (shift : Sp) (paints : Bool) :
+    (h : AnchorRule) (shift : Sp) (paints : Bool) :
     (stepStaged fs imgs st (.boxAnchor h shift paints)).b = st.b.placeAnchor fs h shift paints :=
   rfl
 
@@ -16019,7 +16114,7 @@ private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
     | (refine pagesExtend_trans (finishPage_extends b (o := 0) (f := b.flushes)) (pagesExtend_of_eq ?_);
        simp; done)
 
-private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : Option Sp) (shift : Sp)
+private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : PagesExtend b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -16254,7 +16349,7 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
   ⟨fitCommit_pages_noBreak b mk firstY stepY retryY depth below rl inkBelow bottom ns h,
    fitCommit_keeps_noBreak b mk firstY stepY retryY depth below rl inkBelow bottom ns h⟩
 
-private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : Option Sp) (shift : Sp)
+private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (shift : Sp)
     (paints : Bool) (h : b.noBreak = true) :
     (b.placeAnchor fs h' shift paints).pages = b.pages ∧
       (b.placeAnchor fs h' shift paints).noBreak = true := by
@@ -16467,7 +16562,7 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
     | (refine (bgStep_finishPage b (o := 0) (f := b.flushes)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
 
-private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (shift : Sp)
+private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : BgStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -17179,7 +17274,7 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
           (((frameStep_commit _ _ depth below rl false 0).trans
             (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
 
-private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (shift : Sp)
+private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : FrameStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -17647,7 +17742,7 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
           (((reflowStep_commit _ _ depth below rl false 0).trans
             (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
 
-private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (shift : Sp)
+private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : ReflowStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split

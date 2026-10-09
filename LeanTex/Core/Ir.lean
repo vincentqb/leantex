@@ -5278,19 +5278,32 @@ public structure BibItem where
 
 /-- The titled block's kind, closed: beamer's three block environments
 (`{block}`, `{alertblock}`, `{exampleblock}` — beamer user guide §12.3,
-"Highlighting"). The kind selects the role pair the title resolves
-through (`titledLook`); nothing else about the node differs per kind —
-a poster and a deck set the same node at different base sizes. -/
+"Highlighting"), and tcolorbox's box, which its lowering sets through the
+same surface (`Tcolorbox.lower`). The kind selects the role pair the title
+resolves through (`titledLook`, the box the plain block's: `roleStem`)
+and the box the block stands in: beamer's two colour boxes for the three,
+tcolorbox's frame for the box — a poster and a deck set the same node at
+different base sizes. -/
 public inductive TitledKind where
   | block
   | alert
   | example
+  | box
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The kind's one spelling: the HTML class suffix and the role-key stem
-(`alerttitlefg`), one naming site for both backends. -/
+/-- The kind's one spelling: the HTML class suffix, one naming site for both
+backends and the dump. -/
 public def TitledKind.name : TitledKind → String
   | .block => "block"
+  | .alert => "alert"
+  | .example => "example"
+  | .box => "box"
+
+/-- The role-key stem the kind's colours resolve through (`alerttitlefg`):
+tcolorbox's box takes the plain block's roles, where its lowering declares
+its colours. -/
+public def TitledKind.roleStem : TitledKind → String
+  | .block | .box => "block"
   | .alert => "alert"
   | .example => "example"
 
@@ -10585,6 +10598,24 @@ public theorem titledPadding_contract (fontSize xHeight : Sp) :
 the body box overlapping the title box by half a point. -/
 public def blockSeam : Sp := Dim.pt 1 / 2
 
+/-- `n` tenths of TeX's millimetre, 7227⁄2540 of the point this engine's
+`pt` is numerically: tcolorbox's lengths (tcolorbox.sty) are TeX's. -/
+public def texMmTenths (n : Int) : Sp := n * 7227 * Dim.spPerPt / 25400
+
+/-- tcolorbox's box under its reset style, `size=normal` (tcolorbox.sty,
+`size/normal`): the frame's rule (`boxrule=0.5mm`, the title rule the
+same), `boxsep=1mm`, `left=right=4mm`, `top=bottom=2mm`, the title's own
+`toptitle` and `bottomtitle` zero. Both backends read these. -/
+public def tcbRule : Sp := texMmTenths 5
+public def tcbBoxsep : Sp := texMmTenths 10
+public def tcbSide : Sp := texMmTenths 40
+public def tcbTop : Sp := texMmTenths 20
+public def tcbBottom : Sp := texMmTenths 20
+
+/-- How far a box's text stands inside its edges, on both sides: the rule,
+`boxsep` and `left` (`right`), 5.5 mm. -/
+public def tcbInset : Sp := tcbRule + tcbBoxsep + tcbSide
+
 /-- An unpainted body box opens on `\vskip-.25ex\vbox{}`: its first line is
 spaced from a box standing a quarter ex above the body box's own top. -/
 public def blockBodyRaise : Length := { ex := 250 }
@@ -10593,11 +10624,11 @@ public def blockBodyRaise : Length := { ex := 250 }
 empty. Themes such as Moloch declare their fills and inheritance through
 the palette bindings; no title or accent role implies a body fill. -/
 @[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
-  { fg := pal.find? (kind.name ++ "bodyfg"), bg := pal.find? (kind.name ++ "bodybg") }
+  { fg := pal.find? (kind.roleStem ++ "bodyfg"), bg := pal.find? (kind.roleStem ++ "bodybg") }
 
 public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
-    (titledBodyLook pal kind).fg = pal.find? (kind.name ++ "bodyfg") ∧
-    (titledBodyLook pal kind).bg = pal.find? (kind.name ++ "bodybg") := by
+    (titledBodyLook pal kind).fg = pal.find? (kind.roleStem ++ "bodyfg") ∧
+    (titledBodyLook pal kind).bg = pal.find? (kind.roleStem ++ "bodybg") := by
   exact ⟨rfl, rfl⟩
 
 /-- A titled block's resolved look: the title's ink, and the bar behind it
@@ -10618,7 +10649,7 @@ ink is the page colour, as the frame-title bar's is. Layout reads it with
 the palette in force at the block; `Design.ofDoc` reads it for the
 contrast contract. -/
 public def titledLook (pal : Palette) : TitledKind → TitledLook
-  | .block =>
+  | .block | .box =>
     let bar := pal.find? "blocktitlebg"
     { fg := (pal.find? "blocktitlefg").getD
         (if bar.isSome then (pal.find? "bg").getD Color.white
@@ -10803,7 +10834,7 @@ the document's declarations. -/
 
 /-- The body's declaration projected from the resolved design. -/
 @[expose] public def Design.titledBody (d : Design) : TitledKind → SurfaceLook
-  | .block => d.blockBody
+  | .block | .box => d.blockBody
   | .alert => d.alertBody
   | .example => d.exampleBody
 
@@ -10823,7 +10854,7 @@ so a nested background-only body reads the correction for its own ground. -/
 @[expose] public def Design.titledBodyPaint (d : Design) (kind : TitledKind)
     (parent : ColorPair) (parentRole : String) : ColorPair :=
   let look := d.titledBody kind
-  d.inkOn (if look.fg.isSome then kind.name ++ "bodyfg" else parentRole) (look.resolve parent)
+  d.inkOn (if look.fg.isSome then kind.roleStem ++ "bodyfg" else parentRole) (look.resolve parent)
 
 /-- Ground selection and ink realization share one resolved body value;
 realization can change its ink only, never introduce a new ground. -/
