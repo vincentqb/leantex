@@ -2951,6 +2951,9 @@ def pdfCensusTable :
   -- no link annotation: the image a link wraps ships without its link, the
   -- loss `silentLosses` records; this row follows the fix that closes it
   ("md-images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
+  -- the included markdown's link is the page's one annotation
+  ("md-include", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
+  ("md-include-deck", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
   ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

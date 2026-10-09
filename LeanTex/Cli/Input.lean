@@ -203,10 +203,11 @@ before the driver reads it, and the answer's definitions and flags are in
 force at the caller's next token. The returned execution must continue
 through `Elab.prepareExecuted` or `Elab.runExecuted`, without a second macro
 pass. The other results are read diagnostics and the local-style records
-whose N0020 counts become available after elaboration. -/
-public def expandInputs (file : String) (raws : Array Parse.Raw) :
+whose N0020 counts become available after elaboration. Requests resolve
+beside the document unless `dir` says where it stands. -/
+public def expandInputs (file : String) (raws : Array Parse.Raw)
+    (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) := do
-  let dir := (System.FilePath.mk file).parent.getD "."
   let (executed, log) ← (Elab.executeInputs (readAt dir file 8) file raws).run {}
   return (executed, log.diags, log.spliced)
 

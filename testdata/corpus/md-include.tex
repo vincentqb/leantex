@@ -1,0 +1,20 @@
+% Invented fixture: a markdown file included in a tex article. The file it
+% includes (md-include/notes.md, which is no fixture of its own) holds a
+% top-level heading (the page's one, which tex spells only through the
+% markdown bridge), emphasis, a link, a list and a code block; each must reach both
+% artifacts between its neighbours, as it does in the markdown file alone.
+% Nothing here derives from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro", mono = "Source Code Pro" }
+\usepackage{markdown}
+
+\begin{document}
+
+Placeholder prose from example.org, standing before the included file.
+
+\markdownInput{md-include/notes.md}
+
+Placeholder prose standing after it.
+
+\end{document}

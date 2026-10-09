@@ -265,6 +265,22 @@ def censusRows0 :
         "Target-width cell"].all (hasStr (censusText c) ·)),
     ("every affine rule reaches the shipped page",
       (c[0]?.map (·.rules)).getD 0 == 5)]),
+  ("md-include", fun _ c => [
+    ("one page", c.size == 1),
+    ("the included heading, emphasis, list items and code reach the shipped page",
+      ["Included placeholder notes", "invented paragraph with bold words", "First included item",
+        "Second included item", "defplaceholder(n):", "returnn+1"].all (pageHas c 0 ·)),
+    ("the included file stands between its neighbours",
+      ((lineYOf c 0 "standing before").bind fun a =>
+        (lineYOf c 0 "Included placeholder notes").bind fun h =>
+          (lineYOf c 0 "standing after").map fun b => decide (a < h ∧ h < b)).getD false)]),
+  ("md-include-deck", fun _ c => [
+    ("a title page and one frame page", c.size == 2),
+    ("the frame's included list and quotation reach its page below the title",
+      ["First slide point from markdown", "Second slide point with inline code",
+        "A quoted placeholder line."].all (pageHas c 1 ·) &&
+      ((lineYOf c 1 "Included placeholder frame").bind fun t =>
+        (lineYOf c 1 "First slide point").map fun i => decide (t < i)).getD false)]),
   ("listings", fun geom c => [
     ("one page", c.size == 1),
     -- a no-break space ships as a glyphless box, so the census text of a
