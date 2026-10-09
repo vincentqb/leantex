@@ -69,11 +69,16 @@ public inductive Verdict where
 /-- The validator's outcome, read as the page's decision. A drawn check
 keeps the resource. The support boundary's own refusal refuses the page:
 the bytes cannot be published as checked. A check that never reached an
-answer — the tool absent, killed, or unable to start — omits the resource:
-a fact about the machine degrades the page and never refuses it. -/
+answer — the tool missing or unable to start, killed, or out of time — omits
+the resource: a fact about the machine degrades the page, which ships with
+the loss named, and nothing is remembered, so a rebuild checks again. The
+PDF's conversions already take that stance — an included SVG whose plan did
+not finish is the placeholder W0602 names — so the artifacts degrade alike. -/
 public def svgVerdict : PicCache.Outcome → Verdict
   | .drawn => .keep
   | .refused _ => .refuse
+  -- premise: machineLossChecks — ImageAssets reads a missing, killed or silent tool as
+  -- inconclusive, and the boundary's own no as refused (htmlContainedSvgColorChecks)
   | .inconclusive _ => .omit
 
 /-- **Only the validator's own refusal refuses a page** (`_exact`). The
@@ -81,6 +86,13 @@ defect read a validator that could not start as one that said no: on a
 machine without xmllint, a page whose icon is an SVG published nothing. -/
 public theorem svgVerdict_refuse_exact (o : PicCache.Outcome) :
     svgVerdict o = .refuse ↔ ∃ w, o = .refused w := by
+  cases o <;> simp [svgVerdict]
+
+/-- **Only a check that never finished omits a resource** (`_exact`): the
+reading `Boundary.checkedFace_unfinished_exact` gives a boundary picture's
+face, so the driver withdraws exactly the faces this gate would omit. -/
+public theorem svgVerdict_omit_exact (o : PicCache.Outcome) :
+    svgVerdict o = .omit ↔ ∃ w, o = .inconclusive w := by
   cases o <;> simp [svgVerdict]
 
 private def said : PicCache.Outcome → String
@@ -103,15 +115,18 @@ private def omitEntry (omitted : Array (ByteArray × String)) (en : Image.Loaded
     Image.Loaded × Option Diag :=
   match omittedFace omitted en with
   | some why => ({ en with webError := some why },
+      -- premise: machineLossChecks — the page names an image's omitted face (W0605) and
+      -- never a boundary picture's, which is named here
       if en.src.startsWith Ir.picSrcPrefix then some (DriverDiag.boundarySvgMissing en.src why)
       else none)
   | none => (en, none)
 
 /-- The page without the SVG resources validation omitted. An image whose
-face is omitted takes the failed-face arm, a placeholder that keeps its box
-and text alternative, which the page names (W0605); a boundary picture's is
-named here, as its failed conversion is (W0378). An omitted icon leaves the
-head, named by its path (W0605). -/
+face is omitted takes the page's failed-face arm — a span labelled with its
+text alternative — which the page names (W0605). A boundary picture's face
+arrives checked (`Boundary.htmlFace`), so it is omitted only when this check
+did not finish where the driver's did, and it is named here as an unchecked
+face is (W0378). An omitted icon leaves the head, named by its path (W0605). -/
 public def omitFaces (omitted : Array (ByteArray × String)) (cfg : HtmlDoc.Config)
     (doc : Ir.Doc) : HtmlDoc.Config × Ir.Doc × Array Diag :=
   let marked := cfg.imgs.entries.map (omitEntry omitted)

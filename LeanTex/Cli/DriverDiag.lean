@@ -227,15 +227,16 @@ public def boundaryWithdrawn (tool : String) (said : Option String) (src : Strin
     (subject := some src)
 
 /-- W0378: a boundary picture has no checked SVG face for the HTML artifact
-— the PDF→SVG conversion, or the check its SVG must pass, did not succeed —
-and the page shows the rendered subset's drawing where the subset draws it
-in part (`Boundary.htmlWithdraw`), and otherwise the picture's text
-alternative. One per picture, under its image source. -/
+— its PDF→SVG conversion failed, or the check its SVG must pass did not
+finish (`Boundary.htmlFace`) — so the page shows the rendered subset's
+drawing where the subset draws the picture in part (`Boundary.htmlWithdraw`),
+and otherwise a placeholder labelled with the picture's text alternative.
+One per picture, under its image source. -/
 public def boundarySvgMissing (src err : String) : Diag :=
   Diag.of .W0378
     s!"this boundary picture has no browser face for the HTML artifact: {err}"
-    (help := "install poppler's pdftocairo, libxml2's xmllint and librsvg's \
-rsvg-convert, or \\allow{W0378} accepts the loss")
+    (help := "install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, \
+librsvg's rsvg-convert), rebuild if it was interrupted, or \\allow{W0378} accepts the loss")
     (subject := some src)
     (output := some .html)
 
@@ -244,13 +245,14 @@ public theorem boundarySvgMissing_subject (src err : String) :
       (boundarySvgMissing src err).subject = some src := by
   simp [boundarySvgMissing, Diag.of_record_exact]
 
-/-- W0605: the declared page icon is an SVG its check could not judge on
-this machine, so the page ships without it rather than refusing. -/
+/-- W0605: the declared page icon is an SVG whose check did not finish on
+this machine, so the page ships without the icon instead of refusing. -/
 public def pageIconOmitted (name why : String) : Diag :=
   Diag.of .W0605
-    s!"favicon '{name}' could not produce its browser face: {why}; the page ships without it"
-    (help := "install the tool it names, or \\pdfmeta{ favicon = \"icon.png\" } declares \
-a PNG icon")
+    s!"favicon '{name}' could not be checked for the web page: {why}; \
+the page ships without it"
+    (help := "install the tool the reason names, rebuild if it was interrupted, or \
+\\pdfmeta{ favicon = \"icon.png\" } declares a PNG icon, which needs no tool")
     (subject := some name)
     (output := some .html)
 

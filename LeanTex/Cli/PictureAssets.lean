@@ -75,11 +75,6 @@ private def produce (tool wrapped : String) : IO ConvCache.Result := do
       return { outcome := PicCache.outcome ended.ran (!bytes.isEmpty) log, bytes }
   catch e => return { outcome := .inconclusive (toString e) }
 
-private def replay (answer : Except String ByteArray) : ConvCache.Result :=
-  match answer with
-  | .ok bytes => { outcome := .drawn, bytes }
-  | .error why => { outcome := .refused why }
-
 /-- Independent invocations never share scratch. Each captures its result
 before cleanup, then publishes one integrity-checked answer by atomic rename.
 Cache failures leave the produced answer intact; unfinished attempts write
@@ -90,7 +85,8 @@ public def fulfil (dir : Option System.FilePath) (tool stamp version wrapped : S
       pure (dir.map (· / slotName wrapped tool stamp version))
     else pure none
   if let some path := slot then
-    if let some answer ← readAnswer path then return { result := replay answer, cached := true }
+    if let some answer ← readAnswer path then
+      return { result := ConvCache.Result.replay answer, cached := true }
   let result ← produce tool wrapped
   if let some path := slot then
     if (← ToolProbe.witness tool) == stamp then

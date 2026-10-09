@@ -174,8 +174,8 @@ private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
     -- A converter's own exit 255 is not evidence that it failed to start.
     let unstarted := ran.exitCode == 255 &&
         stderr == s!"could not execute external process '{tool}'"
-    let detail := s!"{tool} exited {ran.exitCode}: {stderr}" ++
-      (if stderr.isEmpty then ran.stdout.trimAscii.toString else "") ++
+    let said := if stderr.isEmpty then ran.stdout.trimAscii.toString else stderr
+    let detail := s!"{tool} exited {ran.exitCode}" ++ (if said.isEmpty then "" else ": " ++ said) ++
       (if unstarted then "; " ++ recovery else "")
     -- The process API encodes signals as 128 + signal. High exits are
     -- ambiguous even when the child logged before termination.
@@ -330,18 +330,30 @@ public def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
   | .last => .ok true
   | .number _ => .error "a numbered SVG poster requires a PDF frame sequence"
 
+/-- `svgPlan`, with whether a fact about the machine stopped it: a
+conversion that never reached an answer — a tool missing, killed or out of
+time — says nothing about the bytes. -/
+public def svgPlanResult (params : Image.PlanParams) (bytes : ByteArray)
+    (page : PdfRead.PageSelection := .first)
+    (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
+    IO (Except String Image.Plan × Bool) := do
+  match svgPosterAtEnd page with
+  | .error err => return (.error err, false)
+  | .ok terminal =>
+    let r ← convertResult (.svgPdf terminal) bytes runTool
+    let unfinished := match r.outcome with
+      | .inconclusive _ => true
+      | .drawn | .refused _ => false
+    return (r.answer >>= fun b => Image.probe b >>= Image.plan params, unfinished)
+
 /-- librsvg's vector reading of a self-contained SVG, optionally after a
 terminal-value projection. The caller retains the captured SVG unchanged
 for the browser. Unsupported timelines fail rather than paint the base. -/
 public def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first)
     (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
-    IO (Except String Image.Plan) := do
-  match svgPosterAtEnd page with
-  | .error err => return .error err
-  | .ok terminal =>
-    let pdf ← convert (.svgPdf terminal) bytes runTool
-    return pdf >>= fun b => Image.probe b >>= Image.plan params
+    IO (Except String Image.Plan) :=
+  Prod.fst <$> svgPlanResult params bytes page runTool
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on
 the selected page instead when a companion PDF supplies a chosen frame. -/

@@ -19,6 +19,10 @@ example : PdfRead.PageSelection → Except String Bool := ImageAssets.svgPosterA
 example : Image.PlanParams → ByteArray → PdfRead.PageSelection →
     Option (IO.Process.SpawnArgs → IO IO.Process.Output) → IO (Except String Image.Plan) :=
   @ImageAssets.svgPlan
+example : Image.PlanParams → ByteArray → PdfRead.PageSelection →
+    Option (IO.Process.SpawnArgs → IO IO.Process.Output) →
+    IO (Except String Image.Plan × Bool) :=
+  @ImageAssets.svgPlanResult
 example : ByteArray → PdfRead.PageSelection → IO (Except String ByteArray) :=
   @ImageAssets.svgPoster
 example : ByteArray → PdfRead.PageSelection → IO (Except String ByteArray) :=

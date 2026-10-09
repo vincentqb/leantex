@@ -341,18 +341,23 @@ boundary results, a path resolves against the document's own directory,
 like `\input`, then through graphicx's extension resolution (a deck says
 `figures/plot` and means the `figures/plot.png` beside it), and decodes in
 the pure core through the content-hash cache when the decode is the
-expensive kind. Returns whether the cache answered, for the phase line. -/
+expensive kind. Returns whether the cache answered, for the phase line, and
+whether a fact about the machine stopped an included SVG's plan, for the
+page's placeholder (`Boundary.markUnplanned`). -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request) :
-    IO (Image.Fetch × Bool) := do
+    IO (Image.Fetch × Bool × Bool) := do
   let src := req.src
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
-    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none, false)
+    | some r =>
+      return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
+        false, false)
     | none =>
       match refused.find? (·.1 == src) with
-      | some (_, why) => return (.refused why, false)
-      | none => return (.missing "the boundary cache (no picture declares this source)", false)
+      | some (_, why) => return (.refused why, false, false)
+      | none =>
+        return (.missing "the boundary cache (no picture declares this source)", false, false)
   let mut hit : Option (String × System.FilePath) := none
   for cand in Image.sourceCandidates src do
     let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
@@ -364,17 +369,17 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
   | none =>
     let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
       else dir / src
-    return (.missing p.toString, false)
+    return (.missing p.toString, false, false)
   | some (cand, p) =>
     let bytes : Except String ByteArray ← try pure (.ok (← IO.FS.readBinFile p))
       catch e => pure (.error (toString e))
     match bytes with
-    | .error e => return (.unreadable e, false)
+    | .error e => return (.unreadable e, false, false)
     | .ok bytes =>
       let href := if cand == src then "" else cand
       if Image.isSvg cand then
-        let res ← ImageAssets.svgPlan params bytes req.page
-        return (.decoded href res (some bytes) none (some bytes) none, false)
+        let (res, stopped) ← ImageAssets.svgPlanResult params bytes req.page
+        return (.decoded href res (some bytes) none (some bytes) none, false, stopped)
       else if req.page != .first || req.animated then
         let res := Image.decodeRequest params bytes req
         -- An animation's companion SVG is read once, here, beside the PDF,
@@ -386,10 +391,10 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
               Except.toOption <$> (IO.FS.readBinFile (p.withExtension "SVG")).toBaseIO
           else pure none
         return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
-          (some bytes) companion, false)
+          (some bytes) companion, false, false)
       else
         let (res, fromCache) ← decodeImageCached params bytes
-        return (.decoded href res none none (some bytes) none, fromCache)
+        return (.decoded href res none none (some bytes) none, fromCache, false)
 
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
@@ -401,7 +406,8 @@ did not carry is named after it (`Image.lossDiags`, W0603/W0604;
 are the defaults until a declaration projects them (the profile slices'
 one line). The `Nat` returned is the cache-hit count, for the phase line.
 Image diagnostics inherit the executed request span; located boundary
-refusals keep their own span. -/
+refusals keep their own span. An include whose plan a fact about the
+machine stopped carries the page's placeholder (`Boundary.markUnplanned`). -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) :
@@ -409,12 +415,15 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
+  let mut stopped : Array Image.Request := #[]
   let mut hits := 0
   for req in Ir.imageRequests doc do
-    let (f, fromCache) ← fetchImage dir pics refused params req
+    let (f, fromCache, machine) ← fetchImage dir pics refused params req
     if fromCache then hits := hits + 1
+    if machine then stopped := stopped.push req
     fetched := fetched.push (req, f)
   let (store, diags) := Image.fulfilRequests fetched
+  let store := Boundary.markUnplanned stopped store
   let mut diags := diags
   for en in store.entries do
     if let some pl := en.info then
@@ -437,8 +446,11 @@ def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
-/-- Convert the captured boundary PDF to captured browser SVG. Conversion
-failure retains the existing named fallback; no output path is consulted. -/
+/-- Convert the captured boundary PDF to captured browser SVG, checked as
+publication checks it (`Boundary.htmlFace`). A conversion that failed, or a
+check that did not finish, retains the existing named fallback — W0378 at the
+picture's span, and the rendered subset's drawing where it draws the picture
+in part; no output path is consulted. -/
 def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Image.Store × Array Diag × Array String) := do
@@ -446,7 +458,7 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
   let mut diags : Array Diag := #[]
   let mut unconverted : Array String := #[]
   for r in pics do
-    match ← ImageAssets.picFace r.bytes with
+    match ← Boundary.htmlFace r.bytes with
     | .ok bytes =>
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
@@ -833,8 +845,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
         -- The boundary pictures' HTML face: captured PDFs convert to
-        -- captured SVG bytes (`picsToSvg`; W0378 names a converter
-        -- this host lacks). A picture the conversion failed on, and that
+        -- checked SVG bytes (`picsToSvg`; W0378 names a face this host
+        -- could not convert or check). A picture left without one, and that
         -- the rendered subset draws in part, is drawn by the subset on
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF

@@ -27,6 +27,8 @@ example (artifact : HtmlArtifact) :
 example : PicCache.Outcome → Verdict := svgVerdict
 example (o : PicCache.Outcome) : svgVerdict o = .refuse ↔ ∃ w, o = .refused w :=
   svgVerdict_refuse_exact o
+example (o : PicCache.Outcome) : svgVerdict o = .omit ↔ ∃ w, o = .inconclusive w :=
+  svgVerdict_omit_exact o
 example : Array (ByteArray × String) → HtmlResource.Embedded → Option String := omittedWhy
 example : Array (ByteArray × String) → Image.Loaded → Option String := omittedFace
 example : Array (ByteArray × String) → HtmlDoc.Config → Ir.Doc →

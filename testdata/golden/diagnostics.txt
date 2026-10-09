@@ -690,10 +690,10 @@
 ⚠ [W0377]
   link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   suggestion: give the link visible text — \href{...}{words} — or an image with alt inside it
-── W0378 (degraded) the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives
+── W0378 (degraded) a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative
 ⚠ [W0378]
   this boundary picture has no browser face for the HTML artifact: not found (error code: 2)
-  suggestion: install poppler's pdftocairo, libxml2's xmllint and librsvg's rsvg-convert, or \allow{W0378} accepts the loss
+  suggestion: install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, librsvg's rsvg-convert), rebuild if it was interrupted, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
   no boundary tool is available for this picture outside the rendered subset
@@ -781,13 +781,13 @@
 ⚠ [W0604]
   image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
   suggestion: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
-── W0605 (degraded) an image has no usable browser face; the web page shows a placeholder instead
+── W0605 (degraded) an image or the page icon has no usable browser face; the web page shows a placeholder for an image and ships without the icon
 ⚠ [W0605]
   image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
 ⚠ [W0605]
-  favicon 'favicon.svg' could not produce its browser face: xmllint did not finish; the page ships without it
-  suggestion: install the tool it names, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon
+  favicon 'favicon.svg' could not be checked for the web page: xmllint did not finish; the page ships without it
+  suggestion: install the tool the reason names, rebuild if it was interrupted, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon, which needs no tool
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel
