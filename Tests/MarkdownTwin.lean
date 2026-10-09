@@ -55,8 +55,9 @@ def twinInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (tw, back, _) := roundTrip (textDoc "first\nsecond")
   t s!"twin: a line ending in text reads back as one ({repr tw})"
     (oneParagraph back "first\nsecond")
-  -- A bare link is an autolink; a destination reads back exactly.
-  let (tw, back, _) := texRoundTrip "\\url{http://example.org/x}"
+  -- A link whose text is its plain destination is an autolink; a
+  -- destination reads back exactly.
+  let (tw, back, _) := texRoundTrip "\\href{http://example.org/x}{http://example.org/x}"
   t s!"twin: a bare link is an autolink ({repr tw})"
     (hasStr tw "<http://example.org/x>" &&
       back.body.any fun b => match b with
@@ -64,6 +65,20 @@ def twinInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .link url _ => url == "http://example.org/x"
           | _ => false
         | _ => false)
+  -- A code-set link keeps its destination and its face, whichever of the
+  -- two the IR holds outside: a code span holds no link, so the code goes
+  -- inside it.
+  for (src, url, text) in [("\\url{http://example.org/u}", "http://example.org/u",
+        "http://example.org/u"),
+      ("\\texttt{see \\href{http://example.org/m}{name}}", "http://example.org/m", "name")] do
+    let (tw, back, _) := texRoundTrip src
+    t s!"twin: {repr src} keeps its destination and its code face ({repr tw})"
+      (hasStr tw ("[`" ++ text ++ "`](" ++ url ++ ")") &&
+        back.body.any fun b => match b with
+          | .para xs => xs.any fun x => match x with
+            | .link u body => u == url && hasStr (MarkdownDoc.inlineText body) ("`" ++ text ++ "`")
+            | _ => false
+          | _ => false)
   for url in ["http://example.org/a(b)c", "http://example.org/a b", "pic\\name.png"] do
     let (tw, back, _) := roundTrip { body := #[.para #[.link url #[.text "words"]]] }
     t s!"twin: the destination {repr url} reads back exactly ({repr tw})"
@@ -117,6 +132,24 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     (back.body.any fun b => match b with
       | .verbatim _ s _ => (Ir.verbatimLines s).toList == ["x", "```", "y"]
       | _ => false)
+  -- A listing's blank lines are its content, two in a row as one, at the
+  -- top level and under a container.
+  let spaced := "def a():\n    pass\n\n\ndef b():\n    pass"
+  for (where_, wrap) in [("at the top level", fun (b : Ir.Block) => #[b]),
+      ("in a quotation", fun b => #[.quote #[b]]),
+      ("in a list item", fun b => #[.list false #[#[.para #[.text "item"], b]]])] do
+    let (tw, back, _) := roundTrip { body := wrap (.verbatim none spaced {}) }
+    let found := (back.body.map fun b => match b with
+      | .verbatim _ s _ => #[s]
+      | .quote body => body.filterMap fun b => match b with
+        | .verbatim _ s _ => some s
+        | _ => none
+      | .list _ items => items.flatMap fun it => it.filterMap fun b => match b with
+        | .verbatim _ s _ => some s
+        | _ => none
+      | _ => #[]).flatten
+    t s!"twin: a listing's two blank lines in a row survive {where_} ({repr tw})"
+      (found.any fun s => (Ir.verbatimLines s).toList == (Ir.verbatimLines spaced).toList)
   -- A code block inside a quotation and inside a list item stays inside.
   let (tw, back, _) := texRoundTrip
     "\\begin{quote}\n\\begin{verbatim}\ncode in quote\n\\end{verbatim}\n\\end{quote}"
@@ -152,6 +185,16 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     .list false #[#[.para #[.text "b"]]]] }
   t s!"twin: two adjacent lists stay two ({repr tw})"
     ((back.body.filter (· matches .list ..)).size == 2)
+  -- Two lists side by side inside an item stay two, and neither they nor a
+  -- list closing an item make the list holding them loose.
+  let inner (x : String) : Ir.Block := .list false #[#[.para #[.text x]]]
+  for (what, doc) in [("two lists in one item",
+        ({ body := #[.list false #[#[.para #[.text "first"], inner "a", inner "b"]]] } : Ir.Doc)),
+      ("a list closing an item", { body := #[.list false #[#[.para #[.text "first"], inner "a"],
+        #[.para #[.text "second"]]]] })] do
+    let (tw, back, ds) := roundTrip doc
+    t s!"twin: {what} reads back as written and tight ({repr tw})"
+      (back.body == doc.body && !ds.any (·.subject == some "md:loose-list"))
   -- An empty quotation is still there.
   let (tw, back, _) := roundTrip { body := #[.quote #[]] }
   t s!"twin: an empty quotation reads back ({repr tw})"

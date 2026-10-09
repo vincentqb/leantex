@@ -1112,14 +1112,15 @@ def reports : List Report := [
       "in the web deck a figure inside a list item stands within three points of its reference typesetting, where it stood eight low"]
     state := .guarded "445f6518" .revert .author },
   { id := "R123", date := "2026-10-08"
-    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences, list items lost their code blocks"
+    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences and lost their blank lines, list items lost their code blocks, adjacent lists merged, and a link in code-set text lost its link"
     pins := [thm% Elab.elabBlocks_input_exact, thm% Elab.markdownInput_blocks_exact,
       thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_contract,
       thm% MarkdownDoc.escapeLineStart_contract,
       check% Tests.MarkdownDoors.markdownDoorChecks,
       check% Tests.MarkdownTwin.markdownTwinChecks,
       .tier "mdtwin" "corpus.reread-clean", .tier "mdtwin" "cm.Lists.reread-exact"]
-    accept := ["the record's failing run is the twin's: on the base tree thirty-seven round-trip rows fail, twelve inline spellings and twenty-five block spellings",
+    accept := ["the record's failing run is the twin's: on the base tree forty-three round-trip rows fail, the thirty-seven first recorded and six of the seven added in review, for a link in code-set text, a listing's blank lines and lists side by side in an item or closing one",
+      "the seventh added row, a code-set URL, holds a face the base twin kept and the first fix lost: it passes on the base tree and fails on that fix's tree, with four of the other six",
       "the theorems pinned here did not exist on the base tree, where the agreement between the surfaces and what an include means was prose",
       "the door checks are a measurement, not a guard seen failing: the elaborator they measure is the base tree's, unchanged here, and each fails on a planted divergent door; under one surface at a time, over a synthetic family reaching every markdown node to depth two and over every CommonMark example, the neutral host's whole document is the file alone under the host's surface, and a frame whose content is the include is the frame with the file's raws in its place",
       "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call"]
