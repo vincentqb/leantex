@@ -107,7 +107,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
   let midCode (out : Layout.Out) : Array String := (bodyLines out).filterMap fun l =>
     (lineRuns l).back?.bind fun (f, s, _, _) =>
       if f == 1 && !codes.any (·.endsWith s) then some s else none
-  let breakChars := ".@\\/!_|;>]),?&'+=#:"
+  let breakChars := ".@\\/!_|;>]),?&'+=#:-"
   t s!"markdown inline code: a line ends inside code only after a break character, drawing no hyphen ({midCode out})"
     (!(midCode out).isEmpty && (midCode out).all fun s => breakChars.contains s.back)
   t "markdown inline code: every character reaches the page, in order"
@@ -116,6 +116,20 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
     (lines.all fun l => l.segs.all fun s => match s with
       | .gap w _ => w ≤ 3 * space
       | _ => true)
+  -- A kebab-case flag longer than the measure breaks after its hyphens,
+  -- as url.sty's `hyphens` option and every browser break it: without a
+  -- break of its own the justified paragraph around it had none either.
+  let flag := "--rewrite-every-gadget-label-before-counting-them-and-writing-each-one-back-to-its-store"
+  let kebab := "The sorter takes " ++ "`" ++ flag ++ "`" ++ " and " ++ "`" ++ flag ++ "`" ++
+    " before it reads every gadget it is handed and writes each one back."
+  let kdoc := (elabMd (kebab ++ "\n")).1
+  let kout := layoutOf fonts kdoc
+  let klines := bodyLines kout
+  t s!"markdown inline code: a kebab-case flag wider than the measure breaks after its hyphens ({klines.size} lines)"
+    (klines.size ≥ 3 && klines.all (fun l => left - Dim.pt 3 ≤ l.x
+        && l.x + l.setWidth ≤ left + measure + Dim.pt 3)
+      && !kout.diags.any (·.kind == .W0005)
+      && String.join (klines.toList.map (bare ∘ lineText)) == bare (kebab.replace "`" ""))
   -- A tex document's typewriter run keeps LaTeX's rule.
   let tex := prose fun c => "\\texttt{" ++ c.replace "_" "\\_" ++ "}"
   let texOut := layoutOf fonts (elabStr (dvDoc "" tex)).1

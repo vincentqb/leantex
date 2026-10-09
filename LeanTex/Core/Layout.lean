@@ -815,11 +815,25 @@ public def relPenalty : Nat := 500
 /-- url.sty's break table, the way `\path` sets text no hyphenation can
 break: after `. @ \ / ! _ | ; > ] ) , ? & ' + = #` (`\UrlBreaks`) at
 `\binoppenalty`, and after `:` (`\UrlBigBreaks`) at `\relpenalty` — 700
-and 500, latex.ltx's values; never after a hyphen (the package's default),
-never inside a run of letters or digits, and never drawing a hyphen. -/
+and 500, latex.ltx's values — and after a hyphen, which the package's
+`hyphens` option adds to `\UrlBreaks` and every browser breaks after too
+(UAX #14's class BA): a long kebab-case flag or package name otherwise
+holds no break, and a justified paragraph around it none either. Never
+inside a run of letters or digits, and never drawing a hyphen. -/
 public def urlBreak (c : Char) : Option Nat :=
-  if ".@\\/!_|;>]),?&'+=#".contains c then some binopPenalty
+  if ".@\\/!_|;>]),?&'+=#-".contains c then some binopPenalty
   else if c == ':' then some relPenalty
+  else none
+
+/-- Where a browser breaks a table cell's code (UAX #14): after a hyphen
+inside a word, a letter or a digit on either side of it — never after a
+word's leading hyphens (`-q`, `--sort`; rule LB20a) nor before a hyphen
+(LB21) — and after no other character an identifier holds. A cell is as
+wide as its widest unbreakable run, so its code needs no break the page
+could choose and the browser could not. -/
+public def cellCodeBreak (prev : Option Char) (c : Char) (next : Option Char) : Option Nat :=
+  if c == '-' && prev.any Char.isAlphanum && next.any Char.isAlphanum then
+    some hyphenPenalty.toNat
   else none
 
 public inductive Seg where
@@ -1474,17 +1488,27 @@ public structure TextStyle where
   declared, never recovered geometrically. -/
   ground : Option Ir.Color := none
   /-- A typewriter run breaks as url.sty sets a path (`urlBreak`) rather
-  than as prose (`proseBreak`): a markdown document's code, which no
-  declaration can make breakable (`collectPara` sets it from the surface,
-  `Spacing.Context.surface`). Read by `explicitBreak`. -/
+  than as prose (`proseBreak`): a markdown document's paragraph code, which
+  no declaration can make breakable (`collectPara` sets it from its
+  `urlBreaks`, the surface's by default, `Spacing.Context.surface`; a table
+  cell's never). Read by `explicitBreak`. -/
   urlBreaks : Bool := false
+  /-- A typewriter run in a narrowing table's cell (`Ir.ColSpec.narrows`)
+  breaks as a browser breaks a table cell's code (`cellCodeBreak`), so the
+  page and the HTML narrow the same column. Read by `explicitBreak`. -/
+  cellCode : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- Where a run of this style may end a line after a character, unhyphenated:
-a typewriter run (slot 2) under `urlBreaks` where url.sty's `\path` breaks,
-every other run after an explicit hyphen. -/
-private def TextStyle.explicitBreak (sty : TextStyle) : Char → Option Nat :=
-  if sty.slot == 2 && sty.urlBreaks then urlBreak else proseBreak
+/-- Where a run of this style may end a line after a character, unhyphenated,
+from the character, the one before it and the one after it in its word: a
+typewriter run (slot 2) under `urlBreaks` where url.sty's `\path` breaks,
+one under `cellCode` where a browser breaks a cell's code, every other run
+after an explicit hyphen. -/
+private def TextStyle.explicitBreak (sty : TextStyle) :
+    Option Char → Char → Option Char → Option Nat :=
+  if sty.slot == 2 && sty.urlBreaks then fun _ c _ => urlBreak c
+  else if sty.slot == 2 && sty.cellCode then cellCodeBreak
+  else fun _ c _ => proseBreak c
 
 /-- Snapshot the command-entry properties ulem uses for a through-line. -/
 private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
@@ -2825,7 +2849,7 @@ original box: expansion must round from that same origin. Hyphenation,
 fallback faces and fixed spaces still start fresh boxes. The final array maps
 source scalars to the items that carry them, for zero-ink destinations. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
-    (explicitBreak : Char → Option Nat)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
@@ -2883,10 +2907,11 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
                   decorations 0 ground (owners[i]?.getD attr)) }
             i := i + 1
           else
+            let brk := explicitBreak (if i == 0 then none else chars[i - 1]?) c chars[i + 1]?
             st := st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font c i
               (owners[i]?.getD attr) (origins[i]?.getD none)
             i := i + 1
-            if let some cost := explicitBreak c then
+            if let some cost := brk then
               st := st.flush fontIdx color link size leading decorations ground attr
               st := { st with items := st.items.push (.pen 0 cost false fontIdx color #[]) }
     else
@@ -2902,7 +2927,8 @@ private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
 /-- Without automatic hyphenation, a clean word producer preserves its
 source scalars, except the explicitly nonpainting fixed spaces. The cursor
 invariant proves that the actual loop consumed the entire input. -/
-private theorem wordItems_none_chars (langKey : String) (explicitBreak : Char → Option Nat)
+private theorem wordItems_none_chars (langKey : String)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
@@ -2978,7 +3004,8 @@ private theorem wordItems_none_chars (langKey : String) (explicitBreak : Char �
               simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf, hnb] using
                 (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans hpchars
             · simp only [hnb]
-              cases hh : explicitBreak chars[i] with
+              cases hh : explicitBreak (if i == 0 then none else chars[i - 1]?) chars[i]
+                  chars[i + 1]? with
               | some cost =>
                 simp only
                 refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
@@ -10623,7 +10650,7 @@ private def collectPara (r : Rd) (a : Acc)
     (hangIndent : Sp := 0) (literalLines : Bool := false)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
-    (background : Sp := 0) : Acc :=
+    (background : Sp := 0) (urlBreaks : Bool := r.surface == .markdown) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -10641,8 +10668,7 @@ private def collectPara (r : Rd) (a : Acc)
   -- on a dark standout background.
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
-  let baseStyle := { baseStyle with ground := a.ground
-                                    urlBreaks := r.surface == .markdown }
+  let baseStyle := { baseStyle with ground := a.ground, urlBreaks := urlBreaks }
   let (items, ds, cache, extras, rawNotes, wordOffsets, anchors, itemSources) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
@@ -11177,11 +11203,12 @@ never the table's own face or size. The stylesheet states the same default
 
 /-- A cell's min-content width: the widest run of its items no break may
 split — boxes, images and rules summed between two legal breaks, interword
-glue or an unflagged penalty (an explicit hyphen, a forced break). A
-hyphenation point reads as no break: a fitted cell sets ragged and
-unhyphenated. Nor does a url.sty break in code (`urlBreak`, priced at
-`binopPenalty` or `relPenalty`): a browser breaks code only at a space or
-a hyphen, and a table's code stays whole in its column on both artifacts. -/
+glue or an unflagged penalty (an explicit hyphen, in code too, or a forced
+break). A hyphenation point reads as no break: a fitted cell sets ragged
+and unhyphenated. Nor does a break priced at `binopPenalty` or `relPenalty`,
+a formula's: a browser breaks no formula, and a cell's code breaks only at
+a space or a hyphen there and on the page, as a table cell sets it
+(`collectTable` sets cells without url.sty's breaks). -/
 private def itemsMinWidth (items : Array Item) : Sp := Id.run do
   let mut widest : Sp := 0
   let mut run : Sp := 0
@@ -11254,6 +11281,11 @@ for a wide table is one of these declarations; a markdown source can
 write none. -/
 public def tableSteps : List String := ["small", "footnotesize", "scriptsize"]
 
+/-- The step a markdown table takes only when, centred at the floor, it
+would still run past the paper: LaTeX's `\tiny`, 5 pt at 10 — type hard
+to read beats columns the sheet never shows. -/
+public def tableLastStep : String := "tiny"
+
 /-- How a narrowing table (`Ir.ColSpec.narrows`) fits its text block: the
 size step it sets at (`none`: its body size) and how far its widest
 unbreakable runs, with the column gaps and outer pads, still pass the
@@ -11276,8 +11308,8 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.
     for (cell, j) in row.zipIdx do
       unless inSpan spans i j do
         let (items, _, c, _) :=
-          itemsOfInlines none size xHeight fs {} cell cache (.fixed .unattributed) imgs
-            geom.textWidth geom.textHeight (ladder := geom.scale)
+          itemsOfInlines none size xHeight fs { cellCode := true } cell cache (.fixed .unattributed)
+            imgs geom.textWidth geom.textHeight (ladder := geom.scale)
         cache := c
         let narrows := (cols[j]?.map (·.narrows)).getD false
         let w := if narrows then itemsMinWidth items else itemsNaturalWidth items
@@ -11285,14 +11317,19 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.
   return widths.foldl (· + ·) 0 + tablePadding colsep cols.size padL padR
 
 /-- **The size a markdown table sets at**: its body size when its narrowing
-columns' widest runs fit the text block (`tableNeed`), else the largest of
-`tableSteps` at which they do, else the floor with what still overhangs.
-One decision, both artifacts: the page sets the table's cells at its step
-and centres the overhang across both margins (`collectTable`), and the
-driver hands this same function to the HTML (`HtmlDoc.Config.tableFit`),
-which states the step as the table's font size and centres the overhang
-on paper. A table with no narrowing column fits as declared. -/
-public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep : Sp)
+columns' widest runs fit the measure it stands in, `avail` (`tableNeed`),
+else the largest of `tableSteps` at which they do, else the floor with what
+still overhangs — or, when that overhang, centred, would pass the side
+margins and so the paper, the last step (`tableLastStep`). One decision,
+both artifacts: the page sets the table's
+cells at its step against its own measure and centres the overhang across
+both margins (`collectTable`), and the driver hands this same function to
+the HTML (`HtmlDoc.Config.tableFit`), which reads the same measure — the
+text block less the list and quotation levels around the table
+(`HtmlDoc.Config.deeper`) — states the step as the table's font size and
+centres the overhang on paper. A table with no narrowing column fits as
+declared. -/
+public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Sp)
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
     (spans : Array Ir.ColSpan) : TableFit := Id.run do
   unless cols.any (·.narrows) do return {}
@@ -11302,11 +11339,17 @@ public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep : 
       (match step with
         | some s => Ir.scaleStepIn geom.scale geom.fontSize s
         | none => geom.fontSize)
-  if need none ≤ geom.textWidth then return {}
+  if need none ≤ avail then return {}
   for s in tableSteps do
-    if need (some s) ≤ geom.textWidth then return { step := some s }
+    if need (some s) ≤ avail then return { step := some s }
   let floor := tableSteps.getLast?
-  return { step := floor, overhang := max 0 (need floor - geom.textWidth) }
+  let over := need floor - avail
+  -- Centred, each half of the overhang stands in a side margin: past the
+  -- margin it leaves the paper, and the last step is the one that keeps
+  -- the columns on it.
+  if over / 2 ≤ geom.hmargin then return { step := floor, overhang := over }
+  let last := some tableLastStep
+  return { step := last, overhang := max 0 (need last - avail) }
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
@@ -11329,7 +11372,8 @@ private def collectTable (r : Rd) (a0 : Acc)
   let total := (a.measure.getD r.geom.textWidth) - indent
   -- A markdown table whose words alone pass the text block sets a step
   -- smaller (`tableFit`, the decision the HTML states too).
-  let fit := tableFit r.geom r.fs r.imgs colsep cols padL padR rows spans
+  let web := cols.any (·.narrows)
+  let fit := tableFit r.geom r.fs r.imgs colsep total cols padL padR rows spans
   let size := match fit.step with
     | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
     | none => r.geom.fontSize
@@ -11345,7 +11389,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs
-          { color := a.fg, ground := a.ground, urlBreaks := r.surface == .markdown } cell cache
+          { color := a.fg, ground := a.ground, cellCode := web } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step)
       cache := c
@@ -11358,7 +11402,6 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- A markdown table is a web table: too wide for the measure, it narrows
   -- its narrowing columns as a browser does (`fitColumns`), and the cells
   -- of a narrowed column wrap below.
-  let web := cols.any (·.narrows)
   let widths := if web then
       fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
     else natural
@@ -11380,11 +11423,15 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- to their longest words at the smallest step. Its overhang is centred
   -- across both margins, which keeps it on paper while it is no wider than
   -- the two together.
+  -- Centred, a markdown table's overhang stays on the paper while each half
+  -- is no wider than the margin beside it.
+  let offPaper := r.geom.hmargin + indent - (tableW - total) / 2 < 0
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
-      (if web then
+      (if web && fit.overhang > 0 then
           s!"the table's words alone are {(tableW - total).toPtString}pt wider than the \
-measure at its smallest size; it overhangs both margins equally"
+measure at its smallest size; centred, it " ++
+            (if offPaper then "runs past both edges of the paper" else "overhangs both margins equally")
         else s!"the table is {(tableW - total).toPtString}pt wider than the measure")
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
       (help := if web then
@@ -11541,21 +11588,26 @@ measure at its smallest size; it overhangs both margins equally"
           let sub := if !(spec.width matches .natural) then
               let (justify, flushRight, center) := cellParagraph spec
               collectPara { rc with geom := { rc.geom with justify, flushRight } } sub cell x
-                center size (leaf := leaf) (span := span) (rowStrut := strut)
+                center size (baseStyle := { cellCode := web }) (leaf := leaf) (span := span)
+                (rowStrut := strut) (urlBreaks := false)
             else if spec.narrows && nat > measureW then
               let (flushRight, center) := narrowedCell (cellSide cols spans i j)
               collectPara
                 { rc with pats := none, geom := { rc.geom with justify := false, flushRight } }
-                sub cell x center size (leaf := leaf) (span := span) (rowStrut := strut)
-                (background := narrowedSkip size)
+                sub cell x center size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (background := narrowedSkip size)
+                (urlBreaks := false)
             else match cellSide cols spans i j with
             | .center =>
-              collectPara rc sub cell x true size (leaf := leaf) (span := span) (rowStrut := strut)
+              collectPara rc sub cell x true size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (urlBreaks := false)
             | .right =>
               collectPara rc sub cell (x + max 0 (wj - nat)) false size
-                (leaf := leaf) (span := span) (rowStrut := strut)
+                (baseStyle := { cellCode := web }) (leaf := leaf) (span := span) (rowStrut := strut)
+                (urlBreaks := false)
             | .left =>
-              collectPara rc sub cell x false size (leaf := leaf) (span := span) (rowStrut := strut)
+              collectPara rc sub cell x false size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (urlBreaks := false)
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache
@@ -15117,7 +15169,8 @@ private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link :
   · intro x _ st hs
     exact WordAcc.glyph_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ st hs
 
-private theorem wordItems_none_prose (langKey : String) (explicitBreak : Char → Option Nat)
+private theorem wordItems_none_prose (langKey : String)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)

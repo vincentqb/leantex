@@ -864,9 +864,10 @@ in the HTML" (← since t)
             Layout.mathTextEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
           -- A markdown table's size and overhang: the page's own decision,
           -- over the one face set.
-          tableFit := fun cols padL padR rows spans =>
+          tableFit := fun avail cols padL padR rows spans =>
             let fit := Layout.tableFit (Layout.Geom.ofPage htmlDoc.page) fs imgs
-              (Layout.tableLength none htmlDoc.preambleFace "tabcolsep") cols padL padR rows spans
+              (Layout.tableLength none htmlDoc.preambleFace "tabcolsep") avail cols padL padR rows
+              spans
             (fit.step, fit.overhang > 0)
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc

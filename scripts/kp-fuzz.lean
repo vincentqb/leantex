@@ -1,7 +1,8 @@
 /-
 Randomized differential test: the pruned Knuth-Plass DP must return a break
 sequence whose demerits equal the brute-force minimum over all legal break
-sequences. Run with:
+sequences, with and without a background stretch every line carries
+(`KpSums.bg`, a narrowed table cell's ragged right skip). Run with:
 
   lake env lean --run scripts/kp-fuzz.lean [iterations]
 
@@ -67,7 +68,7 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   return (items, g)
 
 private def seqCost (items : Array Item) (target : Dim.Sp)
-    (protrude expand : Bool) (breaks : List Nat) : Option Int := Id.run do
+    (protrude expand : Bool) (breaks : List Nat) (bg : Dim.Sp := 0) : Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
   let mut prevFlagged := false
@@ -85,7 +86,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
       if isForced items k then
         return none
     let m := measure items a b protrude
-    total := total + lineDemerits items m target b expand
+    total := total + lineDemerits items { m with stretch := m.stretch + bg } target b expand
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
     if prevFlagged && b == items.size - 1 then
@@ -98,7 +99,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
   return some total
 
 private def bruteBest (items : Array Item) (target : Dim.Sp)
-    (protrude expand : Bool) : Option Int := Id.run do
+    (protrude expand : Bool) (bg : Dim.Sp := 0) : Option Int := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
@@ -108,7 +109,7 @@ private def bruteBest (items : Array Item) (target : Dim.Sp)
     for (b, idx) in optional'.zipIdx do
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
-    if let some c := seqCost items target protrude expand (chosen ++ [n - 1]) then
+    if let some c := seqCost items target protrude expand (chosen ++ [n - 1]) bg then
       match best with
       | some b0 => if c < b0 then best := some c
       | none => best := some c
@@ -143,19 +144,20 @@ def main (args : List String) : IO UInt32 := do
     let target := Dim.pt (tw + 40)
     -- Justified, and ragged as the fil-glue transform the card class uses:
     -- the same breaker must be optimal over both item shapes — and with
-    -- the protrusion boundary term and the expansion flexibility on and
-    -- off, independently.
+    -- the protrusion boundary term, the expansion flexibility and the
+    -- background stretch on and off, independently.
     for shape in [items, raggedItems items] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
-        let kpBreaks := (kp shape target protrude expand).toList
-        let kpCost := seqCost shape target protrude expand kpBreaks
-        let brute := bruteBest shape target protrude expand
-        unless kpCost.isSome && kpCost == brute do
-          failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}): \
+        for bg in [(0 : Dim.Sp), Dim.pt 2, Dim.pt 20] do
+          let kpBreaks := (kp shape target protrude expand bg).toList
+          let kpCost := seqCost shape target protrude expand kpBreaks bg
+          let brute := bruteBest shape target protrude expand bg
+          unless kpCost.isSome && kpCost == brute do
+            failures := failures + 1
+            IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, bg={bg}): \
 target={target} kp={kpCost} brute={brute}"
-          IO.eprintln s!"  breaks={kpBreaks}"
-          IO.eprintln s!"  items={shape.size}"
+            IO.eprintln s!"  breaks={kpBreaks}"
+            IO.eprintln s!"  items={shape.size}"
     unless measuresAgree items do
       failures := failures + 1
       IO.eprintln s!"FAIL case {i}: prefix-sum measure disagrees with direct measure"

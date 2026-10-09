@@ -249,11 +249,16 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let src (label : String) := "| label | p | q | r | s | t | u | v | w | z |\n\
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n" ++
     s!"| {label} | {row 1} |\n| {label}x | {row 2} |\n"
-  let fitsAt (doc : Ir.Doc) := Layout.tableFit (Layout.Geom.ofPage doc.page) fonts {}
-    (Layout.tableLength none doc.preambleFace "tabcolsep")
+  let fitsIn (doc : Ir.Doc) (avail : Dim.Sp) := Layout.tableFit (Layout.Geom.ofPage doc.page)
+    fonts {} (Layout.tableLength none doc.preambleFace "tabcolsep") avail
+  let fitsAt (doc : Ir.Doc) := fitsIn doc (Layout.Geom.ofPage doc.page).textWidth
   let tableOf (doc : Ir.Doc) := doc.body.findSome? fun b => match b with
     | .table cols padL padR rows _ spans => some (cols, padL, padR, rows, spans)
     | _ => none
+  -- The first table at any depth.
+  let tableOf? (doc : Ir.Doc) := Ir.foldBlocks (fun found b => found.orElse fun _ => match b with
+      | .table cols padL padR rows _ spans => some (cols, padL, padR, rows, spans)
+      | _ => none) (fun found _ => found) none doc.body
   let decide (doc : Ir.Doc) : Option Layout.TableFit := (tableOf doc).map
     fun (cols, padL, padR, rows, spans) => fitsAt doc cols padL padR rows spans
   let sizes (out : Layout.Out) : List Dim.Sp :=
@@ -291,8 +296,8 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "the page names the overhang at the table's first cell"
     ((bout.diags.filter (·.kind == .W0338)).size == 1)
   -- The HTML states the same decision.
-  let cfgOf (doc : Ir.Doc) : HtmlDoc.Config := { tableFit := fun cols padL padR rows spans =>
-    let f := fitsAt doc cols padL padR rows spans
+  let cfgOf (doc : Ir.Doc) : HtmlDoc.Config := { tableFit := fun avail cols padL padR rows spans =>
+    let f := fitsIn doc avail cols padL padR rows spans
     (f.step, f.overhang > 0) }
   let tableAttrs (doc : Ir.Doc) : Array (String × String) :=
     let (_, body, _) := HtmlDoc.emitTree (cfgOf doc) doc
@@ -321,6 +326,52 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t s!"and centres the floor's overhang on paper ({classOf big})"
     ((stepMilli big bfit).isSome && emMilli (styleOf big) == stepMilli big bfit
       && hasStr (classOf big) "bt-overhang")
+  -- Too wide for the paper even at the floor: the last step keeps it on.
+  let figures (k : Nat) : String := " | ".intercalate
+    ((List.range 12).map fun j => s!"{1000000 + 91 * j + k}.{100000 + j}")
+  let paperWide := "| " ++ " | ".intercalate ((List.range 12).map (s!"c{·}")) ++ " |\n|" ++
+    String.join (List.replicate 12 "--:|") ++ "\n" ++
+    String.join ((List.range 3).map fun k => "| " ++ figures k ++ " |\n")
+  let (pdoc, _) := elabMd paperWide
+  let pout := layoutOf fonts pdoc
+  let plines := (bodyLines pout).filter hasGlyphRun
+  t s!"a table too wide for the paper at the floor takes the last step and stays on the paper \
+({repr (decide pdoc)})"
+    ((decide pdoc).any (·.step == some Layout.tableLastStep) && !plines.isEmpty
+      && plines.all fun l => 0 ≤ l.x && l.x + l.setWidth ≤ pdoc.page.width)
+  -- One rule for code on both passes: the decision measures a cell's code as
+  -- the page then sets it, breaking only after a hyphen, as a browser's
+  -- cell breaks it.
+  let flagCell := "| Flag | Effect |\n|---|---|\n\
+| `--rewrite-every-gadget-label-before-counting-them-and-writing-each-one-back` | \
+the sorter reads every gadget it is handed |\n"
+  let (fdoc, _) := elabMd flagCell
+  let fout := layoutOf fonts fdoc
+  let ffit := decide fdoc
+  let fsize := ((ffit.bind (·.step)).map fun s => Ir.scaleStepIn fdoc.page.scale fdoc.page.fontSize s
+    ).getD fdoc.page.fontSize
+  t s!"a table whose code holds hyphens sets at the size its decision names, inside the measure \
+({repr ffit})"
+    (ffit.any (·.overhang == 0) && ((bodyLines fout).filter hasGlyphRun).all fun l =>
+      l.size == fsize && left - Dim.pt 1 ≤ l.x && l.x + l.setWidth ≤ right + Dim.pt 1)
+  -- The decision reads the measure the table stands in: a quotation's and a
+  -- list item's, on the page and in the HTML alike.
+  for (label, wrap, inset) in [
+      ("a quotation", fun (l : String) => "> " ++ l, 2),
+      ("a list item", fun (l : String) => (if l.startsWith "| label" then "- " else "  ") ++ l, 1)] do
+    let nested := "\n".intercalate (((src "sorter").splitOn "\n").filter (!·.isEmpty) |>.map wrap) ++ "\n"
+    let (ndoc, _) := elabMd nested
+    let nout := layoutOf fonts ndoc
+    let lm := (Ir.leftMargin ndoc.docClass.record.lists ndoc.page.fontSize 1).getD 0
+    let avail := (Layout.Geom.ofPage ndoc.page).textWidth - inset * lm
+    let nfit := (tableOf? ndoc).map fun (cols, padL, padR, rows, spans) =>
+      fitsIn ndoc avail cols padL padR rows spans
+    let nsize := ((nfit.bind (·.step)).map fun s =>
+      Ir.scaleStepIn ndoc.page.scale ndoc.page.fontSize s).getD ndoc.page.fontSize
+    t s!"a table in {label} decides against that measure and sets at its step ({repr nfit}; {sizes nout})"
+      (nfit.isSome && sizes nout == [nsize])
+    t s!"and the HTML states the same step for it ({styleOf ndoc})"
+      (emMilli (styleOf ndoc) == stepMilli ndoc nfit)
   -- A table that fits keeps its size, on both artifacts.
   let (small, _) := elabMd "| a | b |\n|---|--:|\n| alpha | 12 |\n"
   t "a table that fits keeps its body size and no overhang"

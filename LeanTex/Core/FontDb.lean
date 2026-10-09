@@ -699,7 +699,7 @@ public def cornerFixed (faces : Array Face) (family : String) (c : Nat × Bool) 
   | some (f, none) => f.fixedPitch
   | _ => false
 
-private theorem cornerFixed_spec (faces : Array Face) (family : String) (c : Nat × Bool)
+private theorem cornerFixed_fixedPitch (faces : Array Face) (family : String) (c : Nat × Bool)
     (h : cornerFixed faces family c = true) :
     ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧ f.fixedPitch = true := by
   unfold cornerFixed at h
@@ -734,7 +734,7 @@ public theorem monoCompanion_contract (faces : Array Face) (text family : String
   · rename_i hall
     cases hrow
     intro c hc
-    exact cornerFixed_spec faces _ c (List.all_eq_true.mp hall c hc)
+    exact cornerFixed_fixedPitch faces _ c (List.all_eq_true.mp hall c hc)
   · cases hrow
 
 /-- The default is drawn from the sourced rows: a family it picks is the

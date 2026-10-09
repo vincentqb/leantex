@@ -1178,8 +1178,9 @@ def reports : List Report := [
       "a table of prose descriptions keeps every word on the page in the PDF, on screen and in print, where its description column was cut at the page edge",
       "fourteen more fail on the rebased branch with narrowed cells' ragged right skip, the step-down and the centred overhang reverted: one-word and code lines packed onto overfull lines over the next column, and a table whose words alone passed the measure kept its size and ran off the paper in both artifacts",
       "one more fails with a tex ragged p column set unhyphenated, as a narrowed markdown cell sets: its words packed onto one line over the next column, where main's setting wraps them",
-      "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins on paper and is named, with a remedy markdown can write"]
-    state := .guarded "fa516a82" .before .author },
+      "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins, on paper while no wider than the measure and both margins, and is named, with a remedy markdown can write",
+      "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
+    state := .guarded "e36565a8" .revert .author },
   { id := "R129", date := "2026-10-08"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
     pins := [check% Tests.MarkdownPage.markdownPageChecks,
@@ -1189,7 +1190,8 @@ def reports : List Report := [
       "three more fail where inline code could not break: a justified markdown paragraph now breaks a long identifier after the url package's break characters, every line inside the measure and no word space three of its own wide, and the page's stylesheet lets a browser break one where it would overflow, while a tex document's typewriter run never breaks",
       "every shipped text face sets the markdown measure between seventy and ninety characters with the readable band judge quiet",
       "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before",
-      "a wrapped code line continues twenty points in on screen as on paper"]
+      "a wrapped code line continues twenty points in on screen as on paper",
+      "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line"]
     state := .guarded "fa516a82" .before .author },
   { id := "R130", date := "2026-10-08"
     what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"

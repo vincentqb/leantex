@@ -94,14 +94,22 @@ public structure Config where
   against, as `tokenVars` spells the preamble's. -/
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
   /-- How a narrowing table (`Ir.ColSpec.narrows`, a markdown table's) fits
-  the text block — the step it sets at and whether it still overhangs at
-  that step — read off its columns, pads, rows and spans by the page's own
-  decision (`Layout.tableFit`), which the driver hands over with the
-  document's faces: the HTML states the step as the table's font size and
-  centres an overhang across both margins on paper (`bt-overhang`). The
-  default fits every table as declared. -/
-  tableFit : Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) → Array Ir.ColSpan →
-    Option String × Bool := fun _ _ _ _ _ => (none, false)
+  the measure it stands in — the step it sets at and whether it still
+  overhangs at that step — read off that measure and its columns, pads,
+  rows and spans by the page's own decision (`Layout.tableFit`), which the
+  driver hands over with the document's faces: the HTML states the step as
+  the table's font size and centres an overhang across both margins on
+  paper (`bt-overhang`). The default fits every table as declared. -/
+  tableFit : Sp → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
+    Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
+  /-- The document's list lineage (`Ir.ListLineage`), from the document at
+  `emitTree`'s entry: what a list or quotation level indents by
+  (`Config.deeper`). -/
+  lists : Ir.ListLineage := .sizeFile
+  /-- How many list and quotation levels stand around this content, and the
+  measure they take off its start and end (`Config.deeper`). -/
+  listDepth : Nat := 0
+  inset : Sp := 0
   /-- The resolved local measurement context. A box replaces the horizontal
   measures while retaining the page's text height; outside a box, `none`
   reads the document's text area. Providers share the native vocabulary. -/
@@ -171,6 +179,18 @@ An explicit local context wins over the page's ordinary text area. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
+
+/-- One list or quotation level deeper: the level's `\leftmargin` (the
+class's, `Ir.leftMargin` at the next `\@listdepth`; the sheet's own
+1.35 em where the lineage declares none, as `listIndentCss` pads) off the
+measure's start, and for a quotation (`both`) off its end too — as the
+page's list and quote arms narrow theirs, so a table's fit reads the
+measure its page decides against (`tableFit`). A declared
+`\leftmargin⟨n⟩` is not read here. -/
+public def Config.deeper (cfg : Config) (both : Bool) : Config :=
+  let lv := cfg.listDepth + 1
+  let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 135 / 100)
+  { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
 
 /-- Enter a box with the same horizontal-measure convention as native
 paragraphs. Descendant widths resolve against it; siblings keep their own
@@ -6126,7 +6146,8 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
       (if cls.isEmpty then #[] else #[("class", cls)])
   -- A markdown table too wide for the text block sets at the page's step
   -- and, still too wide at its floor, overhangs both margins on paper.
-  let (step, overhang) := cfg.tableFit cols padL padR rows spans
+  let (step, overhang) :=
+    cfg.tableFit (cfg.measureValues.lineWidth - cfg.inset) cols padL padR rows spans
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
     ++ (if padR then "" else " nopadr") ++ (if overhang then " bt-overhang" else "")
   let kids := Id.run do
@@ -7436,9 +7457,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let desc := !ordered && !items.isEmpty && items.all fun it => match it[0]? with
       | some (Block.para c) => (Ir.descLabel? c).isSome
       | _ => false
-    if desc then Html.elem "dl" (descItemsInto cfg.into #[] items.toList) else
+    if desc then Html.elem "dl" (descItemsInto (cfg.deeper false).into #[] items.toList) else
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (listItemsInto cfg.into #[] items.toList)
+    Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList)
   | .center body =>
     -- A display formula's block is the `.display` paragraph the base
     -- sheet's display rules address — the same shape the PDF walk reads
@@ -7493,7 +7514,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
-    Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
+    Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList)
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
   -- reader's own included) can address each. Its two colour boxes stand
@@ -8422,7 +8443,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
                         deck := doc.docClass.record.model == .frame
                         chromeAllowed := doc.chromeAllowed
                         page := doc.page
-                        lengthBasis := lengthBasisOf doc }
+                        lengthBasis := lengthBasisOf doc
+                        lists := doc.docClass.record.lists }
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
   -- step — the same declarations the PDF path reads. A `\framefoot` note
