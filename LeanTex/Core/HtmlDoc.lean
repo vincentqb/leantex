@@ -8685,8 +8685,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       for i in [:lines.size] do
         if i > 0 then kids := kids.push (Html.text "\n")
         let line := inlines cfg
-          (lines[i]!.map (Listing.paintToken cfg.pal cfg.listingGround covered spec.style
-            brushes))
+          ((Listing.paintLine cfg.pal cfg.listingGround covered spec.style brushes lines[i]!).flatMap
+            fun r => Listing.paintRun r #[.text r.text])
         kids := if spec.numbers then
           kids.push (Html.elem "span" line #[("class", "line")])
           else kids ++ line

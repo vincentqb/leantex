@@ -122,7 +122,95 @@ def fontSpansList (acc : Array (String × String)) : List Html.Node →
 
 end
 
+/-- The `#rrggbb` a style declaration's colour ends in: a palette role's
+custom property carries the colour as its fallback. -/
+def hexIn (css : String) : Option String :=
+  match (css.splitOn "#").getLast? with
+  | some tail => if (css.splitOn "#").length > 1 then some (String.ofList (tail.toList.take 6)) else none
+  | none => none
+
+/-- Each scalar of a code element with the colour, weight and slant it
+ships in: the innermost declared colour, and whether a `strong` or `em`
+encloses it. -/
+abbrev ScalarPaint := Char × Option String × Bool × Bool
+
+mutual
+
+def scalarPaintOne (color : Option String) (bold italic : Bool) (acc : Array ScalarPaint) :
+    Html.Node → Array ScalarPaint
+  | .text s => s.foldl (fun acc c => acc.push (c, color, bold, italic)) acc
+  | .style _ | .script _ _ => acc
+  | .elem tag attrs kids =>
+    let own := (attrs.find? fun (key, value) =>
+      tag == "span" && key == "style" && hasStr value "color:").bind (hexIn ·.2)
+    scalarPaintList (own.or color) (bold || tag == "strong") (italic || tag == "em") acc
+      kids.toList
+
+def scalarPaintList (color : Option String) (bold italic : Bool) (acc : Array ScalarPaint) :
+    List Html.Node → Array ScalarPaint
+  | [] => acc
+  | node :: rest => scalarPaintList color bold italic (scalarPaintOne color bold italic acc node) rest
+
+end
+
+/-- The text nodes a tree holds. -/
+def textNodesOne : Html.Node → Nat
+  | .text _ => 1
+  | .elem _ _ kids => textNodesList kids.toList
+  | _ => 0
+where
+  textNodesList : List Html.Node → Nat
+    | [] => 0
+    | n :: ns => textNodesOne n + textNodesList ns
+
 end ListingHighlight
+
+/-- Listing lines ship as runs of tokens that look alike. Each scalar must
+still show its own token's weights, and wherever it lays down ink its own
+token's ink, in the typed HTML and in the PDF's glyphs; white space may
+take a neighbour's ink, which it does not show. And the runs must cost the
+typed tree fewer text nodes than painting token by token would. -/
+def listingRunChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let source := "theorem garden (n : Nat) : n + 0 = n := by\n  simp only [Nat.add_zero] -- rows\n" ++
+    "def bloom (xs : Array Nat) : Nat := xs[0]! + xs.size"
+  for style in [Ir.ListingStyle.default, .friendly] do
+    let styleName := if style == .friendly then "friendly" else "default"
+    let (doc, _) := elabStr (dvDoc "" ("\\begin{minted}[style=" ++ styleName ++ "]{lean4}\n" ++
+      source ++ "\n\\end{minted}"))
+    let some (covered, src, spec) := (ListingHighlight.listings doc)[0]?
+      | failures ref s!"listing runs {styleName}: no listing"
+    let tokens := (spec.tokenLines src).flatten
+    let brushOf (k : ListingHighlight.Kind) := Listing.brush doc.palette none covered style k
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let codes := ListingHighlight.codeNodesList #[] body.toList
+    let paints := (ListingHighlight.scalarPaintList none false false #[] codes.toList).filter
+      (·.1 != '\n')
+    let expected : Array ListingHighlight.ScalarPaint := tokens.foldl (fun acc tok =>
+      let b := brushOf tok.kind
+      let ink := (b.shipsInk tok.text).bind fun (c, _) => ListingHighlight.hexIn (HtmlDoc.cssColor c)
+      tok.text.foldl (fun acc c => acc.push (c, ink, b.look.bold, b.look.italic)) acc) #[]
+    let shows (p : ListingHighlight.ScalarPaint) :=
+      (p.1, if p.1.isWhitespace then none else p.2.1, p.2.2)
+    t s!"listing runs {styleName}: every scalar shows its token's weights and ink in typed HTML"
+      (!paints.isEmpty && paints.map shows == expected.map shows)
+    let nodes := codes.foldl (fun n code => n + ListingHighlight.textNodesOne code) 0
+    let lineCount := (spec.tokenLines src).size
+    t s!"listing runs {styleName}: runs cost the typed tree fewer text nodes than tokens \
+({nodes} for {tokens.size} tokens on {lineCount} lines)"
+      (nodes < tokens.size)
+    let out := layoutOf fonts doc
+    let glyphs := (ListingHighlight.glyphColors out).filter fun (c, _) =>
+      !c.isWhitespace && c != '\u00a0'
+    let wanted := tokens.foldl (fun acc tok =>
+      match (brushOf tok.kind).shipsInk tok.text with
+      | some (ink, _) => tok.text.foldl (fun acc c =>
+          if c.isWhitespace then acc else acc.push (c, some ink)) acc
+      | none => tok.text.foldl (fun acc c => if c.isWhitespace then acc else acc.push (c, none)) acc)
+      #[]
+    t s!"listing runs {styleName}: every inked glyph keeps its token's ink in the PDF"
+      (glyphs.size == wanted.size && (glyphs.zip wanted).all fun ((c, ink), (c', want)) =>
+        c == c' && want.all (· == ink))
 
 /-- Selecting Friendly must change actual ink while conserving the code.
 The colour pins are Pygments' `styles/friendly.py` (the whole table is held
@@ -566,6 +654,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingPaletteContinuationChecks ref fonts
   listingPaletteAuditChecks ref
   listingRoleEpochChecks ref fonts
+  listingRunChecks ref fonts
   for (language, source) in [("python", ListingHighlight.pythonSource),
       ("lean4", ListingHighlight.leanSource)] do
     let doc := ListingHighlight.sourceDoc language source

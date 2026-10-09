@@ -13138,10 +13138,20 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               out := out.push (.linebreak {})
               out := out.push (.hspace (.lit { width := .ofSp hang }) true)
             j := j + 1
-            for (piece, sourceColumn, text) in pieces do
-              let inline := Listing.paintToken a.pal a.ground covered spec.style brushes piece
-              let source := codeSource i sourceColumn text
-              out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
+            let mut k := 0
+            for run in Listing.paintLine a.pal a.ground covered spec.style brushes (pieces.map (·.1)) do
+              let mut body : Array Ir.Inline := #[]
+              for piece in run.tokens do
+                let (sourceColumn, text) := (pieces[k]?.map (·.2)).getD (0, piece.text)
+                k := k + 1
+                -- A line's site is a scalar that lays down ink: white space
+                -- names no token a reader could find.
+                let source := if piece.text.all Char.isWhitespace then none
+                  else codeSource i sourceColumn text
+                body := body.push
+                  (source.map (fun span => .located span #[.text piece.text]) |>.getD (.text piece.text))
+              let painted := Listing.paintRun run body
+              out := out ++ painted
       pure #[.styled .mono out]
   let inner := match covered with
     | some c => #[.colored c none inner]

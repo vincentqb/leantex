@@ -93,5 +93,24 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       (losses.size == 1 && losses.all fun d =>
         listingSourceExact file source d && d.trigger != some "\\begin" &&
           d.span.any fun span => span.pos.line == 4)
+  -- A highlighted line's indentation is its own token: the overflow names
+  -- the first token that lays down ink, at its column, never the blanks.
+  for (lang, indent) in [("python", "    "), ("lean4", "  "), ("bash", "\t ")] do
+    let line := indent ++ "build_all(" ++ "".pushn 'W' 96 ++ ")"
+    let source := String.intercalate "\n" [
+      "\\documentclass{article}", "\\begin{document}", "\\begin{minted}{" ++ lang ++ "}",
+      line, "\\end{minted}", "\\end{document}"]
+    let prepared := Elab.prepare file (Parse.parse file (Lex.lex file source).1).1
+    let (doc, _, _) := Elab.runPrepared file prepared
+    let geom : Layout.Geom := {
+      pageW := Dim.pt 160, pageH := Dim.pt 400, hmargin := Dim.pt 12, vmargin := Dim.pt 12
+      fontSize := Dim.pt 10, justify := false, hyphenate := false }
+    let out := Layout.run geom fs none doc
+    let losses := (out.diags.filter (·.kind == .W0005)).map
+      prepared.sourceTriggers.attribute
+    t s!"listing origins minted {lang}: an indented overflow names its first inked token"
+      (losses.size == 1 && losses.all fun d =>
+        listingSourceExact file source d && d.trigger == some "build_all" &&
+          d.span.any fun span => span.pos.line == 4 && span.pos.col == indent.length + 1)
 
 end Tests

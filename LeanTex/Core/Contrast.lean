@@ -907,7 +907,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     (spec.tokenLines source).foldl (fun acc line =>
       let brushes := Listing.brushes acc.pal ground covered spec.style #[line]
       usesInlines codeCx acc
-        (line.map (Listing.paintToken acc.pal ground covered spec.style brushes)).toList) acc
+        ((Listing.paintLine acc.pal ground covered spec.style brushes line).flatMap
+          fun r => Listing.paintRun r #[.text r.text]).toList) acc
   | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 
