@@ -1172,7 +1172,7 @@ def reports : List Report := [
     pins := [check% Tests.MarkdownTables.markdownTableChecks,
       thm% LeanTex.Core.Md.tableRaws_contract]
     accept := ["twenty-two typed HTML and shipped layout assertions fail before the reader reads pipe tables",
-      "eight more fail where every table set at its natural width: a table too wide for its measure narrows its columns as a browser's automatic table layout does, each keeping its widest word, its cells wrapping ragged with every word on the page in both artifacts; a table whose words alone pass the measure keeps them whole and is named at its first cell; and every cell of a row stands on one baseline",
+      "eight more fail where every table set at its natural width: a table too wide for its measure narrows its columns as a browser's automatic table layout does, each keeping its widest word, its cells wrapping ragged with every word on the page in both artifacts; a table whose words alone pass the measure keeps them whole; and every cell of a row stands on one baseline",
       "the GFM specification's eight table examples are classified: seven match and one waits on the smart punctuation decision",
       "a long markdown report's summary table sets inside the measure under booktabs' three rules in both artifacts, where it ran forty points past it",
       "a table of prose descriptions keeps every word on the page in the PDF, on screen and in print, where its description column was cut at the page edge",
