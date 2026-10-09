@@ -1,0 +1,33 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Links to Nowhere in Particular"
+para
+  text "An inline link to "
+  link "https://example.org/"
+    text "the example site"
+  text " and an autolink "
+  link "https://example.org/a/path/that/goes/on/for/quite/a/while/before/it/finally/stops/somewhere.html"
+    text "https://example.org/a/path/that/goes/on/for/quite/a/while/before/it/finally/stops/somewhere.html"
+  text " appear in one paragraph."
+para
+  text "A reference link to [the field guide][guide] and a collapsed one to [Guide][] use definitions given below."
+para
+  text "Emphasis around a link: "
+  styled emph
+    italicCorr maybe
+    text "see "
+    link "https://example.org/index"
+      text "the index"
+  text ", and "
+  styled bold
+    italicCorr maybe
+    text "strong text with "
+    link "https://example.org/strong"
+      text "a link"
+  italicCorr maybe
+  text " inside it."
+para
+  text "[guide]: https://example.org/field-guide [Guide]: https://example.org/guide"
+-- diagnostics
+warning[W0392] 3:19 a link's title is not carried: the link sets without it

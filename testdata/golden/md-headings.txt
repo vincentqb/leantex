@@ -1,0 +1,32 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Harbour Notes"
+para
+  text "An invented harbour, described in headings of every rank the reader knows: the title underlined with equals signs, the ranks below it opened with number signs."
+section* 1
+  text "The quay"
+para
+  text "The quay runs the length of the harbour and ends at a lamp."
+section* 2
+  text "Moorings"
+para
+  text "Twelve rings are set into the quay wall, one every few metres."
+section* 3
+  text "Winter moorings"
+para
+  text "Boats moved to the inner basin for the winter."
+section* 4
+  text "The inner basin"
+para
+  text "The basin is sheltered by the old breakwater."
+section* 5
+  text "The breakwater"
+para
+  text "Its stones were laid without mortar."
+section* 1
+  text "Setext heading, second rank"
+para
+  text "A paragraph under a heading underlined with hyphens."
+-- diagnostics
+(none)

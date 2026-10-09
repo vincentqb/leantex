@@ -6071,8 +6071,7 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mathSet ← mathSetOf oneFace
   let shipped ← FontDiscovery.scanRoots [testFonts]
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc0, _) ← elabFixture n src
+    let (doc0, _) ← goldenDoc n
     let doc := Layout.pdfView doc0
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc (Layout.Geom.ofPage doc.page) (some pats)
@@ -6270,8 +6269,7 @@ def inlineAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let mut labelFixtures : Array String := #[]
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc0, _) ← elabFixture n src
+    let (doc0, _) ← goldenDoc n
     let doc := Layout.pdfView doc0
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc (Layout.Geom.ofPage doc.page) (some pats)

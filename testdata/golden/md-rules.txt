@@ -1,0 +1,16 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Sections Divided by Rules"
+para
+  text "The first section ends with a thematic break."
+para
+  text "The second section ends with another, spelled with hyphens."
+para
+  text "The third, with underscores."
+para
+  text "A closing paragraph after the last rule."
+-- diagnostics
+warning[W0307] 5:1 a thematic break has no block in this engine and is not drawn
+warning[W0307] 9:1 a thematic break has no block in this engine and is not drawn
+warning[W0307] 13:1 a thematic break has no block in this engine and is not drawn

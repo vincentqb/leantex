@@ -81,6 +81,110 @@ def condBranchRow (kept hidden : List String) :
   kept.map (fun k => (s!"the branch TeX keeps ships: {k}", hasStr (censusText c) k)) ++
   hidden.map (fun h => (s!"the branch TeX skips does not: {h}", !hasStr (censusText c) h))
 
+/-- The size of the first line on page 0 holding `needle`, or 0. -/
+def mdSizeOf (c : Array CensusPage) (needle : String) : Dim.Sp :=
+  (lineSizeOf c 0 needle).getD 0
+
+/-- The markdown fixtures' census rows: what the markdown reader's pages
+show, read off `Layout.Out` like every other row. Facts a later reader
+change keeps (the text of a pipe table's cells ships whether the table is
+read as a table or as text) stand here; a loss the build names stays out of
+them, the golden and the diagnostic witnessing it instead. -/
+def censusMdRows :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("md-code", fun _ c => [
+    ("one page", c.size == 1),
+    ("the code span ships inside its sentence",
+      hasStr (censusText c) "Inline code such as count_birds(day) sits in a sentence"),
+    ("a doubled-backtick span keeps the backtick it holds", hasStr (censusText c) "a`b"),
+    ("the fenced block ships its long line whole, comment included",
+      hasStr (censusText c) "entry.verified)#onelongline"),
+    ("a tilde fence keeps its indented line", hasStr (censusText c) "indentedlineinsidethefence"),
+    ("prose resumes after the code", hasStr (censusText c) "A paragraph after the code.")]),
+  ("md-emphasis", fun _ c => [
+    ("one page", c.size == 1),
+    ("an intraword underscore is not emphasis", hasStr (censusText c) "snake_case_name"),
+    ("escaped markers ship as themselves",
+      hasStr (censusText c) "*not emphasis*" && hasStr (censusText c) "# not a heading"),
+    ("a backslash and two trailing spaces each end a line",
+      match lineYOf c 0 "A backslash at the end of a line", lineYOf c 0 "forces a hard break",
+          lineYOf c 0 "as do two trailing spaces" with
+      | some a, some b, some d => decide (a < b) && decide (b < d)
+      | _, _, _ => false),
+    ("named and numeric references decode", hasStr (censusText c) "& © © © and a lone & sign")]),
+  ("md-headings", fun _ c => [
+    ("one page", c.size == 1),
+    ("every rank's heading ships",
+      ["Harbour Notes", "The quay", "Moorings", "Winter moorings", "The inner basin",
+        "The breakwater"].all (hasStr (censusText c) ·)),
+    ("the underlined title and ranks two and three step down in size, all above the body",
+      decide (mdSizeOf c "Harbour Notes" > mdSizeOf c "The quay") &&
+      decide (mdSizeOf c "The quay" > mdSizeOf c "Moorings") &&
+      decide (mdSizeOf c "Moorings" > mdSizeOf c "Twelve rings")),
+    ("a hyphen-underlined heading sets at the second rank, as its number-sign twin",
+      mdSizeOf c "Setext heading, second rank" == mdSizeOf c "The quay")]),
+  ("md-images", fun _ c => [
+    ("one page", c.size == 1),
+    ("every image ships, the linked one and the one in a list item included",
+      (c[0]?.map (·.images)).getD 0 == 4),
+    ("the sentence around an inline image ships", hasStr (censusText c) "An image inside a sentence"),
+    ("the list item holding an image keeps its marker",
+      hasStr (censusText c) "• A list item with an image:")]),
+  ("md-links", fun _ c => [
+    ("one page", c.size == 1),
+    ("an inline link's text ships", hasStr (censusText c) "An inline link to the example site"),
+    ("links inside emphasis and strong text ship",
+      hasStr (censusText c) "see the index" && hasStr (censusText c) "strong text with a link"),
+    ("link underlines ship as rules", (c[0]?.map fun p => decide (p.rules ≥ 1)).getD false)]),
+  ("md-lists", fun geom c => [
+    ("one page", c.size == 1),
+    ("each nesting level ships its own marker",
+      hasStr (censusText c) "• Waterproof notebook" && hasStr (censusText c) "– Two sharpened" &&
+      hasStr (censusText c) "* The pocket with a zip"),
+    ("a nested item stands right of its parent",
+      match lineXOf c 0 "Pencils, not pens", lineXOf c 0 "Two sharpened",
+          lineXOf c 0 "The pocket with a zip" with
+      | some a, some b, some d => decide (a < b) && decide (b < d)
+      | _, _, _ => false),
+    ("an ordered list numbers its items", hasStr (censusText c) "2. Leave a note of the route."),
+    ("a list item's second paragraph ships inside the item",
+      (lineXOf c 0 "A second paragraph in the same item").any fun x => decide (x > geom.hmargin)),
+    ("code inside an item ships", hasStr (censusText c) "check--tide--routenorth")]),
+  ("md-quotes", fun geom c => [
+    ("one page", c.size == 1),
+    ("a quotation stands right of the text area's edge",
+      (lineXOf c 0 "The lamp is lit at dusk").any fun x => decide (x > geom.hmargin)),
+    ("a nested quotation stands right of the one holding it",
+      match lineXOf c 0 "Outer quotation.", lineXOf c 0 "An inner quotation" with
+      | some a, some b => decide (a < b)
+      | _, _ => false),
+    ("a list inside a quotation keeps its markers", hasStr (censusText c) "• lamp oil"),
+    ("a heading and code inside a quotation ship",
+      hasStr (censusText c) "A heading inside a quotation" &&
+      hasStr (censusText c) "codeinsideaquotation")]),
+  ("md-readme", fun _ c => [
+    ("one page", c.size == 1),
+    ("the install command ships", hasStr (censusText c) "makeinstallPREFIX=$HOME/.local"),
+    ("an ordered step holds its code and its nested list",
+      hasStr (censusText c) "tidegaugereadharbour.log" &&
+      hasStr (censusText c) "• by date, --day 2091-03-14;"),
+    ("a quotation inside a step ships",
+      hasStr (censusText c) "High water 06:10 (4.1 m), low water 12:25."),
+    ("the option table's cells ship",
+      ["--units", "metres or feet", "print the numbers and no words"].all (hasStr (censusText c) ·)),
+    ("the task items' text ships", hasStr (censusText c) "read the log format")]),
+  ("md-rules", fun _ c => [
+    ("one page", c.size == 1),
+    ("every section the rules divide ships",
+      ["The first section ends", "The second section ends", "The third, with underscores.",
+        "A closing paragraph after the last rule."].all (hasStr (censusText c) ·))]),
+  ("md-table", fun _ c => [
+    ("one page", c.size == 1),
+    ("every cell's text ships",
+      ["Monday", "06:10", "12:25", "Wednesday", "13:50", "4.6"].all (hasStr (censusText c) ·)),
+    ("an escaped pipe's row ships its meaning", hasStr (censusText c) "a literal pipe"),
+    ("prose after a table ships", hasStr (censusText c) "A paragraph after the table")])]
+
 /-- Census assertions, one row per golden fixture: what each fixture's
 shipped pages must show, judged from `Layout.Out` — never from the IR dump,
 which witnesses elaboration only. `censusChecks` fails when a fixture in
@@ -1142,7 +1246,7 @@ waits on this module. A new row joins a part with room, or starts one. -/
 def censusParts :
     List (List (String × (Layout.Geom → Array CensusPage → List (String × Bool)))) :=
   [censusRows0, censusRows1, censusRows2, censusRows3, censusRows4, censusRows5,
-    censusRows6, censusRows7]
+    censusRows6, censusRows7, censusMdRows]
 
 def censusPartRows : Nat := 16
 
@@ -1233,8 +1337,11 @@ elaborates without complaint — promote it"
         (diags.any fun d =>
           d.severity == .error || d.code == "W0301" || d.code == "W0302")
   for n in goldenNames do
-    check ref s!"golden {n}: in the golden set but no testdata/corpus/{n}.tex"
-      (← (dir / s!"{n}.tex").pathExists)
+    check ref s!"golden {n}: in the golden set but no {goldenFile n}"
+      (← System.FilePath.pathExists (goldenFile n))
+  for n in mdGoldenNames do
+    check ref s!"golden {n}: both {n}.md and {n}.tex exist, and the golden set reads only the .md"
+      (!(← (dir / s!"{n}.tex").pathExists))
 
 /-- The characters the ink watch bans, narrower than `Ir.markupChars` on
 purpose. The floor filters `$`, `&`, `^`, `_` and `~` too, because in a
@@ -1293,8 +1400,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- the census exercises the same decision a build runs.
   let shipped ← FontDiscovery.scanRoots [testFonts]
   for (n, facts) in censusTable do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc geom (some pats)
@@ -1333,8 +1439,7 @@ def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .float kind num _ fbody fcaption => out.push (kind, num, fbody, fcaption)
       | _ => out) (fun out _ => out) #[] body
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let refs := Ir.foldBlocks (fun out _ => out)
       (fun out x => match x with
         | .ref key form text _ => out.push (key, form, text)

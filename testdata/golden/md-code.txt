@@ -1,0 +1,27 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Recipes for a Small Script"
+para
+  text "Inline code such as "
+  styled mono
+    italicCorr maybe
+    text "count_birds(day)"
+  italicCorr maybe
+  text " sits in a sentence, and a span with a backtick inside it is written with doubled delimiters: "
+  styled mono
+    italicCorr maybe
+    text "a`b"
+  text "."
+verbatim language python
+  "def count_birds(day):"
+  "    return sum(entry.count for entry in day.entries if entry.species == \"swift\" and entry.verified)  # one long line"
+verbatim
+  "plain fence with tildes"
+  "    indented line inside the fence"
+verbatim language text
+  "a\ttab\tseparated\tline"
+para
+  text "A paragraph after the code."
+-- diagnostics
+(none)

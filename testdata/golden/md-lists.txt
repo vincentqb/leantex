@@ -1,0 +1,68 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Packing for a Field Day"
+para
+  text "A list of lists, nested and numbered, tight and loose."
+list unordered
+  item
+    para
+      text "Waterproof notebook"
+  item
+    para
+      text "Pencils, not pens"
+    list unordered
+      item
+        para
+          text "Two sharpened"
+      item
+        para
+          text "One spare, in a pocket"
+        list unordered
+          item
+            para
+              text "The pocket with a zip"
+  item
+    para
+      text "A flask"
+list ordered
+  item
+    para
+      text "Check the tide table."
+  item
+    para
+      text "Leave a note of the route."
+  item
+    para
+      text "Set off before the light changes."
+para
+  text "A paragraph ends that list, so the next one starts afresh:"
+list ordered
+  item
+    para
+      text "A list that starts at seven"
+  item
+    para
+      text "continues at eight."
+list unordered
+  item
+    para
+      text "A loose item, with a paragraph of its own."
+    para
+      text "A second paragraph in the same item, indented to its content."
+  item
+    para
+      text "Another loose item."
+list ordered
+  item
+    para
+      text "An item holding code:"
+    verbatim
+      "check --tide --route north"
+  item
+    para
+      text "An item after the code."
+-- diagnostics
+warning[W0392] 18:1 an ordered list's start number is not carried and the list counts from one
+warning[W0392] 21:1 a loose list sets as a tight one: its items' paragraph spacing is not carried
+warning[W0392] 27:1 a loose list sets as a tight one: its items' paragraph spacing is not carried

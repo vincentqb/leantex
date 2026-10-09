@@ -34,8 +34,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the theorems, witnessed over the corpus (ir tier: the tree is an IR
   -- projection, and these compare two IR readings, never a page)
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let tree := Struct.ofDoc doc
     t s!"struct {n}: leaf text is blocksText" (tree.text == Ir.blocksText doc.body)
     t s!"struct {n}: headings are headingLevels" (tree.headings == Ir.headingLevels doc.body)
@@ -206,8 +205,7 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fb : Array String → Ir.Block → Array String := fun out b => out.push (Ir.blockTextOne "b" b)
   let fi : Array String → Ir.Inline → Array String := fun out x => out.push (Ir.plainTextOne x)
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     t s!"ctx fold {n}: the context walk covers the leaf fold"
       (Ir.foldCtxBlocks (Ir.CtxFold.ofFold fb fi) () #[] doc.body
         == Ir.foldBlocks fb fi #[] doc.body)

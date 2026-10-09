@@ -1172,8 +1172,7 @@ def artifactCorpusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut contentPaths := 0
   let mut subsets := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, diags) ← elabFixture n src
+    let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let store ← corpusStore doc
@@ -1246,8 +1245,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let shipped ← FontDiscovery.scanRoots [testFonts]
   let build (n : String) :
       IO (Font.FontSet × Layout.Geom × Ir.Doc × Layout.Out × Image.Store) := do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let store ← corpusStore doc
@@ -1662,8 +1660,7 @@ def artBandParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut declaredSeen := 0
   let mut carriedSeen := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let store ← corpusStore doc
@@ -1809,8 +1806,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut declaredSeen := 0
   let mut carriedSeen := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let store ← corpusStore doc
@@ -2072,8 +2068,7 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let mut judged := 0
   let mut declared := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     unless doc.docClass == .slides do continue
     let (head, body, _) := HtmlDoc.emitTree {} doc
     let css := artTreeCssList (artTreeCssList "" head.toList) body.toList

@@ -817,8 +817,7 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The whole corpus as well as the probes: a collision a probe never
   -- reproduced is still one site named twice.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    sources := sources.push (s!"fixture {n}", (← elabFixture n src).2)
+    sources := sources.push (s!"fixture {n}", (← goldenDoc n).2)
   for (what, ds) in sources do
     for pair in siteCollisions ds do
       unless seen.contains pair do seen := pair :: seen
@@ -1907,8 +1906,7 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Over the whole corpus, not only the probes: every recovery any fixture
   -- makes is accounted for.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (fDoc, fDs) ← elabFixture n src
+    let (fDoc, fDs) ← goldenDoc n
     t s!"salvage_named {n}: every recovery is paid for by a diagnostic naming it"
       (named fDs fDoc.salvage)
     -- The claim the census exists to make, and could not be made before it:

@@ -1,0 +1,25 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Three Rectangles"
+para
+  text "An image on its own line:"
+para
+  image "rects.png" alt "Three coloured rectangles on white"
+para
+  text "An image inside a sentence "
+  image "rects-alpha.png" alt "a small mark"
+  text " carries on."
+list unordered
+  item
+    para
+      text "A list item with an image: "
+      image "rects.jpg" alt "rectangles again"
+  item
+    para
+      text "A list item without one."
+para
+  link "https://example.org/rectangles"
+    image "rects.png" alt "A linked image of rectangles"
+-- diagnostics
+(none)

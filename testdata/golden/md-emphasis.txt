@@ -1,0 +1,38 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Emphasis and Escapes"
+para
+  text "Plain, "
+  styled emph
+    italicCorr maybe
+    text "emphasised"
+  text ", "
+  styled bold
+    italicCorr maybe
+    text "strong"
+  text ", "
+  styled emph
+    italicCorr maybe
+    styled bold
+      italicCorr maybe
+      text "both at once"
+    italicCorr maybe
+  text ", and "
+  styled emph
+    italicCorr maybe
+    text "underscored"
+  italicCorr maybe
+  text " emphasis; an intraword snake_case_name keeps its underscores."
+para
+  text "Escaped characters stay literal: *not emphasis*, # not a heading."
+para
+  text "A backslash at the end of a line"
+  linebreak
+  text "forces a hard break,"
+  linebreak
+  text "as do two trailing spaces."
+para
+  text "Entities and references: & © © © and a lone & sign."
+-- diagnostics
+(none)
