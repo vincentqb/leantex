@@ -487,10 +487,13 @@ const cell = (r) => r.n === 0 ? 'na' : r.ok ? 'pass' : 'fail:' + clean(r.why);
 //    print adds cannot mask a loss, and a math italic or a small capital is
 //    the letter it spells. Only a deck with a stage taller than its sheet
 //    exercises it: elsewhere nothing can reach a sheet's edge.
-//  - print-sheets: no sheet goes to paper blank — one with no letter or
-//    digit is allowed only for a stage that lays out none. A stage's
-//    padding alone once took a sheet of its own, and so did the tail of a
-//    stage that opened below a heading instead of on a sheet of its own.
+//  - print-sheets: no sheet goes to paper blank or with furniture alone —
+//    one with no letter or digit, or exactly a stage's footline's letters
+//    and digits and no stage's body's, is allowed only for a stage that
+//    lays out none outside its footline. A stage's padding alone once took
+//    a sheet of its own, and so did the tail of a stage that opened below a
+//    heading instead of on a sheet of its own, and a footline pulled onto
+//    the stage's edge through its padding, its frame number alone on it.
 // Playwright prints to PDF in Chromium alone.
 const census = (s) => {
   const m = new Map();
@@ -526,9 +529,12 @@ const printDeck = async (page, name, fx) => {
   await page.setViewportSize({ width: Math.round(+pt[1] * 4 / 3), height: Math.round(sheetH) });
   const laid = await page.evaluate((h) => {
     const stages = [...document.querySelectorAll('section.slide, section.section-page')];
+    const own = (s, foot) => [...s.children].filter(c => c.matches('footer.slide-foot') === foot)
+      .map(c => c.innerText).join(' ');
     return { spill: stages.filter(s =>
         Math.max(s.scrollHeight, s.getBoundingClientRect().height) > h + 1).length,
-      bare: stages.filter(s => !/[\p{L}\p{N}]/u.test(s.innerText)).length,
+      bare: stages.filter(s => !/[\p{L}\p{N}]/u.test(own(s, false))).length,
+      bodies: stages.map(s => own(s, false)), feet: stages.map(s => own(s, true)),
       text: document.querySelector('main').innerText };
   }, sheetH);
   const pdf = path.join(dir, fx + '.printed.pdf');
@@ -540,9 +546,15 @@ const printDeck = async (page, name, fx) => {
     return { spill: bad, sheets: bad };
   }
   const sheets = paper.split('\f').slice(0, -1);
-  const blank = sheets.filter(t => !inked(t)).length;
-  const sheetsCell = { ok: blank <= laid.bare, n: 1,
-    why: `${blank} of ${sheets.length} sheets blank, ${laid.bare} stage(s) with no text` };
+  // A sheet holding a stage's footline and nothing else: its letters and
+  // digits are exactly one footline's, and no stage's body is those.
+  const same = (a, b) => a.size === b.size && [...a].every(([c, n]) => b.get(c) === n);
+  const feet = laid.feet.filter(inked).map(census), bodies = laid.bodies.map(census);
+  const wasted = sheets.filter(t => !inked(t) ||
+    (feet.some(f => same(f, census(t))) && !bodies.some(b => same(b, census(t))))).length;
+  const sheetsCell = { ok: wasted <= laid.bare, n: 1,
+    why: `${wasted} of ${sheets.length} sheets blank or furniture alone, ` +
+      `${laid.bare} stage(s) with no text outside the footline` };
   if (laid.spill === 0) return { spill: none, sheets: sheetsCell };
   const want = census(laid.text), got = census(paper);
   const lost = [...want].filter(([c, n]) => (got.get(c) || 0) < n);

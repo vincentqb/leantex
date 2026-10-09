@@ -8032,6 +8032,16 @@ beamer's frame furniture and text area — the PDF's footer and floor
 public def Doc.chromeAllowed (doc : Doc) : Bool :=
   doc.docClass.record.chrome && doc.foot.isNone
 
+/-- Whether a frame stands its body in beamer's text area — the paper's top
+edge (moloch's headline is empty) to `\footheight` above its bottom edge:
+wherever the chrome may stand (`Doc.chromeAllowed`), every frame but the
+title page, whose template places its own furniture. The one decision both
+backends read: the PDF's floor and opening (`Layout.frameAreaFor`), the web
+deck's stage and opening (`HtmlDoc.frameOpensBody`); `frame_area_agree`
+states the agreement. -/
+public def frameInTextArea (chromeAllowed : Bool) (valign : VAlign) : Bool :=
+  chromeAllowed && !(valign matches .golden)
+
 /-- appendixnumberbeamer's numbering, exactly: split at the restart, the
 main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
 (`frameNumbers_gapless`) over each part. -/

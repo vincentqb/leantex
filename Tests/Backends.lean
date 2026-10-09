@@ -1052,6 +1052,14 @@ theorem vdist_shares_agree (v : Ir.VAlign) :
     HtmlDoc.vdistShares v =
       ((Layout.VDist.of v).above, (Layout.VDist.of v).below) := rfl
 
+/-- The two backends read one frame-area decision: the web deck opens an
+untitled or standout frame's body at the stage's top exactly where the PDF
+stands that frame in beamer's text area — both projections of
+`Ir.frameInTextArea`, at every alignment and either chrome. -/
+theorem frame_area_agree (chrome : Bool) (v : Ir.VAlign) :
+    HtmlDoc.frameOpensBody chrome false v = (Layout.frameAreaFor chrome v == .text) := by
+  cases chrome <;> cases v <;> rfl
+
 /-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
 elaborated once; each backend keeps or drops through `Ir.keepFor` at its own
 entry. The diagnostics, the `orphanFree` correspondence (the hypothesis of

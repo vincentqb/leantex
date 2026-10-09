@@ -126,77 +126,84 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       l.y + (Layout.segsInk fira l.segs).2 ==
         Layout.frameFloor geom.pageH Ir.footline.sep none).getD false)
 
-/-- The declarations of every rule a stylesheet carries for `sel`, nested
-at-rule blocks included (`artCssBlocks`). -/
-private def rulesFor (css sel : String) : List String :=
-  ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
-
-/-- The value one declaration of a rule gives `key`, if it declares one. -/
-private def declOf (decls key : String) : Option String :=
-  (decls.splitOn ";").findSome? fun d =>
-    match d.splitOn ":" with
-    | name :: rest =>
-      if name.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
-      else none
-    | [] => none
+/-- A deck with no title bar (the bundle a deck without `\usetheme` gets):
+one titled frame. Invented words. -/
+private def barlessDeck : String :=
+  "\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
+  "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n\\end{document}\n"
 
 /-- **The deck stands every frame in beamer's text area too**, the PDF's
 (`checks`): the stage opens at its top edge and its text area ends
-`\footheight` above its bottom edge — the 4 pt gap alone where no footline
-stands, which the footline takes back as its own where one does
-(`HtmlDoc.footlineCss`); the footline stands on the stage's bottom edge
-with its slots' baseline its closing skip above it, inset as moloch insets
-them, its box as tall as its tallest slot's cap height; the frame-title bar
-is moloch's strut box; an untitled or standout frame opens its body as the
-PDF does; a section page closes on its subsection strut; and only a standout
-frame's paragraphs set at the standout size, so its restored note keeps the
-footline's own. Asserted over the typed
-tree and the stylesheet it ships, on `deck`: lengths are the stage's shares
-of the PDF's own (`cssStageLength`, one printed milli-percent). At
+`\footheight` above its bottom edge — the 4 pt gap the frame's end spacer,
+the grow-only spacer a printed frame ends on (`HtmlDoc.printEndGrow`), and
+the footline after it, on the stage's bottom edge, reaching into no padding
+(`HtmlDoc.footlineCss`), and on paper kept with the frame's last content;
+its slots' baseline its closing skip above that
+edge, inset as moloch insets them, its box as tall as its tallest slot's cap
+height; the frame-title bar is moloch's strut box, and with no bar the title
+opens at the slides' top margin, where the PDF sets it; an untitled or
+standout frame opens its body as the PDF does; a section page closes on its
+subsection strut; and a standout frame's type is the whole frame's while its
+footline keeps its own step and weight. Asserted over the typed tree and the
+stylesheet it ships, on `deck` and `barlessDeck`: lengths are the stage's
+shares of the PDF's own (`cssStageLength`, one printed milli-percent). At
 `fa516a82` the stage kept the 6vmin safe area above and below every frame,
-the footline stood that safe area and a 1.45 rem margin up with its slots
-at the safe area's edge, the bar was padded below its line box, untitled
-and standout frames paid a paragraph gap at their top, and a standout
-note set at 1.44 times its size in bold. Invented words. -/
+the footline stood that safe area and a 1.45 rem margin up with its slots at
+the safe area's edge, the bar was padded below its line box, untitled and
+standout frames paid a paragraph gap at their top, and a standout note set
+at 1.44 times its size in bold. At `0232749b` the footline reached the edge
+by a negative margin through the stage's padding, which sent it to a sheet
+of its own on paper, a bar-less title stood on the stage's top edge, and a
+standout frame's lists set at the body's size. Invented words. -/
 def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, _) := elabStr deck
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   let height := doc.page.height
-  let stage := rulesFor css "section.slide"
-  t "frame area html: the stage opens at its top edge and ends its gap above its bottom edge"
-    (stage.any fun d => declOf d "padding-top" == some "0" &&
-      cssStageLength d "padding-bottom" Ir.footline.sep height)
-  let sep := ((stage.find? fun d => declOf d "padding-top" == some "0").bind
-    (declOf · "padding-bottom")).getD "?"
-  let foot := rulesFor css "section.slide > footer.slide-foot"
-  t "frame area html: the footline takes the gap back and stands on the stage's bottom edge"
-    (foot.any fun d => declOf d "margin" ==
-      some s!"{sep} calc(-1 * var(--safearea, 6vmin)) calc(-1 * {sep})" &&
-      declOf d "line-height" == some "0")
+  t "frame area html: the stage opens at its top edge, its text area ending on the frame's end spacer"
+    ((cssBlocksFor css "section.slide:not(.title-page)").any (fun d =>
+      cssDeclOf d "padding-top" == some "0" && cssDeclOf d "padding-bottom" == some "0") &&
+     (cssBlocksFor css "section.slide:not(.title-page)::after").any fun d =>
+      cssDeclOf d "flex" == some s!"{HtmlDoc.printEndGrow} 0 0" &&
+      cssStageLength d "max-height" Ir.footline.sep height)
+  let foot := cssBlocksFor css "section.slide > footer.slide-foot"
+  t "frame area html: the footline stands after the end spacer, on the stage's edge, through no padding"
+    (foot.any fun d => cssDeclOf d "order" == some "1" &&
+      cssDeclOf d "margin" == some "0 calc(-1 * var(--safearea, 6vmin))" &&
+      cssDeclOf d "line-height" == some "0")
+  t "frame area html: on paper a frame's end never opens a sheet, its footline kept with its content"
+    ((cssBlocksFor css "section.slide > :is(.fill, footer.slide-foot), section.slide::after").any
+      (cssDeclOf · "break-before" == some "avoid"))
   let raised (d : String) : Bool :=
-    (declOf d "height").any fun h => hasStr h "1cap + " &&
+    (cssDeclOf d "height").any fun h => hasStr h "1cap + " &&
       cssStageLength s!"x: {((h.splitOn "1cap + ").getD 1 "").dropEnd 1}" "x"
         Ir.footline.raise height
   t "frame area html: the footline's box is its tallest cap height and its closing skip"
-    ((rulesFor css "footer.slide-foot::before").any fun d =>
-      raised d && hasStr ((declOf d "height").getD "") "var(--foot-cap, 1) * 1cap")
+    ((cssBlocksFor css "footer.slide-foot::before").any fun d =>
+      raised d && hasStr ((cssDeclOf d "height").getD "") "var(--foot-cap, 1) * 1cap")
   t "frame area html: each slot's baseline stands the closing skip above the stage's edge"
-    ((rulesFor css "footer.slide-foot > :is(.band-left, .band-right)::before").any fun d =>
-      raised d && hasStr ((declOf d "vertical-align").getD "") "calc(-1 * ")
+    ((cssBlocksFor css "footer.slide-foot > :is(.band-left, .band-right)::before").any fun d =>
+      raised d && hasStr ((cssDeclOf d "vertical-align").getD "") "calc(-1 * ")
   t "frame area html: the slots stand inset from the paper's sides, as moloch's footline"
-    ((rulesFor css "footer.slide-foot > .band-left").any (cssStageLength · "left" Ir.footline.left height) &&
-     (rulesFor css "footer.slide-foot > .band-right").any (cssStageLength · "right" Ir.footline.right height))
+    ((cssBlocksFor css "footer.slide-foot > .band-left").any (cssStageLength · "left" Ir.footline.left height) &&
+     (cssBlocksFor css "footer.slide-foot > .band-right").any (cssStageLength · "right" Ir.footline.right height))
   t "frame area html: the frame-title bar is moloch's strut box"
-    ((rulesFor css "section.slide > header h2::before").any (hasStr · "height: calc(var(--frametitlepadding") &&
-     (rulesFor css "section.slide > header h2::after").any (hasStr · "vertical-align: calc(-1 * var(--frametitlepadding"))
-  let plainStage := (rulesFor css "section.slide.standout").all fun d =>
-    (declOf d "font-size").isNone && (declOf d "font-weight").isNone
-  let sizedParagraph := (rulesFor css "section.slide.standout > p").any fun d =>
-    (declOf d "font-size").isSome
-  t "frame area html: only a standout frame's paragraphs set at the standout size"
-    (plainStage && sizedParagraph)
+    ((cssBlocksFor css "section.slide > header h2::before").any (hasStr · "height: calc(var(--frametitlepadding") &&
+     (cssBlocksFor css "section.slide > header h2::after").any (hasStr · "vertical-align: calc(-1 * var(--frametitlepadding"))
+  -- The standout type is the frame's, moloch's `\usebeamerfont{standout}`;
+  -- the footline undoes that step for its own and sets at the body weight.
+  let standoutSize := (cssBlocksFor css "section.slide.standout").findSome? (cssDeclOf · "font-size")
+  let footStep := (cssBlocksFor css s!".size-{Ir.footline.step}").findSome? (cssDeclOf · "font-size")
+  t "frame area html: a standout frame's type is the whole frame's, its footline keeping its own"
+    ((cssBlocksFor css "section.slide.standout").any (cssDeclOf · "font-weight" == some "600") &&
+     (cssBlocksFor css "section.slide.standout > p").isEmpty &&
+     foot.any (cssDeclOf · "font-weight" == some "normal") &&
+     match standoutSize, footStep with
+     | some s, some f =>
+       (cssBlocksFor css "section.slide.standout > footer.slide-foot").any
+         (cssDeclOf · "font-size" == some s!"calc({f} / {s.dropEnd 2})")
+     | _, _ => false)
   -- The frames' own attributes: every frame of the deck opens its body
   -- (`frame-body-start`), the untitled ones with no fixed skip of their own.
   let sections := elemAttrsList (· == "section") #[] body.toList
@@ -206,11 +213,19 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (slides.size == 5 && slides.all fun (_, attrs) =>
       ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--frame-body-skip")).getD false)
   t "frame area html: a section page closes on its subsection strut below its bar"
-    ((rulesFor css "section.section-page::after").any fun d =>
-      ((declOf d "height").map (hasStr · "em - var(--progressheight")).getD false)
+    ((cssBlocksFor css "section.section-page::after").any fun d =>
+      ((cssDeclOf d "height").map (hasStr · "em - var(--progressheight")).getD false)
   let feet := elemAttrsList (· == "footer") #[] body.toList
   t "frame area html: a restored scriptsize note sizes its footline's box"
     (feet.any fun (_, attrs) =>
       ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--foot-cap: 1.400;")).getD false)
+  -- With no bar the title is the page's first line at the slides' top
+  -- margin (`Layout.collectFrameTitle`), the stage's top edge its area's.
+  let (bdoc, _) := elabStr barlessDeck
+  let (bhead, _, _) := HtmlDoc.emitTree {} bdoc
+  let bcss := treeCssList "" bhead.toList
+  t "frame area html: with no title bar the title opens at the slides' top margin, as the PDF sets it"
+    ((cssBlocksFor bcss "section.slide:not(.title-page) > header").any fun d =>
+      cssStageLength d "padding-top" bdoc.page.vmargin bdoc.page.height)
 
 end Tests.FrameArea

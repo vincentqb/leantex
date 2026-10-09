@@ -1782,6 +1782,21 @@ def artCssBlocks (css : String) : Array (String × String) := Id.run do
       cur := cur.push c
   return out
 
+/-- The declarations of every innermost block a stylesheet carries for the
+selector `sel` exactly, nested at-rule blocks included (`artCssBlocks`). -/
+def cssBlocksFor (css sel : String) : List String :=
+  ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
+
+/-- The value the first declaration of `key` in a declaration list gives,
+if one does; a value may hold a colon of its own (`url(data:…)`). -/
+def cssDeclOf (decls key : String) : Option String :=
+  (decls.splitOn ";").findSome? fun d =>
+    match d.splitOn ":" with
+    | name :: rest =>
+      if name.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
+      else none
+    | [] => none
+
 
 /-! ### The natbib fixtures the bibliography check blocks share -/
 

@@ -1245,6 +1245,11 @@ public inductive FrameArea where
   | paper
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A frame's text area on the PDF page: the IR's one decision
+(`Ir.frameInTextArea`), wherever the chrome may stand (`footAllowed`). -/
+public def frameAreaFor (footAllowed : Bool) (valign : VAlign) : FrameArea :=
+  if Ir.frameInTextArea footAllowed valign then .text else .margins
+
 /-- The inputs in force when the collector opens a frame. The footer is
 computed by the shared IR decision, including plain standout frames and
 an authored running footer. Source ownership and the displayed counter
@@ -13428,10 +13433,9 @@ private def collectBlock (r : Rd) (a : Acc)
     -- footer travel together through `frameOpen`. Wherever the chrome may
     -- stand — slides without a `\runningfoot` — every frame but the title
     -- page, whose own template places its furniture, takes beamer's text
-    -- area (`FrameOpening.area`): the paper's top to `\footheight` above
-    -- its bottom edge, footline or none.
-    let area : FrameArea :=
-      if a.footAllowed && !(valign matches .golden) then .text else .margins
+    -- area (`frameAreaFor`, the IR's one decision): the paper's top to
+    -- `\footheight` above its bottom edge, footline or none.
+    let area := frameAreaFor a.footAllowed valign
     let a := collectFrameOpen a standout breakable area
     let r := frameReader r a standout area
     -- Every frame declares its distribution (beamer's default is centring,
