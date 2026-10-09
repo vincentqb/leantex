@@ -6299,6 +6299,12 @@ opens it (`Layout.openFrameBody`). -/
 public def frameOpensBody (chromeAllowed hasTitle : Bool) (valign : VAlign) : Bool :=
   hasTitle || Ir.frameInTextArea chromeAllowed valign
 
+/-- An untitled frame opens its body exactly where the IR places it in the
+text area. -/
+public theorem frameOpensBody_projects (chromeAllowed : Bool) (valign : VAlign) :
+    frameOpensBody chromeAllowed false valign = Ir.frameInTextArea chromeAllowed valign := by
+  simp only [frameOpensBody, Bool.false_or]
+
 /-- One reference-list entry: the style's marker, the formatted content,
 and the anchor its citations link to. A numbered entry's content is one
 element beside its label, so the list's grid can hang the labels in one

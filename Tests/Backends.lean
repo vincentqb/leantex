@@ -1058,7 +1058,7 @@ stands that frame in beamer's text area — both projections of
 `Ir.frameInTextArea`, at every alignment and either chrome. -/
 theorem frame_area_agree (chrome : Bool) (v : Ir.VAlign) :
     HtmlDoc.frameOpensBody chrome false v = (Layout.frameAreaFor chrome v == .text) := by
-  cases chrome <;> cases v <;> rfl
+  rw [HtmlDoc.frameOpensBody_projects, Layout.frameAreaFor_projects]
 
 /-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
 elaborated once; each backend keeps or drops through `Ir.keepFor` at its own

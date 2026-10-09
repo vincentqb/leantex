@@ -1252,6 +1252,13 @@ public inductive FrameArea where
 public def frameAreaFor (footAllowed : Bool) (valign : VAlign) : FrameArea :=
   if Ir.frameInTextArea footAllowed valign then .text else .margins
 
+/-- The page's text area is the IR's decision, read back through the area it
+selects. -/
+public theorem frameAreaFor_projects (footAllowed : Bool) (valign : VAlign) :
+    (frameAreaFor footAllowed valign == .text) = Ir.frameInTextArea footAllowed valign := by
+  unfold frameAreaFor
+  cases Ir.frameInTextArea footAllowed valign <;> rfl
+
 /-- The inputs in force when the collector opens a frame. The footer is
 computed by the shared IR decision, including plain standout frames and
 an authored running footer. Source ownership and the displayed counter
