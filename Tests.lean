@@ -89,6 +89,7 @@ import Tests.BlockHeaderClearance
 import Tests.BlockGeometry
 import Tests.FrameArea
 import Tests.BlockSkips
+import Tests.BlockTemplate
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
@@ -392,6 +393,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.BlockHeaderClearance.checks ref oneFace
   Tests.BlockGeometry.blockGeometryChecks ref oneFace
   Tests.BlockSkips.blockSkipChecks ref oneFace
+  Tests.BlockTemplate.checks ref oneFace
   Tests.BlockFillConditionals.blockFillConditionalChecks ref oneFace
   Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
   Tests.ThemeCss.epochChecks ref oneFace

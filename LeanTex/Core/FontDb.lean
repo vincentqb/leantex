@@ -149,8 +149,11 @@ public def resolve (faces : Array Face) (family : String) (v : Variant) :
     | none => none
     | some face =>
       let slantOk := face.italic == v.italic
+      -- A named face is its name's regular, whatever its weight: "Fira Sans
+      -- SemiBold" asked for upright is met by the SemiBold face itself.
       let weightOk :=
-        if v.bold then face.weight ≥ 550 else face.weight ≤ 550
+        if named && !v.bold then true
+        else if v.bold then face.weight ≥ 550 else face.weight ≤ 550
       some (face, slantOk && weightOk)
 
 /-- The face a declared per-variant name denotes: a font file name is that

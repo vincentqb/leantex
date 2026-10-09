@@ -2301,6 +2301,11 @@ public structure FontSpec where
   `=sym` values survive compatibility rewriting as typed policy. -/
   mathSources : Math.MathAlphabetSources := {}
   dirs : Array String := #[]
+  /-- Families the document names beside the three slots, as fontspec's
+  `\newfontfamily\cmd{Family}` declares them: the command and the family,
+  in declaration order, each the slot `familySlotBase + i` (`Style.family`
+  selects it), its declared faces in `faces` under that slot. -/
+  families : Array (String × String) := #[]
   /-- Per-variant faces the document named (fontspec's `UprightFont=`,
   `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`, `FontFace={series}{shape}`):
   `(slot, weight, italic)` → the face name, resolved like any other named
@@ -2308,6 +2313,25 @@ public structure FontSpec where
   CSS number (`Weight.css`). -/
   faces : Array ((Nat × Nat × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
+
+/-- The first slot past the body, sans and mono slots: a declared family's. -/
+public def familySlotBase : Nat := 3
+
+/-- The slot a declared family's command selects. -/
+public def FontSpec.familySlot (s : FontSpec) (name : String) : Option Nat :=
+  (s.families.findIdx? (·.1 == name)).map (· + familySlotBase)
+
+/-- The family a declared slot names. -/
+public def FontSpec.slotFamily (s : FontSpec) (slot : Nat) : Option String :=
+  if slot < familySlotBase then none else (s.families[slot - familySlotBase]?).map (·.2)
+
+/-- Declare a family by its command: a redeclaration keeps the command's
+slot and replaces the family (fontspec's `\setfontfamily` and
+`\renewfontfamily` redefine the command in place). -/
+public def FontSpec.declareFamily (s : FontSpec) (name family : String) : FontSpec :=
+  if s.families.any (·.1 == name) then
+    { s with families := s.families.map fun (n, f) => if n == name then (n, family) else (n, f) }
+  else { s with families := s.families.push (name, family) }
 
 /-- Replace-on-redeclare, the same door `Tokens.declare` and
 `Palette.declare` are: a later declaration of the same variant overrides,
@@ -2857,6 +2881,10 @@ public inductive Style where
   (fntguide §2.2: upright, italic, slanted, small caps are one axis), so
   selecting upright clears italic and small caps both. -/
   | upright
+  /-- A family the document declared beside the three slots (fontspec's
+  `\newfontfamily\cmd{Family}`, `FontSpec.families`), by its slot: family
+  selection only, as `\sffamily` is — series and shape stand. -/
+  | family (slot : Nat)
   | size (name : String)
   /-- `\fontsize{size}{leading}\selectfont`: both dimensions stay affine
   until the run's local measure and current font metrics are known. -/
@@ -3310,6 +3338,7 @@ public def Style.label : Style → String
   | .medium => "medium"
   | .series w => s!"series:{w.series}"
   | .upright => "upright"
+  | .family n => s!"family:{n}"
   | .size n => s!"size:{n}"
   | .fontSize _ _ => "fontsize"
   | .lang tag => s!"lang:{tag}"
@@ -7588,6 +7617,104 @@ public def titlePartOf (slots : Array TitleSlot) (n : String) : Option TitlePart
     slot.parts.zipIdx.findSome? fun (part, k) =>
       if titlePartRole i k == n then some part else none
 
+/-! ### A beamer block template, read
+
+beamer sets a block between two templates, `block begin` before its body and
+`block end` after it (beamerbaselocalstructure.sty: `\par\usebeamertemplate{block
+begin}` … `\par\usebeamertemplate{block end}`), one pair per kind. The default
+inner theme's pair sets two colour boxes (beamerinnerthemedefault.sty); a theme
+that replaces the pair writes its own list in TeX's box-and-rule vocabulary,
+which `BlockTemplate.read` interprets into `BlockShape`: the skips the list
+stands in vertical mode, the box the title stands in, the box holding title and
+body when there is one, and the rules beside those boxes. Both backends read the
+record; a style with no shape is the default inner theme's pair. -/
+
+/-- A skip a block template stands in vertical mode: a skip register, read
+where the block stands (`\vskip\medskipamount`, `\smallskip`: `skipAmount`),
+or a glue the template writes. -/
+public inductive BlockSkip where
+  | register (name : String)
+  | glue (g : SymGlue)
+  deriving Repr, BEq, Inhabited
+
+/-- One skip, in force where the block stands. -/
+public def BlockSkip.resolve (tokens : Tokens) : BlockSkip → SymGlue
+  | .register n => skipAmount tokens n
+  | .glue g => g
+
+/-- A run of skips, added as TeX's list adds them. -/
+public def blockSkipSum (tokens : Tokens) (skips : Array BlockSkip) : SymGlue :=
+  skips.foldl (fun acc s => acc.add (s.resolve tokens)) {}
+
+/-- The box a template's rule stands beside: the title's own box
+(`\setbox\B\vbox{… \insertblocktitle …}`), or the box holding title and body
+(`\setbox\B\vbox\bgroup` in `block begin`, `\egroup` in `block end`). -/
+public inductive BlockSpan where
+  | title
+  | whole
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A rule beside one of a block's boxes, as themes spell it
+(`\llap{\vrule width W height \ht\B depth \dp\B \hskip S}\box\B`): `width`
+wide, `sep` from the box's `side`, from the box's top to its bottom. A hanging
+rule stands outside the box's line (`\llap`, `\rlap`), so the box keeps the
+measure; a rule inside the line moves the box in by `width + sep` on its side,
+the box set that much narrower. `color` is the colour in force at the rule, and
+`name` the palette entry it reads (`BlockEdge.ink`). -/
+public structure BlockEdge where
+  span : BlockSpan
+  side : FlushSide
+  width : SymGlue
+  sep : SymGlue
+  hang : Bool
+  color : Color
+  name : Option String := none
+  deriving Repr, BEq, Inhabited
+
+/-- **The one reading of a template rule's colour**, against the palette in
+force where the block stands: the entry the rule names, else the colour it was
+declared with. The page reads it so, and the stylesheet writes the same lookup
+as `var(--name, colour)`. -/
+public def BlockEdge.ink (e : BlockEdge) (pal : Palette) : Color :=
+  (e.name.bind pal.find?).getD e.color
+
+/-- The title as a block template sets it. `boxed`: in a box of its own,
+`\hsize` wide, which TeX places in its list by the interline rule from the
+box's height (`\setbox\B\vbox{…}` … `\box\B`); otherwise a paragraph of the
+list it stands in. `strut`: `\strut` at both ends of the title, so its first
+line stands at least `.7\baselineskip` tall and its last `.3\baselineskip`
+deep. `parskip`: a node stands before the title's paragraph in its list —
+`\usebeamercolor[fg]` puts a colour change there — so the paragraph spends
+`\parskip` inside its box: TeX adds `\parskip` before a paragraph unless the
+paragraph opens an empty internal list (tex.web §1091). -/
+public structure BlockTitleBox where
+  boxed : Bool := false
+  strut : Bool := false
+  parskip : Bool := false
+  deriving Repr, BEq, Inhabited
+
+/-- A block template, read (`BlockTemplate.read`). `untitled`: an untitled
+block keeps the title box, empty (`true`), or sets none, beamer's
+`\ifx\insertblocktitle\@empty` test (`false`). `whole`: the box holding title
+and body, when the template sets one — `some true` when the first paragraph of
+an untitled block's body spends `\parskip` inside it, a colour change standing
+first. -/
+public structure BlockShape where
+  before : Array BlockSkip := #[]
+  title : BlockTitleBox := {}
+  untitled : Bool := true
+  between : Array BlockSkip := #[]
+  after : Array BlockSkip := #[]
+  whole : Option Bool := none
+  edges : Array BlockEdge := #[]
+  deriving Repr, BEq, Inhabited
+
+/-- How far a span's box stands in from the measure on one side: the rules
+inside its line there, `width + sep` each. -/
+public def BlockShape.inset (s : BlockShape) (span : BlockSpan) (side : FlushSide) : SymGlue :=
+  s.edges.foldl (fun acc e =>
+    if e.span == span && e.side == side && !e.hang then (acc.add e.width).add e.sep else acc) {}
+
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.
 `font` is a template: the inline wrappers a declaration like
@@ -7670,6 +7797,9 @@ public structure ElementStyle where
   only: a title page that declares any sets exactly its slots, each where
   it is pinned. Empty is the built-in title page. -/
   slots : Array TitleSlot := #[]
+  /-- A beamer block kind's template (`BlockShape`), read by the three block
+  elements only; `none` is the default inner theme's colour boxes. -/
+  shape : Option BlockShape := none
   deriving Repr, BEq, Inhabited
 
 /-- What of the `titlepage` style the title heading itself takes: every key
@@ -7699,7 +7829,9 @@ override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
 furniture (their `font` is read; `titlepage` also reads `align` and
 `separator`; the other keys have no meaning there yet); `logo` reads
 `align` only — where the logo stands in the furniture band (`logoAlign`,
-both backends). Beyond this list, a
+both backends); `block`, `alertblock` and `exampleblock`, beamer's three
+blocks, read `font` (the title's) and `shape` (the kind's template). Beyond
+this list, a
 `\define`d name is styleable too (the elaborator admits it once the
 `\define` stands): the role's rhythm rides `before`/`after` on the page,
 and the whole style addresses the `u-<name>` class hook in HTML. -/
@@ -7708,7 +7840,7 @@ public def styleableElements : List String :=
    "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
    "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo",
-   "link", "url", "cite"]
+   "link", "url", "cite", "block", "alertblock", "exampleblock"]
 
 public structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -7716,6 +7848,36 @@ public structure Styles where
 
 public def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
+
+/-- The `\style` element a titled block reads: its environment's own name.
+tcolorbox's box reads none of the beamer blocks' styles. -/
+public def TitledKind.styleElement : TitledKind → Option String
+  | .block => some "block"
+  | .alert => some "alertblock"
+  | .example => some "exampleblock"
+  | .box => none
+
+/-- **The template a titled block stands in**: its kind's declared shape, the
+one lookup both backends make; `none` is the default inner theme's pair. -/
+public def blockShapeOf (styles : Styles) (kind : TitledKind) : Option BlockShape :=
+  kind.styleElement.bind fun el => (styles.find? el).bind (·.shape)
+
+/-- **A block title's font template**: its kind's own, else the plain
+block's, beamer's font parent chain (beamerfontthemedefault.sty sets
+`parent={block title,alerted text}` on the alerted title and
+`parent={block title,example text}` on the example one); `none` is the
+title's built-in bold. -/
+public def blockTitleFont (styles : Styles) (kind : TitledKind) : Option (Array Inline) :=
+  kind.styleElement.bind fun el => ((styles.find? el).bind (·.font)).orElse fun _ =>
+    if el == "block" then none else (styles.find? "block").bind (·.font)
+
+/-- An alerted or example title that declares no font takes the plain
+block's (`_exact`): the parent chain, by construction. -/
+public theorem blockTitleFont_parent_exact (styles : Styles) (kind : TitledKind) (el : String)
+    (hel : kind.styleElement = some el) (hne : el ≠ "block")
+    (h : (styles.find? el).bind (·.font) = none) :
+    blockTitleFont styles kind = (styles.find? "block").bind (·.font) := by
+  simp [blockTitleFont, hel, h, hne]
 
 /-- A link's body in its kind's declared ink (`ElementStyle.color`: `link`
 for a cross-reference, `url` for a URL, `cite` for a citation mark), what
@@ -17753,7 +17915,8 @@ public def paraStepOne (x : Inline) : Option String :=
   | .styled .bold body | .styled .italic body | .styled .mono body
   | .styled .smallcaps body | .styled .emph body | .styled .sans body
   | .styled .roman body | .styled .medium body | .styled (.series _) body
-  | .styled .upright body | .styled (.lang _) body => paraStepIn body.toList
+  | .styled .upright body | .styled (.lang _) body | .styled (.family _) body =>
+    paraStepIn body.toList
   | .colored _ _ body => paraStepIn body.toList
   | .located _ body => paraStepIn body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
@@ -17816,6 +17979,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .styled (.series w) body => #[.styled (.series w) (liftParaStepIn body.toList)]
   | .styled .upright body => #[.styled .upright (liftParaStepIn body.toList)]
   | .styled (.lang tag) body => #[.styled (.lang tag) (liftParaStepIn body.toList)]
+  | .styled (.family k) body => #[.styled (.family k) (liftParaStepIn body.toList)]
   | .colored c n body => #[.colored c n (liftParaStepIn body.toList)]
   | .located span body => #[.located span (liftParaStepIn body.toList)]
   | .text s => #[.text s]
@@ -17869,7 +18033,7 @@ private theorem liftParaStepOne_text (x : Inline) :
   | .styled (.bold) body | .styled (.italic) body | .styled (.mono) body
   | .styled (.smallcaps) body | .styled (.emph) body | .styled (.sans) body
   | .styled (.roman) body | .styled (.medium) body | .styled (.series _) body
-  | .styled (.upright) body | .styled (.lang _) body
+  | .styled (.upright) body | .styled (.lang _) body | .styled (.family _) body
   | .colored _ _ body | .located _ body =>
     have ih := liftParaStepIn_text body.toList
     simp only [liftParaStepOne, plainText, plainTextList, plainTextOne] at ih ⊢
@@ -17896,7 +18060,7 @@ public def Decl.setsSize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) | .style .normal => true
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => false
+  | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- Whether a font-size length reads the size in force (`em`, `ex`): a
 `\fontsize` spelled so scales the size declared before it. -/
@@ -17914,7 +18078,7 @@ public def Decl.shadowsSize : Decl → Bool
   | .style (.fontSize s l) => !affineFontRelative s && !affineFontRelative l
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => false
+  | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- Whether a declaration does nothing but set the size: a named step or a
 `\fontsize` — what a later absolute size leaves without effect. -/
@@ -17922,7 +18086,7 @@ public def Decl.onlySize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) => true
   | .style .normal | .style .bold | .style .italic | .style .mono | .style .smallcaps
   | .style .emph | .style .sans | .style .roman | .style .medium | .style (.series _)
-  | .style .upright | .style (.lang _) | .color _ _ => false
+  | .style .upright | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- The step a size declaration leaves in force: its named size, or `none`
 under an explicit `\fontsize` or a `\normalfont`, where the run's own
@@ -17932,7 +18096,7 @@ public def Decl.sizeStep? : Decl → Option (Option String)
   | .style (.fontSize _ _) | .style .normal => some none
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => none
+  | .style (.lang _) | .style (.family _) | .color _ _ => none
 
 /-- The named step a list of declarations gives the paragraph they stand
 over: the first size declaration's (`Decl.sizeStep?`), `none` under none. -/

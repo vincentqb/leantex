@@ -613,6 +613,7 @@ private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
   | .medium => some #["font-weight: 400;"]
   | .series w => some #[s!"font-weight: {w.css};"]
   | .upright => some #["font-style: normal;", "font-variant-caps: normal;"]
+  | .family s => some #[s!"font-family: var(--font-{s});"]
   | .normal => some #[]
   | .size name => (scale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
@@ -2206,6 +2207,63 @@ public def titleSlotCss (doc : Doc) : String :=
   "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
 
+/-- A block template's length as the stylesheet writes it: its print part in
+the screen's unit, as the gap sheet writes one (`screenMilli`), its `em` and
+`ex` parts kept for the face to resolve. -/
+public def blockShapeLength (size : Int) (g : SymGlue) : String :=
+  let l := g.width
+  let parts := (if l.sp != 0 then [milliRem (screenMilli size l.sp)] else []) ++
+    (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
+    (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
+  match parts with
+  | [] => "0rem"
+  | [one] => one
+  | many => "calc(" ++ String.intercalate " + " many ++ ")"
+
+/-- **A block template's boxes and rules, as the stylesheet sets them**: the
+projection of each kind's `Ir.BlockShape`, the value the page's templated
+block arm reads. The title's box is the header, padded above by the
+`\parskip` its line spends and the box's own where its list opens on a colour
+change; the box holding title and body is the section. A rule beside a box is
+that box's `::before` (left) or `::after` (right), `width` wide, `sep` beside
+the box's edge, from the box's top below the line's `\parskip` to its bottom,
+in the palette entry it reads — `var(--name, colour)`, the spelling of
+`Ir.BlockEdge.ink`; a rule inside the line pads its box by `width + sep`. The
+lengths keep their font-relative units: neither box sets a size of its own,
+so an `em` is the body's, the font the template's rule is read in. A shaped
+block's body keeps the page's `\parskip`, which the colour boxes' reset
+takes from every block's children. -/
+public def blockShapeCss (doc : Doc) : String :=
+  let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
+    (Ir.blockShapeOf doc.styles k).map (k, ·)
+  if shapes.isEmpty then "" else
+  let len := blockShapeLength doc.page.fontSize
+  let paint (e : Ir.BlockEdge) : String := match e.name with
+    | some n => s!"var(--{n}, {cssColor e.color})"
+    | none => cssColor e.color
+  let rule (pseudo : String) (sel : String) (e : Ir.BlockEdge) (pad : String) : String :=
+    let place := if e.side == .left then "left" else "right"
+    s!"{sel}::{pseudo} \{ content: \"\"; position: absolute; top: {peerGap}; bottom: 0; \
+{place}: calc({pad} - {len e.sep} - {len e.width}); width: {len e.width}; background: {paint e}; }\n"
+  let rules := shapes.map fun (k, sh) =>
+    let sel := s!"section.block-shaped.block-{k.name}"
+    let inner := if sh.title.parskip then peerGap else "0rem"
+    let edges (span : Ir.BlockSpan) := sh.edges.filter (·.span == span)
+    let boxRules (span : Ir.BlockSpan) (box : String) : String :=
+      let es := edges span
+      let padL := len (sh.inset span .left)
+      let padR := len (sh.inset span .right)
+      let left := (es.find? (·.side == .left)).map fun e => rule "before" box e padL
+      let right := (es.find? (·.side == .right)).map fun e => rule "after" box e padR
+      (if es.isEmpty then "" else
+        s!"{box} \{ position: relative; padding-inline: {padL} {padR}; }\n") ++
+      left.getD "" ++ right.getD ""
+    let titleRules := boxRules .title s!"{sel} > header"
+    let wholeRules := boxRules .whole sel
+    s!"{sel} > header \{ padding-top: calc({peerGap} + {inner}); }\n" ++ titleRules ++ wholeRules
+  let joined := String.join rules
+  ":where(section.block.block-shaped > *) { --parskip: inherit; }\n" ++ joined
+
 /-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
 length at the body size, as the print walk spends it — millimetres the
 screen keeps in proportion to the type, through the stylesheet's own
@@ -2459,6 +2517,7 @@ public def themeCss (doc : Doc) : String :=
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
+  blockShapeCss doc ++
   -- A role names a hue; the contract chooses its lightness on each ground
   -- (`Contrast.realizeDoc`, the one solver site): where a run realized on
   -- a ground the stylesheet paints, the scope carries the ink the palette
@@ -2620,14 +2679,16 @@ substitute for the shipped file. -/
 private def slotName : Nat → String
   | 0 => "body"
   | 1 => "sans"
-  | _ => "mono"
+  | 2 => "mono"
+  | n => toString n
 
 /-- The synthetic families face `i` serves: one per slot any of whose
 index entries — the standard corners and every declared or used weight —
 resolves to it, plus `ltx-math` for the math face. Empty for a face only
 per-glyph fallback reaches. -/
 private def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
-  ((List.range 3).filterMap fun s =>
+  let slots := fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
+  ((List.range slots).filterMap fun s =>
     if fs.index.any (fun e => e.1.1 == s && e.2 == i) then
       some s!"ltx-{slotName s}"
     else none) ++
@@ -3099,6 +3160,10 @@ private def tokenVars (cfg : Config) (doc : Doc) : String :=
       [s!"    --font-body: {slot 0 bodyDeclared};",
        s!"    --font-sans: {slot 1 "sans-serif"};",
        s!"    --font-mono: {slot 2 "monospace"};"] ++
+      -- Each declared family's slot: its own stack, its generic the body's.
+      (doc.fonts.families.toList.zipIdx.map fun (_, i) =>
+        let s := Ir.familySlotBase + i
+        s!"    --font-{s}: {slot s bodyDeclared};") ++
       (if fs.math.isSome then
         [s!"    --font-math: {stackFor fs "ltx-math" "math"};"]
        else [])
@@ -5865,6 +5930,8 @@ private def styleClass : Style → String
   -- `font-weight`, the value CSS matches faces by, never a class
   | .series w => s!"w{w.css}"
   | .upright => "up"
+  -- unused: the styled arm emits a family as its stack's custom property
+  | .family s => s!"family-{s}"
   | .size n => "size-" ++ n
   -- unused: arbitrary sizes emit one inline declaration.
   | .fontSize _ _ => "fontsize"
@@ -6330,6 +6397,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
     -- `hyphens: auto` and assistive technology both read.
     | .lang tag => acc.push (Html.elem "span" kids #[("lang", tag)])
+    -- A declared family is its slot's stack (`tokenVars`), as the PDF sets
+    -- the run in that slot's face.
+    | .family s => acc.push (Html.elem "span" kids #[("style", s!"font-family: var(--font-{s})")])
     | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
   | .role n body =>
     -- The class hook survives as an addressable class. A title-part role
@@ -6490,7 +6560,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .styled st _ => found || match st with
     | .fontSize size leading => readsInlineMeasure size || readsInlineMeasure leading
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .lang _ => false
+    | .medium | .series _ | .upright | .family _ | .size _ | .lang _ => false
   | .rule _ height raise =>
     found || readsInlineMeasure height || readsInlineMeasure raise
   | .image _ size _ => found || size.height.any fun l =>
@@ -7513,6 +7583,7 @@ public def LabelFace.step (f : LabelFace) (s : Style) : LabelFace :=
   | .mono => { f with slot := 2 }
   | .sans => { f with slot := 1 }
   | .roman => { f with slot := 0 }
+  | .family s => { f with slot := s }
   | .normal => {}
   | .lang tag => { f with lang := some tag }
   | .size n => { f with size := some n }
@@ -7542,7 +7613,9 @@ public def LabelFace.attrs (f : LabelFace) : Array (String × String) :=
   let cls : Array (String × String) :=
     if classes.isEmpty then #[] else #[("class", " ".intercalate classes)]
   let family : Array (String × String) :=
-    if f.slot == 2 then #[("style", "font-family: var(--font-mono)")] else #[]
+    if f.slot == 2 then #[("style", "font-family: var(--font-mono)")]
+    else if Ir.familySlotBase ≤ f.slot then #[("style", s!"font-family: var(--font-{f.slot})")]
+    else #[]
   let lang : Array (String × String) := match f.lang with
     | some tag => #[("lang", tag)]
     | none => #[]
@@ -8171,10 +8244,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c}; {titledBoxPaint}").getD ""
     let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
       barStyle
+    -- The kind's title font (`\setbeamerfont{block title}`), the page's.
+    let shown := match Ir.blockTitleFont cfg.styles kind with
+      | some tpl => Ir.fillTemplate tpl title
+      | none => title
     let head : Array Html.Node :=
       if title.isEmpty then
         #[Html.elem "header" #[] #[("style", if barStyle.isEmpty then "min-height: 1lh;" else barStyle)]]
-      else #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
+      else #[Html.elem "header" (inlines cfg shown) #[("style", titleStyle)]]
     let bodyCfg := { cfg.into with
       listingFg := some paint.fg, listingGround := look.bg.or cfg.listingGround
       bodyGround := look.bg.or cfg.bodyGround
@@ -8195,6 +8272,25 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
           #[("class", "tcolorbox-body"), ("style", bodyStyle ++ bodyPaint)]))
         #[("class", "tcolorbox")]
     else
+    match Ir.blockShapeOf cfg.styles kind with
+    | some shape =>
+      -- The kind's own template (`Ir.BlockShape`): no colour box, the title
+      -- in its font on the page's ground, the body's paragraphs keeping the
+      -- page's skip; the boxes' rules are the stylesheet's (`blockShapeCss`).
+      let showTitle := !title.isEmpty || shape.untitled
+      let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
+        { fg := titleLook.fg, bg := parent.bg }).fg
+      let head : Array Html.Node :=
+        if !showTitle then #[]
+        else if title.isEmpty then #[Html.elem "header" #[] #[("style", "min-height: 1lh;")]]
+        else #[Html.elem "header" (inlines cfg shown)
+          #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal parent.bg)]]
+      let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := parent.bg }).fg
+      let shapedCfg := { cfg.into with
+        listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
+      Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
+        #[("class", s!"block block-{kind.name} block-shaped"), ("style", s!"color: {cssColor ink};")]
+    | none =>
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.
     let kids := match look.bg with

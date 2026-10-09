@@ -1459,6 +1459,8 @@ private def declStyleOf (name : String) : Option Ir.Style :=
   else if name.startsWith "@series:" then
     (Ir.Weight.parseSeries ((name.drop "@series:".length).toString)).map
       fun (w, _) => .series w
+  else if name.startsWith "@family:" then
+    ((name.drop "@family:".length).toString.toNat?).map .family
   else declStyles.lookup name
 
 /-- The block form of the language switch: the flow state update, outside
@@ -14256,6 +14258,11 @@ private def fontVariantKey? (key : String) : Option (Nat × Nat × Bool) :=
     (seriesKey series true).map fun (w, i) => (slot, w, i)
   | _ => none
 
+/-- A declared family's variant spelling, `fontVariantKey?`'s past the
+slot: `bold`, `sb`, `sb.italic`. -/
+private def familyVariantKey? (variant : List String) : Option (Nat × Bool) :=
+  (fontVariantKey? (String.intercalate "." ("body" :: variant))).map fun (_, w, i) => (w, i)
+
 /-- `\fonts{...}`: family names per slot, and `dir`, a directory of font
 files shipped beside the document. `rm`/`sf`/`tt` are accepted as aliases so
 a LaTeX habit does not become an error. A dotted key names one variant's
@@ -14277,6 +14284,30 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "math", .str f => spec := { spec with math := some f }
     | "dir", .str d =>
       spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
+    -- A declared family beside the three slots (fontspec's
+    -- `\newfontfamily\cmd{Family}`): `family.<cmd>`, its faces
+    -- `family.<cmd>.<variant>` under its slot (`FontSpec.familySlot`).
+    | key, v@(.str f) =>
+      match key.splitOn "." with
+      | ["family", name] => spec := spec.declareFamily name f
+      | "family" :: name :: variant =>
+        match spec.familySlot name, familyVariantKey? variant with
+        | some slot, some (w, i) => spec := spec.declareFace (slot, w, i) f
+        | _, _ =>
+          evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
+            (fontKeys ++ ["family.<name>", "family.<name>.<variant>"]) pos))
+      | _ =>
+        match fontVariantKey? key with
+        | some variant => spec := spec.declareFace variant f
+        | none =>
+          match Math.MathAlphabet.sourceKey? key with
+          | some _ =>
+            evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key "sym or text" v pos))
+          | none =>
+            evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
+              (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
+                "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)",
+                "family.<name>"]) pos))
     | key, v =>
       match Math.MathAlphabet.sourceKey? key with
       | some a =>
@@ -14320,7 +14351,128 @@ private def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"]
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "shape"]
+
+/-- The keys of a block's `shape = {...}` (`Ir.BlockShape`), and of one of
+its `edge = {...}` groups (`Ir.BlockEdge`). -/
+private def blockShapeKeys : List String :=
+  ["before", "title", "untitled", "between", "after", "whole", "edge"]
+
+private def blockEdgeKeys : List String := ["span", "side", "width", "sep", "hang", "color"]
+
+/-- A block's `shape = {...}`, the native spelling of a beamer block
+template's reading (`BlockTemplate.native` writes it): skips as `+`-joined
+skip registers or glues, the title's box as flags, the untitled arm, the
+box holding title and body, and the rules beside the boxes. -/
+private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option BlockShape) := do
+  let unbrace (src : String) : String :=
+    let t := src.trimAscii.toString
+    if t.startsWith "{" && t.endsWith "}" && t.length ≥ 2
+    then ((t.drop 1).dropEnd 1).toString else t
+  let bad (what : String) : EM Unit :=
+    diag ctx .E0323 s!"a block's 'shape' has {what}" pos
+      (help := "write shape = { before = medskipamount, title = box strut, edge = { span = title, side = left, width = 2pt, sep = 4pt, hang = true, color = accent } }")
+  let lengthOf (v : String) : Option Length :=
+    match Decl.parseValue v ctx.tokens.entries with
+    | some (.glue g) => if g.stretch == {} && g.shrink == {} && !g.fil then some g.width else none
+    | some (.dim d) => some (Dim.Length.ofSp d)
+    | _ =>
+      match Decl.parseLengthExpr ctx.tokens.entries v with
+      | .ok g => if g.stretch == {} && g.shrink == {} && !g.fil then some g.width else none
+      | .error _ => none
+  let skipsOf (v : String) : Option (Array BlockSkip) :=
+    let items := ((unbrace v).splitOn "+").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    items.toArray.mapM fun item =>
+      if ["smallskipamount", "medskipamount", "bigskipamount"].contains item then
+        some (.register item)
+      else (Decl.parseGlue item).map .glue
+  let mut sh : BlockShape := {}
+  let mut ok := true
+  for entry in Decl.splitEntries (unbrace src) do
+    match Decl.splitEntry entry with
+    | none => ok := false; bad s!"an entry that is not key = value: {entry.quote}"
+    | some (k, v) =>
+      let vt := v.trimAscii.toString
+      match k with
+      | "before" | "between" | "after" =>
+        match skipsOf vt with
+        | some sk =>
+          if k == "before" then sh := { sh with before := sk }
+          else if k == "between" then sh := { sh with between := sk }
+          else sh := { sh with after := sk }
+        | none => ok := false; bad s!"'{k}' that is not skip registers or glues joined by +: {vt.quote}"
+      | "title" =>
+        let words := (vt.splitOn " ").filter (!·.isEmpty)
+        if words == ["plain"] then sh := { sh with title := {} }
+        else if words.all (["box", "strut", "parskip"].contains ·) then
+          sh := { sh with title := { boxed := words.contains "box", strut := words.contains "strut",
+                                     parskip := words.contains "parskip" } }
+        else ok := false; bad s!"a 'title' that is not plain or flags among box, strut, parskip: {vt.quote}"
+      | "untitled" =>
+        if vt == "box" then sh := { sh with untitled := true }
+        else if vt == "none" then sh := { sh with untitled := false }
+        else ok := false; bad s!"an 'untitled' that is neither box nor none: {vt.quote}"
+      | "whole" =>
+        if vt == "parskip" then sh := { sh with whole := some true }
+        else if vt == "plain" then sh := { sh with whole := some false }
+        else ok := false; bad s!"a 'whole' that is neither parskip nor plain: {vt.quote}"
+      | "edge" =>
+        let mut span : Option BlockSpan := none
+        let mut side : FlushSide := .left
+        let mut width : Option Length := none
+        let mut sep : Length := {}
+        let mut hang := true
+        let mut color : Option (Ir.Color × Option String) := none
+        for sub in Decl.splitEntries (unbrace v) do
+          match Decl.splitEntry sub with
+          | none => ok := false; bad s!"an edge entry that is not key = value: {sub.quote}"
+          | some (ek, ev) =>
+            let et := ev.trimAscii.toString
+            match ek with
+            | "span" =>
+              if et == "title" then span := some .title
+              else if et == "whole" then span := some .whole
+              else ok := false; bad s!"an edge 'span' that is neither title nor whole: {et.quote}"
+            | "side" =>
+              if et == "left" then side := .left
+              else if et == "right" then side := .right
+              else ok := false; bad s!"an edge 'side' that is neither left nor right: {et.quote}"
+            | "width" =>
+              match lengthOf et with
+              | some l => width := some l
+              | none => ok := false; bad s!"an edge 'width' that is not a length: {et.quote}"
+            | "sep" =>
+              match lengthOf et with
+              | some l => sep := l
+              | none => ok := false; bad s!"an edge 'sep' that is not a length: {et.quote}"
+            | "hang" =>
+              if et == "true" then hang := true
+              else if et == "false" then hang := false
+              else ok := false; bad s!"an edge 'hang' that is neither true nor false: {et.quote}"
+            | "color" =>
+              match ← readColor ctx ctx.palette none et pos with
+              | .resolved c token => color := some (c, token)
+              | .rejected => ok := false
+              | .missing =>
+                ok := false
+                diag ctx .E0326 s!"'{et}' is not in the palette" pos
+            | _ =>
+              ok := false
+              modify fun st' => { st' with
+                diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
+        match span, width, color with
+        | some sp, some w, some (c, n) =>
+          let wg : SymGlue := { width := w }
+          let sg : SymGlue := { width := sep }
+          let edge : BlockEdge :=
+            { span := sp, side := side, width := wg, sep := sg, hang := hang, color := c, name := n }
+          sh := { sh with edges := sh.edges.push edge }
+        | _, _, _ => ok := false; bad "an edge without its span, width or color"
+      | _ =>
+        ok := false
+        modify fun st' => { st' with
+          diags := st'.diags.push (Decl.unknownKey ctx.file "block shape" k blockShapeKeys pos) }
+  return if ok then some sh else none
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. A
 slot owns its box; repeated `part` entries own independently styled data.
@@ -14448,6 +14600,12 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         else
           diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
             (help := "sizes: tiny, scriptsize, footnotesize, small, normalsize, large, Large")
+      | "shape" =>
+        if !["block", "alertblock", "exampleblock"].contains element then
+          diag ctx .E0323 s!"'shape' in '\\style' belongs to a beamer block, not '{element}'" pos
+            (help := "write \\style{block}{ shape = {...} }")
+        else if let some sh ← blockShapeOf ctx valueSrc pos then
+          st := { st with shape := some sh }
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
       | "rule-thickness" => st := { st with ruleThickness := ← asLength }
@@ -14962,6 +15120,10 @@ public inductive PDecl where
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
   | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
   | standoutColor (name source : String) (pos : Pos)
+  /-- A block template's paint site (`BeamerColor.siteMarker`): the beamer
+  element and channel a template rule reads, and the palette entry it
+  paints, resolved with every named colour from here on. -/
+  | beamerSite (element channel key : String) (pos : Pos)
   /-- A preamble page-ground selection, resolved where it stands. `none`
   is `\nopagecolor`; a concrete source is `\pagecolor`. -/
   | pageGround (source : Option String) (pos : Pos)
@@ -15227,6 +15389,16 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             out := out.push (.logoSlot (name == "logoleft") (some body) pos)
           | _ =>
             out := out.push (.logoSlot (name == "logoleft") none pos)
+        else if name == BeamerColor.siteMarker then
+          let j := skipSpaces preamble i
+          let j2 := skipSpaces preamble (j + 1)
+          let j3 := skipSpaces preamble (j2 + 1)
+          match preamble[j]?, preamble[j2]?, preamble[j3]? with
+          | some (.group elem _), some (.group ch _), some (.group key _) =>
+            i := j3 + 1
+            out := out.push (.beamerSite (rawSrc elem).trimAscii.toString
+              (rawSrc ch).trimAscii.toString (rawSrc key).trimAscii.toString pos)
+          | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" none pos)
         else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
             name == BeamerColor.standoutMarker then
           let j := skipSpaces preamble i
@@ -15750,6 +15922,10 @@ the built-in's heading and margins stand{replaced}"
       return s
   | .beamerColor name star src pos =>
     let pal ← applyBeamerColor s.ctx s.palette name star src pos
+    return { s with palette := pal, ctx := { s.ctx with palette := pal } }
+  | .beamerSite element channel key _ =>
+    modify fun st => { st with flowPalette := st.flowPalette.addSite element channel key }
+    let pal ← resolveBeamerColors s.ctx s.palette
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
   | .standoutColor name source pos =>
     modify fun st => { st with flowPalette := { st.flowPalette with

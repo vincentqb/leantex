@@ -195,7 +195,7 @@ mutual
     match style with
     | .lang tag => out.push (.node (.span tag) (inlinesRaw #[] body.toList))
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .fontSize _ _ => inlinesRaw out body.toList
+    | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ => inlinesRaw out body.toList
   | .colored _ _ body => inlinesRaw out body.toList
   | .located _ body => inlinesRaw out body.toList
   | .role _ body => inlinesRaw out body.toList
@@ -760,7 +760,7 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
       rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .fontSize _ _ =>
+    | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ =>
       simp only [inlineRaw, plainTextOne]
       exact inlinesRaw_text acc out body.toList
   | .colored c n body =>
@@ -1096,7 +1096,7 @@ theorem inlineRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (x : 
       rw [inlinesRaw_headings]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .fontSize _ _ =>
+    | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ =>
       simp only [inlineRaw]
       exact inlinesRaw_headings hs out body.toList
   | .colored c n body =>
@@ -1423,7 +1423,7 @@ theorem inlineRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (x
       rw [inlinesRaw_alts]
       rfl
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .fontSize _ _ =>
+    | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ =>
       simp only [inlineRaw, foldInline, altPush]
       exact inlinesRaw_alts is out body.toList
   | .colored c n body =>
@@ -1829,7 +1829,7 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
     match style with
     | .lang tag => simp [inlineRaw]
     | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
-    | .medium | .series _ | .upright | .size _ | .fontSize _ _ =>
+    | .medium | .series _ | .upright | .family _ | .size _ | .fontSize _ _ =>
       simp only [inlineRaw]
       exact inlinesRaw_acc out body.toList
   | .colored c n body =>

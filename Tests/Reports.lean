@@ -60,6 +60,7 @@ import Tests.BlockBar
 import Tests.BlockBody
 import Tests.BlockGeometry
 import Tests.BlockSkips
+import Tests.BlockTemplate
 import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
@@ -1170,7 +1171,13 @@ def reports : List Report := [
       "over the labels of a presentation deck's diagrams in its own face, measured as lualatex boxes, the mean departure from lualatex fell from 0.94 to 0.55 points and the largest from 1.72 to 1.21",
       "with the band split at the face's baseline restored and the guards kept, six assertions fail: the seat, a word of x-height letters on lualatex's baseline against a rule on the page and in the browser, and the declared bound for a word of capitals, one with an ascender and one of figures"]
     state := .guarded "269bd628" .revert .author },
-  { id := "R128", date := "2026-10-10"
+  { id := "R128", date := "2026-10-09"
+    what := "A block template's rule beside the title was not drawn"
+    pins := [check% Tests.BlockTemplate.checks, thm% Ir.blockTitleFont_parent_exact]
+    accept := ["on a presentation deck whose theme replaces the block templates with a rule in the margin beside each title's box, neither artifact drew the rule, and the title set in the regular face where the theme names a semibold family for it; both artifacts now draw the rule and set the title in that face, and in the PDF every rule's offset into the margin, width, height and place beside its title match the reference engine's within a raster pixel at 400 dots per inch",
+      "sixty-five assertions fail on the tree before the fix and hold after, over invented probes of three template shapes, titled, untitled and wrapped, plain, alerted and example: every rule's position and size and every distance around the template's boxes within 0.002 points of the reference engine's, the browser's stylesheet drawing each rule from the record the page reads, a template outside the vocabulary named once with the default blocks kept, and a declared font family setting the block title in both artifacts"]
+    state := .guarded "f42becf3" .before .author },
+  { id := "R129", date := "2026-10-10"
     what := "A markdown pipe table shipped as one run-on paragraph, its delimiter row set as dashes"
     pins := [check% Tests.MarkdownTables.markdownTableChecks,
       thm% LeanTex.Core.Md.tableRaws_contract]
@@ -1184,7 +1191,7 @@ def reports : List Report := [
       "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins, on paper while no wider than the measure and both margins, and is named, with a remedy markdown can write",
       "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
     state := .guarded "08e2326b" .revert .author },
-  { id := "R129", date := "2026-10-10"
+  { id := "R130", date := "2026-10-10"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
     pins := [check% Tests.MarkdownPage.markdownPageChecks,
       check% Tests.MarkdownCode.markdownCodeChecks]
@@ -1196,7 +1203,7 @@ def reports : List Report := [
       "a wrapped code line continues twenty points in on screen as on paper",
       "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line"]
     state := .guarded "fa516a82" .before .author },
-  { id := "R130", date := "2026-10-10"
+  { id := "R131", date := "2026-10-10"
     what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
     pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,
       check% Tests.MarkdownWarnings.markdownMonoChecks,
@@ -1211,7 +1218,7 @@ def reports : List Report := [
       "a tex document that declares no typewriter face keeps the body family and the one warning that names it",
       "two presentation decks render pixel-identical, their logs only folding a repeated glyph fallback"]
     state := .guarded "fa516a82" .before .author },
-  { id := "R131", date := "2026-10-10"
+  { id := "R132", date := "2026-10-10"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1235,14 +1242,14 @@ def reports : List Report := [
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R132", date := "2026-10-10"
+  { id := "R133", date := "2026-10-10"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks,
       check% Tests.LineRhythm.centredRuntChecks]
     accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading",
       "the same slide's thirteen lines each ending at the reference engine's word, as its ragged right fills every line first"]
     state := .guarded "2b555dcfbad3803d9ebbb3d54fdc8571b36e9ea7" .before .author },
-  { id := "R133", date := "2026-10-10"
+  { id := "R134", date := "2026-10-10"
     what := "A beamer deck's build printed one warning per listing for a listing option the engine does not honour, while other repeated losses printed once with a site count: the option's emitter named no subject, and a repeat in the same words with no subject printed at every site"
     pins := [check% Tests.DiagFold.foldChecks, check% Tests.DiagFold.subjectDoorChecks,
       thm% Diag.foldRepeats_sum_exact, thm% Diag.foldRepeats_loss_sum_exact,
@@ -1251,7 +1258,7 @@ def reports : List Report := [
       "a presentation deck's build prints its listing option once with its site count and a repeated glyph fallback once, and its porcelain keeps every record, the sites summing to the records",
       "an invented document whose thousands of paragraphs each hold symbols its face lacks prints one line per symbol"]
     state := .guarded "e942f189" .revert .author },
-  { id := "R134", date := "2026-10-10"
+  { id := "R135", date := "2026-10-10"
     what := "Raw HTML in markdown had no decided policy across the two artifacts: harmless spellings were refused, and a refused disclosure was accounted twice"
     pins := [check% mdHtmlAccountsChecks, check% htmlTwinChecks, check% refusedDisclosureChecks,
       check% cellBreakChecks, check% mdRawHtmlHelpChecks, check% mdTwinBreakChecks,

@@ -8,6 +8,7 @@ import LeanTex.Core.Decl
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
+import LeanTex.Core.BlockTemplate
 import LeanTex.Core.BibStyle
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
@@ -99,19 +100,26 @@ title`, `standout`). Where beamer's name and the engine's furniture name
 differ, the furniture is the same: beamer's `section title` is the section
 page's heading, its `title` and `author` the title page's two lines.
 
+The three block titles are their block element's `font`, the title's
+(`Ir.blockTitleFont`, which also holds beamer's parent chain from the
+alerted and example titles to the plain one).
+
 Deliberately absent, and therefore named rather than guessed: `normal text`
 is the *document's* font, which is `\fonts` and not an element style;
 beamer's list elements name a marker font where the engine's list style
 names the item's, so mapping them would restyle the wrong thing; and
-`block title`, `footline`, `headline`, `caption`, `date`, `institute`,
-`subtitle` and `framesubtitle` have no styleable element here at all. -/
+`footline`, `headline`, `caption`, `date`, `institute`, `subtitle` and
+`framesubtitle` have no styleable element here at all. -/
 private def beamerFontElements : List (String × String × String) :=
   [("frametitle", "frametitle", "font"),
    ("standout", "standout", "font"),
    ("section title", "sectionpage", "font"),
    ("title", "titlepage", "font"),
    ("author", "titlepage", "author-font"),
-   ("abstract title", "abstract", "font")]
+   ("abstract title", "abstract", "font"),
+   ("block title", "block", "font"),
+   ("block title alerted", "alertblock", "font"),
+   ("block title example", "exampleblock", "font")]
 
 /-- Beamer's font axes in selection order (`beamerbasefont.sty`,
 `\beamer@usebeamerfont`): each declaration replaces its named fields, and
@@ -990,6 +998,18 @@ private structure St where
   /-- Successful captures, including local assignments whose values were
   restored. Only these justify removing an otherwise empty preamble group. -/
   beamerCaptures : Nat := 0
+  /-- beamer's block templates the preamble installs, by element (`block
+  begin`, `block alerted end`, …), with the file and site each was written
+  at: read as pairs where the preamble ends (`flushBeamerBlocks`). -/
+  beamerTemplates : Array (String × String × Pos × Array Raw) := #[]
+  /-- Named block templates (`\defbeamertemplate{element}{name}{…}`) a
+  `\setbeamertemplate{element}[name]` installs. -/
+  beamerTemplateDefs : Array ((String × String) × Array Raw) := #[]
+  /-- The families declared beside the three slots, in the order the
+  elaborator gives them their slots (`Ir.FontSpec.families`): fontspec's
+  `\newfontfamily` commands and native `\fonts{ family.<name> = … }`
+  keys alike, so a command's switch names its family's slot. -/
+  fontFamilies : Array String := #[]
 
 private abbrev M := StateM St
 
@@ -1082,7 +1102,9 @@ private def closeBeamerScope (saved : St) (result : α × St) : α × St :=
   (result.1, (write fun st => { st with
     beamerFonts := saved.beamerFonts
     beamerFootline := saved.beamerFootline
-    beamerScopes := saved.beamerScopes }) result.2 |>.2)
+    beamerScopes := saved.beamerScopes
+    beamerTemplates := saved.beamerTemplates
+    beamerTemplateDefs := saved.beamerTemplateDefs }) result.2 |>.2)
 
 private def withBeamerScope (act : M α) : M α := fun st =>
   closeBeamerScope st (act st)
@@ -6716,6 +6738,109 @@ private def numberedFootline? (body : Array Raw) :
     else none
   some (content.extract 0 split, counter, font, options.getD "")
 
+/-- beamer's block templates, per kind (beamerinnerthemedefault.sty: the
+`blocks` parent's six children): the begin and end elements, the `\style`
+element the reading lands on, and the font and colour elements the kind's
+title and body are set in. -/
+private def blockTemplateKinds : List (Ir.TitledKind × String × String × String × String × String) :=
+  [(.block, "block begin", "block end", "block", "block title", "block body"),
+   (.alert, "block alerted begin", "block alerted end", "alertblock", "block title alerted",
+     "block body alerted"),
+   (.example, "block example begin", "block example end", "exampleblock", "block title example",
+     "block body example")]
+
+/-- Is `el` one of the block templates the reader reads? -/
+private def blockTemplateElement (el : String) : Bool :=
+  blockTemplateKinds.any fun (_, b, e, _) => b == el || e == el
+
+/-- A template's `#1` stands for its argument; `\usebeamertemplate` gives
+none, so the declared default stands (beamerbasetemplates.sty). A template
+of more arguments is not read. -/
+private def substArg (default : Array Raw) : List Raw → Array Raw → Array Raw
+  | [], acc => acc
+  | .sym '#' _ :: .word w p :: rest, acc =>
+    if w == "1" then substArg default rest (acc ++ default)
+    else if w.startsWith "1" then substArg default rest ((acc ++ default).push (.word (w.drop 1).toString p))
+    else substArg default rest ((acc.push (.sym '#' p)).push (.word w p))
+  | r :: rest, acc => substArg default rest (acc.push r)
+
+/-- Install a block template: an installed `block begin` replaces what
+`\addtobeamertemplate` appended to the one before it, as beamer's install
+replaces the template the addition modified. -/
+private def installBlockTemplate (element : String) (body : Array Raw) (pos : Pos) : M Unit :=
+  write fun st => { st with
+    beamerTemplates := (st.beamerTemplates.filter (·.1 != element)).push (element, st.file, pos, body)
+    beamerBlockBegin := if element == "block begin" then #[] else st.beamerBlockBegin }
+
+/-- The block templates the preamble installed, read in pairs where it ends
+(`BlockTemplate.read`): each pair read whole lands as its kind's
+`\style{…}{ shape = … }`, its rules' colours as palette entries — a beamer
+colour element's channel as a paint site (`BeamerColor.siteMarker`), a named
+colour as an alias; a pair the reader cannot read is named once and the
+default inner theme's pair stands. -/
+private def flushBeamerBlocks : M (Array Raw) := do
+  let installed := (← get).beamerTemplates
+  if installed.isEmpty then return #[]
+  let mut out : Array Raw := #[]
+  for (kind, beginEl, endEl, styleEl, titleEl, bodyEl) in blockTemplateKinds do
+    let b := installed.find? (·.1 == beginEl)
+    let e := installed.find? (·.1 == endEl)
+    let site := match b, e with
+      | some (_, f, p, _), _ => some (f, p)
+      | none, some (_, f, p, _) => some (f, p)
+      | none, none => none
+    let some (file, pos) := site | continue
+    let savedFile := (← get).file
+    write fun st => { st with file := file }
+    let wrap (rs : Array Raw) : Array Raw :=
+      if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
+    let st ← get
+    -- The document's own macros a template calls, as the conditional
+    -- pass recorded them: what TeX expands where the template runs.
+    let defs : String → Option BlockTemplate.Macro := fun n =>
+      match st.binds[n]? with
+      | some (some v) =>
+        if v.optional.isNone then some { serial := v.serial, arity := v.arity, body := v.raws }
+        else none
+      | _ => none
+    let unread : Array String ← match b, e with
+      | some (_, _, _, bb), some (_, _, _, eb) =>
+        match BlockTemplate.read bb eb defs (st.serial + 1) with
+        | .error us => pure us
+        | .ok r =>
+          let titleOk := r.titleFont == some titleEl &&
+            r.titlePaint == some (.beamer titleEl "fg")
+          let bodyOk := (r.bodyFont.isNone || r.bodyFont == some bodyEl) &&
+            (r.bodyPaint.isNone || r.bodyPaint == some (.beamer bodyEl "fg"))
+          if !titleOk then pure #[s!"a title set in another font or colour than '{titleEl}'"]
+          else if !bodyOk then pure #[s!"a body set in another font or colour than '{bodyEl}'"]
+          else
+            let mut colors : Array String := #[]
+            for (edge, i) in r.edges.zipIdx do
+              let role := kind.roleStem ++ "edge" ++ (if i == 0 then "" else toString (i + 1))
+              match edge.paint with
+              | some (.beamer el ch) =>
+                out := out ++ wrap #[.ctrl BeamerColor.siteMarker pos, .group (← synth el) pos,
+                  .group (← synth ch) pos, .group (← synth role) pos]
+                colors := colors.push role
+              | some (.named n) =>
+                out := out ++ wrap (← synthAt s!"\\palette\{ {role} = {n} }" pos)
+                colors := colors.push role
+              | none => colors := colors.push "fg"
+            let native := s!"\\style\{{styleEl}}\{ shape = {BlockTemplate.native r colors} }"
+            became s!"\\defbeamertemplate\{{beginEl}}" native pos
+            out := out ++ wrap (← synthAt native pos)
+            pure #[]
+      | some _, none => pure #[s!"its '{endEl}' half, which the document never sets"]
+      | none, _ => pure #[s!"its '{beginEl}' half, which the document never sets"]
+    unless unread.isEmpty do
+      sayOnce ("beamer:template:" ++ beginEl) .W0110
+        s!"the '{beginEl}' and '{endEl}' templates are not read: \
+{String.intercalate "; " unread.toList}; those blocks keep beamer's default template" pos
+        (help := "write the template with \\setbox, \\vbox, \\llap, \\vrule, \\strut and \\usebeamercolor, or style the block with \\style{block}{...}")
+    write fun st => { st with file := savedFile }
+  return out
+
 /-- Resolve a stored footer through the same font-size marker and native
 footer declarations as ordinary document content. Box dimensions are not
 content: the shared footer band determines those, with a named adaptation. -/
@@ -7415,6 +7540,56 @@ is skipped" pos
       -- two alternative groups and no nested compatibility work is skipped.
       return some (#[.ctrl (alertMark (← get).themed) pos, spec], j + 1)
     | _ => alertPlain pos raws start
+  | "fonts" =>
+    -- A native family declaration takes the next family slot, as the
+    -- elaborator gives it (`Ir.FontSpec.declareFamily`): counted here so a
+    -- `\newfontfamily` after it names its own. The declaration stands.
+    let (args, _) := takeGroups raws start 1
+    for entry in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
+      if let some (key, _) := Decl.splitEntry entry then
+        if let ["family", n] := key.splitOn "." then
+          unless (← get).fontFamilies.contains n do
+            write fun st => { st with fontFamilies := st.fontFamilies.push n }
+    return none
+  | "defbeamertemplate" =>
+    -- beamerbasetemplates.sty: `\defbeamertemplate*{element}{name}[n][default]{body}`
+    -- defines a named option, the starred form installing it too. A block
+    -- template is held for the reader where the preamble ends
+    -- (`flushBeamerBlocks`); any other element is unknown, as before.
+    let j := skipStar raws start
+    let starred := j != skipSpaces raws start
+    let (args, j) := takeGroups raws j 2
+    let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if args.size != 2 || !blockTemplateElement element then return none
+    let name := (rawSrc (args.getD 1 #[])).trimAscii.toString
+    let (arity, j) := takeOpt raws j
+    let (default, j) := takeRawOpt raws j
+    let (bodyArgs, k) := takeGroups raws j 1
+    if bodyArgs.size != 1 then return none
+    let body := bodyArgs.getD 0 #[]
+    let body := match arity.map (·.trimAscii.toString) with
+      | some "1" => substArg (default.getD #[]) body.toList #[]
+      | _ => body
+    if (← get).inDoc then
+      sayOnce ("beamer:template:" ++ element) .W0104
+        s!"'\\defbeamertemplate\{{element}}' in the document body is skipped: \
+only preamble block templates are read" pos
+        (help := "define block templates in the preamble")
+      return some (#[], k)
+    write fun st => { st with beamerTemplateDefs :=
+      (st.beamerTemplateDefs.filter (·.1 != (element, name))).push ((element, name), body) }
+    if starred then installBlockTemplate element body pos
+    became s!"\\defbeamertemplate\{{element}}\{{name}}" "a block template, read where the preamble ends" pos
+    return some (#[], k)
+  | "newbox" =>
+    -- A box register's allocation: the block template reader reads the
+    -- registers a template sets, so the allocation means nothing more.
+    let j := skipSpaces raws start
+    match raws[j]? with
+    | some (.ctrl _ _) =>
+      became "\\newbox" "a box register a block template reads" pos
+      return some (#[], j + 1)
+    | _ => return none
   | "setbeamertemplate" =>
     -- `frame footer` is the one template with a native meaning: its body
     -- is the per-frame footer note. The body group STAYS in the stream —
@@ -7422,6 +7597,35 @@ is skipped" pos
     -- included) and `\framefoot` takes it at elaboration.
     let (args, j) := takeGroups raws start 1
     let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if blockTemplateElement element then
+      -- `\setbeamertemplate{element}[name]` installs a defined option,
+      -- `{body}` a template of its own (beamerbasetemplates.sty).
+      let (opt, j') := takeOpt raws j
+      let (bodyArgs, k) := if opt.isSome then (#[], j') else takeGroups raws j' 1
+      if (← get).inDoc then
+        sayOnce ("beamer:template:" ++ element) .W0104
+          s!"'\\setbeamertemplate\{{element}}' in the document body is skipped: \
+only preamble block templates are read" pos
+          (help := "set block templates in the preamble")
+        return some (#[], k)
+      match opt.map (·.trimAscii.toString), bodyArgs[0]? with
+      | some name, _ =>
+        match (← get).beamerTemplateDefs.find? (·.1 == (element, name)) with
+        | some (_, body) =>
+          installBlockTemplate element body pos
+          became s!"\\setbeamertemplate\{{element}}[{name}]" "a block template, read where the preamble ends" pos
+        | none =>
+          -- The default inner theme's own option: the built-in pair stands.
+          write fun st => { st with beamerTemplates := st.beamerTemplates.filter (·.1 != element) }
+          if name != "default" then
+            sayOnce ("beamer:template:" ++ element ++ ":" ++ name) .W0110
+              s!"'\\setbeamertemplate\{{element}}[{name}]' names a template the document never \
+defines; those blocks keep beamer's default template" pos
+      | none, some body =>
+        installBlockTemplate element body pos
+        became s!"\\setbeamertemplate\{{element}}" "a block template, read where the preamble ends" pos
+      | none, none => return none
+      return some (#[], k)
     if element == "frame footer" then
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
       return some (← synthAt "\\framefoot" pos, j)
@@ -8437,22 +8641,42 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let dependencies ← rewritePackages "RequirePackage" packages none pos
       return some (declaration ++ dependencies, k)
     else return none
-  | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
+  | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
+  | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
+  | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
     -- `\babelfont[lang]{slot}{font}` binds a font per language (babel
     -- manual §1.8). The option parses first — it stands before the slot —
     -- and the binding is then dropped by name (W0369): one Latin body
     -- face covers en/fr/de, and a per-language face buys nothing until a
     -- non-Latin document exists. The unoptioned form is the main font.
+    -- fontspec's `\newfontfamily\cmd{font}` (fontspec manual, "Font
+    -- families") declares a family beside the three and the command that
+    -- selects it: the native `family.<cmd>` slot, whose command the
+    -- elaborator defines; `\newfontface` is one face for every variant.
+    let declared : Option String :=
+      if name.endsWith "fontfamily" || name.endsWith "fontface" then
+        match raws[skipSpaces raws start]? with
+        | some (.ctrl c _) => some c
+        | some (.group g _) => match g.toList.filter (· != .space) with
+          | [.ctrl c _] => some c
+          | _ => none
+        | _ => none
+      else none
+    if (name.endsWith "fontfamily" || name.endsWith "fontface") && declared.isNone then return none
+    let start := if declared.isSome then skipSpaces raws start + 1 else start
+    if let some c := declared then
+      write fun st => { st with bound := if st.bound.contains c then st.bound else st.bound.push c }
     let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
     let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
     let (optBefore, j) := takeOpt raws j
     let (args, k) := takeGroups raws j 1
     -- fontspec takes its features before the name or after it.
     let (optAfter, k) := takeOpt raws k
-    let slot := match name with
-      | "babelfont" => match rawSrc (slotArgs.getD 0 #[]) with
+    let slot := match name, declared with
+      | _, some c => "family." ++ c
+      | "babelfont", _ => match rawSrc (slotArgs.getD 0 #[]) with
         | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
-      | "setmainfont" => "body" | "setsansfont" => "sans" | _ => "mono"
+      | "setmainfont", _ => "body" | "setsansfont", _ => "sans" | _, _ => "mono"
     let family := rawSrc (args.getD 0 #[])
     -- fontspec features that matter here are the ones that name fonts rather
     -- than shape them: `Path=` says where the fonts live, and the per-variant
@@ -8471,6 +8695,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       | some d => s!"dir = \"{d}\", "
       | none => ""
     let mut parts := #[s!"{slot} = \"{family}\""]
+    -- A face is every variant at once (fontspec's `\newfontface`).
+    if name.endsWith "fontface" then
+      for variant in ["bold", "italic", "bolditalic"] do
+        parts := parts.push s!"{slot}.{variant} = \"{family}\""
     for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
         ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
       if let some f := feature opt then
@@ -8500,7 +8728,20 @@ face serves every language, so the binding is dropped" pos
     let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
     became s!"\\{name}" native pos
     write fun st => { st with facesDeclared := st.facesDeclared.push slot }
-    return some (← synthAt native pos, k)
+    let fonts ← synthAt native pos
+    match declared with
+    | none => return some (fonts, k)
+    | some c =>
+      -- The command selects its family's slot (`Style.family`), as a
+      -- declaration scoping the rest of its group: a definition whose body
+      -- is the unforgeable switch, `\sffamily`'s shape.
+      let st ← get
+      let slot := Ir.familySlotBase + ((st.fontFamilies.findIdx? (· == c)).getD st.fontFamilies.size)
+      unless st.fontFamilies.contains c do
+        write fun st => { st with fontFamilies := st.fontFamilies.push c }
+      let switch := (← synthAt s!"\\define \\{c}() " pos) ++
+        #[Raw.group #[Raw.ctrl s!"@family:{slot}" pos] pos]
+      return some (fonts ++ switch, k)
   | "definecolor" =>
     let (args, k) := takeGroups raws start 3
     if h : args.size = 3 then
@@ -9778,7 +10019,7 @@ pass may still translate any number of nested rows and report their losses. -/
 private def QuietTail (st : St) : Prop :=
   st.head = #[] ∧ st.foot = #[] ∧ st.runFrom ≤ 1 ∧
     st.listResets = #[] ∧ st.listDefs = #[] ∧
-    st.deferred = #[] ∧ st.beamerFootline = none
+    st.deferred = #[] ∧ st.beamerFootline = none ∧ st.beamerTemplates = #[]
 
 private def TailDiag (d : Diag) (st : St) : Prop :=
   QuietTail st ∧ d ∈ st.diags
@@ -11126,10 +11367,16 @@ private theorem flushListLevels_quiet (st : St) (h : QuietTail st) :
     (#[], { st with listDefs := #[], listResets := #[], writes := st.writes + 1 })
   simp only [← h.2.2.2.1, ← h.2.2.2.2.1]
 
+private theorem flushBeamerBlocks_quiet (st : St) (h : QuietTail st) :
+    flushBeamerBlocks st = (#[], st) := by
+  simp only [flushBeamerBlocks, bind, StateT.bind, get, getThe,
+    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2.2, Array.isEmpty_empty, ↓reduceIte]
+  rfl
+
 private theorem flushBeamerFootline_quiet (st : St) (h : QuietTail st) :
     flushBeamerFootline st = ((#[], #[]), st) := by
   simp only [flushBeamerFootline, bind, StateT.bind, get, getThe,
-    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2]
+    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2.1]
   rfl
 
 /-- Split the raws of a replayed hook body across the seam
@@ -11426,7 +11673,7 @@ private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
       preSide := preSide ++ wrap p
       bodySide := bodySide ++ wrap b
   let (footerPre, footerBody) ← flushBeamerFootline
-  preSide := preSide ++ footerPre
+  preSide := preSide ++ footerPre ++ (← flushBeamerBlocks)
   let footerBody ← rewriteList false footerBody #[] footerBody.toList 0 0
   bodySide := footerBody ++ bodySide
   write fun st => { st with inDoc := saved, file := savedFile, seam := false }
@@ -11573,7 +11820,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
     have hquiet : QuietTail after := by
-      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl⟩
+      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl, rfl⟩
     have hmem : atSource st pos (packageRefusal st.file pos part.trimAscii.toString) ∈
         after.diags := by
       apply Array.mem_append.mpr

@@ -11,6 +11,9 @@ groups follow this internal marker; no author text is encoded into it. -/
 public def marker : String := " beamer color"
 public def starMarker : String := " beamer color*"
 public def standoutMarker : String := " beamer standout color"
+/-- A paint site a block template reads (`\usebeamercolor[bg]{element}` at a
+rule): its element, channel and the palette entry it paints. -/
+public def siteMarker : String := " beamer color site"
 
 /-- Beamer's named elements with genuine native paint sites. In particular,
 the head/foot progress placement is absent: a section rule is not that site.
@@ -153,7 +156,17 @@ public structure State where
   /-- The colour theme in force, whose own declarations (`themeElement`)
   stand under the document's. -/
   theme : String := ""
+  /-- Paint sites a block template reads beside the native ones (`roles`'
+  shape): the element a rule's `\usebeamercolor[fg]` or `[bg]` names, and
+  the palette entry its channel paints. -/
+  sites : List (String × String × String) := []
   deriving Inhabited
+
+/-- Register a template's paint site: the element's channel paints `key`.
+A site already registered for the key is replaced. -/
+public def State.addSite (s : State) (element channel key : String) : State :=
+  let site := if channel == "fg" then (element, key, "") else (element, "", key)
+  { s with sites := s.sites.filter (fun (_, f, b) => f != key && b != key) ++ [site] }
 
 private def unbrace (s : String) : String :=
   let s := s.trimAscii.toString
@@ -371,7 +384,7 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   let mut s := { s with origins := #[] }
   let mut out := base
   let mut issues := []
-  let allNames := (roles.map (·.1)) ++ ["structure", "titlelike"] ++
+  let allNames := (roles.map (·.1)) ++ (s.sites.map (·.1)) ++ ["structure", "titlelike"] ++
     s.elements.flatMap (fun e => e.parents.getD [] ++ e.uses)
   let es := allNames.foldl (fun es name =>
     if es.any (·.name == name) then es
@@ -395,6 +408,18 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     let i := s.elements.findIdx (·.name == name)
     if i < s.elements.length then i + 1 else 0
   let ordered := roles.mergeSort fun a b => rank a.1 ≤ rank b.1
+  let normalBg := (Design.ofPalette context).bg
+  -- A template's site always paints: a channel the element leaves unset
+  -- is the colour in force there, normal text's (beamerbasecolor.sty's
+  -- `\usebeamercolor` falls back to the current `fg`/`bg`).
+  for (name, fgKey, bgKey) in s.sites do
+    let r := read s.theme context [] es name
+    let (names, _) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
+    s := { s with reached := s.reached ++ names }
+    issues := issues ++ r.issues
+    for (key, value, fallback) in [(fgKey, r.fg, normalFg), (bgKey, r.bg, normalBg)] do
+      unless key.isEmpty do
+        out := out.declare key ((value.bind (·.color)).getD fallback)
   for (name, fgKey, bgKey) in ordered do
     let r := read s.theme context [] es name
     let (names, said) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
