@@ -256,6 +256,15 @@ def includedDoc (hostFile host : String) (files : List (String × String × Stri
   let (executed, readDs) := (Elab.executeInputs (mdFileReader files) hostFile raws).run #[]
   Elab.runExecuted hostFile executed (ds ++ readDs)
 
+/-- A markdown file alone as a document named `docFile`: its door's
+fragment and nothing else — no preamble, no host, no reader. Named as a
+host, it is the file alone under that host's surface, the document the
+neutral host's is held to; named as the file itself, it is the markdown
+door's own document with its raws wrapped as the file they came from. -/
+def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.fragment .md f t {}
+  Elab.runExecuted docFile (Elab.executeInputs nullReader docFile raws) ds
+
 /-- The neutral host: an article whose body is one `\markdownInput` and
 nothing else, so the include stands as the body's block sequence. -/
 def neutralHost (name : String) : String :=

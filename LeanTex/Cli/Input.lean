@@ -57,10 +57,11 @@ public def readSource (file : String) : IO (Except Diag ByteArray) := do
 contract, and its one door (`Surface.fragment`): the file's reading is a
 fragment of the same AST, wrapped as the file it came from; its bytes are
 never converted to TeX source and parsed again. The wrapper carries the
-file's name and nothing else: an include standing as its block sequence
-elaborates as the file alone does (`Elab.elabBlocks_input_exact`;
-`Elab.markdownInput_blocks_exact` for markdown, with no hypothesis on its
-content). Mid-sequence the included blocks are the same and only the inner
+file's name and nothing else: an include standing as a whole block sequence
+— a document body, a frame's content — elaborates as the file alone does
+(`Elab.elabBlocks_input_exact`, `Elab.elabBlockScope_input_exact`; for a
+markdown file with any content, `Elab.markdownInput_blocks_exact`).
+Mid-sequence the included blocks are the same and only the inner
 frame-source offsets shift, which no statement here claims. Filename normalization
 precedes the surface's extension policy: LaTeX's file-name sanitizer removes
 paired quotes and trims both ends when the name contains a dot, only the

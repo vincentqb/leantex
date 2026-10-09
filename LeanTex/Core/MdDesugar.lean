@@ -18,7 +18,7 @@ Markdown lowers into a declared vocabulary of the surface AST
 (`Md.vocabulary`): words, spaces, paragraph ends, a fixed list of controls,
 environments and verbatims, and the heading bridge — at every depth, for
 every md block and inline node (`desugar_vocabulary_mem`). Its output is
-also block-shaped (`desugar_blockStart_mem`), which is what makes a
+also block-shaped (`desugar_blockStart_contract`), which is what makes a
 markdown file included in tex elaborate as it does alone
 (`Elab.markdownInput_blocks_exact`). The vocabulary exceeds what a
 tex source can spell in two named places: heading ranks h1, h5 and h6

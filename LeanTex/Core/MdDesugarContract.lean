@@ -377,7 +377,7 @@ private theorem blkListRaws_starts (file : String) : (l : List Blk) → (out : A
 /-- **Markdown is block-shaped.** A markdown document that lowers to
 anything lowers to at least one raw that opens a block: its content never
 reads as a phrase continuing the text around an include. -/
-public theorem desugar_blockStart_mem (file input : String)
+public theorem desugar_blockStart_contract (file input : String)
     (h : (desugar file input).1 ≠ #[]) : ∃ r ∈ (desugar file input).1, BlockStart r := by
   unfold desugar at h ⊢
   exact (blkListRaws_starts file _ #[] #[] (Or.inl rfl)).resolve_left h

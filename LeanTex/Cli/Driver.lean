@@ -555,10 +555,20 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     -- Which surface a path's extension selects, read through its one door.
     -- The markdown door hands back the same surface AST the tex door does —
     -- one elaborator, one place where meaning lives — so everything past
-    -- this point is blind to which surface the document was written in.
-    let surface := Surface.ofPath file
-    let (raws, frontDiags) := surface.read file input
-    ui.phase surface.name s!"{raws.size} top-level nodes" (← since t)
+    -- this point reads raws, never the surface that wrote them. The tex
+    -- door's two stages report apart (`Surface.read_tex_stages`).
+    let (raws, frontDiags) ← match Surface.ofPath file with
+      | .tex => do
+        let (toks, lexDiags) := Surface.texLex file input
+        ui.phase "lex" s!"{toks.size} tokens" (← since t)
+        let t ← IO.monoMsNow
+        let (raws, parseDiags) := Surface.texParse file toks
+        ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
+        pure (raws, lexDiags ++ parseDiags)
+      | .md => do
+        let (raws, ds) := Surface.read .md file input
+        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
+        pure (raws, ds)
     let t ← IO.monoMsNow
     let (executed, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file executed.raws

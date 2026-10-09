@@ -228,17 +228,25 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
 An included file reaches the elaborator wrapped once, as the file it came
 from (`Parse.inputEnv`, through `Surface.fragment`). The statements below
 say what the wrapper means: nothing but the file's name. An include
-standing as its own block sequence — a document body, or a frame body,
-that is just the include — produces exactly the blocks and the final state
-its raws produce as a body of their own under the file's name, with no
-call site. The host contributes only its display marking of a file that is
-exactly one display.
+standing as the whole of a block accumulator produces exactly the blocks and
+the final state its raws produce as that accumulator of their own, under the
+file's name, with no call site; the host contributes only its display
+marking of a file that is exactly one display. The accumulator is any the
+elaborator opens through `elabBlockScope` with no text pending
+(`elabBlockScope_input_exact`, from every frame-source state): a frame's
+content — the frame arm elaborates it there — and the bodies the block
+environments open the same way. The document body is the public form
+(`elabBlocks_input_exact`, `runDocBody_input_exact`). That a frame's other
+steps — options, title, notes, palette — read only its content scope's
+result is the frame arm's code, not a statement here; the doors' D6 frame
+rows check the composed frame end to end.
 
 Mid-sequence, the included blocks are the same, but the inner frame-source
 offsets shift by the blocks before the include, by design; that form is a
 stretch lemma, not a claim made here. Markdown meets the hypotheses by
-construction (`markdownInput_blocks_exact`): its desugaring is block-shaped
-and lowers into a vocabulary that holds no length-restore marker. -/
+construction (`markdownInput_blocks_exact`): a nonempty file's desugaring
+is block-shaped and lowers into a vocabulary that holds no length-restore
+marker. -/
 
 open Parse Ir
 
@@ -338,14 +346,46 @@ private theorem closeBlockScope_base (ctx : Ctx) (base : Option Nat) (blocks : A
   simp [closeBlockScope, closeLengthScope, setFrameSourceBase]
   rfl
 
-/-- A splice at offset zero, met where the frame base is zero, schedules
-exactly what a fresh body schedules: the included file's scope opens as
-`elabBlocks` opens it. -/
-private theorem splicedFrameScope_base (ctx : Ctx) (body : Array Raw) (st : ESt)
-    (h : st.spans.frames.base = some 0) :
-    (splicedFrameScope (some 0) (elabBlockScope ctx body)).run st =
-      (elabBlocks ctx body).run st := by
-  simp [splicedFrameScope, elabBlocks, FrameSources.offset, h]
+/-- A block accumulator's entry state: its scheduled splice offset becomes
+its base, and nothing is scheduled inside (`openBlockScope`). -/
+private def openScope (st : ESt) : ESt :=
+  { st with spans := { st.spans with frames :=
+    { st.spans.frames with base := st.spans.frames.nextBase, nextBase := none } } }
+
+/-- A block accumulator with no macro role active and no length scope to
+open runs its walk from the entry state and closes back to the base it
+found. -/
+private theorem elabBlockScope_run (ctx : Ctx) (st : ESt) (raws : Array Raw)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hlen : openLengthScope ctx raws =
+      (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)) :
+    (elabBlockScope ctx raws).run st =
+      ((do
+        let bs ← elabBlocksGo ctx raws 0 #[] #[] st.flowGen
+        closeBlockScope ctx #[] st.spans.frames.base bs) :
+        EM (Array Block)).run (openScope st) := by
+  have henter : {ctx with macroRoles := ctx.macroRoles.enter} = ctx := by
+    cases ctx
+    cases hm
+    rfl
+  rw [elabBlockScope]
+  simp only [henter, openBlockScope, hlen, bind_assoc, pure_bind]
+  rfl
+
+/-- A splice at offset zero schedules the accumulator it opens at the base
+it is met at: the included file's scope opens where its caller's stands. -/
+private theorem splicedFrameScope_zero (scope : EM (Array Block)) (st : ESt) :
+    (splicedFrameScope (some 0) scope).run st =
+      scope.run { st with spans := { st.spans with frames :=
+        { st.spans.frames with nextBase := st.spans.frames.base } } } := by
+  cases hb : st.spans.frames.base <;>
+    simp [splicedFrameScope, FrameSources.offset, hb]
+
+/-- `elabBlocks` is the accumulator scheduled at offset zero. -/
+private theorem elabBlocks_run (ctx : Ctx) (raws : Array Raw) (st : ESt) :
+    (elabBlocks ctx raws).run st =
+      (elabBlockScope ctx raws).run { st with spans := { st.spans with frames :=
+        { st.spans.frames with nextBase := some 0 } } } := rfl
 
 /-- The dispatch domain where a wrapped file splices. No macro expansion is
 open; the wrapper has a source position; the raws are block-shaped (a
@@ -356,39 +396,53 @@ syntax and context, none a fact of the result. -/
   ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧ pos.origins = [] ∧ bodyIsBlock body = true ∧
     ∀ n p, body.back? = some (.ctrl n p) → Compat.lengthRestoreKeys? n = none
 
-/-- **An include standing as its own block sequence is transparent.** Its
-raws produce exactly the blocks and final state they produce as a body of
-their own, under the file's name and no call site. The host contributes
-only its display marking of a file that is exactly one display. The
-statement is the whole state, not a census: diagnostics, counters, labels,
-frame sources and the flow epoch all agree. -/
-public theorem elabBlocks_input_exact (ctx : Ctx) (f : String) (body : Array Raw) (pos : Pos)
-    (st : ESt) (h : InputSplice ctx body pos) :
-    (elabBlocks ctx #[.env (Parse.inputEnv f) body pos]).run st =
-      let r := (elabBlocks { ctx with file := f, callSite := none } body).run st
+/-- **An include standing as a whole block accumulator is transparent.**
+Its raws produce exactly the blocks and final state they produce as that
+accumulator of their own, under the file's name and no call site, from any
+frame-source state — so at a frame's content scope as at a document body.
+The host contributes only its display marking of a file that is exactly one
+display. The statement is the whole state, not a census: diagnostics,
+counters, labels, frame sources and the flow epoch all agree. -/
+private theorem elabBlockScope_input_exact (ctx : Ctx) (f : String) (body : Array Raw)
+    (pos : Pos) (st : ESt) (h : InputSplice ctx body pos) :
+    (elabBlockScope ctx #[.env (Parse.inputEnv f) body pos]).run st =
+      let r := (elabBlockScope { ctx with file := f, callSite := none } body).run st
       (Ir.markDisplay false false false 0 r.1, r.2) := by
   obtain ⟨hm, hp, hb, hl⟩ := h
   have hlen := lengthScopeKeys?_back body hl
   have hmF : ({ ctx with file := f, callSite := none } : Ctx).macroRoles =
       ({file := ""} : Ctx).macroRoles := hm
-  rw [elabBlocks_scope ctx st _ hm (openLengthScope_inert _ _ rfl),
-    elabBlocks_scope _ st body hmF (openLengthScope_inert _ _ hlen)]
+  rw [elabBlockScope_run ctx st _ hm (openLengthScope_inert _ _ rfl),
+    elabBlockScope_run _ st body hmF (openLengthScope_inert _ _ hlen)]
   simp only [StateT.run_bind]
-  rw [elabBlocksGo_input_splice ctx (enterBodyScope st) f body pos st.flowGen rfl hm hp hb]
+  rw [elabBlocksGo_input_splice ctx (openScope st) f body pos st.flowGen rfl hm hp hb]
   simp only [StateT.run_bind]
-  rw [elabEnvArm_input_scope ctx f body pos hlen,
-    splicedFrameScope_base _ body (enterBodyScope st) rfl,
-    elabBlocks_scope _ (enterBodyScope st) body hmF (openLengthScope_inert _ _ hlen)]
-  have he : enterBodyScope (enterBodyScope st) = enterBodyScope st := rfl
-  have hg : (enterBodyScope st).flowGen = st.flowGen := rfl
-  have hb0 : (enterBodyScope st).spans.frames.base = some 0 := rfl
-  rw [he, hg, hb0]
+  rw [elabEnvArm_input_scope ctx f body pos hlen, splicedFrameScope_zero,
+    elabBlockScope_run _ _ body hmF (openLengthScope_inert _ _ hlen)]
+  have he : openScope { openScope st with spans := { (openScope st).spans with frames :=
+      { (openScope st).spans.frames with nextBase := (openScope st).spans.frames.base } } } =
+      openScope st := rfl
+  have hg : ({ openScope st with spans := { (openScope st).spans with frames :=
+      { (openScope st).spans.frames with nextBase := (openScope st).spans.frames.base } } }
+      : ESt).flowGen = st.flowGen := rfl
+  rw [he, hg]
   rcases hx : (elabBlocksGo { ctx with file := f, callSite := none } body 0 #[] #[]
-    st.flowGen).run (enterBodyScope st) with ⟨bs, s4⟩
+    st.flowGen).run (openScope st) with ⟨bs, s4⟩
   have hend := fun s b => elabBlocksGo_end ctx s #[.env (Parse.inputEnv f) body pos] 1 b
     st.flowGen hm (by simp)
   simp only [StateT.run_bind, hx, closeBlockScope_base, hend]
   rfl
+
+/-- **An include standing as its own block sequence is transparent**, at the
+document body: the accumulator `elabBlocks` schedules at offset zero is the
+one `elabBlockScope_input_exact` describes. -/
+public theorem elabBlocks_input_exact (ctx : Ctx) (f : String) (body : Array Raw) (pos : Pos)
+    (st : ESt) (h : InputSplice ctx body pos) :
+    (elabBlocks ctx #[.env (Parse.inputEnv f) body pos]).run st =
+      let r := (elabBlocks { ctx with file := f, callSite := none } body).run st
+      (Ir.markDisplay false false false 0 r.1, r.2) := by
+  rw [elabBlocks_run, elabBlocks_run]
+  exact elabBlockScope_input_exact ctx f body pos _ h
 
 /-- The same at the document body: a body that is one include runs the
 document continuation — numbering, metadata, references — over exactly the
@@ -451,7 +505,7 @@ private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body
 
 /-- A nonempty markdown file meets the splice domain wherever no macro
 expansion is open and the include has a source position: block-shaped by
-`Md.desugar_blockStart_mem`, and closed by no length-restore marker by
+`Md.desugar_blockStart_contract`, and closed by no length-restore marker by
 `Md.desugar_vocabulary_mem` and `markdownVocabulary_contract`. -/
 private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -460,7 +514,7 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
   have hread : (Surface.read .md f t).1 = (Md.desugar f t).1 := by
     simp [Surface.read, Md.read_desugar_exact]
   rw [hread] at hne ⊢
-  refine ⟨hm, hp, bodyIsBlock_of_blockStart _ (Md.desugar_blockStart_mem f t hne), ?_⟩
+  refine ⟨hm, hp, bodyIsBlock_of_blockStart _ (Md.desugar_blockStart_contract f t hne), ?_⟩
   intro n p hback
   have hmem : Raw.ctrl n p ∈ (Md.desugar f t).1 := by
     rw [Array.back?_eq_getElem?] at hback
@@ -469,17 +523,33 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
+/-- Markdown at any block accumulator — a frame's content as a document
+body: a nonempty markdown file read through its door and included where it
+stands as the accumulator's whole content gives exactly the blocks and state
+it gives alone there, under its own name, up to the host's display marking. -/
+private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pos : Pos) (st : ESt)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
+    (hne : (Surface.read .md f t).1 ≠ #[]) :
+    (elabBlockScope ctx (Surface.fragment .md f t pos).1).run st =
+      let r := (elabBlockScope { ctx with file := f, callSite := none }
+        (Surface.read .md f t).1).run st
+      (Ir.markDisplay false false false 0 r.1, r.2) :=
+  elabBlockScope_input_exact ctx f _ pos st (markdownInput_splice ctx f t pos hm hp hne)
+
 /-- **Markdown included in tex is markdown.** A nonempty markdown file read
 through its door and included where it stands as the block sequence gives
 exactly the blocks and state it gives alone, under its own name, up to the
-host's display marking; no hypothesis about the file's content remains. -/
+host's display marking. What remains assumed is the shape of the call, never
+the file's content beyond its having some: no macro expansion open, a
+source position, and a desugaring that is not empty. -/
 public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Surface.read .md f t).1 ≠ #[]) :
     (elabBlocks ctx (Surface.fragment .md f t pos).1).run st =
       let r := (elabBlocks { ctx with file := f, callSite := none } (Surface.read .md f t).1).run st
-      (Ir.markDisplay false false false 0 r.1, r.2) :=
-  elabBlocks_input_exact ctx f _ pos st (markdownInput_splice ctx f t pos hm hp hne)
+      (Ir.markDisplay false false false 0 r.1, r.2) := by
+  rw [elabBlocks_run, elabBlocks_run]
+  exact markdownInput_scope_exact ctx f t pos _ hm hp hne
 
 /-- The census of the same: included markdown sets the text it sets alone. -/
 public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (pos : Pos) (st : ESt)

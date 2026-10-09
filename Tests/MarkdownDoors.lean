@@ -6,27 +6,43 @@ open LeanTex.Core.Parse (Raw)
 /-! # Two doors, one meaning
 
 A markdown file reaches the one elaborator through two doors: alone, as a
-document of its own, and included in a tex host by `\markdownInput`. The
-block-level statement is a theorem (`Elab.markdownInput_blocks_exact`).
-The document-level statement — the neutral host's whole document is the
-file's own — is pending under the name markdownInput_document_exact: it
-passes through the compatibility layer's input state, and owes a
-comparable projection of that state (the neutral preamble's equals the
-empty one up to its N0100) and the compatibility walk's transparency on
-the markdown vocabulary's raws. These checks hold the document level
-meanwhile, over a synthetic family that reaches every markdown block and
-inline node to depth two:
+document of its own, and included in a tex host by `\markdownInput`. A
+document's surface may declare defaults of its own — how its content sets,
+never what is set — so the doors are compared one surface at a time. The
+block-level statement is a theorem under one context, so one surface
+(`Elab.markdownInput_blocks_exact`). The document-level statement — the
+neutral host's whole document is the file alone as a document of the host's
+surface — is pending under the name markdownInput_document_exact: it passes
+through the compatibility layer's input state, and owes a comparable
+projection of that state (the neutral preamble's equals the empty one up to
+its N0100) and the compatibility walk's transparency on the markdown
+vocabulary's raws. These checks hold the document level meanwhile, over a
+synthetic family that reaches every markdown block and inline node to depth
+two:
 
-* D1 — the neutral host's document is the standalone document, whole.
+* D1 — under the host's surface: the neutral host's document is the file
+  alone as a document named as the host (`aloneDoc`), whole.
+* D1′ — under the markdown surface: the markdown door's document is its own
+  include, the file alone as a document of its own name, whole and with the
+  same diagnostics. Between D1 and D1′ the raws are one array and only the
+  document's name differs — the name that selects a surface — and across
+  that difference the content census agrees (`Ir.blocksText`), whatever
+  defaults a surface declares.
 * D2 — capture: a host's redefinition of a vocabulary control reaches the
   included file as it reaches the same raws spliced at the call, and which
   controls are captured today is a table here.
 * D3 — the capture bound: redefining a name outside the vocabulary leaves
   the included blocks those of the neutral host.
-* D4 — one accounting: every standalone diagnostic appears in the included
-  run with its code, subject and span; every other one has a host span.
-* D5 — the artifacts: the typed HTML tree and the shipped-page census agree
-  across the doors.
+* D4 — one accounting, under the host's surface: every diagnostic of the
+  file alone appears in the included run with its code, subject and span;
+  every other one has a host span.
+* D5 — the artifacts, under the host's surface: the typed HTML tree and the
+  shipped-page census agree.
+* D6 — named as the file, an include is nothing: where the included file
+  and the including document share a name, a document body or a frame's
+  content that is the include is the same document with the file's raws in
+  the call's place. This is `Elab.elabBlockScope_input_exact`'s accumulator
+  at a frame, composed with the rest of the frame arm, end to end.
 
 Every family carries a planted divergence that must fail. -/
 
@@ -90,6 +106,14 @@ def standalone (src : String) : Ir.Doc × Array Diag := standaloneDoc mdName src
 def included (src : String) : Ir.Doc × Array Diag :=
   includedDoc hostFile (neutralHost mdName) [(mdName, mdName, src)]
 
+/-- The file alone under the host's surface: the document D1 holds the
+neutral host's to. -/
+def aloneInHost (src : String) : Ir.Doc × Array Diag := aloneDoc hostFile mdName src
+
+/-- The file alone as its own include, under its own surface: the document
+D1′ holds the markdown door's to. -/
+def aloneInSelf (src : String) : Ir.Doc × Array Diag := aloneDoc mdName mdName src
+
 /-- A planted door that reads markdown through the tex door: the
 comparison must see it. -/
 def plantedTexDoor (src : String) : Ir.Doc × Array Diag :=
@@ -111,12 +135,16 @@ def plantedRenamedDoor (src : String) : Ir.Doc × Array Diag :=
 /-- The diagnostic identity the accounting compares. -/
 def ident (d : Diag) : String × Option String × Option Span := (d.code, d.subject, d.span)
 
-/-- D4's judge: every standalone diagnostic appears among the included
-ones, and every included one that does not is the host's own. -/
+/-- D4's judge: the file's own diagnostics — those whose span lies in the
+file — are the same in both runs, both ways, by code, subject and span; and
+whatever else either run says is its document's own, with no span or one in
+the host. A bare document says it assumed the article page model; the
+neutral host says its `\usepackage{markdown}` sets nothing. -/
 def accounted (alone inc : Array Diag) : Bool :=
-  alone.all (fun d => inc.any (ident · == ident d)) &&
-    inc.all fun d => alone.any (ident · == ident d) ||
-      d.span.any (·.file == hostFile)
+  let own (d : Diag) := d.span.any (·.file == mdName)
+  let documents (d : Diag) := d.span.all (·.file == hostFile)
+  alone.all (fun d => if own d then inc.any (ident · == ident d) else documents d) &&
+    inc.all fun d => if own d then alone.any (ident · == ident d) else documents d
 
 /-! ## D2 — capture, as data -/
 
@@ -146,6 +174,28 @@ def splicedDoc (host src : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
   let fds := (Surface.read .md mdName src).2
   let raws := spliceList mdName (fun p => (Surface.fragment .md mdName src p).1) #[] raws.toList
+  Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
+
+/-- D6's right side: the host with the file's raws — read under the host's
+own name, no wrapper written — standing where each call stood, executed
+with no reader. -/
+def unwrappedDoc (host src : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .tex hostFile host
+  let (sub, fds) := Surface.read .md hostFile src
+  let raws := spliceList mdName (fun _ => sub) #[] raws.toList
+  Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
+
+/-- D6's left side: the host including the file under the host's own name,
+so the wrapper names the file already in force. -/
+def selfNamedDoc (host src : String) : Ir.Doc × Array Diag :=
+  includedDoc hostFile host [(mdName, hostFile, src)]
+
+/-- A planted wrapper that means more than a name — a quotation —
+standing where the include stood: D6 must see it. -/
+def quotedDoc (host src : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .tex hostFile host
+  let (sub, fds) := Surface.read .md hostFile src
+  let raws := spliceList mdName (fun p => #[.env "quote" sub p]) #[] raws.toList
   Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
 
 /-- An article host with one preamble line. -/
@@ -180,17 +230,23 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       (Md.vocabulary.admitsList (Surface.read .md mdName src).1.toList)
   t "doors: the vocabulary judge refuses math and an unlisted control"
     (!Md.vocabulary.admits (.math false #[] {}) && !Md.vocabulary.admits (.ctrl "section" {}))
-  -- D1 and D4 over the family.
+  -- D1, D1′ and D4 over the family.
   let mut plantedTex := 0
   let mut plantedRenamed := 0
   for src in family do
     let (aDoc, aDs) := standalone src
     let (iDoc, iDs) := included src
-    t s!"doors D1: the neutral host's document is the standalone one for {repr src}"
-      (iDoc == aDoc)
-    t s!"doors D4: one accounting for {repr src}" (accounted aDs iDs)
-    if (plantedTexDoor src).1 != aDoc then plantedTex := plantedTex + 1
-    if !accounted aDs (plantedRenamedDoor src).2 then plantedRenamed := plantedRenamed + 1
+    let (hDoc, hDs) := aloneInHost src
+    let (sDoc, sDs) := aloneInSelf src
+    t s!"doors D1: the neutral host's document is the file alone under its surface for {repr src}"
+      (iDoc == hDoc)
+    t s!"doors D1′: the markdown door's document is its own include for {repr src}"
+      (aDoc == sDoc && aDs.map ident == sDs.map ident)
+    t s!"doors D1: the content census agrees across the surfaces for {repr src}"
+      (Ir.blocksText aDoc.body == Ir.blocksText hDoc.body)
+    t s!"doors D4: one accounting for {repr src}" (accounted hDs iDs)
+    if (plantedTexDoor src).1 != hDoc then plantedTex := plantedTex + 1
+    if !accounted hDs (plantedRenamedDoor src).2 then plantedRenamed := plantedRenamed + 1
   t s!"doors D1: a door reading markdown as tex is seen ({plantedTex} of {family.length})"
     (plantedTex * 2 > family.length)
   t s!"doors D4: a door that renames the file is seen ({plantedRenamed} of {family.length})"
@@ -223,15 +279,29 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse bytes | failures ref "doors D5: invalid fixture font"
   let fonts := oneFaceOf font
   for src in [captureFragment, "# Heading\n\n> quoted words\n\n```python\nx = 1\n```\n"] do
-    let (aDoc, _) := standalone src
+    let (hDoc, _) := aloneInHost src
     let (iDoc, _) := included src
-    let (_, aTree, _) := HtmlDoc.emitTree {} aDoc
+    let (_, hTree, _) := HtmlDoc.emitTree {} hDoc
     let (_, iTree, _) := HtmlDoc.emitTree {} iDoc
     t s!"doors D5: one HTML tree for {repr src}"
-      (mdFlatten "" aTree.toList == mdFlatten "" iTree.toList)
+      (mdFlatten "" hTree.toList == mdFlatten "" iTree.toList)
     t s!"doors D5: one shipped-page census for {repr src}"
-      (censusText (censusOf #[] (layoutOf fonts aDoc)) ==
+      (censusText (censusOf #[] (layoutOf fonts hDoc)) ==
         censusText (censusOf #[] (layoutOf fonts iDoc)))
+  -- D6: named as the file, an include is nothing, at a body and at a frame.
+  let mut quotedSeen := 0
+  for src in family do
+    for (site, host) in [("body", neutralHost mdName), ("frame", frameHost)] do
+      t s!"doors D6: named as the file, a {site} that is the include is its raws for {repr src}"
+        ((selfNamedDoc host src).1 == (unwrappedDoc host src).1)
+    if (selfNamedDoc frameHost src).1 != (quotedDoc frameHost src).1 then
+      quotedSeen := quotedSeen + 1
+  t s!"doors D6: a wrapper that means more than a name is seen ({quotedSeen} of {family.length})"
+    (quotedSeen * 2 > family.length)
+  t "doors D6: raws standing at the wrong place in a frame are seen"
+    ((selfNamedDoc frameHost captureFragment).1 !=
+      (unwrappedDoc (frameHost.replace "{Frame title}" "{Frame title}Lead words")
+        captureFragment).1)
 
 /-- The neutral host through the driver's own reader, against the pure
 door: the pure reader is held to the one the driver runs. -/

@@ -1114,13 +1114,14 @@ def reports : List Report := [
   { id := "R123", date := "2026-10-08"
     what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences, list items lost their code blocks"
     pins := [thm% Elab.elabBlocks_input_exact, thm% Elab.markdownInput_blocks_exact,
-      thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_mem,
+      thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_contract,
       thm% MarkdownDoc.escapeLineStart_contract,
       check% Tests.MarkdownDoors.markdownDoorChecks,
       check% Tests.MarkdownTwin.markdownTwinChecks,
       .tier "mdtwin" "corpus.reread-clean", .tier "mdtwin" "cm.Lists.reread-exact"]
-    accept := ["thirty-seven twin round-trip rows fail on the base twin: twelve inline spellings, twenty-five block spellings",
-      "the neutral host's whole document equals the standalone one over a synthetic family reaching every markdown node to depth two, and over every CommonMark example",
+    accept := ["the record's failing run is the twin's: on the base tree thirty-seven round-trip rows fail, twelve inline spellings and twenty-five block spellings",
+      "the theorems pinned here did not exist on the base tree, where the agreement between the surfaces and what an include means was prose",
+      "the door checks are a measurement, not a guard seen failing: the elaborator they measure is the base tree's, unchanged here, and each fails on a planted divergent door; under one surface at a time, over a synthetic family reaching every markdown node to depth two and over every CommonMark example, the neutral host's whole document is the file alone under the host's surface, and a frame whose content is the include is the frame with the file's raws in its place",
       "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call"]
     state := .guarded "fa516a82" .before .author }
 ]
