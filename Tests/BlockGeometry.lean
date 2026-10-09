@@ -389,6 +389,42 @@ private def coveredItemChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   check ref "block covered items: no step moves a box"
     ((boxes 0).size == 4 && place 0 == place 1 && place 1 == place 2)
 
+/-- A block in a list or a quotation. TeX sets beamer's colour box
+`\textwidth` wide in vertical mode at the box's left edge
+(beamerbasecolor.sty), and `\@arrayparboxrestore` zeroes
+`\@totalleftmargin`, so neither an item's indent nor a quotation's margins
+reach it: lualatex on this frame (16:9, 10 pt) spans every bar across the
+text block and `.75ex` beyond it, and starts every block line on the text
+block's edge, the item and quoted text keeping their indents. Owed, both
+ways: the engine's titled block also carries tcolorbox's lowering
+(`Tcolorbox.lower`), whose box LaTeX sets `\linewidth` wide, inside the
+indent; until the two are told apart, a block stands on its list's
+indent. -/
+private def listedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let src := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
+    "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
+    "\\setbeamercolor{block title}{fg=white,bg=probeInk}\n" ++
+    "\\setbeamercolor{block body}{fg=probeInk,bg=probeSurface}\n\\begin{document}\n" ++
+    "\\begin{frame}[t]{Listed}\n\\begin{itemize}\n\\item Outer item words.\n" ++
+    "\\begin{block}{Outer listed}Outer block words.\\end{block}\n\\begin{itemize}\n" ++
+    "\\item Inner item words.\n\\begin{block}{Inner listed}Inner block words.\\end{block}\n" ++
+    "\\end{itemize}\n\\end{itemize}\n\\begin{quote}\nQuoted words.\n" ++
+    "\\begin{block}{Quoted}Quoted block words.\\end{block}\n\\end{quote}\n" ++
+    "\\end{frame}\n\\end{document}\n"
+  let (doc, _) := Elab.run "block-listed.tex" src
+  let geom := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom fonts none doc
+  let page := out.pages[0]?.getD {}
+  let lineX (text : String) : Option Dim.Sp :=
+    (page.lines.find? fun l => !l.furniture && lineText l false == letters text).map (·.x)
+  check ref "block in a list: the item and quoted text keep their indents"
+    (["Outer item words.", "Inner item words.", "Quoted words."].all fun t =>
+      page.lines.any fun l =>
+        !l.furniture && (lineText l false).endsWith (letters t) && geom.hmargin < l.x)
+  check ref "owed: a block in a list or a quotation stands on its indent"
+    (["Outer listed", "Outer block words.", "Inner listed", "Inner block words.", "Quoted",
+      "Quoted block words."].all fun t => (lineX t).any (geom.hmargin < ·))
+
 /-- The block template spends the registers in force, never their kernel
 values: `\vskip\medskipamount` above the title box and `\vskip
 \smallskipamount` below the body box (beamerinnerthemedefault.sty) take the
@@ -534,6 +570,7 @@ def blockGeometryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   parentChecks ref fonts
   coveredChecks ref fonts
   coveredItemChecks ref fonts
+  listedBlockChecks ref fonts
   skipChecks ref fonts
   stepWrapChecks ref
   let transparent := out.pages[1]?.getD {}
