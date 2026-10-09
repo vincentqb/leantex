@@ -9,10 +9,10 @@ public import LeanTex.Core.Html
 Judges of what a reader sees on `Layout.Out`: lines past the text area or
 off the medium, a paragraph's single line stranded at a page boundary, a
 hyphen carried over a page turn, a one-word last line, a table row or an
-unbreakable block cut by a page break, glyphs set in a fallback face, and a
-left edge that steps where protrusion should hang it. Every judge reads the
-pages alone, so a diagnostic that names a defect never excuses it: the
-artifact is what is counted.
+unbreakable block cut by a page break, glyphs set in a fallback face, a
+left edge that steps where protrusion should hang it, and, on the typed
+HTML tree, a font program shipped twice. Every judge reads the artifact
+alone, so a diagnostic that names a defect never excuses it.
 
 A line's block comes from the structure tree the pages are attributed
 against (`LineOut.leaf` indexes `Struct.leaves (Struct.ofDoc (pdfView doc))`),

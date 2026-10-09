@@ -66,9 +66,9 @@ def typesetDir : System.FilePath := "testdata/typeset"
 def fontsDir : System.FilePath := "testdata/corpus/fonts"
 
 /-- The tier's headroom ceiling. Above every count and every overflow in
-points a fixture here reaches (the worst line on record runs 7,800 pt past
-its measure), so `cap - count` stays positive; a constant, since raising it
-would raise every item at once. -/
+points a fixture here reaches (the worst line on record runs 7,526 pt past
+the text area), so `cap - count` stays positive; a constant, since raising
+it would raise every item at once. -/
 def cap : Int := 10000
 
 /-- One fixture, built. -/
