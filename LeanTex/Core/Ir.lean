@@ -1137,45 +1137,73 @@ public theorem listSkips_web_exact (size : Sp) (level : Nat) :
     listSkips .web size level = none := by
   simp only [listSkips]
 
-/-- **The one resolving site for a trivlist's space in a lineage**: the
-document's token where declared (`trivlistSkip`); in beamer's lineage
-LaTeX's own top-level `\topsep`, the size file's level-one value — the
-size file runs its `\@listi` once as it loads (size10.clo:216-221), and
-beamer's own `\@listi` (beamerbaselocalstructure.sty:151-154) runs only
-inside a list — measured under lualatex as `8pt plus 2pt minus 4pt` above
-and below a `{center}` in a 10pt frame; elsewhere the rhythm's quantum
-(`trivlistSkipDefault`). A frame distributes its content instead of
-setting it on the text grid the quantum keeps, so a deck spends LaTeX's
-value. Both backends read it: the PDF walk around a trivlist and the web
-deck's `--topsep`. -/
-public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) : SymGlue :=
-  match tokens.find? trivlistSkipName, l with
-  | some g, _ => g
-  | none, .beamer => ((listSkips .sizeFile size 1).map (·.topsep)).getD (trivlistSkipDefault size)
-  | none, .sizeFile | none, .web => trivlistSkipDefault size
+/-- The top-level `\topsep` the size file of each beamer class option
+leaves in force as it loads, running its `\@listi`: size8.clo and
+size9.clo:145 `6pt plus 2pt minus 3pt` (extsizes' files, which beamer.cls
+loads for `8pt` and `9pt`), size10.clo:218 `8pt plus 2pt minus 4pt`,
+size11.clo:218 `9pt plus 3pt minus 5pt`, size12.clo:218 `10pt plus 4pt minus
+6pt`, size14.clo:145 `12pt plus 5pt minus 7pt`, size17.clo:145 `14pt plus 6pt
+minus 8pt`, size20.clo:145 `16pt plus 7pt minus 9pt`. -/
+private def beamerTopsepTable : List (Nat × SymGlue) :=
+  [(8, ptsGlue 600 200 300), (9, ptsGlue 600 200 300), (10, ptsGlue 800 200 400),
+   (11, ptsGlue 900 300 500), (12, ptsGlue 1000 400 600), (14, ptsGlue 1200 500 700),
+   (17, ptsGlue 1400 600 800), (20, ptsGlue 1600 700 900)]
+
+/-- The class option a beamer body declares: the option whose point size,
+or the `\normalsize` its file sets (10.95, 14.4, 17.28 and 20.74 pt), is the
+body; otherwise beamer's documented default, `11pt` — a poster's body is
+beamerposter's scaled type over beamer's own size file, whose skips the
+package leaves in force. -/
+private def beamerOptionOf (size : Sp) : Nat :=
+  let opts : List (Nat × Sp) := [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10),
+    (11, Dim.pt 1095 / 100), (12, Dim.pt 12), (14, Dim.pt 144 / 10),
+    (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
+  ((opts.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
+
+/-- **The one resolving site for a trivlist's space in a lineage**, at the
+list depth it stands in. In beamer's lineage, outside a list, the document's
+token where declared, else LaTeX's own top-level `\topsep` — the size file's
+of the class option (`beamerTopsepTable`), since beamer's `\@listi`
+(beamerbaselocalstructure.sty:151-154) runs only inside a list — measured
+under lualatex as `8pt plus 2pt minus 4pt` above and below a `{center}` in
+a 10pt frame; inside a list at depth `n`, the `\topsep` beamer's
+`\@list⟨n⟩` sets there (`listSkips`: 3 pt, then 2 pt), which no preamble
+declaration survives. Elsewhere the rhythm's quantum (`trivlistSkip`). A
+frame distributes its content instead of setting it on the text grid the
+quantum keeps, so a deck spends LaTeX's value. Both backends read it: the
+PDF walk around a trivlist and the web deck's `--topsep`. -/
+public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+    SymGlue :=
+  match l with
+  | .beamer =>
+    let top := (beamerTopsepTable.lookup (beamerOptionOf size)).getD (trivlistSkipDefault size)
+    if depth == 0 then (tokens.find? trivlistSkipName).getD top
+    else ((listSkips .beamer size depth).map (·.topsep)).getD top
+  | .sizeFile | .web => trivlistSkip tokens size
 
 /-- Outside beamer's lineage the trivlist's space is the one every class
-reads (`trivlistSkip`). -/
+reads (`trivlistSkip`), at every depth. -/
 public theorem trivlistSkipFor_trivlistSkip_exact (l : ListLineage) (tokens : Tokens)
-    (size : Sp) (h : l ≠ .beamer) :
-    trivlistSkipFor l tokens size = trivlistSkip tokens size := by
-  unfold trivlistSkipFor trivlistSkip
-  cases tokens.find? trivlistSkipName <;> cases l <;> simp_all
+    (size : Sp) (depth : Nat) (h : l ≠ .beamer) :
+    trivlistSkipFor l tokens size depth = trivlistSkip tokens size := by
+  cases l <;> simp_all [trivlistSkipFor]
 
-/-- **The one resolving site for a float's space against the text**, with
-whether the paragraph gap stands on top of it: a declared `\floatsep`
-(`\tokens{ floatsep = ... }`) alone where the document sets one; in
-beamer's lineage, where a figure or a table is the `{center}` its
-environment opens (beamerbaselocalstructure.sty:550-559, `\par\nobreak
-\begin{center}`), the trivlist's space (`trivlistSkipFor`) with the
-paragraph gap on top of it, as a trivlist spends it — measured under
-lualatex, a frame's `\parskip` moves the text after a figure by itself;
-elsewhere the rhythm's float unit (`floatSepDefault`). Both backends read
-it: the PDF float plan's text-side gaps and the web deck's `--floatsep`. -/
-public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) : SymGlue × Bool :=
+/-- **The one resolving site for a float's space against the text**, at
+the list depth it stands in, with whether the paragraph gap stands on top
+of it: a declared `\floatsep` (`\tokens{ floatsep = ... }`) alone where the
+document sets one; in beamer's lineage, where a figure or a table is the
+`{center}` its environment opens (beamerbaselocalstructure.sty:550-559,
+`\par\nobreak\begin{center}`), the trivlist's space there
+(`trivlistSkipFor`) with the paragraph gap on top of it, as a trivlist
+spends it — measured under lualatex, a frame's `\parskip` moves the text
+after a figure by itself; elsewhere the rhythm's float unit
+(`floatSepDefault`). Both backends read it: the PDF float plan's text-side
+gaps and the web deck's `--floatsep`. -/
+public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+    SymGlue × Bool :=
   match tokens.find? "floatsep", l with
   | some g, _ => (g, false)
-  | none, .beamer => (trivlistSkipFor l tokens size, true)
+  | none, .beamer => (trivlistSkipFor l tokens size depth, true)
   | none, .sizeFile | none, .web => (floatSepDefault size, false)
 
 /-- The class's `\partopsep`, the value in force where no list level sets
@@ -6775,6 +6803,16 @@ public def CaptionSkip.default (s : CaptionSkip) (size : Sp) : SymGlue :=
   match s with
   | .above => captionSepDefault size
   | .below => {}
+
+/-- A skip's value where the document declares none, in a class's lineage:
+beamer sets `\abovecaptionskip` and `\belowcaptionskip` to 7 pt
+(beamerbaselocalstructure.sty:563-568) and spends one above a caption and
+the other below it in every figure and table (`\beamer@makecaption`);
+elsewhere `default`. -/
+public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp) : SymGlue :=
+  match l with
+  | .beamer => { width := { sp := Dim.pt 7 } }
+  | .sizeFile | .web => s.default size
 
 /-- **A caption's two skips, by the side it stands on and the side it is
 placed for**: the skip between the caption and its object, then the one on

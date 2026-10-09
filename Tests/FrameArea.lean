@@ -280,8 +280,8 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- An invented deck whose frames open on beamer's trivlists: `[t]`
 untitled, a `{center}`, a `{flushleft}` and a `{flushright}` on a line, a
 `{figure}` and a `{center}` on an image taller than the body's
-`\baselineskip`, a `{description}`, and a `{center}` between two
-paragraphs. -/
+`\baselineskip`, a `{description}`, a `{center}` between two paragraphs,
+a `{center}` inside a list item, and a captioned `{figure}`. -/
 private def trivDeck : String :=
   "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
   "\\begin{frame}[t]\n\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n" ++
@@ -294,27 +294,40 @@ private def trivDeck : String :=
   "\\begin{frame}[t]\n\\begin{description}\n\\item[Kilo] words.\n\\end{description}\n" ++
   "\\end{frame}\n" ++
   "\\begin{frame}[t]\nKilo words.\n\\begin{center}\nLima words.\n\\end{center}\n" ++
-  "Mike words.\n\\end{frame}\n\\end{document}\n"
+  "Mike words.\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{itemize}\n\\item Kilo words.\n\\begin{center}\nLima words.\n" ++
+  "\\end{center}\nMike words.\n\\item November words.\n\\end{itemize}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{figure}\n\\includegraphics[width=60pt,height=40pt]{tall.png}\n" ++
+  "\\caption{Lima words.}\n\\end{figure}\nMike words.\n\\end{frame}\n\\end{document}\n"
 
-/-- **A frame opening on a trivlist opens as TeX opens it, on both
+/-- **A frame's trivlists open and stand apart as TeX sets them, on both
 artifacts**: a `{center}`, `{flushleft}` or `{flushright}` — and beamer's
 `{figure}`, which is a `{center}` (beamerbaselocalstructure.sty:550-553) —
-spends its `\topsep` below the opening, LaTeX's own top-level one in a
-frame (`Ir.trivlistSkipFor`: size10.clo's `8pt plus 2pt minus 4pt`, which
-beamer leaves in force outside a list), and its first line stands one
-`\baselineskip` below that, an image `\lineskip` below its own height; the
-same space stands above and below a `{center}` between paragraphs, with
-the paragraph gap on top. Over `Layout.Out` against lualatex on `trivDeck`
-(4:3, the shipped Fira Sans for every face): the three lines at 25.59 bp,
-both images' tops at 14.64, the description's item at 20.61, and the
-paragraphs around the `{center}` at 17.62, 37.55 and 57.48; over the
-stylesheet the deck ships, the opening space of a trivlist and of a figure
-is the stage's share of the page's, their first lines and a description's
-take the first-line strut, and the root declares beamer's spaces. Before
-this, the page spent the rhythm's 6 pt quantum for the `\topsep` and a
-float's text gap for a figure — the lines 1.93 bp high and the figure's
-image 4.03 bp low — and the web deck dropped the trivlist's opening space
-and its strut: the lines 9.35 bp high, both images 8.97. Invented words. -/
+spends the `\topsep` in force where it stands (`Ir.trivlistSkipFor`):
+outside a list the class option's size file's (size10.clo's `8pt plus 2pt
+minus 4pt`, which beamer leaves in force there; extsizes' 6 pt under `9pt`;
+beamer's own 11pt's 9 pt under a poster's scaled body), inside one the
+`\topsep` beamer's `\@listi` sets again (3 pt, then 2 pt), which a preamble
+declaration does not survive; its first line stands one `\baselineskip`
+below the opening, an image `\lineskip` below its own height; a caption
+spends beamer's 7 pt `\abovecaptionskip` and `\belowcaptionskip`. Over
+`Layout.Out` against lualatex on `trivDeck` (4:3, the shipped Fira Sans for
+every face): the three lines at 25.59 bp, both images' tops at 14.64, the
+description's item at 20.61, the paragraphs around the `{center}` at 17.62,
+37.55 and 57.48, the `{center}` in an item at 35.56 with its item's next
+line at 50.50 and the next item at 65.45, and the captioned figure's next
+line 26.90 below its caption; over the stylesheet the deck ships, the
+opening space of a trivlist and of a figure, the root's and each list
+level's `--topsep` and the caption skips are the stage's shares of the
+page's, and their first lines and a description's label take the
+first-line strut. Before the first fix the page spent the rhythm's 6 pt
+quantum for the `\topsep` and a float's text gap for a figure — the lines
+1.93 bp high and the figure's image 4.03 bp low — and the web deck dropped
+the trivlist's opening space and its strut: the lines 9.35 bp high, both
+images 8.97. Before the second, a `{center}` in an item spent the top
+level's 8 pt (its line 5.11 bp low, its item's next line 10.17), and the
+captioned figure's next line stood 6.90 bp short of its caption. Invented
+words. -/
 def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "trivlist opening: the shipped Fira Sans parses" false
@@ -325,7 +338,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lists := doc.docClass.record.lists
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
-  let topsep := (Ir.trivlistSkipFor lists doc.tokens size).width.sp
+  let topsep := (Ir.trivlistSkipFor lists doc.tokens size 0).width.sp
   let lineY (page : Nat) (word : String) : Option Dim.Sp :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map (·.y)
@@ -333,7 +346,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
-    (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size).1.width.sp == topsep)
+    (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.sp == topsep)
   t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
     ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
       y == skip + topsep + lead && near y (ptMilli 25594))
@@ -345,6 +358,26 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "trivlist opening: a center between paragraphs stands its topsep above and below, as lualatex's"
     ((lineY 6 "Kilo").any (near · (ptMilli 17624)) && (lineY 6 "Lima").any (near · (ptMilli 37550)) &&
      (lineY 6 "Mike").any (near · (ptMilli 57475)))
+  -- Inside a list beamer's `\@listi` has set `\topsep` again, to 3 pt.
+  t "trivlist opening: a center inside a list item spends its level's topsep, as lualatex's"
+    ((Ir.trivlistSkipFor lists doc.tokens size 1).width.sp == Dim.pt 3 &&
+     (lineY 7 "Lima").any (near · (ptMilli 35557)) && (lineY 7 "Mike").any (near · (ptMilli 50501)) &&
+     (lineY 7 "November").any (near · (ptMilli 65445)))
+  -- A caption sets 7 pt below its own line (`\belowcaptionskip`), the
+  -- figure's topsep after that, as beamer's caption does.
+  t "trivlist opening: a captioned figure spends beamer's caption skips, as lualatex's"
+    ((imageY 8).any (fun y => near (y - Dim.pt 40) (ptMilli 14635)) &&
+     (match lineY 8 "Figure", lineY 8 "Mike" with
+      | some c, some m => near (m - c) (ptMilli 26899)
+      | _, _ => false))
+  -- The top-level topsep is the class option's size file's: extsizes'
+  -- 6 pt under `9pt`, and beamer's own 11pt's 9 pt under a poster's body.
+  t "trivlist opening: the top-level topsep is the class option's size file's"
+    ((Ir.trivlistSkipFor lists {} (Dim.pt 9) 0).width.sp == Dim.pt 6 &&
+     (Ir.trivlistSkipFor lists {} Ir.posterFontSize 0).width.sp == Dim.pt 9 &&
+     (Ir.trivlistSkipFor lists {} (Dim.pt 10) 2).width.sp == Dim.pt 2 &&
+     (Ir.trivlistSkipFor lists { entries := #[(Ir.trivlistSkipName, { width := { sp := Dim.pt 20 } })] } (Dim.pt 10) 1).width.sp
+       == Dim.pt 3)
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   let blocks := artCssBlocks css
@@ -358,16 +391,31 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     (strut.size == 1 && strut.all fun (sel, _) =>
       hasStr sel s!".{HtmlDoc.roleClass Ir.trivlistRole}.frame-body-start > p:first-child::before" &&
       hasStr sel "figure.float.frame-body-start > :is(p, figcaption):first-child::before" &&
-      hasStr sel "dl.frame-body-start > :is(dt:first-child, dt:first-child + dd)::before")
+      hasStr sel "dl.frame-body-start > dt:first-child::before" && !hasStr sel "+ dd")
   let root := (cssBlocksFor css ":root").foldl (· ++ ";" ++ ·) ""
-  t "trivlist opening html: the deck declares beamer's trivlist and float spaces"
-    ((cssDeclOf root "--topsep").any (·.endsWith "rem") &&
+  t "trivlist opening html: the deck declares beamer's trivlist and float spaces, the stage's share"
+    (cssStageLength root "--topsep" topsep doc.page.height &&
      cssDeclOf root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
+  t "trivlist opening html: each list level declares its own topsep, the stage's share"
+    ((cssBlocksFor css ":where(:is(li, dd, blockquote))").any (cssStageLength · "--topsep"
+        (Ir.trivlistSkipFor lists doc.tokens size 1).width.sp doc.page.height) &&
+     (cssBlocksFor css ":where(:is(li, dd, blockquote) :is(li, dd, blockquote))").any
+       (cssStageLength · "--topsep" (Ir.trivlistSkipFor lists doc.tokens size 2).width.sp
+         doc.page.height))
+  -- The caption skips' undeclared value is the chain's innermost fallback.
+  let innermost (v : String) : String :=
+    ((v.splitOn ", ").getLast!.splitOn ")").head!
+  t "trivlist opening html: a figure's caption skips are beamer's 7pt, the stage's share"
+    ((cssBlocksFor css "figure.float").any fun d =>
+      (cssDeclOf d "--ltx-capsep").any (fun v =>
+        cssStageLength ("--c: " ++ innermost v) "--c" (Dim.pt 7) doc.page.height) &&
+      (cssDeclOf d "--ltx-capfar").any (fun v =>
+        cssStageLength ("--c: " ++ innermost v) "--c" (Dim.pt 7) doc.page.height))
   let classes := attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])
   t "trivlist opening html: every trivlist frame opens on its trivlist or its figure"
     ((classes.filter fun c => (c.splitOn " ").contains "frame-body-start" &&
       ((c.splitOn " ").contains (HtmlDoc.roleClass Ir.trivlistRole) ||
-       (c.splitOn " ").contains "float")).size == 5)
+       (c.splitOn " ").contains "float")).size == 6)
 
 /-- **An alignment a standout frame discards is named** (`Elab.frameOpts`):
 moloch's `standout` key opens with `\setkeys{beamerframe}{c}`, so `b` before

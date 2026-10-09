@@ -1452,20 +1452,6 @@ public def parskipVar (page : Ir.PageSpec) : String :=
   | none => ""
   | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize g.width.sp)};\n"
 
-/-- In beamer's lineage, the trivlist's and the float's spaces the page
-spends (`Ir.trivlistSkipFor`, `Ir.floatSpaceFor`): `--topsep` the
-trivlist's, and `--floatsep` that space with the paragraph gap on top, a
-figure being the `{center}` it opens. A declared token overrides either
-(`tokenVars`, later in the cascade). -/
-private def lineageSkipVars (doc : Doc) : String :=
-  match doc.docClass.record.lists with
-  | .beamer =>
-    let size := doc.page.fontSize
-    let t := (Ir.trivlistSkipFor .beamer doc.tokens size).width.sp
-    s!"    --{Ir.trivlistSkipName}: {milliRem (screenMilli size t)};\n" ++
-    s!"    --floatsep: calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem));\n"
-  | .sizeFile | .web => ""
-
 /-- The PDF backend's shipped default gap at a boundary kind: the values
 placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
 at an undeclared boundary), twice it above a heading (the walk's
@@ -1730,6 +1716,45 @@ private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSiz
 (`deckStageMilli`), as type and the frame opening are stated. -/
 private def stageVh (page : PageSpec) (x : Sp) : String :=
   s!"{decMilli (deckStageMilli x page.height)}vh"
+
+/-- A length a class's lineage fixes, in the page's own unit: on a deck's
+stage its share of the stage (`stageVh`), as the deck's type and frame
+opening are stated, so it keeps its proportion at every viewport and on
+paper; elsewhere the screen's rem (`screenMilli`). -/
+private def lineageLength (doc : Doc) (x : Sp) : String :=
+  if doc.docClass.record.model == .frame then stageVh doc.page x
+  else milliRem (screenMilli doc.page.fontSize x)
+
+/-- In beamer's lineage, the trivlist's and the float's spaces the page
+spends, at the list depth they stand in (`Ir.trivlistSkipFor`,
+`Ir.floatSpaceFor`): `--topsep` the top level's on the root and each list
+level's inside it (a list item, a description's body, a quotation, the
+`\@list⟨n⟩` beamer runs), and `--floatsep` that space with the paragraph
+gap on top, a figure being the `{center}` it opens. A declared `\topsep`
+overrides the root's (`tokenVars`, later in the cascade) and reaches no
+list, as `\@listi` sets the length again there. -/
+private def lineageSkipVars (doc : Doc) : String :=
+  match doc.docClass.record.lists with
+  | .beamer =>
+    let t := (Ir.trivlistSkipFor .beamer doc.tokens doc.page.fontSize 0).width.sp
+    let float := match Ir.floatSpaceFor .beamer doc.tokens doc.page.fontSize 0 with
+      | (_, true) => s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
+      | (g, false) => lineageLength doc g.width.sp
+    s!"    --{Ir.trivlistSkipName}: {lineageLength doc t};\n" ++
+    s!"    --floatsep: {float};\n"
+  | .sizeFile | .web => ""
+
+/-- Each list level's `--topsep` in beamer's lineage (`lineageSkipVars`):
+level one inside one enclosing list, the deeper levels inside two. -/
+private def lineageLevelRules (doc : Doc) : String :=
+  match doc.docClass.record.lists with
+  | .beamer =>
+    let atDepth (depth : Nat) : String :=
+      lineageLength doc (Ir.trivlistSkipFor .beamer doc.tokens doc.page.fontSize depth).width.sp
+    let within := ":is(li, dd, blockquote)"
+    s!":where({within}) \{ --{Ir.trivlistSkipName}: {atDepth 1}; }\n" ++
+    s!":where({within} {within}) \{ --{Ir.trivlistSkipName}: {atDepth 2}; }\n"
+  | .sizeFile | .web => ""
 
 /-- The footline band's box as the stage lengths `footlineCss` reads: its
 glyphs' height and depth, the page's own (`Config.footBox`). -/
@@ -3535,13 +3560,13 @@ private def frameOpeningCss (doc : Doc) : String :=
      s!"section.slide > :is({", ".intercalate listElems}).frame-body-start \{ \
 --frame-body-open: {stageVh doc.page opened}; }\n"
    | none => "") ++
-  s!"{triv} \{ --frame-body-open: {stageVh doc.page (Ir.trivlistSkipFor l doc.tokens size).width.sp}; }\n" ++
-  s!"{float} \{ --frame-body-open: {stageVh doc.page (Ir.floatSpaceFor l doc.tokens size).1.width.sp}; }\n" ++
+  s!"{triv} \{ --frame-body-open: {stageVh doc.page (Ir.trivlistSkipFor l doc.tokens size 0).width.sp}; }\n" ++
+  s!"{float} \{ --frame-body-open: {stageVh doc.page (Ir.floatSpaceFor l doc.tokens size 0).1.width.sp}; }\n" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
 .frame-body-end { text-box: trim-end text alphabetic; }\n" ++
   "section.slide > p.frame-body-start::before,\n" ++
   s!"{triv} > p:first-child::before, {float} > :is(p, figcaption):first-child::before,\n" ++
-  "section.slide > dl.frame-body-start > :is(dt:first-child, dt:first-child + dd)::before,\n" ++
+  "section.slide > dl.frame-body-start > dt:first-child::before,\n" ++
   s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
   s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
   s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
@@ -4768,11 +4793,14 @@ site): one custom-property indirection per kind and side — `--ltx-capsep`
 facing the object and `--ltx-capfar` on the text side for a caption below,
 the `-top` pair for one above — so a `\captionsetup[table]` gap reaches
 tables and no figure. -/
-private def captionScopeCss (pos : Array (String × Ir.CaptionPos)) : String :=
+private def captionScopeCss (doc : Doc) : String :=
+  let pos := doc.captionPos
   let chain (s : Ir.CaptionSkip) (k : Ir.FloatKind) : String :=
-    let dflt := match s with
-      | .above => quantaRem (gapK "caption")
-      | .below => "0px"
+    let dflt := match doc.docClass.record.lists, s with
+      | .beamer, _ =>
+        lineageLength doc (Ir.CaptionSkip.defaultFor .beamer s doc.page.fontSize).width.sp
+      | _, .above => quantaRem (gapK "caption")
+      | _, .below => "0px"
     (s.keys k).foldr (fun key acc => s!"var(--{key}, {acc})") dflt
   String.join ([Ir.FloatKind.figure, .table, .sub, .algorithm].map fun k =>
     let p := Ir.captionPosOf pos k
@@ -4851,6 +4879,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- link relies on below.
   (let tv := tokenVars cfg doc
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
+  lineageLevelRules doc ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
   "  margin: 0;\n" ++
@@ -5062,7 +5091,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   "  position: absolute; left: 0; text-align: right; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
-  captionScopeCss doc.captionPos ++
+  captionScopeCss doc ++
   "figure.float > figcaption { margin-top: var(--ltx-capsep);\n" ++
   "  padding: 0 var(--ltx-capmargin) var(--ltx-capfar);\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
