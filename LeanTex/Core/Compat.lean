@@ -8596,9 +8596,12 @@ skipped, and the length keeps its value" pos
     -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
     -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
     -- values) declares the document's body size and leading. Both are the
-    -- page's to carry: the leading lands as the factor over the engine's
-    -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
-    -- baselines at 10.95pt and the rhythm unit follows. The body's
+    -- page's to carry: the leading lands as the body's `\baselineskip`
+    -- (`\page{ baselineskip = … }`), the factor over the engine's 6/5 base
+    -- (`Ir.leadingMilli`) and the skip column's `\normalsize` row, so a
+    -- spliced .sty's 10/10.95 sets baselines at 10.95pt, the rhythm unit
+    -- follows, and a step the .sty never declares keeps size10.clo's own
+    -- skip (`Ir.stepLead`). The body's
     -- trailing display-skip internals are TeX the engine does not run;
     -- the translation note names what was taken. The display skips it
     -- assigns are the document's (`\begin{document}` runs `\normalsize`),
@@ -8612,10 +8615,9 @@ skipped, and the length keeps its value" pos
           if h : fsArgs.size ≥ 3 then
             if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
               if sz > 0 && ld > 0 then
-                let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
                 let skips ← sizeSkips sbody afterFs pos
                 let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
-leading = {milliStr factor} }" ++
+baselineskip = {milliStr ld}pt }" ++
                   (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
                 write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}" native pos

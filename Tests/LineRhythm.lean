@@ -87,7 +87,7 @@ def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deck := (HtmlDoc.emit {} deckDoc).1
   t "a deck's steps set their own leading as line heights"
     (hasStr deck ".size-small { font-size: 0.900em; line-height: 1.222; }" &&
-      hasStr deck ".size-footnotesize { font-size: 0.800em; line-height: 1.187; }" &&
+      hasStr deck ".size-footnotesize { font-size: 0.800em; line-height: 1.188; }" &&
       hasStr deck ".size-LARGE { font-size: 1.728em; line-height: 1.273; }")
   -- The 4:3 stage is 96 mm (272.126 pt) high: the 10 pt body is 3.674% of
   -- it, and the root — the body at 12/14.5 — 3.041%, so the sheet's
@@ -158,9 +158,9 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
 /-- **A listing's lines stand at its size's leading, less what its package
 takes off each line**: a bare `verbatim` under `\\footnotesize` at the
 step's 9.5 pt, as lualatex sets it (9.464 bp), and a minted listing 0.25 pt
-tighter, fvextra's overlap after every line (lualatex: 9.215 bp); the
-HTML `pre` states the same pitch over its font size. Before, both stood at
-6⁄5 of 8 pt, 9.6 pt, on both artifacts. -/
+tighter, fvextra's overlap after every line (lualatex: 9.215 bp), twice
+after its first (8.966 bp); the HTML `pre` states the later pitch over its
+font size. Before, both stood at 6⁄5 of 8 pt, 9.6 pt, on both artifacts. -/
 def listingPitchChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let code := "alpha = 1\nbravo = 2\ncharlie = 3\n"
@@ -169,8 +169,8 @@ def listingPitchChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ("\\begin{minted}{python}\n" ++ code ++ "\\end{minted}")
   t "a footnotesize verbatim's lines stand at the step's 9.5 pt"
     (pitchesOf oneFace verbatim == #[pt 95 / 10, pt 95 / 10])
-  t "a minted listing's lines stand fvextra's 0.25 pt under the step"
-    (pitchesOf oneFace minted == #[pt 925 / 100, pt 925 / 100])
+  t "a minted listing's lines stand fvextra's 0.25 pt under the step, twice after the first"
+    (pitchesOf oneFace minted == #[pt 9, pt 925 / 100])
   t "the HTML sets a verbatim's pitch over its size"
     (hasStr (HtmlDoc.emit {} (elabStr verbatim).1).1 "line-height: 1.187;")
   t "the HTML sets a minted listing's pitch over its size"
@@ -273,21 +273,150 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     ((lastDeclared art "pre" "padding").any (· != "0") &&
       lastDeclared art "pre" "background" == some "var(--tint)")
 
-/-- **A table cell set in one named size stands on the step's line box in
-both artifacts**: the page sets the cell's paragraph at the step's strut
-and leading (`Ir.paraStep?`), and the HTML gives the cell element the
-step's class, the content lifted out of the scope (`Ir.liftParaStep`) — a
-size span inside the cell left the body's strut under every line. -/
+/-- The distinct baselines a source's body lines stand on, in page order, and
+the distances between them: a table's row pitch, one per row, whatever the
+number of cells a row sets. -/
+private def rowPitches (fs : Font.FontSet) (src : String) : Array Sp :=
+  let ys := (bodyLines (layoutOf fs (elabStr src).1)).foldl (fun (acc : Array Sp) l =>
+    if acc.back? == some l.y then acc else acc.push l.y) #[]
+  (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
+
+/-- **A table's rows stand on the strut of the size the table began under**,
+in both artifacts: LaTeX's `\@arstrut` is the strut in force where the
+`tabular` opened, so a cell that sets its own size changes its type, never
+its row — lualatex keeps three `\small` cells' rows 11.955 bp apart, the
+body's 12 pt, and a table opened under `\small` sets its rows at the step's
+11 pt (10.955 bp) and its `p`-column paragraphs' wrapped lines at the step's
+leading. Before, a cell set wholly in one size took the step's strut, and
+its row stood 11 pt below the last. The HTML cell carries the size the row
+stands under (`Ir.paraStep?`); a cell's own size stays a span. -/
 def cellStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let src := dvDoc "" ("\\begin{tabular}{p{3cm}}\n\\small " ++ longTitle ++ "\n\\end{tabular}")
-  let (doc, _) := elabStr src
-  t "a small cell's wrapped lines stand at the step's 11 pt"
-    (let ps := pitchesOf oneFace src
+  let perCell := dvDoc "" ("\\begin{tabular}{ll}\n\\small Alpha & \\small one\\\\\n" ++
+    "\\small Bravo & \\small two\\\\\n\\small Charlie & \\small three\\\\\n\\end{tabular}")
+  t "a table whose cells set their own size keeps the body's row strut"
+    (rowPitches oneFace perCell == #[pt 12, pt 12])
+  let underSmall := dvDoc "" ("{\\small\n\\begin{tabular}{ll}\nDelta & four\\\\\n" ++
+    "Echo & five\\\\\nFoxtrot & six\\\\\n\\end{tabular}\\par}")
+  t "a table opened under a size declaration sets its rows at the step's strut"
+    (rowPitches oneFace underSmall == #[pt 11, pt 11])
+  let wrapped := dvDoc "" ("{\\small\n\\begin{tabular}{p{3cm}}\n" ++ longTitle ++
+    "\n\\end{tabular}\\par}")
+  t "a p-column under a size declaration wraps at the step's 11 pt"
+    (let ps := pitchesOf oneFace wrapped
      !ps.isEmpty && ps.all (· == pt 11))
-  let (_, nodes, _) := HtmlDoc.emitTree {} doc
-  let cells := withClassIn nodes "size-small"
-  t "the HTML cell carries the step's class itself"
-    (cells.size == 1 && cells.all (· matches .elem "td" _ _))
+  let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr perCell).1
+  t "the HTML cell that sets its own size keeps the size a span"
+    ((withClassIn nodes "size-small").size == 6 &&
+      (withClassIn nodes "size-small").all (· matches .elem "span" _ _))
+  let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr underSmall).1
+  t "the HTML cell under a size declaration carries the step's class itself"
+    ((withClassIn nodes "size-small").size == 6 &&
+      (withClassIn nodes "size-small").all (· matches .elem "td" _ _))
+
+/-- **A paragraph leads at the size in force where it ends**, on the shipped
+page: LaTeX reads `\baselineskip` at `\par`, so a size group closed before
+its paragraph ends leaves the body's leading under the paragraph's lines
+(lualatex: `{\small A\\B}\par` stands its lines 11.955 bp apart, the body's
+12 pt), while `{\small A\\B\par}`, a `\small` declaration over the
+paragraph, and a nested size group ending the paragraph inside it lead at
+their step (`Ir.paraAt`, `Ir.paraStep_paraAt_exact`). The HTML gives the step
+to the paragraph element only where it is in force at the end. Before, the
+closed group led at the step, a point tight, and a `\Huge` group at a page's
+top stood its line 11.6 bp low. -/
+def paraEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  t "a size group closed before the paragraph ends leaves the body's leading"
+    (pitchesOf oneFace (metricDoc "{\\small Alpha one\\\\Bravo two}\\par") == #[pt 12])
+  t "a size group ending its paragraph inside it leads at the step"
+    (pitchesOf oneFace (metricDoc "{\\small Alpha one\\\\Bravo two\\par}") == #[pt 11])
+  t "a group closed inside a size declaration leaves the declaration's leading"
+    (pitchesOf oneFace (metricDoc "{\\small {\\footnotesize Alpha one\\\\Bravo two}\\par}") ==
+      #[pt 11])
+  t "the last of nested size declarations in force sets the leading"
+    (pitchesOf oneFace (metricDoc "{\\small {\\footnotesize Alpha one\\\\Bravo two\\par}}") ==
+      #[pt 95 / 10])
+  let (_, closed, _) := HtmlDoc.emitTree {} (elabStr (metricDoc
+    "{\\small Alpha one\\\\Bravo two}\\par")).1
+  t "the HTML keeps a closed size group a span inside its paragraph"
+    ((withClassIn closed "size-small").size == 1 &&
+      (withClassIn closed "size-small").all (· matches .elem "span" _ _) &&
+      (withClassIn closed "size-normalsize").isEmpty)
+  let (_, nested, _) := HtmlDoc.emitTree {} (elabStr (metricDoc
+    "{\\small {\\footnotesize Alpha one\\\\Bravo two\\par}}")).1
+  t "the HTML sets the last size in force on the paragraph, and only it"
+    ((withClassIn nested "size-footnotesize").all (· matches .elem "p" _ _) &&
+      (withClassIn nested "size-footnotesize").size == 1 &&
+      (withClassIn nested "size-small").isEmpty)
+
+/-- A venue's size ladder as a style it ships declares one: `\@setfontsize`
+rows for the body and some of its steps (invented values, in a venue's shape:
+a 10/10.95 body, steps that declare their own skips). -/
+private def venuePre : String :=
+  "\\makeatletter\n" ++
+  "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}\n" ++
+  "\\renewcommand{\\footnotesize}{\\@setfontsize\\footnotesize\\@ixpt\\@xpt}\n" ++
+  "\\renewcommand{\\scriptsize}{\\@setfontsize\\scriptsize\\@viipt\\@viiipt}\n" ++
+  "\\renewcommand{\\tiny}{\\@setfontsize\\tiny\\@vipt\\@viipt}\n" ++
+  "\\renewcommand{\\large}{\\@setfontsize\\large{14}{15}}\n" ++
+  "\\makeatother\n"
+
+/-- **Under a size ladder a document declares, each step leads at the skip it
+declares** (fntguide's `\@setfontsize`, its third argument), measured under
+lualatex on the venue probe: `\footnotesize` 9/10 at 9.96 bp, `\scriptsize`
+7/8 at 7.97, `\tiny` 6/7 at 6.97, a `\large` declared 14/15 at 15, and a
+step the venue leaves alone at size10.clo's own skip (`\small` 11 pt). The
+column holds the declared skips (`Ir.setSkip`, `Ir.skipRowOf_between`) and
+every step leads in its proportion to the body's (`Ir.stepLead_ratio_between`),
+to the page factor's milli rounding. Before, every step read size10.clo's
+column under the venue's tighter body factor: `\footnotesize` set 8.68 bp
+lines on 9 pt type, `\large` solid. -/
+def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
+  for (name, skip) in [("tiny", 700), ("scriptsize", 800), ("footnotesize", 1000),
+      ("normalsize", 1095), ("large", 1500), ("small", 1100), ("Large", 1800)] do
+    let ps := pitchesOf oneFace (dvDoc venuePre (stepPara name))
+    t s!"under a declared ladder '\\{name}' leads at {skip / 100}.{skip % 100} pt"
+      (ps.size == 1 && near ps[0]! (pt skip / 100))
+  let code := "{\\footnotesize\n\\begin{verbatim}\nalpha = 1\nbravo = 2\n\\end{verbatim}\n}"
+  t "a listing in a declared step leads at the declared skip"
+    (let ps := pitchesOf oneFace (dvDoc venuePre code)
+     ps.size == 1 && near ps[0]! (pt 10))
+  -- The body's skip declared natively, the spelling a class's `\normalsize`
+  -- reads as: the body's lines at it, a step it leaves alone at size10.clo's.
+  let native (body : String) := dvDoc "\\page{ fontsize = 10pt, baselineskip = 11pt }\n" body
+  t "a declared body skip sets the body's lines at it"
+    (let ps := pitchesOf oneFace (native (stepPara "normalsize"))
+     ps.size == 1 && near ps[0]! (pt 11))
+  t "a declared body skip leaves an undeclared step at size10.clo's skip"
+    (let ps := pitchesOf oneFace (native (stepPara "footnotesize"))
+     ps.size == 1 && near ps[0]! (pt 95 / 10))
+  let (doc, _) := elabStr (dvDoc venuePre "Alpha words.")
+  t "the declared skips stand as the document's skip column"
+    (doc.page.skipScale.lookup "footnotesize" == some 1000 &&
+      doc.page.skipScale.lookup "normalsize" == some 1095 &&
+      doc.page.skipScale.lookup "small" == some 1100)
+
+/-- **A deck's heading set in a named size takes the step's leading over its
+own size**, as the page leads a display's lines at the step's
+`\baselineskip` on the base the step scales: a `\small` frame title's
+element carries `lead-small`, whose line height is the page's 15.84 pt over
+the title's 14.4 pt. Before, the element kept the heading's own line height,
+about 17 bp per line against the page's 15.84. -/
+def headingLeadChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deckDoc := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{\\small " ++ longTitle ++ "}\nBody words.\n\\end{frame}\n" ++
+    "\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}\n\\end{document}")).1
+  let (_, nodes, _) := HtmlDoc.emitTree {} deckDoc
+  let leads := withClassIn nodes "lead-small"
+  t "a small frame title's element carries the step's leading"
+    (leads.size == 1 && leads.all (· matches .elem "h2" _ _))
+  let css := (HtmlDoc.emit {} deckDoc).1
+  t "a step's leading over a display's own size is the page's"
+    (hasStr css ".lead-small { line-height: 1.100; }")
+  t "a frame title under no size command keeps the heading's leading"
+    ((elemNodesList (· == "h2") #[] nodes.toList).size == 2)
 
 end Tests.LineRhythm

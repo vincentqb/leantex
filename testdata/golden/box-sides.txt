@@ -14,8 +14,9 @@ role trivlist-env
     table c
       row
         cell
-          styled size:LARGE
-            text "An Invented Tabular Title"
+          styled size:normalsize
+            styled size:LARGE
+              text "An Invented Tabular Title"
       row
         cell
           text "Pat Placeholder"

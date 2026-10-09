@@ -2017,7 +2017,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
   let leadedAt (sz : Dim.Sp) (step : Option String := none) : Dim.Sp × Dim.Sp :=
     Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
-      (Ir.stepSkip (step.bind (Ir.stepLead · body)) sz geom.leading)
+      (Ir.stepSkip (step.bind (Ir.stepLead Ir.sizeSkipScale · body)) sz geom.leading)
   -- Interline is the metric rule (CSS 2.1 §10.8.1): the previous line's
   -- leaded below plus this line's leaded above — for uniform text exactly
   -- one leading, and after a Huge line the Huge box's own below, never a
@@ -4910,13 +4910,18 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     t s!"\\vspace* keeps its space at a page's top, below a {ts}pt \\topskip"
       ((at? (src s!"\\setlength\{\\topskip}\{{ts}pt}" "\\vspace*{20pt}\nAlpha words") 0 "Alpha").map
         (·.1 == Dim.pt (ts + 20) + lead) |>.getD false)
-  -- A rule taller than the body's leading: lualatex stands this line 0.21 bp
-  -- above the engine. A `\Huge` paragraph sets at `\Huge`'s own 30 pt
-  -- leading (`Ir.paraStep?`), clear of its 17.9 pt line: lualatex and the
-  -- engine both stand it 30 pt below the kept space.
+  -- A `\Huge` group closed before its paragraph ends leaves the body's
+  -- leading in force at `\par` (`Ir.paraAt`), and its 17.9 pt line is taller
+  -- than that leading: `\lineskip` below the kept space, as for a tall rule.
   t "a first line taller than the leading takes \\lineskip below the kept space"
+    ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words}") 0 "Alpha").map
+      (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  t "a rule taller than the leading takes \\lineskip below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n\\rule{1pt}{24pt} Alpha words") 0 "Alpha").map
       (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  -- With `\Huge` in force at `\par` the line leads at `\Huge`'s own 30 pt,
+  -- clear of its 17.9 pt line: lualatex and the engine both stand it 30 pt
+  -- below the kept space.
   t "a Huge first line stands Huge's leading below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words\\par}") 0 "Alpha").map
       (fun (y, _, _) => y == Dim.pt 60) |>.getD false)

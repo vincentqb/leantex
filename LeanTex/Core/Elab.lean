@@ -1096,7 +1096,7 @@ public def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 private def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
-   "textwidth", "textheight", "leading", "parskip",
+   "textwidth", "textheight", "leading", "baselineskip", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
    "furnituregap", "headsep", "footskip", "rule", "trim", "bottom"]
@@ -6930,6 +6930,21 @@ private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
 private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw :=
   splitAtParsGo ctx pos body.toList #[] #[] #[]
 
+/-- A scope group whose paragraph ends inside it, under the size declaration
+it opens with (`{\small A\\B\par}`): LaTeX's `\par` there reads that size's
+`\baselineskip`, so the group is the block scope it is — its declaration
+standing over the paragraph (`Ir.paraAt`) — never spliced open at the
+paragraph end (`splitAtPars`), which would close the size before the `\par`
+and lead the paragraph at the body's skip. Only a group that ends at its
+paragraph end: text after the brace then joins no paragraph inside it. -/
+private def sizeParScope (body : Array Raw) : Bool :=
+  let ws := body.toList.filter fun r => !(r matches .space)
+  match ws.head?, ws.getLast? with
+  | some (.ctrl n _), some last =>
+    ((declStyleOf n) matches some (.size _) || n.startsWith Compat.fontSizeMark) &&
+      isParRaw last
+  | _, _ => false
+
 private theorem nestedParsList_push (a : Array Raw) (r : Raw) :
     nestedParsList (a.push r).toList = nestedParsList a.toList + nestedPars r := by
   simp [Array.toList_push, nestedParsList_append, nestedParsList]
@@ -7163,7 +7178,9 @@ private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   -- says; kept, it is an empty line in the PDF and an empty row in HTML.
   let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
-  return some (paraUnder (← get).flowLang (Ir.wrapDecls (← get).blockDecls inlines))
+  -- The declarations in force where the paragraph ends set its step
+  -- (`Ir.paraAt`): LaTeX reads `\baselineskip` at `\par`.
+  return some (paraUnder (← get).flowLang (Ir.paraAt (← get).blockDecls inlines))
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
@@ -9011,7 +9028,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9033,7 +9050,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9118,7 +9135,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+    cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Rectangularity: every walk below trusts `cols.size`.
@@ -10284,7 +10301,7 @@ seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
-seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 seal isColumnStray
 seal parFollows displayAtBlock
 
@@ -12427,11 +12444,13 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         sliceWeight_zero _
       have hg1 : slicePars body 0 = nestedParsList body.toList :=
         slicePars_zero _
-      if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone then
+      if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone &&
+          !sizeParScope body then
         -- A scope group holding a paragraph end is spliced open first, so
-        -- the `\par` inside it is the boundary it is everywhere else.
+        -- the `\par` inside it is the boundary it is everywhere else — save
+        -- a size scope ending its paragraph inside it (`sizeParScope`).
         have hpp2 : body.any isParRaw = true := by
-          simp only [Bool.and_eq_true] at hpp; exact hpp.1.1
+          simp only [Bool.and_eq_true] at hpp; exact hpp.1.1.1
         have hdec := slicePars_splice h hr hpp2 ctx' gpos
         have hdec2 : slicePars (raws.extract 0 i
             ++ (splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size)) i
@@ -12966,7 +12985,7 @@ unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
-unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
 unseal parFollows displayAtBlock
 unseal scanBracketArg
@@ -13201,7 +13220,7 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return some (paraUnder (← get).flowLang
-        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
+        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
   rw [mkPara]
   simp only [ForIn.forIn]
   rw [Lean.Loop.forIn_eq_of_monadTail]
@@ -13566,7 +13585,7 @@ private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : Str
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return blocks.push (paraUnder (← get).flowLang
-        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
+        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
       EM (Array Block)).run st := by
   rw [elabBlocksGo_recovered_ctrl ctx st name w p gp wp blocks hm hp hb,
     elabBlocksGo_recovered_group ctx st name w p gp wp blocks hm hgp,
@@ -13587,7 +13606,7 @@ private theorem elabBlocksGo_recovered_shape (ctx : Ctx) (st : ESt) (name w : St
     (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
     ∃ lang decls, ((elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
       0 blocks #[] st.flowGen).run st).1 =
-      blocks.push (paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])) := by
+      blocks.push (paraUnder lang (Ir.paraAt decls #[sourceInline ctx wp (.text w)])) := by
   rw [elabBlocksGo_recovered_word ctx st name w p gp wp blocks hm hp hgp hwp hn hs he hl ht hr hb]
   exact ⟨_, _, rfl⟩
 
@@ -13607,7 +13626,7 @@ private theorem elabBlocks_recovered_shape (ctx : Ctx) (st : ESt) (name w : Stri
     (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w)
     (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
     ∃ lang decls, ((elabBlocks ctx #[.ctrl name p, .group #[.word w wp] gp]).run st).1 =
-      #[paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])] := by
+      #[paraUnder lang (Ir.paraAt decls #[sourceInline ctx wp (.text w)])] := by
   let xs : Array Raw := #[.ctrl name p, .group #[.word w wp] gp]
   have henter : {ctx with macroRoles := ctx.macroRoles.enter} = ctx := by
     cases ctx
@@ -13649,6 +13668,17 @@ private theorem mapInlines_wrapDecls (f : Inline → Inline) (ds : List Ir.Decl)
       change #[Inline.colored c name (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
       rw [ih]
 
+private theorem mapInlines_paraAt (f : Inline → Inline) (ds : List Ir.Decl)
+    (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
+    Ir.mapInlines f (Ir.paraAt ds xs) = Ir.paraAt ds xs := by
+  unfold Ir.paraAt
+  dsimp only
+  split
+  · change #[Inline.styled (.size "normalsize")
+      (Ir.mapInlines f (Ir.wrapDecls (Ir.dropShadowedSizes ds) xs))] = _
+    rw [mapInlines_wrapDecls f _ xs h]
+  · exact mapInlines_wrapDecls f _ xs h
+
 private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option String)
     (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
     Ir.mapBlocks f #[paraUnder lang xs] = #[paraUnder lang xs] := by
@@ -13662,26 +13692,26 @@ private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option Strin
 private theorem resolve_recovered_para (ctx : Ctx) (wp : Pos) (w : String)
     (lang : Option String) (ds : List Ir.Decl) (loc : Locale) (table : Ir.RefTable) :
     Ir.resolveRefs loc table
-      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] =
-      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] := by
+      #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] =
+      #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] := by
   rw [Ir.resolveRefs_agree]
   apply mapBlocks_paraUnder
-  apply mapInlines_wrapDecls
+  apply mapInlines_paraAt
   rfl
 
 private theorem recovered_para_census (ctx : Ctx) (wp : Pos) (w : String)
     (lang : Option String) (ds : List Ir.Decl) :
-    Ir.blocksText #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] = w := by
+    Ir.blocksText #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] = w := by
   have hw : Ir.plainText #[sourceInline ctx wp (.text w)] = w := by
     simp [sourceInline, Ir.plainText, Ir.plainTextList, Ir.plainTextOne]
   cases lang with
   | none =>
-    change "" ++ Ir.plainText (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)]) = w
-    rw [String.empty_append, Ir.wrapDecls_text ds _, hw]
+    change "" ++ Ir.plainText (Ir.paraAt ds #[sourceInline ctx wp (.text w)]) = w
+    rw [String.empty_append, Ir.paraAt_text ds _, hw]
   | some tag =>
     change "" ++ Ir.plainText (Ir.langWrap tag
-      (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])) = w
-    rw [String.empty_append, Ir.langWrap_text tag _, Ir.wrapDecls_text ds _, hw]
+      (Ir.paraAt ds #[sourceInline ctx wp (.text w)])) = w
+    rw [String.empty_append, Ir.langWrap_text tag _, Ir.paraAt_text ds _, hw]
 
 private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) :
     Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
@@ -13795,6 +13825,25 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
       | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'"
+    -- The body's `\baselineskip` as a class's `\normalsize` declares it
+    -- (`\@setfontsize`'s third argument, fntguide): the page's factor over
+    -- the 6⁄5 rule at the body size in force where the entry stands, and
+    -- the skip column's `\normalsize` row, so a named step the document
+    -- does not declare keeps size10.clo's own length (`Ir.stepLead`).
+    | "baselineskip", v =>
+      if let some d := asDim v then
+        if 0 < d then
+          let body := spec.fontSize
+          -- The factor at milli-point precision, the arithmetic a class's
+          -- `\@setfontsize` arguments are read at.
+          let ld := (d * 1000 + Dim.pt 1 / 2) / Dim.pt 1
+          let sz := max 1 ((body * 1000 + Dim.pt 1 / 2) / Dim.pt 1)
+          spec := { spec with
+            leading := ((ld * 1000000 + sz * 600) / (sz * 1200)).toNat
+            skips := some (Ir.setSkip spec.skipScale "normalsize" (Ir.skipRowOf (d * 1000) body)) }
+        else
+          evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "baselineskip" "a dimension" v pos))
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
@@ -13948,10 +13997,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         -- `modulo` only qualifies `linenumbers` (named beside it in the
         -- lineno translation notes), so it too is accepted without a
         -- listing of its own; `bottom` is `\flushbottom`'s and
-        -- `\raggedbottom`'s, which name it in their translation notes.
+        -- `\raggedbottom`'s, which name it in their translation notes, as a
+        -- class's `\normalsize` names `baselineskip`.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
-            (!["headsep", "footskip", "textwidth", "textheight",
+            (!["headsep", "footskip", "textwidth", "textheight", "baselineskip",
                "mark-gap", "mark-thickness", "modulo", "rule", "trim", "bottom"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343). A
@@ -16170,17 +16220,20 @@ own ladder disorders — step by step through `Ir.setStep`, the offenders
 named (`Ir.size_ladder_monotone`, `Ir.size_ladder_monotone_all`). A landed
 step drops its W0361 and notes what it became (N0100); a step that would
 disorder the named sizes keeps the built-in, its W0361 gaining the clause
-saying why; a body whose head is not the idiom keeps plain rule (b). The
-declared leading is not read:
-the engine's leading is one page-level factor (`Ir.leadingFor`), already
-the venue's own through `\normalsize`'s read-out, and no per-step leading
-exists to declare. A redefinition that later won extracts nothing. -/
+saying why; a body whose head is not the idiom keeps plain rule (b). A
+landed step's declared leading — the idiom's third argument — lands with it
+as the step's row of the document's skip column (`Ir.setSkip`, read as its
+per-mille share of the body, `Ir.skipRowOf`), so its lines lead at the skip
+the venue wrote (`Ir.stepLead`) against the body's own, the venue's
+`\normalsize` read-out (`\page{ baselineskip = … }`); a step it refuses keeps
+size10.clo's size and skip together. A redefinition that later won extracts
+nothing. -/
 private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
   let stash := (← get).refusedSizeBodies
   if stash.isEmpty then return s
   modify fun st => { st with refusedSizeBodies := #[] }
   -- Each stashed body's readable step, in document order — later wins.
-  let mut steps : Array (String × Nat × Span) := #[]
+  let mut steps : Array (String × Nat × Option Nat × Span) := #[]
   for (name, body, span) in stash do
     if (lookupUser s.ctx name).isSome then continue
     let b := skipSpaces body 0
@@ -16194,7 +16247,10 @@ private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
     -- `sz` is milli-points, so `Dim.pt sz` is a thousand times the size in
     -- sp: dividing by the body straight off gives the per-mille step.
     let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
-    steps := (steps.filter (·.1 != name)).push (name, factor, span)
+    -- The declared leading, as its row of the skip column at the same body.
+    let skip := (fsArgs[2]?.bind Compat.ptMacroArg).filter (0 < ·) |>.map fun ld =>
+      Ir.skipRowOf (Dim.pt (Int.ofNat ld)) bodySp
+    steps := (steps.filter (·.1 != name)).push (name, factor, skip, span)
   if steps.isEmpty then return s
   let land (name : String) (factor : Nat) (span : Span) : EM Unit :=
     modify fun st => { st with
@@ -16218,24 +16274,32 @@ order, so it is not read" }
   -- ladder that disorders whole is salvaged step by step, the offenders
   -- named — both doors ordered by construction (`Ir.size_ladder_monotone`,
   -- `Ir.size_ladder_monotone_all`).
+  -- A landed step's declared skip lands with its size, as one row.
+  let withSkips (skips : List (String × Nat)) (landed : List (String × Option Nat)) :
+      List (String × Nat) :=
+    landed.foldl (fun sk (name, skip) => match skip with
+      | some row => Ir.setSkip sk name row
+      | none => sk) skips
   match Ir.setStepsAll s.page.scale (steps.toList.map fun q => (q.1, q.2.1)) with
   | some ladder =>
-    for (name, factor, span) in steps do
+    for (name, factor, _, span) in steps do
       land name factor span
-    return { s with page := { s.page with sizes := some ladder } }
+    let skips := withSkips s.page.skipScale (steps.toList.map fun q => (q.1, q.2.2.1))
+    return { s with page := { s.page with sizes := some ladder, skips := some skips } }
   | none =>
     let mut ladder := s.page.scale
-    let mut moved := false
-    for (name, factor, span) in steps do
+    let mut landed : Array (String × Option Nat) := #[]
+    for (name, factor, skip, span) in steps do
       match Ir.setStep ladder name factor with
       | some l' =>
         ladder := l'
-        moved := true
+        landed := landed.push (name, skip)
         land name factor span
       | none =>
         refuse name factor
-    if moved then
-      return { s with page := { s.page with sizes := some ladder } }
+    if !landed.isEmpty then
+      return { s with page := { s.page with sizes := some ladder
+                                            skips := some (withSkips s.page.skipScale landed.toList) } }
     else
       return s
 

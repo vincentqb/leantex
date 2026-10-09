@@ -2268,48 +2268,60 @@ private def scaleSize (name : String) (unit : String) : String :=
   milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
 
 /-- The leading a named size step sets, as a CSS line height over the
-step's own font size, in milli: its `\baselineskip` at a per-mille base
-(`Ir.stepLead`, the function the page's line boxes read) over the step's
-size `k` on that base, under the page's `\linespread` factor. A unitless
-line height multiplies the element's own size, so the box is the step's
-leading on whatever base the step's size scales — the body, or a heading's
-— as the page's is (`stepLineHeight_projects`). -/
-@[expose] public def stepLineHeightMilli (factor : Nat) (step : String) (k : Nat) : Nat :=
-  (Ir.stepSkip (Ir.stepLead step 1000) 1000 factor).toNat * 1000 / max k 1
+step's own font size, in milli: the page's leading for the step at the
+document's body — `Ir.stepLead` over the document's skip column under the
+page's factor, the function the page's line boxes read — over the step's
+size there, `k` per mille of the body. A unitless line height multiplies
+the element's own size, so on whatever base the step's size scales — the
+body, or a heading's — the box is the step's leading on it, as the page's
+is (`stepLineHeight_between`). -/
+@[expose] public def stepLineHeightMilli (skips : List (String × Nat)) (factor : Nat)
+    (body : Dim.Sp) (step : String) (k : Nat) : Nat :=
+  let size := max 1 (body * (k : Int) / 1000)
+  ((Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 + size / 2) / size).toNat
 
-/-- `stepLineHeightMilli` as CSS. -/
-private def stepLeadingCss (factor : Nat) (step : String) (k : Nat) : String :=
-  milliFactor (stepLineHeightMilli factor step k)
-
-/-- **The deck's step line height projects the page's step leading**
-(`_projects`): the factor is `Ir.stepSkip` of `Ir.stepLead` — the leading
-the page sets a step's lines at (`Layout`'s line boxes read the same two
-functions) — over the step's size, never a second table. -/
-public theorem stepLineHeight_projects (factor : Nat) (step : String) (k : Nat) :
-    stepLineHeightMilli factor step k =
-      (Ir.stepSkip (Ir.stepLead step 1000) 1000 factor).toNat * 1000 / max k 1 := rfl
-
-/-- At the page's own leading, every shipped step's line height is its
-size file's leading over its type floored to the milli (`_between`): the
-browser's line box for a step's line stands under the page's by less than
-a thousandth of the step's type, on any base. -/
-public theorem stepLineHeight_between :
-    ∀ p ∈ Ir.sizeScale, ∀ q ∈ Ir.sizeSkipScale, p.1 = q.1 →
-      stepLineHeightMilli 1000 p.1 p.2 * p.2 ≤ 1000 * q.2 ∧
-        1000 * q.2 < (stepLineHeightMilli 1000 p.1 p.2 + 1) * p.2 := by
-  decide +kernel
+/-- **The deck's step line height is the page's leading over the step's
+size, to the milli** (`_between`): for any step of the document's own ladder
+and skip column at its body, the emitted line height times the step's size
+stands within half a milli of that size of the leading the page sets the
+step's lines at — one value of the IR read by both artifacts. -/
+public theorem stepLineHeight_between (skips : List (String × Nat)) (factor : Nat)
+    (body : Int) (step : String) (k : Nat) (hs : 0 < body * (k : Int) / 1000)
+    (hl : 0 ≤ Ir.stepSkip (Ir.stepLead skips step body) body factor) :
+    (stepLineHeightMilli skips factor body step k : Int) * (body * (k : Int) / 1000) ≤
+        Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 +
+          body * (k : Int) / 1000 / 2 ∧
+      Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 +
+          body * (k : Int) / 1000 / 2 <
+        ((stepLineHeightMilli skips factor body step k : Int) + 1) *
+          (body * (k : Int) / 1000) := by
+  unfold stepLineHeightMilli
+  generalize body * (k : Int) / 1000 = sz at hs ⊢
+  have hm : max 1 sz = sz := by omega
+  have hq : 0 ≤ (Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 + sz / 2) / sz :=
+    Int.ediv_nonneg (Int.add_nonneg (Int.mul_nonneg hl (by decide))
+      (Int.ediv_nonneg (Int.le_of_lt hs) (by decide))) (Int.le_of_lt hs)
+  simp only [hm, Int.toNat_of_nonneg hq]
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hs), Int.lt_ediv_add_one_mul_self _ hs⟩
 
 /-- Size rules generated from the document's ladder (`Ir.PageSpec.scale`),
 so the two backends cannot drift apart on what `\Huge` means — the PDF
 resolves the same runs through the same ladder (`Layout`'s flatten state).
-`em` rather than `rem`: sizes nest. -/
-private def sizeRules (scale : List (String × Nat)) (deckLeading : Option Nat := none) :
-    String :=
+`em` rather than `rem`: sizes nest. On a deck each step also states its
+leading (`stepLineHeightMilli`, over the document's skip column, factor and
+body), and a heading or title set in a step takes that leading over its own
+size through `lead-<step>`, as the page leads a display's lines on the base
+the step scales. -/
+private def sizeRules (scale : List (String × Nat))
+    (deck : Option (List (String × Nat) × Nat × Dim.Sp) := none) : String :=
   String.join (scale.map fun (name, k) =>
-    let lh := match deckLeading with
-      | some factor => s!" line-height: {stepLeadingCss factor name k};"
-      | none => ""
-    s!".size-{name} \{ font-size: {milliFactor k}em;{lh} }\n")
+    match deck with
+    | some (skips, factor, body) =>
+      s!".size-{name} \{ font-size: {milliFactor k}em; line-height: " ++
+        s!"{milliFactor (stepLineHeightMilli skips factor body name k)}; }\n" ++
+      s!".lead-{name} \{ line-height: " ++
+        s!"{milliFactor (stepLineHeightMilli skips factor body name 1000)}; }\n"
+    | none => s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
 /-! ### The deck stylesheet, as typed rules
 
@@ -4047,7 +4059,8 @@ public def deckSourced (stage : Sp) (g : Ir.Sourced SymGlue) : String :=
 private def deckType (page : PageSpec) : DeckType :=
   { body := s!"{milliFactor (deckStageMilli page.fontSize page.height).toNat}vh"
     root := s!"{milliFactor (deckRootMilli page.fontSize page.height).toNat}vh"
-    leading := stepLeadingCss page.leading "normalsize" 1000 }
+    leading := milliFactor
+      (stepLineHeightMilli page.skipScale page.leading page.fontSize "normalsize" 1000) }
 
 /-- The cross-backend image ratio, the same mold: the deck's HTML states
 an image dimension as its share of the stage (`deckStageMilli`, printed
@@ -4824,7 +4837,8 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- size's `\baselineskip` (`Ir.stepSkip`); a reading page keeps the
   -- screen's one line height, inherited.
   sizeRules doc.page.scale
-    (if doc.docClass == .slides then some doc.page.leading else none) ++
+    (if doc.docClass == .slides then
+      some (doc.page.skipScale, doc.page.leading, doc.page.fontSize) else none) ++
   -- The math face the document resolved, through its token — the `math`
   -- element selector reaches native MathML, whose engine default is the
   -- `math` generic family (MathML Core, user agent stylesheet); Chromium's
@@ -5130,17 +5144,18 @@ public def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String
   | .undeclared => #[("role", "img"), ("aria-label", floor)]
 
 /-- A listing's line height over its own font size: the pitch its source
-lines stand at on the page, the step's leading (`Ir.stepSkip` of a
-per-mille body) less the package's space after each source line
+lines stand at on the page, the step's leading at the body (`Ir.stepSkip`
+over the document's skip column) less the package's space after each source line
 (`Ir.ListingSpec.lineOverlap`). A `pre` has one line height, so a wrapped
 source line's continuation stands at it too, where the page keeps the
 step's own. -/
 private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : String) :
     String :=
   let k := (page.scale.lookup step).getD 1000
-  let overlap := spec.lineOverlap * 1000 / max page.fontSize 1
-  let pitch := Ir.stepSkip (Ir.stepLead step 1000) 1000 page.leading - overlap
-  decMilli (pitch * 1000 / max (k : Int) 1)
+  let size := page.fontSize * (k : Int) / 1000
+  let pitch := Ir.stepSkip (Ir.stepLead page.skipScale step page.fontSize) page.fontSize
+    page.leading - spec.lineOverlap
+  decMilli (pitch * 1000 / max size 1)
 
 /-- Absolute font size and leading keep their physical lengths in the IR;
 on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
@@ -5553,11 +5568,14 @@ private def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Arra
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
     | .natural | .flex _ => cfg
-  -- A cell set wholly in one named size carries the step's class on its
-  -- own element, as a paragraph does (`stepNode`): the page sets the cell's
-  -- paragraph on the step's strut and leading (`Ir.paraStep?`), and a size
-  -- span inside the cell would leave the body's strut under every line.
+  -- A cell set under one named size carries the step's class on its own
+  -- element, as a paragraph does (`stepNode`): the page sets the cell's row
+  -- on the step's strut and leading (`Ir.paraStep?`) — the size in force
+  -- where the table began, `\@arstrut`'s, which a size command inside the
+  -- cell leaves to the body's (`Ir.paraAt`) — and a size span inside the
+  -- cell keeps its own type.
   let (cell, attrs) := match Ir.paraStep? cell with
+    | some "normalsize" => (Ir.liftParaStep cell, attrs)
     | some n =>
       let cls := "size-" ++ n
       (Ir.liftParaStep cell, match attrs.find? (·.1 == "class") with
@@ -6814,8 +6832,19 @@ page sets the paragraph's strut at the step — a size span inside the
 element would leave the body's strut, and its leading, under every line. -/
 private def stepNode (cfg : Config) (tag : String) (content : Array Inline) : Node :=
   match Ir.paraStep? content with
+  | some "normalsize" => Html.elem tag (inlines cfg (Ir.liftParaStep content))
   | some n => Html.elem tag (inlines cfg (Ir.liftParaStep content)) #[("class", "size-" ++ n)]
   | none => Html.elem tag (inlines cfg content)
+
+/-- A deck's heading or title set in one named size (`Ir.paraStep?`) takes
+that step's leading over its own size (`lead-<step>`, `sizeRules`), as the
+page leads a display's lines at the step's `\baselineskip` on the base the
+step scales; the element keeps its own size and its content its spans. -/
+private def withLead (cfg : Config) (content : Array Inline) (node : Node) : Node :=
+  if !cfg.deck then node else
+  match Ir.paraStep? content with
+  | some "normalsize" | none => node
+  | some n => withClass ("lead-" ++ n) node
 
 private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
   -- Label anchors alone must not open a blank paragraph.
@@ -6856,7 +6885,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
     let attrs := if cfg.deck && level == 1 then
       attrs.push ("style", "color: var(--sectiontitlefg, var(--fg))") else attrs
-    let node := Html.elem tag kids attrs
+    let node := withLead cfg title (Html.elem tag kids attrs)
     if level == .h1 then withClass "body-heading" node else node
   | .list ordered items =>
     -- A description list (every item run in by its label) is HTML's own
@@ -7123,7 +7152,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- empty div has no height and the declaration rides along inert.
     let cfg := cfg.inFrame b
     let header := if title.isEmpty then #[]
-      else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
+      else #[Html.elem "header" #[withLead cfg title (Html.elem "h2" (inlines cfg title))]]
     let cls := if standout then "slide standout"
       else if valign matches .golden then "slide title-page" else "slide"
     let design := Ir.Design.ofPalette cfg.pal

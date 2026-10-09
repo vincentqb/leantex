@@ -27,12 +27,13 @@ setPalette
 role trivlist-env
   center
     para
-      styled sans
-        styled bold
-          styled size:Huge
-            color primary #0F766E
-              text "Alex"
-            text " Doe "
+      styled size:normalsize
+        styled sans
+          styled bold
+            styled size:Huge
+              color primary #0F766E
+                text "Alex"
+              text " Doe "
     block before 1800/1000ex plus 800/1000ex minus 400/1000ex
     para
       color muted #73727F

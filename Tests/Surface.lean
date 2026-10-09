@@ -1221,9 +1221,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `\par` ends a paragraph inside a scope group, with the group's
   -- declarations carried into what follows; a command's argument group is
   -- not a scope and is left to the command.
+  -- A size group ending its paragraph inside it stays the block scope it is
+  -- (its size in force at the paragraph's end), the trailing space the
+  -- paragraph end removes.
   t "par in a scope group ends the paragraph"
     ((elabStr "{\\Huge a \\par} b").1.body ==
-      #[.para #[.styled (.size "Huge") #[.text "a "]], .para #[.text "b"]])
+      #[.para #[.styled (.size "Huge") #[.text "a"]], .para #[.text "b"]])
   t "par in a scope group carries the declarations"
     ((elabStr "{\\bfseries a \\par b}").1.body ==
       #[.para #[.styled .bold #[.text "a "]], .para #[.styled .bold #[.text "b"]]])

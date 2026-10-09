@@ -961,16 +961,19 @@ def reports : List Report := [
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
       check% Tests.LineRhythm.displayStepChecks, check% Tests.LineRhythm.deckListingChecks,
-      check% Tests.LineRhythm.cellStepChecks,
+      check% Tests.LineRhythm.cellStepChecks, check% Tests.LineRhythm.paraEndChecks,
+      check% Tests.LineRhythm.venueLadderChecks, check% Tests.LineRhythm.headingLeadChecks,
       thm% Ir.stepSkip_normalsize_exact, thm% Ir.sizeSkipScale_between,
-      thm% Ir.stepLead_between, thm% Ir.stepLead_linear_between,
-      thm% HtmlDoc.stepLineHeight_projects, thm% HtmlDoc.stepLineHeight_between,
+      thm% Ir.stepLead_between, thm% Ir.stepLead_ratio_between, thm% Ir.skipRowOf_between,
+      thm% Ir.paraStep_paraAt_exact, thm% Ir.paraAt_text,
+      thm% HtmlDoc.stepLineHeight_between,
       thm% Ir.liftParaStep_text, thm% HtmlDoc.deck_root_between,
       Pin.tier "rhythm" "article-steps/step-footnotesize.within",
       Pin.tier "rhythm" "slides-steps/step-small.within"]
     accept := ["a ten-point deck rebuilt in both artifacts beside the reference engine's: body, small-size and code lines at its line pitch",
       "the same deck's slides measured in a browser: line pitch and paragraph gaps at the page's on the stage, and a code slide that fits its page fits its stage",
-      "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid"]
+      "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid",
+      "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R111", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"

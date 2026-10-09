@@ -128,17 +128,19 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- LuaLaTeX/FancyVerb selects the listing's own size and baseline skip:
   -- at the article 10pt base, footnotesize is 8/9.5pt, and minted's fvextra
   -- takes 0.25pt off the space after every source line (`Ir.fvextraLineOverlap`:
-  -- 9.215bp measured); a 10pt body strut must not hold these lines at 12pt.
-  -- Explicit \fontsize keeps its declared skip exactly.
+  -- 9.215bp measured), twice after the first (8.966bp); a 10pt body strut
+  -- must not hold these lines at 12pt. Explicit \fontsize keeps its declared
+  -- skip exactly.
   for (step, pt, ratio) in [("normalsize", 10, "1.175"), ("small", 9, "1.194"),
       ("footnotesize", 8, "1.156"), ("scriptsize", 7, "1.107")] do
     let src := dvDoc "" (code ("fontsize=\\" ++ step) "text"
       "Alpha Bravo\n\nAlpha Bravo\nAlpha Bravo")
     let out := rendered src
     let gaps := baselinePitches out
+    let skip := Ir.stepSkip (Ir.stepLead Ir.sizeSkipScale step (Dim.pt 10)) 0
     t s!"minted rhythm: {step} owns its line box, including a blank line"
-      (hasSize src pt && gaps.size == 3 &&
-        gaps.all (· == Ir.stepSkip (Ir.stepLead step (Dim.pt 10)) 0 - Ir.fvextraLineOverlap))
+      (hasSize src pt && gaps == #[skip - 2 * Ir.fvextraLineOverlap,
+        skip - Ir.fvextraLineOverlap, skip - Ir.fvextraLineOverlap])
     t s!"minted rhythm: {step} has an explicit typed HTML baseline ratio"
       ((MintedSettings.html src).1.any fun n =>
         hasStr (MintedSettings.preStyle n) s!"line-height:{ratio};")
@@ -276,12 +278,13 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "minted breaks: a genuinely split declared line still raises W0386"
     ((bodyLines realWrap).size > 3 && realWrap.diags.any fun d => d.kind == .W0386)
   -- A wrapped source line's continuation keeps the step's own skip; fvextra
-  -- takes its overlap after each source line only.
+  -- takes its overlap after each source line only, twice after the first.
   t "minted wrapping: continuation baselines use the selected listing size"
-    (let skip := Ir.stepSkip (Ir.stepLead "footnotesize" (Dim.pt 10)) 0
+    (let skip := Ir.stepSkip (Ir.stepLead Ir.sizeSkipScale "footnotesize" (Dim.pt 10)) 0
      let gaps := baselinePitches realWrap
      gaps.contains skip && gaps.contains (skip - Ir.fvextraLineOverlap) &&
-       gaps.all fun g => g == skip || g == skip - Ir.fvextraLineOverlap)
+       gaps.all fun g => g == skip || g == skip - Ir.fvextraLineOverlap ||
+         g == skip - 2 * Ir.fvextraLineOverlap)
   for wrap in ["true", "false"] do
     let identifier := "alpha-bravo-charlie-delta-echo"
     let literal := dvDoc "" ("\\begin{minipage}{96pt}" ++
