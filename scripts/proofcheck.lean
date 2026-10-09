@@ -71,7 +71,7 @@ def auditWidth : Nat := 8
 wrappers. `auditWidth` workers draw them from one queue, costliest first:
 batches of eight waited for their slowest member, so seven compilers idled
 behind every large module. Every started job is joined, a failed one is
-rethrown, and results keep job order. -/
+rethrown, each job must report exactly once, and results keep job order. -/
 def auditBatch (jobs : Array α) (cost : α → Nat) (run : Nat → α → IO IO.Process.Output) :
     IO (Array IO.Process.Output) := do
   let queue := jobs.zipIdx.qsort fun a b => cost a.1 > cost b.1
@@ -90,8 +90,9 @@ def auditBatch (jobs : Array α) (cost : α → Nat) (run : Nat → α → IO IO
       if failure.isNone then failure := some e
   if let some e := failure then throw e
   let outs := (← done.get).qsort (·.1 < ·.1)
-  unless outs.size == jobs.size do
-    throw <| IO.userError s!"proof audit: {jobs.size - outs.size} jobs left no result"
+  unless outs.map (·.1) == Array.range jobs.size do
+    throw <| IO.userError
+      s!"proof audit: the jobs did not each report once ({outs.size} reports, {jobs.size} jobs)"
   return outs.map (·.2)
 
 /-- What the audits read: every maintained source compiled, and the plugin. -/
