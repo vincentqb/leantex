@@ -95,6 +95,7 @@ import Tests.FontDefaults
 import Tests.Batch
 import Tests.ElabFrameSources
 import Tests.LayoutSources
+import Tests.LineRhythm
 import scripts.LandCore
 
 /-!
@@ -954,7 +955,23 @@ def reports : List Report := [
       "selected aliases restore their opening values while unrelated palette changes survive",
       "native PDF, HTML and reference output agree on the resolved frame colours",
       "unsupported callback content remains diagnosed"]
-    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author }
+    state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author },
+  { id := "R110", date := "2026-10-08"
+    what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
+    pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
+      check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
+      thm% Ir.stepSkip_normalsize_exact, thm% Ir.sizeSkipScale_between,
+      thm% Ir.liftParaStep_text, thm% HtmlDoc.deck_root_projects,
+      Pin.tier "rhythm" "article-steps/step-footnotesize.within",
+      Pin.tier "rhythm" "slides-steps/step-small.within"]
+    accept := ["a ten-point deck rebuilt in both artifacts beside the reference engine's: body, small-size and code lines at its line pitch",
+      "the same deck's slides measured in a browser: line pitch and paragraph gaps at the page's on the stage"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R111", date := "2026-10-08"
+    what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
+    pins := [check% Tests.LineRhythm.raggedFrameChecks]
+    accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading"]
+    state := .guarded "2b555dcfbad3803d9ebbb3d54fdc8571b36e9ea7" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
