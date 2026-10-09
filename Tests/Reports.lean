@@ -68,6 +68,8 @@ import Tests.ListingProvider
 import Tests.ListingStyleTable
 import Tests.PublicationPaths
 import Tests.MarkdownInput
+import Tests.MarkdownDoors
+import Tests.MarkdownTwin
 import Tests.InputUse
 import Tests.MathAlphaEntry
 import Tests.MathDiagnosticOrigins
@@ -1108,7 +1110,19 @@ def reports : List Report := [
       "an untitled frame opening on a center, a flushleft, a flushright, a figure, a centred image or a description stands its first line or image within a tenth of a point of its reference typesetting on the page, and a top-aligned one its lines within a tenth in the web deck too, its images a point high there",
       "on the page a center inside a first-level list item and the lines after it stand within a quarter of a point of their reference typesetting, a captioned figure's next line within an eighth of its distance from the caption, and a 9pt deck's center within a third",
       "in the web deck a figure inside a list item stands within three points of its reference typesetting, where it stood eight low"]
-    state := .guarded "445f6518" .revert .author }
+    state := .guarded "445f6518" .revert .author },
+  { id := "R123", date := "2026-10-08"
+    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences, list items lost their code blocks"
+    pins := [thm% Elab.elabBlocks_input_exact, thm% Elab.markdownInput_blocks_exact,
+      thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_mem,
+      thm% MarkdownDoc.escapeLineStart_contract,
+      check% Tests.MarkdownDoors.markdownDoorChecks,
+      check% Tests.MarkdownTwin.markdownTwinChecks,
+      .tier "mdtwin" "corpus.reread-clean", .tier "mdtwin" "cm.Lists.reread-exact"]
+    accept := ["thirty-seven twin round-trip rows fail on the base twin: twelve inline spellings, twenty-five block spellings",
+      "the neutral host's whole document equals the standalone one over a synthetic family reaching every markdown node to depth two, and over every CommonMark example",
+      "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call"]
+    state := .guarded "fa516a82" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -11,23 +11,26 @@ title and subject become the `#` line and the blockquote), and the body maps
 structurally. Like every backend, this one consumes the IR and nothing else.
 
 The twin is written to be read back. Text escapes what would read as
-markup, raw HTML and character references included (`escapeText`); a code
-span holds its content exactly; a link's destination reads back as it
-stands, and a bare link is an autolink; runs of one style are one run, with
-their spaces outside the delimiters. The round trip is measured, never
-assumed: the `mdtwin` tier counts the CommonMark examples and the corpus
-documents whose twin reads back to the same IR, and `Tests/MarkdownTwin.lean`
-pins each spelling class.
+markup, raw HTML and character references included (`escapeText`); no
+paragraph line opens a block (`escapeLineStart_contract`); a code span and
+a fence hold their content exactly; a container's prefix stands on every
+line of its blocks; a link's destination reads back as it stands, and a
+bare link is an autolink. Where markdown has no spelling for what the IR
+holds — a formula, a footnote, an overlay, a table the reader does not read
+yet — the twin writes the nearest one, and the difference is a loss, not a
+spelling. The round trip is measured, never assumed: the `mdtwin` tier
+counts the CommonMark examples and corpus documents whose twin re-reads to
+the same IR, and `Tests/MarkdownTwin.lean` pins each spelling class.
 
 **External premise — the reader hop.** What a twin means to the world is
-what a CommonMark reader makes of it. This module claims that a CommonMark
-reader parses every spelling the twin writes as the markdown door
-does. Evidence, not proof: the commonmark tier's `match`
-verdicts, ratcheted, in the sections those spellings live in — ATX
-headings, lists, list items, fenced code, code spans, emphasis, links,
-images, autolinks, block quotes, hard breaks, backslash escapes. A report
-from an external reader over the corpus twins is the direct check, and
-stays a report. -/
+what a CommonMark reader makes of it; this module claims that a CommonMark
+reader parses every spelling the twin writes as the markdown door does.
+Evidence,
+not proof: the commonmark tier's `match` verdicts, ratcheted, in the
+sections those spellings live in — ATX headings, lists, list items, fenced
+code, code spans, emphasis, links, images, autolinks, block quotes, hard
+breaks, backslash escapes. A report from an external reader over the
+corpus twins is the direct check, and stays a report. -/
 
 namespace LeanTex.Core.MarkdownDoc
 
@@ -39,8 +42,8 @@ and `&`, so the twin never writes raw HTML (§6.6) or reads a character
 reference (§2.5) into its text — each is a valid backslash escape (§2.4:
 any ASCII punctuation). A line ending inside text is the one character it
 spells as a numeric reference, since it has no other spelling.
-`#` and `-` are left alone: they mark up only at a line's start, where the
-emitter decides what a line starts with. -/
+What opens a block only at a line's start is the line's business
+(`escapeLineStart`). -/
 private def escapeText (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
@@ -51,6 +54,130 @@ private def escapeText (s : String) : String :=
     else if c == '\n' then acc ++ "&#10;"
     else if c == '\r' then acc ++ "&#13;"
     else acc.push c
+
+/-- Is the rest of a line a space, a tab or nothing — what must follow a
+list marker or an ATX opening sequence for it to open a block? -/
+@[expose] public def spaceOrEnd : List Char → Bool
+  | [] => true
+  | x :: _ => x == ' ' || x == '\t'
+
+/-- After an ATX heading's first `#`: up to five more, then a space, a tab
+or the line's end (§4.2). -/
+@[expose] public def atxRest : Nat → List Char → Bool
+  | 0, l => spaceOrEnd l
+  | n + 1, '#' :: rest => atxRest n rest
+  | _ + 1, l => spaceOrEnd l
+
+/-- A line of `c` and spaces or tabs alone, holding at least three `c`: a
+thematic break (§4.1). -/
+@[expose] public def thematic (c : Char) (l : List Char) : Bool :=
+  l.all (fun x => x == c || x == ' ' || x == '\t') && l.count c ≥ 3
+
+/-- A line of `c` alone, then spaces or tabs: a setext underline (§4.3). -/
+@[expose] public def underline (c : Char) (l : List Char) : Bool :=
+  let rest := l.dropWhile (· == c)
+  rest.length < l.length && rest.all (fun x => x == ' ' || x == '\t')
+
+/-- After an ordered marker's first digit: more digits, then `.` or `)`,
+then a space, a tab or the line's end (§5.2). -/
+@[expose] public def orderedRest : List Char → Bool
+  | [] => false
+  | c :: rest =>
+    if c.isDigit then orderedRest rest else (c == '.' || c == ')') && spaceOrEnd rest
+
+/-- Does a line, read where markdown reads a paragraph's line — its start, or
+a continuation after a hard break — open a block (CommonMark 0.31.2 §4–5)?
+Leading indentation (up to an indented code block, §4.4), a block quote's
+`>` (§5.1), an ATX opening sequence (§4.2), a bullet marker (§5.2), a
+thematic break (§4.1), a setext underline (§4.3), a fence of three
+tildes, or of three backticks whose info string holds none (§4.5), an
+ordered marker (§5.2). An HTML block (§4.6)
+is not modelled: the twin escapes every `<` its text holds, and the one it
+writes bare opens an autolink, which is no tag. -/
+@[expose] public def opensBlockChars : List Char → Bool
+  | [] => false
+  | c :: rest =>
+    c == ' ' || c == '\t' || c == '>' ||
+      (c == '#' && atxRest 5 rest) ||
+      ((c == '-' || c == '+' || c == '*') && spaceOrEnd rest) ||
+      ((c == '-' || c == '*' || c == '_') && thematic c (c :: rest)) ||
+      ((c == '-' || c == '=') && underline c (c :: rest)) ||
+      (c == '~' && rest.take 2 == ['~', '~']) ||
+      (c == '`' && rest.take 2 == ['`', '`'] && !(rest.dropWhile (· == '`')).contains '`') ||
+      (c.isDigit && orderedRest rest)
+
+@[expose] public def opensBlock (s : String) : Bool := opensBlockChars s.toList
+
+/-- A paragraph line as the twin writes it: its leading spaces dropped, as
+CommonMark drops them (§4.8), and, where it would open a block, its first
+character escaped — for an ordered marker, its delimiter, since a backslash
+before a digit is no escape (§2.4). A line that opens nothing is written
+as it is: escaping an emphasis opener would make it literal. -/
+@[expose] public def escapeLineStart (s : String) : String :=
+  let cs := s.toList.dropWhile (fun c => c == ' ' || c == '\t')
+  if !opensBlockChars cs then String.ofList cs
+  else match cs with
+    | [] => ""
+    | c :: rest =>
+      if c.isDigit then
+        let ds := (c :: rest).takeWhile Char.isDigit
+        String.ofList (ds ++ '\\' :: (c :: rest).drop ds.length)
+      else String.ofList ('\\' :: c :: rest)
+
+/-- An ordered marker's tail reads through digits and stops at the escape:
+a digit run, a backslash, anything — no marker. -/
+private theorem orderedRest_escaped : (ds : List Char) → (∀ c ∈ ds, c.isDigit = true) →
+    (m : List Char) → orderedRest (ds ++ '\\' :: m) = false
+  | [], _, m => by simp [orderedRest]
+  | d :: ds, h, m => by
+    simp only [List.cons_append, orderedRest, h d (List.mem_cons_self ..), ite_true]
+    exact orderedRest_escaped ds (fun c hc => h c (List.mem_cons_of_mem _ hc)) m
+
+/-- A digit is none of the characters a block opens with. -/
+private theorem digit_beq {c : Char} (hc : c.isDigit = true) (d : Char) (hd : d.isDigit = false) :
+    (c == d) = false := by
+  cases h : c == d
+  · rfl
+  · have : c = d := by simpa using h
+    subst this
+    rw [hc] at hd
+    exact absurd hd (by decide)
+
+/-- A line that opens with a backslash opens no block. -/
+private theorem opensBlockChars_escaped (cs : List Char) : opensBlockChars ('\\' :: cs) = false := by
+  simp [opensBlockChars]
+
+/-- **No line the twin writes in a paragraph opens a block.** Whatever the
+text, the line `escapeLineStart` makes of it starts no block under the
+CommonMark model `opensBlock` declares — so a paragraph's text cannot become
+a heading, a list, a quotation, a fence, a break or an underline when it is
+read back. -/
+public theorem escapeLineStart_contract (s : String) : opensBlock (escapeLineStart s) = false := by
+  unfold escapeLineStart opensBlock
+  generalize hcs : s.toList.dropWhile (fun c => c == ' ' || c == '\t') = cs
+  by_cases ho : opensBlockChars cs = true
+  · simp only [ho, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+    cases cs with
+    | nil => simp [opensBlockChars] at ho
+    | cons c rest =>
+      simp only
+      by_cases hd : c.isDigit = true
+      · simp only [hd, ↓reduceIte, String.toList_ofList]
+        have hpre : (c :: rest).takeWhile Char.isDigit = c :: rest.takeWhile Char.isDigit := by
+          simp [hd]
+        rw [hpre]
+        have hds : ∀ x ∈ rest.takeWhile Char.isDigit, x.isDigit = true :=
+          List.all_eq_true.mp List.all_takeWhile
+        simp only [opensBlockChars, List.cons_append, List.length_cons, List.drop_succ_cons,
+          digit_beq hd ' ' (by decide), digit_beq hd '\t' (by decide), digit_beq hd '>' (by decide),
+          digit_beq hd '#' (by decide), digit_beq hd '-' (by decide), digit_beq hd '+' (by decide),
+          digit_beq hd '*' (by decide), digit_beq hd '_' (by decide), digit_beq hd '=' (by decide),
+          digit_beq hd '~' (by decide), digit_beq hd '`' (by decide), hd,
+          orderedRest_escaped _ hds, Bool.false_and, Bool.or_false, Bool.and_false]
+      · simp only [hd, Bool.false_eq_true, ↓reduceIte, String.toList_ofList]
+        exact opensBlockChars_escaped (c :: rest)
+  · simp only [Bool.not_eq_true] at ho
+    simp [ho, String.toList_ofList]
 
 /-- The longest run of `c` in `s`. -/
 private def longestRun (c : Char) (s : String) : Nat :=
@@ -68,6 +195,11 @@ private def codeSpan (s : String) : String :=
   let pad := s.startsWith "`" || s.endsWith "`" ||
     (s.startsWith " " && s.endsWith " " && s.any (· != ' '))
   ticks ++ (if pad then " " ++ s ++ " " else s) ++ ticks
+
+/-- A fence for `body`: three backticks, or one more than the longest run
+inside — a closing fence is at least as long as its opening (§4.5). -/
+private def fenceFor (body : String) : String :=
+  String.ofList (List.replicate (max 3 (longestRun '`' body + 1)) '`')
 
 /-- An absolute URI an autolink can carry (§6.4): a scheme of two to
 thirty-two letters, digits, `+`, `.` or `-`, opening with a letter, then
@@ -241,6 +373,25 @@ public def inlineText (xs : Array Inline) : String :=
   let s := inlinesInto "" none xs.toList
   if s.endsWith "#" then (s.dropEnd 1).toString ++ "\\#" else s
 
+/-- A paragraph's lines under their container: each line — the first, and
+each after a hard break — escaped at its start (`escapeLineStart`) and set
+under the container's prefix, so no line opens a block or falls out of the
+container that holds it; the paragraph's trailing spaces, which a reader
+drops, are not written. `first` prefixes the first line (a list item's
+marker, or the container's prefix), `ind` every other. -/
+private def paraText (first ind text : String) : String :=
+  let text := String.ofList (text.toList.reverse.dropWhile (· == ' ')).reverse
+  match text.splitOn "\n" with
+  | [] => first
+  | l :: ls =>
+    ls.foldl (fun acc x => acc ++ "\n" ++ ind ++ escapeLineStart x) (first ++ escapeLineStart l)
+
+/-- A fenced block under its container: the fence, each line of `lines`
+behind the container's prefix, the fence again. -/
+private def fencedText (ind fence info : String) (lines : List String) : String :=
+  lines.foldl (fun acc l => acc ++ ind ++ l ++ "\n") (ind ++ fence ++ info ++ "\n") ++
+    ind ++ fence ++ "\n\n"
+
 /-- The reference list's markdown spelling: one paragraph per entry, the
 style's marker leading it — thebibliography's shape in prose. -/
 private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := Id.run do
@@ -249,7 +400,7 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
     let mark := match item.marker with
       | some m => s!"[{m}] "
       | none => ""
-    out := out ++ ind ++ mark ++ inlineText item.content ++ "\n\n"
+    out := out ++ paraText ind ind (mark ++ inlineText item.content) ++ "\n\n"
   return out
 
 /-- The heading marker a section level takes: as many `#` as the shared
@@ -261,14 +412,38 @@ states the agreement over every level. -/
 
 mutual
 
-/-- One block onto `acc`. `ind` is the current line prefix (list nesting);
-`summary` is the llms.txt summary blockquote, emitted immediately after the
-level-0 heading when the body carries the document title — the summary's
-place is after the title line, wherever that line comes from (`emit`). -/
+/-- Does the block's markdown open with a list? A list does, and so does a
+wrapper the twin writes as its body — a role, a spacing scope, a resolved
+step or backend conditional, an alignment, a block link — whose first block
+does. -/
+private def leadsWithList : Block → Bool
+  | .list _ _ => true
+  | .role _ body => leadsWithListList body.toList
+  | .spaced _ body => leadsWithListList body.toList
+  | .only _ body => leadsWithListList body.toList
+  | .onSteps _ body => leadsWithListList body.toList
+  | .center body => leadsWithListList body.toList
+  | .ragged _ body => leadsWithListList body.toList
+  | .link _ body => leadsWithListList body.toList
+  | _ => false
+
+private def leadsWithListList : List Block → Bool
+  | [] => false
+  | b :: _ => leadsWithList b
+
+end
+
+mutual
+
+/-- One block onto `acc`. `ind` is the current line prefix (list nesting,
+quotation), which every line of the block carries; `summary` is the
+llms.txt summary blockquote, emitted immediately after the level-0 heading
+when the body carries the document title — the summary's place is after
+the title line, wherever that line comes from (`emit`). -/
 private def blockInto (loc : Locale) (summary ind acc : String) : Block → String
-  | .para xs => acc ++ ind ++ inlineText xs ++ "\n\n"
+  | .para xs => acc ++ paraText ind ind (inlineText xs) ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
-  | .equation num xs => acc ++ ind ++ inlineText xs ++ " " ++ inlineText num ++ "\n\n"
+  | .equation num xs => acc ++ paraText ind ind (inlineText xs ++ " " ++ inlineText num) ++ "\n\n"
   | .section level _ num title =>
     -- The heading line carries its resolved number the way the page does;
     -- a level-0 heading (the document title) never has one.
@@ -278,62 +453,65 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ inlineText title ++ "\n\n"
     if level == 0 then head ++ summary
     else head
-  | .list ordered items => itemsInto loc summary ind ordered 1 acc items.toList ++ "\n"
-  | .center body => blocksInto loc summary ind acc body.toList
-  | .ragged _ body => blocksInto loc summary ind acc body.toList
+  | .list ordered items => itemsInto loc summary ind ordered false 1 acc items.toList ++ "\n"
+  | .center body => blocksInto loc summary ind acc none body.toList
+  | .ragged _ body => blocksInto loc summary ind acc none body.toList
   -- Markdown's own quotation: every line of the body takes the `> `
   -- marker as part of its prefix, and the separator line between two
   -- quoted blocks keeps a bare `>` so the quotation stays one block
   -- (CommonMark §5.1: a blockquote does not span a blank line).
   | .quote body =>
-    let inner := blocksInto loc summary (ind ++ "> ") "" body.toList
+    let inner := blocksInto loc summary (ind ++ "> ") "" none body.toList
     let trimmed := String.ofList (inner.toList.reverse.dropWhile (· == '\n')).reverse
-    let joined := String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
+    -- An empty quotation is its bare marker: written as nothing, it would
+    -- not be there to read back.
+    let joined := if trimmed.isEmpty then ind ++ ">"
+      else String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
     acc ++ joined ++ "\n\n"
-  | .spaced _ body => blocksInto loc summary ind acc body.toList
+  | .spaced _ body => blocksInto loc summary ind acc none body.toList
   -- The class's own titled block: a heading line, then the body plain --
   -- the twin mirrors the HTML <section> with its heading, not the PDF's
   -- quotation margins, which are ink. "Abstract" is class furniture
   -- (article.cls's \abstractname), generated here as in both backends.
   | .abstract body =>
-    blocksInto loc summary ind (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) body.toList
+    blocksInto loc summary ind (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList
   -- The titled block mirrors the HTML <section> and its header: the
   -- title as its own bold line, then the body plain.
   | .titled _ title body =>
     let head := if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n"
-    blocksInto loc summary ind (acc ++ head) body.toList
+    blocksInto loc summary ind (acc ++ head) none body.toList
   -- the role's class is a web styling hook; the twin keeps the content
-  | .role _ body => blocksInto loc summary ind acc body.toList
+  | .role _ body => blocksInto loc summary ind acc none body.toList
   -- CommonMark has no block-link construct; the twin preserves the body.
-  | .link _ body => blocksInto loc summary ind acc body.toList
+  | .link _ body => blocksInto loc summary ind acc none body.toList
   | .verbatim _ s spec =>
-    let lines := String.intercalate "\n" (verbatimLines s).toList
     -- The numbered caption leads the fence, as the twin sets a float's
     -- caption; line numbers are page furniture a text stream cannot carry.
     -- The declared language is the fence's info string, read from the one
     -- IR projection the HTML class reads too (`listing_language_agree`).
+    -- The fence outlasts any backtick run inside, and every line stands
+    -- behind the container's prefix.
     let cap := match spec.caption with
-      | some (n, c) =>
-        ind ++ inlineText (Ir.listingCaption loc n c) ++ "\n\n"
+      | some (n, c) => paraText ind ind (inlineText (Ir.listingCaption loc n c)) ++ "\n\n"
       | none => ""
-    acc ++ cap ++ ("```" ++ spec.fenceInfo ++ "\n") ++ lines ++ "\n```\n\n"
+    acc ++ cap ++ fencedText ind (fenceFor s) spec.fenceInfo (verbatimLines s).toList
   -- Pseudocode as a fence: each line with its generated keywords rendered
   -- to plain text (`AlgLine.rendered`, the site both artifact backends
   -- read too), depth as two spaces — code for a text twin, as verbatim.
   | .algorithm _ semis lines =>
     let words := Ir.algWords loc.tag
-    let txt := String.intercalate "\n" (lines.toList.map fun l =>
+    let rendered := lines.toList.map fun l =>
       String.ofList (List.replicate (2 * l.depth) ' ') ++
-        Ir.plainText (Ir.AlgLine.rendered words semis Ir.Color.black l))
-    acc ++ "```\n" ++ txt ++ "\n```\n\n"
+        Ir.plainText (Ir.AlgLine.rendered words semis Ir.Color.black l)
+    acc ++ fencedText ind (fenceFor (String.join rendered)) "" rendered
   | .columns cols => columnsInto loc summary ind acc cols.toList
-  | .onSteps _ body => blocksInto loc summary ind acc body.toList
+  | .onSteps _ body => blocksInto loc summary ind acc none body.toList
   | .altSteps _ active otherwise =>
-    blocksInto loc summary ind (blocksInto loc summary ind acc active.toList)
+    blocksInto loc summary ind (blocksInto loc summary ind acc none active.toList) none
       otherwise.toList
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
   -- it is a transparent group, as a resolved step is.
-  | .only _ body => blocksInto loc summary ind acc body.toList
+  | .only _ body => blocksInto loc summary ind acc none body.toList
   -- A nav is furniture, not content: the twin drops it — a menu printed
   -- as `[One](#one)` body text was the leak that forced backend wrappers.
   -- The HTML page keeps the landmark; the paged surface renders the
@@ -358,7 +536,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   | .picture _ => acc
   | .frame title _ _ _ body =>
     let head := if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n"
-    blocksInto loc summary ind (acc ++ head) body.toList
+    blocksInto loc summary ind (acc ++ head) none body.toList
   -- Markdown's own table is the pipe table: one line per row, the GFM
   -- separator (which plays the head rule) after the first, alignment from
   -- the column spec. booktabs' rule weights have no markdown spelling.
@@ -379,39 +557,65 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- with the number prefix every backend spells from the one site.
   | .float kind num capAbove body caption =>
     let cap := if caption.isEmpty then ""
-      else ind ++ inlineText (Ir.numberedCaption loc kind num caption) ++ "\n\n"
-    if capAbove then blocksInto loc summary ind (acc ++ cap) body.toList
-    else blocksInto loc summary ind acc body.toList ++ cap
+      else paraText ind ind (inlineText (Ir.numberedCaption loc kind num caption)) ++ "\n\n"
+    if capAbove then blocksInto loc summary ind (acc ++ cap) none body.toList
+    else blocksInto loc summary ind acc none body.toList ++ cap
   | .bibliography _ _ items =>
     let entries := bibItemsText ind items
     acc ++ entries
 
-private def blocksInto (loc : Locale) (summary ind acc : String) : List Block → String
+/-- A block sequence. Two lists of one kind side by side are two lists in
+the IR, and markdown reads them as one unless their markers differ (§5.3),
+so a list that follows a list of its kind takes the other marker: `prev`
+is the kind of the list written last, with whether it took the other one. -/
+private def blocksInto (loc : Locale) (summary ind acc : String)
+    (prev : Option (Bool × Bool)) : List Block → String
   | [] => acc
-  | b :: rest => blocksInto loc summary ind (blockInto loc summary ind acc b) rest
+  | .list ordered items :: rest =>
+    let alt := match prev with
+      | some (o, a) => o == ordered && !a
+      | none => false
+    blocksInto loc summary ind (itemsInto loc summary ind ordered alt 1 acc items.toList ++ "\n")
+      (some (ordered, alt)) rest
+  | b :: rest => blocksInto loc summary ind (blockInto loc summary ind acc b) none rest
 
 private def columnsInto (loc : Locale) (summary ind acc : String) :
     List (BoxWidth × Array Block) → String
   | [] => acc
-  | (_, body) :: rest => columnsInto loc summary ind (blocksInto loc summary ind acc body.toList) rest
+  | (_, body) :: rest => columnsInto loc summary ind (blocksInto loc summary ind acc none body.toList) rest
 
-/-- List items: `- ` or `k. `, a first paragraph on the marker's line,
-anything further indented under it. -/
-private def itemsInto (loc : Locale) (summary ind : String) (ordered : Bool) (k : Nat) (acc : String) :
-    List (Array Block) → String
+/-- List items: `- ` or `k. `, a first paragraph on the marker's line, and
+every further line of the item indented by the marker's width — the
+content column CommonMark reads a list item's continuation at (§5.2). -/
+private def itemsInto (loc : Locale) (summary ind : String) (ordered alt : Bool) (k : Nat)
+    (acc : String) : List (Array Block) → String
   | [] => acc
   | item :: rest =>
-    let marker := if ordered then s!"{k}. " else "- "
-    let acc := itemInto loc summary ind marker acc item.toList
-    itemsInto loc summary ind ordered (k + 1) acc rest
+    let marker := if ordered then s!"{k}{if alt then ")" else "."} " else if alt then "+ " else "- "
+    let cont := ind ++ String.ofList (List.replicate marker.length ' ')
+    let acc := itemInto loc summary (ind ++ marker) cont acc item.toList
+    itemsInto loc summary ind ordered alt (k + 1) acc rest
 
-private def itemInto (loc : Locale) (summary ind marker acc : String) : List Block → String
-  | [] => acc ++ ind ++ marker ++ "\n"
+/-- One item: its first block's first line on the marker's line — any
+block may open there (§5.2) — every other line under the content column,
+then the rest. A first block that writes nothing leaves the marker alone. -/
+private def itemInto (loc : Locale) (summary first cont acc : String) : List Block → String
+  | [] => acc ++ first ++ "\n"
   | b :: rest =>
-    let acc := match b with
-      | .para xs => acc ++ ind ++ marker ++ inlineText xs ++ "\n"
-      | other => blockInto loc summary (ind ++ "  ") (acc ++ ind ++ marker ++ "\n") other
-    blocksInto loc summary (ind ++ "  ") acc rest
+    let s := blockInto loc summary cont "" b
+    let s := String.ofList (s.toList.reverse.dropWhile (· == '\n')).reverse
+    let head := if s.startsWith cont then first ++ (s.drop cont.length).toString
+      else if s.isEmpty then first else first ++ "\n" ++ s
+    itemRestInto loc summary cont (acc ++ head ++ "\n") rest
+
+/-- An item's blocks after its first, a blank line before each — a
+paragraph after a paragraph is a second paragraph, not its continuation —
+except a list, which nests under the paragraph with none. -/
+private def itemRestInto (loc : Locale) (summary cont acc : String) : List Block → String
+  | [] => acc
+  | b :: rest =>
+    let acc := if leadsWithList b then acc else acc ++ "\n"
+    itemRestInto loc summary cont (blockInto loc summary cont acc b) rest
 
 end
 
@@ -474,7 +678,7 @@ public def emit (doc : Doc) : String :=
     | some t => if bodyTitled then "" else "# " ++ t ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
-  tighten (preamble ++ blocksInto doc.info.locale summary "" "" doc.body.toList)
+  tighten (preamble ++ blocksInto doc.info.locale summary "" "" none doc.body.toList)
     ++ noteDefs doc.info.locale doc.body
 
 -- The definitions are data to the placement proofs, never proof material:
@@ -540,45 +744,43 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
     (b : Block) → ∃ r, blockInto loc summary ind acc b = acc ++ r
   | .para _ => by
     simp only [blockInto]
-    exact append_chain₃ _ _ _ _
+    exact append_chain₂ _ _ _
   | .equation _ _ => by
     simp only [blockInto]
-    exact append_chain₅ _ _ _ _ _ _
+    exact append_chain₂ _ _ _
   | .section _ _ _ _ => by
     simp only [blockInto]
     split
     · exact append_chain₇ _ _ _ _ _ _ _ _
     · exact append_chain₆ _ _ _ _ _ _ _
   | .list _ items =>
-    extends_comp (itemsInto_extends loc summary ind _ 1 acc items.toList) ⟨"\n", rfl⟩
-  | .center body => blocksInto_extends loc summary ind acc body.toList
-  | .ragged _ body => blocksInto_extends loc summary ind acc body.toList
+    extends_comp (itemsInto_extends loc summary ind _ false 1 acc items.toList) ⟨"\n", rfl⟩
+  | .center body => blocksInto_extends loc summary ind acc none body.toList
+  | .ragged _ body => blocksInto_extends loc summary ind acc none body.toList
   | .quote _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .abstract body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
-      (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) body.toList)
+      (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList)
   | .titled _ title body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
       (acc ++ if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n")
-      body.toList)
-  | .spaced _ body => blocksInto_extends loc summary ind acc body.toList
+      none body.toList)
+  | .spaced _ body => blocksInto_extends loc summary ind acc none body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
-  | .role _ body => blocksInto_extends loc summary ind acc body.toList
-  | .link _ body => blocksInto_extends loc summary ind acc body.toList
-  | .verbatim _ _ spec => by
+  | .role _ body => blocksInto_extends loc summary ind acc none body.toList
+  | .link _ body => blocksInto_extends loc summary ind acc none body.toList
+  | .verbatim _ _ _ => by
     simp only [blockInto]
-    cases spec.caption <;> exact append_chain₄ _ _ _ _ _
-  | .algorithm _ _ _ => by
-    simp only [blockInto]
-    exact append_chain₃ _ _ _ _
+    exact append_chain₂ _ _ _
+  | .algorithm _ _ _ => ⟨_, rfl⟩
   | .columns cols => columnsInto_extends loc summary ind acc cols.toList
-  | .onSteps _ body => blocksInto_extends loc summary ind acc body.toList
+  | .onSteps _ body => blocksInto_extends loc summary ind acc none body.toList
   | .altSteps _ active otherwise =>
-    extends_comp (blocksInto_extends loc summary ind acc active.toList)
-      (blocksInto_extends loc summary ind _ otherwise.toList)
-  | .only _ body => blocksInto_extends loc summary ind acc body.toList
+    extends_comp (blocksInto_extends loc summary ind acc none active.toList)
+      (blocksInto_extends loc summary ind _ none otherwise.toList)
+  | .only _ body => blocksInto_extends loc summary ind acc none body.toList
   | .nav _ _ => append_nil acc
   | .note _ => append_nil acc
   | .framefoot _ => append_nil acc
@@ -591,7 +793,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .frame title _ _ _ body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
       (acc ++ if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n")
-      body.toList)
+      none body.toList)
   | .table _ _ _ rows _ _ => by
     simp only [blockInto]
     split
@@ -602,51 +804,66 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
     split
     · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
         (acc ++ if caption.isEmpty then "" else
-          ind ++ inlineText (Ir.numberedCaption loc kind num caption) ++ "\n\n")
-        body.toList)
-    · exact extends_comp (blocksInto_extends loc summary ind acc body.toList) ⟨_, rfl⟩
+          paraText ind ind (inlineText (Ir.numberedCaption loc kind num caption)) ++ "\n\n")
+        none body.toList)
+    · exact extends_comp (blocksInto_extends loc summary ind acc none body.toList) ⟨_, rfl⟩
 
-private theorem blocksInto_extends (loc : Locale) (summary ind acc : String) :
-    (bs : List Block) → ∃ r, blocksInto loc summary ind acc bs = acc ++ r
+private theorem blocksInto_extends (loc : Locale) (summary ind acc : String)
+    (prev : Option (Bool × Bool)) :
+    (bs : List Block) → ∃ r, blocksInto loc summary ind acc prev bs = acc ++ r
   | [] => append_nil acc
-  | b :: rest =>
-    extends_comp (blockInto_extends loc summary ind acc b)
-      (blocksInto_extends loc summary ind (blockInto loc summary ind acc b) rest)
+  | .list ordered items :: rest => by
+    simp only [blocksInto]
+    exact extends_comp (extends_comp (itemsInto_extends loc summary ind ordered _ 1 acc
+      items.toList) ⟨"\n", rfl⟩) (blocksInto_extends loc summary ind _ _ rest)
+  | b :: rest => by
+    have hb := blockInto_extends loc summary ind acc b
+    have hrest := fun acc' p => blocksInto_extends loc summary ind acc' p rest
+    cases b with
+    | list ordered items =>
+      simp only [blocksInto]
+      exact extends_comp (extends_comp (itemsInto_extends loc summary ind ordered _ 1 acc
+        items.toList) ⟨"\n", rfl⟩) (hrest _ _)
+    | _ =>
+      simp only [blocksInto]
+      exact extends_comp hb (hrest _ _)
 
 private theorem columnsInto_extends (loc : Locale) (summary ind acc : String) :
     (cols : List (BoxWidth × Array Block)) →
       ∃ r, columnsInto loc summary ind acc cols = acc ++ r
   | [] => append_nil acc
   | (_, body) :: rest =>
-    extends_comp (blocksInto_extends loc summary ind acc body.toList)
-      (columnsInto_extends loc summary ind (blocksInto loc summary ind acc body.toList) rest)
+    extends_comp (blocksInto_extends loc summary ind acc none body.toList)
+      (columnsInto_extends loc summary ind (blocksInto loc summary ind acc none body.toList) rest)
 
-private theorem itemsInto_extends (loc : Locale) (summary ind : String) (ordered : Bool) (k : Nat)
-    (acc : String) :
+private theorem itemsInto_extends (loc : Locale) (summary ind : String) (ordered alt : Bool)
+    (k : Nat) (acc : String) :
     (items : List (Array Block)) →
-      ∃ r, itemsInto loc summary ind ordered k acc items = acc ++ r
+      ∃ r, itemsInto loc summary ind ordered alt k acc items = acc ++ r
   | [] => append_nil acc
-  | item :: rest =>
-    extends_comp
-      (itemInto_extends loc summary ind (if ordered then s!"{k}. " else "- ") acc
-        item.toList)
-      (itemsInto_extends loc summary ind ordered (k + 1)
-        (itemInto loc summary ind (if ordered then s!"{k}. " else "- ") acc item.toList)
-        rest)
+  | item :: rest => by
+    simp only [itemsInto]
+    exact extends_comp (itemInto_extends loc summary _ _ acc item.toList)
+      (itemsInto_extends loc summary ind ordered alt (k + 1) _ rest)
 
-private theorem itemInto_extends (loc : Locale) (summary ind marker acc : String) :
-    (bs : List Block) → ∃ r, itemInto loc summary ind marker acc bs = acc ++ r
-  | [] => append_chain₃ acc ind marker "\n"
+private theorem itemInto_extends (loc : Locale) (summary first cont acc : String) :
+    (bs : List Block) → ∃ r, itemInto loc summary first cont acc bs = acc ++ r
+  | [] => append_chain₂ acc first "\n"
   | b :: rest => by
-    obtain ⟨rb, hb⟩ := blockInto_extends loc summary (ind ++ "  ")
-      (acc ++ ind ++ marker ++ "\n") b
-    have hblocks : ∀ g, ∃ r, blocksInto loc summary (ind ++ "  ") g rest = g ++ r :=
-      fun g => blocksInto_extends loc summary (ind ++ "  ") g rest
-    cases b
-    case para xs =>
-      exact extends_comp (append_chain₄ acc ind marker (inlineText xs) "\n")
-        (hblocks (acc ++ ind ++ marker ++ inlineText xs ++ "\n"))
-    all_goals exact extends_comp (extends_trans₃ hb) (hblocks _)
+    simp only [itemInto]
+    exact extends_comp (append_chain₂ _ _ _) (itemRestInto_extends loc summary cont _ rest)
+
+private theorem itemRestInto_extends (loc : Locale) (summary cont acc : String) :
+    (bs : List Block) → ∃ r, itemRestInto loc summary cont acc bs = acc ++ r
+  | [] => append_nil acc
+  | b :: rest => by
+    simp only [itemRestInto]
+    have hgap : ∃ r, (if leadsWithList b then acc else acc ++ "\n") = acc ++ r := by
+      split
+      · exact append_nil acc
+      · exact ⟨"\n", rfl⟩
+    exact extends_comp (extends_comp hgap (blockInto_extends loc summary cont _ b))
+      (itemRestInto_extends loc summary cont _ rest)
 
 end
 
@@ -873,7 +1090,7 @@ public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (htn : ∀ c ∈ t.toList, c ≠ '\n') (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
     ∃ q, emit doc = "# " ++ t ++ "\n\n" ++ "> " ++ s ++ q := by
   obtain ⟨q, hq⟩ := tighten_head t s
-    (blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" (Ir.keepFor "md" doc.body).toList)
+    (blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" none (Ir.keepFor "md" doc.body).toList)
     htn hsn
   refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
   simp only [emit, ht, hs, hbody]
@@ -901,14 +1118,14 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
       simp)
   have hbt : (Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0 = true :=
     Array.contains_eq_true_of_mem h0
-  have hfirst : blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" ""
+  have hfirst : blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" none
       (Ir.keepFor "md" doc.body).toList =
       blocksInto doc.info.locale ("> " ++ s ++ "\n\n") ""
-        ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) rest := by
+        ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest := by
     rw [hbody]
     simp [blocksInto, blockInto, headingMarker, Ir.headingRank]
   obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ s ++ "\n\n") ""
-    ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) rest
+    ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest
   obtain ⟨q, hq⟩ := tighten_head (inlineText ttl) s w htn hsn
   refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
   cases hT : doc.info.title with
