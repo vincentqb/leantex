@@ -275,4 +275,55 @@ def footBoxChecks (ref : IO.Ref (List String)) : IO Unit := do
       cssStageLength st "--foot-h" h doc.page.height &&
       cssStageLength st "--foot-d" d doc.page.height)
 
+/-- An invented moloch deck whose frames carry footnotes — a titled centred
+frame, an untitled one, a top-aligned one with two notes — and the titled
+frame again with no note, to read the note's own lift against. -/
+private def noteFrames : String :=
+  "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
+  "\\begin{frame}{Alpha words}\nKilo lima mike\\footnote{Oscar papa quebec.} november.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}\nKilo lima mike\\footnote{Romeo sierra tango.} november.\n\\end{frame}\n" ++
+  "\\begin{frame}[t]{Bravo words}\nKilo lima mike\\footnote{Uniform victor.}" ++
+  "\\footnote{Whiskey yankee.} november.\n\\end{frame}\n" ++
+  "\\begin{frame}{Charlie words}\nKilo lima mike november.\n\\end{frame}\n\\end{document}\n"
+
+/-- **A frame's footnotes stand in its text area as beamer sets them**
+(`Spacing.Page.noteGap`, `Spacing.Page.noteHang`): one box directly under the
+frame's content, no `\skip\footins` above it, its last baseline on the text
+area's floor and its depth below, the content centred in what the box
+leaves. Asserted over `Layout.Out` against lualatex's measurements of
+`noteFrames` (TeX Live 2026, beamer 10 pt, 4:3, the shipped Fira Sans for
+every face; bp from the page top to the baseline): the notes at 260.82,
+260.77, and 251.00 and 260.71; the untitled frame's body at 132.87; and the
+titled frame's body 3.39 bp above the same frame's with no note — the note's
+own lift, apart from the titled frames' size-ladder residual. Held to 0.5
+bp, as `checks` holds its lines. At `fac230ee` the notes stood a
+`\skip\footins` and their ink above the floor: about 2 bp high, and the
+body above them about 8 bp high. Invented words. -/
+def frameNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← (do
+      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
+      | .ok f => pure (some (oneFaceOf f))
+      | .error _ => pure none : IO (Option Font.FontSet))
+    | t "frame notes: the shipped Fira Sans parses" false
+  let (doc, _) := elabStr noteFrames
+  let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
+  let bp (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
+  let near (a b : Dim.Sp) : Bool := a - b ≤ bp 500 && b - a ≤ bp 500
+  let ys (page : Nat) (note : Bool) : List Dim.Sp :=
+    ((out.pages[page]?.map fun p => (p.lines.filter fun l =>
+      l.note == note && !l.furniture &&
+        (if note then !(lineText l).isEmpty else hasStr (lineText l) "Kilo")).map (·.y)).getD #[]).toList
+  let at? (got : List Dim.Sp) (milli : List Int) : Bool :=
+    got.length == milli.length && (got.zip milli).all fun (a, m) => near a (bp m)
+  t "frame notes: a frame's notes stand their last baseline on the text area's floor, as lualatex does"
+    (at? (ys 0 true) [260820] && at? (ys 1 true) [260770] && at? (ys 2 true) [251000, 260710])
+  t "frame notes: an untitled frame centres above its note, as lualatex does"
+    (at? (ys 1 false) [132870])
+  t "frame notes: a note lifts its titled frame's body by half its box, as lualatex does"
+    (match ys 0 false, ys 3 false with
+     | [a], [b] => near (a - b) (bp (-3390))
+     | _, _ => false)
+
 end Tests.FrameArea

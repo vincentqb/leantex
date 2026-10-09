@@ -7322,6 +7322,9 @@ bottom-anchored flush in `finishPage`. -/
 private structure NoteBlock where
   lines : Array LineOut
   height : Sp
+  /-- The last line's ink below its baseline: what a frame's note box hangs
+  below the text area's floor (`Spacing.Page.noteHang`). -/
+  depth : Sp := 0
   deriving Repr, Inhabited
 
 /-- A block link, or a painted colour box: beamer's `beamercolorbox`, whose
@@ -7484,10 +7487,12 @@ private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
 
 /-- The lowest y body ink may reach on a page carrying `h` of note ink:
 the note block and the `\skip\footins` gap above it come out of the text
-block's bottom; with no notes the floor is `bodyBottom` itself. Every
-placement fit test on a noted page reads the bottom from here. -/
-private def noteFloor (bottom footins h : Sp) : Sp :=
-  if h == 0 then bottom else bottom - h - footins
+block's bottom, less what the block hangs below that bottom (`hang`, a
+frame's notes' depth: `Spacing.Page.noteHang`); with no notes the floor is
+`bodyBottom` itself. Every placement fit test on a noted page reads the
+bottom from here. -/
+private def noteFloor (bottom footins h : Sp) (hang : Sp := 0) : Sp :=
+  if h == 0 then bottom else bottom + hang - h - footins
 
 
 /-- A display's placement, read where the page builder sets its first line:
@@ -7809,6 +7814,8 @@ public structure Spacing.Page where
   private footins : Sp := 0
   /-- The footnote rule's ink colour: the design's `fg`. -/
   private noteInk : Ir.Color := Ir.Color.black
+  /-- The last pending note's ink below its last baseline (`NoteBlock.depth`). -/
+  private notesDepth : Sp := 0
   /-- Footnote lines committed to the open page, y relative to the note
   block's top: the bottom-anchored flush in `finishPage` ships them. A
   note enters only through `attachNotes`, in the same step as its mark's
@@ -7847,6 +7854,22 @@ private def Spacing.Page.bottom (b : B) : Sp :=
     | some (h, d) => footFloor b.geom.pageH b.footGap h d
     | none => b.geom.bodyBottom
 
+/-- The gap above a page's note block: LaTeX's `\skip\footins`, except in
+beamer's text area, where a frame sets its footnotes directly under its
+content — `\beamer@framefootnotetext` fills `\beamer@footins`, which the frame
+unboxes after its bottom skip with no skip above it
+(beamerbaseframesize.sty:229-241). -/
+private def Spacing.Page.noteGap (b : B) : Sp :=
+  if b.frameArea == .margins then b.footins else 0
+
+/-- How far a page's note block hangs below its floor: nothing on LaTeX's
+page, whose insertion stands its ink on the floor, and in beamer's text area
+the notes' last depth — the frame's `\vbox to\textheight` stands their last
+baseline on the floor and takes the depth outside. `depth` is the last
+note's where notes are about to join, the pending ones' otherwise. -/
+private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
+  if b.frameArea == .margins then 0 else depth.getD b.notesDepth
+
 /-- Nothing stands on the page being built that the next band must be
 spaced below: no line and no opened frame body, or a column rewound to the
 page's start. -/
@@ -7863,13 +7886,14 @@ private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
   else notes.foldl (fun b nb =>
     { b with pendingNotes := b.pendingNotes
                ++ nb.lines.map (fun l => { l with y := l.y + b.notesH })
-             notesH := b.notesH + nb.height }) b
+             notesH := b.notesH + nb.height
+             notesDepth := nb.depth }) b
 
 /-- W0372: the note block plus its mark's line reach below the text
 block's floor even on a fresh page — the note ships whole and the page is
 honestly overrun (the W0358 shape), never silently truncated or split. -/
 private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
-  let over := y + inkBelow - noteFloor b.bottom b.footins b.notesH
+  let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   if b.notesH > 0 && over > 0 then
     { b with diags := b.diags.push (Diag.of .W0372
         (s!"a footnote is {over.toPtString}pt taller than the text block; " ++
@@ -7959,7 +7983,7 @@ pending, so an unnoted page ships exactly what it always shipped. One
 `++` per page close, bounded, never a walk's accumulator. -/
 private def Spacing.Page.noteLines (b : B) : Array LineOut :=
   if b.pendingNotes.isEmpty then #[] else
-    let top := b.bottom - b.notesH
+    let top := b.bottom + b.noteHang - b.notesH
     let thick := b.geom.fontSize * 4 / 100
     let ruleW := b.geom.textWidth * 2 / 5
     let rule : LineOut := { x := b.geom.hmargin
@@ -8169,7 +8193,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
       -- after the shift, anchored at bodyBottom)
-      noteFloor b.bottom b.footins b.notesH - regionContentEnd (b.contentEnd owed) paintedEnd
+      noteFloor b.bottom b.noteGap b.notesH b.noteHang - regionContentEnd (b.contentEnd owed) paintedEnd
     else 0
   -- `\flushbottom` on a page the builder broke (`flush`): with no fil and
   -- no shrink given, the page's finite stretch takes the leftover between
@@ -8179,7 +8203,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- moving by its share of the stretch above it, at one glue-set ratio.
   -- A surface's metric depth and insets remain painted even when its
   -- source region has closed. Ordinary text keeps TeX's baseline floor.
-  let lo := noteFloor b.bottom b.footins b.notesH - regionContentEnd b.y paintedEnd
+  let lo := noteFloor b.bottom b.noteGap b.notesH b.noteHang - regionContentEnd b.y paintedEnd
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
@@ -8248,7 +8272,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
-           pendingNotes := #[], notesH := 0, opened := false, freshStart := false,
+           pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
            diags := diags }
 
 /-- The shipped page records the IR lifecycle before shipment, and the
@@ -9319,7 +9343,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   -- not fit spills WITH its notes and the reservation follows the mark.
   let need := if notes.isEmpty then 0
     else notes.foldl (fun s nb => s + nb.height) 0
-  let bottom := noteFloor b.bottom b.footins (b.notesH + need)
+  let bottom := noteFloor b.bottom b.noteGap (b.notesH + need) (b.noteHang (notes.back?.map (·.depth)))
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       regionExtent := some tex
@@ -9570,7 +9594,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
-      noteFloor b.bottom b.footins b.notesH -
+      noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)
     else 0), fun i hi => ?_⟩
   split <;> split <;>
@@ -9592,24 +9616,24 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
-    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH -
+    (hl : 0 ≤ noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
-          VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+          VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)))) ∧
-    VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+    VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-      ≤ (noteFloor b.bottom b.footins b.notesH -
+      ≤ (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        - VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) ∧
-    (noteFloor b.bottom b.footins b.notesH -
+    (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-        - VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+        - VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-      ≤ VDist.center.aboveShare (noteFloor b.bottom b.footins b.notesH -
+      ≤ VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
         + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
@@ -9641,24 +9665,24 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
     (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
     (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
-    (hl : 0 ≤ noteFloor b.bottom b.footins b.notesH -
+    (hl : 0 ≤ noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
-          filShare (noteFloor b.bottom b.footins b.notesH -
+          filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2)) ∧
-    filShare (noteFloor b.bottom b.footins b.notesH -
+    filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
-      ≤ (noteFloor b.bottom b.footins b.notesH -
+      ≤ (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-        - filShare (noteFloor b.bottom b.footins b.notesH -
+        - filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 ∧
-    (noteFloor b.bottom b.footins b.notesH -
+    (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
-        - filShare (noteFloor b.bottom b.footins b.notesH -
+        - filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
-      ≤ filShare (noteFloor b.bottom b.footins b.notesH -
+      ≤ filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
@@ -10575,6 +10599,7 @@ private def collectPara (r : Rd) (a : Acc)
       let mut yPrev : Sp := 0
       let mut belowPrev : Sp := 0
       let mut hgt : Sp := 0
+      let mut depth : Sp := 0
       let mut prev := 0
       let mut first := true
       for brk in breaks do
@@ -10594,11 +10619,12 @@ private def collectPara (r : Rd) (a : Acc)
                               anchors := lineAnchors (nanchors.map (fun (n, i) => (n, i + 1)))
                                 prev brk first (brk == breaks.back?.getD 0) }
         hgt := y + box.inkBelow
+        depth := box.inkBelow
         yPrev := y
         belowPrev := box.below
         prev := brk
         first := false
-      out := out.push (markIdx, { lines := lines, height := hgt })
+      out := out.push (markIdx, { lines := lines, height := hgt, depth := depth })
     return (out, ds, cache)
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
@@ -15379,7 +15405,7 @@ flow and outside a float replay: a frame or a float decides its own page.
 private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
   if 0 < j.keepNext && b.frameBreak.isNone && !b.noBreak &&
       !b.fresh &&
-      noteFloor b.bottom b.footins b.notesH + b.pageShrink + b.skip.shrink
+      noteFloor b.bottom b.noteGap b.notesH b.noteHang + b.pageShrink + b.skip.shrink
         < b.y + b.prevDepth + b.skip.width
           + (n : Int) * Ir.leadingFor j.size b.geom.leading + j.keepNext then
     b.spillPage
@@ -16087,7 +16113,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
     let b2 := st2.b
-    let overrun := b2.y + b2.prevDepth - noteFloor b2.bottom b2.footins b2.notesH
+    let overrun := b2.y + b2.prevDepth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
     let b2 := if overrun > b2.pageShrink then
         { b2 with diags := b2.diags.push (Diag.of .W0358
           (s!"a figure or table is {(overrun - b2.pageShrink).toPtString}pt taller " ++
@@ -16999,6 +17025,7 @@ private def joinColumnCurrent (a b : B) : B :=
     neededSource := if a.needed < b.needed then b.neededSource else a.neededSource
     pendingNotes := a.pendingNotes ++ b.pendingNotes.map (fun l => { l with y := l.y + a.notesH })
     notesH := a.notesH + b.notesH
+    notesDepth := if b.notesH == 0 then a.notesDepth else b.notesDepth
     closedRegions := a.closedRegions ++ a.openRegions.map (·.close a.cur) ++
       (b.closedRegions ++ b.openRegions.map (·.close b.cur)).map (·.afterPage a.cur)
     openRegions := b.openRegions.map (fun s =>
