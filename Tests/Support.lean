@@ -1645,6 +1645,26 @@ def formulaElems (body : Array Html.Node) : Array Html.Node :=
     | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "data-tex").isSome
     | _ => false
 
+/-- The pictures a document's body draws natively, in document order. -/
+def docPictures (doc : Ir.Doc) : Array Ir.Pic.Picture :=
+  Ir.foldBlocks (fun acc b => match b with
+    | .picture p => acc.push p
+    | _ => acc) (fun acc _ => acc) #[] doc.body
+
+/-- An article whose one picture, drawn by the engine, holds a node at
+(-1,1) labelled `label` under the node options `opts`. -/
+def mathLabelSource (label opts : String) : String :=
+  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
+  "\\begin{tikzpicture}\n\\node[" ++ opts ++ "] at (-1,1) {" ++ label ++
+  "};\n\\end{tikzpicture}\n\\end{document}"
+
+/-- An article whose one picture, drawn by the engine, is a drawn node around
+`content`. -/
+def drawnNodeSource (content : String) : String :=
+  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
+  "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
+  "};\n\\end{tikzpicture}\n\\end{document}"
+
 /-- Every value the elements `want` accepts declare for attribute `key`, in
 document order: `elemAttrsOne`'s elements, read for one attribute. -/
 def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=

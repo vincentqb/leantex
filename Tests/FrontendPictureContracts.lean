@@ -63,10 +63,8 @@ def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := d
     ("\\pictures{tool=none}\n\\begin{document}\n" ++
       "\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture}\n\\end{document}")).1).1
   let keyChild := (Parse.parse keyFile (Lex.lex keyFile "% keys\n\\tikzset{sloped}").1).1
-  let k := (keyRoot.findIdx? fun r => r matches .env "document" _ _).getD keyRoot.size
   let keyed ← pure (Elab.runRaws "picture-contract.tex"
-    (keyRoot.extract 0 k ++ #[.env (Parse.inputEnv keyFile) keyChild {}] ++
-      keyRoot.extract k keyRoot.size))
+    (#[.env (Parse.inputEnv keyFile) keyChild {}] ++ keyRoot))
   let sloped := keyed.2.filter (·.subject == some "picture:set:'sloped'")
   t "a setting line an included file wrote is named in that file, at its own token"
     (!sloped.isEmpty && sloped.all fun d =>

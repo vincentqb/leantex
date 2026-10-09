@@ -390,6 +390,28 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html a11y: an unlinked deck logo strip is declared decorative: {strips} {imgAlts udbody}"
     (strips == #[(some "presentation", some "true")] && imgAlts udbody == #[some ""])
 
+/-- **The painted request census reads the scalar census's regions**, over
+one corpus document: the formulas the math face is requested for
+(`Ir.mathRequests .face`) ask exactly the scalars `Layout.docMathScalars`
+holds — the census the driver loads the math face and the per-glyph
+fallback by — so a region one census reads and the other skips fails here,
+and `Ir.mathRequests_resolve_covers` speaks of the regions both backends
+paint. `htmlMathChecks` runs it over every golden fixture on the documents
+it reads once; the answer is whether this document's picture labels ask
+for scalars, which keeps that corpus run non-vacuous. -/
+def mathCensusRegionChecks (ref : IO.Ref (List String)) (n : String) (doc : Ir.Doc) :
+    IO Bool := do
+  let requested := (Ir.mathRequests .face doc).foldl
+    (fun acc r => Math.MList.scalarsList acc r.body) #[]
+  let census := Layout.docMathScalars doc
+  check ref s!"math census {n}: the painted requests ask the scalar census's scalars"
+    (requested.all census.contains && census.all requested.contains)
+  let scalars := fun (acc : Array Char) (xs : Array Ir.Inline) =>
+    Ir.foldInlines (fun acc x => match x with
+      | .formula _ _ body => Math.MList.scalarsList acc body
+      | _ => acc) acc xs
+  return !((docPictures doc).foldl (fun acc p => p.labelContents.foldl scalars acc) #[]).isEmpty
+
 /-- **No shipped page nests a MathML root or ships an error element.** Over
 every golden fixture's typed tree — the pages the corpus ships — no `math`
 element stands inside another and no `merror` appears, judged by the
@@ -401,13 +423,17 @@ to its source glyphs — so the count owed is zero, not a count of named ones.
 The pages are emitted with no face, so with an empty alphabet coverage;
 resolution is alphabet-free under every coverage, which the IR theorem
 quantifies (`Ir.mathRequests_resolve_covers`). Non-vacuous only while the
-corpus ships MathML, MathML inside a picture, and an alphabet there. -/
+corpus ships MathML, MathML inside a picture, and an alphabet there. The
+same pass holds each document's painted request census to its scalar census
+(`mathCensusRegionChecks`). -/
 def htmlMathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut roots := 0
   let mut carried := 0
+  let mut labelled := 0
   for n in goldenNames do
-    let (_, _, _, body, _) ← a11yCorpusPage n
+    let (doc, _, _, body, _) ← a11yCorpusPage n
+    if ← mathCensusRegionChecks ref n doc then labelled := labelled + 1
     let carriers := elemNodesList (· == "foreignObject") #[] body.toList
     roots := roots + (elemNodesList (· == "math") #[] body.toList).size
     carried := carried + (elemNodesList (· == "math") #[] carriers.toList).size
@@ -418,6 +444,8 @@ def htmlMathChecks (ref : IO.Ref (List String)) : IO Unit := do
       (MathMl.tagFreeList (· == "merror") body.toList)
   t s!"html math: the corpus ships MathML ({roots} roots)" (roots > 0)
   t s!"html math: the corpus ships MathML inside a picture ({carried} carriers)" (carried > 0)
+  t s!"math census: a fixture's picture labels ask for scalars ({labelled} fixtures)"
+    (labelled > 0)
   let (_, _, _, scm, _) ← a11yCorpusPage "diagram-scm"
   t "html math: the corpus ships a math alphabet inside a picture"
     ((formulaElems (elemNodesList (· == "foreignObject") #[] scm.toList)).any fun n =>

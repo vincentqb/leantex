@@ -16,16 +16,6 @@ def mathLabelCases : Array (String × String × String) := #[
   ("Ash$\\frac{3}{7}$", "Ash37", "mfrac"),
   ("Pine$\\sqrt{z}$", "Pine𝑧", "msqrt")]
 
-def mathLabelSource (label opts : String) : String :=
-  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
-  "\\begin{tikzpicture}\n\\node[" ++ opts ++ "] at (-1,1) {" ++ label ++
-  "};\n\\end{tikzpicture}\n\\end{document}"
-
-def pictures (doc : Ir.Doc) : Array Ir.Pic.Picture :=
-  Ir.foldBlocks (fun acc b => match b with
-    | .picture p => acc.push p
-    | _ => acc) (fun acc _ => acc) #[] doc.body
-
 end PictureMathLabels
 
 /-- **Parsed picture mathematics keeps its structure on the shipped page.**
@@ -46,8 +36,8 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
   let fs ← mathSetOf oneFace
   t "picture mathematics: the bundled math face loads" fs.math.isSome
   for (label, leaves, schema) in PictureMathLabels.mathLabelCases do
-    let (base, ds) := elabMeasured fs (PictureMathLabels.mathLabelSource label "")
-    let pics := PictureMathLabels.pictures base
+    let (base, ds) := elabMeasured fs (mathLabelSource label "")
+    let pics := docPictures base
     t s!"picture mathematics: {label} parses one picture without loss"
       (pics.size == 1 &&
         !ds.any fun d => ["W0012", "W0334", "E0333", "W0335"].contains d.code)
@@ -131,7 +121,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
   -- mathematical structure under face resets, nested emphasis and colour.
   for label in #["\\textbf{Maple$'$}", "\\textit{\\emph{Maple}$'$}",
       "\\textbf{\\textnormal{Maple}$'$}", "\\textcolor{red}{Maple$'$}"] do
-    let (doc, _) := elabMeasured fs (PictureMathLabels.mathLabelSource label "")
+    let (doc, _) := elabMeasured fs (mathLabelSource label "")
     let cfg : HtmlDoc.Config := {
       fonts := some fs, labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs }
     let svgs := elemNodesList (· == "svg") #[] (HtmlDoc.emitTree cfg doc).2.1.toList
@@ -174,12 +164,6 @@ def alphabetLabelCases : Array String := #[
 def paragraphSource (content : String) : String :=
   "\\documentclass{article}\\begin{document}\n" ++ content ++ "\n\\end{document}"
 
-/-- A drawn node around `content`, alone in its picture. -/
-def drawnNodeSource (content : String) : String :=
-  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
-  "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
-  "};\n\\end{tikzpicture}\n\\end{document}"
-
 /-- On the shipped page of a document drawing one outlined node: the gaps
 from the outline the layout strokes to the label line it sets, left and
 right. The outline was placed at elaboration; the line is the label as the
@@ -218,9 +202,9 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
   for content in PictureMathLabels.alphabetLabelCases do
     let name := s!"picture alphabet: {content}"
     let (prose, _) := elabMeasured fs (PictureMathLabels.paragraphSource content)
-    let (label, _) := elabMeasured fs (PictureMathLabels.mathLabelSource content "")
+    let (label, _) := elabMeasured fs (mathLabelSource content "")
     t (name ++ " elaborates one picture")
-      ((PictureMathLabels.pictures label).size == 1)
+      ((docPictures label).size == 1)
     let (_, proseBody, _) := HtmlDoc.emitTree (cfgOf prose) prose
     let (_, labelBody, _) := HtmlDoc.emitTree (cfgOf label) label
     let proseFormulas := formulaElems proseBody
@@ -246,7 +230,7 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
   -- page paints, its alphabet resolved. Against a plain-text node, each gap
   -- is the same, to the rounding of a halved width.
   let gapsOf := fun (content : String) =>
-    let (doc, _) := elabMeasured fs (PictureMathLabels.drawnNodeSource content)
+    let (doc, _) := elabMeasured fs (drawnNodeSource content)
     PictureMathLabels.outlineGaps (layoutOf fs doc)
   let plain := gapsOf "W"
   t s!"picture alphabet: a text node ships its outline and label line ({plain})" plain.isSome
@@ -290,7 +274,7 @@ def labelSettleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let carried ← mathSetOf oneFace
   let lacking : Font.FontSet := { carried with mathAlphabets := {} }
   -- A symbol-sourced alphabet: the math face's own coverage decides it.
-  let src := PictureMathLabels.drawnNodeSource "$\\mathbb{R}$"
+  let src := drawnNodeSource "$\\mathbb{R}$"
   let (elaborated, _) := elabMeasured carried src
   let geom := Layout.Geom.ofPage elaborated.page
   let pre := Layout.labelMetric geom carried
@@ -305,30 +289,3 @@ def labelSettleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       (LeanTex.Cli.FontFix.probes (resolvedBy lacking).body))
   t "label settle: with no provisional face, a drawn picture is elaborated again"
     !(← Tests.DriverAssets.settles elaborated none carried (resolvedBy carried))
-
-/-- **The painted request census reads the scalar census's regions.** Over
-every golden fixture, the formulas the math face is requested for
-(`Ir.mathRequests .face`) ask exactly the scalars `Layout.docMathScalars`
-holds — the census the driver loads the math face and the per-glyph
-fallback by — so a region one census reads and the other skips fails here,
-and `Ir.mathRequests_resolve_covers` speaks of the regions both backends
-paint. Non-vacuous while some fixture's picture label asks for scalars. -/
-def mathCensusRegionChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := check ref
-  let scalars := fun (xs : Array Ir.Inline) (acc : Array Char) =>
-    Ir.foldInlines (fun acc x => match x with
-      | .formula _ _ body => Math.MList.scalarsList acc body
-      | _ => acc) acc xs
-  let mut labelled := 0
-  for n in goldenNames do
-    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
-    let requested := (Ir.mathRequests .face doc).foldl
-      (fun acc r => Math.MList.scalarsList acc r.body) #[]
-    let census := Layout.docMathScalars doc
-    t s!"math census {n}: the painted requests ask the scalar census's scalars"
-      (requested.all census.contains && census.all requested.contains)
-    let inLabels := (PictureMathLabels.pictures doc).foldl
-      (fun acc p => p.labelContents.foldl (fun acc xs => scalars xs acc) acc) #[]
-    if !inLabels.isEmpty then labelled := labelled + 1
-  t s!"math census: a fixture's picture labels ask for scalars ({labelled} fixtures)"
-    (labelled > 0)
