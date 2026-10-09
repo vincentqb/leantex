@@ -60,16 +60,16 @@ def cases : Array (String × Gfx.Figure Empty) := #[
       Gfx.Alpha.opaque #[.draw square (some (fillOf blue)) none]]),
   ("an alpha group",
     figure #[.group Gfx.Affine.unit #[] half #[.draw square (some (fillOf red)) none,
-      .draw (.path #[tri]) none (some (Gfx.strokeOf {}))]]),
+      .draw (.path #[tri]) none (some (Ir.Pic.strokeOf {}))]]),
   ("a symbol used twice",
     figure #[.use 0 turn, .use 0 Gfx.Affine.unit]
       #[#[.draw square (some (fillOf red)) none,
-          .group turn #[] Gfx.Alpha.opaque #[.draw (.path #[tri]) none (some (Gfx.strokeOf {}))]]]),
+          .group turn #[] Gfx.Alpha.opaque #[.draw (.path #[tri]) none (some (Ir.Pic.strokeOf {}))]]]),
   ("an outline stamped",
     figure #[.stamp 0 turn (some (fillOf blue)) none] (outlines := #[#[tri]])),
   ("a raster mapped",
     figure #[.image 0 ⟨20, 0, 0, 10, Dim.pt 5, Dim.pt 5⟩]),
-  ("ink-free words", figure #[.words "recovered text", .draw square none (some (Gfx.strokeOf {}))])]
+  ("ink-free words", figure #[.words "recovered text", .draw square none (some (Ir.Pic.strokeOf {}))])]
 
 def pdfPlace : Gfx.Iso := { flipY := false, dx := Dim.pt 3, dy := Dim.pt 4 }
 def svgPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }

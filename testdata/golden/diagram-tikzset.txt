@@ -10,21 +10,24 @@ picture 7 shapes
   border -9.921 -9.921 9.921 9.921
   border 75.118 -9.921 94.961 9.921
   border 29.764 -51.024 55.276 -34.016
-  circle 0 0 9.921 stroke #000000 0.4
+  draw ellipse 0 0 9.921 9.921 stroke #000000 0.4
   label 0 0 #000000 1000
     text "P"
-  circle 85.039 0 9.921 stroke #000000 0.4
+  draw ellipse 85.039 0 9.921 9.921 stroke #000000 0.4
   label 85.039 0 #000000 1000
     text "Q"
-  frame 29.764 -51.024 25.512 17.008 stroke #000000 0.8
+  draw rect 29.764 -51.024 25.512 17.008 stroke #000000 0.8
   label 42.52 -42.52 #000000 1000
     text "out"
-  edge (10.121,0)--(74.918,0) stroke #000000 0.4
+  group
+    draw path (10.121,0)--(74.918,0) stroke #000000 0.4
 para
   text "The next diagram applies its style to itself, not to either edge."
 picture 2 shapes
-  edge (0,0)--(85.039,0) stroke #0000FF 0.8
-  edge (0,17.008)--(85.039,17.008) stroke #FF0000 0.8
+  group
+    draw path (0,0)--(85.039,0) stroke #0000FF 0.8
+  group
+    draw path (0,17.008)--(85.039,17.008) stroke #FF0000 0.8
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics

@@ -1019,6 +1019,31 @@ def subpathSegs (subs : Array Gfx.Subpath) : Array Ir.Pic.PathSeg :=
       cur := sg.endPt
     return out
 
+/-- A shape's ink read back as a circle the subset draws: centre, radius,
+stroke, fill. -/
+def shapeCircle? : Ir.Pic.Shape →
+    Option (Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
+  | .ink (.draw (.ellipse x y rx _) fl st) => some (x, y, rx, st, fl)
+  | _ => none
+
+/-- A shape's ink read back as a frame or a fill the subset draws: its min
+corner, extents, stroke and fill. -/
+def shapeFrame? : Ir.Pic.Shape →
+    Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
+  | .ink (.draw (.rect x y w h) fl st) => some (x, y, w, h, st, fl)
+  | _ => none
+
+/-- A shape's ink read back as an edge the subset draws: its segments, its
+stroke, and whether a tip ends it. -/
+def shapeEdge? : Ir.Pic.Shape → Option (Array Ir.Pic.PathSeg × Gfx.Stroke × Bool)
+  | .ink (.group _ _ _ kids) =>
+    match kids.toList with
+    | [.draw (.path subs) none (some st)] => some (subpathSegs subs, st, false)
+    | [.draw (.path subs) none (some st), .draw _ (some _) none] =>
+      some (subpathSegs subs, st, true)
+    | _ => none
+  | _ => none
+
 /-- The segments of a page's picture edges — its stroked paths — in paint
 order, in layout coordinates. -/
 def edgeSegs (p : Layout.PageOut) : Array Ir.Pic.PathSeg :=

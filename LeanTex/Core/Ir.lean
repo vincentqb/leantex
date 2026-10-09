@@ -4176,61 +4176,175 @@ public inductive LabelAlign where
   | north
   deriving Repr, BEq, Inhabited
 
-/-- The dump spelling of a shape's paint, for the IR goldens. -/
-public def paintDump (st : Option Stroke) (fl : Option Color) : String :=
-  let stS := match st with
-    | some k =>
-      let d := match k.dash with
-        | .solid => ""
-        | .dashed => " dashed"
-        | .dotted => " dotted"
-      s!" stroke #{Color.hexByte k.color.r}{Color.hexByte k.color.g}\
-{Color.hexByte k.color.b} {k.width.toPtString}{d}"
-    | none => ""
-  match fl with
-  | some c => stS ++ s!" fill #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-  | none => stS
-
 /-- One shape of an elaborated picture, in picture coordinates: sp with y
 growing upward, as TikZ has it. The elaborator evaluates everything before
 the IR — loops unrolled, expressions reduced, colours resolved, `scale=`
 applied — so a shape is concrete ink both backends place without reading
 the surface again. -/
 public inductive Shape where
-  /-- A filled rectangle: `(x, y)` one corner, `(x + w, y + h)` the other. -/
-  | rect (x y w h : Sp) (color : Color)
   /-- A text label whose box is centred on `(x, y)` — TikZ's default node
   anchor — at `scale` per mille of the body size. The body is inline
   content, so a node's `{$X$}` renders through the math layer exactly as
   it would in a paragraph. -/
   | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
       (align : LabelAlign)
-  /-- A node's circular outline: centre and radius, stroked and/or
-  filled. The radius is the declared minimum's half — pgf manual
-  §"Shapes" has extent = max(minimum, text + 2·inner sep) per axis, and
-  the minimum is the whole answer when it dominates the body, the case
-  this subset renders; a larger body stands proud of its border. -/
-  | circle (x y r : Sp) (stroke : Option Stroke) (fill : Option Color)
-  /-- A node's rectangular outline: `(x, y)` the min corner, `w × h` the
-  extents (non-negative by construction), sized like `circle` from the
-  declared minimums. -/
-  | frame (x y w h : Sp) (stroke : Option Stroke) (fill : Option Color)
-  /-- A stroked edge (`\draw (a) -- (b)`): segments in order, optionally
-  ending in an arrow tip filled in the stroke's colour. Endpoints are
-  concrete — border anchoring already happened at elaboration. -/
-  | edge (segs : Array PathSeg) (stroke : Stroke) (tip : Option Tip)
+  /-- Ink: one node of the vector model — a fill, an outline, a stroked path
+  with its tips, a group carrying a frame, clips or an opacity — which both
+  backends emit as the figure's own (`Gfx.ofPicture`). A label is never ink:
+  `Gfx.Node Empty` holds none. -/
+  | ink (n : Gfx.Node Empty)
   deriving Repr, BEq, Inhabited
+
+/-- A solid opaque fill under the nonzero rule: every TikZ fill. -/
+@[expose] public def solidFill (c : Color) : Gfx.Fill :=
+  { paint := .solid c, rule := .nonzero, alpha := Gfx.Alpha.opaque }
+
+/-- pgf's miter limit, PDF's initial value (pgf manual §15.3.1: pgf leaves
+the limit at the PDF default of 10). -/
+@[expose] public def pgfMiterLimit : Rat := 10
+
+/-- A picture stroke in the model: pgf's butt caps, miter joins and miter
+limit, its declared colour and width, and its dash rhythm — pgf manual
+§15.3.2: `dashed` is on 3 pt off 3 pt, `dotted` on the line width off 1 pt
+(the `densely dotted` rhythm the subset keeps). -/
+@[expose] public def strokeOf (k : Stroke) : Gfx.Stroke :=
+  { paint := .solid k.color, width := k.width, cap := .butt, join := .miter
+    miterLimit := pgfMiterLimit
+    dash := match k.dash with
+      | .solid => #[]
+      | .dashed => #[Dim.pt 3, Dim.pt 3]
+      | .dotted => #[k.width, Dim.pt 1]
+    phase := 0, alpha := Gfx.Alpha.opaque }
+
+/-- An edge's segments as subpaths: a segment that starts where the last
+ended continues its subpath, any other opens a new one. -/
+@[expose] public def edgeSubpaths (segs : Array PathSeg) : Array Gfx.Subpath :=
+  let step (acc : Array Gfx.Subpath) (sg : PathSeg) : Array Gfx.Subpath :=
+    let (start, seg) : Gfx.Pt × Gfx.Seg := match sg with
+      | .line x1 y1 x2 y2 => ((x1, y1), .line (x2, y2))
+      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => ((x1, y1), .cubic (c1x, c1y) (c2x, c2y) (x2, y2))
+    match acc.back? with
+    | some cur =>
+      if cur.endPt == start then acc.pop.push { cur with segs := cur.segs.push seg }
+      else acc.push { start := start, segs := #[seg], closed := false }
+    | none => acc.push { start := start, segs := #[seg], closed := false }
+  segs.foldl step #[]
+
+/-- An arrow tip's triangle, closed. -/
+@[expose] public def tipSubpath (t : Tip) : Gfx.Subpath :=
+  { start := (t.x1, t.y1), segs := #[.line (t.x2, t.y2), .line (t.x3, t.y3)], closed := true }
+
+/-- A filled rectangle: `(x, y)` one corner, `(x + w, y + h)` the other —
+its ink the rectangle with sorted corners, filled. -/
+@[expose] public def Shape.rect (x y w h : Sp) (color : Color) : Shape :=
+  .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
+    (some (solidFill color)) none)
+
+/-- A node's circular outline: centre and radius, stroked and/or filled.
+The radius is the declared minimum's half — pgf manual §"Shapes" has
+extent = max(minimum, text + 2·inner sep) per axis. -/
+@[expose] public def Shape.circle (x y r : Sp) (stroke : Option Stroke) (fill : Option Color) :
+    Shape :=
+  .ink (.draw (.ellipse x y (max r (-r)) (max r (-r))) (fill.map solidFill) (stroke.map strokeOf))
+
+/-- A node's rectangular outline: `(x, y)` the min corner, `w × h` the
+extents, stroked and/or filled. -/
+@[expose] public def Shape.frame (x y w h : Sp) (stroke : Option Stroke) (fill : Option Color) :
+    Shape :=
+  .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
+    (fill.map solidFill) (stroke.map strokeOf))
+
+/-- A stroked edge (`\draw (a) -- (b)`): segments in order — continuing
+ones share a subpath, so interior vertices join — optionally ending in an
+arrow tip filled in the stroke's colour. Endpoints are concrete: border
+anchoring already happened at elaboration. -/
+@[expose] public def Shape.edge (segs : Array PathSeg) (stroke : Stroke) (tip : Option Tip) :
+    Shape :=
+  .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque
+    (#[.draw (.path (edgeSubpaths segs)) none (some (strokeOf stroke))] ++
+      match tip with
+      | some t => #[.draw (.path #[tipSubpath t]) (some (solidFill stroke.color)) none]
+      | none => #[]))
+
+/-- A colour as the IR goldens spell it. -/
+private def hexDump (c : Color) : String :=
+  s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+
+private def paintDumpOf : Gfx.Paint → String
+  | .solid c => hexDump c
+  | .gradient (.linear _ _ stops _) => s!"linear({stops.size} stops)"
+  | .gradient (.radial _ _ _ _ stops _) => s!"radial({stops.size} stops)"
+
+private def alphaDump (a : Gfx.Alpha) : String :=
+  if a == Gfx.Alpha.opaque then "" else s!" alpha {a.val}"
+
+/-- A fill as the IR goldens spell it. -/
+public def fillDump : Option Gfx.Fill → String
+  | some f =>
+    s!" fill {paintDumpOf f.paint}" ++ (if f.rule == .evenOdd then " evenodd" else "") ++
+      alphaDump f.alpha
+  | none => ""
+
+/-- A stroke as the IR goldens spell it: what differs from pgf's butt caps
+and miter joins at limit 10, and the dash as its pattern. -/
+public def strokeDump : Option Gfx.Stroke → String
+  | some k =>
+    let dash := if k.dash.isEmpty then "" else
+      " dash " ++ String.intercalate "," (k.dash.toList.map (·.toPtString))
+    let cap := match k.cap with
+      | .butt => ""
+      | .round => " cap round"
+      | .square => " cap square"
+    let join := match k.join with
+      | .miter => if k.miterLimit == pgfMiterLimit then "" else " miter"
+      | .round => " join round"
+      | .bevel => " join bevel"
+    s!" stroke {paintDumpOf k.paint} {k.width.toPtString}" ++ dash ++ cap ++ join ++
+      alphaDump k.alpha
+  | none => ""
+
+private def ptDump (p : Gfx.Pt) : String := s!"({p.1.toPtString},{p.2.toPtString})"
+
+/-- A geometry as the IR goldens spell it: a rectangle and an ellipse by
+their extents, a path by its points — `--` a line, `~` a curve's end, `z`
+a closed subpath. -/
+public def geomDump : Gfx.Geom → String
+  | .rect x y w h => s!"rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString}"
+  | .ellipse cx cy rx ry =>
+    s!"ellipse {cx.toPtString} {cy.toPtString} {rx.toPtString} {ry.toPtString}"
+  | .path subs => "path" ++ String.join (subs.toList.map fun sp =>
+      let segs := String.join (sp.segs.toList.map fun sg => match sg with
+        | .line q => s!"--{ptDump q}"
+        | .cubic _ _ q => s!"~{ptDump q}")
+      s!" {ptDump sp.start}{segs}{if sp.closed then " z" else ""}")
+
+mutual
+
+-- conserves: none — a debugging spelling of the IR, not a rewrite.
+/-- One ink node's lines in the IR goldens, a group's kids indented. -/
+public def dumpNode (ind : String) (acc : String) : Gfx.Node Empty → String
+  | .draw g fl st => acc ++ s!"{ind}draw {geomDump g}{fillDump fl}{strokeDump st}\n"
+  | .group xf clips alpha kids =>
+    let head := s!"{ind}group" ++ (if xf == Gfx.Affine.unit then "" else s!" cm {xf.operands}") ++
+      (if clips.isEmpty then "" else s!" clip {clips.size}") ++ alphaDump alpha ++ "\n"
+    dumpNodeList (ind ++ "  ") (acc ++ head) kids.toList
+  | .use k _ => acc ++ s!"{ind}use {k}\n"
+  | .stamp o _ fl st => acc ++ s!"{ind}stamp {o}{fillDump fl}{strokeDump st}\n"
+  | .image k _ => acc ++ s!"{ind}image {k}\n"
+  | .label l => nomatch l
+  | .words w => acc ++ s!"{ind}words {w}\n"
+
+public def dumpNodeList (ind : String) (acc : String) : List (Gfx.Node Empty) → String
+  | [] => acc
+  | n :: rest => dumpNodeList ind (dumpNode ind acc n) rest
+
+end
 
 /-- Repaint a shape, keeping its geometry and text: how a picture dims
 under an overlay cover. -/
 @[expose] public def Shape.recolor (f : Color → Color) : Shape → Shape
-  | .rect x y w h c => .rect x y w h (f c)
   | .label x y t c sc al => .label x y t (f c) sc al
-  | .circle x y r st fl =>
-    .circle x y r (st.map fun s => { s with color := f s.color }) (fl.map f)
-  | .frame x y w h st fl =>
-    .frame x y w h (st.map fun s => { s with color := f s.color }) (fl.map f)
-  | .edge segs st tip => .edge segs { st with color := f st.color } tip
+  | .ink n => .ink (Gfx.Node.recolorOne f id n)
 
 /-- A box in picture coordinates: min corner, then max corner — the one
 box type of the vector model (`Gfx.Box`), whose join, order and hull it
@@ -4541,21 +4655,10 @@ own. A picture's declared box bounds every fill entirely and every label
 at its anchor (`box_in_bbox`); the ink of a label stands proud of it,
 which is what the measured box exists to close. -/
 public def Shape.box : Shape → Box
-  | .rect x y w h _ => ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
   | .label x y _ _ _ _ => ((x, y), (x, y))
-  | .circle x y r _ _ =>
-    ((min (x - r) (x + r), min (y - r) (y + r)),
-     (max (x - r) (x + r), max (y - r) (y + r)))
-  | .frame x y w h _ _ =>
-    ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
-  | .edge segs _ tip =>
-    let base : Box := match tip with
-      | some t => ((min t.x1 (min t.x2 t.x3), min t.y1 (min t.y2 t.y3)),
-                   (max t.x1 (max t.x2 t.x3), max t.y1 (max t.y2 t.y3)))
-      | none => match segs[0]? with
-        | some s => s.box
-        | none => ((0, 0), (0, 0))
-    segs.foldl (fun acc s => Gfx.Box.join acc s.box) base
+  | .ink n =>
+    (Gfx.hullOf (Gfx.Mark.geomBox Gfx.rasterUnit) (Gfx.Node.marksOne #[] Gfx.Ctx.root #[] n)).getD
+      ((0, 0), (0, 0))
 
 public structure Picture where
   shapes : Array Shape := #[]
@@ -4582,18 +4685,50 @@ public structure Picture where
 @[expose] public def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
   { p with shapes := p.shapes.map (·.recolor f) }
 
+/-- The solid colour a geometry's fill paints at a point, when the geometry
+holds it: a rectangle's box, a circle's disc, an ellipse's interior. A path
+is not asked: its interior is a question of winding no fill ground reads. -/
+public def geomFillAt (x y : Sp) (c : Color) : Gfx.Geom → Option Color
+  | .rect rx ry w h => if rx ≤ x ∧ x ≤ rx + w ∧ ry ≤ y ∧ y ≤ ry + h then some c else none
+  | .ellipse cx cy rx ry =>
+    if rx == ry then
+      if (x - cx) * (x - cx) + (y - cy) * (y - cy) ≤ rx * rx then some c else none
+    else if (x - cx) * (x - cx) * (ry * ry) + (y - cy) * (y - cy) * (rx * rx) ≤
+        rx * rx * (ry * ry) then some c
+    else none
+  | .path _ => none
+
+mutual
+
+-- conserves: none — a reading: the fill a node paints at one point.
+/-- The solid fill one node paints at a point, the last of a plain group's
+kids that paints it winning, as the painter's algorithm has it. A group that
+moves, clips or fades its kids is not read: the ground under a label there
+is not one colour the walk can name. -/
+public def inkFillAt (x y : Sp) : Gfx.Node Empty → Option Color
+  | .draw g (some { paint := .solid c, .. }) _ => geomFillAt x y c g
+  | .draw _ _ _ => none
+  | .group xf clips alpha kids =>
+    if xf == Gfx.Affine.unit && clips.isEmpty && alpha == Gfx.Alpha.opaque then
+      inkFillAtList x y none kids.toList
+    else none
+  | .use _ _ => none
+  | .stamp _ _ _ _ => none
+  | .image _ _ => none
+  | .label l => nomatch l
+  | .words _ => none
+
+public def inkFillAtList (x y : Sp) (acc : Option Color) : List (Gfx.Node Empty) → Option Color
+  | [] => acc
+  | n :: rest => inkFillAtList x y ((inkFillAt x y n).or acc) rest
+
+end
+
 /-- The fill a shape paints at a point, when it holds the point: a filled
 rectangle, a filled circle's disc, a filled frame's box. -/
 public def Shape.fillAt (x y : Sp) : Shape → Option Color
-  | .rect rx ry w h c =>
-    if min rx (rx + w) ≤ x ∧ x ≤ max rx (rx + w) ∧ min ry (ry + h) ≤ y ∧ y ≤ max ry (ry + h)
-    then some c else none
-  | .circle cx cy r _ fl =>
-    if (x - cx) * (x - cx) + (y - cy) * (y - cy) ≤ r * r then fl else none
-  | .frame fx fy w h _ fl =>
-    if fx ≤ x ∧ x ≤ fx + w ∧ fy ≤ y ∧ y ≤ fy + h then fl else none
   | .label _ _ _ _ _ _ => none
-  | .edge _ _ _ => none
+  | .ink n => inkFillAt x y n
 
 /-- The ground a label's ink stands on: the fill of the last shape drawn
 before it that paints its anchor — a node's own fill sits under its
@@ -4607,19 +4742,13 @@ glyph — text or math — a picture can ask a face for is here. -/
 public def Picture.labelContents (p : Picture) : Array (Array Inline) :=
   p.shapes.filterMap fun s => match s with
     | .label _ _ content _ _ _ => some content
-    | .rect _ _ _ _ _ => none
-    | .circle _ _ _ _ _ => none
-    | .frame _ _ _ _ _ _ => none
-    | .edge _ _ _ => none
+    | .ink _ => none
 
 /-- A shape with its label content through `f`; geometry, colour and every
 other shape stay. -/
 @[expose] public def Shape.mapLabel (f : Array Inline → Array Inline) : Shape → Shape
   | .label x y content c scale align => .label x y (f content) c scale align
-  | .rect x y w h c => .rect x y w h c
-  | .circle x y r stroke fill => .circle x y r stroke fill
-  | .frame x y w h stroke fill => .frame x y w h stroke fill
-  | .edge segs stroke tip => .edge segs stroke tip
+  | .ink n => .ink n
 
 /-- Every label's content through one inline rewrite: the picture face of
 the generic maps (`mapBlocksPic`), for a pass that must reach the text a
@@ -4651,10 +4780,7 @@ their own geometry, and only text has an extent the IR cannot compute — the
 glyphs' own box on the baseline the band places (`labelGlyphBox`). -/
 @[expose] public def Shape.inkBox (m : LabelMetric) : Shape → Box
   | .label x y content _ scale align => labelGlyphBox x y align (m content scale)
-  | s@(.rect _ _ _ _ _) => s.box
-  | s@(.circle _ _ _ _ _) => s.box
-  | s@(.frame _ _ _ _ _ _) => s.box
-  | s@(.edge _ _ _) => s.box
+  | s@(.ink _) => s.box
 
 -- The Place proofs state their arithmetic over bare `Int` binders because
 -- `omega` does not see through the `Sp` abbreviation (the same workaround
@@ -4891,7 +5017,10 @@ under an overlay cover occupies the box it occupied lit. -/
 public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : LabelMetric) :
     (p.recolor f).box m = p.box m := by
   have hs : ∀ s : Shape, (s.recolor f).inkBox m = s.inkBox m := by
-    intro s; cases s <;> rfl
+    intro s
+    cases s with
+    | label => rfl
+    | ink n => simp only [Shape.recolor, Shape.inkBox, Shape.box, Gfx.Node.recolor_geomBox_id]
   have hb : (p.recolor f).inkBoxes m = p.inkBoxes m := by
     simp only [Picture.inkBoxes, Picture.recolor, Array.map_map]
     exact Array.map_congr_left fun s _ => hs s
@@ -4943,10 +5072,7 @@ public theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Gfx.Box.le s.
   cases s with
   | label x y content color scale align =>
     exact labelGlyphBox_covers x y align _
-  | rect _ _ _ _ _ => exact Gfx.Box.le_refl _
-  | circle _ _ _ _ _ => exact Gfx.Box.le_refl _
-  | frame _ _ _ _ _ _ => exact Gfx.Box.le_refl _
-  | edge _ _ _ => exact Gfx.Box.le_refl _
+  | ink _ => exact Gfx.Box.le_refl _
 
 /-- Where a picture lands on a page: the map from picture coordinates
 (y up) to layout coordinates (y down). The elaborator has already applied
@@ -12159,9 +12285,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
     String.join (pic.borders.toList.map fun b => s!"{ind}  border {boxS b}\n") ++
     String.join (pic.shapes.toList.map fun s =>
       match s with
-      | .rect x y w h c =>
-        s!"{ind}  rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} \
-#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n"
+      | .ink n => Pic.dumpNode (ind ++ "  ") "" n
       | .label x y content c sc al =>
         let alS := match al with
           | .center => ""
@@ -12171,21 +12295,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
           | .north => " north"
         s!"{ind}  label {x.toPtString} {y.toPtString} \
 #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}{alS}\n" ++
-        dumpInlines (ind ++ "    ") content
-      | .circle x y r st fl =>
-        s!"{ind}  circle {x.toPtString} {y.toPtString} {r.toPtString}\
-{Pic.paintDump st fl}\n"
-      | .frame x y w h st fl =>
-        s!"{ind}  frame {x.toPtString} {y.toPtString} {w.toPtString} \
-{h.toPtString}{Pic.paintDump st fl}\n"
-      | .edge segs st tip =>
-        let pts := String.join (segs.toList.map fun sg => match sg with
-          | .line x1 y1 x2 y2 =>
-            s!" ({x1.toPtString},{y1.toPtString})--({x2.toPtString},{y2.toPtString})"
-          | .cubic x1 y1 _ _ _ _ x2 y2 =>
-            s!" ({x1.toPtString},{y1.toPtString})~({x2.toPtString},{y2.toPtString})")
-        s!"{ind}  edge{pts}{Pic.paintDump (some st) none}\
-{if tip.isSome then " tip" else ""}\n")
+        dumpInlines (ind ++ "    ") content)
   | .table cols padL padR rows rules spans =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")
@@ -14973,10 +15083,7 @@ private def recolorRolesShapes (recolor : RoleRecolor) (pal : Palette) (ground :
         let g := (Pic.fillUnder drawn x y).or ground
         .label x y (recolorRolesInlines recolor pal g #[] content.toList) (recolor pal g none c)
           sc al
-      | .rect x y w h c => .rect x y w h c
-      | .circle x y r st fl => .circle x y r st fl
-      | .frame x y w h st fl => .frame x y w h st fl
-      | .edge segs st tip => .edge segs st tip
+      | .ink n => .ink n
     recolorRolesShapes recolor pal ground (drawn.push s') rest
 
 

@@ -3211,24 +3211,24 @@ def contentOpsPathPage : Layout.PageOut := {
   inks := #[
     { fig := contentOpsFigure #[
         .draw (.ellipse (Dim.pt 50) (Dim.pt 50) (Dim.pt 20) (Dim.pt 20)) none
-          (some (Gfx.strokeOf { color := contentOpsRed, dash := .dashed })),
+          (some (Ir.Pic.strokeOf { color := contentOpsRed, dash := .dashed })),
         .draw (.rect (Dim.pt 10) (Dim.pt 70) (Dim.pt 30) (Dim.pt 20))
-          (some (Gfx.solidFill contentOpsGrey))
-          (some (Gfx.strokeOf { dash := .dotted, width := Dim.pt 1 })),
-        .draw (.path (Gfx.edgeSubpaths #[
+          (some (Ir.Pic.solidFill contentOpsGrey))
+          (some (Ir.Pic.strokeOf { dash := .dotted, width := Dim.pt 1 })),
+        .draw (.path (Ir.Pic.edgeSubpaths #[
             .line (Dim.pt 1) (Dim.pt 98) (Dim.pt 3) (Dim.pt 96),
             .line (Dim.pt 3) (Dim.pt 96) (Dim.pt 5) (Dim.pt 94),
             .cubic (Dim.pt 7) (Dim.pt 92) (Dim.pt 9) (Dim.pt 90) (Dim.pt 11) (Dim.pt 88) (Dim.pt 13)
               (Dim.pt 86),
             .cubic (Dim.pt 13) (Dim.pt 86) (Dim.pt 1) (Dim.pt 99) (Dim.pt 2) (Dim.pt 98) (Dim.pt 3)
               (Dim.pt 97)]))
-          none (some (Gfx.strokeOf {}))]
+          none (some (Ir.Pic.strokeOf {}))]
       place := contentOpsPlace, leaf := some 0 },
     { fig := contentOpsFigure #[
         .draw (.path #[{ start := (Dim.pt 1, Dim.pt 98)
                          segs := #[.line (Dim.pt 3, Dim.pt 96), .line (Dim.pt 5, Dim.pt 94)]
                          closed := true }])
-          (some (Gfx.solidFill contentOpsRed)) none,
+          (some (Ir.Pic.solidFill contentOpsRed)) none,
         .draw (.rect (Dim.pt 1) (Dim.pt 97) (Dim.pt 2) (Dim.pt 2)) none none]
       place := contentOpsPlace, leaf := some 1 } ] }
 

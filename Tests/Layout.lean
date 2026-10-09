@@ -4490,7 +4490,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     ((out.pages[0]?.map fun p => p.fills.isEmpty && match (pageDraws p).toList with
       | [(.rect x y w h, some f, none)] =>
         x == geom.hmargin && y == geom.vmargin && w == Dim.pt 20 && h == Dim.pt 10 &&
-          f == Gfx.solidFill red
+          f == Ir.Pic.solidFill red
       | _ => false).getD false)
   t "picture label ships its glyphs centred on the anchor"
     ((out.pages[0]?.map fun p =>
@@ -4519,7 +4519,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
            ry == Dim.pt 5
        | .rect _ _ _ _ => false
        | .path _ => false) &&
-      st == some (Gfx.strokeOf {}) && fl == some (Gfx.solidFill red)).getD false)
+      st == some (Ir.Pic.strokeOf {}) && fl == some (Ir.Pic.solidFill red)).getD false)
   -- `{center}` centres the box, as it centres a paragraph's lines.
   let centered := run #[.center #[.picture pic]]
   t "a centred picture centres its box"

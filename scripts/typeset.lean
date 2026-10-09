@@ -502,7 +502,7 @@ def rectInk (x y w h : Int) : Layout.InkOut :=
   { fig := { box := ((0, 0), (0, 0)), clipToBox := false, outlines := #[], symbols := #[],
              rasters := #[], title := none, losses := #[],
              nodes := #[.draw (.rect (Dim.pt x) (Dim.pt y) (Dim.pt w) (Dim.pt h))
-               (some (Gfx.solidFill Ir.Color.black)) none] }
+               (some (Ir.Pic.solidFill Ir.Color.black)) none] }
     place := { flipY := false, dx := 0, dy := 0 } }
 
 def selftest : IO UInt32 := tierSelftest "typeset" fun no => do

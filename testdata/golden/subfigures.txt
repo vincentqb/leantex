@@ -14,7 +14,7 @@ float figure 1
           text "The first invented panel."
         picture 2 shapes alt "The first invented panel."
           border 25.013 10.84 31.679 17.506
-          rect 0 0 56.693 28.346 #CCCCCC
+          draw rect 0 0 56.693 28.346 fill #CCCCCC
           label 28.346 14.173 #000000 1000
             text "left box"
     column 480/1000 [t]
@@ -23,7 +23,7 @@ float figure 1
           text "The second invented panel."
         picture 2 shapes alt "The second invented panel."
           border 25.013 10.84 31.679 17.506
-          rect 0 0 56.693 28.346 #999999
+          draw rect 0 0 56.693 28.346 fill #999999
           label 28.346 14.173 #000000 1000
             text "right box"
 float figure 2

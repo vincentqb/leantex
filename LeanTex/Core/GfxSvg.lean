@@ -620,13 +620,73 @@ public def spellList (sp : Spell) (acc : Array Html.Node) : List El → Array Ht
 
 end
 
-/-- **A typed tree spelled**: its elements, behind one `defs` when it
-defines anything. `ord` numbers the figure in its document. -/
+/-- **A typed tree spelled**: its elements, then one `defs` when it defines
+anything — after them, so element `j` of the tree is node `j` of its
+spelling whatever the tree defines (`spell_raw_exact`); a reference to a
+definition later in its own `svg` resolves (SVG 2 §5.6). `ord` numbers the
+figure in its document. -/
 public def spell (ord : Nat) (els : Array El) : Array Html.Node :=
   let start : Spell :=
     { ord := ord, clips := 0, grads := 0, defs := #[], syms := #[], outlines := #[] }
   let (items, sp) := spellList start #[] els.toList
-  if sp.defs.isEmpty then items else #[Html.elem "defs" sp.defs] ++ items
+  if sp.defs.isEmpty then items else items.push (Html.elem "defs" sp.defs)
+
+/-- Every element spells one node onto what came before, a raw element its
+own node. -/
+private theorem spellOne_one (sp : Spell) (acc : Array Html.Node) (e : El) :
+    ∃ node, (spellOne sp acc e).1 = acc.push node ∧ ∀ n, e = .raw n → node = n := by
+  cases e with
+  | shape g a => exact ⟨_, rfl, fun _ h => by cases h⟩
+  | g xf op clip kids =>
+    cases clip with
+    | none => exact ⟨_, rfl, fun _ h => by cases h⟩
+    | some c => exact ⟨_, rfl, fun _ h => by cases h⟩
+  | use k xf body => exact ⟨_, rfl, fun _ h => by cases h⟩
+  | stamp o xf subs a => exact ⟨_, rfl, fun _ h => by cases h⟩
+  | image k m ref => exact ⟨_, rfl, fun _ h => by cases h⟩
+  | raw n => exact ⟨n, rfl, fun _ h => by cases h; rfl⟩
+
+/-- A list spells one node per element, in order, each raw element as itself. -/
+private theorem spellList_one (sp : Spell) (acc : Array Html.Node) (els : List El) :
+    ∃ nodes : Array Html.Node, (spellList sp acc els).1 = acc ++ nodes ∧
+      nodes.size = els.length ∧
+      ∀ (j : Nat) (n : Html.Node), els[j]? = some (El.raw n) → nodes[j]? = some n := by
+  induction els generalizing sp acc with
+  | nil => exact ⟨#[], by simp [spellList], rfl, fun j n h => by simp at h⟩
+  | cons e rest ih =>
+    obtain ⟨node, hn, hraw⟩ := spellOne_one sp acc e
+    obtain ⟨nodes, h1, h2, h3⟩ := ih (spellOne sp acc e).2 (spellOne sp acc e).1
+    refine ⟨#[node] ++ nodes, ?_, by simp [h2]; omega, ?_⟩
+    · simp only [spellList]
+      rw [h1, hn]
+      simp
+    · intro j n hj
+      cases j with
+      | zero =>
+        simp only [List.getElem?_cons_zero, Option.some.injEq] at hj
+        rw [Array.getElem?_append_left (by simp)]
+        simp [hraw n hj]
+      | succ j =>
+        simp only [List.getElem?_cons_succ] at hj
+        rw [Array.getElem?_append_right (by simp)]
+        simpa using h3 j n hj
+
+/-- **Element `j` of a tree is node `j` of its spelling** (`_exact`), whatever
+the tree defines: a raw element — a label's node — ships as itself at its
+own index, the definitions standing after every element. -/
+public theorem spell_raw_exact (ord : Nat) (els : Array El) (j : Nat) (n : Html.Node)
+    (hj : els[j]? = some (El.raw n)) : (spell ord els)[j]? = some n := by
+  obtain ⟨nodes, h1, h2, h3⟩ := spellList_one
+    { ord := ord, clips := 0, grads := 0, defs := #[], syms := #[], outlines := #[] } #[] els.toList
+  have hj' : els.toList[j]? = some (El.raw n) := by simpa using hj
+  have hlt : j < nodes.size := by
+    rw [h2]
+    exact (List.getElem?_eq_some_iff.mp hj').1
+  simp only [spell]
+  split
+  · rw [h1, Array.empty_append]; exact h3 j n hj'
+  · rw [h1, Array.empty_append, Array.getElem?_push_lt hlt, ← Array.getElem?_eq_getElem hlt]
+    exact h3 j n hj'
 
 /-! ## A tree that names no definition spells element for element -/
 
@@ -766,6 +826,21 @@ mutual
 
 end
 
+/-- The raw-node predicate over two runs of elements is the two runs'. -/
+public theorem El.rawsAllList_append (q : Html.Node → Bool) (a b : List El) :
+    El.rawsAllList q (a ++ b) = (El.rawsAllList q a && El.rawsAllList q b) := by
+  induction a with
+  | nil => simp [El.rawsAllList]
+  | cons e rest ih => simp [El.rawsAllList, ih, Bool.and_assoc]
+
+/-- A group's clips wrap its kids and carry no raw node of their own. -/
+public theorem El.rawsAllList_nestClips (q : Html.Node → Bool) (fr : SFrame) (kids : Array El)
+    (cs : List Clip) :
+    El.rawsAllList q (nestClips fr kids cs).toList = El.rawsAllList q kids.toList := by
+  induction cs with
+  | nil => rfl
+  | cons c rest ih => simp [nestClips, El.rawsAllList, El.rawsAll, ih]
+
 /-- A node property every plain SVG element has once its children have it. -/
 @[expose] public def PlainClosed (q : Html.Node → Bool) : Prop :=
   ∀ t ∈ plainTags, ∀ (attrs : Array (String × String)) (kids : Array Html.Node),
@@ -853,6 +928,198 @@ public theorem spell_plain_contract (q : Html.Node → Bool) (hq : PlainClosed q
   simp only [spell]
   rw [hs]
   simpa only [Array.isEmpty_empty, ↓reduceIte] using hall
+
+/-- Every element name a spelling writes: the plain ones, and the
+definitions behind one `defs` — a clip path, a gradient and its stops, a
+symbol's body, an outline's path — with the `use` that paints a symbol or
+an outline. -/
+@[expose] public def spellTags : List String :=
+  plainTags ++ ["use", "defs", "clipPath", "linearGradient", "radialGradient", "stop", "symbol"]
+
+/-- A node property every element a spelling writes has once its children
+have it. -/
+@[expose] public def SpellClosed (q : Html.Node → Bool) : Prop :=
+  ∀ t ∈ spellTags, ∀ (attrs : Array (String × String)) (kids : Array Html.Node),
+    (∀ k ∈ kids, q k = true) → q (Html.elem t kids attrs) = true
+
+private theorem closed_leaf (q : Html.Node → Bool) (hq : SpellClosed q) (t : String)
+    (ht : t ∈ spellTags) (attrs : Array (String × String)) : q (Html.elem t #[] attrs) = true :=
+  hq t ht attrs #[] (by simp)
+
+private theorem geomEl_spellClosed (q : Html.Node → Bool) (hq : SpellClosed q) (g : Geom)
+    (attrs : Array (String × String)) : q (geomEl g attrs) = true := by
+  cases g with
+  | rect x y w h => exact closed_leaf q hq "rect" (by simp [spellTags, plainTags]) _
+  | ellipse cx cy rx ry =>
+    simp only [geomEl]
+    split
+    · exact closed_leaf q hq "circle" (by simp [spellTags, plainTags]) _
+    · exact closed_leaf q hq "ellipse" (by simp [spellTags, plainTags]) _
+  | path subs => exact closed_leaf q hq "path" (by simp [spellTags, plainTags]) _
+
+private theorem gradientEl_closed (q : Html.Node → Bool) (hq : SpellClosed q) (id : String)
+    (g : Gradient) : q (gradientEl id g) = true := by
+  have hstops : ∀ (stops : Array Stop), ∀ k ∈ stops.map gradientEl.stopEl, q k = true := by
+    intro stops k hk
+    obtain ⟨st, _, rfl⟩ := Array.mem_map.mp hk
+    exact closed_leaf q hq "stop" (by simp [spellTags]) _
+  cases g with
+  | linear p0 p1 stops xf =>
+    exact hq "linearGradient" (by simp [spellTags]) _ _ (hstops stops)
+  | radial c0 r0 c1 r1 stops xf =>
+    exact hq "radialGradient" (by simp [spellTags]) _ _ (hstops stops)
+
+private theorem paintValue_defs (q : Html.Node → Bool) (hq : SpellClosed q) (sp : Spell)
+    (p : SPaint) (h : ∀ n ∈ sp.defs, q n = true) : ∀ n ∈ (paintValue sp p).2.defs, q n = true := by
+  cases p with
+  | none => exact h
+  | color c => exact h
+  | url g =>
+    intro n hn
+    simp only [paintValue, Array.mem_push] at hn
+    rcases hn with hn | rfl
+    · exact h n hn
+    · exact gradientEl_closed q hq _ g
+
+private theorem attrsSpell_defs (q : Html.Node → Bool) (hq : SpellClosed q) (sp : Spell)
+    (a : ShapeAttrs) (h : ∀ n ∈ sp.defs, q n = true) :
+    ∀ n ∈ (attrsSpell sp a).2.defs, q n = true := by
+  have hopt : ∀ (sp : Spell) (p : Option SPaint), (∀ n ∈ sp.defs, q n = true) →
+      ∀ n ∈ (optPaint sp p).2.defs, q n = true := by
+    intro sp p hs
+    cases p with
+    | none => exact hs
+    | some p => exact paintValue_defs q hq sp p hs
+  simp only [attrsSpell]
+  exact hopt _ _ (hopt _ _ h)
+
+mutual
+
+private theorem spellOne_closed_all (q : Html.Node → Bool) (hq : SpellClosed q) :
+    ∀ (sp : Spell) (acc : Array Html.Node) (e : El),
+      (∀ n ∈ acc, q n = true) → (∀ n ∈ sp.defs, q n = true) → e.rawsAll q = true →
+        (∀ n ∈ (spellOne sp acc e).1, q n = true) ∧
+          (∀ n ∈ (spellOne sp acc e).2.defs, q n = true)
+  | sp, acc, .shape g a, ha, hd, _ => by
+    refine ⟨fun n hn => ?_, attrsSpell_defs q hq sp a hd⟩
+    simp only [spellOne, Array.mem_push] at hn
+    rcases hn with hn | rfl
+    · exact ha n hn
+    · exact geomEl_spellClosed q hq _ _
+  | sp, acc, .g xf op clip kids, ha, hd, hr => by
+    simp only [El.rawsAll] at hr
+    obtain ⟨hin, hdk⟩ := spellList_closed_all q hq sp #[] kids.toList (by simp) hd hr
+    have hg : ∀ (attrs : Array (String × String)),
+        q (Html.elem "g" (spellList sp #[] kids.toList).1 attrs) = true :=
+      fun attrs => hq "g" (by simp [spellTags, plainTags]) attrs _ hin
+    cases clip with
+    | none =>
+      refine ⟨fun n hn => ?_, hdk⟩
+      simp only [spellOne, Array.mem_push] at hn
+      rcases hn with hn | rfl
+      · exact ha n hn
+      · exact hg _
+    | some c =>
+      refine ⟨fun n hn => ?_, fun n hn => ?_⟩
+      · simp only [spellOne, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact ha n hn
+        · exact hg _
+      · simp only [spellOne, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact hdk n hn
+        · exact hq "clipPath" (by simp [spellTags]) _ _ (fun k hk => by
+            simp only [List.mem_toArray, List.mem_singleton] at hk
+            subst hk
+            exact geomEl_spellClosed q hq _ _)
+  | sp, acc, .use k xf body, ha, hd, hr => by
+    simp only [El.rawsAll] at hr
+    have huse : q (Html.elem "use" #[] #[("href", s!"#{svgId sp.ord .symbol k}"),
+        transformAttr xf]) = true := closed_leaf q hq "use" (by simp [spellTags]) _
+    by_cases hk : sp.syms.contains k
+    · refine ⟨fun n hn => ?_, ?_⟩
+      · simp only [spellOne, hk, ↓reduceIte, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact ha n hn
+        · exact huse
+      · simpa only [spellOne, hk, ↓reduceIte] using hd
+    · obtain ⟨hin, hdk⟩ := spellList_closed_all q hq { sp with syms := sp.syms.push k } #[]
+        body.toList (by simp) hd hr
+      refine ⟨fun n hn => ?_, fun n hn => ?_⟩
+      · simp only [spellOne, hk, Bool.false_eq_true, ↓reduceIte, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact ha n hn
+        · exact huse
+      · simp only [spellOne, hk, Bool.false_eq_true, ↓reduceIte, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact hdk n hn
+        · exact hq "symbol" (by simp [spellTags]) _ _ hin
+  | sp, acc, .stamp o xf subs a, ha, hd, _ => by
+    let sp1 : Spell := if sp.outlines.contains o then sp else
+      { sp with outlines := sp.outlines.push o
+                defs := sp.defs.push (Html.elem "path" #[] (#[("id", svgId sp.ord .outline o)] ++
+                  if subs.isEmpty then #[] else #[("d", pathD subs)])) }
+    have h1 : ∀ n ∈ sp1.defs, q n = true := by
+      intro n hn
+      by_cases ho : sp.outlines.contains o
+      · simp only [sp1, ho, ↓reduceIte] at hn
+        exact hd n hn
+      · simp only [sp1, ho, Bool.false_eq_true, ↓reduceIte, Array.mem_push] at hn
+        rcases hn with hn | rfl
+        · exact hd n hn
+        · exact closed_leaf q hq "path" (by simp [spellTags, plainTags]) _
+    refine ⟨fun n hn => ?_, ?_⟩
+    · simp only [spellOne, Array.mem_push] at hn
+      rcases hn with hn | rfl
+      · exact ha n hn
+      · exact closed_leaf q hq "use" (by simp [spellTags]) _
+    · exact attrsSpell_defs q hq sp1 a h1
+  | sp, acc, .image k m ref, ha, hd, _ => by
+    refine ⟨fun n hn => ?_, hd⟩
+    simp only [spellOne, Array.mem_push] at hn
+    rcases hn with hn | rfl
+    · exact ha n hn
+    · exact closed_leaf q hq "image" (by simp [spellTags, plainTags]) _
+  | sp, acc, .raw r, ha, hd, hr => by
+    refine ⟨fun n hn => ?_, hd⟩
+    simp only [spellOne, Array.mem_push] at hn
+    rcases hn with hn | rfl
+    · exact ha n hn
+    · simpa only [El.rawsAll] using hr
+
+private theorem spellList_closed_all (q : Html.Node → Bool) (hq : SpellClosed q) :
+    ∀ (sp : Spell) (acc : Array Html.Node) (els : List El),
+      (∀ n ∈ acc, q n = true) → (∀ n ∈ sp.defs, q n = true) → El.rawsAllList q els = true →
+        (∀ n ∈ (spellList sp acc els).1, q n = true) ∧
+          (∀ n ∈ (spellList sp acc els).2.defs, q n = true)
+  | sp, acc, [], ha, hd, _ => ⟨by simpa only [spellList] using ha, by simpa only [spellList] using hd⟩
+  | sp, acc, e :: rest, ha, hd, hr => by
+    simp only [El.rawsAllList, Bool.and_eq_true] at hr
+    obtain ⟨h1, h2⟩ := spellOne_closed_all q hq sp acc e ha hd hr.1
+    simp only [spellList]
+    exact spellList_closed_all q hq _ _ rest h1 h2 hr.2
+
+end
+
+/-- **A spelling wraps its raw nodes in SVG and nothing else**
+(`_contract`): every node a typed tree spells has any property each element
+the spelling writes has once its children do, as soon as the tree's raw
+nodes have it — the spelling adds geometry, groups, images and the
+definitions they name (`spellTags`) around what a producer passed in. A
+picture's raw nodes are its labels. -/
+public theorem spell_contract (q : Html.Node → Bool) (hq : SpellClosed q) (ord : Nat)
+    (els : Array El) (hr : El.rawsAllList q els.toList = true) :
+    ∀ n ∈ spell ord els, q n = true := by
+  obtain ⟨hall, hdefs⟩ := spellList_closed_all q hq
+    { ord := ord, clips := 0, grads := 0, defs := #[], syms := #[], outlines := #[] } #[]
+    els.toList (by simp) (by simp) hr
+  intro n hn
+  simp only [spell] at hn
+  split at hn
+  · exact hall n hn
+  · rcases Array.mem_push.mp hn with hn | rfl
+    · exact hall n hn
+    · exact hq "defs" (by simp [spellTags]) _ _ hdefs
 
 /-- The placement a standalone document draws a figure under: its box's
 top-left corner at the origin, y down. -/

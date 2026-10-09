@@ -6,12 +6,11 @@ public import LeanTex.Core.GfxAffine
 /-!
 # A TikZ picture as a figure
 
-The elaborator evaluates a picture into concrete `Ir.Pic.Shape`s; this is
-their lowering onto the vector model, which both backends then emit. A shape
-is one top-level node, so a label's node index is its shape index: a fill
-is a draw, a node outline a draw, an edge a group of its stroked path and its
-tip, a label an engine-set label. Continuous edge segments share one subpath
-— the PDF already merged them, and the SVG now draws the same joins.
+The elaborator evaluates a picture into `Ir.Pic.Shape`s: labels, and ink —
+nodes of the vector model already (`Ir.Pic.Shape.ink`). This is their
+lowering onto a figure both backends then emit. A shape is one top-level
+node, so a label's node index is its shape index: ink is its own node, a
+label an engine-set label.
 -/
 
 namespace LeanTex.Core.Gfx
@@ -30,62 +29,64 @@ public structure LabelSpec where
   align : Ir.Pic.LabelAlign
   deriving Repr, Inhabited
 
-/-- A solid opaque fill under the nonzero rule: every TikZ fill. -/
-@[expose] public def solidFill (c : Ir.Color) : Fill :=
-  { paint := .solid c, rule := .nonzero, alpha := Alpha.opaque }
+mutual
 
-/-- pgf's miter limit, PDF's initial value (pgf manual §15.3.1: pgf leaves
-the limit at the PDF default of 10). -/
-@[expose] public def pgfMiterLimit : Rat := 10
+-- conserves: none — a relabelling of the empty label type, node for node.
+/-- A label-free node at any label type: the ink a picture's shape carries,
+as a node of the figure that also holds labels. -/
+@[expose] public def Node.lift {L : Type} : Node Empty → Node L
+  | .draw g fl st => .draw g fl st
+  | .group xf clips alpha kids => .group xf clips alpha (Node.liftList #[] kids.toList)
+  | .use k xf => .use k xf
+  | .stamp o xf fl st => .stamp o xf fl st
+  | .image k xf => .image k xf
+  | .label l => nomatch l
+  | .words s => .words s
 
-/-- A picture stroke in the model: pgf's butt caps, miter joins and miter
-limit, its declared colour and width, and its dash rhythm — pgf manual
-§15.3.2: `dashed` is on 3 pt off 3 pt, `dotted` on the line width off 1 pt
-(the `densely dotted` rhythm the subset keeps). -/
-@[expose] public def strokeOf (k : Ir.Pic.Stroke) : Stroke :=
-  { paint := .solid k.color, width := k.width, cap := .butt, join := .miter
-    miterLimit := pgfMiterLimit
-    dash := match k.dash with
-      | .solid => #[]
-      | .dashed => #[Dim.pt 3, Dim.pt 3]
-      | .dotted => #[k.width, Dim.pt 1]
-    phase := 0, alpha := Alpha.opaque }
+@[expose] public def Node.liftList {L : Type} (acc : Array (Node L)) :
+    List (Node Empty) → Array (Node L)
+  | [] => acc
+  | n :: rest => Node.liftList (acc.push (Node.lift n)) rest
 
-/-- An edge's segments as subpaths: a segment that starts where the last
-ended continues its subpath, any other opens a new one. -/
-@[expose] public def edgeSubpaths (segs : Array Ir.Pic.PathSeg) : Array Subpath :=
-  let step (acc : Array Subpath) (sg : Ir.Pic.PathSeg) : Array Subpath :=
-    let (start, seg) : Pt × Seg := match sg with
-      | .line x1 y1 x2 y2 => ((x1, y1), .line (x2, y2))
-      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => ((x1, y1), .cubic (c1x, c1y) (c2x, c2y) (x2, y2))
-    match acc.back? with
-    | some cur =>
-      if cur.endPt == start then acc.pop.push { cur with segs := cur.segs.push seg }
-      else acc.push { start := start, segs := #[seg], closed := false }
-    | none => acc.push { start := start, segs := #[seg], closed := false }
-  segs.foldl step #[]
+end
 
-/-- An arrow tip's triangle, closed. -/
-@[expose] public def tipSubpath (t : Ir.Pic.Tip) : Subpath :=
-  { start := (t.x1, t.y1), segs := #[.line (t.x2, t.y2), .line (t.x3, t.y3)], closed := true }
+/-- The lifting walk as a map over its list. -/
+public theorem Node.liftList_map {L : Type} (acc : Array (Node L)) (xs : List (Node Empty)) :
+    Node.liftList acc xs = acc ++ (xs.map Node.lift).toArray := by
+  induction xs generalizing acc with
+  | nil => simp [Node.liftList]
+  | cons x rest ih => simp [Node.liftList, ih]
 
 /-- One shape as one node. -/
 @[expose] public def ofShape : Ir.Pic.Shape → Node LabelSpec
-  | .rect x y w h c =>
-    .draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h))) (some (solidFill c)) none
   | .label x y content color scale align =>
     .label { x := x, y := y, content := content, color := color, scale := scale, align := align }
-  | .circle x y r st fl =>
-    .draw (.ellipse x y (max r (-r)) (max r (-r))) (fl.map solidFill) (st.map strokeOf)
-  | .frame x y w h st fl =>
-    .draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
-      (fl.map solidFill) (st.map strokeOf)
-  | .edge segs st tip =>
-    .group Affine.unit #[] Alpha.opaque
-      (#[.draw (.path (edgeSubpaths segs)) none (some (strokeOf st))] ++
-        match tip with
-        | some t => #[.draw (.path #[tipSubpath t]) (some (solidFill st.color)) none]
-        | none => #[])
+  | .ink n => n.lift
+
+/-- **Today's shapes lower as they always did** (`_id`): each of the four
+the subset drew before ink was general — a fill, a circle, a frame, an
+edge with its tip — is the node the lowering wrote for it, so no picture
+drawn before moves a mark. -/
+public theorem ofPicture_ink_id (x y w h r : Sp) (c : Ir.Color) (st : Option Ir.Pic.Stroke)
+    (fl : Option Ir.Color) (segs : Array Ir.Pic.PathSeg) (k : Ir.Pic.Stroke)
+    (tip : Option Ir.Pic.Tip) :
+    ofShape (.rect x y w h c) =
+        .draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
+          (some (Ir.Pic.solidFill c)) none ∧
+      ofShape (.circle x y r st fl) =
+        .draw (.ellipse x y (max r (-r)) (max r (-r))) (fl.map Ir.Pic.solidFill)
+          (st.map Ir.Pic.strokeOf) ∧
+      ofShape (.frame x y w h st fl) =
+        .draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
+          (fl.map Ir.Pic.solidFill) (st.map Ir.Pic.strokeOf) ∧
+      ofShape (.edge segs k tip) =
+        .group Affine.unit #[] Alpha.opaque
+          (#[.draw (.path (Ir.Pic.edgeSubpaths segs)) none (some (Ir.Pic.strokeOf k))] ++
+            match tip with
+            | some t => #[.draw (.path #[Ir.Pic.tipSubpath t]) (some (Ir.Pic.solidFill k.color)) none]
+            | none => #[]) := by
+  refine ⟨rfl, rfl, rfl, ?_⟩
+  cases tip <;> rfl
 
 /-- A picture as a figure in a box its caller already measured. -/
 @[expose] public def ofPictureIn (box : Box) (pic : Ir.Pic.Picture) : Figure LabelSpec :=
@@ -108,14 +109,25 @@ public theorem ofPicture_nodes_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Pict
     (ofPicture m pic).nodes[i]? = pic.shapes[i]?.map ofShape := by
   simp [ofPicture, ofPictureIn]
 
+/-- Whether a shape lowers to exactly one element of a picture's tree: a
+label, or ink that draws, groups, stamps or maps a raster — the ink a
+picture's evaluator builds. Recovered words and a symbol use paint no
+element of their own there. -/
+@[expose] public def shapeOneEl : Ir.Pic.Shape → Bool
+  | .label .. => true
+  | .ink (.draw ..) => true
+  | .ink (.group ..) => true
+  | .ink (.stamp ..) => true
+  | .ink (.image ..) => true
+  | .ink (.use ..) => false
+  | .ink (.words _) => false
+  | .ink (.label l) => nomatch l
+
 /-- The label a shape carries, if it is one. -/
 @[expose] public def labelOf? : Ir.Pic.Shape → Option LabelSpec
   | .label x y content color scale align =>
     some { x := x, y := y, content := content, color := color, scale := scale, align := align }
-  | .rect _ _ _ _ _ => none
-  | .circle _ _ _ _ _ => none
-  | .frame _ _ _ _ _ _ => none
-  | .edge _ _ _ => none
+  | .ink _ => none
 
 /-- The label a node carries at its top level, if it is one. -/
 @[expose] public def Node.label? {L : Type} : Node L → Option L
@@ -135,11 +147,8 @@ public theorem ofPicture_labels_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Pic
   apply Array.map_congr_left
   intro s _
   cases s with
-  | rect => rfl
   | label => rfl
-  | circle => rfl
-  | frame => rfl
-  | edge segs st tip => cases tip <;> rfl
+  | ink n => cases n <;> first | rfl | (rename_i l; exact nomatch l)
 
 private theorem imageFreeList_append {L : Type} (a b : List (Node L)) :
     Node.imageFreeList (a ++ b) = (Node.imageFreeList a && Node.imageFreeList b) := by
@@ -147,13 +156,44 @@ private theorem imageFreeList_append {L : Type} (a b : List (Node L)) :
   | nil => simp [Node.imageFreeList]
   | cons n rest ih => simp [Node.imageFreeList, ih, Bool.and_assoc]
 
-private theorem ofShape_imageFree (s : Ir.Pic.Shape) : (ofShape s).imageFree = true := by
+/-- Whether a shape's ink paints no raster: a label paints none. -/
+@[expose] public def shapeImageFree : Ir.Pic.Shape → Bool
+  | .label _ _ _ _ _ _ => true
+  | .ink n => n.imageFree
+
+mutual
+
+private theorem lift_imageFree {L : Type} :
+    ∀ n : Node Empty, n.imageFree = true → (Node.lift n : Node L).imageFree = true
+  | .draw g fl st, _ => rfl
+  | .group xf clips alpha kids, h => by
+    simp only [Node.imageFree] at h
+    simp only [Node.lift, Node.imageFree]
+    exact liftList_imageFree #[] rfl kids.toList h
+  | .use k xf, _ => rfl
+  | .stamp o xf fl st, _ => rfl
+  | .image _ _, h => by simp [Node.imageFree] at h
+  | .label l, _ => nomatch l
+  | .words w, _ => rfl
+
+private theorem liftList_imageFree {L : Type} (acc : Array (Node L))
+    (hacc : Node.imageFreeList acc.toList = true) :
+    ∀ xs : List (Node Empty), Node.imageFreeList xs = true →
+      Node.imageFreeList (Node.liftList acc xs).toList = true
+  | [], _ => by simpa [Node.liftList] using hacc
+  | n :: rest, h => by
+    simp only [Node.imageFreeList, Bool.and_eq_true] at h
+    simp only [Node.liftList]
+    apply liftList_imageFree _ _ rest h.2
+    simp [imageFreeList_append, hacc, Node.imageFreeList, lift_imageFree n h.1]
+
+end
+
+private theorem ofShape_imageFree (s : Ir.Pic.Shape) (h : shapeImageFree s = true) :
+    (ofShape s).imageFree = true := by
   cases s with
-  | rect => rfl
   | label => rfl
-  | circle => rfl
-  | frame => rfl
-  | edge segs st tip => cases tip <;> rfl
+  | ink n => exact lift_imageFree n h
 
 mutual
 
@@ -189,53 +229,69 @@ private theorem dropLabelsList_imageFree {L : Type} (acc : Array (Node Empty))
 
 end
 
-private theorem imageFreeList_map (xs : List Ir.Pic.Shape) :
+private theorem imageFreeList_map (xs : List Ir.Pic.Shape) (h : ∀ s ∈ xs, shapeImageFree s = true) :
     Node.imageFreeList (xs.map ofShape) = true := by
   induction xs with
   | nil => rfl
-  | cons s rest ih => simp [Node.imageFreeList, ofShape_imageFree, ih]
+  | cons s rest ih =>
+    simp [Node.imageFreeList, ofShape_imageFree s (h s (List.mem_cons_self ..)),
+      ih fun s' hs' => h s' (List.mem_cons_of_mem _ hs')]
 
-/-- **A picture's ink paints no raster** (`_exact`): every node the
-lowering makes, its labels taken out, is a draw or a group of draws — so a
-page's ink never asks the PDF writer for an image it has no table for. -/
-public theorem ofPictureIn_imageFree_exact (box : Box) (pic : Ir.Pic.Picture) :
+/-- **A picture's ink paints no raster** (`_exact`) where its shapes'
+ink holds none: every node the lowering makes, its labels taken out, is
+the shapes' own ink — so a page's ink asks the PDF writer for an image only
+where a shape's node held one, which no evaluator door builds; the writer
+refuses that case (`Pdf.inkRasterPage?`). -/
+public theorem ofPictureIn_imageFree_exact (box : Box) (pic : Ir.Pic.Picture)
+    (h : ∀ s ∈ pic.shapes, shapeImageFree s = true) :
     (ofPictureIn box pic).dropLabels.imageFree = true := by
-  have h := dropLabelsList_imageFree #[] rfl _ (imageFreeList_map pic.shapes.toList)
-  simp [Figure.imageFree, Figure.dropLabels, ofPictureIn, h]
+  have h' := dropLabelsList_imageFree #[] rfl _
+    (imageFreeList_map pic.shapes.toList fun s hs => h s (Array.mem_toList_iff.mp hs))
+  simp [Figure.imageFree, Figure.dropLabels, ofPictureIn, h']
 
 /-- A label repainted. -/
 @[expose] public def LabelSpec.recolor (f : Ir.Color → Ir.Color) (l : LabelSpec) : LabelSpec :=
   { l with color := f l.color }
 
-private theorem strokeOf_recolor (f : Ir.Color → Ir.Color) (k : Ir.Pic.Stroke) :
-    strokeOf { k with color := f k.color } = (strokeOf k).recolor f := by
-  cases k with
-  | mk c w d => cases d <;> rfl
+mutual
+
+private theorem lift_recolor {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L) :
+    ∀ n : Node Empty,
+      (Node.lift (Node.recolorOne f id n) : Node L) = Node.recolorOne f fl (Node.lift n)
+  | .draw g fill st => rfl
+  | .group xf clips alpha kids => by
+    simp only [Node.recolorOne, Node.lift, Node.recolorList_map, Array.toList_append,
+      List.nil_append]
+    congr 1
+    have h := liftList_recolor f fl #[] kids.toList
+    simp only [Array.map_empty] at h
+    rw [h]
+    apply Array.ext'
+    simp
+  | .use k xf => rfl
+  | .stamp o xf fill st => rfl
+  | .image k xf => rfl
+  | .label l => nomatch l
+  | .words w => rfl
+
+private theorem liftList_recolor {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
+    (acc : Array (Node L)) :
+    ∀ xs : List (Node Empty),
+      Node.liftList (acc.map (Node.recolorOne f fl)) (xs.map (Node.recolorOne f id)) =
+        (Node.liftList acc xs).map (Node.recolorOne f fl)
+  | [] => rfl
+  | n :: rest => by
+    simp only [List.map_cons, Node.liftList]
+    rw [lift_recolor f fl n, ← Array.map_push]
+    exact liftList_recolor f fl (acc.push (Node.lift n)) rest
+
+end
 
 private theorem ofShape_recolor (f : Ir.Color → Ir.Color) (s : Ir.Pic.Shape) :
     ofShape (s.recolor f) = Node.recolorOne f (LabelSpec.recolor f) (ofShape s) := by
   cases s with
-  | rect x y w h c => rfl
   | label x y content color scale align => rfl
-  | circle x y r st fl =>
-    cases st <;> cases fl <;>
-      simp [ofShape, Ir.Pic.Shape.recolor, Node.recolorOne, strokeOf_recolor, Fill.recolor,
-        solidFill, Paint.recolor]
-  | frame x y w h st fl =>
-    cases st <;> cases fl <;>
-      simp [ofShape, Ir.Pic.Shape.recolor, Node.recolorOne, strokeOf_recolor, Fill.recolor,
-        solidFill, Paint.recolor]
-  | edge segs st tip =>
-    cases tip <;>
-      simp [ofShape, Ir.Pic.Shape.recolor, Node.recolorOne, Node.recolorList,
-        strokeOf_recolor, Fill.recolor, solidFill, Paint.recolor]
-
-private theorem recolorList_map (f : Ir.Color → Ir.Color) (fl : LabelSpec → LabelSpec)
-    (acc : Array (Node LabelSpec)) (xs : List (Node LabelSpec)) :
-    Node.recolorList f fl acc xs = acc ++ (xs.map (Node.recolorOne f fl)).toArray := by
-  induction xs generalizing acc with
-  | nil => simp [Node.recolorList]
-  | cons x rest ih => simp [Node.recolorList, ih]
+  | ink n => exact lift_recolor f (LabelSpec.recolor f) n
 
 /-- **Lowering commutes with repainting** (`_exact`): dimming a picture
 under an overlay cover and lowering it is lowering it and dimming the
@@ -244,7 +300,7 @@ public theorem ofPicture_recolor_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Pi
     (f : Ir.Color → Ir.Color) :
     ofPicture m (pic.recolor f) = (ofPicture m pic).recolor f (LabelSpec.recolor f) := by
   have hb := Ir.Pic.Picture.recolor_box_id pic f m
-  simp only [ofPicture, ofPictureIn, Figure.recolor, recolorList_map, Array.map_empty,
+  simp only [ofPicture, ofPictureIn, Figure.recolor, Node.recolorList_map, Array.map_empty,
     Array.empty_append]
   rw [hb]
   simp only [Figure.mk.injEq, true_and, and_true]

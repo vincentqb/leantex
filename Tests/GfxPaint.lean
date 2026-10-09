@@ -206,8 +206,8 @@ def gfxStampChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match forms twoColours with
      | #[.form _ body] => !hasStr (Pdf.render body) " rg" && (Pdf.render body).endsWith " h f"
      | _ => false)
-  let widths := stampFig #[(none, some { Gfx.strokeOf {} with width := Dim.pt 1 }),
-    (none, some { Gfx.strokeOf {} with width := Dim.pt 4 })]
+  let widths := stampFig #[(none, some { Ir.Pic.strokeOf {} with width := Dim.pt 1 }),
+    (none, some { Ir.Pic.strokeOf {} with width := Dim.pt 4 })]
   t "stamps: strokes needing different room are different forms"
     ((forms widths).size == 2)
   let graded := stampFig #[(some (opaqueFill (.gradient linear)), none)]

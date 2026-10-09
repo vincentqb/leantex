@@ -16796,8 +16796,7 @@ public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
               key := Ir.plainText content
               source := Ir.inlineSource content
               blank := labelTextBlank content } : LabelAudit.Request)
-    | .rect _ _ _ _ _ | .circle _ _ _ _ _ | .frame _ _ _ _ _ _
-      | .edge _ _ _ => none).filterMap id
+    | .ink _ => none).filterMap id
 
 private def stagedLabelRequests (ops : Array StagedOp) : Array LabelAudit.Request :=
   ops.flatMap fun op => match op with
@@ -16928,10 +16927,7 @@ public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (out : PictureEmission) (shape : Ir.Pic.Shape)
     (origin : Option (Nat × Nat) := none) : PictureEmission :=
   match shape with
-  | .rect _ _ _ _ _ => out
-  | .circle _ _ _ _ _ => out
-  | .frame _ _ _ _ _ _ => out
-  | .edge _ _ _ => out
+  | .ink _ => out
   | .label lx ly content color scale align =>
     let label := emitLabel fs imgs geom xHeight leaf place lx ly content color scale align
     let lines := match label.line? with

@@ -3391,8 +3391,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node[minimum size=4mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .frame _ _ w h _ _ => w == Dim.mm 4 && h == Dim.mm 4
-            | _ => false
+            | s => match shapeFrame? s with
+              | some (_, _, w, h, _, _) => w == Dim.mm 4 && h == Dim.mm 4
+              | none => false
         | _ => false))
   -- A picture-level key that names no declared style is still the picture
   -- loop's own, named where it stands: inheritance carries styles, not
@@ -3442,9 +3443,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ st _ => st.color == { r := 0, g := 0, b := 255 } &&
-                st.width == Ir.Pic.thickWidth
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, st, _) => strokeColor? st == some { r := 0, g := 0, b := 255 } &&
+                  st.width == Ir.Pic.thickWidth
+              | none => false
         | _ => false))
   -- The middle boundary: `every node` beats the picture's own entry
   -- (`Picture.merge_every_exact`), stated on the accumulating key, where a
@@ -3456,8 +3458,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .circle _ _ r _ _ => r == Dim.mm 4
-            | _ => false
+            | s => match shapeCircle? s with
+              | some (_, _, r, _, _) => r == Dim.mm 4
+              | none => false
         | _ => false))
   -- The inner boundary: the node's own bracket beats `every node`
   -- (`Picture.merge_own_exact`).
@@ -3467,8 +3470,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node[minimum size=5mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .circle _ _ r _ _ => r == Dim.mm 5 / 2
-            | _ => false
+            | s => match shapeCircle? s with
+              | some (_, _, r, _, _) => r == Dim.mm 5 / 2
+              | none => false
         | _ => false))
   -- All three at once: the node's own value is what draws, and neither
   -- other level leaves a trace of its own.
@@ -3479,8 +3483,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node[minimum size=5mm] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .circle _ _ r _ _ => r == Dim.mm 5 / 2
-            | _ => false
+            | s => match shapeCircle? s with
+              | some (_, _, r, _, _) => r == Dim.mm 5 / 2
+              | none => false
         | _ => false))
   -- The path pair of the same two boundaries, read on the stroke: the
   -- picture sets a colour, `every path` another, the path its own.
@@ -3491,9 +3496,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw (0,0) -- (2,0);\\draw[draw=red] (0,1) -- (2,1);" ++
       "\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => (pic.shapes.filterMap fun s => match s with
-            | .edge _ st _ => some st.color
-            | _ => none) == #[{ r := 0, g := 255, b := 0 }, { r := 255, g := 0, b := 0 }]
+        | .picture pic => (pic.shapes.filterMap fun s =>
+            (shapeEdge? s).bind fun (_, st, _) => strokeColor? st) ==
+              #[{ r := 0, g := 255, b := 0 }, { r := 255, g := 0, b := 0 }]
         | _ => false))
   -- A picture's own bracket may declare the level too, through the one
   -- definition router a `\tikzset` goes through.
@@ -3530,9 +3535,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ st _ => st.color == { r := 0, g := 0, b := 255 } &&
-                st.width == Ir.Pic.thickWidth
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, st, _) => strokeColor? st == some { r := 0, g := 0, b := 255 } &&
+                  st.width == Ir.Pic.thickWidth
+              | none => false
         | _ => false))
   -- An `every X` that declares no keys at all loses nothing, so the two
   -- places the level cannot reach say nothing either.
@@ -3561,8 +3567,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\node[ball] at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .circle _ _ r _ _ => r == Dim.mm 4
-            | _ => false
+            | s => match shapeCircle? s with
+              | some (_, _, r, _, _) => r == Dim.mm 4
+              | none => false
         | _ => false))
   t "elab a second style definition of a name throws the prior body away"
     ((elabStr ("\\tikzset{ball/.style={circle, draw}}\n" ++
@@ -3581,8 +3588,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw[wire] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ st _ => st.color == { r := 255, g := 0, b := 0 }
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, st, _) => strokeColor? st == some { r := 255, g := 0, b := 0 }
+              | none => false
         | _ => false))
   -- Appending to a name nothing defined defines it: the keys the document
   -- asked for still apply.
@@ -3631,8 +3639,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ _ tip => tip.isSome
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, _, tip) => tip
+              | none => false
         | _ => false))
   t "elab a declared tip in braces draws the same head"
     ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
@@ -3640,8 +3649,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw[-{plume}] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ _ tip => tip.isSome
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, _, tip) => tip
+              | none => false
         | _ => false))
   -- A tip nothing declared is still named by its own spelling, and the
   -- edge still ships: a picture draws what it can and says what it lost.
@@ -3656,8 +3666,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
-            | .edge _ _ tip => tip.isNone
-            | _ => false
+            | s => match shapeEdge? s with
+              | some (_, _, tip) => !tip
+              | none => false
         | _ => false))
   -- `>=<tip>` names which head the `->` shorthand draws: accepted for a
   -- declared tip, named for one nothing declared.
@@ -3981,12 +3992,16 @@ minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
     (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == [] &&
       (match ((picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes)).getD #[] with
        | s => s.size == 2 && (match s[0]? with
-         | some (Ir.Pic.Shape.circle _ _ r _ _) => decide (0 < r)
-         | _ => false)) &&
+         | some s => match shapeCircle? s with
+           | some (_, _, r, _, _) => decide (0 < r)
+           | none => false
+         | none => false)) &&
       (match ((picOf (wrap "\\node[draw] at (0,0) {x};")).map (·.shapes)).getD #[] with
        | s => s.size == 2 && (match s[0]? with
-         | some (Ir.Pic.Shape.frame _ _ w h _ _) => decide (0 < w ∧ 0 < h)
-         | _ => false)))
+         | some s => match shapeFrame? s with
+           | some (_, _, w, h, _, _) => decide (0 < w ∧ 0 < h)
+           | none => false
+         | none => false)))
   t "a shape option without draw or fill draws nothing and warns nothing"
     ((elabStr (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).2.isEmpty &&
       (picOf (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).map
@@ -4015,24 +4030,27 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "an arrow edge shortens its line and ships a tip"
     (((picOf (wrap (twoCircles ++ "\\draw[->, thick] (u) -- (v);"))).map fun p =>
       p.shapes.any fun s => match s with
-        | .edge segs st (some _) =>
-          st.width == Ir.Pic.thickWidth &&
-          (segs[0]?.map fun sg => match sg with
-            | .line _ _ x2 _ => decide (x2 < 2 * cm - rr)
-            | .cubic _ _ _ _ _ _ _ _ => false).getD false
-        | _ => false).getD false)
+        | s => match shapeEdge? s with
+          | some (segs, st, true) =>
+            st.width == Ir.Pic.thickWidth &&
+            (segs[0]?.map fun sg => match sg with
+              | .line _ _ x2 _ => decide (x2 < 2 * cm - rr)
+              | .cubic _ _ _ _ _ _ _ _ => false).getD false
+          | _ => false).getD false)
   t "an edge naming no node is E0333"
     (errCodes (wrap "\\draw (a) -- (0,0);") == ["E0333"])
   t "draw= on an edge sets the stroke colour"
     ((picOf (wrap "\\draw[draw=grid] (0,0) -- (1,0);")).map (fun p =>
       p.shapes.any fun s => match s with
-        | .edge _ st _ => st.color == { r := 42, g := 111, b := 78 }
-        | _ => false) == some true)
+        | s => match shapeEdge? s with
+          | some (_, st, _) => strokeColor? st == some { r := 42, g := 111, b := 78 }
+          | none => false) == some true)
   t "a waypoint coordinate chains segments"
     ((picOf (wrap "\\draw (0,0) -- (1,1) -- (2,0);")).map (fun p =>
       p.shapes.any fun s => match s with
-        | .edge segs _ _ => segs.size == 2
-        | _ => false) == some true)
+        | s => match shapeEdge? s with
+          | some (segs, _, _) => segs.size == 2
+          | none => false) == some true)
   t "a path operation outside the subset loses the edge by name"
     ((elabStr (wrap "\\draw (0,0) circle (1);")).2.any fun d =>
       d.code == "W0334" && hasStr d.message "'circle'")
@@ -4041,16 +4059,18 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "a to[out,in] edge ships a cubic segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (2,2);")).map (fun p =>
       p.shapes.any fun s => match s with
-        | .edge segs _ _ => segs.any fun sg => match sg with
-          | .cubic _ _ _ _ _ _ _ _ => true
-          | .line _ _ _ _ => false
-        | _ => false) == some true)
+        | s => match shapeEdge? s with
+          | some (segs, _, _) => segs.any fun sg => match sg with
+            | .cubic _ _ _ _ _ _ _ _ => true
+            | .line _ _ _ _ => false
+          | none => false) == some true)
   t "a bare to draws the straight line, silently"
     ((elabStr (wrap "\\draw (0,0) to (1,1);")).2.isEmpty &&
       (picOf (wrap "\\draw (0,0) to (1,1);")).map (fun p =>
         p.shapes.any fun s => match s with
-          | .edge segs _ _ => segs == #[.line 0 0 cm cm]
-          | _ => false) == some true)
+          | s => match shapeEdge? s with
+            | some (segs, _, _) => segs == #[.line 0 0 cm cm]
+            | none => false) == some true)
   t "a to with only one tangent keeps the library's default for the other"
     (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == [] &&
       (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes) ==
@@ -4063,8 +4083,9 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "a chained to path keeps every waypoint segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (1,1) to[out=0,in=180] (2,0);")).map
       (fun p => p.shapes.any fun s => match s with
-        | .edge segs _ _ => segs.size == 2
-        | _ => false) == some true)
+        | s => match shapeEdge? s with
+          | some (segs, _, _) => segs.size == 2
+          | none => false) == some true)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
       ["W0334", "W0362"])

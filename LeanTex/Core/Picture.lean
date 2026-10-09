@@ -3288,14 +3288,14 @@ private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
     (ls : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
   let w := ls.foldl (fun w s => match s with
     | .label _ _ content _ sz a => if a == .center then max w (m content sz).w else w
-    | .rect .. | .circle .. | .frame .. | .edge .. => w) 0
+    | .ink _ => w) 0
   ls.map fun s => match s with
     | .label x y c col sz a =>
       if a != .center then s
       else if al == .west then .label (x - w / 2) y c col sz .west
       else if al == .east then .label (x + w / 2) y c col sz .east
       else s
-    | .rect .. | .circle .. | .frame .. | .edge .. => s
+    | .ink _ => s
 
 /-- A relative placement's direction: the `positioning` keys this subset
 reads — the four sides and the four corners. Public because the placement
@@ -4063,7 +4063,7 @@ outside the rendered picture subset; the label is not drawn")
   let inkHalf : Sp × Sp :=
     let bands := shapes0.filterMap fun s => match s with
       | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
-      | .rect .. | .circle .. | .frame .. | .edge .. => none
+      | .ink _ => none
     let ((bx0, by0), (bx1, by1)) := Gfx.Box.hull bands
     (max (-bx0) bx1, max (-by0) by1)
   -- Each line's baseline and measurement. The label's *first* line is the
@@ -4074,7 +4074,7 @@ outside the rendered picture subset; the label is not drawn")
     | .label _ ly content _ sz al =>
       let m := cx.metric content sz
       some (Ir.Pic.labelBaseline ly al m, m)
-    | .rect .. | .circle .. | .frame .. | .edge .. => none
+    | .ink _ => none
   let baseOff : Sp := (lineInks[0]?.map (·.1)).getD 0
   -- The border is the text *plus* `inner sep` (pgf manual §17.2.2), so an
   -- anchor stands clear of the letters rather than on them. The default is
@@ -4641,7 +4641,7 @@ placement, after the path itself has been resolved. -/
 public def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
   | .label x y content color size align =>
     .label (x + offset.1) (y + offset.2) content color size align
-  | s@(.rect ..) | s@(.circle ..) | s@(.frame ..) | s@(.edge ..) => s
+  | s@(.ink _) => s
 
 /-- The emitted label's text box is exactly the translated IR box.
 Attachments can therefore use `Box.attachOffset_contract` without a
@@ -4655,7 +4655,7 @@ public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
       Ir.Pic.labelTextBox u v al (metric text scale) =
         ((box.1.1 + offset.1, box.1.2 + offset.2),
          (box.2.1 + offset.1, box.2.2 + offset.2))
-    | .rect .. | .circle .. | .frame .. | .edge .. => False :=
+    | .ink _ => False :=
   Ir.Pic.labelTextBox_translate_exact x y align (metric content size) offset
 
 /-- Stack and align once, then attach the whole measured text box. All
@@ -4677,7 +4677,7 @@ private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
       let box := Gfx.Box.hull (lines.filterMap fun (shape : Ir.Pic.Shape) => match shape with
         | .label x y content _ size align =>
           some (Ir.Pic.labelTextBox x y align (cx.metric content size))
-        | .rect .. | .circle .. | .frame .. | .edge .. => none)
+        | .ink _ => none)
       let gap := (label.inner.1 + label.outer.1.getD (width / 2),
                   label.inner.2 + label.outer.2.getD (width / 2))
       Ir.Pic.Box.attachOffset box anchor (dir.offset (1, 1)) gap

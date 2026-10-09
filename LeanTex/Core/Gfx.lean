@@ -446,7 +446,7 @@ public inductive Node (L : Type) where
   | image (raster : Nat) (xf : Affine)
   | label (l : L)
   | words (s : String)
-  deriving Repr, Inhabited
+  deriving Repr, BEq, Inhabited
 
 /-- What an importer met and could not give this meaning, keyed by feature. -/
 public inductive Loss where
@@ -1118,6 +1118,11 @@ model cannot make. -/
 @[expose] public def Stroke.recolor (f : Ir.Color → Ir.Color) (st : Stroke) : Stroke :=
   { st with paint := st.paint.recolor f }
 
+/-- A repaint keeps a stroke's dash, so the path the PDF strokes. -/
+private theorem Stroke.recolor_dashed (f : Ir.Color → Ir.Color) (st : Option Stroke) :
+    (st.map (Stroke.recolor f)).any Stroke.dashed = st.any Stroke.dashed := by
+  cases st <;> rfl
+
 mutual
 
 -- conserves: none — a repaint keeps the figure's words; that census is
@@ -1162,6 +1167,67 @@ sets labels elsewhere paints. -/
   | n :: rest => Node.dropLabelsList (Node.dropLabelsOne acc n) rest
 
 end
+
+/-- The recolouring walk as a map over its list, from an empty start. -/
+public theorem Node.recolorList_map {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
+    (acc : Array (Node L)) (xs : List (Node L)) :
+    Node.recolorList f fl acc xs = acc ++ (xs.map (Node.recolorOne f fl)).toArray := by
+  induction xs generalizing acc with
+  | nil => simp [Node.recolorList]
+  | cons x rest ih => simp [Node.recolorList, ih]
+
+/-- Two arrays a reading maps alike fold to one hull. -/
+private theorem hullOf_map_eq {α β : Type} (r : α → Option Box) (q : β → Option Box)
+    (xs : Array α) (ys : Array β) (h : xs.map r = ys.map q) : hullOf r xs = hullOf q ys := by
+  unfold hullOf
+  rw [← Array.foldl_map (f := r) (g := Box.joinOpt), ← Array.foldl_map (f := q) (g := Box.joinOpt),
+    h]
+
+mutual
+
+private theorem marksOne_recolor_geom {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
+    (outlines : Array (Array Subpath)) (cx : Ctx) (acc acc' : Array Mark)
+    (h : acc'.map (Mark.geomBox rasterUnit) = acc.map (Mark.geomBox rasterUnit)) :
+    ∀ n : Node L,
+      (Node.marksOne outlines cx acc' (Node.recolorOne f fl n)).map (Mark.geomBox rasterUnit) =
+        (Node.marksOne outlines cx acc n).map (Mark.geomBox rasterUnit)
+  | .draw g fill st => by
+    simp only [Node.recolorOne, Node.marksOne, Array.map_push, h, Mark.geomBox,
+      Stroke.recolor_dashed]
+  | .group xf clips alpha kids => by
+    simp only [Node.recolorOne, Node.marksOne, Node.recolorList_map, Array.toList_append,
+      List.nil_append]
+    exact marksList_recolor_geom f fl outlines _ acc acc' h kids.toList
+  | .use k xf => by simp only [Node.recolorOne, Node.marksOne, h]
+  | .stamp o xf fill st => by
+    simp only [Node.recolorOne, Node.marksOne, Array.map_push, h, Mark.geomBox]
+  | .image k xf => by simp only [Node.recolorOne, Node.marksOne, Array.map_push, h, Mark.geomBox]
+  | .label l => by simp only [Node.recolorOne, Node.marksOne, h]
+  | .words w => by simp only [Node.recolorOne, Node.marksOne, h]
+
+private theorem marksList_recolor_geom {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
+    (outlines : Array (Array Subpath)) (cx : Ctx) (acc acc' : Array Mark)
+    (h : acc'.map (Mark.geomBox rasterUnit) = acc.map (Mark.geomBox rasterUnit)) :
+    ∀ xs : List (Node L),
+      (Node.marksList outlines cx acc' (xs.map (Node.recolorOne f fl))).map
+          (Mark.geomBox rasterUnit) =
+        (Node.marksList outlines cx acc xs).map (Mark.geomBox rasterUnit)
+  | [] => by simpa [Node.marksList] using h
+  | n :: rest => by
+    simp only [List.map_cons, Node.marksList]
+    exact marksList_recolor_geom f fl outlines cx _ _
+      (marksOne_recolor_geom f fl outlines cx acc acc' h n) rest
+
+end
+
+/-- **Repainting moves no mark's geometry** (`_id`): a node's marks, read
+for their geometry boxes, are the recoloured node's — so the box a picture
+reserves for its ink is the box it reserves dimmed. -/
+public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (fl : L → L)
+    (n : Node L) :
+    hullOf (Mark.geomBox rasterUnit) (Node.marksOne #[] Ctx.root #[] (Node.recolorOne f fl n)) =
+      hullOf (Mark.geomBox rasterUnit) (Node.marksOne #[] Ctx.root #[] n) :=
+  hullOf_map_eq _ _ _ _ (marksOne_recolor_geom f fl #[] Ctx.root #[] #[] rfl n)
 
 /-- A figure with its labels taken out: a picture's ink, whose labels the
 page sets as lines. -/

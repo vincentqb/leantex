@@ -48,10 +48,7 @@ is a probe that can only make the answer more conservative, never less. -/
 public def probesOfPic (p : Ir.Pic.Picture) : Array Probe :=
   p.shapes.filterMap fun s => match s with
     | .label _ _ content _ scale _ => some (content, scale)
-    | .rect _ _ _ _ _ => none
-    | .circle _ _ _ _ _ => none
-    | .frame _ _ _ _ _ _ => none
-    | .edge _ _ _ => none
+    | .ink _ => none
 
 /-- Every measurement a document's pictures asked a face for, at any
 depth — each distinct call once. Labels repeat heavily (a deck's rows reuse

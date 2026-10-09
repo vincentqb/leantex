@@ -16,9 +16,12 @@ para
 role trivlist-env
   center
     picture 3 shapes
-      edge (0,0)--(56.693,0) (56.693,0)--(56.693,42.52) stroke #000000 3
-      edge (0,-17.008)--(113.386,-17.008) stroke #000000 0
-      edge (79.37,0)--(96.378,42.52) (96.378,42.52)--(113.386,0) stroke #000000 1 dashed
+      group
+        draw path (0,0)--(56.693,0)--(56.693,42.52) stroke #000000 3
+      group
+        draw path (0,-17.008)--(113.386,-17.008) stroke #000000 0
+      group
+        draw path (79.37,0)--(96.378,42.52)--(113.386,0) stroke #000000 1 dash 3,3
 para
   text "After the strokes, the prose resumes."
 -- diagnostics
