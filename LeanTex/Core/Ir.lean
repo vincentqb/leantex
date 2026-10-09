@@ -266,6 +266,29 @@ text — the code, lists and tables most markdown documents are made of — so
 every default family lands inside the band, 75 to 85. -/
 public def markdownTextBlock : Sp := pt 384
 
+/-- The surface a document is written in: the tex reader's or the markdown
+reader's. A markdown source can declare nothing — no page, no faces, no
+listing keys — so what its surface defaults is the whole of those settings
+for its documents: the text block (`textBlock`), how code sets
+(`Surface.listing`), and a typewriter face beside the default text face
+(the driver's `FontDb.monoCompanion`). One decision, the path's extension
+(`ofPath`), read by the driver to pick the reader and by the elaborator to
+record the surface in the document; a markdown fragment a tex document
+includes is set as that document's surface sets it. -/
+public inductive Surface where
+  | tex
+  | markdown
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The surface a source path selects: `.md` is markdown. -/
+public def Surface.ofPath (file : String) : Surface :=
+  if file.endsWith ".md" then .markdown else .tex
+
+/-- The text block an undeclared flow page takes on this surface. -/
+public def Surface.textBlock : Surface → Sp
+  | .tex => articleTextBlock
+  | .markdown => markdownTextBlock
+
 /-- The slides stage and its defaults, beamer's own where beamer names one:
 128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
 160×90 mm at `aspectratio=169`, side text margins of 1 cm ("the left and
@@ -5512,7 +5535,32 @@ public structure ListingSpec where
   their glyphs' boxes, as verbatim's are. A colour box around the code ends
   on the last line's box. -/
   lineStrut : Bool := false
+  /-- How a wrapping listing's continuation stands in past its own line's
+  indentation, when it wraps as listings.sty wraps (`breakindent`, with
+  `breakautoindent` on): the layout then breaks each source line itself, so
+  every declared line holds and none re-flows. `none` leaves a wrap to the
+  paragraph breaker, which names the re-flow (W0386) — minted's, whose
+  fvextra continuation carries a break symbol this engine does not draw. -/
+  breakIndent : Option Sp := none
   deriving Repr, BEq, Inhabited
+
+/-- listings.sty's continuation indent: `breakindent` defaults to 20 pt
+(listings.dtx, `\lst@Key{breakindent}{20pt}`), and a LuaLaTeX probe sets a
+continuation 20 pt past its line's own indentation. -/
+public def listingBreakIndent : Sp := pt 20
+
+/-- What a listing sets with before its own keys: on a tex document LaTeX's
+defaults, the ambient size and no wrapping. A markdown document declares no
+listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
+which the markdown measure holds 79 to 80 monospaced columns (the 0.6 em
+advance of every default typewriter face, to within 0.003 em) — the
+80-column line most code is written to (PEP 8's limit is 79) — and wraps a
+longer line as listings does: paper has no scroll, so every character
+reaches the page, as the HTML print rule already promises. -/
+public def Surface.listing : Surface → ListingSpec
+  | .tex => {}
+  | .markdown =>
+    { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent }
 
 /-- The declared language as the bare token, `none` when none is declared:
 the one IR fact both text projections below read. -/
@@ -8009,6 +8057,8 @@ message. -/
 
 public structure Doc where
   docClass : DocClass := .article
+  /-- The surface the document was written in (`Surface.ofPath`). -/
+  surface : Surface := .tex
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}

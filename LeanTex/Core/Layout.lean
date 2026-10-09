@@ -9713,15 +9713,21 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
-/-- The census key every overfull line shares: one loss, the content wider
-than the measure that sets it, counted at each line it recurs on. -/
-def overfullSubject : String := "line:overfull"
+/-- The census key of an overfull line: the source position its first
+located item stands at, so each overfull line is its own loss — TeX logs
+every overfull box, and each wants its own fix — and only the same site
+set again (an overlay's repeated page) counts as a repeat. A line no
+source item reaches shares one key, the one `uniqueDiags` collapses into
+a count. -/
+def overfullSubject : Option Span → String
+  | some s => s!"overfull:{s.file}:{s.pos.line}:{s.pos.col}"
+  | none => "overfull:unlocated"
 
 private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (trigger := source.bind (·.pos.command)) (subject := some overfullSubject)) }
+        (trigger := source.bind (·.pos.command)) (subject := some (overfullSubject source))) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns. -/
@@ -10636,7 +10642,7 @@ private def collectPara (r : Rd) (a : Acc)
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
             (span := lineSource nsources s brk)
             (trigger := (lineSource nsources s brk).bind (·.pos.command))
-            (subject := some overfullSubject))
+            (subject := some (overfullSubject (lineSource nsources s brk))))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs
@@ -12344,6 +12350,87 @@ private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
   let a := (a.leafRange (leafCount content)).1
   { a with ops := a.ops.push (.setLogo content) }
 
+/-- One display column of a listing line as the layout sets it: the
+character (`ListingSpec.layoutText`'s spelling, tab stops expanded), the
+token it came from, its authored source column, and whether the source is
+white space there — where a wrap may fall. -/
+private structure CodeUnit where
+  c : Char
+  token : Nat
+  sourceCol : Nat
+  space : Bool
+  deriving Inhabited
+
+/-- A source line as display units, each character spelled as `layoutText`
+spells the whole line, the column threaded through the tokens. -/
+private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Token) :
+    Array CodeUnit := Id.run do
+  let mut out : Array CodeUnit := #[]
+  let mut col := 0
+  let mut src := 0
+  let mut k := 0
+  for token in line do
+    for c in token.text.toList do
+      let (kept, next) := spec.layoutText col (String.singleton c)
+      for d in kept.toList do
+        out := out.push { c := d, token := k, sourceCol := src, space := c == ' ' || c == '\t' }
+      col := next
+      src := src + 1
+    k := k + 1
+  return out
+
+/-- A character that continues an identifier, which listings never breaks
+inside: its letter and digit classes (`a`–`z`, `A`–`Z`, `@`, `$`, `_`,
+`0`–`9`), every non-ASCII scalar read as a letter. -/
+private def codeIdent (c : Char) : Bool :=
+  c.isAlphanum || c == '_' || c == '@' || c == '$' || c.toNat > 127
+
+/-- Where a source line wraps as listings wraps it (`breaklines`, under its
+default `breakatwhitespace=false`; a LuaLaTeX probe agrees): greedily, each
+segment the longest that fits — `first` wide for the line's first, `cont`
+for every continuation — ending before a space or between two output
+units, never inside an identifier, the spaces at a wrap dropped. A segment
+no legal break brings inside its width runs on to its first legal break, as
+TeX sets the overfull line. Each segment is its unit range; `widths` is
+each unit's advance. -/
+private def codeWraps (us : Array CodeUnit) (widths : Array Sp) (first cont : Sp) :
+    Array (Nat × Nat) := Id.run do
+  let n := us.size
+  let mut pre : Array Sp := #[0]
+  for w in widths do
+    pre := pre.push ((pre.back?.getD 0) + w)
+  let width (a b : Nat) : Sp := (pre[b]?.getD 0) - (pre[a]?.getD 0)
+  let legal (b : Nat) : Bool :=
+    match us[b - 1]?, us[b]? with
+    | some p, some q => !p.space && (q.space || !(codeIdent p.c && codeIdent q.c))
+    | _, _ => false
+  let mut out : Array (Nat × Nat) := #[]
+  let mut s := 0
+  for _ in [0:n + 1] do
+    if s ≥ n then break
+    let limit := if out.isEmpty then first else cont
+    if width s n ≤ limit then
+      out := out.push (s, n)
+      s := n
+    else
+      let mut cut : Option Nat := none
+      let mut over : Option Nat := none
+      for b in [s + 1:n] do
+        if width s b > limit && (cut.isSome || over.isSome) then break
+        if legal b then
+          if width s b ≤ limit then cut := some b else over := some b
+      match cut.orElse fun _ => over with
+      | some b =>
+        out := out.push (s, b)
+        let mut k := b
+        for _ in [b:n] do
+          if (us[k]?.map (·.space)).getD false then k := k + 1 else break
+        s := k
+      | none =>
+        out := out.push (s, n)
+        s := n
+  return out
+
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   -- Code lines use the declared size through the ordinary style resolver.
   -- No hyphenation patterns: the engine must never invent a hyphen inside
@@ -12372,6 +12459,35 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
         (Ir.captionSepDefault r.geom.fontSize)))
     | none => a
+  -- A listing owns its line box, not the enclosing body's strut.
+  -- Resolve once against the body/local measure, then give collectPara
+  -- that size and an explicit skip: its ordinary mixed-size paragraph
+  -- strut would otherwise hold 8pt code on 12pt body baselines.
+  let avail := (a.measure.getD r.geom.textWidth) - indent
+  let (size, leading) := (applyStyle r.geom.scale {} spec.fontSize).metrics
+    r.geom.fontSize r.xHeight avail r.geom.textHeight
+  let leading := leading.getD (Ir.leadingFor size r.geom.leading)
+  -- A listing that wraps as listings wraps (`breakIndent`) is broken here,
+  -- line by line, each continuation standing in its line's own indentation
+  -- and the break indent: every segment then fits, so the paragraph sets
+  -- the lines as declared and none re-flows. Advances are the mono slot's
+  -- at the listing's size, a missing glyph's its fallback face's.
+  let wrap := if spec.breakLines then spec.breakIndent else none
+  let mono := r.fs.get (r.fs.lookup 2 400 false)
+  let advance (c : Char) : Sp :=
+    match glyphOf size mono c with
+    | some g => g.2.2
+    | none =>
+      match (r.fs.fallbackFor c).bind fun fb => glyphOf size (r.fs.get fb) c with
+      | some g => g.2.2
+      | none => 0
+  let codeSource (i sourceColumn : Nat) (text : String) : Option Span :=
+    spec.source.map fun source =>
+      let line := source.pos.line + i - 1 +
+        (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
+      let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
+      { source with pos := { source.pos with
+          line := line, col := col, command := some text } }
   -- Declared line numbers are furniture beside each line — generated
   -- ink, like a list's markers: right-aligned digits in the mono face,
   -- held to their line by no-break spaces.
@@ -12384,41 +12500,70 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
         i := i + 1
         unless out.isEmpty do
           out := out.push (.linebreak {})
-        if spec.numbers then
-          let numStr := toString i
-          let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
-          out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0"))
+        let numbered := if spec.numbers then
+            let numStr := toString i
+            String.ofList (List.replicate (w - numStr.length) '\u00a0') ++ numStr ++ "\u00a0\u00a0"
+          else ""
+        unless numbered.isEmpty do
+          out := out.push (.text numbered)
         if (ListingHighlight.lineText line).isEmpty then
           out := out.push (.text "\u00a0")
         else
-          let mut column := 0
-          -- Source columns count authored scalars. Display columns expand
-          -- tabs and exclude the generated line-number prefix.
-          let mut sourceColumn := 0
-          for token in line do
-            let (kept, nextColumn) := spec.layoutText column token.text
-            column := nextColumn
-            let inline := Listing.tokenInline a.pal a.ground covered
-              { token with text := kept } (style := spec.style)
-            let source := spec.source.map fun source =>
-              let line := source.pos.line + i - 1 +
-                (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
-              let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
-              { source with pos := { source.pos with
-                  line := line, col := col, command := some token.text } }
-            sourceColumn := sourceColumn + token.text.length
-            out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
+          -- Each physical line the source line sets as: its token pieces
+          -- in display spelling, each with its authored source column and
+          -- the token's source text. Source columns count authored
+          -- scalars; display columns expand tabs and exclude the generated
+          -- line-number prefix.
+          let (physical, hang) : Array (Array (ListingHighlight.Token × Nat × String)) × Sp :=
+            match wrap with
+            | none => Id.run do
+              let mut column := 0
+              let mut sourceColumn := 0
+              let mut pieces := #[]
+              for token in line do
+                let (kept, nextColumn) := spec.layoutText column token.text
+                column := nextColumn
+                pieces := pieces.push ({ token with text := kept }, sourceColumn, token.text)
+                sourceColumn := sourceColumn + token.text.length
+              return (#[pieces], 0)
+            | some breakIndent => Id.run do
+              let us := codeUnits { spec with breakLines := false } line
+              let ws := us.map (advance ·.c)
+              let prefixW := (numbered.toList.map advance).sum
+              let lead := ((us.toList.takeWhile (·.space)).map (advance ·.c)).sum
+              let hang := prefixW + lead + breakIndent
+              let mut physical := #[]
+              for (a0, b0) in codeWraps us ws (avail - prefixW) (avail - hang) do
+                let mut pieces := #[]
+                let mut k := a0
+                for _ in [a0:b0] do
+                  if k ≥ b0 then break
+                  let first := us[k]!
+                  let mut chars : Array Char := #[]
+                  for _ in [k:b0] do
+                    if k < b0 && us[k]!.token == first.token then
+                      chars := chars.push us[k]!.c
+                      k := k + 1
+                    else break
+                  let token := line[first.token]!
+                  pieces := pieces.push
+                    ({ token with text := String.ofList chars.toList }, first.sourceCol, token.text)
+                physical := physical.push pieces
+              return (physical, hang)
+          let mut j := 0
+          for pieces in physical do
+            if j > 0 then
+              out := out.push (.linebreak {})
+              out := out.push (.hspace (.lit { width := .ofSp hang }) true)
+            j := j + 1
+            for (piece, sourceColumn, text) in pieces do
+              let inline := Listing.tokenInline a.pal a.ground covered piece (style := spec.style)
+              let source := codeSource i sourceColumn text
+              out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
       pure #[.styled .mono out]
   let inner := match covered with
     | some c => #[.colored c none inner]
     | none => inner
-  -- A listing owns its line box, not the enclosing body's strut.
-  -- Resolve once against the body/local measure, then give collectPara
-  -- that size and an explicit skip: its ordinary mixed-size paragraph
-  -- strut would otherwise hold 8pt code on 12pt body baselines.
-  let (size, leading) := (applyStyle r.geom.scale {} spec.fontSize).metrics
-    r.geom.fontSize r.xHeight ((a.measure.getD r.geom.textWidth) - indent) r.geom.textHeight
-  let leading := leading.getD (Ir.leadingFor size r.geom.leading)
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
   collectPara { r with pats := none, geom := { r.geom with justify := false } }

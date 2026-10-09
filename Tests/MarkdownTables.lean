@@ -81,16 +81,16 @@ def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!hasStr (mdTreeOf basic) "|" && !hasStr (mdTreeOf basic) "<p>")
   -- The reported shape: inline code and emoji in the head, every number
   -- column right-aligned, the delimiter row's hyphens never text.
-  let report := "| Kind | total | ✅ kept / no `gap` | ⚠️ holds `gap` | ⚠️ other |\n\
-|---|---:|---:|---:|---:|\n| alpha | 12 | 11 | 1 | 0 |\n| beta | 7 | 7 | 0 | 0 |\n"
+  let report := "| Orchard | rows | 🌳 `pruned` | ☀️ sunny | 🍂 `shed` / fallen |\n\
+|---|---:|---:|---:|---:|\n| north | 12 | 9 | 3 | 0 |\n| south | 7 | 7 | 0 | 0 |\n"
   let reportTree := mdTreeOf report
   let (_, reportBody, _) := HtmlDoc.emitTree {} (elabMd report).1
   let codesInHead := (elemNodesList (· == "th") #[] reportBody.toList).foldl
     (fun n th => n + (elemNodesList (· == "code") #[] [th]).size) 0
   t "a head with inline code and emoji keeps both in its cells"
-    (head report == [["Kind", "total", "✅ kept / no gap", "⚠️ holds gap", "⚠️ other"]]
+    (head report == [["Orchard", "rows", "🌳 pruned", "☀️ sunny", "🍂 shed / fallen"]]
       && codesInHead == 2
-      && bodyRows report == [["alpha", "12", "11", "1", "0"], ["beta", "7", "7", "0", "0"]])
+      && bodyRows report == [["north", "12", "9", "3", "0"], ["south", "7", "7", "0", "0"]])
   t "the delimiter row is structure, never text: no dash ships"
     (!hasStr reportTree "—" && !hasStr reportTree "–" && !hasStr reportTree "---")
   t "a right-aligned delimiter cell right-aligns its whole column, head included"

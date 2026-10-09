@@ -269,6 +269,9 @@ public structure Ctx where
   tokens (`paperwidth`, `textwidth`, …) and a token-named column width
   resolve against. Set once, after the class defaults are applied. -/
   page : Ir.PageSpec := {}
+  /-- The surface the document was written in, set once with `page`: an
+  input wrapper changes `file`, never this. -/
+  surface : Ir.Surface := .tex
   /-- The engine's own length tokens, resolved from the final page: the
   body-side lookup `\setlength` expressions extend theirs with. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
@@ -9225,14 +9228,19 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
   -- `\verbatim@font` is `\normalfont\ttfamily`, which selects the mono family
   -- and changes no size, so verbatim sets at the ambient size — never a fixed
-  -- `footnotesize`. A package's own size option overrides it below.
+  -- `footnotesize`. A package's own size option overrides it below. What
+  -- a listing starts from before any of that is its surface's
+  -- (`Ir.Surface.listing`): LaTeX's defaults on a tex document, and on a
+  -- markdown one, which can declare none, its smaller wrapping code.
+  let base := ctx.surface.listing
   let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
-    | _ => size) (Ir.Style.size "normalsize")
+    | _ => size) base.fontSize
   let sourceStart := ("\\begin{" ++ env ++ "}").foldl
     (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s { fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
+    return .verbatim none s
+      { base with fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -9241,8 +9249,8 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut language : Option Ir.ListingLang := none
   let mut style := Ir.ListingStyle.default
   let mut fontSize := inherited
-  let mut tabSize := 8
-  let mut breakLines := false
+  let mut tabSize := base.tabSize
+  let mut breakLines := base.breakLines
   let sizeName? (v : String) : Option String :=
     if v.startsWith "\\" then
       let name := (v.drop 1).toString
@@ -9350,6 +9358,9 @@ size commands; the current style stands" (some pos)
     tabSize := tabSize
     breakLines := breakLines
     lineStrut := env == "minted" && breakLines
+    -- listings wraps with its own continuation indent; minted's fvextra
+    -- wrap keeps the surface's (none on a tex document).
+    breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -16923,14 +16934,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       diag ctx .W0356
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
         none
+  let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
     -- declares any \page geometry keeps every value it named. A markdown
-    -- source can declare none, so its page is the markdown text block.
-    let block := if file.endsWith ".md" then Ir.markdownTextBlock else Ir.articleTextBlock
-    page := { page with hmargin := (page.width - block) / 2 }
+    -- source can declare none, so its page is its surface's text block.
+    page := { page with hmargin := (page.width - surface.textBlock) / 2 }
   -- Furniture legality is the class record's, not the geometry's: a class
   -- that carries no running furniture drops the declaration and says so.
   if !record.runningFurniture && (head.isSome || foot.isSome) then
@@ -16955,7 +16966,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page, tokens := tokens
+                    page := page, tokens := tokens, surface := surface
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
@@ -17152,6 +17163,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       author := fallback info.author st.author }
     let doc : Doc := {
       docClass := docClass
+      surface := surface
       classOptions := classOptions
       page := page
       fonts := fonts

@@ -110,12 +110,15 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let slides := doc.docClass == Ir.DocClass.slides
   let textFamily := if slides then spec.sans.orElse fun _ => spec.body
     else spec.body.orElse fun _ => spec.sans
-  -- An undeclared typewriter slot takes a fixed-pitch face, as LaTeX's
-  -- `\ttfamily` always does: the text family's designed companion, else the
-  -- least installed fixed-pitch face (`FontDb.pickMono`). Only a scan holding
-  -- none leaves the slot to the text face, which is the loss W0390 names.
-  let spec := if spec.mono.isNone then
-      { spec with mono := (textFamily.bind (FontDb.pickMono faces ·)).map (·.family) }
+  -- A markdown document cannot declare a typewriter face, so its undeclared
+  -- slot takes the default text family's designed companion wherever the
+  -- scan serves it whole and fixed-pitch (`FontDb.monoCompanion`, held to
+  -- the resolver call below by `monoCompanion_fixed`). Anywhere else — a
+  -- tex document, or a scan without the companion — an undeclared slot
+  -- falls to the body family, the loss W0390 names.
+  -- premise: markdownMonoChecks — two builds of one markdown document, its companion in the scan and not, set code in different faces, and only the second names W0390
+  let spec := if doc.surface == .markdown && spec.mono.isNone then
+      { spec with mono := textFamily.bind (FontDb.monoCompanion faces ·) }
     else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
@@ -165,8 +168,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- for a weight nobody asked), plus every declared face's own key — a
   -- declaration is a request to load, as fontspec's is, so a declared
   -- Light ships in the HTML set even before a run selects it.
-  let standard : List (Nat × Bool) :=
-    [(400, false), (700, false), (400, true), (700, true)]
+  let standard : List (Nat × Bool) := FontDb.corners
   let extraKeysFor (slot : Nat) : List (Nat × Bool) :=
     ((Layout.docWeightKeys doc).toList.filterMap fun (s, w, i) =>
       if s == slot then some (w, i) else none) ++

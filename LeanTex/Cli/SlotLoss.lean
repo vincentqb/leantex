@@ -7,13 +7,16 @@ import LeanTex.Cli.DriverDiag
 
 /-! **A family slot set in a face that is not of its kind, named.**
 
-The engine resolves three family slots — body, sans, mono. A sans slot the
+The engine resolves three family slots — body, sans, mono. A slot the
 document declares no family for is filled by the body family
-(`resolveName` in the driver's assembly); an undeclared mono slot takes an
-installed fixed-pitch face first (`FontDb.pickMono`) and falls to the body
-family only on a scan that holds none — so a `\texttt`, `\url` or verbatim
-run sets in body prose exactly there. This module is the decision; the
-diagnostic is `DriverDiag.slotCollapsed` (W0390).
+(`resolveName` in the driver's assembly), so a `\texttt`, `\url` or
+verbatim run in a document with no `\fonts{ mono = ... }` sets in body
+prose. The one exception cannot reach this report: a markdown document,
+which can declare nothing, takes its text family's designed typewriter
+companion where the scan serves it at every corner in fixed pitch
+(`FontDb.monoCompanion_fixed`), and a fixed-pitch slot is no loss — so
+every slot this module reports was served by the body family. This module
+is the decision; the diagnostic is `DriverDiag.slotCollapsed` (W0390).
 
 The decision reads the face, never the slot index. An index says which
 face; it does not say what that face is, and the two part company in a

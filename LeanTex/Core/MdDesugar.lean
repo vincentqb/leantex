@@ -37,8 +37,8 @@ reaches the page, which is the registry's rule and not a habit:
   `md:disclosure`. Shipping content cannot take an absent-content loss.
 
 A GFM table is expressible, and crosses as the booktabs `{tabular}` it
-means, every cell's content inside a group of its own, so no cell text can
-end a cell or a row there (`tableRaws_covers`).
+means, every cell's content inside a group of its own (`tableRaws_contract`),
+where the `{tabular}` reader looks for no cell or row end.
 
 All six heading ranks cross the native heading bridge as fixed names and
 grouped inline raws. Their shared IR rank reaches both artifacts unchanged;
@@ -365,7 +365,7 @@ private theorem tableTop_push (p : Pos) (xs : Array Raw) (r : Raw)
   · exact h x hx
   · exact hr
 
-private theorem laterCellsRaws_covers (file : String) (p : Pos) (cells : List (Array Inl)) :
+private theorem laterCellsRaws_tableTop (file : String) (p : Pos) (cells : List (Array Inl)) :
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
       ∀ x ∈ (laterCellsRaws file p out ds cells).1, TableTop p x := by
   induction cells with
@@ -377,22 +377,22 @@ private theorem laterCellsRaws_covers (file : String) (p : Pos) (cells : List (A
     exact ih _ _ (tableTop_push p _ _ (tableTop_push p _ _ h (Or.inr (Or.inl rfl)))
       (Or.inl ⟨rs, rfl⟩))
 
-private theorem rowCellsRaws_covers (file : String) (p : Pos) (cells : List (Array Inl)) :
+private theorem rowCellsRaws_tableTop (file : String) (p : Pos) (cells : List (Array Inl)) :
     ∀ x ∈ (rowCellsRaws file p cells).1, TableTop p x := by
   cases cells with
   | nil => simp [rowCellsRaws]
   | cons cell rest =>
     unfold rowCellsRaws
-    exact laterCellsRaws_covers file p rest _ _ (by
+    exact laterCellsRaws_tableTop file p rest _ _ (by
       intro x hx
       simp at hx
       exact hx ▸ Or.inl ⟨_, rfl⟩)
 
-private theorem rowRaws_covers (file : String) (row : Array (Array Inl)) (p : Pos) :
+private theorem rowRaws_tableTop (file : String) (row : Array (Array Inl)) (p : Pos) :
     ∀ x ∈ (rowRaws file row p).1, TableTop p x :=
-  tableTop_push p _ _ (rowCellsRaws_covers file p row.toList) (Or.inr (Or.inr (Or.inl rfl)))
+  tableTop_push p _ _ (rowCellsRaws_tableTop file p row.toList) (Or.inr (Or.inr (Or.inl rfl)))
 
-private theorem rowsRaws_covers (file : String) (p : Pos) (rows : List (Array (Array Inl))) :
+private theorem rowsRaws_tableTop (file : String) (p : Pos) (rows : List (Array (Array Inl))) :
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
       ∀ x ∈ (rowsRaws file p out ds rows).1, TableTop p x := by
   induction rows with
@@ -400,7 +400,7 @@ private theorem rowsRaws_covers (file : String) (p : Pos) (rows : List (Array (A
   | cons row rest ih =>
     intro out ds h
     unfold rowsRaws
-    have hr := rowRaws_covers file row p
+    have hr := rowRaws_tableTop file row p
     rcases hrow : rowRaws file row p with ⟨rs, rds⟩
     rw [hrow] at hr
     refine ih _ _ ?_
@@ -409,24 +409,27 @@ private theorem rowsRaws_covers (file : String) (p : Pos) (rows : List (Array (A
     · exact h x hx
     · exact hr x hx
 
-/-- **A cell's text cannot become the table's structure.** A markdown table
-lowers to one `{tabular}` whose body holds, at its top level, nothing but
-groups — the column spec and one per cell —, the `&` and `\\` between them,
-and booktabs' rules: every word a cell holds sits inside its cell's group,
-where the `{tabular}` reading splits nothing, so an `&` or a backslash in a
-cell is that cell's text. -/
-public theorem tableRaws_covers (file : String) (aligns : Array TableAlign)
+/-- **The lowering's shape: a cell's text is inside its cell's group.** A
+markdown table lowers to one `{tabular}` whose body holds, at its top
+level, nothing but groups — the column spec and one per cell —, the `&`
+and `\\` between them, and booktabs' rules; every word a cell holds sits
+inside that cell's group. What the shape buys rests on a premise of the
+elaborator's, not proved here: that the `{tabular}` reader splits a body
+into rows and cells only at its top level, never inside a group. The
+end-to-end check holds it — `markdownTableChecks` ships an `&` and a `\\`
+in a cell as that cell's text. -/
+public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
     ∃ body, (tableRaws file aligns header rows p).1 = #[.env "tabular" body p] ∧
       ∀ x ∈ body, TableTop p x := by
   unfold tableRaws
-  have hh := rowRaws_covers file header p
+  have hh := rowRaws_tableTop file header p
   rcases hhr : rowRaws file header p with ⟨hr, hds⟩
   rw [hhr] at hh
   dsimp only
   refine ⟨_, rfl, ?_⟩
   refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
-  refine rowsRaws_covers file p _ _ _ ?_
+  refine rowsRaws_tableTop file p _ _ _ ?_
   refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))
   intro x hx
   rcases Array.mem_append.mp hx with hx | hx

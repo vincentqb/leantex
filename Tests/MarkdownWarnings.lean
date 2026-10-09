@@ -12,56 +12,107 @@ its code set in the proportional text face, hyphenated like prose, and every
 repeat of one loss printed its own warning — two and a half thousand lines
 for a handful of losses on a long generated report. The invariants are over
 what ships and what the default log shows: the face the typewriter slot
-resolves to through the driver's own assembly over the suite's fonts, the
-line ends of code on `Layout.Out`, and the lines `Diag.foldRepeats` leaves
-at warning severity. Every word here is invented. -/
+resolves to through the driver's own assembly, two builds apart; the line
+ends of code on `Layout.Out`; and the lines `Diag.foldRepeats` leaves at
+warning and error severity. The suite's own font files stand in for the
+default families under the scan records' names. Every word here is
+invented. -/
 
 namespace Tests.MarkdownWarnings
 
-/-- A face record for the pick: its family and whether it declares fixed
-pitch, nothing read from a file. -/
-def face (family : String) (fixed : Bool) : FontDb.Face :=
-  { path := family ++ ".otf", family, subfamily := "Regular", bold := false
-    italic := false, fixedPitch := fixed, weight := 400 }
+/-- A scan record for the pick: a family, a corner and its pitch, nothing
+read from a file. -/
+def face (family : String) (fixed : Bool) (bold italic : Bool := false)
+    (path : String := family ++ ".otf") : FontDb.Face :=
+  { path, family, subfamily := "Regular", bold, italic, fixedPitch := fixed
+    weight := if bold then 700 else 400 }
 
-/-- The typewriter slot, its line ends, and the default log. -/
-def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
+/-- A family's four corners, all from one file. -/
+def family4 (family path : String) (fixed : Bool) : Array FontDb.Face :=
+  #[face family fixed (path := path), face family fixed (bold := true) (path := path),
+    face family fixed (italic := true) (path := path),
+    face family fixed (bold := true) (italic := true) (path := path)]
+
+/-- The suite's faces under the default families' names: Open Sans's four
+files as the default text family, Source Code Pro as its designed
+typewriter companion. -/
+def relabeled : Array FontDb.Face :=
+  #[face "DejaVu Sans" false (path := testFonts ++ "/OpenSans-Regular.ttf"),
+    face "DejaVu Sans" false (bold := true) (path := testFonts ++ "/OpenSans-Bold.ttf"),
+    face "DejaVu Sans" false (italic := true) (path := testFonts ++ "/OpenSans-Italic.ttf"),
+    face "DejaVu Sans" false (bold := true) (italic := true)
+      (path := testFonts ++ "/OpenSans-BoldItalic.ttf")] ++
+  family4 "DejaVu Sans Mono" (testFonts ++ "/SourceCodePro-Regular.otf") true
+
+/-- The face index a shipped run holding `needle` sets in, if one does. -/
+def runFace (out : Layout.Out) (needle : String) : Option Nat :=
+  (bodyLines out).findSome? fun l =>
+    (lineRuns l).findSome? fun (f, s, _, _) => if hasStr s needle then some f else none
+
+/-- **The markdown typewriter default, and its premise two builds apart.**
+The default is a decision over sourced rows, never a guess; it fills the
+slot only where the scan serves the companion whole and fixed-pitch; a tex
+document is untouched; and with the companion and without it, one
+markdown document ships its code in different faces while only the second
+names W0390 — the default moves ink, it does not silence a loss. -/
+def markdownMonoChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- The pick, over face records: the companion first, then the least
-  -- fixed-pitch face, and nothing when none is installed.
-  let faces := #[face "DejaVu Sans" false, face "DejaVu Sans Mono" true,
-    face "Aardvark Mono" true, face "Open Sans" false]
-  t "an undeclared typewriter slot takes the text family's designed companion"
-    ((FontDb.pickMono faces "DejaVu Sans").map (·.family) == some "DejaVu Sans Mono")
-  t "with no companion row it takes the least installed fixed-pitch face"
-    ((FontDb.pickMono faces "Open Sans").map (·.family) == some "Aardvark Mono")
-  t "with no fixed-pitch face installed it takes none"
-    ((FontDb.pickMono (faces.filter (!·.fixedPitch)) "Open Sans").isNone)
-  -- The driver's own assembly over the suite's fonts: a markdown document
-  -- setting code has a fixed-pitch typewriter face and no slot loss.
-  let scanned ← FontDiscovery.scanRootsIn none [testFonts]
-  let scan : FaceScan := { faces := scanned, docDirs := [], dirs := #[], diags := #[] }
+  let pick := FontDb.monoCompanion
+  t "the default text family's designed companion is its markdown typewriter face"
+    (pick (#[face "DejaVu Sans" false] ++ family4 "DejaVu Sans Mono" "m.ttf" true)
+      "DejaVu Sans" == some "DejaVu Sans Mono")
+  t "a companion missing a corner is no default"
+    (pick #[face "DejaVu Sans" false, face "DejaVu Sans Mono" true] "DejaVu Sans" == none)
+  t "a companion whose face is not fixed-pitch is no default"
+    (pick (#[face "DejaVu Sans" false] ++ family4 "DejaVu Sans Mono" "m.ttf" false)
+      "DejaVu Sans" == none)
+  t "a text family with no sourced row takes no installed fixed-pitch face by guess"
+    (pick (#[face "Open Sans" false] ++ family4 "Aardvark Mono" "a.ttf" true)
+      "Open Sans" == none)
+  t "every default text family is a decided row: a companion or no companion, never both"
+    (FontDb.defaultFamilies.all fun f =>
+      (FontDb.companionRow FontDb.monoCompanions f).isSome != FontDb.monoUnpaired.contains f)
+  -- The driver's own assembly, over the suite's files under the default
+  -- families' names.
   let cache ← FontEnv.Cache.mk'
+  let withMono : FaceScan := { faces := relabeled, docDirs := [], dirs := #[], diags := #[] }
+  let without : FaceScan :=
+    { withMono with faces := relabeled.filter (·.family != "DejaVu Sans Mono") }
   let src := "Words with `inline code` beside them.\n\n```\nfenced code\n```\n"
   let (doc, _) := elabMd src
-  match ← buildFontSet doc scan cache .settled with
-  | .error d => t s!"markdown fonts: the assembly succeeds ({d.message})" false
+  let assemble (d : Ir.Doc) (scan : FaceScan) :=
+    buildFontSet d scan cache .settled
+  match ← assemble doc withMono, ← assemble doc without with
+  | .ok (fsA, docA, diagsA, _), .ok (fsB, docB, diagsB, _) =>
+    let lossA := SlotLoss.diags docA.fonts fsA docA (SlotLoss.carries #[.pdf, .html] docA.fontPolicy)
+    let lossB := SlotLoss.diags docB.fonts fsB docB (SlotLoss.carries #[.pdf, .html] docB.fontPolicy)
+    t "markdown fonts: the typewriter slot is the companion's fixed-pitch face"
+      (fsA.slotIsFixedPitch 2 && !fsA.slotCollapsed 2 && lossA.isEmpty)
+    t "markdown fonts: the default substitutes no corner"
+      (!diagsA.any (·.kind == .W0006))
+    t "markdown fonts: without the companion the slot is the text face and W0390 names it"
+      (fsB.slotCollapsed 2 && lossB.any (·.kind == .W0390) && !diagsB.any (·.kind == .W0006))
+    let codeA := runFace (layoutOf fsA docA) "fenced"
+    let codeB := runFace (layoutOf fsB docB) "fenced"
+    t "markdown fonts: the two builds ship the code in different faces"
+      (codeA == some (fsA.lookup 2 400 false) && codeB == some (fsB.lookup 0 400 false)
+        && (fsA.get (fsA.lookup 2 400 false)).isFixedPitch
+        && !(fsB.get (fsB.lookup 0 400 false)).isFixedPitch)
+  | _, _ => t "markdown fonts: both assemblies succeed" false
+  -- A tex document declares its own faces: the same scan leaves its
+  -- undeclared typewriter slot to the body family, and the loss is named.
+  let (texDoc, _) := elabStr (dvDoc "" "Words with \\texttt{inline code} beside them.")
+  match ← assemble texDoc withMono with
   | .ok (fs, resolved, _, _) =>
-    t "markdown fonts: the typewriter slot is set in a fixed-pitch face"
-      (fs.slotIsFixedPitch 2 && !fs.slotCollapsed 2)
-    t "markdown fonts: no slot loss is reported for a markdown document"
-      (SlotLoss.diags resolved.fonts fs resolved
-        (SlotLoss.carries #[.pdf, .html] resolved.fontPolicy)).isEmpty
-  -- A scan with no fixed-pitch face still names the loss: the default
-  -- fills the slot only from what is installed.
-  let proportional := { scan with faces := scanned.filter (!·.fixedPitch) }
-  match ← buildFontSet doc proportional cache .settled with
-  | .error d => t s!"markdown fonts: the proportional assembly succeeds ({d.message})" false
-  | .ok (fs, resolved, _, _) =>
-    t "markdown fonts: with no fixed-pitch face the typewriter loss is still named"
-      ((SlotLoss.diags resolved.fonts fs resolved
+    t "a tex document's undeclared typewriter slot keeps the body family"
+      (fs.slotCollapsed 2 && (SlotLoss.diags resolved.fonts fs resolved
         (SlotLoss.carries #[.pdf] resolved.fontPolicy)).any (·.kind == .W0390))
-  -- The default log: one loss, one line, counted.
+  | .error d => t s!"tex fonts: the assembly succeeds ({d.message})" false
+
+/-- The default log and the line ends of code. -/
+def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- One warning, one line, counted.
   let three := "<details>\n<summary>Ash</summary>\nBirch\n</details>\n\n\
 <details>\n<summary>Cedar</summary>\nDogwood\n</details>\n\n\
 <details>\n<summary>Elm</summary>\nFir\n</details>\n"
@@ -73,6 +124,11 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
       && (routes.filter (·.severity == .note)).size == 2)
   t "folding keeps every site in the census"
     ((folded.toList.map (·.sites)).sum == (dvMd three).size)
+  -- An error is never folded: each refused site fails the build.
+  let refused := "a\n\n    one\n\nb\n\n    two\n\nc\n\n    three\n"
+  let errs := (Diag.foldRepeats (dvMd refused)).filter (·.kind == .E0390)
+  t s!"a repeated error stays an error at every site ({errs.size})"
+    (errs.size == 3 && errs.all (·.severity == .error))
   let some font ← loadTestFont "SourceCodePro-Regular.otf"
     | t "markdown log: the fixed-pitch face loads" false
   -- A typewriter run is never hyphenated, as no LaTeX typewriter family is:
@@ -81,11 +137,7 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- there. Long hyphenatable words in both faces make breaks likely in both.
   let some text ← loadTestFont "OpenSans-Regular.ttf"
     | t "markdown log: the text face loads" false
-  let corners (slot face : Nat) : List ((Nat × Nat × Bool) × Nat) :=
-    [((slot, 400, false), face), ((slot, 700, false), face),
-     ((slot, 400, true), face), ((slot, 700, true), face)]
-  let split : Font.FontSet :=
-    { fonts := #[text, font], index := (corners 0 0 ++ corners 1 0 ++ corners 2 1).toArray }
+  let split := monoSlotOf text font
   let longWords := ["internationalization", "characterization", "institutionalization",
     "incomprehensibility", "counterrevolutionary", "representativeness"]
   let coded := String.intercalate " " ((List.range 160).map fun k =>
@@ -99,7 +151,8 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"a typewriter run never ends a line in a hyphen ({codeEnds.size} lines end in code, \
 {textBreaks.size} text lines end hyphenated)"
     (!codeEnds.isEmpty && !textBreaks.isEmpty && codeEnds.all fun (_, s, _, _) => !s.endsWith "-")
-  -- Four paragraphs, each holding one token no measure line can hold.
+  -- Four paragraphs, each holding one token no measure line can hold: four
+  -- overfull lines, each its own loss with its own fix, as TeX logs each.
   let wide := String.ofList (List.replicate 90 '7')
   let paras := String.intercalate "\n\n" (List.replicate 4 s!"Before {wide} after.") ++ "\n"
   -- The located document, as the driver lays it out: every overfull line
@@ -108,11 +161,12 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (located, _, _) := Elab.runRawsSpanned "t.md" raws readDiags
   let out := layoutOf (oneFaceOf font) located
   let overfull := out.diags.filter (·.kind == .W0005)
-  t s!"every overfull line is a site of one counted loss ({overfull.size})"
-    (overfull.size == 4 && overfull.all (·.subject == some "line:overfull")
-      && (overfull.map (·.span.map (·.pos.line))).toList == [some 1, some 3, some 5, some 7])
+  t s!"every overfull line is reported at its own source line ({overfull.size})"
+    (overfull.size == 4
+      && (overfull.map (·.span.map (·.pos.line))).toList == [some 1, some 3, some 5, some 7]
+      && (overfull.toList.filterMap (·.subject)).eraseDups.length == 4)
   let shown := (Diag.foldRepeats overfull).filter (·.severity == .warning)
-  t "the default log shows the overfull lines once, carrying the count"
-    (shown.size == 1 && shown.toList.map (·.sites) == [4])
+  t "the default log shows each overfull line, none folded into another"
+    (shown.size == 4 && shown.all (·.sites == 1))
 
 end Tests.MarkdownWarnings
