@@ -52,7 +52,7 @@ where
     clips.map fun (m, c) => (m, { c with geom := c.geom.normal.quantize })
 
 /-- A content stream's tokens spelled back by the tokenizer's own writer,
-then read: the round trip the tokenizer is held to. -/
+then read: the round trip `scan_render_exact` states. -/
 def roundTrips (toks : Array PdfContentLex.Tok) : Bool :=
   let again := PdfContentLex.scan (PdfContentLex.render toks)
   again.size == toks.size && (again.zip toks).all fun (a, b) => match a, b with
@@ -90,6 +90,10 @@ def pdfContentLexChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (img[0]? : Option PdfContentLex.Tok), (img[1]? : Option PdfContentLex.Tok) with
       | some (.inline d data), some (.op "Q") => d.size == 4 && data == "a EI".toUTF8
       | _, _ => false)
+  t "content lex: a content stream holds no references, so `1 0 R` is three tokens"
+    (match (PdfContentLex.scan "1 0 R".toUTF8).toList with
+      | [.val (.int 1), .val (.int 0), .op "R"] => true
+      | _ => false)
   t "content lex: stray delimiters are skipped, the stream still read"
     ((PdfContentLex.scan ") ] } q Q".toUTF8).size == 2)
   t "content lex: what the tokenizer reads, its writer spells back"

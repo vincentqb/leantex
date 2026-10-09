@@ -15,9 +15,9 @@ abbreviated dictionary, `ID`, the bytes, `EI`.
 
 Total over arbitrary bytes: the loop's bound is the byte count, every step
 consumes at least one byte, and a byte that starts no token — a stray `)`,
-`>`, `]`, a brace — is skipped. What it reads, `render` spells back, and
-the artifact tier and the figure importer read every stream through this
-one reading.
+`>`, `]`, a brace — is skipped. The writer's spelling reads back
+(`scan_render_exact`), and the artifact tier and the figure importer read
+every stream through this one reading.
 -/
 
 namespace LeanTex.Core.PdfContentLex
@@ -44,8 +44,13 @@ public def runEnd (b : ByteArray) (i : Nat) : Nat :=
     pure (if regular (at? b j) then ForInStep.yield (j + 1) else .done j)) : Id Nat).run
 
 /-- The bytes `[i, j)` as the ASCII string an operator is. -/
-public def asciiOf (b : ByteArray) (i j : Nat) : String :=
-  (b.extract i j).foldl (fun s c => s.push (Char.ofNat c.toNat)) ""
+@[expose] public def asciiAt (b : ByteArray) (i j : Nat) : String :=
+  String.ofList ((List.range (j - i)).map fun k => Char.ofNat (at? b (i + k)))
+
+/-- A number token's object (§7.3.3): a real where it holds a point, an
+integer where it reads as one, nothing else. -/
+@[expose] public def numberObj (raw : String) : Option Obj :=
+  if raw.contains '.' then some (.real raw) else raw.toInt?.map .int
 
 /-- The component count of an inline image's colour space, spelled out or
 abbreviated (§8.9.7, Table 93); `none` for a named resource, whose count
@@ -135,19 +140,25 @@ public structure State where
   out : Array Tok
   deriving Inhabited
 
-/-- Whether an operand starts at a byte: a string, a hexadecimal string or
-dictionary, an array, a name, a number. -/
-@[expose] public def operandStart (c : Nat) : Bool :=
-  c == 40 || c == 60 || c == 91 || c == 47 || numByte c
+/-- Whether an operand the object reader reads starts at a byte: a string,
+a hexadecimal string or dictionary, an array, a name. -/
+@[expose] public def objStart (c : Nat) : Bool := c == 40 || c == 60 || c == 91 || c == 47
 
-/-- One step: skip white space and comments, then read one token — an
-operand through the object reader, a keyword-valued operand, an operator,
-an inline image — or skip one byte that starts none. -/
+/-- One step: skip white space and comments, then read one token — a
+number by itself (§7.8.2: a content stream's operands are direct objects,
+never references, so `1 0 R` is three tokens to it), an operand through the
+object reader, a keyword-valued operand, an operator, an inline image — or
+skip one byte that starts none. -/
 public def step (b : ByteArray) (s : State) : ForInStep State :=
   let i := skipWs b s.pos
   if b.size ≤ i then .done { s with pos := i } else
   let c := at? b i
-  if operandStart c then
+  if numByte c then
+    let (raw, j) := scanNumber b i
+    match numberObj raw with
+    | some o => .yield { pos := max j (i + 1), out := s.out.push (.val o) }
+    | none => .yield { pos := max j (i + 1), out := s.out }
+  else if objStart c then
     match PdfRead.parseVal b i with
     | .ok (o, j) =>
       if i < j then .yield { pos := j, out := s.out.push (.val o) }
@@ -155,7 +166,7 @@ public def step (b : ByteArray) (s : State) : ForInStep State :=
     | .error _ => .yield { s with pos := i + 1 }
   else if regular c then
     let j := runEnd b i
-    let name := asciiOf b i j
+    let name := asciiAt b i j
     if name == "true" then .yield { pos := j, out := s.out.push (.val (.bool true)) }
     else if name == "false" then .yield { pos := j, out := s.out.push (.val (.bool false)) }
     else if name == "null" then .yield { pos := j, out := s.out.push (.val .null) }
@@ -191,7 +202,7 @@ public def Tok.renderInto (acc : ByteArray) : Tok → ByteArray
     (head ++ "ID ".toUTF8 ++ data).push 10 ++ "EI".toUTF8
 
 /-- Tokens spelled one after another, a line feed after each: what `scan`
-reads back. -/
+reads back (`scan_render_exact`). -/
 public def render (toks : Array Tok) : ByteArray :=
   toks.foldl (fun acc t => (t.renderInto acc).push 10) ByteArray.empty
 

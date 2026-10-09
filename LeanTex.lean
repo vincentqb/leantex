@@ -101,6 +101,7 @@ public import LeanTex.Core.PdfCopiedForm
 public import LeanTex.Core.GlyphListData
 public import LeanTex.Core.GlyphList
 public import LeanTex.Core.PdfContentLex
+public import LeanTex.Core.PdfContentLexProof
 public import LeanTex.Core.PdfFilters
 public import LeanTex.Core.PngEncode
 public import LeanTex.Core.PdfFont
