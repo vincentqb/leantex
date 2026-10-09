@@ -16740,10 +16740,10 @@ role the realizer moved is moved in the picture too — the picture's
 dependency roots: a TikZ style can name a macro or colour that the body
 never spells. The colour scan also reads every reachable macro definition,
 so the same closure that makes a macro travel makes its colours travel. -/
-public def pictureRequest (doc : Doc) (src : PicSrc) : String :=
+public def pictureRequest (doc : Doc) (src : PicSrc) (faces : FontSpec := doc.fonts) : String :=
   let roots := doc.picturePreamble ++ src.body
   let macros := macroDecls doc.pictureMacros roots
-  wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble (fontLines doc.fonts)
+  wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble (fontLines faces)
     (paletteDecls doc.palette (macroDeclLines macros ++ roots)) (slideShims doc roots) macros
     (pictureSwitch doc.page src.size) src
 
@@ -16758,11 +16758,14 @@ the body's are recorded where they stand. -/
 filtered to the ids an `.image` node still references — a picture pruned
 with its frame asks for nothing, exactly as a pruned `\bibliography` does
 — each wrapped at this site (`pictureRequest`), so the request reads the
-document's design as both backends do. -/
-public def pictureRefs (doc : Doc) : Array (String × String) :=
+document's design as both backends do. The font roles are the document's
+unless the driver hands the ones the engine resolved (`faces`,
+`Cli.FontAssembly.boundaryFonts`): the request is then set in the faces the
+page sets in. -/
+public def pictureRefs (doc : Doc) (faces : FontSpec := doc.fonts) : Array (String × String) :=
   let srcs := imageRefs doc
   (doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)).map
-    fun (h, src) => (h, pictureRequest doc src)
+    fun (h, src) => (h, pictureRequest doc src faces)
 
 /-- Blanks a standalone's spelling sets between a command and its operand. -/
 private def skipBlanksL : List Char → List Char

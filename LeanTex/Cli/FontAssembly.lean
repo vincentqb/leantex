@@ -290,4 +290,27 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     mathAlphabets := mathAlphabets }
   return .ok (set, doc, diags, paths)
 
+/-- **A boundary standalone sets in the faces the page sets in.** The
+document's declared roles, and for a role it left undeclared the family the
+engine itself resolved: the text slot's regular face (`FontDb.defaultFamily`
+for a document naming none, a deck's sans) and the math face the companion
+rule chose (`FontEnv.resolveMath`). Without them lualatex sets a picture's
+text and formulas in its Computer Modern defaults — another face than the
+page's, and Type 1 programs a vector import cannot read. Only a family the
+scan found outside the document's own directories travels: the tool
+resolves a family by name from its own search path, and cannot see a
+directory the document ships. -/
+public def boundaryFonts (spec : Ir.FontSpec) (fs : Font.FontSet) (scan : FaceScan) :
+    Ir.FontSpec :=
+  let inDocDir (path : String) : Bool :=
+    scan.docDirs.any fun d => path.startsWith (d ++ "/") || path == d
+  let travels (fam : String) : Bool :=
+    scan.faces.any fun f => f.family == fam && !inDocDir f.path
+  let text := (fs.index.find? (·.1 == (0, 400, false))).bind fun (_, i) => fs.fonts[i]?
+  let math := fs.math.bind (fs.fonts[·]?)
+  { spec with
+    body := if spec.body.isSome || spec.sans.isSome then spec.body
+      else (text.map (·.family)).filter travels
+    math := spec.math.orElse fun _ => (math.map (·.family)).filter travels }
+
 end LeanTex.Cli.FontAssembly

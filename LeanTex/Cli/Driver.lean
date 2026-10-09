@@ -238,9 +238,9 @@ scratch and atomic cache publication also protect independent compiler runs.
 Unfinished attempts remain distinct from refusals, so machine failures
 cannot silently select the native subset's drawing. -/
 def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
-    (imageSpans : Array (String × Span) := #[]) :
+    (imageSpans : Array (String × Span) := #[]) (faces : Ir.FontSpec := doc.fonts) :
     IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
-  let refs := Ir.pictureRefs doc
+  let refs := Ir.pictureRefs doc faces
   if refs.isEmpty then return (#[], #[])
   -- The files each request reads (`Ir.pictureInputs`), resolved as an
   -- image of the document is — against its own directory, through
@@ -728,6 +728,22 @@ def settlement (front : Front) (fs : Font.FontSet) (resolved : Ir.Doc) :
     | some pre => FontFix.agree pre metric ps
     | none => Elab.enginePictures resolved.body == 0)
 
+/-- The font roles a boundary request sets in (`FontAssembly.boundaryFonts`),
+resolved before any request is wrapped and only where the document states
+one: the text slot and a math face, as the provisional assembly resolves
+them — a formula inside a diagram wants the math face even where the page
+itself sets none. The scan it takes is the one the settled assembly reuses. -/
+def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec × Front) := do
+  let doc := front.doc
+  if (Ir.pictureRefs doc).isEmpty then return (doc.fonts, front)
+  let scan ← match front.scan.filter (·.dirs == doc.fonts.dirs) with
+    | some s => pure s
+    | none => scanFaces ui file doc.fonts
+  let front := { front with scan := some scan }
+  match ← buildFontSet doc scan front.cache (.provisional true) with
+  | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc.fonts fs scan, front)
+  | .error _ => return (doc.fonts, front)
+
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   match ← frontend ui file with
@@ -752,8 +768,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let declined := Boundary.linesOf tool {} front.spans.declined
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
     let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
+    let (faces, front) ← boundaryFaces ui file front
     let (pics, undrawn) ← if failing then pure (#[], #[])
-      else resolvePictures ui file front.doc front.spans.images
+      else resolvePictures ui file front.doc front.spans.images faces
     let w := Boundary.withdraw front.spans.fallbacks undrawn
     let front ← if w.ids.isEmpty then pure front else do
       let t ← IO.monoMsNow
