@@ -969,6 +969,170 @@ private theorem Reader.contentParts_stream_exact (r : Reader) (num gen : Nat)
   simp only [Reader.contentParts, Reader.deref, h]
   rfl
 
+-- ## One read of a file: object streams decoded once
+
+/-- An object stream's decoded data, header pairs and `/First`, as
+`Reader.objStm` reads it. -/
+public abbrev ObjStm := ByteArray × Array (Nat × Nat) × Nat
+
+/-- An object stream (§7.5.7) decoded, as the plain reader of a file's
+bytes and cross-reference decodes it: the one computation the memo below
+caches. -/
+public def objStmOf (b : ByteArray) (locs : Std.HashMap Nat Loc) (stm : Nat) :
+    Except String ObjStm :=
+  ({ b, locs } : Reader).objStm stm
+
+/-- A read PDF: its bytes, its object locations, and its object streams
+decoded at most once — a thunk per object stream the cross-reference names,
+holding exactly what `objStmOf` decodes (`memo_ok`). Selecting page 224 of
+a 224-page file walks `/Kids` through objects that share a handful of
+object streams; decoded per lookup, each walk step inflated its stream
+again, and the read slowed with the page index. -/
+public structure Doc where
+  bytes : ByteArray
+  locs : Std.HashMap Nat Loc
+  memo : Std.HashMap Nat (Thunk (Except String ObjStm))
+  memo_ok : ∀ k t, memo.get? k = some t → t.get = objStmOf bytes locs k
+  /-- The document catalog's object number. -/
+  root : Nat
+  /-- The trailer dictionary the cross-reference read last. -/
+  trailer : Obj
+
+/-- The plain reader of a document's bytes. -/
+private def Doc.reader (d : Doc) : Reader := { b := d.bytes, locs := d.locs }
+
+/-- One object stream more in a memo, under its own computation. -/
+private def memoAdd (b : ByteArray) (locs : Std.HashMap Nat Loc)
+    (m : { m : Std.HashMap Nat (Thunk (Except String ObjStm)) //
+      ∀ k t, m.get? k = some t → t.get = objStmOf b locs k }) (stm : Nat) :
+    { m : Std.HashMap Nat (Thunk (Except String ObjStm)) //
+      ∀ k t, m.get? k = some t → t.get = objStmOf b locs k } :=
+  if m.val.contains stm then m else
+  ⟨m.val.insert stm ⟨fun _ => objStmOf b locs stm⟩, fun k t h => by
+    rw [Std.HashMap.get?_insert] at h
+    split at h
+    · next he =>
+      have hk : stm = k := by simpa using he
+      subst hk
+      cases h
+      rfl
+    · exact m.property k t h⟩
+
+/-- The memo of every object stream a cross-reference names. -/
+private def memoOf (b : ByteArray) (locs : Std.HashMap Nat Loc) :
+    { m : Std.HashMap Nat (Thunk (Except String ObjStm)) //
+      ∀ k t, m.get? k = some t → t.get = objStmOf b locs k } :=
+  locs.fold (fun m _ l => match l with
+    | .inStm stm _ => memoAdd b locs m stm
+    | .direct _ => m) ⟨{}, fun k t h => by simp at h⟩
+
+/-- An object stream through the memo. -/
+public def Doc.objStm (d : Doc) (stm : Nat) : Except String ObjStm :=
+  match d.memo.get? stm with
+  | some t => t.get
+  | none => objStmOf d.bytes d.locs stm
+
+/-- **The memo answers what a fresh decode answers** (`_agree`): every
+object stream read through the memo is the stream the plain reader
+decodes, so memoizing changes how often a stream inflates and nothing a
+read returns. -/
+public theorem Doc.memo_agree (d : Doc) (stm : Nat) : d.objStm stm = objStmOf d.bytes d.locs stm := by
+  unfold Doc.objStm
+  split
+  · next t ht => exact d.memo_ok stm t ht
+  · rfl
+
+/-- `Reader.valueAt` through the memo. -/
+public def Doc.valueAt (d : Doc) (num : Nat) : Except String (Obj × Option Nat) := do
+  match d.locs.get? num with
+  | none => return (.null, none)
+  | some (.direct off) =>
+    let (_, v, j) ← parseIndirectAt d.bytes off
+    return (v, some j)
+  | some (.inStm stm idx) =>
+    let (data, pairs, first) ← d.objStm stm
+    let some (_, ooff) := pairs[idx]?
+      | throw "malformed PDF: an object stream index is out of range"
+    let (v, _) ← parseVal data (first + ooff)
+    return (v, none)
+
+/-- An object's value read afresh, as the plain reader reads it. -/
+public def valueAtOf (b : ByteArray) (locs : Std.HashMap Nat Loc) (num : Nat) :
+    Except String (Obj × Option Nat) :=
+  ({ b, locs } : Reader).valueAt num
+
+/-- **A memoized read is a plain read** (`_agree`): every object value the
+document reads through its memo is the value the plain reader reads. -/
+public theorem Doc.valueAt_agree (d : Doc) (num : Nat) :
+    d.valueAt num = valueAtOf d.bytes d.locs num := by
+  unfold Doc.valueAt valueAtOf Reader.valueAt
+  simp only [Doc.memo_agree, objStmOf]
+
+/-- An object's value and its raw (still encoded) stream, if any. -/
+public def Doc.get (d : Doc) (num : Nat) : Except String (Obj × Option ByteArray) := do
+  let (v, after) ← d.valueAt num
+  let raw ← match after with
+    | none => pure none
+    | some j => d.reader.streamAfterWith (fun n =>
+        (d.valueAt n).toOption.bind (fun (v, _) => v.int?)) v j
+  return (v, raw)
+
+/-- One level of indirection: a `ref` fetched, anything else unchanged. -/
+public def Doc.deref (d : Doc) (o : Obj) : Except String Obj := do
+  match o with
+  | .ref n _ => return (← d.get n).1
+  | _ => return o
+
+/-- A dictionary's entry, one reference followed. -/
+public def Doc.field (d : Doc) (o : Obj) (k : String) : Except String (Option Obj) := do
+  match ← d.deref o with
+  | .dict es =>
+    match (es.find? (·.1 == k)).map (·.2) with
+    | some v => return some (← d.deref v)
+    | none => return none
+  | _ => return none
+
+/-- A stream object's dictionary and its decoded data (`decodeStream`:
+none, or Flate with a PNG predictor), or `none` when the value carries no
+stream. -/
+public def Doc.stream (d : Doc) (o : Obj) : Except String (Option (Obj × ByteArray)) := do
+  match o with
+  | .ref n _ =>
+    let (v, raw?) ← d.get n
+    match raw? with
+    | some raw => return some (v, raw)
+    | none => return none
+  | _ => return none
+
+/-- Open a PDF: check the header, read the cross-reference, and prepare the
+object-stream memo. -/
+public def Doc.ofBytes (b : ByteArray) : Except String Doc := do
+  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
+    throw "not a PDF file (no %PDF header)"
+  let x ← readXref b
+  let some root := x.root
+    | throw "malformed PDF: no /Root in any trailer"
+  let m := memoOf b x.locs
+  return { bytes := b, locs := x.locs, memo := m.val, memo_ok := m.property, root
+           trailer := x.trailer.getD (.dict #[]) }
+
+/-- How many objects the cross-reference lists: every loop over a
+document's graph is bounded by it. -/
+public def Doc.objectCount (d : Doc) : Nat := d.locs.size
+
+/-- The object numbers the cross-reference lists. -/
+public def Doc.objectNumbers (d : Doc) : List Nat := d.locs.keys
+
+/-- Whether the cross-reference lists an object. -/
+public def Doc.lists (d : Doc) (num : Nat) : Bool := d.locs.contains num
+
+/-- **A listed object is among the object numbers** (`_mem`). -/
+public theorem Doc.lists_mem (d : Doc) (num : Nat) (h : d.lists num = true) :
+    num ∈ d.objectNumbers := by
+  unfold Doc.lists at h
+  unfold Doc.objectNumbers
+  exact Std.HashMap.mem_keys.mpr (Std.HashMap.mem_iff_contains.mpr h)
+
 -- ## Every object (§7.5.4, §7.5.7): the substrate a census reads
 
 /-- One object the cross-reference lists, fetched: where the table put it,
@@ -1466,12 +1630,15 @@ public inductive PageSelection where
   | number (oneBased : Nat)
   deriving Inhabited, BEq, ReflBEq, LawfulBEq, DecidableEq, Repr
 
-private structure Page where
+/-- A selected page: its dictionary and the attributes it inherits from
+the page tree (§7.7.3.4), each the value its nearest declaration states. -/
+public structure Page where
   node : Obj
   mediaBox : Option Obj
   cropBox : Option Obj
   resources : Option Obj
   rotate : Option Obj
+  deriving Inhabited
 
 /-- Walk `/Kids` depth-first, counting actual `/Type /Page` leaves and
 carrying inheritable attributes (§7.7.3.4). `/Count` never decides a page's
@@ -1479,7 +1646,7 @@ ordinal or whether the traversal is finished. The first or numbered leaf
 can return immediately; the last requires an exhausted worklist.
 Revisited indirect nodes are malformed, and exhausting the reader's
 xref-sized visit bound also refuses, even when a leaf has been seen. -/
-private def selectPage (r : Reader) (root : Nat) (selection : PageSelection) :
+private def selectPage (r : Doc) (root : Nat) (selection : PageSelection) :
     Except String (Nat × Page) := do
   if selection == .number 0 then
     throw "PDF page number 0 is invalid; page numbers start at 1"
@@ -1491,7 +1658,7 @@ private def selectPage (r : Reader) (root : Nat) (selection : PageSelection) :
   let mut seen : Std.HashMap Nat Unit := {}
   let mut count := 0
   let mut latest : Option (Nat × Page) := none
-  for _ in [0:r.locs.size + 2] do
+  for _ in [0:r.objectCount + 2] do
     let some (nodeRef, mb, cb, res, rot) := work.back? | break
     work := work.pop
     if let .ref num _ := nodeRef then
@@ -1530,14 +1697,36 @@ private def selectPage (r : Reader) (root : Nat) (selection : PageSelection) :
 /-- The shared file validation and selection path for form inclusion and
 physical page-number resolution. -/
 private def readPage (b : ByteArray) (page : PageSelection) :
-    Except String (Reader × (Nat × Page)) := do
-  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
-    throw "not a PDF file (no %PDF header)"
-  let x ← readXref b
-  let some root := x.root
-    | throw "malformed PDF: no /Root in any trailer"
-  let r : Reader := { b, locs := x.locs }
-  return (r, ← selectPage r root page)
+    Except String (Doc × (Nat × Page)) := do
+  let r ← Doc.ofBytes b
+  return (r, ← selectPage r r.root page)
+
+/-- A page of a read document, selected by its physical position in
+`/Kids` order, with its one-based number and inherited attributes. -/
+public def Doc.page (d : Doc) (page : PageSelection) : Except String (Nat × Page) :=
+  selectPage d d.root page
+
+/-- A page's content streams decoded and joined by line feeds (§7.8.2: the
+division between streams falls only between operators). -/
+public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do
+  let mut content := ByteArray.empty
+  match page.node.get? "Contents" with
+  | none => pure ()
+  | some contents =>
+    let parts ← match ← r.deref contents with
+      | .arr xs => pure xs
+      | _ => pure #[contents]
+    for part in parts do
+      let num ← match part with
+        | .ref n _ => pure n
+        | _ => throw "malformed PDF: page contents are not references"
+      let (cd, raw?) ← r.get num
+      let some raw := raw?
+        | throw "malformed PDF: a content stream has no data"
+      let data ← decodeStream cd raw
+      content := content ++ data
+      content := content.push 10
+  return content
 
 /-- Resolve a selection to its one-based physical page number, using the
 same `/Kids` traversal and selection checks as `readForm`. Contents and
@@ -1728,23 +1917,7 @@ public def readForm (b : ByteArray) (page : PageSelection := .first) :
   match (← r.deref (page.rotate.getD (.int 0))).int?.getD 0 with
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
-  -- The content: one stream or an array, each decoded, joined by newlines
-  -- (§7.8.2: the division between streams occurs only between operators).
-  let mut content := ByteArray.empty
-  match page.node.get? "Contents" with
-  | none => pure ()
-  | some contents =>
-    let parts ← r.contentParts contents
-    for part in parts do
-      let num ← match part with
-        | .ref n _ => pure n
-        | _ => throw "malformed PDF: page contents are not references"
-      let (cd, raw?) ← r.get num
-      let some raw := raw?
-        | throw "malformed PDF: a content stream has no data"
-      let data ← decodeStream cd raw
-      content := content ++ data
-      content := content.push 10
+  let content ← r.content page
   -- The resources graph, copied whole and renumbered.
   let mut st : SerSt := {}
   let resObj := page.resources.getD (.dict #[])

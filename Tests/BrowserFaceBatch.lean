@@ -10,8 +10,11 @@ namespace Tests.BrowserFaceBatch
 
 open LeanTex.Core LeanTex.Cli
 
+-- The batch exercises the converter: its pages are ones the figure
+-- importer refuses (an encrypted file), so every face is the converter's,
+-- as before faces were drawn natively.
 private def capturedPdf (tag : String) : ByteArray :=
-  svgCanvasPdf ++ ("\n% batch-id:" ++ tag ++ "\n").toUTF8
+  encryptedCanvasPdf ++ ("\n% batch-id:" ++ tag ++ "\n").toUTF8
 
 private def capturedSvg (tag : String) : ByteArray :=
   svgDocument ("<!--batch-id:" ++ tag ++ " --><path d=\"M0 0L20 20\"/>")

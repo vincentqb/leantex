@@ -276,6 +276,8 @@ public inductive DiagCode where
   | W0603
   | W0604
   | W0605
+  | W0608
+  | N0024
   | W0384
   | W0385
   | W0386
@@ -484,6 +486,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
   | .W0605 => ("0605", .degraded, "an image or the page icon has no usable browser face; the web page shows a placeholder for an image and ships without the icon")
+  | .W0608 => ("0608", .degraded, "a figure's web face is the engine's own drawing without one of its features; the rest of the figure is drawn")
+  | .N0024 => ("0024", .info, "a figure's web face is drawn by an external converter, because the engine does not draw one of its features")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0400 => ("0400", .degraded, "a frame a little taller than its page stands past its text area, in the gap below it")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")

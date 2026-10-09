@@ -7,6 +7,7 @@ import LeanTex.Core.Ir
 import LeanTex.Core.HtmlDoc
 import LeanTex.Cli.Batch
 import LeanTex.Cli.ImageAssets
+public import LeanTex.Cli.PdfFaces
 
 namespace LeanTex.Cli.BrowserFaces
 
@@ -119,43 +120,69 @@ private def primarySource? (en : Image.Loaded) : Option ByteArray :=
 private inductive Prepared where
   | keep (entry : Image.Loaded)
   | converted (entry : Image.Loaded) (plan : Plan) (bytes : Except String ByteArray)
+      (diags : Array Diag) (native : Bool) (route : Option Boundary.Route)
 
+/-- A selected PDF page's face is native first (`PdfFaces.face`): the
+converter runs only for a page whose import names a loss. -/
 private def preparePrimary (en : Image.Loaded) : IO Prepared := do
   let p := plan en
   let some conversion := p.conversion? | return .keep en
-  let bytes ← match conversion, conversion.source? en with
-    | .svgPoster page, some svg => ImageAssets.svgPoster svg page
-    | .svgPoster _, none => pure (.error "the SVG source has no captured bytes")
-    | .pdfPage page, some pdf => ImageAssets.pdfSvg pdf page
-    | .pdfPage _, none => pure (.error "the PDF source has no captured bytes")
-  return .converted en p bytes
+  match conversion, conversion.source? en with
+  | .svgPoster page, some svg => return .converted en p (← ImageAssets.svgPoster svg page) #[] false none
+  | .svgPoster _, none =>
+    return .converted en p (.error "the SVG source has no captured bytes") #[] false none
+  | .pdfPage page, some pdf =>
+    let f ← PdfFaces.face (HtmlDoc.resolvedSrc en) pdf page (ImageAssets.pdfSvg pdf page)
+    return .converted en p f.bytes f.diags f.native (some f.route)
+  | .pdfPage _, none =>
+    return .converted en p (.error "the PDF source has no captured bytes") #[] false none
 
 private def Prepared.companion? : Prepared → Option ByteArray
-  | .converted en (.animatedWithCompanion _) (.ok _) => en.companion
+  | .converted en (.animatedWithCompanion _) (.ok _) _ _ _ => en.companion
   | _ => none
 
-private def Prepared.finish (prepared : Prepared) : IO Image.Loaded := do
+/-- What one face's preparation leaves: the entry, the diagnostics its
+route owes, and the bytes of a face the engine drew itself. -/
+public structure Finished where
+  entry : Image.Loaded
+  diags : Array Diag
+  native : Option ByteArray
+  route : Option Boundary.Route
+
+private def Prepared.finish (prepared : Prepared) : IO Finished := do
   match prepared with
-  | .keep en => return en
-  | .converted en p bytes =>
+  | .keep en => return { entry := en, diags := #[], native := none, route := none }
+  | .converted en p bytes diags native route =>
     let companionOk ← match prepared.companion? with
       | some svg => Except.isOk <$> ImageAssets.validateSvg svg
       | none => pure false
-    return apply en p { bytes, companionOk }
+    let entry := apply en p { bytes, companionOk }
+    let nativeFace := if native then (match bytes with
+      | .ok b => some b
+      | .error _ => none) else none
+    return { entry, diags, native := nativeFace, route }
 
 public def prepare (en : Image.Loaded) : IO Image.Loaded := do
-  (← preparePrimary en).finish
+  return (← (← preparePrimary en).finish).entry
 
 /-- Prepare browser faces with at most `max 1 limit` concurrent requests,
-returning them in source order. All primaries finish before companions:
+returning them in source order, with the diagnostics each route owes and
+the faces the engine drew itself. All primaries finish before companions:
 distinct PDF sources can share a companion's validation cache slot.
 Both phases use the same content keys as the conversion cache's source
 prefix and the ordered, exclusive partition checked by `Batch.plan_exact`,
 `Batch.plan_bounded` and `Batch.plan_keys_nodup`. Tool identity memos may
 share a path across keys; ConvCache publishes those atomically too. -/
-public def prepareAll (entries : Array Image.Loaded) (limit : Nat := 4) :
-    IO (Array Image.Loaded) := do
+public def prepareAllFaces (entries : Array Image.Loaded) (limit : Nat := 4) :
+    IO (Array Image.Loaded × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
   let prepared ← mapBySource limit primarySource? preparePrimary entries
-  mapBySource limit Prepared.companion? Prepared.finish prepared
+  let done ← mapBySource limit Prepared.companion? Prepared.finish prepared
+  return (done.map (·.entry), done.flatMap (fun f => f.diags.map (f.entry.src, ·)),
+    done.filterMap (·.native), done.foldl (fun t f => (f.route.map t.add).getD t) {})
+
+/-- `prepareAllFaces`' entries alone. -/
+public def prepareAll (entries : Array Image.Loaded) (limit : Nat := 4) :
+    IO (Array Image.Loaded) :=
+  (·.1) <$> prepareAllFaces entries limit
 
 end LeanTex.Cli.BrowserFaces

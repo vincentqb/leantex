@@ -1,0 +1,568 @@
+module
+
+public import LeanTex.Core.Gfx
+public import LeanTex.Core.PdfRead
+public import LeanTex.Core.Ink
+public import Std.Data.HashMap
+import LeanTex.Core.GlyphList
+import LeanTex.Core.PdfContentLex
+import LeanTex.Core.PdfFilters
+import LeanTex.Core.Font
+
+/-!
+# A PDF figure's fonts, read for drawing
+
+What a figure's text needs from its fonts (ISO 32000-2 §9.5–9.10): how a
+string's bytes split into codes, which glyph of the embedded program each
+code selects, how far each advances the pen, and what text each code means.
+The glyph programs are read by `Ink` — TrueType `glyf` (`FontFile2`), bare
+and CID-keyed CFF (`FontFile3` `Type1C`, `CIDFontType0C`), OpenType
+(`FontFile3` `OpenType`) — and a Type 3 font's glyph procedures are handed
+to the content interpreter. A Type 1 program (`FontFile`) and an
+unembedded font are read for their widths and text only: they draw nothing,
+and the reading says which (`Loaded.losses`).
+-/
+
+namespace LeanTex.Core.PdfFont
+
+open LeanTex.Core LeanTex.Core.PdfRead LeanTex.Core.PdfContentLex
+
+/-- Where a code's glyph lives: a glyph of the embedded program, or a
+Type 3 glyph procedure by name. -/
+public inductive GlyphRef where
+  | gid (n : Nat)
+  | proc (name : String)
+  deriving Repr, BEq, Hashable, Inhabited
+
+/-- A font's glyph program: an `Ink` source with the matrix from its glyph
+units to text space (TrueType: one over the units per em; CFF: its font
+matrix), a Type 3 font's procedures with its font matrix and resources, or
+nothing to draw with. -/
+public inductive Program where
+  | ink (src : Ink.Src) (matrix : Array Rat)
+  | type3 (procs : Array (String × Obj)) (matrix : Array Rat) (resources : Option Obj)
+  | missing
+  deriving Inhabited
+
+/-- One code of a string: its value, its byte length, its glyph, its
+advance in glyph-space thousandths (Type 3: glyph space), and its text. -/
+public structure Code where
+  code : Nat
+  bytes : Nat
+  glyph : Option GlyphRef
+  width : Rat
+  text : String
+  deriving Inhabited
+
+/-- How a font reads its strings. A simple font: one byte per code, and per
+code its glyph, width and text. A composite font: codes of one to four
+bytes by its codespace ranges, each to a CID, each CID to a glyph and a
+width; its text by code. -/
+public inductive Codes where
+  | simple (glyphs : Array (Option GlyphRef)) (widths : Array Rat) (text : Array String)
+  | composite (codespace : Array (Nat × Nat × Nat)) (cids : Array (Nat × Nat × Nat))
+      (gidOf : Option ByteArray) (cff : Bool) (widths : Std.HashMap Nat Rat) (dw : Rat)
+      (text : Std.HashMap Nat String) (vertical : Bool)
+  deriving Inhabited
+
+/-- A font read for drawing. `losses` names what it cannot draw. -/
+public structure Loaded where
+  program : Program
+  codes : Codes
+  losses : Array Gfx.Loss
+  deriving Inhabited
+
+/-- A number object as an exact rational. -/
+public def num? (o : Obj) : Option Rat := PdfContentLex.numRat? o
+
+/-- A stream's decoded bytes, or `none`. -/
+public def streamBytes (d : Doc) (o : Obj) : Option ByteArray :=
+  match d.stream o with
+  | .ok (some (dict, raw)) =>
+    match PdfFilters.decode dict raw with
+    | .ok (.bytes b) => some b
+    | _ => none
+  | _ => none
+
+/-- A dictionary's entry as written — a stream's reference kept, so its
+data can be read — the dictionary itself followed one reference. -/
+public def entry (d : Doc) (o : Obj) (k : String) : Option Obj :=
+  (d.deref o).toOption.bind (·.get? k)
+
+/-- A hex or literal string's bytes as a big-endian number. -/
+private def codeOf (o : Obj) : Option (Nat × Nat) := do
+  let b ← strBytes? o
+  return (b.foldl (fun a x => a * 256 + x.toNat) 0, b.size)
+
+/-- UTF-16BE bytes as text; an unpaired surrogate as U+FFFD. -/
+public def utf16 (b : ByteArray) : String := Id.run do
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:b.size] do
+    if i + 1 ≥ b.size then break
+    let u := (b[i]?.getD 0).toNat * 256 + (b[i + 1]?.getD 0).toNat
+    i := i + 2
+    if 0xD800 ≤ u && u < 0xDC00 && i + 1 < b.size then
+      let l := (b[i]?.getD 0).toNat * 256 + (b[i + 1]?.getD 0).toNat
+      if 0xDC00 ≤ l && l < 0xE000 then
+        out := out.push (Char.ofNat (0x10000 + (u - 0xD800) * 1024 + (l - 0xDC00)))
+        i := i + 2
+      else out := out.push '�'
+    else if 0xD800 ≤ u && u < 0xE000 then out := out.push '�'
+    else out := out.push (Char.ofNat u)
+  return out
+
+/-- A destination string's text, or a code added to its last unit. -/
+private def bumpText (b : ByteArray) (k : Nat) : String :=
+  if b.size == 0 then "" else
+  let last := (b[b.size - 1]?.getD 0).toNat + (b[b.size - 2]?.getD 0).toNat * 256
+  let v := last + k
+  let head := b.extract 0 (b.size - 2)
+  utf16 (head.push (UInt8.ofNat (v / 256 % 256)) |>.push (UInt8.ofNat (v % 256)))
+
+/-- **A ToUnicode CMap's mappings** (§9.10.3): `bfchar` pairs and `bfrange`
+runs — a destination string incremented along the run, or an array of
+destinations — code to text. -/
+public def toUnicode (cmap : ByteArray) : Std.HashMap Nat String := Id.run do
+  let toks := scan cmap
+  let mut m : Std.HashMap Nat String := {}
+  let mut mode := 0
+  let mut args : Array Obj := #[]
+  for t in toks do
+    match t with
+    | .val o => if mode != 0 then args := args.push o
+    | .op "beginbfchar" => mode := 1; args := #[]
+    | .op "beginbfrange" => mode := 2; args := #[]
+    | .op "endbfchar" =>
+      for k in [0:args.size / 2] do
+        match codeOf (args[2 * k]?.getD .null), strBytes? (args[2 * k + 1]?.getD .null) with
+        | some (c, _), some dst => m := m.insert c (utf16 dst)
+        | _, _ => pure ()
+      mode := 0
+    | .op "endbfrange" =>
+      for k in [0:args.size / 3] do
+        match codeOf (args[3 * k]?.getD .null), codeOf (args[3 * k + 1]?.getD .null) with
+        | some (lo, _), some (hi, _) =>
+          if lo ≤ hi && hi - lo < 65536 then
+            match args[3 * k + 2]?.getD .null with
+            | .arr dsts =>
+              for i in [0:hi - lo + 1] do
+                if let some dst := (dsts[i]?).bind strBytes? then m := m.insert (lo + i) (utf16 dst)
+            | o =>
+              if let some dst := strBytes? o then
+                for i in [0:hi - lo + 1] do m := m.insert (lo + i) (bumpText dst i)
+        | _, _ => pure ()
+      mode := 0
+    | _ => pure ()
+  return m
+
+/-- An embedded CMap's codespace ranges and CID mappings (§9.7.6.1):
+`(bytes, lo, hi)` per codespace range, `(lo, hi, firstCid)` per CID range
+or CID character. -/
+public def cmapRanges (cmap : ByteArray) : Array (Nat × Nat × Nat) × Array (Nat × Nat × Nat) := Id.run do
+  let toks := scan cmap
+  let mut space : Array (Nat × Nat × Nat) := #[]
+  let mut cids : Array (Nat × Nat × Nat) := #[]
+  let mut mode := 0
+  let mut args : Array Obj := #[]
+  for t in toks do
+    match t with
+    | .val o => if mode != 0 then args := args.push o
+    | .op "begincodespacerange" => mode := 1; args := #[]
+    | .op "begincidrange" => mode := 2; args := #[]
+    | .op "begincidchar" => mode := 3; args := #[]
+    | .op "endcodespacerange" =>
+      for k in [0:args.size / 2] do
+        match codeOf (args[2 * k]?.getD .null), codeOf (args[2 * k + 1]?.getD .null) with
+        | some (lo, n), some (hi, _) => space := space.push (n, lo, hi)
+        | _, _ => pure ()
+      mode := 0
+    | .op "endcidrange" =>
+      for k in [0:args.size / 3] do
+        match codeOf (args[3 * k]?.getD .null), codeOf (args[3 * k + 1]?.getD .null),
+            (args[3 * k + 2]?.getD .null).int? with
+        | some (lo, _), some (hi, _), some c => cids := cids.push (lo, hi, c.toNat)
+        | _, _, _ => pure ()
+      mode := 0
+    | .op "endcidchar" =>
+      for k in [0:args.size / 2] do
+        match codeOf (args[2 * k]?.getD .null), (args[2 * k + 1]?.getD .null).int? with
+        | some (c, _), some cid => cids := cids.push (c, c, cid.toNat)
+        | _, _ => pure ()
+      mode := 0
+    | _ => pure ()
+  return (space, cids)
+
+/-! ## Glyph selection in a TrueType program -/
+
+/-- The ranges of one cmap subtable, `(platform, encoding)`, formats 0, 4
+and 6: `(first code, last code, first glyph)`. -/
+public def cmapSub (b : ByteArray) (platform encoding : Nat) : Array (Nat × Nat × Nat) := Id.run do
+  let some t := Ink.findTable b "cmap" | return #[]
+  let n := Ink.u16 b (t.offset + 2)
+  let mut sub? : Option Nat := none
+  for k in [0:n] do
+    let e := t.offset + 4 + 8 * k
+    if sub?.isNone && Ink.u16 b e == platform && Ink.u16 b (e + 2) == encoding then
+      sub? := some (t.offset + Ink.u32 b (e + 4))
+  let some off := sub? | return #[]
+  let fmt := Ink.u16 b off
+  let mut out : Array (Nat × Nat × Nat) := #[]
+  if fmt == 0 then
+    for c in [0:256] do
+      let g := Ink.u8 b (off + 6 + c)
+      if g != 0 then out := out.push (c, c, g)
+  else if fmt == 6 then
+    let first := Ink.u16 b (off + 6)
+    let count := Ink.u16 b (off + 8)
+    for i in [0:count] do
+      let g := Ink.u16 b (off + 10 + 2 * i)
+      if g != 0 then out := out.push (first + i, first + i, g)
+  else if fmt == 4 then
+    let segX2 := Ink.u16 b (off + 6)
+    let seg := segX2 / 2
+    let endBase := off + 14
+    let startBase := endBase + segX2 + 2
+    let deltaBase := startBase + segX2
+    let rangeBase := deltaBase + segX2
+    for k in [0:seg] do
+      let endC := Ink.u16 b (endBase + 2 * k)
+      let startC := Ink.u16 b (startBase + 2 * k)
+      let delta := Ink.u16 b (deltaBase + 2 * k)
+      let rangeOff := Ink.u16 b (rangeBase + 2 * k)
+      if startC ≤ endC && endC - startC < 65536 then
+        for c in [startC:endC + 1] do
+          let g := if rangeOff == 0 then (c + delta) % 65536 else
+            let idx := rangeBase + 2 * k + rangeOff + 2 * (c - startC)
+            let g0 := Ink.u16 b idx
+            if g0 == 0 then 0 else (g0 + delta) % 65536
+          if g != 0 then out := out.push (c, c, g)
+  return out
+
+/-- A code's glyph in sorted `(code, code, glyph)` rows. -/
+private def rowGlyph (rows : Array (Nat × Nat × Nat)) (c : Nat) : Option Nat :=
+  (rows.find? fun (lo, hi, _) => lo ≤ c && c ≤ hi).map fun (lo, _, g) => g + (c - lo)
+
+/-- An `sfnt`'s glyph count (`maxp`). -/
+public def glyphCount (b : ByteArray) : Nat :=
+  match Ink.findTable b "maxp" with
+  | some t => Ink.u16 b (t.offset + 4)
+  | none => 0
+
+/-- An `sfnt`'s units per em (`head`), 1000 when unreadable. -/
+public def unitsPerEm (b : ByteArray) : Nat :=
+  match Ink.findTable b "head" with
+  | some t => let u := Ink.u16 b (t.offset + 18); if u == 0 then 1000 else u
+  | none => 1000
+
+/-- An `sfnt` program's outline source and its matrix: a `CFF ` table read
+as CFF, else `glyf`. -/
+public def sfntProgram (b : ByteArray) : Program :=
+  match Ink.findTable b "CFF " with
+  | some _ =>
+    let src := Ink.Src.make b true 0
+    .ink src ((src.cffMatrix 0).getD #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0])
+  | none =>
+    let upem := unitsPerEm b
+    .ink (Ink.Src.make b false (glyphCount b)) #[mkRat 1 upem, 0, 0, mkRat 1 upem, 0, 0]
+
+/-! ## Reading a font dictionary -/
+
+/-- A font's encoding (§9.6.5): its base and its differences, code to glyph
+name. -/
+private def encodingOf (d : Doc) (font : Obj) : Option GlyphList.Base × Array (Nat × String) :=
+  match (d.field font "Encoding").toOption.getD none with
+  | some (.name n) => (GlyphList.Base.ofName? n, #[])
+  | some (.dict es) =>
+    let enc := Obj.dict es
+    let base := match enc.get? "BaseEncoding" with
+      | some (.name n) => GlyphList.Base.ofName? n
+      | _ => none
+    let diffs := match (d.deref ((enc.get? "Differences").getD .null)).toOption with
+      | some (.arr xs) => Id.run do
+        let mut out : Array (Nat × String) := #[]
+        let mut code := 0
+        for x in xs do
+          match x with
+          | .int n => code := n.toNat
+          | .name nm =>
+            out := out.push (code, nm)
+            code := code + 1
+          | _ => pure ()
+        return out
+      | _ => #[]
+    (base, diffs)
+  | _ => (none, #[])
+
+/-- The font descriptor's `Flags` (§9.8.2): whether the font is symbolic. -/
+private def symbolic (d : Doc) (desc : Option Obj) : Bool :=
+  match desc.bind fun ds => ((d.field ds "Flags").toOption.getD none).bind Obj.int? with
+  | some f => (f / 4) % 2 == 1
+  | none => false
+
+/-- The embedded program of a font descriptor, with what it is: `FontFile2`
+TrueType, `FontFile3` by its subtype, `FontFile` Type 1. -/
+private def programOf (d : Doc) (desc : Option Obj) : Program × Option Gfx.Loss × Option ByteArray :=
+  let file (k : String) : Option Obj := desc.bind fun ds =>
+    match ds with
+    | .dict es => (es.find? (·.1 == k)).map (·.2)
+    | _ => none
+  match file "FontFile2" with
+  | some f =>
+    match streamBytes d f with
+    | some b => (sfntProgram b, none, some b)
+    | none => (.missing, some (.font "unreadable"), none)
+  | none =>
+    match file "FontFile3" with
+    | some f =>
+      match streamBytes d f, (d.stream f).toOption.getD none with
+      | some b, some (dict, _) =>
+        match dict.get? "Subtype" with
+        | some (.name "OpenType") => (sfntProgram b, none, some b)
+        | _ =>
+          let src := Ink.Src.ofCff b
+          (.ink src ((src.cffMatrix 0).getD #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0]), none, none)
+      | _, _ => (.missing, some (.font "unreadable"), none)
+    | none =>
+      match file "FontFile" with
+      | some _ => (.missing, some (.font "type1"), none)
+      | none => (.missing, some (.font "nonembedded"), none)
+
+/-- A simple font's widths by code (§9.6.2.1): `Widths` from `FirstChar`,
+`MissingWidth` elsewhere. -/
+private def simpleWidths (d : Doc) (font : Obj) (desc : Option Obj) : Array Rat :=
+  let first := (((d.field font "FirstChar").toOption.getD none).bind Obj.int?).getD 0
+  let missing := ((desc.bind fun ds => (d.field ds "MissingWidth").toOption.getD none).bind num?).getD 0
+  let ws : Array Rat := match (d.field font "Widths").toOption.getD none with
+    | some (.arr xs) => xs.map fun x => ((d.deref x).toOption.bind num?).getD missing
+    | _ => #[]
+  (Array.range 256).map fun (c : Nat) =>
+    if (c : Int) ≥ first then (ws[c - first.toNat]?).getD missing else missing
+
+/-- A glyph name's glyph in a name-keyed CFF: the name itself, else —
+where the font calls the glyph by its character's code point instead — the
+`uniXXXX` or `uXXXX` spelling of the one scalar the name reads as (the
+glyph list's conventions), so `twosuperior` finds a glyph its font names
+`uni00B2`. -/
+public def cffNameGlyph (src : Ink.Src) (n : String) : Option Nat :=
+  (src.nameGlyph n).orElse fun _ =>
+    match (GlyphList.nameText n).map String.toList with
+    | some [ch] =>
+      let hex := String.ofList ((Nat.toDigits 16 ch.toNat).map Char.toUpper)
+      let hex4 := "".pushn '0' (4 - hex.length) ++ hex
+      (if ch.toNat < 0x10000 then src.nameGlyph ("uni" ++ hex4) else none).orElse fun _ =>
+        src.nameGlyph ("u" ++ hex4)
+    | _ => none
+
+/-- **A simple font read for drawing** (§9.6): each code's glyph, width
+and text. A code's glyph name is its `Differences` entry, else its
+`BaseEncoding`'s (Annex D); with neither, an embedded program's own
+encoding stands (§9.6.5.1), and a font with no program StandardEncoding
+unless it is symbolic. A TrueType program's glyph is found through the
+name's scalar in its Unicode cmap, or by code in its symbolic or Macintosh
+one (§9.6.5.4); a CFF program's through the name's string identifier in
+its charset, or its own encoding by code; a Type 3 font's procedure by the
+name. The text is `ToUnicode`'s, else the name's through the glyph list,
+else the base encoding's. -/
+public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
+  let subtype := match (d.field font "Subtype").toOption.getD none with
+    | some (.name n) => n
+    | _ => ""
+  let desc := (d.field font "FontDescriptor").toOption.getD none
+  let (base, diffs) := encodingOf d font
+  let isSym := symbolic d desc
+  let explicit (c : Nat) : Option String :=
+    match diffs.findRev? (·.1 == c) with
+    | some (_, n) => some n
+    | none => base.map (·.name c)
+  let uni : Std.HashMap Nat String := match entry d font "ToUnicode" with
+    | some o => match streamBytes d o with
+      | some b => toUnicode b
+      | none => {}
+    | none => {}
+  let widths := simpleWidths d font desc
+  -- A base encoding's code means its scalar (Annex D through Unicode's
+  -- mapping files); a name elsewhere means what the glyph list reads it as.
+  let textOf (named : Nat → Option String) (c : Nat) : String :=
+    match uni.get? c with
+    | some t => t
+    | none =>
+      let fromName (n : String) : Option String := if n.isEmpty then none else GlyphList.nameText n
+      let t : Option String := match diffs.findRev? (·.1 == c), base with
+        | some (_, n), _ => fromName n
+        | none, some e => (e.scalar? c).map String.singleton
+        | none, none => (named c).bind fromName
+      t.getD ""
+  if subtype == "Type3" then
+    let procs : Array (String × Obj) := match (d.field font "CharProcs").toOption.getD none with
+      | some (.dict es) => es
+      | _ => #[]
+    let matrix : Array Rat := match (d.field font "FontMatrix").toOption.getD none with
+      | some (.arr xs) =>
+        let ms := xs.filterMap fun x => (d.deref x).toOption.bind num?
+        if ms.size == 6 then ms else #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0]
+      | _ => #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0]
+    let res := (d.field font "Resources").toOption.getD none
+    let named (c : Nat) : Option String :=
+      (explicit c).orElse fun _ => if isSym then none else some (GlyphList.standardName c)
+    let glyphs := (Array.range 256).map fun c =>
+      (named c).bind fun n => if procs.any (·.1 == n) then some (GlyphRef.proc n) else none
+    return { program := .type3 procs matrix res, codes := .simple glyphs widths ((Array.range 256).map (textOf named))
+             losses := #[] }
+  let (program, loss, sfnt?) := programOf d desc
+  match program, sfnt? with
+  | .ink _ _, some b =>
+    let named (c : Nat) : Option String :=
+      (explicit c).orElse fun _ => if isSym then none else some (GlyphList.standardName c)
+    let scalarOf (c : Nat) : Option Char :=
+      match diffs.findRev? (·.1 == c) with
+      | some (_, n) => GlyphList.nameScalar n
+      | none =>
+        match base with
+        | some e => e.scalar? c
+        | none => if isSym then none else GlyphList.Base.standard.scalar? c
+    let uniRows := cmapSub b 3 1
+    let symRows := cmapSub b 3 0
+    let macRows := cmapSub b 1 0
+    let glyphs := (Array.range 256).map fun c =>
+      let byUnicode := (scalarOf c).bind fun ch => rowGlyph uniRows ch.toNat
+      let bySymbol := (rowGlyph symRows (0xF000 + c)).orElse fun _ => rowGlyph symRows c
+      let byMac := rowGlyph macRows c
+      let g := if isSym || (uniRows.isEmpty && !symRows.isEmpty) then
+          bySymbol.orElse fun _ => byMac.orElse fun _ => byUnicode
+        else byUnicode.orElse fun _ => bySymbol.orElse fun _ => byMac
+      g.map GlyphRef.gid
+    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named)), losses := loss.toArray }
+  | .ink src _, none =>
+    let glyph (c : Nat) : Option Nat :=
+      match explicit c with
+      | some n => if n.isEmpty then none else cffNameGlyph src n
+      | none => src.builtinGlyph c
+    let named (c : Nat) : Option String :=
+      (explicit c).orElse fun _ => (glyph c).bind src.glyphName
+    let glyphs := (Array.range 256).map fun c => (glyph c).map GlyphRef.gid
+    return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named)), losses := loss.toArray }
+  | _, _ =>
+    let named (c : Nat) : Option String :=
+      (explicit c).orElse fun _ => if isSym then none else some (GlyphList.standardName c)
+    return { program, codes := .simple (Array.replicate 256 none) widths ((Array.range 256).map (textOf named))
+             losses := loss.toArray }
+
+/-- A composite font's widths by CID (§9.7.4.3): the `W` array's two forms. -/
+private def cidWidths (d : Doc) (cidFont : Obj) : Std.HashMap Nat Rat := Id.run do
+  let mut m : Std.HashMap Nat Rat := {}
+  let xs := match (d.field cidFont "W").toOption.getD none with
+    | some (.arr xs) => xs
+    | _ => #[]
+  let mut i := 0
+  for _ in [0:xs.size + 1] do
+    if i ≥ xs.size then break
+    let first := ((xs[i]?).bind fun x => (d.deref x).toOption.bind Obj.int?).getD 0
+    match (xs[i + 1]?).bind fun x => (d.deref x).toOption with
+    | some (.arr ws) =>
+      for h : k in [0:ws.size] do
+        if let some w := num? ws[k] then m := m.insert (first.toNat + k) w
+      i := i + 2
+    | some o =>
+      let last := (o.int?).getD first
+      let w := ((xs[i + 2]?).bind fun x => (d.deref x).toOption.bind num?).getD 0
+      if first ≤ last && last - first < 65536 then
+        for k in [0:(last - first).toNat + 1] do m := m.insert (first.toNat + k) w
+      i := i + 3
+    | none => i := i + 1
+  return m
+
+/-- **A composite font read for drawing** (§9.7): its CMap — `Identity-H`,
+`Identity-V`, or an embedded one; a predefined CMap other than the two
+identities is named as a loss — its descendant CIDFont's program, CIDs to
+glyphs through `CIDToGIDMap` (TrueType) or the charset (CID-keyed CFF),
+its widths, and its text by code. -/
+public def loadComposite (d : Doc) (font : Obj) : Loaded := Id.run do
+  let desc0 := match (d.field font "DescendantFonts").toOption.getD none with
+    | some (.arr xs) => (xs[0]?).bind fun x => (d.deref x).toOption
+    | _ => none
+  let cidFont := desc0.getD .null
+  let desc := (d.field cidFont "FontDescriptor").toOption.getD none
+  let (program, loss, _) := programOf d desc
+  let identity : Array (Nat × Nat × Nat) := #[(2, 0, 0xFFFF)]
+  let (space, cids, vertical, cmapLoss) : Array (Nat × Nat × Nat) × Array (Nat × Nat × Nat) × Bool ×
+      Option Gfx.Loss :=
+    match entry d font "Encoding" with
+    | some (.name "Identity-H") => (identity, #[(0, 0xFFFF, 0)], false, none)
+    | some (.name "Identity-V") => (identity, #[(0, 0xFFFF, 0)], true, none)
+    | some (.name n) => (identity, #[(0, 0xFFFF, 0)], false, some (.font s!"cmap-{n}"))
+    | some o =>
+      match streamBytes d o with
+      | some b =>
+        let (sp, cs) := cmapRanges b
+        let vert := match (d.stream o).toOption.getD none with
+          | some (dict, _) => dict.get? "WMode" == some (.int 1)
+          | none => false
+        (if sp.isEmpty then identity else sp, cs, vert, none)
+      | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-unreadable"))
+    | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-missing"))
+  let gidOf : Option ByteArray := (entry d cidFont "CIDToGIDMap").bind fun o => match o with
+    | .name _ => none
+    | o => streamBytes d o
+  let isCff := match program with
+    | .ink src _ => src.isCidCff
+    | _ => false
+  let dw := (((d.field cidFont "DW").toOption.getD none).bind num?).getD 1000
+  let text : Std.HashMap Nat String := match entry d font "ToUnicode" with
+    | some o => match streamBytes d o with
+      | some b => toUnicode b
+      | none => {}
+    | none => {}
+  -- Vertical writing advances down the page (§9.7.4.3), which the reading
+  -- does not: its glyphs would stand side by side.
+  return { program, codes := .composite space cids gidOf isCff (cidWidths d cidFont) dw text vertical
+           losses := loss.toArray ++ cmapLoss.toArray ++ (if vertical then #[.font "vertical"] else #[]) }
+
+/-- A font dictionary read for drawing, by its subtype. -/
+public def load (d : Doc) (font : Obj) : Loaded :=
+  match (d.field font "Subtype").toOption.getD none with
+  | some (.name "Type0") => loadComposite d font
+  | _ => loadSimple d font
+
+/-! ## Reading a string -/
+
+/-- **A string's codes** (§9.4.3, §9.7.6.2): a simple font one byte per code;
+a composite font the shortest codespace range each next byte run matches
+(one byte when none does), each code to its CID, glyph, width and text. -/
+public def Loaded.codes? (f : Loaded) (s : ByteArray) : Array Code := Id.run do
+  match f.codes with
+  | .simple glyphs widths text =>
+    return s.foldl (fun acc b =>
+      let c := b.toNat
+      acc.push { code := c, bytes := 1, glyph := (glyphs[c]?).getD none
+                 width := (widths[c]?).getD 0, text := (text[c]?).getD "" }) #[]
+  | .composite space cids gidOf cff widths dw text _ =>
+    let mut out : Array Code := #[]
+    let mut i := 0
+    for _ in [0:s.size + 1] do
+      if i ≥ s.size then break
+      let mut len := 1
+      let mut found := false
+      for n in [1:5] do
+        if !found && i + n ≤ s.size then
+          let v := (s.extract i (i + n)).foldl (fun a x => a * 256 + x.toNat) 0
+          if space.any fun (bn, lo, hi) => bn == n && lo ≤ v && v ≤ hi then
+            len := n
+            found := true
+      let code := (s.extract i (i + len)).foldl (fun a x => a * 256 + x.toNat) 0
+      i := i + len
+      let cid := ((cids.find? fun (lo, hi, _) => lo ≤ code && code ≤ hi).map
+        fun (lo, _, c0) => c0 + (code - lo)).getD 0
+      let glyph : Option GlyphRef :=
+        match f.program with
+        | .ink src _ =>
+          if cff then (src.cidGlyph cid).map GlyphRef.gid
+          else match gidOf with
+            | some m => some (.gid ((m[2 * cid]?.getD 0).toNat * 256 + (m[2 * cid + 1]?.getD 0).toNat))
+            | none => some (.gid cid)
+        | _ => none
+      out := out.push { code, bytes := len, glyph, width := (widths.get? cid).getD dw
+                        text := (text.get? code).getD "" }
+    return out
+
+end LeanTex.Core.PdfFont

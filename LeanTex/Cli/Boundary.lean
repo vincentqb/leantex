@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Ir
+public import LeanTex.Core.Gfx
 public import LeanTex.Cli.PicCache
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.ImageAssets
@@ -493,5 +494,94 @@ public theorem markUnplanned_kept_exact (stopped : Array Image.Request) (s : Ima
     (markUnplanned stopped s).get? k = some en := by
   simp only [Image.Store.get?, markUnplanned, Array.getElem?_map] at h ⊢
   simp [h, markStopped, hkept]
+
+/-! ## A figure's web face: native first -/
+
+/-- What an importer answered for a figure: exact — every construct it met
+has the model's meaning, so the native drawing is the figure; lossy — the
+native drawing, with each construct it could not give that meaning named;
+refused — no drawing, and why. -/
+public inductive Verdict where
+  | exact
+  | lossy (losses : Array Gfx.Loss)
+  | refused (why : String)
+  deriving Repr
+
+/-- What the external converter did for a figure: not asked, drew it, or
+left it undrawn — missing, refused by the document, or failed. -/
+public inductive ToolState where
+  | notAsked
+  | drew
+  | failed (why : String)
+  deriving Repr
+
+/-- Whether the document refuses the converter for its figures. -/
+public inductive Refusal where
+  | none
+  | declared
+  deriving Repr, BEq
+
+/-- Where a figure's web face comes from: the model's drawing, exact; the
+converter's drawing; the model's lossy drawing with every loss named; or
+nothing, a placeholder. -/
+public inductive Route where
+  | native
+  | tool
+  | nativeWithLoss
+  | refused
+  deriving Repr, BEq, DecidableEq
+
+/-- Whether a verdict asks the converter at all, under the document's
+declaration: an exact import never does, and neither does a document that
+refused it. -/
+public def Verdict.asksTool (v : Verdict) (decl : Refusal) : Bool :=
+  match v, decl with
+  | .exact, _ => false
+  | _, .declared => false
+  | _, .none => true
+
+/-- **The one decision** a figure's web face is: native where the import is
+exact; the converter's drawing where the import named a loss and the
+converter drew; the lossy native drawing with its losses named where the
+converter was refused, missing or failed; a placeholder only where nothing
+drew at all. -/
+-- premise: figureRouteChecks — two builds differing only by tool presence:
+-- a lossless figure ships byte-identical faces and runs no tool; a lossy
+-- one names every loss subject in both builds.
+public def route (v : Verdict) (t : ToolState) (decl : Refusal) : Route :=
+  match v with
+  | .exact => .native
+  | .lossy _ =>
+    match decl, t with
+    | .none, .drew => .tool
+    | _, _ => .nativeWithLoss
+  | .refused _ =>
+    match decl, t with
+    | .none, .drew => .tool
+    | _, _ => .refused
+
+/-- **An exact import never reaches the converter** (`_exact`): its face is
+the native drawing whatever the converter and the document say, so a
+lossless figure ships the same face on a machine with no tool. -/
+public theorem route_exact (t : ToolState) (decl : Refusal) : route .exact t decl = .native := by
+  unfold route
+  rfl
+
+/-- **A drawn figure is never a placeholder** (`_exact`): a lossy import
+ships the converter's drawing or its own, never nothing. -/
+public theorem route_lossy_exact (ls : Array Gfx.Loss) (t : ToolState) (decl : Refusal) :
+    route (.lossy ls) t decl = .tool ∨ route (.lossy ls) t decl = .nativeWithLoss := by
+  unfold route
+  cases decl <;> cases t <;> simp
+
+/-- **A lossless import never asks the converter** (`_exact`), whatever the
+document declares. -/
+public theorem asksTool_lossless_exact (decl : Refusal) : Verdict.exact.asksTool decl = false := by
+  cases decl <;> rfl
+
+/-- **A refused converter is never run** (`_exact`): under the document's
+refusal no verdict asks it. -/
+public theorem asksTool_declared_exact (v : Verdict) : v.asksTool .declared = false := by
+  cases v <;> simp [Verdict.asksTool]
 
 end LeanTex.Cli.Boundary

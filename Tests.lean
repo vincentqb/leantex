@@ -126,6 +126,7 @@ import Tests.Census
 import Tests.GfxRegression
 import Tests.GfxMatrix
 import Tests.PdfFigures
+import Tests.PdfNative
 import Tests.GfxPaint
 import Tests.Backends
 import Tests.Images
@@ -347,6 +348,14 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   gfxStampChecks ref
   gfxKitChecks ref
   pdfFiguresChecks ref
+  pdfContentLexChecks ref
+  glyphListChecks ref
+  pdfFontChecks ref
+  pdfInterpreterChecks ref
+  figureRouteChecks ref
+  nativeFaceClosedChecks ref
+  pdfFixtureChecks ref
+  pngEncodeChecks ref
   outputContractChecks ref
   htmlAssetChecks ref
   htmlContainedPublicationChecks ref
@@ -373,6 +382,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
   layoutSourceChecks ref oneFace
+  pdfReadbackChecks ref oneFace
   diagnosticLayoutOriginChecks ref oneFace
   Tests.diagnosticLiteralOriginChecks ref oneFace
   Tests.diagnosticListingOriginChecks ref

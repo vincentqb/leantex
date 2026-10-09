@@ -605,6 +605,14 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
   | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf",
       DriverDiag.pageIconOmitted "favicon.svg" "xmllint did not finish"]
+  -- A PDF figure whose text is in a Type 1 program the importer does not
+  -- read: its web face is the engine's drawing without it where no
+  -- converter drew the figure (`figureRouteChecks`), the converter's where
+  -- one did.
+  | .W0608 => FigureLoss.diags (FigureLoss.pdfLostDiag "figures/plot.pdf")
+      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])
+  | .N0024 => FigureLoss.diags (FigureLoss.pdfConvertedDiag "figures/plot.pdf")
+      ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395

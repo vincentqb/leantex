@@ -82,6 +82,62 @@ def svgPublishedAsset (html : String) (_output : System.FilePath)
     throw <| IO.userError "expected an embedded SVG reference"
   return (href, data)
 
+/-- A one-file PDF of the given objects' bytes, numbered from 1, the first
+the catalog: a classic cross-reference table and trailer. -/
+def syntheticPdfBin (objects : Array ByteArray) (trailerExtra : String := "") : ByteArray := Id.run do
+  let mut out := "%PDF-1.7\n".toUTF8
+  let mut offsets : Array Nat := #[]
+  for (object, i) in objects.zipIdx do
+    offsets := offsets.push out.size
+    out := out ++ s!"{i + 1} 0 obj\n".toUTF8 ++ object ++ "\nendobj\n".toUTF8
+  let xref := out.size
+  out := out ++ s!"xref\n0 {objects.size + 1}\n0000000000 65535 f \n".toUTF8
+  for offset in offsets do
+    let digits := toString offset
+    out := out ++ ("".pushn '0' (10 - digits.length) ++ digits ++ " 00000 n \n").toUTF8
+  return out ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R {trailerExtra}>>\n\
+    startxref\n{xref}\n%%EOF\n".toUTF8
+
+/-- A one-file PDF of the given objects, numbered from 1, the first the
+catalog: a classic cross-reference table and trailer over invented bytes. -/
+def syntheticPdf (objects : Array String) (trailerExtra : String := "") : ByteArray :=
+  syntheticPdfBin (objects.map String.toUTF8) trailerExtra
+
+/-- A stream object over bytes, its dictionary's other entries `dict`. -/
+def streamObjBin (body : ByteArray) (dict : String := "") : ByteArray :=
+  s!"<< /Length {body.size} {dict}>>\nstream\n".toUTF8 ++ body ++ "\nendstream".toUTF8
+
+/-- A stream object's spelling. -/
+def streamObj (body : String) (dict : String := "") : String :=
+  s!"<< /Length {body.utf8ByteSize} {dict}>>\nstream\n{body}\nendstream"
+
+/-- A one-page figure PDF whose text is in an embedded Type 1 program: the
+importer draws its paths and names the font a loss. Invented content. -/
+def type1FigurePdf : ByteArray := syntheticPdf #[
+  "<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+    /Resources << /Font << /F1 5 0 R >> >> >>",
+  streamObj "0 0 1 rg 10 10 30 20 re f BT /F1 12 Tf 50 20 Td (x) Tj ET",
+  "<< /Type /Font /Subtype /Type1 /BaseFont /Placeholder /FirstChar 120 /LastChar 120 \
+    /Widths [500] /FontDescriptor 6 0 R >>",
+  "<< /Type /FontDescriptor /FontName /Placeholder /Flags 32 /FontFile 7 0 R >>",
+  streamObj "%!PS-AdobeFont-1.0: Placeholder" "/Length1 31 /Length2 0 /Length3 0 "]
+
+/-- `svgCanvasPdf`'s pages in a file whose trailer declares encryption: the
+PDF backend copies the page as it does any, and the figure importer refuses
+it, so its web face is the converter's or none. -/
+def encryptedCanvasPdf : ByteArray :=
+  let stream (ink : String) := s!"<< /Length {ink.utf8ByteSize} >>\nstream\n{ink}\nendstream"
+  syntheticPdf #[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 4 0 R >>",
+    stream "0 0 1 rg 0 0 120 80 re f",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 60 120] /Contents 6 0 R >>",
+    stream "1 0 0 rg 0 0 60 120 re f",
+    "<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>"] "/Encrypt 7 0 R "
+
 /-- A synthetic two-page sequence: a wide blue first frame and a tall red
 poster. No fonts or outside resources participate in its conversion. -/
 def svgCanvasPdf : ByteArray := Id.run do

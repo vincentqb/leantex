@@ -141,6 +141,19 @@ example : ByteArray → PdfRead.PageSelection → Except String Nat :=
 example : ByteArray → PdfRead.PageSelection → Except String { f : PdfRead.Form // f.wf } :=
   fun b page => PdfRead.readForm b page
 
+-- One read of a file, its object streams decoded once: the figure
+-- importer's door into the object graph.
+example : ByteArray → Except String PdfRead.Doc := PdfRead.Doc.ofBytes
+example : PdfRead.Doc → PdfRead.PageSelection → Except String (Nat × PdfRead.Page) :=
+  PdfRead.Doc.page
+example : PdfRead.Doc → PdfRead.Page → Except String ByteArray := PdfRead.Doc.content
+example : PdfRead.Doc → Nat → Except String (Obj × Option ByteArray) := PdfRead.Doc.get
+example : PdfRead.Doc → Obj → Except String Obj := PdfRead.Doc.deref
+example (d : PdfRead.Doc) (stm : Nat) : d.objStm stm = PdfRead.objStmOf d.bytes d.locs stm :=
+  PdfRead.Doc.memo_agree d stm
+example (d : PdfRead.Doc) (n : Nat) : d.valueAt n = PdfRead.valueAtOf d.bytes d.locs n :=
+  PdfRead.Doc.valueAt_agree d n
+
 example (f : PdfRead.Form) : f.w = f.x1 - f.x0 := rfl
 example (f : PdfRead.Form) : f.h = f.y1 - f.y0 := rfl
 example (e : PdfRead.Entry) : e.wf = (e.header == e.num) := rfl
@@ -304,7 +317,6 @@ example : True := by
   fail_if_success have := PdfRead.readStreamSection
   fail_if_success have := PdfRead.readXrefFrom
   fail_if_success have := PdfRead.ObjectScan
-  fail_if_success have := PdfRead.Page
   fail_if_success have := PdfRead.selectPage
   fail_if_success have := PdfRead.SerSt
   fail_if_success have := PdfRead.serObj

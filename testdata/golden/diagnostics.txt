@@ -251,6 +251,9 @@
 ℹ [N0030]
   '&' in a .bib field sets as the character; LaTeX reads it as an alignment tab outside a table and stops there
   suggestion: write it '\&' if the .bib must also build with LaTeX
+── N0024 (info) a figure's web face is drawn by an external converter, because the engine does not draw one of its features
+ℹ [N0024]
+  figure 'figures/plot.pdf' is drawn on the web page by pdftocairo, because the engine does not draw its type1 font
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
@@ -873,6 +876,10 @@
 ⚠ [W0605]
   favicon 'favicon.svg' could not be checked for the web page: xmllint did not finish; the page ships without it
   suggestion: install the tool the reason names, rebuild if it was interrupted, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon, which needs no tool
+── W0608 (degraded) a figure's web face is the engine's own drawing without one of its features; the rest of the figure is drawn
+⚠ [W0608]
+  figure 'figures/plot.pdf' is drawn on the web page without its type1 font, which the engine does not draw
+  suggestion: install poppler's pdftocairo to draw the figure whole, or accept the loss with \allow{W0608}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel

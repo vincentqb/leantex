@@ -57,121 +57,54 @@ inductive CTok where
   | op (name : String)
   deriving Repr, BEq, Inhabited
 
-private def ctWs (c : Nat) : Bool :=
-  c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
+/-- A string operand as the flat reading spells it: a hexadecimal string's
+digits, whitespace removed, or a literal string's bytes as characters. -/
+private def ctStr (raw : ByteArray) : CTok :=
+  if raw[0]? == some 60 then
+    .hex (String.ofList ((raw.extract 1 (raw.size - 1)).toList.filterMap fun b =>
+      if b == 0 || b == 9 || b == 10 || b == 12 || b == 13 || b == 32 then none else some (Char.ofNat b.toNat)))
+  else
+    .lit (String.ofList (((PdfContentLex.strBytes? (.str raw)).getD ByteArray.empty).toList.map
+      fun b => Char.ofNat b.toNat))
 
-private def ctDelim (c : Nat) : Bool :=
-  c == 40 || c == 41 || c == 60 || c == 62 || c == 91 || c == 93 ||
-    c == 123 || c == 125 || c == 47 || c == 37
+mutual
 
-private def ctAt (b : ByteArray) (i : Nat) : Nat :=
-  (b[i]?.map (·.toNat)).getD 256
+/-- An operand's flat tokens onto `acc`: an array or a dictionary as its
+delimiters around its contents, a keyword as the operator-shaped token it
+spells. -/
+private def ctOfObj (acc : Array CTok) : Obj → Array CTok
+  | .null => acc.push (.op "null")
+  | .bool b => acc.push (.op (if b then "true" else "false"))
+  | .int n => acc.push (.num ((Obj.int n).sp?.getD 0) (toString n))
+  | .real raw => acc.push (.num ((Obj.real raw).sp?.getD 0) raw)
+  | .str raw => acc.push (ctStr raw)
+  | .name n => acc.push (.name n)
+  | .arr xs => (ctOfList (acc.push .arrOpen) xs.toList).push .arrClose
+  | .dict es => (ctOfEntries (acc.push .dictOpen) es.toList).push .dictClose
+  | .ref n g =>
+    acc.push (.num ((Obj.int n).sp?.getD 0) (toString n)) |>.push (.num ((Obj.int g).sp?.getD 0) (toString g))
+      |>.push (.op "R")
 
-private def ctNumByte (c : Nat) : Bool :=
-  (48 ≤ c && c ≤ 57) || c == 43 || c == 45 || c == 46
+private def ctOfList (acc : Array CTok) : List Obj → Array CTok
+  | [] => acc
+  | o :: rest => ctOfList (ctOfObj acc o) rest
 
-/-- A content stream's tokens, in order. Index-bounded throughout: the
-outer loop's bound is the byte count and every step advances `i`, so the
-walk terminates by structure alone. Comments and whitespace are dropped;
-everything else becomes exactly one token, so an operator's operands are
-the tokens since the last operator. -/
-def scanContent (b : ByteArray) : Array CTok := Id.run do
-  let mut out : Array CTok := #[]
-  let mut i := 0
-  for _ in [0:b.size + 1] do
-    if b.size ≤ i then break
-    let c := ctAt b i
-    if ctWs c then
-      i := i + 1
-    else if c == 37 then
-      let mut j := i + 1
-      for _ in [0:b.size + 1] do
-        let d := ctAt b j
-        if d == 256 || d == 10 || d == 13 then break
-        j := j + 1
-      i := j
-    else if c == 47 then
-      let mut j := i + 1
-      let mut s := ""
-      for _ in [0:b.size + 1] do
-        let d := ctAt b j
-        if d == 256 || ctWs d || ctDelim d then break
-        s := s.push (Char.ofNat d)
-        j := j + 1
-      out := out.push (.name s)
-      i := j
-    else if c == 60 then
-      if ctAt b (i + 1) == 60 then
-        out := out.push .dictOpen
-        i := i + 2
-      else
-        let mut j := i + 1
-        let mut s := ""
-        for _ in [0:b.size + 1] do
-          let d := ctAt b j
-          if d == 256 || d == 62 then break
-          unless ctWs d do s := s.push (Char.ofNat d)
-          j := j + 1
-        out := out.push (.hex s)
-        i := j + 1
-    else if c == 62 then
-      if ctAt b (i + 1) == 62 then
-        out := out.push .dictClose
-        i := i + 2
-      else
-        i := i + 1
-    else if c == 91 then
-      out := out.push .arrOpen
-      i := i + 1
-    else if c == 93 then
-      out := out.push .arrClose
-      i := i + 1
-    else if c == 40 then
-      let mut j := i + 1
-      let mut depth := 1
-      let mut s := ""
-      for _ in [0:b.size + 1] do
-        let d := ctAt b j
-        if d == 256 then break
-        if d == 92 then
-          s := s.push (Char.ofNat (ctAt b (j + 1)))
-          j := j + 2
-        else if d == 40 then
-          depth := depth + 1
-          s := s.push '('
-          j := j + 1
-        else if d == 41 then
-          depth := depth - 1
-          j := j + 1
-          if depth == 0 then break
-          s := s.push ')'
-        else
-          s := s.push (Char.ofNat d)
-          j := j + 1
-      out := out.push (.lit s)
-      i := j
-    else if ctNumByte c then
-      let mut j := i
-      let mut s := ""
-      for _ in [0:b.size + 1] do
-        let d := ctAt b j
-        if ctNumByte d then
-          s := s.push (Char.ofNat d)
-          j := j + 1
-        else break
-      out := out.push (.num ((Obj.real s).sp?.getD 0) s)
-      i := j
-    else
-      let mut j := i
-      let mut s := ""
-      for _ in [0:b.size + 1] do
-        let d := ctAt b j
-        if d == 256 || ctWs d || ctDelim d then break
-        s := s.push (Char.ofNat d)
-        j := j + 1
-      out := out.push (.op s)
-      i := j
-  return out
+private def ctOfEntries (acc : Array CTok) : List (String × Obj) → Array CTok
+  | [] => acc
+  | (k, v) :: rest => ctOfEntries (ctOfObj (acc.push (.name k)) v) rest
+
+end
+
+/-- A content stream's tokens, in order, read through the engine's one
+content tokenizer (`PdfContentLex.scan`) — the figure importer's reading —
+and flattened: an operand's array or dictionary spelled as its delimiters
+around its contents, so an operator's operands are the tokens since the
+last operator. An inline image is its keywords around its dictionary. -/
+def scanContent (b : ByteArray) : Array CTok :=
+  (PdfContentLex.scan b).foldl (fun acc t => match t with
+    | .val o => ctOfObj acc o
+    | .op n => acc.push (.op n)
+    | .inline d _ => (ctOfEntries (acc.push (.op "BI")) d.toList).push (.op "ID") |>.push (.op "EI")) #[]
 
 private def artHexNibble (c : Char) : Option Nat :=
   if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)

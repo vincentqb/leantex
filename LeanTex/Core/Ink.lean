@@ -1,5 +1,7 @@
 module
 
+import LeanTex.Core.GlyphList
+
 namespace LeanTex.Core.Ink
 
 /-! Glyph ink in the underline band, from the font's own outlines.
@@ -481,13 +483,60 @@ private structure CffDict where
   subrs : Nat := 0
   cid : Bool := false
   cstype : Int := 2
+  charset : Nat := 0
+  encoding : Nat := 0
+  fdArray : Nat := 0
+  fdSelect : Nat := 0
+  matrix : Option (Array Rat) := none
 
-/-- The DICT operators this consumer needs; numbers it does not (reals) parse
-as zero, which only ever loses an offset and falls back. -/
+/-- A DICT real (Adobe Technical Note #5176 Table 5): nibbles of digits, a
+point, an exponent (`E`, `E-`), a sign, up to the `f` terminator. The value
+and the position after it. -/
+private def dictReal (b : ByteArray) (p e : Nat) : Rat × Nat := Id.run do
+  let mut q := p
+  let mut neg := false
+  let mut ip : Nat := 0
+  let mut fr : Nat := 0
+  let mut scale : Nat := 1
+  let mut afterPoint := false
+  let mut expo : Nat := 0
+  let mut expoNeg := false
+  let mut inExp := false
+  let mut fin := false
+  for _ in [0:e - p + 1] do
+    if fin || q ≥ e then
+      break
+    let v := u8 b q
+    q := q + 1
+    for nib in [v / 16, v % 16] do
+      if !fin then
+        if nib ≤ 9 then
+          if inExp then expo := expo * 10 + nib
+          else if afterPoint then
+            fr := fr * 10 + nib
+            scale := scale * 10
+          else ip := ip * 10 + nib
+        else if nib == 0xa then afterPoint := true
+        else if nib == 0xb then inExp := true
+        else if nib == 0xc then
+          inExp := true
+          expoNeg := true
+        else if nib == 0xe then neg := true
+        else if nib == 0xf then fin := true
+  let m : Rat := (ip : Rat) + mkRat fr scale
+  let p10 : Rat := ((10 ^ (min expo 64) : Nat) : Rat)
+  let v := if expoNeg then m / p10 else m * p10
+  return (if neg then -v else v, q)
+
+/-- The DICT operators this consumer needs (Technical Note #5176 Table 9,
+Table 10): the charstrings, the private dictionary and its subroutines,
+the charstring type, the font matrix, the charset and encoding, and the
+CID-keyed font's `ROS`, `FDArray` and `FDSelect`. -/
 private def parseDict (b : ByteArray) (s e : Nat) : CffDict := Id.run do
-  let mut ops : Array Int := #[]
+  let mut ops : Array Rat := #[]
   let mut d : CffDict := {}
   let mut p := s
+  let natOf (r : Rat) : Nat := r.floor.toNat
   for _ in [0:e - s] do
     if p ≥ e then
       break
@@ -508,76 +557,192 @@ private def parseDict (b : ByteArray) (s e : Nat) : CffDict := Id.run do
       ops := ops.push (i32 b (p + 1))
       p := p + 5
     else if b0 == 30 then
-      -- real number: skip nibbles to the 0xf terminator
-      p := p + 1
-      for _ in [0:e - p] do
-        let v := u8 b p
-        p := p + 1
-        if v % 16 == 15 || v / 16 == 15 then
-          break
-      ops := ops.push 0
+      let (v, q) := dictReal b (p + 1) e
+      ops := ops.push v
+      p := q
     else if b0 == 12 then
       let b1 := u8 b (p + 1)
       p := p + 2
       if b1 == 6 then
-        d := { d with cstype := ops.back?.getD 2 }
-      else if b1 == 36 || b1 == 37 then
+        d := { d with cstype := (ops.back?.getD 2).floor }
+      else if b1 == 7 then
+        if ops.size == 6 then d := { d with matrix := some ops }
+      else if b1 == 30 then
         d := { d with cid := true }
+      else if b1 == 36 then
+        d := { d with cid := true, fdArray := natOf (ops.back?.getD 0) }
+      else if b1 == 37 then
+        d := { d with cid := true, fdSelect := natOf (ops.back?.getD 0) }
       ops := #[]
     else
       p := p + 1
-      if b0 == 17 then
-        d := { d with charStrings := (ops.back?.getD 0).toNat }
+      if b0 == 15 then
+        d := { d with charset := natOf (ops.back?.getD 0) }
+      else if b0 == 16 then
+        d := { d with encoding := natOf (ops.back?.getD 0) }
+      else if b0 == 17 then
+        d := { d with charStrings := natOf (ops.back?.getD 0) }
       else if b0 == 18 then
         if ops.size ≥ 2 then
           d := { d with
-            privSize := (ops[ops.size - 2]?.getD 0).toNat
-            privOff := (ops.back?.getD 0).toNat }
+            privSize := natOf (ops[ops.size - 2]?.getD 0)
+            privOff := natOf (ops.back?.getD 0) }
       else if b0 == 19 then
-        d := { d with subrs := (ops.back?.getD 0).toNat }
+        d := { d with subrs := natOf (ops.back?.getD 0) }
       ops := #[]
   return d
 
-/-- Prepared CFF data carried by `Src.cffSrc`. Consumers may inspect the
-source kind; only the outline decoder reads its parsed table state. -/
+/-- The local subroutines a font dictionary's private dictionary names. -/
+private def localSubrs (b : ByteArray) (d : CffDict) : Array (Nat × Nat) :=
+  if d.privSize > 0 && d.privOff + d.privSize ≤ b.size then
+    let pd := parseDict b d.privOff (d.privOff + d.privSize)
+    if pd.subrs > 0 then
+      match parseIndex b (d.privOff + pd.subrs) with
+      | some (ls, _) => ls
+      | none => #[]
+    else #[]
+  else #[]
+
+/-- A charset (Technical Note #5176 §13): each glyph's string identifier —
+or, in a CID-keyed font, its CID — glyph 0 being `.notdef`. The three
+predefined charsets (offsets 0–2) are read as the identity, which is the
+ISOAdobe charset's own reading. -/
+private def parseCharset (b : ByteArray) (off n : Nat) : Array Nat := Id.run do
+  if off ≤ 2 then
+    return Array.range n
+  let fmt := u8 b off
+  let mut out : Array Nat := #[0]
+  let mut p := off + 1
+  if fmt == 0 then
+    for _ in [1:n] do
+      out := out.push (u16 b p)
+      p := p + 2
+  else if fmt == 1 || fmt == 2 then
+    for _ in [0:n] do
+      if out.size ≥ n || p ≥ b.size then
+        break
+      let first := u16 b p
+      let left := if fmt == 1 then u8 b (p + 2) else u16 b (p + 2)
+      p := p + (if fmt == 1 then 3 else 4)
+      for k in [0:left + 1] do
+        if out.size < n then
+          out := out.push (first + k)
+  return out
+
+/-- A name-keyed CFF's own encoding (Technical Note #5176 §12): each of
+the 256 codes' glyph — the predefined Standard and Expert encodings
+through their names' string identifiers and the charset; a custom one's
+codes (format 0) or ranges (format 1), in glyph order from glyph 1, and
+its supplements, each a code and the string identifier of its glyph. -/
+private def parseEncoding (b : ByteArray) (off : Nat) (charset : Array Nat) : Array (Option Nat) := Id.run do
+  let bySid (sid : Nat) : Option Nat := charset.findIdx? (· == sid)
+  if off == 0 then
+    return (Array.range 256).map fun c => (GlyphList.standardSid c).bind bySid
+  if off == 1 then
+    return (Array.range 256).map fun c =>
+      let n := GlyphList.expertName c
+      if n.isEmpty then none else (GlyphList.cffSid? n).bind bySid
+  let mut enc : Array (Option Nat) := Array.replicate 256 none
+  let fmt := u8 b off
+  let n := u8 b (off + 1)
+  let mut p := off + 2
+  if fmt % 128 == 0 then
+    for i in [0:n] do
+      let code := u8 b (p + i)
+      if i + 1 < charset.size then enc := enc.set! code (some (i + 1))
+    p := p + n
+  else if fmt % 128 == 1 then
+    let mut gid := 1
+    for _ in [0:n] do
+      let first := u8 b p
+      let left := u8 b (p + 1)
+      p := p + 2
+      for k in [0:left + 1] do
+        if gid < charset.size && first + k < 256 then enc := enc.set! (first + k) (some gid)
+        gid := gid + 1
+  else
+    return enc
+  if fmt ≥ 128 then
+    let nSups := u8 b p
+    for i in [0:nSups] do
+      let q := p + 1 + 3 * i
+      enc := enc.set! (u8 b q) (bySid (u16 b (q + 1)))
+  return enc
+
+/-- An FDSelect (Technical Note #5176 §19): each glyph's font dictionary,
+formats 0 and 3. -/
+private def parseFdSelect (b : ByteArray) (off n : Nat) : Array Nat := Id.run do
+  let fmt := u8 b off
+  if fmt == 0 then
+    return (Array.range n).map fun g => u8 b (off + 1 + g)
+  if fmt != 3 then
+    return #[]
+  let nRanges := u16 b (off + 1)
+  let mut out : Array Nat := #[]
+  for r in [0:nRanges] do
+    let first := u16 b (off + 3 + 3 * r)
+    let fd := u8 b (off + 5 + 3 * r)
+    let next := u16 b (off + 6 + 3 * r)
+    for g in [first:next] do
+      if out.size == g && g < n then
+        out := out.push fd
+  return out
+
+/-- Prepared CFF data carried by `Src.cffSrc`: the charstrings and their
+subroutines, each glyph's charset entry, and — in a CID-keyed font — each
+glyph's font dictionary and its own local subroutines and matrix.
+Consumers may inspect the source kind; only the outline decoder reads its
+parsed table state. -/
 public structure Cff where
   private charStrings : Array (Nat × Nat)
   private gsubrs : Array (Nat × Nat)
   private lsubrs : Array (Nat × Nat)
+  private fdOf : Array Nat
+  private fdSubrs : Array (Array (Nat × Nat))
+  private fdMatrix : Array (Option (Array Rat))
+  private charset : Array Nat
+  private strings : Array (Nat × Nat)
+  /-- A name-keyed font's own encoding: each code's glyph. -/
+  private builtin : Array (Option Nat)
+  /-- Whether the font is CID-keyed (its Top DICT has `ROS`). -/
+  cid : Bool
+  /-- The Top DICT's font matrix: glyph space to text space. -/
+  matrix : Array Rat
 
-/-- The pieces of a non-CID CFF table the interpreter needs. `none` for a
-CID-keyed font or anything malformed: every glyph then falls back. -/
+/-- The CFF data at the start of `b` — a bare CFF, as a PDF's `FontFile3`
+carries it (`Type1C`, `CIDFontType0C`), or an OpenType font's `CFF `
+table — name-keyed or CID-keyed. `none` for a charstring type other than 2
+or anything malformed: every glyph then falls back. -/
 private def parseCff (b : ByteArray) : Option Cff := do
-  let t ← findTable b "CFF "
-  guard (fits b t)
-  let base := t.offset
-  let hdrSize := u8 b (base + 2)
-  let (_, p1) ← parseIndex b (base + hdrSize)
+  let hdrSize := u8 b 2
+  let (_, p1) ← parseIndex b hdrSize
   let (tops, p2) ← parseIndex b p1
-  let (_, p3) ← parseIndex b p2
+  let (strings, p3) ← parseIndex b p2
   let (gsubrs, _) ← parseIndex b p3
   let (ts, te) ← tops[0]?
   let d := parseDict b ts te
-  guard (!d.cid && d.cstype == 2)
-  let (cs, _) ← parseIndex b (base + d.charStrings)
-  let lsubrs :=
-    if d.privSize > 0 && base + d.privOff + d.privSize ≤ b.size then
-      let pd := parseDict b (base + d.privOff) (base + d.privOff + d.privSize)
-      if pd.subrs > 0 then
-        match parseIndex b (base + d.privOff + pd.subrs) with
-        | some (ls, _) => ls
-        | none => #[]
-      else #[]
-    else #[]
-  return { charStrings := cs, gsubrs := gsubrs, lsubrs := lsubrs }
+  guard (d.cstype == 2)
+  let (cs, _) ← parseIndex b d.charStrings
+  let n := cs.size
+  let matrix := d.matrix.getD #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0]
+  if d.cid then
+    let (fds, _) ← parseIndex b d.fdArray
+    let fdDicts := fds.map fun (s, e) => parseDict b s e
+    return { charStrings := cs, gsubrs, lsubrs := #[], fdOf := parseFdSelect b d.fdSelect n
+             fdSubrs := fdDicts.map (localSubrs b), fdMatrix := fdDicts.map (·.matrix)
+             charset := parseCharset b d.charset n, strings, builtin := #[], cid := true, matrix }
+  let charset := parseCharset b d.charset n
+  return { charStrings := cs, gsubrs, lsubrs := localSubrs b d, fdOf := #[], fdSubrs := #[]
+           fdMatrix := #[], charset, strings, builtin := parseEncoding b d.encoding charset
+           cid := false, matrix }
 
 /-- Run one Type 2 charstring into an outline. Explicit subroutine frames
 and a step budget keep it total on arbitrary bytes; `none` marks a
 charstring the interpreter does not cover (seac composition, arithmetic
 operators) or that never terminates within the budget, which the caller
 treats conservatively. -/
-private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
-    Option Outline := Id.run do
+private def runCharstring (b : ByteArray) (gsubrs lsubrs : Array (Nat × Nat)) (cs : Nat × Nat) :
+    Option (Outline × Option (Int × Int × Nat × Nat)) := Id.run do
   let biasOf (n : Nat) : Int :=
     if n < 1240 then 107 else if n < 33900 then 1131 else 32768
   let mut stk : Array Int := #[]
@@ -591,6 +756,7 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
   let mut lim := cs.2
   let mut bad := false
   let mut done := false
+  let mut seac : Option (Int × Int × Nat × Nat) := none
   for _ in [0:65536] do
     if bad || done then
       break
@@ -745,7 +911,7 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
         stk := #[]
         pc := pc + 1
       else if b0 == 10 || b0 == 29 then
-        let subs := if b0 == 10 then c.lsubrs else c.gsubrs
+        let subs := if b0 == 10 then lsubrs else gsubrs
         let idx := (stk.back?.getD 0) + biasOf subs.size
         stk := stk.pop
         if frames.size ≥ 24 || idx < 0 then
@@ -765,11 +931,17 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
           lim := rl
         | none => done := true
       else if b0 == 14 then
+        -- With four arguments (after an optional width), endchar is
+        -- Type 1's `seac`: a base and an accent glyph by StandardEncoding
+        -- code, the accent's origin at (adx, ady) (Technical Note #5177
+        -- Appendix C). The caller composes them.
         if n ≥ 4 then
-          -- seac accent composition: not decoded
-          bad := true
-        else
-          done := true
+          let bc := arg (n - 2)
+          let ac := arg (n - 1)
+          if 0 ≤ bc && 0 ≤ ac then
+            seac := some (arg (n - 4), arg (n - 3), bc.toNat, ac.toNat)
+          else bad := true
+        done := true
       else if b0 == 12 then
         let b1 := u8 b (pc + 1)
         if b1 == 35 && n ≥ 13 then
@@ -845,7 +1017,41 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
         bad := true
   if bad || !done then
     return none
-  return some ⟨cmds, minY⟩
+  return some (⟨cmds, minY⟩, seac)
+
+/-- The glyph that a StandardEncoding code names in a name-keyed font: the
+charset entry holding the code's standard string. -/
+private def Cff.stdGlyph (c : Cff) (code : Nat) : Option Nat := do
+  let sid ← GlyphList.standardSid code
+  c.charset.findIdx? (· == sid)
+
+/-- An outline moved by `(dx, dy)`. -/
+private def shiftCmds (dx dy : Int) : Cmd → Cmd
+  | .move x y => .move (x + dx) (y + dy)
+  | .line x y => .line (x + dx) (y + dy)
+  | .quad cx cy x y => .quad (cx + dx) (cy + dy) (x + dx) (y + dy)
+  | .cube a b c d x y => .cube (a + dx) (b + dy) (c + dx) (d + dy) (x + dx) (y + dy)
+
+/-- Glyph `g`'s outline: its charstring run with the local subroutines of
+its font dictionary (the private dictionary's in a name-keyed font), and a
+`seac` composed of its base and accent glyphs — each of which must decode
+on its own, with no `seac` of its own. -/
+private def Cff.outline (b : ByteArray) (c : Cff) (g : Nat) : Option Outline := do
+  let cs ← c.charStrings[g]?
+  let ls := if c.cid then ((c.fdOf[g]?).bind (c.fdSubrs[·]?)).getD #[] else c.lsubrs
+  let (o, seac) ← runCharstring b c.gsubrs ls cs
+  match seac with
+  | none => some o
+  | some (adx, ady, bc, ac) =>
+    let bg ← c.stdGlyph bc
+    let ag ← c.stdGlyph ac
+    let bcs ← c.charStrings[bg]?
+    let acs ← c.charStrings[ag]?
+    let (bo, s1) ← runCharstring b c.gsubrs c.lsubrs bcs
+    let (ao, s2) ← runCharstring b c.gsubrs c.lsubrs acs
+    guard (s1.isNone && s2.isNone)
+    some { cmds := o.cmds ++ bo.cmds ++ ao.cmds.map (shiftCmds adx ady)
+           minY := min o.minY (min bo.minY (ao.minY + ady)) }
 
 /-- The prepared outline source of one font, tables resolved once so
 per-glyph decoding is pay-as-you-go. `.opaque`: outlines that cannot be
@@ -860,10 +1066,24 @@ public inductive Src where
 
 public instance : Inhabited Src := ⟨.opaque⟩
 
+/-- An OpenType font's `CFF ` table, its bytes alone: offsets inside a CFF
+are relative to its own start. -/
+public def cffTable (b : ByteArray) : Option ByteArray := do
+  let t ← findTable b "CFF "
+  guard (fits b t)
+  return b.extract t.offset (t.offset + t.length)
+
+/-- The outline source of a bare CFF: a PDF's `FontFile3` of subtype
+`Type1C` or `CIDFontType0C`, name-keyed or CID-keyed. -/
+public def Src.ofCff (b : ByteArray) : Src :=
+  match parseCff b with
+  | some c => .cffSrc b c
+  | none => .opaque
+
 public def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
   if isCff then
-    match parseCff b with
-    | some c => .cffSrc b c
+    match cffTable b with
+    | some t => Src.ofCff t
     | none => .opaque
   else
     match findTable b "head", findTable b "loca", findTable b "glyf" with
@@ -914,8 +1134,7 @@ public def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
   match s with
   | .opaque => none
   | .cffSrc b c => do
-    let cs ← c.charStrings[g]?
-    let o ← runCharstring b c cs
+    let o ← c.outline b g
     some o.bounds
   | .glyfSrc b glyf loca long numGlyphs =>
     let o1 := if long then u32 b (loca.offset + 4 * g)
@@ -944,8 +1163,7 @@ public def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
   match s with
   | .opaque => none
   | .cffSrc b c => do
-    let cs ← c.charStrings[g]?
-    let o ← runCharstring b c cs
+    let o ← c.outline b g
     some o.cmds
   | .glyfSrc b glyf loca long numGlyphs =>
     if g ≥ numGlyphs then none
@@ -959,12 +1177,9 @@ public def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
   match s with
   | .opaque => none
   | .cffSrc b c =>
-    match c.charStrings[g]? with
+    match c.outline b g with
     | none => none
-    | some cs =>
-      match runCharstring b c cs with
-      | none => none
-      | some o => some (bandIntervals o bandLo bandHi)
+    | some o => some (bandIntervals o bandLo bandHi)
   | .glyfSrc b glyf loca long numGlyphs =>
     let o1 := if long then u32 b (loca.offset + 4 * g)
       else 2 * u16 b (loca.offset + 2 * g)
@@ -987,5 +1202,84 @@ public def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
       match glyfOutline b glyf loca long numGlyphs g with
       | none => none
       | some o => some (bandIntervals o bandLo bandHi)
+
+/-! ## What a PDF's font reading asks of a CFF -/
+
+/-- Whether a source is a CID-keyed CFF. -/
+public def Src.isCidCff : Src → Bool
+  | .cffSrc _ c => c.cid
+  | .glyfSrc .. => false
+  | .opaque => false
+
+/-- How many glyphs a CFF holds; 0 for any other source. -/
+public def Src.cffGlyphCount : Src → Nat
+  | .cffSrc _ c => c.charStrings.size
+  | .glyfSrc .. => 0
+  | .opaque => 0
+
+/-- The glyph a CID names in a CID-keyed CFF: the charset entry holding it
+(Technical Note #5176 §13). -/
+public def Src.cidGlyph (s : Src) (cid : Nat) : Option Nat :=
+  match s with
+  | .cffSrc _ c => if c.cid then c.charset.findIdx? (· == cid) else none
+  | .glyfSrc .. => none
+  | .opaque => none
+
+/-- Two font matrices composed, PDF's row-vector order: glyph space through
+`inner`, then `outer`. -/
+private def composeMatrix (inner outer : Array Rat) : Array Rat :=
+  let g (m : Array Rat) (i : Nat) : Rat := m[i]?.getD 0
+  #[g inner 0 * g outer 0 + g inner 1 * g outer 2, g inner 0 * g outer 1 + g inner 1 * g outer 3,
+    g inner 2 * g outer 0 + g inner 3 * g outer 2, g inner 2 * g outer 1 + g inner 3 * g outer 3,
+    g inner 4 * g outer 0 + g inner 5 * g outer 2 + g outer 4,
+    g inner 4 * g outer 1 + g inner 5 * g outer 3 + g outer 5]
+
+/-- A CFF glyph's font matrix, glyph space to text space: the Top DICT's,
+and in a CID-keyed font its font dictionary's composed under it. -/
+public def Src.cffMatrix (s : Src) (g : Nat) : Option (Array Rat) :=
+  match s with
+  | .cffSrc _ c =>
+    if c.cid then
+      match (c.fdOf[g]?).bind (c.fdMatrix[·]?) with
+      | some (some fd) => some (composeMatrix fd c.matrix)
+      | _ => some c.matrix
+    else some c.matrix
+  | .glyfSrc .. => none
+  | .opaque => none
+
+/-- The glyph a name names in a name-keyed CFF: the charset entry holding
+its string identifier — a standard string's (0–390, Technical Note #5176
+Appendix A), or a custom one's (391 on, from the String INDEX). -/
+public def Src.nameGlyph (s : Src) (name : String) : Option Nat :=
+  match s with
+  | .cffSrc b c =>
+    if c.cid then none else
+    let bytes := name.toUTF8
+    let sid := (GlyphList.cffSid? name).orElse fun _ =>
+      (c.strings.findIdx? fun (st, en) => b.extract st en == bytes).map (391 + ·)
+    sid.bind fun sid => c.charset.findIdx? (· == sid)
+  | .glyfSrc .. => none
+  | .opaque => none
+
+/-- The glyph a code selects through a name-keyed CFF's own encoding. -/
+public def Src.builtinGlyph (s : Src) (code : Nat) : Option Nat :=
+  match s with
+  | .cffSrc _ c => if c.cid then none else (c.builtin[code]?).getD none
+  | .glyfSrc .. => none
+  | .opaque => none
+
+/-- A glyph's name in a name-keyed CFF: the standard or custom string its
+charset entry names. -/
+public def Src.glyphName (s : Src) (g : Nat) : Option String :=
+  match s with
+  | .cffSrc b c =>
+    if c.cid then none else do
+    let sid ← c.charset[g]?
+    if sid < 391 then GlyphList.cffString? sid
+    else
+      let (st, en) ← c.strings[sid - 391]?
+      String.fromUTF8? (b.extract st en)
+  | .glyfSrc .. => none
+  | .opaque => none
 
 end LeanTex.Core.Ink

@@ -1,0 +1,37 @@
+Fixtures of the pdf-native tier (scripts/pdf-native.lean) and of
+Tests/PdfNative.lean: invented figures, each made by a tool the figure
+importer meets in practice. Content, text and design are invented; the
+only faces are the repository's shipped ones (testdata/corpus/fonts, with
+their licences).
+
+cairo-chart.pdf
+  rsvg-convert 2.63.2 (cairo 1.18.4, pango 1.58.2, fontconfig 2.18.3) on
+  cairo-chart.svg, beside it, with fontconfig confined to the shipped faces
+  (a fonts.conf whose one <dir> is testdata/corpus/fonts):
+    FONTCONFIG_FILE=<that fonts.conf> rsvg-convert --format=pdf -o cairo-chart.pdf cairo-chart.svg
+  TrueType text (Open Sans), a gradient under an opacity (cairo's soft
+  mask), a clip, dashes, an opacity group.
+
+lualatex-shade.pdf
+  LuaHBTeX 1.24.0 (TeX Live 2026) on lualatex-shade.tex, beside it: the
+  standalone the engine wraps the boundary picture of
+  testdata/corpus/diagram-boundary.tex in, as the driver hands it to
+  lualatex. A pgf axial shading.
+
+lualatex-text.pdf
+  LuaHBTeX 1.24.0 (TeX Live 2026) on lualatex-text.tex, beside it, with the
+  shipped Source Serif Pro and Fira Math copied into ./fonts:
+    lualatex -interaction=batchmode -halt-on-error lualatex-text.tex
+  CID-keyed CFF text and math.
+
+leantex-strokes.pdf
+  The engine's own writer: leantex testdata/corpus/diagram-strokes.tex,
+  on the branch that added this file. OpenType CFF text and TikZ ink.
+
+matplotlib-dialect.pdf
+  Written by hand in matplotlib's dialect: scripts/pdf-native.lean
+  --fixtures writes it from `PdfNative.matplotlibDialect`, and the tier's
+  selftest holds the committed bytes to it.
+
+SHA256SUMS pins every PDF above; sha256sum -c SHA256SUMS checks them from
+this directory.

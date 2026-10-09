@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture: an invented chart, drawn by cairo through rsvg-convert. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">
+  <defs>
+    <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4060c0"/>
+      <stop offset="1" stop-color="#c0e0ff"/>
+    </linearGradient>
+    <clipPath id="plot">
+      <rect x="40" y="20" width="260" height="140"/>
+    </clipPath>
+  </defs>
+  <rect x="0" y="0" width="320" height="200" fill="#ffffff"/>
+  <rect x="40" y="20" width="260" height="140" fill="#f4f4f4" stroke="#999999" stroke-width="0.8"/>
+  <g stroke="#dddddd" stroke-width="0.5" stroke-dasharray="3 2">
+    <path d="M40 55 H300 M40 90 H300 M40 125 H300"/>
+    <path d="M105 20 V160 M170 20 V160 M235 20 V160"/>
+  </g>
+  <g clip-path="url(#plot)">
+    <path d="M40 150 C 90 140, 120 60, 170 70 S 250 30, 310 10 L 310 160 L 40 160 Z"
+          fill="url(#band)" fill-opacity="0.6"/>
+    <polyline points="40,140 90,120 140,125 190,80 240,60 290,40"
+              fill="none" stroke="#c03030" stroke-width="2.5" stroke-linejoin="round"
+              stroke-linecap="round"/>
+  </g>
+  <g opacity="0.7">
+    <circle cx="90" cy="120" r="5" fill="#c03030"/>
+    <circle cx="190" cy="80" r="5" fill="#c03030"/>
+    <circle cx="290" cy="40" r="5" fill="#c03030"/>
+  </g>
+  <path d="M60 175 l 10 -8 l 10 8 z" fill="#208040" stroke="#104020" stroke-width="1" stroke-linejoin="miter"/>
+  <text x="85" y="178" font-family="Open Sans" font-size="11" fill="#222222">Placeholder series</text>
+  <text x="40" y="14" font-family="Open Sans" font-size="12" font-weight="bold" fill="#111111">An invented chart</text>
+</svg>

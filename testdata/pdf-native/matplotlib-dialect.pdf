@@ -1,0 +1,84 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> /ExtGState << /A1 << /Type /ExtGState /CA 0.8 /ca 0.8 >> /A2 << /Type /ExtGState /CA 1 /ca 1 >> >> /XObject << /M0 6 0 R /I1 7 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 357 >>
+stream
+1 g 0 0 200 120 re f
+q 20 20 160 80 re W n
+/A1 gs 0.12 0.47 0.71 RG 0.12 0.47 0.71 rg 1.5 w 1 J 1 j
+20 30 m 60 70 l 100 50 l 140 90 l 180 60 l S
+q 1 0 0 1 60 70 cm /M0 Do Q
+q 1 0 0 1 100 50 cm /M0 Do Q
+q 1 0 0 1 140 90 cm /M0 Do Q
+Q
+/A2 gs [3 2] 0 d 0 0 0 RG 0.5 w 20 20 m 180 20 l S
+q 16 0 0 16 160 96 cm /I1 Do Q
+0 0 0 rg BT /F1 10 Tf 30 104 Td (ab) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [0 0 600 700] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 8 0 R /b 9 0 R >> /Encoding << /Type /Encoding /Differences [97 /a /b] >> /FirstChar 97 /LastChar 98 /Widths [600 600] /ToUnicode 10 0 R >>
+endobj
+6 0 obj
+<< /Length 100 /Type /XObject /Subtype /Form /BBox [-4 -4 4 4] >>
+stream
+0 -3 m 1.66 -3 3 -1.66 3 0 c 3 1.66 1.66 3 0 3 c -1.66 3 -3 1.66 -3 0 c -3 -1.66 -1.66 -3 0 -3 c h B
+endstream
+endobj
+7 0 obj
+<< /Length 97 /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /SMask 11 0 R >>
+stream
+c030303060c0c030303060c03060c0c030303060c0c03030c030303060c0c030303060c03060c0c030303060c0c03030>
+endstream
+endobj
+8 0 obj
+<< /Length 50 >>
+stream
+600 0 0 0 600 700 d1 100 0 m 500 0 l 300 700 l h f
+endstream
+endobj
+9 0 obj
+<< /Length 60 >>
+stream
+600 0 0 0 600 700 d1 100 0 m 500 0 l 500 700 l 100 700 l h f
+endstream
+endobj
+10 0 obj
+<< /Length 200 >>
+stream
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Placeholder-UCS def 1 begincodespacerange <00> <ff> endcodespacerange 1 beginbfrange <61> <62> <0061> endbfrange endcmap end end
+endstream
+endobj
+11 0 obj
+<< /Length 33 /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode >>
+stream
+00406080406080ff6080ffff80ffffff>
+endstream
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000375 00000 n 
+0000000783 00000 n 
+0000001044 00000 n 
+0000001243 00000 n 
+0000001521 00000 n 
+0000001621 00000 n 
+0000001731 00000 n 
+0000001983 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+2185
+%%EOF

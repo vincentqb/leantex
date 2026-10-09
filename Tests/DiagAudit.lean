@@ -15,6 +15,7 @@ import Tests.TableSide
 import Tests.PdfBounds
 import Tests.InputDecoding
 import Tests.BibModel
+import Tests.PdfNative
 import scripts.Rung
 
 /-!
@@ -178,6 +179,10 @@ def registry : List AuditRow :=
    -- line or the lazy line the reader consumed, and its check holds all
    -- three strict classes and their fix-its.
    ⟨.E0390, .refusal, .fails, check% mdSurfaceChecks⟩,
+   -- A PDF figure's feature the importer does not draw: drawing it natively
+   -- retires both, the route that names it is the boundary's one decision.
+   ⟨.W0608, .native, .native, check% figureRouteChecks⟩,
+   ⟨.N0024, .native, .native, check% figureRouteChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,

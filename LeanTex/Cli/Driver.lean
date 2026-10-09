@@ -43,6 +43,7 @@ import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.BrowserFaces
+import LeanTex.Cli.PdfFaces
 import LeanTex.Cli.ListingHighlight
 import LeanTex.Cli.PublicationPaths
 import LeanTex.Cli.Publication
@@ -450,29 +451,53 @@ poster as the browser face. No generated script or inline XML is needed. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
   return { entries := ← BrowserFaces.prepareAll imgs.entries }
 
+/-- `imageBrowserFaces`, with the diagnostics each face's route owes and the
+faces the engine drew itself (`PdfFaces.face`). -/
+def imageBrowserFacesNative (imgs : Image.Store) :
+    IO (Image.Store × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
+  let (entries, diags, natives, tally) ← BrowserFaces.prepareAllFaces imgs.entries
+  return ({ entries }, diags, natives, tally)
+
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
-/-- Convert the captured boundary PDF to captured browser SVG, checked as
-publication checks it (`Boundary.htmlFace`). A conversion that failed, or a
-check that did not finish, retains the existing named fallback — W0378 at the
-picture's span, and the rendered subset's drawing where it draws the picture
-in part; no output path is consulted. -/
-def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
+/-- Boundary pictures' browser faces, native first (`PdfFaces.face`): a
+picture whose import names no loss is drawn by the engine with no converter
+run; one whose import names a loss goes to the converter — its PDF converted
+to SVG and checked as publication checks it (`Boundary.htmlFace`) — and
+where the converter does not draw it the engine's lossy drawing ships with
+each loss named. A picture nothing drew retains the existing named fallback
+— W0378 at the picture's span, and the rendered subset's drawing where it
+draws the picture in part; no output path is consulted. Also returns the
+faces the engine drew itself, and how each face was decided. -/
+def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
     (imageSpans : Array (String × Span) := #[]) :
-    IO (Image.Store × Array Diag × Array String) := do
+    IO (Image.Store × Array Diag × Array String × Array ByteArray × PdfFaces.Tally) := do
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
   let mut unconverted : Array String := #[]
+  let mut natives : Array ByteArray := #[]
+  let mut tally : PdfFaces.Tally := {}
   for r in pics do
-    match ← Boundary.htmlFace r.bytes with
+    let f ← PdfFaces.face r.src r.bytes .first (Boundary.htmlFace r.bytes)
+    tally := tally.add f.route
+    diags := diags ++ f.diags.map (DriverDiag.atImageRequest imageSpans r.src)
+    match f.bytes with
     | .ok bytes =>
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
+      if f.native then natives := natives.push bytes
     | .error why =>
       diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src why))
       unconverted := unconverted.push r.src
-  return (Boundary.markFaceless { entries }, diags, unconverted)
+  return (Boundary.markFaceless { entries }, diags, unconverted, natives, tally)
+
+/-- `picsToSvgNative`'s store, diagnostics and unconverted pictures. -/
+def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
+    (imageSpans : Array (String × Span) := #[]) :
+    IO (Image.Store × Array Diag × Array String) := do
+  let (store, diags, unconverted, _, _) ← picsToSvgNative pics imgs imageSpans
+  return (store, diags, unconverted)
 
 /-- **Elaborate, against whatever face the caller has.** Everything from the
 elaborator on is a function of the prepared source and one measurement
@@ -841,10 +866,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
-        let (imgs, svgDiags, unconverted) ← picsToSvg pics imgs reqSpans.images
-        let imgs ← imageBrowserFaces imgs
+        let tf ← IO.monoMsNow
+        let (imgs, svgDiags, unconverted, picNatives, picTally) ← picsToSvgNative pics imgs reqSpans.images
+        let (imgs, faceDiags, faceNatives, faceTally) ← imageBrowserFacesNative imgs
+        let tally := picTally.merge faceTally
+        if tally.native + tally.lossy + tally.tool + tally.refused > 0 then
+          ui.phase "faces" tally.words (← since tf)
+        let faceDiags := faceDiags.map fun (src, d) => DriverDiag.atImageRequest reqSpans.images src d
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
-          (svgDiags.map front.prepared.sourceTriggers.attribute))
+          ((svgDiags ++ faceDiags).map front.prepared.sourceTriggers.attribute))
         let htmlOnly := Boundary.htmlWithdraw reqSpans.fallbacks unconverted
         let htmlDoc ← if htmlOnly.isEmpty then pure doc else do
           let t ← IO.monoMsNow
@@ -882,7 +912,7 @@ in the HTML" (← since t)
             (fit.step, fit.overhang > 0)
         }
         let htmlDoc := { htmlDoc with body := Ir.squeezeFrames htmlDoc.body squeezed }
-        let (result, hdiags) ← prepareHtml file hcfg htmlDoc
+        let (result, hdiags) ← prepareHtml file hcfg htmlDoc (picNatives ++ faceNatives)
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
           (hdiags.map front.prepared.sourceTriggers.attribute))
         match result with

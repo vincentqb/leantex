@@ -98,6 +98,14 @@ public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.GfxContract
 public import LeanTex.Core.PdfFigures
 public import LeanTex.Core.PdfCopiedForm
+public import LeanTex.Core.GlyphListData
+public import LeanTex.Core.GlyphList
+public import LeanTex.Core.PdfContentLex
+public import LeanTex.Core.PdfFilters
+public import LeanTex.Core.PngEncode
+public import LeanTex.Core.PdfFont
+public import LeanTex.Core.PdfGfx
+public import LeanTex.Core.FigureLoss
 public import LeanTex.Cli.Args
 public import LeanTex.Cli.Render
 public import LeanTex.Cli.DriverDiag
@@ -111,3 +119,4 @@ public import LeanTex.Cli.World
 public import LeanTex.Cli.Host
 public import LeanTex.Cli.ToolProbe
 public import LeanTex.Cli.ConvCache
+public import LeanTex.Cli.PdfFaces

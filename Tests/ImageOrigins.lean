@@ -69,7 +69,9 @@ exit 19\n"
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x",
       (tools / "lualatex").toString, (tools / "pdftocairo").toString] }
     unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the image origins tools"
-    IO.FS.writeBinFile (dir / "boundary.pdf") svgCanvasPdf
+    -- An encrypted boundary result: the PDF embeds it, the figure importer
+    -- refuses it, and the failing converter leaves its web face to W0378.
+    IO.FS.writeBinFile (dir / "boundary.pdf") encryptedCanvasPdf
     IO.FS.writeFile (dir / "invalid.png") "not an image"
     IO.FS.writeBinFile (dir / "metadata.jpg")
       (jpegOf (iccApp2 1 1 [1, 2, 3] ++ exifApp1 6 true) 2 1 3)
