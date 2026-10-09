@@ -1112,10 +1112,11 @@ def reports : List Report := [
       "in the web deck a figure inside a list item stands within three points of its reference typesetting, where it stood eight low"]
     state := .guarded "445f6518" .revert .author },
   { id := "R123", date := "2026-10-08"
-    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences and lost their blank lines, list items lost their code blocks, adjacent lists merged, and a link in code-set text lost its link"
+    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences and lost their blank lines, list items lost their code blocks, adjacent lists merged, a link in code-set text lost its link, a pipe in a table cell's code split the cell, and a hard break in a heading split it from its text"
     pins := [thm% Elab.elabBlocks_input_exact, thm% Elab.markdownInput_blocks_exact,
       thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_contract,
-      thm% MarkdownDoc.escapeLineStart_contract,
+      thm% MarkdownDoc.escapeLineStart_contract, thm% MarkdownDoc.rowLine_cells_exact,
+      thm% MarkdownDoc.headingText_contract, thm% MarkdownDoc.titleLine_contract,
       check% Tests.MarkdownDoors.markdownDoorChecks,
       check% Tests.MarkdownTwin.markdownTwinChecks,
       .tier "mdtwin" "corpus.reread-clean", .tier "mdtwin" "cm.Lists.reread-exact"]
@@ -1124,7 +1125,9 @@ def reports : List Report := [
       "the theorems pinned here did not exist on the base tree, where the agreement between the surfaces and what an include means was prose",
       "the door checks are a measurement, not a guard seen failing: the elaborator they measure is the base tree's, unchanged here, and each fails on a planted divergent door; under one surface at a time, over a synthetic family reaching every markdown node to depth two and over every CommonMark example, the neutral host's whole document is the file alone under the host's surface, and a frame whose content is the include is the frame with the file's raws in its place, with the call written tight and on a line of its own",
       "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call",
-      "two rows added in the third review round fail on the second round's twin: an item whose paragraph and nested list sit in a resolved step wrote a blank line between them, which a CommonMark reader reads as a loose list, and an item opening with a block that writes nothing wrote an empty item before its text"]
+      "two rows added in the third review round fail on the second round's twin: an item whose paragraph and nested list sit in a resolved step wrote a blank line between them, which a CommonMark reader reads as a loose list, and an item opening with a block that writes nothing wrote an empty item before its text",
+      "rows added in the fourth review round fail fourteen ways on the third round's twin: a table row split at a pipe in code, a destination or a formula, a cell's hard break ended its row, and a heading's or frame title's hard break split it from its text; the fifth round's rows fail eight ways on the fourth's: the metadata title and summary written raw, a bare link the driver's document carries in a source location written as a link, a heading's hash before trailing space read as its closing sequence, a titled block's spaced title not bold, and a footnote's hard break ending the footnote",
+      "the twin's table rows read under an external GFM table reader as GFM's row grammar reads them, on every corpus twin that writes one"]
     state := .guarded "fa516a82" .before .author }
 ]
 

@@ -12,9 +12,10 @@ and desugaring. Past the door the elaborator reads raws, never the surface
 that wrote them; what a document's surface may still decide is its own
 defaults — how its content sets, never what is set. The door is this
 file's definition, and the hook holds the CLI to it: a CLI source reads a
-surface only through `read` and `fragment`, and a core source lexes and
-parses tex text only inside a declared reader (`surfaceDoorBypasses` and
-`coreTexReaders` in `scripts/precommit.lean`). The six declared readers
+surface only through `read`, `fragment` and the tex door's two stages
+`texLex` and `texParse`, which compose to `read` (`read_tex_exact`), and a
+core source lexes and parses tex text only inside a declared reader
+(`surfaceDoorBypasses` and `coreTexReaders` in `scripts/precommit.lean`). The six declared readers
 each read text the engine itself holds rather than a file: the elaborator's
 whole-document entry (`Elab.run`, which tests elaborate a string with), a
 style declaration's value (`Elab.applyStyle`), a setting's tex value

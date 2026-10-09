@@ -697,10 +697,11 @@ private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body
   exact bodyIsBlockList_of_mem body.toList r (Array.mem_toList_iff.mpr hr)
     (bodyIsBlockOne_of_blockStart r hs)
 
-/-- A nonempty markdown file meets the splice domain wherever no macro
-expansion is open and the include has a source position: block-shaped by
-`Md.desugar_blockStart_contract`, and closed by no length-restore marker by
-`Md.desugar_vocabulary_mem` and `markdownVocabulary_contract`. -/
+/-- A markdown file whose desugaring is not empty meets the splice domain
+wherever no macro expansion is open and the include has a source position:
+block-shaped by `Md.desugar_blockStart_contract`, and closed by no
+length-restore marker by `Md.desugar_vocabulary_mem` and
+`markdownVocabulary_contract`. -/
 private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Surface.read .markdown f t).1 ≠ #[]) :
@@ -718,10 +719,10 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
 /-- Markdown at any block accumulator — a frame's content as a document
-body: a nonempty markdown file read through its door and included where it
-stands as the accumulator's whole content, blank source around the call
-allowed, gives exactly the blocks and state it gives alone there, under its
-own name, up to the host's display marking. -/
+body: a markdown file with a nonempty desugaring, read through its door and
+included where it stands as the accumulator's whole content, blank source
+around the call allowed, gives exactly the blocks and state it gives alone
+there, under its own name, up to the host's display marking. -/
 private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -734,13 +735,14 @@ private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post :
   elabBlockScope_input_exact ctx f _ pre post pos st (markdownInput_splice ctx f t pos hm hp hne)
     hpre hpost
 
-/-- **Markdown included in tex is markdown.** A nonempty markdown file read
-through its door and included where it stands as the block sequence, blank
-source around the call allowed, gives exactly the blocks and state it gives
-alone, under its own name, up to the host's display marking. What remains
-assumed is the shape of the call, never the file's content beyond its having
-some: no macro expansion open, a source position, and a desugaring that is
-not empty. -/
+/-- **Markdown included in tex is markdown.** A markdown file read through
+its door and included where it stands as the block sequence, blank source
+around the call allowed, gives exactly the blocks and state it gives alone,
+under its own name, up to the host's display marking. What remains assumed
+is the shape of the call, never the file's content beyond its desugaring
+not being empty — a file of text has one; a file holding only what desugars
+to nothing, a thematic break or blank lines, does not: no macro expansion
+open, a source position, and a nonempty desugaring. -/
 public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
