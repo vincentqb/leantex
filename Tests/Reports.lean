@@ -1058,7 +1058,7 @@ def reports : List Report := [
     pins := [check% Tests.BlockGeometry.blockGeometryChecks,
       thm% HtmlDoc.blockGap_owner_contract]
     accept := ["consecutive painted blocks stood one paragraph skip apart, or touched where the page declared none, against the reference's 10 points; they now stand the template's small and medium skips and line skip apart, and a paragraph after a block spends its own skip",
-      "on a presentation deck consecutive blocks stand the reference engine's 10 points apart wherever the frame has room; where the reference overfills a frame it shrinks those skips, to 6.8 points on one, which the engine does not",
+      "on a presentation deck consecutive blocks stand the reference engine's 10 points apart wherever the frame has room, and where a frame overfills both engines shrink those skips",
       "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box",
       "review of the first fix: the space around a block held the kernel's values whatever the document set the two skip registers to, and a block after a paused step lost its space above in the browser; three distances the reference engine measures and four sheet values fail on the first fix, and both artifacts now spend the registers in force, the browser's step carrier owning the boundary its block meets"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
