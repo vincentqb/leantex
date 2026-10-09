@@ -20,12 +20,16 @@ the lines every backend shows (`verbatimLines`), blank lines included; a
 container's prefix stands on every line of its blocks; a link's destination
 reads back as it stands, a link whose text is its plain destination is an
 autolink, and a link in code-set text keeps its destination and its face.
-Where markdown has no spelling for what the IR
-holds — a formula, a footnote, an overlay, a table the reader does not read
-yet — the twin writes the nearest one, and the difference is a loss, not a
-spelling. The round trip is measured, never assumed: the `mdtwin` tier
-counts the CommonMark examples and corpus documents whose twin re-reads to
-the same IR, and `Tests/MarkdownTwin.lean` pins each spelling class.
+A heading and a pipe table's cell each stand on one line
+(`headingText_contract`, `cellText_contract`), and a row reads as exactly
+its cells under GFM's row grammar (`rowLine_cells_exact`), every pipe a
+cell holds escaped. Where markdown has no spelling for what the IR holds —
+a formula, a footnote, an overlay, a table the reader does not read yet, a
+hard break inside a heading or a cell, which is written as a space — the
+twin writes the nearest one, and the difference is a loss, not a spelling.
+The round trip is measured, never assumed: the `mdtwin` tier counts the
+CommonMark examples and corpus documents whose twin re-reads to the same IR,
+and `Tests/MarkdownTwin.lean` pins each spelling class.
 
 **External premise — the reader hop.** What a twin means to the world is
 what a CommonMark reader makes of it; this module claims that a CommonMark
@@ -37,24 +41,27 @@ links, images, autolinks, block quotes, hard breaks, backslash escapes —
 and the direct check, `scripts/commonmark.lean --reader-hop`, which reads
 every corpus document's twin and every accepted CommonMark example's twin
 with an external CommonMark reader and with the door, at the classifier's
-comparison. It needs the tool, so it is a report and never a gate. -/
+comparison, and every twin's pipe tables with an external GFM table reader
+against the rows `gfmRow` reads. It needs the tool, so it is a report and
+never a gate. -/
 
 namespace LeanTex.Core.MarkdownDoc
 
 open LeanTex.Core LeanTex.Core.Ir
 
 /-- Escape the characters that would read as markup anywhere in a line:
-CommonMark's inline punctuation, the pipe table's cell separator, and `<`
-and `&`, so the twin never writes raw HTML (§6.6) or reads a character
-reference (§2.5) into its text — each is a valid backslash escape (§2.4:
-any ASCII punctuation). A line ending inside text is the one character it
-spells as a numeric reference, since it has no other spelling.
-What opens a block only at a line's start is the line's business
-(`escapeLineStart`). -/
-private def escapeText (s : String) : String :=
+CommonMark's inline punctuation, the pipe table's cell separator where
+`pipes` says the line is not a cell (a cell escapes every pipe it holds
+itself, `rowLine`), and `<` and `&`, so the twin never writes raw HTML
+(§6.6) or reads a character reference (§2.5) into its text — each is a
+valid backslash escape (§2.4: any ASCII punctuation). A line ending inside
+text is the one character it spells as a numeric reference, since it has no
+other spelling. What opens a block only at a line's start is the line's
+business (`escapeLineStart`). -/
+private def escapeText (pipes : Bool) (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
-        || c == '|' || c == '<' || c == '&' then
+        || (pipes && c == '|') || c == '<' || c == '&' then
       (acc.push '\\').push c
     -- a line ending inside text has no other spelling: a newline would end
     -- the line, and a paragraph's text cannot hold one
@@ -186,6 +193,231 @@ public theorem escapeLineStart_contract (s : String) : opensBlock (escapeLineSta
   · simp only [Bool.not_eq_true] at ho
     simp [ho, String.toList_ofList]
 
+/-! ### A pipe table's row
+
+GFM's pipe table (§4.10) reads a row as cells split at each `|`, where a
+`\|` pair — whatever stands before it — is the cell's own `|`, unescaped
+before the cell's inline content is read, a code span's and a link
+destination's included; each cell is then trimmed of the white space around
+it. `gfmRow` is that reading, for a row written between a leading and a
+trailing pipe: the shape the twin writes. The twin writes every pipe a cell
+holds escaped (`rowLine`), so the row reads as exactly its cells
+(`rowLine_cells_exact`), and a cell's text holds no line ending
+(`cellText_contract`), so the row is one line (`rowLine_contract`). -/
+
+/-- Every `|` escaped as `\|`. -/
+@[expose] public def escapePipes : List Char → List Char
+  | [] => []
+  | c :: rest => if c == '|' then '\\' :: '|' :: escapePipes rest else c :: escapePipes rest
+
+/-- A row read from inside a cell: the cell's text, then the cells after it.
+`held` says the last character read was a backslash not yet written, which
+a `|` makes the cell's own pipe, and anything else writes as it is. -/
+@[expose] public def gfmSplit : Bool → List Char → List Char × List (List Char)
+  | false, [] => ([], [])
+  | true, [] => (['\\'], [])
+  | false, c :: rest =>
+    if c == '|' then
+      let r := gfmSplit false rest
+      ([], r.1 :: r.2)
+    else if c == '\\' then gfmSplit true rest
+    else
+      let r := gfmSplit false rest
+      (c :: r.1, r.2)
+  | true, c :: rest =>
+    if c == '|' then
+      let r := gfmSplit false rest
+      ('|' :: r.1, r.2)
+    else if c == '\\' then
+      let r := gfmSplit true rest
+      ('\\' :: r.1, r.2)
+    else
+      let r := gfmSplit false rest
+      ('\\' :: c :: r.1, r.2)
+
+/-- The white space GFM trims around a cell: space, tab, line endings,
+vertical tab and form feed. -/
+@[expose] public def gfmSpace (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0B' || c == '\x0C'
+
+/-- A cell's text without the white space around it. -/
+@[expose] public def gfmTrim (cs : List Char) : List Char :=
+  ((cs.dropWhile gfmSpace).reverse.dropWhile gfmSpace).reverse
+
+/-- A row written between a leading and a trailing pipe, as GFM reads it:
+the cells between the two, each trimmed. -/
+@[expose] public def gfmRow (line : String) : List String :=
+  let r := gfmSplit false line.toList
+  ((r.1 :: r.2).drop 1).dropLast.map fun c => String.ofList (gfmTrim c)
+
+/-- A row's cells after its leading pipe: each between a space on either
+side, its pipes escaped, and closed by a pipe. -/
+@[expose] public def rowCells : List String → List Char
+  | [] => []
+  | c :: cs => ' ' :: escapePipes c.toList ++ ' ' :: '|' :: rowCells cs
+
+/-- A pipe table row, `| a | b |`. -/
+@[expose] public def rowLine (cells : List String) : String :=
+  String.ofList ('|' :: rowCells cells)
+
+/-- A held backslash before anything but a pipe is written as it is. -/
+private theorem gfmSplit_held (l : List Char) (h : l.head? ≠ some '|') :
+    gfmSplit true l = ('\\' :: (gfmSplit false l).1, (gfmSplit false l).2) := by
+  cases l with
+  | nil => rfl
+  | cons c rest =>
+    have hc : (c == '|') = false := by
+      simpa using h
+    by_cases hb : c = '\\'
+    · subst hb
+      simp [gfmSplit]
+    · have hb' : (c == '\\') = false := by simpa using hb
+      simp [gfmSplit, hc, hb']
+
+/-- Escaping keeps a row's next character off a pipe. -/
+private theorem escapePipes_head (c rest : List Char) (h : rest.head? ≠ some '|') :
+    (escapePipes c ++ rest).head? ≠ some '|' := by
+  cases c with
+  | nil => simpa only [escapePipes, List.nil_append] using h
+  | cons x c' =>
+    by_cases hx : x = '|'
+    · subst hx
+      simp [escapePipes]
+    · have hx' : (x == '|') = false := by simpa using hx
+      simp [escapePipes, hx', hx]
+
+/-- An escaped cell's text reads back as the text, and the row goes on. -/
+private theorem gfmSplit_escapePipes (c rest : List Char) (h : rest.head? ≠ some '|') :
+    gfmSplit false (escapePipes c ++ rest) =
+      (c ++ (gfmSplit false rest).1, (gfmSplit false rest).2) := by
+  induction c with
+  | nil => rfl
+  | cons x c' ih =>
+    by_cases hx : x = '|'
+    · subst hx
+      simp only [escapePipes, beq_self_eq_true, ↓reduceIte, List.cons_append]
+      simp [gfmSplit, ih]
+    · have hx' : (x == '|') = false := by simpa using hx
+      by_cases hb : x = '\\'
+      · subst hb
+        simp only [escapePipes, hx', Bool.false_eq_true, ↓reduceIte, List.cons_append]
+        simp only [gfmSplit, hx', Bool.false_eq_true, ↓reduceIte, beq_self_eq_true]
+        rw [gfmSplit_held _ (escapePipes_head c' rest h), ih]
+      · have hb' : (x == '\\') = false := by simpa using hb
+        simp only [escapePipes, hx', Bool.false_eq_true, ↓reduceIte, List.cons_append]
+        simp [gfmSplit, hx', hb', ih]
+
+/-- The cells after a row's leading pipe, each between its two spaces, and
+the empty text after the closing pipe. -/
+private theorem gfmSplit_rowCells (cells : List String) :
+    (gfmSplit false (rowCells cells)).1 :: (gfmSplit false (rowCells cells)).2 =
+      cells.map (fun c => ' ' :: c.toList ++ [' ']) ++ [[]] := by
+  induction cells with
+  | nil => rfl
+  | cons c cs ih =>
+    simp only [rowCells, List.cons_append]
+    have hsp : gfmSplit false (' ' :: (escapePipes c.toList ++ ' ' :: '|' :: rowCells cs)) =
+        (' ' :: (gfmSplit false (escapePipes c.toList ++ ' ' :: '|' :: rowCells cs)).1,
+          (gfmSplit false (escapePipes c.toList ++ ' ' :: '|' :: rowCells cs)).2) := by
+      simp [gfmSplit]
+    rw [hsp, gfmSplit_escapePipes _ _ (by simp)]
+    simp [gfmSplit, ih]
+
+/-- The two spaces the twin sets around a cell are trimmed with the cell's
+own. -/
+private theorem gfmTrim_pad (cs : List Char) : gfmTrim (' ' :: (cs ++ [' '])) = gfmTrim cs := by
+  unfold gfmTrim
+  have hs : gfmSpace ' ' = true := rfl
+  rw [List.dropWhile_cons_of_pos hs, List.dropWhile_append]
+  split
+  · next hd =>
+    rw [List.isEmpty_iff] at hd
+    simp [hd, hs]
+  · simp [hs]
+
+/-- **A row the twin writes reads as exactly its cells.** Under GFM's row
+reading (`gfmRow`), the row `rowLine` writes splits into one cell per cell
+written — no pipe a cell holds, in its text, a code span or a destination,
+opens a cell — and each reads as the cell's own text, trimmed as GFM trims
+every cell. -/
+public theorem rowLine_cells_exact (cells : List String) :
+    gfmRow (rowLine cells) = cells.map fun c => String.ofList (gfmTrim c.toList) := by
+  have hsplit : gfmSplit false (rowLine cells).toList =
+      ([], (gfmSplit false (rowCells cells)).1 :: (gfmSplit false (rowCells cells)).2) := by
+    simp [rowLine, gfmSplit]
+  simp only [gfmRow, hsplit, List.drop_succ_cons, List.drop_zero, gfmSplit_rowCells,
+    List.dropLast_concat, List.map_map]
+  apply List.map_congr_left
+  intro c _
+  simp only [Function.comp_apply, List.cons_append, gfmTrim_pad]
+
+/-- Escaping a cell's pipes writes only its characters and backslashes. -/
+private theorem escapePipes_mem (l : List Char) :
+    ∀ x ∈ escapePipes l, x = '\\' ∨ x ∈ l := by
+  induction l with
+  | nil => simp [escapePipes]
+  | cons y l' ih =>
+    intro x hx
+    by_cases hy : y = '|'
+    · subst hy
+      simp only [escapePipes, beq_self_eq_true, ↓reduceIte, List.mem_cons] at hx
+      rcases hx with rfl | rfl | hx
+      · exact Or.inl rfl
+      · exact Or.inr List.mem_cons_self
+      · rcases ih x hx with h | h
+        · exact Or.inl h
+        · exact Or.inr (List.mem_cons_of_mem _ h)
+    · have hy' : (y == '|') = false := by simpa using hy
+      simp only [escapePipes, hy', Bool.false_eq_true, ↓reduceIte, List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · exact Or.inr List.mem_cons_self
+      · rcases ih x hx with h | h
+        · exact Or.inl h
+        · exact Or.inr (List.mem_cons_of_mem _ h)
+
+/-- **A row writes only its cells' characters**, besides its pipes, the
+backslashes escaping a cell's pipes and the spaces around each cell. -/
+public theorem rowLine_mem (cells : List String) :
+    ∀ x ∈ (rowLine cells).toList,
+      x = '|' ∨ x = '\\' ∨ x = ' ' ∨ ∃ c ∈ cells, x ∈ c.toList := by
+  have hrow : ∀ (cs : List String), ∀ x ∈ rowCells cs,
+      x = '|' ∨ x = '\\' ∨ x = ' ' ∨ ∃ c ∈ cs, x ∈ c.toList := by
+    intro cs
+    induction cs with
+    | nil => simp [rowCells]
+    | cons c cs ih =>
+      intro x hx
+      simp only [rowCells, List.cons_append, List.mem_cons, List.mem_append] at hx
+      rcases hx with rfl | hx | rfl | rfl | hx
+      · exact Or.inr (Or.inr (Or.inl rfl))
+      · rcases escapePipes_mem _ x hx with h | h
+        · exact Or.inr (Or.inl h)
+        · exact Or.inr (Or.inr (Or.inr ⟨c, List.mem_cons_self, h⟩))
+      · exact Or.inr (Or.inr (Or.inl rfl))
+      · exact Or.inl rfl
+      · rcases ih x hx with h | h | h | ⟨c', hc', h⟩
+        · exact Or.inl h
+        · exact Or.inr (Or.inl h)
+        · exact Or.inr (Or.inr (Or.inl h))
+        · exact Or.inr (Or.inr (Or.inr ⟨c', List.mem_cons_of_mem _ hc', h⟩))
+  intro x hx
+  simp only [rowLine, String.toList_ofList, List.mem_cons] at hx
+  rcases hx with rfl | hx
+  · exact Or.inl rfl
+  · exact hrow cells x hx
+
+/-- **A row of one-line cells is one line**: it holds no line ending its
+cells do not hold. -/
+public theorem rowLine_contract (cells : List String)
+    (h : ∀ c ∈ cells, ∀ x ∈ c.toList, x ≠ '\n' ∧ x ≠ '\r') :
+    ∀ x ∈ (rowLine cells).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+  intro x hx
+  rcases rowLine_mem cells x hx with rfl | rfl | rfl | ⟨c, hc, hxc⟩
+  · decide
+  · decide
+  · decide
+  · exact h c hc x hxc
+
 /-- The longest run of `c` in `s`. -/
 private def longestRun (c : Char) (s : String) : Nat :=
   (s.foldl (fun (best, cur) x => if x == c then (max best (cur + 1), cur + 1) else (best, 0))
@@ -270,15 +502,26 @@ private def styleMark : Style → Option String
   | .emph => some "*"
   | _ => none
 
+/-- Where inline content is written. A paragraph's lines (`flow`) hold a
+hard break as a backslash ending its line. A heading (`line`) and a pipe
+table's cell (`cell`) are one line each: a hard break has no spelling there
+and is written as a space, the break a loss, and a cell writes its text's
+pipes bare, since its row escapes every pipe the cell holds (`rowLine`). -/
+private inductive Site where
+  | flow
+  | line
+  | cell
+  deriving BEq
+
 mutual
 
 /-- Inline content onto `acc`. Meaning survives, decoration degrades: bold,
 italic, and code have markdown spellings; colour, small caps, and underline
 have none and render as their text. The accumulator threads through the
 sibling walk, as everywhere (`#[x] ++ rest` copies). -/
-private def inlineInto (acc : String) : Inline → String
+private def inlineInto (site : Site) (acc : String) : Inline → String
   | .text s =>
-    let escaped := escapeText s
+    let escaped := escapeText (site != .cell) s
     acc ++ escaped
   | .math display src =>
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
@@ -289,48 +532,48 @@ private def inlineInto (acc : String) : Inline → String
   -- the alt text rides as markdown's own image construct; the size
   -- request degrades like colour
   | .image src _ alt =>
-    let shown := escapeText alt.text
+    let shown := escapeText (site != .cell) alt.text
     let dest := linkDest src
     acc ++ "![" ++ shown ++ "](" ++ dest ++ ")"
   -- an icon's markdown spelling is its text alternative: prose keeps the
   -- meaning, the glyph is a web/print rendering
   | .icon _ label =>
     -- bound first: the append is one-off, not a walk (the cost gate's shape)
-    let escaped := escapeText label
+    let escaped := escapeText (site != .cell) label
     acc ++ escaped
   -- an anchor has no prose; a reference is worth what it resolved to
   | .label _ => acc
   | .ref _ _ text _ =>
-    let escaped := escapeText text
+    let escaped := escapeText (site != .cell) text
     acc ++ escaped
   | .styled st body =>
     match st with
     -- a code span's content is not unescaped: its text, as it is
     | .mono => monoInto acc #[] body.toList
     | _ =>
-      let inner := inlinesInto "" none body.toList
+      let inner := inlinesInto site "" none body.toList
       match styleMark st with
       | some m =>
         let (lead, core, trail) := spaceSplit inner
         if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
       | none => acc ++ inner
-  | .colored _ _ body => inlinesInto acc none body.toList
-  | .located _ body => inlinesInto acc none body.toList
+  | .colored _ _ body => inlinesInto site acc none body.toList
+  | .located _ body => inlinesInto site acc none body.toList
   -- the role's class is a web styling hook; prose keeps the words
-  | .role _ body => inlinesInto acc none body.toList
+  | .role _ body => inlinesInto site acc none body.toList
   | .link url body =>
     -- A link whose text is its plain destination is an autolink
     -- (`bareLink`); anything else writes its text and a destination that
     -- reads back exactly.
     if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
-      let inner := inlinesInto "" none body.toList
+      let inner := inlinesInto site "" none body.toList
       let dest := linkDest url
       acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
-  | .decorated _ body => inlinesInto acc none body.toList
-  | .onSteps _ body => inlinesInto acc none body.toList
+  | .decorated _ body => inlinesInto site acc none body.toList
+  | .onSteps _ body => inlinesInto site acc none body.toList
   | .altSteps _ active otherwise =>
-    inlinesInto (inlinesInto acc none active.toList) none otherwise.toList
+    inlinesInto site (inlinesInto site acc none active.toList) none otherwise.toList
   -- `\hfill` separates a label from what it pushes to the far margin; text
   -- has no margin, so the separation renders as a spaced em dash. The space
   -- the author typed before it folds in rather than doubling.
@@ -365,7 +608,9 @@ private def inlineInto (acc : String) : Inline → String
   -- The mark, CommonMark-extension footnote syntax: the body lands once,
   -- as the `[^k]: ...` definition after the document (`noteDefs`).
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
-  | .linebreak _ => acc ++ "\\\n"
+  | .linebreak _ =>
+    if site == .flow then acc ++ "\\\n"
+    else if acc.endsWith " " then acc else acc ++ " "
 
 /-- The sibling walk. Adjacent runs written with one delimiter are written
 as one run — `**a****b**` reads back as neither two runs nor one — so a run
@@ -373,34 +618,103 @@ that follows a run of its own delimiter reopens it: the closing delimiter
 written last comes off, and this run's opening one is not written. `prev`
 is the delimiter the text written so far ends on, if it ends on a closing
 one; a run's own spaces stand outside its delimiters (`spaceSplit`). -/
-private def inlinesInto (acc : String) (prev : Option String := none) : List Inline → String
+private def inlinesInto (site : Site) (acc : String) (prev : Option String := none) :
+    List Inline → String
   | [] => acc
   | .styled st body :: rest =>
     match styleMark st with
     | some m =>
-      let (lead, core, trail) := spaceSplit (inlinesInto "" none body.toList)
+      let (lead, core, trail) := spaceSplit (inlinesInto site "" none body.toList)
       let ends := if trail.isEmpty then some m else none
       if core.isEmpty then
-        inlinesInto (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none) rest
+        inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none) rest
       else if prev == some m then
-        inlinesInto ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends rest
-      else inlinesInto (acc ++ lead ++ m ++ core ++ m ++ trail) ends rest
-    | none => inlinesInto (inlineInto acc (.styled st body)) none rest
+        inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends rest
+      else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends rest
+    | none => inlinesInto site (inlineInto site acc (.styled st body)) none rest
   | x :: rest =>
     -- an inline that writes nothing (an italic correction, a label) leaves
     -- the run it follows open to the next
-    let next := inlineInto acc x
-    inlinesInto next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) rest
+    let next := inlineInto site acc x
+    inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) rest
 
 end
 
-/-- The markdown spelling of inline content: what a heading or a cell sets.
-Public because the placement theorems below quote it — the emitted title
-line is `# ` followed by exactly this. A trailing `#` is escaped, so a
-heading's text never reads as its closing sequence (§4.2). -/
+/-- A trailing `#` escaped, so a heading's text never reads as its closing
+sequence (§4.2). -/
+private def closeHash (s : String) : String :=
+  match s.toList.reverse with
+  | '#' :: rest => String.ofList (rest.reverse ++ ['\\', '#'])
+  | _ => s
+
+/-- The markdown spelling of inline content in a paragraph's flow, its
+trailing `#` escaped (`closeHash`). -/
 public def inlineText (xs : Array Inline) : String :=
-  let s := inlinesInto "" none xs.toList
-  if s.endsWith "#" then (s.dropEnd 1).toString ++ "\\#" else s
+  closeHash (inlinesInto .flow "" none xs.toList)
+
+/-- Line endings as spaces: what stands on one line. A line ending a code
+span holds reads as a space (§6.1), and one in a formula's source is TeX's
+space. -/
+private def oneLine (s : String) : String :=
+  String.ofList (s.toList.map fun c => if c == '\n' || c == '\r' then ' ' else c)
+
+/-- A heading's text: one line, its trailing `#` escaped. Public because the
+placement theorems below quote it — the emitted title line is `# ` followed
+by exactly this. -/
+public def headingText (xs : Array Inline) : String :=
+  closeHash (oneLine (inlinesInto .line "" none xs.toList))
+
+/-- A pipe table cell's text as the cell reads: one line, its pipes bare —
+the row escapes them (`rowLine`). -/
+public def cellText (xs : Array Inline) : String :=
+  oneLine (inlinesInto .cell "" none xs.toList)
+
+private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+  intro x hx
+  simp only [oneLine, String.toList_ofList, List.mem_map] at hx
+  obtain ⟨c, _, rfl⟩ := hx
+  by_cases h : (c == '\n' || c == '\r') = true
+  · simp only [h, ↓reduceIte]
+    decide
+  · simp only [Bool.not_eq_true] at h
+    simp only [h, Bool.false_eq_true, ↓reduceIte]
+    simp only [Bool.or_eq_false_iff, beq_eq_false_iff_ne] at h
+    exact h
+
+private theorem closeHash_mem (s : String) (x : Char) (hx : x ∈ (closeHash s).toList) :
+    x ∈ s.toList ∨ x = '\\' ∨ x = '#' := by
+  unfold closeHash at hx
+  split at hx
+  · next rest heq =>
+    simp only [String.toList_ofList, List.mem_append, List.mem_cons, List.not_mem_nil,
+      or_false] at hx
+    rcases hx with hx | hx
+    · left
+      have : x ∈ s.toList.reverse := by
+        rw [heq]
+        exact List.mem_cons_of_mem _ (List.mem_reverse.mp hx)
+      exact List.mem_reverse.mp this
+    · right
+      exact hx
+  · exact Or.inl hx
+
+/-- **A heading's text is one line**: whatever its content — a hard break,
+a formula or code whose source spans lines — the heading the twin writes
+holds no line ending, so it stands on its own line and reads back as one
+heading. -/
+public theorem headingText_contract (xs : Array Inline) :
+    ∀ x ∈ (headingText xs).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+  intro x hx
+  rcases closeHash_mem _ x hx with hx | rfl | rfl
+  · exact oneLine_mem _ x hx
+  · decide
+  · decide
+
+/-- **A cell's text is one line**: it holds no line ending, so the row that
+holds it is one row (`rowLine_contract`). -/
+public theorem cellText_contract (xs : Array Inline) :
+    ∀ x ∈ (cellText xs).toList, x ≠ '\n' ∧ x ≠ '\r' :=
+  oneLine_mem _
 
 /-- A paragraph's lines under their container: each line — the first, and
 each after a hard break — escaped at its start (`escapeLineStart`) and set
@@ -565,7 +879,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     let numTxt := match num with
       | some n => n ++ " "
       | none => ""
-    let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ inlineText title ++ "\n\n"
+    let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ headingText title ++ "\n\n"
     if level == 0 then head ++ summary
     else head
   | .list ordered items =>
@@ -593,9 +907,10 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   | .abstract body =>
     blocksInto loc summary ind (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList
   -- The titled block mirrors the HTML <section> and its header: the
-  -- title as its own bold line, then the body plain.
+  -- title as its own bold paragraph, then the body plain.
   | .titled _ title body =>
-    let head := if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n"
+    let head := if title.isEmpty then "" else
+      paraText ind ind ("**" ++ inlineText title ++ "**") ++ "\n\n"
     blocksInto loc summary ind (acc ++ head) none body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto loc summary ind acc none body.toList
@@ -653,14 +968,13 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- the twin can carry in reading order.
   | .picture _ => acc
   | .frame title _ _ _ body =>
-    let head := if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n"
+    let head := if title.isEmpty then "" else ind ++ "## " ++ headingText title ++ "\n\n"
     blocksInto loc summary ind (acc ++ head) none body.toList
   -- Markdown's own table is the pipe table: one line per row, the GFM
   -- separator (which plays the head rule) after the first, alignment from
   -- the column spec. booktabs' rule weights have no markdown spelling.
   | .table cols _ _ rows _ _ =>
-    let line (row : Array (Array Inline)) : String :=
-      "| " ++ String.intercalate " | " (row.toList.map inlineText) ++ " |"
+    let line (row : Array (Array Inline)) : String := rowLine (row.toList.map cellText)
     let sep := "|" ++ String.join (cols.toList.map fun c =>
       match c.align with
       | .left => " --- |"
@@ -939,7 +1253,8 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
       (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList)
   | .titled _ title body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
-      (acc ++ if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n")
+      (acc ++ if title.isEmpty then "" else
+        paraText ind ind ("**" ++ inlineText title ++ "**") ++ "\n\n")
       none body.toList)
   | .spaced _ body => blocksInto_extends loc summary ind acc none body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
@@ -966,7 +1281,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .picture _ => append_nil acc
   | .frame title _ _ _ body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
-      (acc ++ if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n")
+      (acc ++ if title.isEmpty then "" else ind ++ "## " ++ headingText title ++ "\n\n")
       none body.toList)
   | .table _ _ _ rows _ _ => by
     simp only [blockInto]
@@ -1245,14 +1560,14 @@ level-0 heading (`\maketitle`), the preamble yields — no second `#` line, no
 summary above the body — and the summary lands immediately after the body's
 title line, whatever the rest of the body emits and whether or not the
 metadata also declares a title. This is the defect's contrapositive: the
-summary follows the title, wherever the title came from. -/
+summary follows the title, wherever the title came from. The title is a
+line whatever it holds (`headingText_contract`). -/
 public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
     (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st none ttl :: rest)
-    (htn : ∀ c ∈ (inlineText ttl).toList, c ≠ '\n')
     (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
-    ∃ q, emit doc = "# " ++ inlineText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
+    ∃ q, emit doc = "# " ++ headingText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
   have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (Ir.keepFor "md" doc.body) := by
     show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (Ir.keepFor "md" doc.body).toList
     rw [hbody]
@@ -1264,12 +1579,13 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
   have hfirst : blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" none
       (Ir.keepFor "md" doc.body).toList =
       blocksInto doc.info.locale ("> " ++ s ++ "\n\n") ""
-        ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest := by
+        ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest := by
     rw [hbody]
     simp [blocksInto, blockInto, headingMarker, Ir.headingRank]
   obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ s ++ "\n\n") ""
-    ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest
-  obtain ⟨q, hq⟩ := tighten_head (inlineText ttl) s w htn hsn
+    ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest
+  obtain ⟨q, hq⟩ := tighten_head (headingText ttl) s w
+    (fun c hc => (headingText_contract ttl c hc).1) hsn
   refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
   cases hT : doc.info.title with
   | some t =>

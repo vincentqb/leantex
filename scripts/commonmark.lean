@@ -1117,6 +1117,82 @@ def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat))
       out := out.push (s!"example {ex.id} ({ex.section_})", MarkdownDoc.emit d, some ex.id)
   return out
 
+mutual
+
+/-- The rows of every table a page holds, in document order, each the text
+of its cells, markup dropped. -/
+def tableRowsOf (acc : Array (Array String)) (n : Html.Node) : Array (Array String) :=
+  match n with
+  | .elem "tr" _ kids =>
+    acc.push ((kids.filter fun k => k matches .elem "td" _ _ | .elem "th" _ _).map textOnly)
+  | .elem _ _ kids => tableRowsOfList acc kids.toList
+  | _ => acc
+
+def tableRowsOfList (acc : Array (Array String)) : List Html.Node → Array (Array String)
+  | [] => acc
+  | k :: rest => tableRowsOfList (tableRowsOf acc k) rest
+
+end
+
+/-- A cell's text, compared: the door's typographic punctuation read back
+(`unsmarten`) and its white space one space. -/
+def cellKey (s : String) : String :=
+  " ".intercalate (((unsmarten s).splitOn " ").filter (!·.isEmpty))
+
+/-- The twin's own top-level tables as the door reads them: each row it
+writes read by GFM's row grammar (`MarkdownDoc.gfmRow`), each cell through
+the door as a paragraph, its text — the delimiter row, the second line of
+each table, left out. -/
+def twinTableRows (twin : String) : Array (Array String) := Id.run do
+  let mut out : Array (Array String) := #[]
+  let mut inTable := 0
+  for l in twin.splitOn "\n" do
+    if l.startsWith "|" then
+      inTable := inTable + 1
+      unless inTable == 2 do
+        out := out.push ((MarkdownDoc.gfmRow l).toArray.map fun c =>
+          match (elabMd (c ++ "\n")).1.body.toList with
+          | [.para xs] => cellKey (Ir.plainText xs)
+          | _ => cellKey c)
+    else inTable := 0
+  return out
+
+/-- The table pass's reader: CommonMark with GFM's pipe tables and nothing
+else, so the tables are the one difference from the hop's own reader. -/
+def hopTableArgs (file : String) : Array String :=
+  #["-f", "commonmark+pipe_tables", "-t", "html", "--syntax-highlighting=none", file]
+
+/-- The twin's pipe tables through an external GFM table reader: every
+twin that writes one, its rows as that reader reads them against the rows
+`MarkdownDoc.gfmRow` and the door read — the model `rowLine_cells_exact`
+is stated against, held to a reader. A report, like the hop. -/
+def readerHopTables (twins : Array (String × String × Option Nat)) : IO Unit := do
+  let tabled := twins.filter fun (_, twin, _) => (twin.splitOn "\n").any (·.startsWith "|")
+  let results ← IO.FS.withTempDir fun dir => do
+    let file := (dir / "twin.md").toString
+    let mut out : Array (String × Option (Array (Array String) × Array (Array String))) := #[]
+    for (name, twin, _) in tabled do
+      IO.FS.writeFile file twin
+      let r ← (IO.Process.output { cmd := hopTool, args := hopTableArgs file }).toBaseIO
+      match r with
+      | .ok o =>
+        out := out.push (name, if o.exitCode == 0 then
+          some (((tableRowsOfList #[] (hParse o.stdout).toList).map (·.map cellKey)),
+            twinTableRows twin)
+          else none)
+      | .error _ => out := out.push (name, none)
+    return out
+  let ran := results.filterMap fun (name, r) => r.map (name, ·)
+  let agree := ran.filter fun (_, ext, door) => ext == door
+  IO.println s!"reader hop ({hopTool} -f commonmark+pipe_tables): {ran.size} twins with a \
+table read; {agree.size} read as the twin's rows read"
+  for (name, ext, door) in ran do
+    unless ext == door do
+      let i := ((ext.zip door).findIdx? fun (a, b) => a != b).getD (min ext.size door.size)
+      IO.println s!"  differs: {name} at row {i}\n    external: {repr ext[i]?}\n    door:     {repr door[i]?}"
+  let failed := results.size - ran.size
+  if failed > 0 then IO.println s!"  {failed} twins the tool did not read"
+
 /-- The reader hop, reported: `MarkdownDoc`'s external premise — a
 CommonMark reader parses every spelling the twin writes as the markdown door
 does — measured over every twin `hopTwins` reads, against the committed
@@ -1159,6 +1235,7 @@ the door already reads otherwise; {count .differ} differ unaccounted"
       IO.println s!"  differs: {name}\n    external: {repr w}\n    door:     {repr g}"
   let failed := results.size - ran.size
   if failed > 0 then IO.println s!"  {failed} twins the tool did not read"
+  readerHopTables twins
   return 0
 
 -- ## The modes

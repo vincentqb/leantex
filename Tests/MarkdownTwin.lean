@@ -255,9 +255,83 @@ def twinLineStartChecks (ref : IO.Ref (List String)) : IO Unit := do
         n := n + 1
   t s!"twin: {n} generated lines checked" (n == openers.length * follow.length * lead.length)
 
+/-- The tables of a document, every row of each, in document order. -/
+def tableRows (d : Ir.Doc) : Array (Array (Array Ir.Inline)) :=
+  Ir.foldBlocks (fun acc b => match b with
+    | .table _ _ _ rows _ _ => acc ++ rows
+    | _ => acc) (fun acc _ => acc) #[] d.body
+
+/-- A pipe table's rows as the twin writes them: its lines that open with a
+pipe, the delimiter row left out. -/
+def twinRows (tw : String) : List String :=
+  match (tw.splitOn "\n").filter (·.startsWith "|") with
+  | first :: _ :: rest => first :: rest
+  | rows => rows
+
+/-- Table cells: the row GFM reads (`MarkdownDoc.gfmRow`) holds one cell per
+cell the IR holds, each reading back through the markdown door as the
+cell's own text — a pipe in code, in text, in a destination or in a formula
+opens no cell, and a hard break stays on the row's line. -/
+def twinTableChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := "\\begin{tabular}{lll}\n\\texttt{a|b} & c|d & \\texttt{x || y}\\\\\n" ++
+    "\\texttt{p\\textbackslash{}|q} & \\href{http://example.org/a|b}{e} & $|x|$\\\\\n" ++
+    "\\texttt{|lead} & r & \\texttt{end|}\n\\end{tabular}"
+  -- the hard break a wrapping cell can hold, set in the IR: the tabular's
+  -- `\\\\` ends its row
+  let broken : Array Ir.Inline := #[.text "r", .linebreak default, .text "s"]
+  let doc := { (elabStr (dvDoc "" src)).1 with
+    body := (elabStr (dvDoc "" src)).1.body.map fun b => match b with
+      | .table cols pl pr rows rules spans =>
+        .table cols pl pr (rows.modify 2 (·.set! 1 broken)) rules spans
+      | b => b }
+  let tw := MarkdownDoc.emit doc
+  let rows := tableRows doc
+  let lines := twinRows tw
+  t s!"twin: a table's rows are its lines ({lines.length} of {rows.size}; {repr tw})"
+    (lines.length == rows.size && rows.size == 3)
+  for (line, row) in lines.zip rows.toList do
+    let cells := MarkdownDoc.gfmRow line
+    t s!"twin: the row {repr line} reads as {row.size} cells ({repr cells})"
+      (cells.length == row.size)
+    for (cell, ir) in cells.zip row.toList do
+      -- a formula's source is the twin's spelling, which the door reads
+      -- as text: its pipes are held by the cell count above
+      unless ir.any (· matches .math .. | .formula ..) do
+        let (back, _) := elabMd (cell ++ "\n")
+        let want := (Ir.plainText ir).replace "\n" " "
+        t s!"twin: the cell {repr cell} reads back as {repr want}"
+          (match back.body.toList with
+            | [.para xs] => Ir.plainText xs == want
+            | [] => want.isEmpty
+            | _ => false)
+  t s!"twin: a cell's destination keeps its pipe ({repr tw})"
+    (hasStr tw "[e](http://example.org/a\\|b)")
+
+/-- Headings: a hard break in a title has no spelling on a heading's line,
+so it is written as a space, and the heading reads back as one heading. -/
+def twinHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (src, title) in [("\\section{Alder\\\\ Birch}", "1 Alder Birch"),
+      ("\\section*{Cedar\\\\ Dogwood}", "Cedar Dogwood")] do
+    let (tw, back, _) := texRoundTrip src
+    t s!"twin: a heading with a hard break stays one heading ({repr tw})"
+      (match back.body.toList with
+        | [.section _ _ _ xs] => Ir.plainText xs == title
+        | _ => false)
+  let (doc, _) := elabStr (dvDeck "" "\\begin{frame}{Elm\\\\ Fir}\nGrove\n\\end{frame}")
+  let tw := MarkdownDoc.emit doc
+  let (back, _) := elabMd tw
+  t s!"twin: a frame title with a hard break stays one heading ({repr tw})"
+    (hasStr tw "## Elm Fir\n" && back.body.any fun b => match b with
+      | .section _ _ _ xs => Ir.plainText xs == "Elm Fir"
+      | _ => false)
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinInlineChecks ref
   twinBlockChecks ref
   twinLineStartChecks ref
+  twinTableChecks ref
+  twinHeadingChecks ref
 
 end Tests.MarkdownTwin
