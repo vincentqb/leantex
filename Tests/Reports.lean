@@ -347,7 +347,7 @@ def reports : List Report := [
     what := "a business card rendered wrong: its page boxes, bleed, marks, lengths and faces"
     pins := [check% filChecks, check% driverOptionChecks, check% drawnMarkChecks,
       check% pdfVersionChecks]
-    accept := ["the card's own print check recipe — page boxes, cut marks, fonts, exact strings — against the engine's PDF"]
+    accept := ["an out-of-repo print check of the engine's PDF: page boxes, cut marks, embedded faces and set text"]
     state := .guarded "da9b049d" .before .author },
   { id := "R38", date := "2026-09-27"
     what := "a website broke: every centred environment gained a wrapper element"
@@ -363,7 +363,7 @@ def reports : List Report := [
   { id := "R40", date := "2026-09-27"
     what := "a business card's text did not stand vertically centred on its faces: the gaps above and below its block differed"
     pins := [check% faceCentreChecks]
-    accept := ["the card's own print check recipe, against its lualatex build"]
+    accept := ["an out-of-repo print check of both faces, against the lualatex build of the same source"]
     state := .guarded "f16b1321" .before .author },
   { id := "R41", date := "2026-09-28"
     what := "a slide's rows of images, two to a row parted by a fill, stood clumped at the middle and too small where TeX sets them at the measure's two edges: a centred line gave its fill no share of the slack, and a text-height fraction sized against the engine's own margins rather than the frame's text area"

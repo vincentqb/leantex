@@ -18,21 +18,21 @@
 \palette{
   % Neither pure black nor pure white on either side: both are harsh on a
   % projector and on an OLED panel.
-  surface   = #FAFAF9,         % warm off-white
-  ink       = #18181B,         % near-black
-  muted     = #71717A,         % secondary text, captions, footer
-  accent    = #E11D48,         % exactly one accent
-  tint      = #F4F4F5,         % 2-4% plane separation, not a border
-  rule      = #E4E4E7,         % hairlines
+  surface   = #F7F6F2,         % warm off-white
+  ink       = #22252A,         % near-black
+  muted     = #626973,         % secondary text, captions, footer
+  accent    = #B5442B,         % exactly one accent
+  tint      = #EFEDE7,         % 2-4% plane separation, not a border
+  rule      = #DCD8CF,         % hairlines
 }
 
 \palette[dark]{                % PENDING (M5b): variant, same accent, re-checked
-  surface   = #18181B,
-  ink       = #FAFAF9,
-  muted     = #A1A1AA,
-  accent    = #FB7185,         % lifted for AA on dark
-  tint      = #27272A,
-  rule      = #3F3F46,
+  surface   = #1D2024,
+  ink       = #F2F0EA,
+  muted     = #A3A9B1,
+  accent    = #E58A6E,         % lifted for AA on dark
+  tint      = #2A2E33,
+  rule      = #41464D,
 }
 
 % A ~1.25 modular scale. Body at 22pt reads from the back row of a lecture
@@ -42,9 +42,9 @@
   small     = 17.6pt,          % body / 1.25
   large     = 27.5pt,          % body * 1.25
   title     = 43pt,            % body * 1.25^3
-  rhythm    = 1.4em plus 0.4em minus 0.2em,
-  sep       = 1.0 * rhythm,    % between peers
-  bind      = 0.45 * rhythm,   % label to its content
+  beat      = 1.2em plus 0.3em minus 0.15em,
+  gap       = 1.25 * beat,     % between blocks
+  hold      = 0.5 * beat,      % a heading to what it heads
   gutter    = 0.06 * body,
   hairline  = 1.5pt,
 }

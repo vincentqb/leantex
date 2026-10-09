@@ -12,18 +12,16 @@
 
 \begin{document}
 
-\begin{center}
-  {\bfseries\Huge Alex Doe}\\
-  alex@example.org
-\end{center}
+{\bfseries\LARGE Alex Doe}\\
+alex@example.org
 
-\section*{Experience}
+\section*{Work}
 
 \begin{foreach}{j}{job}
-  \textbf{\val{j.company}}\,|\,\textbf{\val{j.role}}
-    \hfill \val{j.start}--\ifdata{j.end}{\val{j.end}}[present]
-  \ifdata{j.team}{\par \textit{\val{j.team}}}
-  \begin{itemize} \val{j.achievements} \end{itemize}
+  \textbf{\val{j.title}}, \val{j.employer}
+    \hfill \val{j.from}--\ifdata{j.to}{\val{j.to}}[present]
+  \ifdata{j.unit}{\par \textit{\val{j.unit}}}
+  \begin{itemize} \val{j.highlights} \end{itemize}
 \end{foreach}
 
 \end{document}

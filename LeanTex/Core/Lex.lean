@@ -38,9 +38,9 @@ them is content. The elaborator reads the same table for replacement text. -/
 source2e `ltdefns.dtx`; catcodes, TeXbook ch. 7), because internal names
 like `\p@` must be writable in package code and unwritable in documents.
 This engine has no catcode reprogramming, so the mode collapses to its
-permissive half: `\vqb@bp` is one name wherever it stands. The alternative
-— honouring the mode — would re-lex `\vqb@bp` outside `\makeatletter` as
-`\vqb` then `@bp`, which is exactly the mis-lex the mode exists to cause,
+permissive half: `\demo@wd` is one name wherever it stands. The alternative
+— honouring the mode — would re-lex `\demo@wd` outside `\makeatletter` as
+`\demo` then `@wd`, which is exactly the mis-lex the mode exists to cause,
 and no known document wants: a document using `@`-names writes
 `\makeatletter` first, and one that never uses them never notices. -/
 @[expose] public def nameChar (c : Char) : Bool :=

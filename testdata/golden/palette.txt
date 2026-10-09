@@ -4,8 +4,8 @@ font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
 palette primary #7C3AED
-palette ink #18181B
-palette muted #71717A
+palette ink #23262B
+palette muted #6B7268
 palette warn #B45309
 palette soft #D8C4FA decorative
 assert pages == 1
@@ -17,11 +17,11 @@ para
   color primary #7C3AED
     text "This clause is primary"
   text " and "
-  color muted #71717A
+  color muted #6B7268
     text "this one is muted"
   text ", then black resumes."
 para
-  color muted #71717A
+  color muted #6B7268
     text "A declaration colours the rest of its group, including "
     styled bold
       italicCorr maybe
@@ -36,7 +36,7 @@ list unordered
   item
     para
       text "Short hex works too: "
-      color ink #18181B
+      color ink #23262B
         text "ink"
       text "."
   item

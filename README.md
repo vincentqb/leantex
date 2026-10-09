@@ -5,11 +5,12 @@ or self-contained HTML on Linux and macOS.
 
 ## Install
 
-Install [elan](https://github.com/leanprover/elan), then build from source.
+Install [elan](https://github.com/leanprover/elan), then build from source,
+with this repository's clone URL in place of `<repository-url>`.
 On macOS, install the Xcode Command Line Tools first (`xcode-select --install`).
 
 ```sh
-git clone https://github.com/vincentqb/leantex.git
+git clone <repository-url> leantex
 cd leantex
 lake build
 export PATH="$PWD/.lake/build/bin:$PATH"

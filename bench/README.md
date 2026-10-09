@@ -13,7 +13,7 @@ system and implements much more.
 
 ## Baseline — 2026-09-15
 
-AMD EPYC 9R14 host; LuaHBTeX 1.24.0 (TeX Live 2026/Homebrew).
+AMD EPYC host; LuaHBTeX 1.24.0 (TeX Live 2026/Homebrew).
 
 | Input | Size | leantex | lualatex | Ratio |
 |---|---:|---:|---:|---:|

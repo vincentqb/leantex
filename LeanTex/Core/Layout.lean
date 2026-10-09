@@ -912,18 +912,18 @@ public theorem effectivePageGround_epoch_exact (epoch : Option Ir.Color) :
 public theorem effectivePageGround_clear_exact :
     effectivePageGround none none = none := by rfl
 
-/-- The eight printer's cut marks a page ships under `\page{ marks = cut }`:
-a pure function of the trim box (`W × H`), the bleed, the gap, and the
-thickness — derived, never placed by hand, so the drawn marks and the
-declared TrimBox cannot drift apart. Each mark is a hairline inside the
-bleed strip, anchored at a medium edge and running inward along a trim
-line, stopping `gap` short of the trim line it approaches: the strip it
-occupies is the strip the cutter discards. Coordinates are layout (trim)
-space, y down — the medium spans `−bleed … W+bleed` — and the painted
-thickness is `2·(thick/2)`: the odd sp (1/65536 pt, far below any press's
-resolution) is dropped so the mark centres exactly on its trim line
-(`cutmarks_on_trim_exact`) and the duplex flip maps marks onto marks
-exactly (`cutmarks_symmetric_mem`). -/
+/-- The eight printer's cut marks a page ships under `\page{ marks = cut }`,
+computed from the trim size (`W × H`), the bleed, the gap and the
+thickness alone: the marks and the TrimBox the file declares read the same
+numbers, so neither moves without the other. Two marks extend each trim
+line into the bleed, one past each end of it; a mark begins at the
+medium's edge and ends `gap` before the trimmed page, so all of its ink
+lies on paper the trim removes. Coordinates are layout (trim) space, y
+down — the medium spans `−bleed … W+bleed` — and the painted thickness is
+`2·(thick/2)`: the odd sp (1/65536 pt, far below any press's resolution)
+is dropped so a mark's centre line is its trim line itself
+(`cutmarks_on_trim_exact`) and mirroring a face for its reverse side sends
+the marks to marks (`cutmarks_symmetric_mem`). -/
 public def cutMarks (trimW trimH bleed gap thick : Sp) (color : Ir.Color) : Array Fill :=
   let hw := thick / 2
   let len := bleed - gap
@@ -949,11 +949,11 @@ private theorem cutmarks_trim_arith (W H t : Int) :
     2 * (W - t / 2) + 2 * (t / 2) = 2 * W ∧
     2 * (H - t / 2) + 2 * (t / 2) = 2 * H := by omega
 
-/-- Each mark's centre line lies exactly on a trim line — the card
-source's own argument made a theorem: positions derive from the same
-lengths as the page boxes, so the drawn marks and the declared TrimBox
-cannot drift apart. Spelled doubled (`2x + w = 2·trim`) so the statement
-needs no division and no parity hypothesis. -/
+/-- Each mark's centre line lies exactly on a trim line: the marks are
+computed from the lengths the page boxes are, so where they stand and the
+TrimBox the file declares agree by construction. Spelled doubled
+(`2x + w = 2·trim`) so the statement needs no division and no parity
+hypothesis. -/
 public theorem cutmarks_on_trim_exact (W H b g t : Int) (c : Ir.Color) :
     ∀ f ∈ cutMarks W H b g t c,
       2 * f.x + f.w = 0 ∨ 2 * f.x + f.w = 2 * W ∨
@@ -1596,7 +1596,7 @@ capital form, the whole word at the face's own scale
 (`smallCapScaleFor`) — one style, one size, so mixed case cannot come out
 at two heights. The invariant whose absence was the defect: the old
 synthesis kept capitals full-size beside their scaled neighbours, and
-`{\scshape PhD}` set a full P and D against a small H.
+`{\scshape NaCl}` set a full N and C against a small a and l.
 Chosen only when the face carries no real small caps (`Font.smallCaps`);
 `\scshape` means uniform small capitals in both mechanisms (the PLAN
 2026-09-18 entry carries the decision). -/
@@ -10026,7 +10026,7 @@ tree does not census — and the counter past them. -/
 private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
   ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
 
-/-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
+/-- A declared length with its rubber: `2ex plus 0.5ex minus 0.25ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
 private def Spacing.Context.resolve (r : Rd) (g : SymGlue) : Glue :=
   g.resolve r.geom.fontSize r.xHeight
@@ -11281,7 +11281,7 @@ public theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg 
 contains.** Emptying every run's glyph array changes neither reach, so a
 label's band — and through `Ir.Pic.labelBaseline`, the baseline its line is
 set on — is a function of the faces, sizes and raises present and nothing
-else. `value` and `inventory` place identically; so do `WAX` and `gjpqy`.
+else. `candle` and `misty` place identically; so do `WAX` and `gjpqy`.
 
 This is the guarantee the report asked for, and the sibling of
 `line_box_glyph_free` one layer down: same fold congruence, same reason (no

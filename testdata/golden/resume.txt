@@ -1,106 +1,86 @@
-class resume [paper=letter, fontsize=10pt]
-page 612x792 vmargin 36 hmargin 54 parskip 0
+class resume [paper=a4, fontsize=11pt]
+page 595x842 vmargin 51.024 hmargin 62.362 fontsize 11 parskip 0
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
-palette primary #7C3AED
-palette ink #18181B
-palette muted #71717A
-token rhythm 1500/1000ex plus 600/1000ex minus 300/1000ex
-token sep 900/1000ex plus 360/1000ex minus 180/1000ex
-token bind 675/1000ex plus 270/1000ex minus 135/1000ex
+palette primary #2F5D50
+palette ink #262A2E
+palette muted #5E6670
+token step 1300/1000ex plus 500/1000ex minus 250/1000ex
+token wide 1950/1000ex plus 750/1000ex minus 375/1000ex
+token close 780/1000ex plus 300/1000ex minus 150/1000ex
 runninghead
-  styled sans
-    styled smallcaps
-      text "Alex Doe "
-      fill
-      pagenumber
-meta title "Alex Doe — Resume"
+  styled smallcaps
+    italicCorr maybe
+    text "Alex Doe"
+  italicCorr maybe
+  text " "
+  fill
+  pagenumber
+meta title "Alex Doe — Curriculum"
 meta author "Alex Doe"
 assert fonts.all_embedded
 assert pages == 1
 assert text.in_area
 assert text.xheight >= 3.968pt
-role trivlist-env
-  center
-    para
-      styled sans
-        styled bold
-          styled size:Huge
-            color primary #7C3AED
-              text "Alex"
-            text " Doe"
-      linebreak 675/1000ex plus 270/1000ex minus 135/1000ex
-      color muted #71717A
-        text "alex@example.org · example.org · github.com/adoe"
+para
+  styled sans
+    styled bold
+      styled size:LARGE
+        color primary #2F5D50
+          text "Alex Doe"
+  linebreak 780/1000ex plus 300/1000ex minus 150/1000ex
+  color muted #5E6670
+    text "alex@example.org · example.org"
 section* 1
-  text "Experience"
-role role
-  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+  text "Work"
+role entry
+  block before 1950/1000ex plus 750/1000ex minus 375/1000ex
     para
+      color muted #5E6670
+        text "1996 to now"
+      text " "
       styled bold
         italicCorr maybe
-        text "Example Corp"
-      italicCorr maybe
-      text " | "
-      styled bold
-        italicCorr maybe
-        text "Staff Engineer"
-      italicCorr maybe
-      text " "
-      fill
-      color muted #71717A
-        text "2021–present"
+        text "Head Gardener"
+      text ", Example Corp"
       linebreak
-      color muted #71717A
-        styled italic
-          italicCorr maybe
-          text "Platform"
+      styled italic
         italicCorr maybe
+        text "Orchards"
+      italicCorr maybe
 list unordered
   item
     para
-      text "Made a slow thing 10% faster and proved it stayed correct."
+      text "Grew a slow hedge 10% faster and kept it trim."
   item
     para
-      text "Deleted more code than was added, on purpose, twice."
-role role
-  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+      text "Pruned more branches than were planted, on purpose, twice."
+role entry
+  block before 1950/1000ex plus 750/1000ex minus 375/1000ex
     para
+      color muted #5E6670
+        text "1989 to 1996"
+      text " "
       styled bold
         italicCorr maybe
-        text "Widgets Ltd"
-      italicCorr maybe
-      text " | "
-      styled bold
-        italicCorr maybe
-        text "Engineer"
-      italicCorr maybe
-      text " "
-      fill
-      color muted #71717A
-        text "2017–2021"
+        text "Gardener"
+      text ", Widgets Ltd"
 list unordered
   item
     para
-      text "Shipped widgets; measured them; shipped better widgets."
+      text "Planted bulbs; measured them; planted better bulbs."
 section* 1
-  text "Education"
-role role
-  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+  text "Study"
+role entry
+  block before 1950/1000ex plus 750/1000ex minus 375/1000ex
     para
+      color muted #5E6670
+        text "1985 to 1989"
+      text " "
       styled bold
         italicCorr maybe
-        text "Example University"
-      italicCorr maybe
-      text " | "
-      styled bold
-        italicCorr maybe
-        text "PhD, Applied Mathematics"
-      italicCorr maybe
-      text " "
-      fill
-      color muted #71717A
-        text "2013–2017"
+        text "BA, Medieval History"
+      text ", Example University"
 -- diagnostics
 (none)

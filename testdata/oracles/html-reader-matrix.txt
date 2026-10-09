@@ -57,7 +57,7 @@ declared          pass          untested      load,fonts,lang,landmarks,color-sc
 diagram-boundary  pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-overflow  pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-refused   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-diagram-scm       pass          untested      load,fonts,mathml,mathAlpha,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram-shapes    pass          untested      load,fonts,mathml,mathAlpha,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-tikzset   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 eqnum             pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script

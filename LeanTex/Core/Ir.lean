@@ -82,17 +82,14 @@ public theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
     < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
   omega
 
-/-- The default clearance between a cut mark's inward end and the trim
-line it stops short of: 0.075 in. The industry guillotine tolerance is
-1/32–1/16 in (PrintNinja's pre-press guide and Smartpress's cutting
-tolerance both publish the 1/16 in outer bound), so 0.075 in beats a
-spec-limit drift with 0.0125 in to spare — the mirror of the 1/8 in safe
-zone type keeps inside the trim. `\page{ mark-gap = ... }` overrides. -/
+/-- The default space between a cut mark's inner end and the trimmed page:
+0.075 in, wider than the 1/16 in that published guillotine cutting
+tolerances give as their outer bound (PrintNinja's pre-press guide,
+Smartpress's cutting tolerance), so a cut within tolerance never meets a
+mark. `\page{ mark-gap = ... }` overrides. -/
 public def cutMarkGap : Sp := inch 3 / 40
 
-/-- The default cut-mark thickness: 0.5 bp, a print shop's floor for a
-hairline that prints legibly on digital stock and twice the 0.25 bp
-offset floor, so the mark survives either process. This engine reads
+/-- The default cut-mark thickness: a 0.5 bp hairline. This engine reads
 `bp` as `pt` (`Decl.unitScaleBase`), so the value is 0.5 pt in sp.
 `\page{ mark-thickness = ... }` overrides. -/
 public def cutMarkThickness : Sp := pt 1 / 2
@@ -135,7 +132,7 @@ public structure PageSpec where
   `baseFontSize`. -/
   fontSize : Sp := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
-  `\linespread{1.04}` has a home. -/
+  `\linespread{1.15}` has a home. -/
   leading : Nat := 1000
   /-- The gap between peer paragraphs, with its rubber; `none` is the
   engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
@@ -3736,8 +3733,8 @@ picture reserves and the baseline a line is set on cannot disagree.
 
 This is the number the wobble is about. Under TeX's node centring the
 baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
-slope ½ and a word with a descender floats up: 1.155 pt between `value`
-and `inventory` in Computer Modern at 10 pt (pgf manual §17.5.1 calls it
+slope ½ and a word with a descender floats up: 1.155 pt between `candle`
+and `misty` in Latin Modern at 10 pt (pgf manual §17.5.1 calls it
 "wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
 are the face's declared cap height and descent at the run's size, never the
 glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
@@ -17079,7 +17076,7 @@ public theorem decl_spellings_agree (s : Style) (xs : Array Inline) :
     wrapDecls [.style s] xs = #[.styled s xs] := by rfl
 
 /-- One character of a label's anchor: Unicode characters, ASCII word
-characters and the punctuation label keys conventionally carry (`fig:scm`,
+characters and the punctuation label keys conventionally carry (`fig:flow`,
 `eq.1`, `a-b`, `x_y`) survive verbatim. HTML ids permit non-ASCII characters;
 folding them would collapse distinct authored targets. Other ASCII
 characters — whitespace included — fold to a hyphen. -/

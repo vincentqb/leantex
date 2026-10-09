@@ -329,7 +329,7 @@ def goldenNames : List String :=
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav", "nav-directory",
    "bibliography", "resume-data",
    "icons",
-   "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-scm",
+   "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-shapes",
    "diagram-tikzset",
    "tables", "tables-ragged", "tables-deck", "subfigures", "float-center", "box-sides",
    "math-companion", "math-first", "math-text", "math-alpha", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",

@@ -6,16 +6,10 @@ assert pages == 1
 para
   styled bold
     italicCorr maybe
-    text "Example Corp"
-  italicCorr maybe
-  text "  |  "
-  styled bold
-    italicCorr maybe
-    text "Staff Engineer"
-  italicCorr maybe
-  text " "
+    text "Spring regatta"
+  text ", Upper Reach "
   fill
-  text "2021–present"
+  text "14–15 May"
 para
   text "A following paragraph, so the entry above is not the last line on the page."
 para

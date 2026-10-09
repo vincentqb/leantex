@@ -450,9 +450,9 @@ def htmlMathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html math: the corpus ships MathML inside a picture ({carried} carriers)" (carried > 0)
   t s!"math census: a fixture's picture labels ask for scalars ({labelled} fixtures)"
     (labelled > 0)
-  let (_, _, _, scm, _) ← a11yCorpusPage "diagram-scm"
+  let (_, _, _, shapes, _) ← a11yCorpusPage "diagram-shapes"
   t "html math: the corpus ships a math alphabet inside a picture"
-    ((formulaElems (elemNodesList (· == "foreignObject") #[] scm.toList)).any fun n =>
+    ((formulaElems (elemNodesList (· == "foreignObject") #[] shapes.toList)).any fun n =>
       match n with
       | .elem _ attrs _ => HtmlDoc.attrOf? attrs "data-tex" == some "\\mathrm {rd}"
       | _ => false)

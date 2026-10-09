@@ -353,7 +353,7 @@ public inductive SecNumStyle where
   deriving Repr, BEq
 
 /-- One piece of a heading-number format — what `\renewcommand
-{\thesubsection}{FAQ \arabic{subsection}.}` declares (classes.dtx
+{\thesubsection}{Item \arabic{subsection}.}` declares (classes.dtx
 §Sectioning: `\the<counter>` is the counter's printed format, not a
 macro): literal text, a numeral over a section counter, or another
 level's own format (`\thesection` inside a subsection format). -/
@@ -1369,7 +1369,7 @@ public def accentBase (d : String) : Option Char :=
     | _ => none
 
 /-- The composed text of an accent command applied to what follows: the
-first letter of an adjacent word (`\'elair` → "élair"), a one-letter group
+first letter of an adjacent word (`\'ecole` → "école"), a one-letter group
 (`\'{e}`), a command base (`\'{\i}`, `\'\AE`), or an empty group (`\^{}` →
 "^", TU's empty-base composite). `none` — a shape or a pair with no
 precomposed scalar — falls through to the ordinary dispatch, so nothing new
@@ -3734,7 +3734,7 @@ private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run d
 /-- A definition that is a heading-number format: parameterless, named
 `\the<section counter>`, its body readable as a format. classes.dtx
 §Sectioning: `\the<counter>` is the counter's printed format, so
-`\renewcommand{\thesubsection}{FAQ \arabic{subsection}.}` — which the
+`\renewcommand{\thesubsection}{Item \arabic{subsection}.}` — which the
 definer rewrite spells `\define \thesubsection() {...}` — restyles the
 heading numbers; binding it as a macro instead left every such document
 with dead `\arabic` text and E0312 where the renew stood inline. -/
@@ -4587,7 +4587,7 @@ seal theCounterLevel? sectionLevel
 mutual
 /-- A pure declaration chain: an inline that is nothing but nested style
 wrappers around emptiness — what a 0-ary definition whose body *ends* in
-declarations (`\newcommand{\cardlight}{\fontseries{l}\selectfont}`,
+declarations (`\newcommand{\featherweight}{\fontseries{l}\selectfont}`,
 `\newcommand{\strong}{\bfseries}`) elaborates to in isolation. Outermost
 style first. `none` when any real content is present. -/
 -- conserves: none — a census, not a rewrite: it reads a shape and returns
@@ -4607,8 +4607,8 @@ end
 ends with, if any. Expansion is token replacement, so a trailing
 declaration must style the rest of the *enclosing* group, exactly as the
 same declaration written directly would — elaborating the body in
-isolation had it styling the empty rest of the body instead, and the
-card's `{\cardlight …}` runs rendered in the upright face while an empty
+isolation had it styling the empty rest of the body instead, and a
+document's `{\featherweight …}` runs rendered in the upright face while an empty
 `<strong></strong>` marked where the style went. The chain is outermost
 style first. -/
 private def splitTrailingDecls (xs : Array Ir.Inline) :
@@ -13738,7 +13738,7 @@ private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Un
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be a declared token or an expression over them
-  -- (`\geometry{paperheight=\bleedingheight}`), which parses as glue: it
+  -- (`\geometry{paperheight=\sheetheight}`), which parses as glue: it
   -- is a dimension when nothing font-relative or infinite rides in it —
   -- the page exists before any font is chosen.
   let asDim : Decl.Value → Option Sp
@@ -13812,14 +13812,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
     | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
     | "leading", .dim d =>
-      -- A bare decimal like 1.04 reads as a dimension in points; the factor
+      -- A bare decimal like 1.15 reads as a dimension in points; the factor
       -- is what was meant.
       spec := { spec with leading := (d * 1000 / pt 1).toNat }
     | "leading", .ident f =>
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
-      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'"
+      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>

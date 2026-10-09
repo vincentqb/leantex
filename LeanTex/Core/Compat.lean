@@ -4972,7 +4972,7 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
-/-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
+/-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
 `\relax` vanishes. Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
@@ -5573,7 +5573,7 @@ private def flushListLevels : M (Array Raw) := do
         out := out ++ (← synthAt native pos)
   return out
 
-/-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
+/-- A TeX length from option text: `3\\gapunit` is `3 * gapunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
   match t.splitOn "\\" with
@@ -8287,7 +8287,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       if let some f := feature opt then
         -- fontspec's `*` stands for the family name (fontspec manual,
         -- "Choosing additional fonts": "may be replaced by *"):
-        -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
+        -- `UprightFont = *-Semibold` under `{Ordwick}` names "Ordwick-Semibold".
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
     -- fontspec's `FontFace = {series}{shape}{font}`: one declared face per

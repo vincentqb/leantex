@@ -1,162 +1,141 @@
-class article [paper=letter,fontsize=10pt]
-page 612x792 vmargin 36 hmargin 54 parskip 0
+class article [paper=a5,fontsize=11pt]
+page 420x595 vmargin 39.685 hmargin 48.189 fontsize 11 parskip 0
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"
-palette primary #0F766E
-palette rulecolor #99F6E4
-palette bulletcolor #737380
-palette muted #73727F
-token rhythm 1800/1000ex plus 800/1000ex minus 400/1000ex
-token sepunit 900/1000ex plus 400/1000ex minus 200/1000ex
+palette deepwater #1F4E5F
+palette driftwood #786954
+palette foam #B8D8CF
+palette oarblade #786954
+token beat 2200/1000ex plus 600/1000ex minus 300/1000ex
+token stroke 1650/1000ex plus 450/1000ex minus 225/1000ex
 runninghead
-  styled sans
-    styled smallcaps
-      text "Alex Doe "
-      fill
-      fill
-      pagenumber
-meta title "Alex Doe"
-meta author "Alex Doe"
+  styled italic
+    text "Harbour Rowing Club "
+    fill
+    fill
+    pagenumber
+meta title "Spring Bulletin"
+meta author "Harbour Rowing Club"
 setPalette
-  primary = #0F766E
-  rulecolor = #99F6E4
-  bulletcolor = #737380
-  fg = #0F766E
-  muted = #73727F
+  deepwater = #1F4E5F
+  driftwood = #786954
+  foam = #B8D8CF
+  oarblade = #786954
+  fg = #1F4E5F
 role trivlist-env
   center
     para
-      styled sans
-        styled bold
-          styled size:Huge
-            color primary #0F766E
-              text "Alex"
-            text " Doe "
-    block before 1800/1000ex plus 800/1000ex minus 400/1000ex
+      styled size:LARGE
+        styled sans
+          styled bold
+            text "Spring "
+            color driftwood #786954
+              text "Bulletin"
+    block before 3300/1000ex plus 900/1000ex minus 450/1000ex
     para
-      color muted #73727F
-        text " alex@example.org · example.org"
+      color driftwood #786954
+        text " crew@example.org • example.org/harbour"
 section* 1
-  text "Experience"
-role role
+  text "Fixtures"
+role fixture
   para
+    styled smallcaps
+      italicCorr maybe
+      text "Sat 09:30"
+    italicCorr maybe
+    text " "
     styled bold
       italicCorr maybe
-      text "Example Corp"
-    italicCorr maybe
-    text " | "
-    styled bold
+      text "Upper Reach"
+    text ", coxed fours ("
+    styled italic
       italicCorr maybe
-      text "Staff Engineer"
+      text "novices welcome"
     italicCorr maybe
-    text " "
-    fill
-    color muted #73727F
-      text "2021–present"
-  para
-    color muted #73727F
-      styled italic
-        italicCorr maybe
-        text "Platform"
-      italicCorr maybe
+    text ")"
 list unordered
   item
     para
-      text "Made a slow thing 10% faster and proved it stayed correct."
-block before 1800/1000ex plus 800/1000ex minus 400/1000ex
-role role
+      text "Launch from the north pontoon; the tide turns at ten."
+block before 3300/1000ex plus 900/1000ex minus 450/1000ex
+role fixture
   para
+    styled smallcaps
+      italicCorr maybe
+      text "Sun 15:00"
+    italicCorr maybe
+    text " "
     styled bold
       italicCorr maybe
-      text "Widgets Ltd"
-    italicCorr maybe
-    text " | "
-    styled bold
-      italicCorr maybe
-      text "Engineer"
-    italicCorr maybe
-    text " "
-    fill
-    color muted #73727F
-      text "2017–2021"
+      text "Lower Reach"
+    text ", single sculls"
 section* 1
-  text "Education"
-role degree
+  text "Boats"
+role boat
   para
-    styled bold
+    styled italic
       italicCorr maybe
-      text "PhD Applied Mathematics"
-    text ", Example University"
+      text "Kestrel"
+    italicCorr maybe
+    text ": a coxed four rigged for bow side."
 para
   styled bold
     italicCorr maybe
-    text "Awards"
+    text "Novice"
   italicCorr maybe
-  text " | "
+  text " and "
   styled bold
     italicCorr maybe
-    text "Judged"
+    text "Trophy"
   italicCorr maybe
-  text " "
-  fill
-  color muted #73727F
-    text "2019"
+  text " share the shelf this season."
 para
   decoration underline
-    text "Selected honours"
-  text " follow, judged "
+    text "Race reports"
+  text " follow, rowed "
   decoration underline
-    text "genuinely groundbreaking"
-  text " by a jury."
+    text "remarkably steadily"
+  text " into a headwind."
 -- diagnostics
-note[N0100] 5:1 '\documentclass{scrartcl}' → \documentclass[paper=letter,fontsize=10pt]{article}\page{ parskip = 0pt }
-note[N0100] 7:1 '\usepackage[english]{babel}' → \pdfmeta{ language = "en" }
-note[N0100] 8:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
-note[N0100] 9:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
-note[N0100] 10:1 '\usepackage{microtype}' → nothing: the engine does this itself
-note[N0100] 11:1 '\usepackage{xcolor}' → nothing: the engine does this itself
-note[N0100] 12:1 '\usepackage{geometry}' → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in, headsep = 0.25in }
-note[N0100] 13:1 '\usepackage{scrlayer-scrpage}' → nothing: the engine does this itself
-note[N0100] 14:1 '\pagestyle{scrheadings}' → nothing: declared running fields apply by themselves
-note[N0100] 15:1 '\clearpairofpagestyles' → no running fields; fields declared after apply
-note[N0100] 19:1 '\newlength{\rhythm}' → \tokens{ rhythm = 0pt }
-note[N0100] 20:1 '\setlength{\rhythm}' → \tokens{ rhythm = 1.8ex plus 0.8ex minus 0.4ex }
-note[N0100] 21:1 '\newlength{\sepunit}' → \tokens{ sepunit = 0pt }
-note[N0100] 22:1 '\setlength{\sepunit}' → \tokens{ sepunit = 0.5 * rhythm }
-note[N0100] 23:1 '\linespread' → \page{ leading = 1.04 }
-note[N0100] 25:1 '\usepackage{hyperref}' → nothing: the engine does this itself
-note[N0100] 26:1 '\usepackage{soul}' → nothing: the engine does this itself
-note[N0100] 27:1 '\hypersetup' → \pdfmeta{ author = "Alex Doe", title = "Alex Doe" }
-note[N0100] 34:1 '\definecolor{primary}' → \palette{ primary = HTML(0F766E) }
-note[N0100] 35:1 '\definecolor{muted}' → \palette{ muted = rgb(0.45,0.45,0.5) }
-note[N0100] 36:1 '\definecolor{rulecolor}' → \palette{ rulecolor = HTML(99F6E4) }
-note[N0100] 37:1 '\colorlet' → \palette{ bulletcolor = muted }
-note[N0100] 40:1 '\setkomafont{section}' → \style{section}{ font = {...} }
-note[N0100] 41:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 3 * sepunit, after = 1 * sepunit }
-note[N0100] 42:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 43:1 '\sectionlinesformat' → \style{section}{ rule = rulecolor, rule-position = baseline, rule-thickness = 0.6pt }
-note[N0100] 44:1 '\makeatother' → nothing: @-names are always readable here
-note[N0100] 45:1 '\setlist[itemize]' → \style{itemize}{ indent = 1.2em, before = sepunit, gap = sepunit, marker = {\textcolor {bulletcolor}{\small \textendash}} }
-note[N0100] 46:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
-note[N0100] 48:1 '\NewDocumentCommand{\dotsep}' → \define \dotsep() {...}
-note[N0100] 49:1 '\NewDocumentCommand{\role}' → \define \role(a1: content, a2: content, a3: content, a4?: content) {...}
-note[N0100] 50:5 '\noindent' → nothing: no paragraph carries a first-line indent here
-note[N0100] 50:56 '\color{muted}' → \muted
-note[N0100] 51:19 '\noindent' → nothing: no paragraph carries a first-line indent here
-note[N0100] 51:29 '\color{muted}' → \muted
-note[N0100] 53:1 '\newcommand{\degree}' → \define \degree(a1: content, a2: content) {...}
-note[N0100] 53:25 '\noindent' → nothing: no paragraph carries a first-line indent here
-note[N0100] 54:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 55:1 '\makeatother' → nothing: @-names are always readable here
-note[N0100] 58:1 '\color{primary}' → \primary
-note[N0100] 62:5 '\vspace' → \block[before = 2 * sepunit]{}
-note[N0100] 63:6 '\color{muted}' → \muted
-note[N0100] 74:1 '\vspace' → \block[before = 2 * sepunit]{}
-note[N0100] 85:1 '\noindent' → nothing: no paragraph carries a first-line indent here
-note[N0100] 85:73 '\color{muted}' → \muted
-note[N0100] 87:1 '\ul' → \underline
-note[N0100] 87:38 '\varul' → \underline
-note[N0100] 16:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}
-note[N0100] 85:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force
-note[N0022] 63:6 'muted' is realized darker (#73727F) on the page (#FAFAF9) to meet 4.50:1
+note[N0100] 5:1 '\documentclass{scrartcl}' → \documentclass[paper=a5,fontsize=11pt]{article}\page{ parskip = 0pt }
+note[N0100] 7:1 '\usepackage{xcolor}' → nothing: the engine does this itself
+note[N0100] 8:1 '\definecolor{deepwater}' → \palette{ deepwater = HTML(1F4E5F) }
+note[N0100] 9:1 '\definecolor{driftwood}' → \palette{ driftwood = rgb(0.47,0.41,0.33) }
+note[N0100] 10:1 '\definecolor{foam}' → \palette{ foam = HTML(B8D8CF) }
+note[N0100] 11:1 '\colorlet' → \palette{ oarblade = driftwood }
+note[N0100] 13:1 '\usepackage[english]{babel}' → \pdfmeta{ language = "en" }
+note[N0100] 14:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
+note[N0100] 15:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
+note[N0100] 16:1 '\usepackage{geometry}' → \page{ size = a5, vmargin = 14mm, hmargin = 17mm, headsep = 5mm }
+note[N0100] 17:1 '\usepackage{microtype}' → nothing: the engine does this itself
+note[N0100] 19:1 '\newlength{\beat}' → \tokens{ beat = 0pt }
+note[N0100] 20:1 '\setlength{\beat}' → \tokens{ beat = 2.2ex plus 0.6ex minus 0.3ex }
+note[N0100] 21:1 '\newlength{\stroke}' → \tokens{ stroke = 0pt }
+note[N0100] 22:1 '\setlength{\stroke}' → \tokens{ stroke = 0.75 * beat }
+note[N0100] 23:1 '\linespread' → \page{ leading = 1.12 }
+note[N0100] 25:1 '\usepackage{scrlayer-scrpage}' → nothing: the engine does this itself
+note[N0100] 26:1 '\clearpairofpagestyles' → no running fields; fields declared after apply
+note[N0100] 29:1 '\pagestyle{scrheadings}' → nothing: declared running fields apply by themselves
+note[N0100] 32:1 '\makeatletter' → nothing: @-names are always readable here
+note[N0100] 33:1 '\sectionlinesformat' → \style{section}{ rule = foam, rule-position = baseline, rule-thickness = 1.1pt }
+note[N0100] 34:1 '\makeatother' → nothing: @-names are always readable here
+note[N0100] 35:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 2 * stroke, after = 1 * stroke }
+note[N0100] 36:1 '\setkomafont{section}' → \style{section}{ font = {...} }
+note[N0100] 37:1 '\setlist[itemize]' → \style{itemize}{ indent = 1.6em, gap = stroke, before = stroke, marker = {\textcolor {oarblade}{\footnotesize \textbullet}} }
+note[N0100] 39:1 '\newcommand{\boat}' → \define \boat(a1: content, a2: content) {...}
+note[N0100] 40:1 '\NewDocumentCommand{\boatsep}' → \define \boatsep() {...}
+note[N0100] 41:1 '\NewDocumentCommand{\fixture}' → \define \fixture(a1: content, a2: content, a3: content, a4?: content) {...}
+note[N0100] 45:1 '\usepackage{hyperref}' → nothing: the engine does this itself
+note[N0100] 46:1 '\usepackage{soul}' → nothing: the engine does this itself
+note[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
+note[N0100] 53:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
+note[N0100] 56:1 '\color{deepwater}' → \deepwater
+note[N0100] 60:5 '\vspace' → \block[before = 2 * stroke]{}
+note[N0100] 61:6 '\color{driftwood}' → \driftwood
+note[N0100] 72:1 '\vspace' → \block[before = 2 * stroke]{}
+note[N0100] 83:1 '\noindent' → nothing: no paragraph carries a first-line indent here
+note[N0100] 85:1 '\ul' → \underline
+note[N0100] 85:33 '\varul' → \underline
+note[N0100] 27:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}
+note[N0100] 83:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force

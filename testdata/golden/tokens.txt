@@ -4,13 +4,13 @@ font dir "fonts"
 font body "Source Serif Pro"
 token rhythm 2000/1000ex plus 500/1000ex minus 250/1000ex
 token sep 1500/1000ex plus 375/1000ex minus 187/1000ex
-token bind 800/1000ex plus 200/1000ex minus 100/1000ex
+token bind 600/1000ex plus 150/1000ex minus 75/1000ex
 token slab 18pt
 assert pages == 1
 section 1 number "1"
   text "Declared spacing"
 para
-  text "Tokens are declared once and used by name, so no loose decimals appear where the spacing is applied. A token may scale an earlier one."
+  text "Tokens are declared once and used by name, so each spacing value is written in one place only. A token may scale an earlier one."
 block before 1500/1000ex plus 375/1000ex minus 187/1000ex
   para
     text "Separated from the paragraph above by one "
@@ -18,7 +18,7 @@ block before 1500/1000ex plus 375/1000ex minus 187/1000ex
       italicCorr maybe
       text "sep"
     text ", which is three quarters of the base rhythm and therefore font-relative."
-block before 800/1000ex plus 200/1000ex minus 100/1000ex
+block before 600/1000ex plus 150/1000ex minus 75/1000ex
   para
     text "Bound more tightly using "
     styled mono

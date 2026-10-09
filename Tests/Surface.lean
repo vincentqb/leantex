@@ -124,23 +124,23 @@ def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- TeX's true units are unscaled-by-\mag spellings of their plain
   -- counterparts (TeXbook ch. 10); with no magnification they are equal.
   t "truein is in: a \\setlength in true units declares the token"
-    (let (doc, ds) := elabStr (pre "\\newlength{\\a}\\setlength{\\a}{1.75truein}\
-\\newlength{\\b}\\setlength{\\b}{1.75in}")
+    (let (doc, ds) := elabStr (pre "\\newlength{\\a}\\setlength{\\a}{2.6truein}\
+\\newlength{\\b}\\setlength{\\b}{2.6in}")
      ds.all (·.severity != .error) &&
        (doc.tokens.find? "a").isSome && doc.tokens.find? "a" == doc.tokens.find? "b")
   t "truebp scales a decimal exactly like bp"
-    (Decl.parseLength "0.5truebp" == Decl.parseLength "0.5bp")
+    (Decl.parseLength "0.3truebp" == Decl.parseLength "0.3bp")
   -- The didot and cicero keep TeX's own relation: 1 cc = 12 dd.
   t "a cicero is twelve didots"
     ((Decl.parseLength "1cc").isSome &&
       Decl.parseLength "12dd" == Decl.parseLength "1cc")
-  -- `@` is a control-name character always: `\vqb@bp` is one (unknown)
-  -- name, never `\vqb` followed by stray text `@bp`.
+  -- `@` is a control-name character always: `\demo@wd` is one (unknown)
+  -- name, never `\demo` followed by stray text `@wd`.
   t "@ in a control name lexes as one name"
-    (toks "\\vqb@bp" == [.ctrl "vqb@bp"])
+    (toks "\\demo@wd" == [.ctrl "demo@wd"])
   t "an unknown @-name is one diagnostic naming it, with no stray text"
-    (let (doc, ds) := elabStr "x \\vqb@bp y"
-     ds.any (fun d => d.code == "W0301" && (d.message.splitOn "vqb@bp").length > 1) &&
+    (let (doc, ds) := elabStr "x \\demo@wd y"
+     ds.any (fun d => d.code == "W0301" && (d.message.splitOn "demo@wd").length > 1) &&
        doc.body == #[.para #[.text "x y"]])
   -- LaTeX's starred forms: the star means "no \par in the arguments"
   -- (definers), not modelled, so that star is consumed with its command,
@@ -410,8 +410,8 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- where it stands instead of binding a macro (which also fired E0312
   -- for every renew standing inline).
   t "a renew of \\thesubsection is the heading-number format"
-    (nums (art "\\renewcommand*{\\thesubsection}{FAQ \\arabic{subsection}.}\\section{A}\\subsection{B}\\subsection{C}") ==
-      [some "1", some "FAQ 1.", some "FAQ 2."])
+    (nums (art "\\renewcommand*{\\thesubsection}{Item \\arabic{subsection}.}\\section{A}\\subsection{B}\\subsection{C}") ==
+      [some "1", some "Item 1.", some "Item 2."])
   t "a format may reference the parent level's own format"
     (nums (art "\\renewcommand{\\thesubsection}{\\thesection-\\alph{subsection}}\\section{A}\\subsection{B}") ==
       [some "1", some "1-a"])
@@ -422,17 +422,17 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a renew inside a macro body applies from the call site, without E0312"
     (errCodes viaMacro == [] &&
       nums (elabStr viaMacro).1 == [some "1", some "1.1", some "Q2"])
-  -- The label hack every FAQ-styled document writes: retarget the label
+  -- The label hack a prefixed heading number needs: retarget the label
   -- to the bare counter while the headings keep their prefixed format.
-  let faq := "\\documentclass{article}" ++
+  let prefixed := "\\documentclass{article}" ++
     "\\newcommand{\\qlabel}[1]{\\renewcommand{\\thesubsection}{\\arabic{subsection}}" ++
     "\\addtocounter{subsection}{-1}\\refstepcounter{subsection}\\label{#1}" ++
-    "\\renewcommand{\\thesubsection}{FAQ \\arabic{subsection}.}}" ++
-    "\\begin{document}\n\\renewcommand{\\thesubsection}{FAQ \\arabic{subsection}.}" ++
+    "\\renewcommand{\\thesubsection}{Item \\arabic{subsection}.}}" ++
+    "\\begin{document}\n\\renewcommand{\\thesubsection}{Item \\arabic{subsection}.}" ++
     "\\section{Q}\\subsection{A}\\qlabel{q:one_two}\n\\subsection{B}\nSee \\ref{q:one_two}.\n\\end{document}"
   t "refstepcounter retargets a label under the format in force"
-    (errCodes faq == [] && !(warnCodes faq).contains "W0349" &&
-      nums (elabStr faq).1 == [some "1", some "FAQ 1.", some "FAQ 2."])
+    (errCodes prefixed == [] && !(warnCodes prefixed).contains "W0349" &&
+      nums (elabStr prefixed).1 == [some "1", some "Item 1.", some "Item 2."])
   t "a counter the engine does not model is named and its arguments consumed"
     ((warnCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")).contains "W0104" &&
       (errCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")) == [])
@@ -693,22 +693,22 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes adv == [] && (warnCodes adv).contains "W0104")
   -- geometry's per-side margins: an equal pair is the symmetric margin
   -- the engine centres with; unequal or lone sides stay named (W0101).
-  let folded := dvDoc "\\usepackage[top=0.5in, bottom=0.5in, left=0.5in, right=0.5in]{geometry}\n" "x"
-  let direct := dvDoc "\\page{ vmargin = 0.5in, hmargin = 0.5in }\n" "x"
+  let folded := dvDoc "\\usepackage[top=0.7in, bottom=0.7in, left=0.7in, right=0.7in]{geometry}\n" "x"
+  let direct := dvDoc "\\page{ vmargin = 0.7in, hmargin = 0.7in }\n" "x"
   t "equal geometry sides fold to the symmetric margins"
     (!(warnCodes folded).contains "W0101" &&
       (elabStr folded).1.page.vmargin == (elabStr direct).1.page.vmargin &&
       (elabStr folded).1.page.hmargin == (elabStr direct).1.page.hmargin)
   t "unequal geometry sides stay named"
-    ((warnCodes (dvDoc "\\usepackage[top=1in, bottom=0.5in]{geometry}\n" "x")).contains
+    ((warnCodes (dvDoc "\\usepackage[top=1in, bottom=0.7in]{geometry}\n" "x")).contains
       "W0101")
   -- LaTeX idioms translate to native declarations, each with a note that
   -- shows the shorter spelling. The document compiles as written.
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
-  let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
+  let (geoDoc, geoDs) := elabStr (pre "\\usepackage[a4paper,vmargin=0.6in,hmargin=0.9in,headsep=1in]{geometry}")
   t "compat geometry becomes page" (geoDs.all (·.severity != .error) &&
-    geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
+    geoDoc.page.vmargin == Dim.inch 3 / 5 && geoDoc.page.hmargin == Dim.inch 9 / 10)
   t "compat geometry carries headsep to the page keys"
     (geoDoc.page.headsep == some (Dim.inch 1) &&
       geoDs.all (·.code != "W0101"))
@@ -716,10 +716,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- rides through; headheight is satisfied by construction (the head's
   -- band reserves its line's whole ink) and goes quietly.
   let (pairDoc, pairDs) := elabStr
-    (pre "\\usepackage[top=0.5in,bottom=0.5in,left=0.5in,right=0.5in,footskip=0.2in,headheight=12pt]{geometry}")
+    (pre "\\usepackage[top=0.75in,bottom=0.75in,left=0.75in,right=0.75in,footskip=0.3in,headheight=12pt]{geometry}")
   t "compat geometry pairs equal one-sided margins"
-    (pairDoc.page.vmargin == Dim.inch 1 / 2 && pairDoc.page.hmargin == Dim.inch 1 / 2 &&
-     pairDoc.page.footskip == some (Dim.inch 1 / 5) &&
+    (pairDoc.page.vmargin == Dim.inch 3 / 4 && pairDoc.page.hmargin == Dim.inch 3 / 4 &&
+     pairDoc.page.footskip == some (Dim.inch 3 / 10) &&
      pairDs.all (·.code != "W0101"))
   t "compat geometry drops an unequal pair named"
     ((elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2.any fun d =>
@@ -730,10 +730,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- assignment, because "footskip" alone points at a key the engine does
   -- read and hides that the value is the problem.
   let dimexprDs := (elabStr
-    (pre "\\usepackage[footskip=\\dimexpr 0.25in + \\ht\\strutbox\\relax]{geometry}")).2
+    (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")).2
   t "compat geometry drops a dimexpr value named with its spelling"
     ((dimexprDs.any fun d => d.code == "W0101" &&
-        hasStr d.message "footskip = \\dimexpr 0.25in" &&
+        hasStr d.message "footskip = \\dimexpr 0.3in" &&
         hasStr d.message "\\strutbox" &&
         (d.help.map (hasStr · "literal")).getD false) &&
       dimexprDs.all (·.severity != .error))
@@ -1133,7 +1133,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat res is resume"
     ((elabStr "\\documentclass{res}\\begin{document}x\\end{document}").1.docClass == .resume)
   t "compat linespread is leading"
-    ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
+    ((elabStr (pre "\\linespread{1.15}")).1.page.leading == 1150)
   -- A class's \renewcommand\normalsize opening with \@setfontsize: the
   -- body size and its leading, honoured as the page's own — 10/10.95
   -- (\@xpt/\@xipt) lands the baselines at 10.95pt over the engine's 6/5
@@ -1713,7 +1713,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let koma := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\newlength{\\s}\\setlength{\\s}{3pt}" ++
     "\\setkomafont{section}{\\large\\sffamily\\color{ink}}" ++
     "\\RedeclareSectionCommand[beforeskip=2\\s,afterskip=1\\s]{section}" ++
-    "\\setlist[itemize]{leftmargin=1.2em,itemsep=\\s,label={\\color{ink}\\textendash}}" ++
+    "\\setlist[itemize]{leftmargin=1.5em,itemsep=\\s,label={\\color{ink}\\textbullet}}" ++
     "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule\\hfill}}\\makeatother" ++
     "\\thispagestyle{empty}\\ihead{L}"))
   t "compat koma section font" ((koma.1.styles.find? "section").bind (·.font) ==
@@ -2831,7 +2831,7 @@ def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Nfc.normalize "e\u0301\u0327" == "\u0229\u0301")
   t "nfc maps singleton" (Nfc.normalize "\u212B" == "Å")
   t "nfc keeps ascii" (Nfc.normalize "hello" == "hello")
-  t "nfc keeps composed" (Nfc.normalize "Bélair" == "Bélair")
+  t "nfc keeps composed" (Nfc.normalize "Crème" == "Crème")
   t "nfc idempotent" (Nfc.normalize (Nfc.normalize "e\u0301\u0327 ơ\u0323")
     == Nfc.normalize "e\u0301\u0327 ơ\u0323")
   t "nfc hangul composes" (Nfc.normalize "\u1100\u1161\u11A8" == "\uAC01")
@@ -2845,20 +2845,20 @@ def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "toLower folds beyond ASCII"
     (Nfc.toLower 'É' == 'é' && Nfc.toLower 'A' == 'a' && Nfc.toLower 'ß' == 'ß')
   -- The lexer feeds normalized text to everything downstream.
-  t "lex normalizes to NFC" (toks "Be\u0301lair" == [.word "Bélair"])
+  t "lex normalizes to NFC" (toks "Cre\u0300me" == [.word "Crème"])
 
 def accentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- TeX accent commands compose to NFC in text elaboration, the same
   -- route .bib values read (Bib.accentOf via Elab.accentCompose):
-  -- B\'elair renders "Bélair", not "Belair" + W0301.
+  -- F\'evrier renders "Février", not "Fevrier" + W0301.
   let para? (p : Ir.Doc × Array Diag) : Option (Array Ir.Inline) :=
     match p.1.body with
     | #[.para xs] => some xs
     | _ => none
-  let (d1, ds1) := elabStr "B\\'elair"
+  let (d1, ds1) := elabStr "F\\'evrier"
   t "accent on adjacent word composes" (ds1.isEmpty &&
-    para? (d1, ds1) == some #[.text "Bélair"])
+    para? (d1, ds1) == some #[.text "Février"])
   let (d2, ds2) := elabStr "sch\\\"{o}n and \\c{c}a and gro\\ss e"
   t "accent groups, cedilla, and char commands compose" (ds2.isEmpty &&
     para? (d2, ds2) == some #[.text "schön and ça and große"])
@@ -3560,21 +3560,21 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- uses it on an edge, which was `Unknown arrow tip kind` at the boundary
   -- and a dropped option natively.
   t "elab a declared tip draws the subset's arrow head"
-    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+    ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty &&
-     (elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | .edge _ _ tip => tip.isSome
             | _ => false
         | _ => false))
   t "elab a declared tip in braces draws the same head"
-    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+    ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-{scm}] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      "\\draw[-{plume}] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | .edge _ _ tip => tip.isSome
@@ -3584,13 +3584,13 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- edge still ships: a picture draws what it can and says what it lost.
   t "elab an undeclared tip is named and the edge still draws"
     (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.code)).toList == ["W0334"] &&
      ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
-      (·.message)).any (fun m => hasStr m "'scm'") &&
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.message)).any (fun m => hasStr m "'plume'") &&
      (elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | .edge _ _ tip => tip.isNone
@@ -3599,28 +3599,28 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `>=<tip>` names which head the `->` shorthand draws: accepted for a
   -- declared tip, named for one nothing declared.
   t "elab a declared tip named by '>=' is accepted"
-    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+    ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
+      "\\draw[>=plume, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab an undeclared tip named by '>=' is named"
     ((((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      "\\draw[>=plume, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
       (·.code)).toList == ["W0334"]) &&
      ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[>=scm, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
-      (·.message)).any (fun m => hasStr m "'scm'"))
+      "\\draw[>=plume, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
+      (·.message)).any (fun m => hasStr m "'plume'"))
   -- The braced spelling of a tip name is the same name: pgf writes it that
   -- way as soon as the tip carries options.
   t "elab a declared tip named by '>=' in braces is accepted"
-    ((elabStr ("\\tikzset{scm/.tip={Latex[round]}}\n" ++
+    ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[>={scm}, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
+      "\\draw[>={plume}, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `/.tip` declaration is read, so it is not an unread key at its line;
   -- an `every X` with no loop behind it still is (`readableKey`).
   t "elab a tip declaration is not named as an unread key"
-    ((elabStr ("\\pictures{ tool = none }\\tikzset{scm/.tip={Latex[round]}}\n" ++
+    ((elabStr ("\\pictures{ tool = none }\\tikzset{plume/.tip={Latex[round]}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
-      "\\draw[-scm] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
+      "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.isEmpty)
   -- A `(name)` before `at` names the node for edges; the node draws.
   t "elab picture named node draws without a diagnostic"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
@@ -3649,10 +3649,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "\\define \\pagebreak() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
   -- ...except a text symbol, whose name a document may want for itself.
   let (degDoc, degDs) := elabStr
-    "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{PhD}\\end{document}"
+    "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{warm}\\end{document}"
   t "elab user definition shadows a symbol"
     (degDs.isEmpty && degDoc.body ==
-      #[.para #[.role "degree" #[.styled .bold #[.italicCorr true, .text "PhD"], .italicCorr true]]])
+      #[.para #[.role "degree" #[.styled .bold #[.italicCorr true, .text "warm"], .italicCorr true]]])
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 
@@ -3899,9 +3899,9 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the minimum is the whole answer when it dominates the body, the case
   -- the subset renders).
   t "a drawn circle node ships its outline at half the minimum size"
-    ((picOf (wrap "\\node[circle, draw, minimum size=8mm, inner sep=1pt] at (0,0) {x};")).map
+    ((picOf (wrap "\\node[circle, draw, minimum size=6mm, inner sep=2pt] at (0,0) {x};")).map
       (·.shapes) == some #[
-        .circle 0 0 (8000 * Dim.mm 10 / 10000 / 2) (some ({} : Ir.Pic.Stroke)) none,
+        .circle 0 0 (6000 * Dim.mm 10 / 10000 / 2) (some ({} : Ir.Pic.Stroke)) none,
         .label 0 0 #[.text "x"] Ir.Color.black 1000 .center])
   t "a filled rectangle node ships its frame centred on the anchor"
     ((picOf (wrap "\\node[rectangle, draw=grid, fill=white, thick, dashed, \
@@ -6161,7 +6161,7 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := "@job{a, role = {Alpha~\\emph{Role} 10\\%}, start = 2020}\n" ++
     "@job{b, role = {Beta Role}, start = 2021, end = 2024, " ++
-    "achievements = {\\item One \\item Two}}"
+    "highlights = {\\item One \\item Two}}"
   let srcs := #[("records", bib)]
   let pre := "\\data{ file = \"records\" }\n"
   t "data: \\val splices the field's own TeX — \\emph, ~, \\% are content"
@@ -6174,7 +6174,7 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
       "2020--present 2021--2024")
   t "data: \\item inside a value is the list the document wraps"
     (dataCovers srcs
-      (pre ++ "\\begin{foreach}{j}{job}\\ifdata{j.achievements}{\\begin{itemize}\\val{j.achievements}\\end{itemize}}\\end{foreach}")
+      (pre ++ "\\begin{foreach}{j}{job}\\ifdata{j.highlights}{\\begin{itemize}\\val{j.highlights}\\end{itemize}}\\end{foreach}")
       "\\begin{itemize}\\item One \\item Two\\end{itemize}")
   t "data: inline \\data{ @kind{...} } is the same grammar through the other door"
     (dataCovers #[]
@@ -6390,12 +6390,12 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some c => hasStr (reqOf ldoc) (Ir.colorDeclLine ("ember2", c)) &&
          hasStr (reqOf ldoc) "\\definecolor{ember2}{RGB}{"
      | none => false)
-  let (kdoc, _) := elabStr (dvDoc "\\palette{ ink = cmyk(0, 0.83, 0.76, 0.07), key = cmyk(0, 1, 1, 0) }\n"
+  let (kdoc, _) := elabStr (dvDoc "\\palette{ ink = cmyk(0, 0.6, 0.4, 0.2), key = cmyk(0, 1, 1, 0) }\n"
     ("\\begin{tikzpicture}\\shade[text=ink, fill=key] (0,0) rectangle (1,1);" ++
      "\\end{tikzpicture}"))
   t "a cmyk role rides in its declared model"
     ((kdoc.palette.find? "ink" |>.any (·.cmyk.isSome)) &&
-      hasStr (reqOf kdoc) "\\definecolor{ink}{cmyk}{0,0.83,0.76,0.07}" &&
+      hasStr (reqOf kdoc) "\\definecolor{ink}{cmyk}{0,0.6,0.4,0.2}" &&
       hasStr (reqOf kdoc) "\\definecolor{key}{cmyk}{0,1,1,0}")
   -- The deck's shape, invented text: a theme role reached only through
   -- \alert's rewrite, and a formula in a node — red before this slice
@@ -6601,7 +6601,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let t := check ref
   -- The set lines where a figure file puts them: in the body, above the
   -- picture that reads them.
-  let sets := "\\usetikzlibrary{arrows.meta}\n\\tikzset{scmarrow/.tip={Latex[round]}}\n\n"
+  let sets := "\\usetikzlibrary{arrows.meta}\n\\tikzset{plumearrow/.tip={Latex[round]}}\n\n"
   -- A picture the subset draws nothing of, so the boundary is its route.
   -- `\shade` is the construct outside it: a `\path` of drawn segments is
   -- native now (M8b slice 3), and a fixture that routes has to name
@@ -6612,7 +6612,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
   t "a body-level set line reaches the standalone its picture renders in"
     (hasStr (reqOf bodyDoc) "\\usetikzlibrary{arrows.meta}" &&
-     hasStr (reqOf bodyDoc) "\\tikzset{scmarrow/.tip={Latex[round]}}")
+     hasStr (reqOf bodyDoc) "\\tikzset{plumearrow/.tip={Latex[round]}}")
   t "where a set line stands does not change the request"
     (reqOf bodyDoc == reqOf preDoc && !(reqOf bodyDoc).isEmpty)
   t "a body-level set line is not an unknown command"
@@ -6624,7 +6624,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       ((censusOf (coveredColorsOf d) (layoutOf oneFace d)).toList.map (·.text))
   let shipped := shippedText bodyDoc
   t "the definition's source is not ink on the page"
-    (!hasStr shipped "scmarrow" && !hasStr shipped "arrows.meta" &&
+    (!hasStr shipped "plumearrow" && !hasStr shipped "arrows.meta" &&
      !hasStr shipped "Latex")
   -- The declared refusal is still the acceptance: with no boundary, a set
   -- line is an unknown command again, arguments and all.
@@ -6654,7 +6654,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- of, where there is nothing to fall back to, and the run fails rather
   -- than shipping a page that reads as intentional.
   let failed := DriverDiag.boundaryFailed "lualatex"
-    "! Package pgf Error: Unknown arrow tip kind 'scmarrow'."
+    "! Package pgf Error: Unknown arrow tip kind 'plumearrow'."
   t "a boundary failure is an error the document must declare to accept"
     (failed.code == "E0382" && failed.severity == .error &&
      DiagCode.E0382.loss == .dropped)
@@ -6876,8 +6876,8 @@ def pictureStyleHandlerChecks (ref : IO.Ref (List String))
     ((ca[0]?.map (·.images == 0)).getD false)
   let tipSrc (decl : String) : String :=
     decl ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
-    "\\draw[-scm] (0,0) -- (2,0);\n\\end{tikzpicture}\n\\end{document}"
-  let cd := censusSrc (tipSrc "\\tikzset{scm/.tip={Latex[round]}}\n")
+    "\\draw[-plume] (0,0) -- (2,0);\n\\end{tikzpicture}\n\\end{document}"
+  let cd := censusSrc (tipSrc "\\tikzset{plume/.tip={Latex[round]}}\n")
   let cu := censusSrc (tipSrc "")
   t "a declared tip ships a head beside its edge"
     ((cd[0]?.map (·.paths == 2)).getD false)
@@ -9230,10 +9230,10 @@ def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let has := hasStr
   -- The reported defect, on the shape it was reported in: a pair of words
   -- aligned by hand shipped the phantom's letters beside the word.
-  let v := "Inventory Value\\vphantom{qy} counted"
+  let v := "Garden Gate\\vphantom{qy} counted"
   t "a vphantom's argument is not ink" (!has (allText v) "qy")
   t "the words around it are, still one run"
-    (has (pageText v) "Value counted")
+    (has (pageText v) "Gate counted")
   t "and vphantom is not an unknown command"
     (!(warnCodes v).contains "W0301")
   t "the height and depth it props are already the line's, so nothing is named"

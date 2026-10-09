@@ -1,0 +1,32 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "Shaped nodes"
+picture 12 shapes
+  border -15.874 -5.669 15.874 5.669
+  border 61.228 -6.803 74.835 6.803
+  border 28.346 -39.685 39.685 -28.346
+  frame -15.874 -5.669 31.748 11.339 stroke #000000 0.8 fill #D9FFFF
+  label 0 0 #000000 800
+    text "tile"
+  circle 68.031 0 6.803 stroke #000000 0.4
+  label 68.031 0 #000000 640
+    formula inline "p"
+      ord:𝑝
+  circle 34.016 -34.016 5.669 stroke #000000 0.4 dashed
+  label 34.016 -34.016 #000000 640
+    formula inline "g"
+      ord:𝑔
+  edge (16.274,0)--(56.228,0) stroke #000000 0.4 tip
+  edge (63.08,-4.952)--(38.166,-29.866) stroke #808080 0.4
+  edge (6.069,-6.069)--(29.866,-29.866) stroke #000000 0.4 dashed
+  label 17.967 -17.967 #000000 640
+    formula inline "\\mathrm {rd}"
+      ord:alpha:rm{ord:𝑟 ord:𝑑}
+  edge (0,-6.069)~(28.146,-34.016) stroke #000000 0.4 dotted
+  label 8.25 -25.866 #000000 640
+    text "bend"
+-- diagnostics
+(none)

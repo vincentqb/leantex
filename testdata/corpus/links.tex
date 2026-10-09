@@ -4,9 +4,9 @@
 
 \fonts{ dir = "fonts", body = "Source Serif Pro", sans = "Open Sans" }
 
-\palette{ accent = #1D4ED8, muted = #71717A }
+\palette{ accent = #1D4ED8, muted = #6A6F66 }
 
-\tokens{ rhythm = 1.6ex plus 0.4ex, sep = 1.0 * rhythm }
+\tokens{ unit = 1.6ex plus 0.4ex, sep = 1.0 * unit }
 
 \page{ size = a5, margin = 0.6in }
 
@@ -16,7 +16,7 @@
 % A definition that produces a block, which used to report E0312.
 \define \entry(what: text, who: text, when: text) {
   \block[before = sep]{
-    \textbf{\what} \,|\, \who \hfill \muted{\when}
+    \textbf{\what}, \who \hfill \muted{\when}
   }
 }
 
@@ -33,7 +33,7 @@ Links inherit style, so \textbf{\href{https://example.org/three}{a bold
 link}} works, and a link may wrap across a line break because its rectangle
 is emitted per line rather than per word.
 
-\entry{Example Corp}{Staff Engineer}{2021--present}
-\entry{Widgets Ltd}{Engineer}{2017--2021}
+\entry{Spring regatta}{Upper Reach}{May}
+\entry{Autumn head race}{Lower Reach}{October}
 
 \end{document}
