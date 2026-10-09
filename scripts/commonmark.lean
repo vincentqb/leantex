@@ -115,7 +115,9 @@ and every other dropped, declared nowhere — and it certified a page whose
 every paragraph was `hidden` as 323 matches. -/
 def droppedAttrs : List (String × String) :=
   [("class",
-    "the engine's styling classes (`numbered`, `line`). Its `language-*` \
+    "the engine's styling classes (`numbered`, `line`), and a table cell's \
+side class (`bt-left`, `bt-center`, `bt-right`), which `cellAlignAttrs` reads \
+into the compared `align` before this row drops it. Its `language-*` \
 tokens are kept and compared on both sides: the one class a spec example \
 states as content, a fenced block's info string. Dropping `class` whole \
 once hid three lost languages the run had named with W0110"),
@@ -175,8 +177,10 @@ ends in a blank line differs by two newlines, so it still fails."),
 them. Hides: nothing — HTML attribute order is not content."),
    ("a table cell's alignment spelling",
     "the GFM spec writes a cell's alignment as the `align` attribute, which \
-HTML lists as non-conforming (HTML §16, 'use CSS instead'); the engine writes \
-`text-align` in the cell's `style`. Both are read into one `align` value and \
+HTML lists as non-conforming (HTML §16, 'use CSS instead'); the engine states \
+it as the cell's side class (`bt-left`, `bt-center`, `bt-right`, each a \
+stylesheet `text-align`), or as `text-align` in the cell's `style`. All are \
+read into one `align` value and \
 compared, a declared `left` read as none: a cell that declares no side sets on \
 the left, the side a `:--` delimiter cell declares, since every spec example's \
 page sets left to right and centres no scope around its table. Hides: the \
@@ -205,6 +209,13 @@ def textAlignOf (style : String) : Option String :=
       else none
     | _ => none
 
+/-- The side a cell's side class states (`HtmlDoc.cellSideClass`), if its
+class value carries one. -/
+def sideClassOf (classes : String) : Option String :=
+  (classes.splitOn " ").findSome? fun c =>
+    [Ir.HAlign.left, .center, .right].findSome? fun h =>
+      if c == HtmlDoc.cellSideClass h then some h.align else none
+
 /-- A cell's alignment as one `align` value, whichever spelling carried it,
 `left` as none: the declared normalization of a table cell's alignment. -/
 def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
@@ -213,8 +224,9 @@ def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
   else
     let spelled := (attrs.find? (·.1 == "align")).map (·.2.toLower)
     let styled := (attrs.find? (·.1 == "style")).bind (textAlignOf ·.2)
+    let classed := (attrs.find? (·.1 == "class")).bind (sideClassOf ·.2)
     let rest := attrs.filter (·.1 != "align")
-    match spelled.orElse fun _ => styled with
+    match (spelled.orElse fun _ => styled).orElse fun _ => classed with
     | some "left" => rest
     | some a => rest.push ("align", a)
     | none => rest
@@ -1578,6 +1590,18 @@ def selftest : IO UInt32 := do
      differ "cell alignment: the text beside it is still compared"
        "<table><tr><td style=\"text-align: right\">a</td></tr></table>"
        "<table><tr><td style=\"text-align: right\">b</td></tr></table>",
+     same "cell alignment: the side class is the cell's alignment"
+       "<table><tr><td align=\"right\">a</td></tr></table>"
+       "<table><tr><td class=\"bt-right\">a</td></tr></table>",
+     same "cell alignment: a left side class is the undeclared side"
+       "<table><tr><td>a</td></tr></table>"
+       "<table><tr><td class=\"bt-left bt-nowrap\">a</td></tr></table>",
+     differ "cell alignment: two side classes still differ"
+       "<table><tr><td align=\"right\">a</td></tr></table>"
+       "<table><tr><td class=\"bt-center\">a</td></tr></table>",
+     differ "cell alignment: a side class against none still differs"
+       "<table><tr><td align=\"center\">a</td></tr></table>"
+       "<table><tr><td class=\"bt-cmid\">a</td></tr></table>",
      -- a column group of bare columns
      same "colgroup: a group of bare columns is dropped"
        "<table><colgroup><col><col></colgroup><tr><td>a</td></tr></table>"

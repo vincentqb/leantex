@@ -4800,6 +4800,15 @@ private def docHasListing (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
+/-- Whether the document carries a table whose columns narrow (a markdown
+table's, `Ir.ColSpec.narrows`): the gate on its print rule, so a document
+without one ships exactly the stylesheet it shipped before. -/
+private def docHasNarrowingTable (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || match bl with
+      | .table cols .. => cols.any (·.narrows)
+      | _ => false)
+    (fun b _ => b) false doc.body
+
 /-- Whether the document carries a reference list: the gate on its rules,
 so a document without one ships exactly the stylesheet it shipped before. -/
 private def docHasBibliography (doc : Doc) : Bool :=
@@ -5285,7 +5294,9 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- the right one alone ran its last columns off the sheet. On screen it
   -- keeps the column's start, where a narrow viewport can still scroll to
   -- its end.
-  "  table.booktabs.bt-overhang { position: relative; left: 50%; transform: translateX(-50%); }\n" ++
+  (if docHasNarrowingTable doc then
+    "  table.booktabs.bt-overhang { position: relative; left: 50%; transform: translateX(-50%); }\n"
+  else "") ++
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
