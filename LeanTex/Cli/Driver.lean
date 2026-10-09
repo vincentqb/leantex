@@ -623,6 +623,27 @@ def diagnosticOutputs (emit : Array Emit) : Array Diag.Output :=
     | .html => some .html
     | .md => none
 
+/-- **Is the document elaboration returned already the fixed point?** It
+was elaborated against `front.provisional`; font assembly settled on `fs`
+and returned `resolved`, the same document with its alphabets resolved
+against `fs`'s coverage. Where the two faces measure every label alike
+(`Cli.FontFix.agree`, over `probes`), the extents the placement used are
+the extents `fs` gives — `extent_agree` is the step — so no second
+elaboration can change the document; where they differ, or where no
+provisional face was resolved and the body drew a picture anyway, it is
+elaborated again against `fs`'s measure, which this returns beside the
+probes and the verdict. The probes are `front.doc`'s labels, the calls
+elaboration made, never `resolved`'s: those carry `fs`'s alphabets, and
+where the faces' coverage differ they measure alike where the labels
+elaboration measured do not. -/
+def settlement (front : Front) (fs : Font.FontSet) (resolved : Ir.Doc) :
+    Ir.Pic.LabelMetric × Array FontFix.Probe × Bool :=
+  let metric := Layout.labelMetric (Layout.Geom.ofPage resolved.page) fs
+  let ps := FontFix.probes front.doc.body
+  (metric, ps, match front.provisional with
+    | some pre => FontFix.agree pre metric ps
+    | none => Elab.enginePictures resolved.body == 0)
+
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   match ← frontend ui file with
@@ -671,9 +692,6 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let scan ← match reuse with
       | some s => pure s
       | none => scanFaces ui file doc.fonts
-    -- The calls elaboration made: the labels as it measured them, before
-    -- the font set resolves their alphabets against its own coverage.
-    let measured := FontFix.probes doc.body
     match ← buildFontSet doc scan front.cache .settled with
     | .error d =>
       -- No usable font set exists at all: nothing downstream can run, so
@@ -690,23 +708,11 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
-      -- **Is the document already the fixed point?** It was elaborated
-      -- against a face resolved from its preamble; the face it settles on
-      -- is `fs`. Where the two measure every label the pictures carry
-      -- alike (`Cli.FontFix.agree`, over `probes`), the extents the
-      -- placement used are the extents this face gives — `extent_agree` is
-      -- the step — so the document in hand *is* the one this environment
-      -- determines and no second elaboration can change it. Where they
-      -- differ, or where no provisional face was resolved at all and the
-      -- body drew a picture anyway, elaborate again against the settled
-      -- face: the artifact is a function of the document and the font
-      -- environment, never of whichever face happened to be resolved first.
-      let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
+      -- The artifact is a function of the document and the font
+      -- environment, never of whichever face happened to be resolved first
+      -- (`settlement`).
       let t ← IO.monoMsNow
-      let ps := measured
-      let settled : Bool := match front.provisional with
-        | some pre => FontFix.agree pre metric ps
-        | none => Elab.enginePictures doc.body == 0
+      let (metric, ps, settled) := settlement front fs doc
       if let some pre := front.provisional then
         ui.phase "settle" (if settled then s!"provisional face holds ({ps.size} labels)"
           else s!"provisional face superseded \

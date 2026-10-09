@@ -42,10 +42,10 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   check "picture literal punctuation is label content"
     (labelText (Picture.nodeLabel cx [] [.sym '[', .ident "x", .sym ']']).1 == "[x]")
   check "picture math content comes from its elaborator"
-    (labelText (Picture.nodeLabel cx [] [.math false []]).1 == "computed")
+    (labelText (Picture.nodeLabel cx [] [.math false [] {}]).1 == "computed")
   let inputs := Picture.labelInputList
     [("value", .str "bound"), ("value", .str "shadowed"), ("unused", .str "unreferenced")]
-    #[] [.sym '[', .num (-1250), .group [.ctrl "value", .math true []],
+    #[] [.sym '[', .num (-1250), .group [.ctrl "value", .math true [] {}],
       .ctrl "unbound", .other "parser-marker"]
   check "picture source census retains typed tokens and the selected declaration"
     (inputs == #[.literal (.symbol '['), .literal (.number (-1250)),
@@ -68,7 +68,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let nested := Picture.nodeLabel styledCx [("value", .str "bound")]
     [.ctrl "textbf", .group [.ident "outer", .space, .ctrl "textcolor",
       .group [.ident "accent"], .group [.ident "inner"], .space, .ctrl "value",
-      .space, .math false []]]
+      .space, .math false [] {}]]
   check "picture nested styles preserve body and elaborated math"
     (labelText nested.1 == "outer inner bound computed" && nested.2.isEmpty)
   let discarded := Picture.nodeLabel styledCx []
@@ -178,10 +178,10 @@ def provenanceRenderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let cases : Array (String × List Picture.Tok × Array String × Bool) := #[
     ("literal brackets", [.sym '[', .ident "source", .sym ']'], #["[source]"], false),
     ("declared substitution", [.ctrl "textbf", .group [.ctrl "value"]], #["Bound"], false),
-    ("arbitrary math output", [.math true [], .space, .math false []],
+    ("arbitrary math output", [.math true [] {}, .space, .math false [] {}],
       #["[DISPLAY] [math]"], false),
     ("nested style and color", [.ctrl "textbf", .group [
-      .ident "first", .ctrl "\\", .math false [], .ctrl "textcolor",
+      .ident "first", .ctrl "\\", .math false [] {}, .ctrl "textcolor",
       .group [.ident "accent"], .group [.ident "last"]]], #["first", "[math]last"], false),
     ("discarded naming argument", [.ident "kept", .ctrl "ref", .group [.ident "not-shipped"]],
       #["kept"], true),

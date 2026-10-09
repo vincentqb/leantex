@@ -21,7 +21,8 @@ example : Repr NodeGeom := inferInstance
 example : BEq NodeGeom := inferInstance
 
 example (body : List Tok) : Tok := .group body
-example (display : Bool) (body : List Parse.Raw) : Tok := .math display body
+example (display : Bool) (body : List Parse.Raw) (pos : Pos) : Tok :=
+  .math display body pos
 example : Array Parse.Raw → Array Tok := ofRaws
 example : Int → String := milliString
 example : Val → String := Val.text

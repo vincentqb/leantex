@@ -82,7 +82,14 @@ private def mathOriginFixtures : Array MathOriginFixture := #[
   { name := "dollar-source"
     body := "First $x$.\n\nLater $\\mathcal{A}$."
     face := some ⟨4, 7, some "$"⟩
-    alphabets := #[("cal", ⟨6, 7, some "$"⟩)] }]
+    alphabets := #[("cal", ⟨6, 7, some "$"⟩)] },
+  -- A picture label's formula is located at its opener, as a paragraph's is.
+  { name := "picture-label"
+    preamble := "\\pictures{tool=none}\n"
+    body := "\\begin{tikzpicture}\n\\node at (0,0) {Label $\\mathcal{A}$};\n\
+      \\end{tikzpicture}"
+    face := some ⟨6, 23, some "$"⟩
+    alphabets := #[("cal", ⟨6, 23, some "$"⟩)] }]
 
 private def mathOriginSource (family : String) (f : MathOriginFixture) : String :=
   "\\documentclass{article}\n\\fonts{body=\"" ++ family ++ "\"" ++

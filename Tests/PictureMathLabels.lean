@@ -1,4 +1,5 @@
 import Tests.Support
+import Tests.DriverAssets
 
 open LeanTex.Core
 
@@ -179,17 +180,17 @@ def drawnNodeSource (content : String) : String :=
   "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
   "};\n\\end{tikzpicture}\n\\end{document}"
 
-/-- The node outline's width and the label's content and size in the one
-picture a document draws: what elaboration placed. -/
-def outlineOf (doc : Ir.Doc) : Option (Dim.Sp × Array Ir.Inline × Nat) := do
-  let pic ← (pictures doc)[0]?
-  let w ← pic.shapes.findSome? fun s => match s with
-    | .frame _ _ w _ _ _ => some w
+/-- On the shipped page of a document drawing one outlined node: the gaps
+from the outline the layout strokes to the label line it sets, left and
+right. The outline was placed at elaboration; the line is the label as the
+page paints it. -/
+def outlineGaps (out : Layout.Out) : Option (Dim.Sp × Dim.Sp) := do
+  let page ← out.pages[0]?
+  let (x, w) ← page.paths.findSome? fun q => match q.path with
+    | .rect x _ w _ => some (x, w)
     | _ => none
-  let (content, scale) ← pic.shapes.findSome? fun s => match s with
-    | .label _ _ content _ scale _ => some (content, scale)
-    | _ => none
-  return (w, content, scale)
+  let line ← (page.lines.filter (!·.furniture))[0]?
+  return (line.x - x, x + w - (line.x + line.setWidth))
 
 end PictureMathLabels
 
@@ -202,10 +203,10 @@ alphabet resolution reached picture labels, a label's alphabet shipped as an
 unresolved node — an `merror` around the source glyphs in HTML, which a
 browser frames in red on yellow, and the source italic on the page — and the
 label's carrier nested each formula's own `math` root. A drawn outline,
-placed at elaboration, keeps a text node's margin around the glyphs the page
-sets, measured from the resolved label (the measure itself is
-`Layout.labelMetric_resolve_id`). Reads `Layout.Out`, the emitted HTML tree
-and the placed picture, never an IR dump. Invented content. -/
+placed at elaboration, stands a text node's inner sep clear of the label
+line the page sets (the measure behind it is `Layout.labelMetric_resolve_id`).
+Reads `Layout.Out` and the emitted HTML tree, never an IR dump. Invented
+content. -/
 def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -240,22 +241,21 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
     t (name ++ s!" sets the paragraph's scalars on the page \
 ({scalars labelOut} against {scalars proseOut})")
       (!(scalars proseOut).isEmpty && scalars labelOut == scalars proseOut)
-  -- **A drawn outline stands its inner sep clear of the glyphs that paint.**
-  -- The outline is placed at elaboration; the glyphs are the resolved
-  -- alphabet. Against a plain-text node, the outline's margin over the
-  -- painted label's measure is the same, to the rounding of a halved width.
-  let marginOf := fun (content : String) =>
+  -- **A drawn outline stands its inner sep clear of the label the page
+  -- sets.** The outline is placed at elaboration; the line is the label the
+  -- page paints, its alphabet resolved. Against a plain-text node, each gap
+  -- is the same, to the rounding of a halved width.
+  let gapsOf := fun (content : String) =>
     let (doc, _) := elabMeasured fs (PictureMathLabels.drawnNodeSource content)
-    let metric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
-    (PictureMathLabels.outlineOf doc).map fun (w, label, scale) =>
-      w - (metric (Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets) label) scale).w
-  let plain := marginOf "W"
+    PictureMathLabels.outlineGaps (layoutOf fs doc)
+  let plain := gapsOf "W"
+  t s!"picture alphabet: a text node ships its outline and label line ({plain})" plain.isSome
   for content in #["$\\mathbf{W}$", "$\\mathrm{Fir}$", "$\\mathsf{Q}$", "$\\mathtt{k}$"] do
-    let alphabet := marginOf content
-    t s!"picture alphabet: a drawn node around {content} keeps the text node's margin \
-({alphabet} against {plain})"
+    let alphabet := gapsOf content
+    t s!"picture alphabet: a drawn node around {content} stands a text node's inner sep \
+clear of its shipped label ({alphabet} against {plain})"
       (match plain, alphabet with
-       | some a, some b => (a - b).natAbs ≤ 2
+       | some (l, r), some (l', r') => (l - l').natAbs ≤ 2 && (r - r').natAbs ≤ 2
        | _, _ => false)
   -- A display formula set in a carrier keeps its display style on the row:
   -- the display root's children, `displaystyle` where the root declares
@@ -275,3 +275,60 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
            (HtmlDoc.attrOf? inlineAttrs "displaystyle").isNone &&
            render rowKids == render rootKids
        | _, _, _ => false)
+
+/-- **The driver settles on the labels elaboration measured.** A document
+elaborated against a provisional face stands only where the settled face
+measures every label elaboration measured as the provisional face did. Font
+assembly returns the document resolved against the settled face's coverage,
+whose labels are not those calls: where the settled face lacks an alphabet
+the provisional face carries, the resolved label sets the source glyphs,
+which both faces measure alike, while the label elaboration measured — the
+alphabet — measures differently, so the drawn outline around it would stand
+sized for glyphs the page never sets. Invented content. -/
+def labelSettleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let carried ← mathSetOf oneFace
+  let lacking : Font.FontSet := { carried with mathAlphabets := {} }
+  -- A symbol-sourced alphabet: the math face's own coverage decides it.
+  let src := PictureMathLabels.drawnNodeSource "$\\mathbb{R}$"
+  let (elaborated, _) := elabMeasured carried src
+  let geom := Layout.Geom.ofPage elaborated.page
+  let pre := Layout.labelMetric geom carried
+  let resolvedBy := fun (fs : Font.FontSet) =>
+    (Ir.resolveMathAlphas fs.mathAlphabets "math face" elaborated).1
+  t "label settle: the provisional face, settled on, holds"
+    (← Tests.DriverAssets.settles elaborated (some pre) carried (resolvedBy carried))
+  t "label settle: a settled face lacking the label's alphabet supersedes it"
+    !(← Tests.DriverAssets.settles elaborated (some pre) lacking (resolvedBy lacking))
+  t "label settle: the resolved labels would hide that, measuring alike under both"
+    (LeanTex.Cli.FontFix.agree pre (Layout.labelMetric geom lacking)
+      (LeanTex.Cli.FontFix.probes (resolvedBy lacking).body))
+  t "label settle: with no provisional face, a drawn picture is elaborated again"
+    !(← Tests.DriverAssets.settles elaborated none carried (resolvedBy carried))
+
+/-- **The painted request census reads the scalar census's regions.** Over
+every golden fixture, the formulas the math face is requested for
+(`Ir.mathRequests .face`) ask exactly the scalars `Layout.docMathScalars`
+holds — the census the driver loads the math face and the per-glyph
+fallback by — so a region one census reads and the other skips fails here,
+and `Ir.mathRequests_resolve_covers` speaks of the regions both backends
+paint. Non-vacuous while some fixture's picture label asks for scalars. -/
+def mathCensusRegionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let scalars := fun (xs : Array Ir.Inline) (acc : Array Char) =>
+    Ir.foldInlines (fun acc x => match x with
+      | .formula _ _ body => Math.MList.scalarsList acc body
+      | _ => acc) acc xs
+  let mut labelled := 0
+  for n in goldenNames do
+    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    let requested := (Ir.mathRequests .face doc).foldl
+      (fun acc r => Math.MList.scalarsList acc r.body) #[]
+    let census := Layout.docMathScalars doc
+    t s!"math census {n}: the painted requests ask the scalar census's scalars"
+      (requested.all census.contains && census.all requested.contains)
+    let inLabels := (PictureMathLabels.pictures doc).foldl
+      (fun acc p => p.labelContents.foldl (fun acc xs => scalars xs acc) acc) #[]
+    if !inLabels.isEmpty then labelled := labelled + 1
+  t s!"math census: a fixture's picture labels ask for scalars ({labelled} fixtures)"
+    (labelled > 0)

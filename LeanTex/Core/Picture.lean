@@ -64,8 +64,9 @@ public inductive Tok where
   | group (body : List Tok)
   /-- A math span (`$X$` in a node body): carried whole and elaborated by
   the hook the elaborator provides (`Cx.math`) — the picture walk owns no
-  math parser. -/
-  | math (display : Bool) (body : List Parse.Raw)
+  math parser — with its opener's position, where the elaborator locates
+  the formula (`Cx.locate`). -/
+  | math (display : Bool) (body : List Parse.Raw) (pos : Pos)
   /-- Source the subset cannot even tokenise into itself (a nested
   environment, verbatim): named so the diagnostic can say what stood
   here. -/
@@ -128,7 +129,7 @@ private def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
   | .ctrl n _ => acc.push (.ctrl n)
   | .sym c _ => acc.push (.sym c)
   | .group body _ => acc.push (.group (ofRawList #[] body.toList).toList)
-  | .math d body _ => acc.push (.math d body.toList)
+  | .math d body p => acc.push (.math d body.toList p)
   | .env n _ _ => acc.push (.other s!"environment '{n}'")
   | .verb _ _ _ => acc.push (.other "verbatim")
 
@@ -172,7 +173,7 @@ private def tokText : Tok → String
   | .sym c => s!"'{c}'"
   | .space => "a space"
   | .group _ => "'{...}'"
-  | .math _ _ => "math"
+  | .math _ _ _ => "math"
   | .other what => what
 
 /-- One RPN element of a parsed expression. -/
@@ -309,7 +310,7 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
         expectOperand := true
       | .sym c => return .error s!"'{c}' in an expression"
       | .group _ => return .error "'{...}' in an expression"
-      | .math _ _ => return .error "math in an expression"
+      | .math _ _ _ => return .error "math in an expression"
       | .other what => return .error s!"{what} in an expression"
   let (o2, p2) := flushTo out ops 1
   out := o2
@@ -742,7 +743,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
       | none => { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
-    | .math _ _ => { (st.outside "math") with mode := .skip }
+    | .math _ _ _ => { (st.outside "math") with mode := .skip }
     | .ident s => { (st.outside s!"'{s}'") with mode := .skip }
     | .num _ => { (st.outside "a bare number") with mode := .skip }
     | .sym c => { (st.outside s!"'{c}'") with mode := .skip }
@@ -920,6 +921,12 @@ public structure Cx where
   paragraph's does — the picture walk owns no math parser. The result is
   the inline plus any losses the elaboration names. -/
   math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag
+  /-- Where a label's formula was written: the source location the
+  elaborator gives the formula's opener, as it locates a paragraph's
+  formula, so a note the formula census raises after elaboration — an
+  alphabet the face lacks, the face it loaded — names the label. The
+  default locates nothing: the walk owns no source files. -/
+  locate : Pos → Option Span := fun _ => none
   /-- The one-argument text commands and the style each names
   (`\textbf` bold, `\emph` emphasis, …): the elaborator's own table, handed
   down as `math` is, so a text command in a node body means what it means
@@ -1116,7 +1123,7 @@ private def keyTokText : Tok → Option String
   | .num m => some (milliString m)
   | .space => some " "
   | .sym c => if c == '/' || c == ',' || c == '=' then none else some (String.singleton c)
-  | .ctrl _ | .group _ | .math _ _ | .other _ => none
+  | .ctrl _ | .group _ | .math _ _ _ | .other _ => none
 
 /-- A key path's name, in pgf's own grammar: every token's characters, with
 the space restored between two adjacent word tokens (an entry's spaces are
@@ -2429,6 +2436,20 @@ private def fontCmdNocorr : Tok → Bool
   | .ctrl "nocorr" => true
   | _ => false
 
+/-- A label's formula at the location the elaborator gives its opener
+(`Cx.locate`), or bare where it gives none. -/
+private def locatedAt (cx : Cx) (p : Pos) (inl : Ir.Inline) : Ir.Inline :=
+  match cx.locate p with
+  | some span => .located span #[inl]
+  | none => inl
+
+/-- Locating a label's formula changes no character of its text. -/
+private theorem locatedAt_text (cx : Cx) (p : Pos) :
+    Ir.Conserves Ir.plainTextOne (locatedAt cx p) := by
+  intro inl
+  unfold locatedAt
+  split <;> simp [Ir.plainTextOne, Ir.plainTextList]
+
 private def fontCmdEdges (body : List Tok) (next? : Option Tok) : Bool × Bool :=
   Ir.fontCmdEdges (· == .space) fontCmdNocorr
     (fun
@@ -2514,9 +2535,9 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
       let inner : Sal := { inner with depth := s.depth }
       let inner : Sal := { inner with consumeNocorr := s.consumeNocorr }
       { inner with next := s.next }
-    | .math d body =>
+    | .math d body p =>
       let (inl, ds) := cx.math d body.toArray
-      (s.inline inl).addDiags ds
+      (s.inline (locatedAt cx p inl)).addDiags ds
     | .other what => s.refuse what
     | .ctrl n => salCtrl cx env n s
 
@@ -2838,7 +2859,7 @@ public def labelInputOne (env : List (String × Val)) (acc : Array LabelInput) :
     | some v => acc.push (.substitution n v)
     | none => acc
   | .group ts => labelInputList env acc ts
-  | .math d ts => acc.push (.math d ts)
+  | .math d ts _ => acc.push (.math d ts)
   | .other _ => acc
 
 end
@@ -2907,7 +2928,7 @@ public theorem labelSource_exact (cx : Cx) (env : List (String × Val)) (t : Tok
         | some v => v.text
         | none => ""
       | .group ts => labelSources cx env ts
-      | .math d ts => Ir.plainTextOne (cx.math d ts.toArray).1
+      | .math d ts _ => Ir.plainTextOne (cx.math d ts.toArray).1
       | .other _ => "" := by
   cases t <;> simp [labelSource, labelInputOne, labelInputText, LabelInput.text,
     LabelLiteral.text, labelSources]
@@ -3029,7 +3050,8 @@ private theorem salOne_from (P : Char → Prop) (cx : Cx) (env : List (String ×
       split
       · exact hi
       · exact Sal.flush_from P _ hi
-    | math d body => exact Sal.inline_from P _ _ hs ht
+    | math d body _ =>
+      exact Sal.inline_from P _ _ hs (by rw [locatedAt_text cx _ _]; exact ht)
     | other _ => exact hs
     | ctrl n =>
       exact salCtrl_from P cx env n _ hs (by simpa only [labelSource_exact] using ht)
@@ -4343,7 +4365,7 @@ private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
           throw (.E0333, s!"in '\\draw', unknown macro '\\{n}' in a node name; \
 the edge is not drawn")
       | .ident _ | .num _ | .sym _ | .space => expanded := expanded.push t
-      | .math _ _ | .group _ | .other _ =>
+      | .math _ _ _ | .group _ | .other _ =>
         throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
 picture subset; the edge is not drawn")
     let nm := (nameOfToks expanded.toList).getD ""
@@ -4405,7 +4427,7 @@ private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
   let (inner, next) ← (readCoordBody ts i).mapError fun e =>
     (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
   let a ← match inner.toList with
-    | [.math false raw] => calcAnchor cx env ev raw
+    | [.math false raw _] => calcAnchor cx env ev raw
     | _ => anchorBody cx env ev inner
   let (point, reference) := coordStep mode base a.center
   return (if mode == .absolute then a else .point point.1 point.2, next, reference)
@@ -5597,7 +5619,7 @@ private def substTok (args : Array (List Tok)) : Tok → Tok
   | .num m => .num m
   | .sym c => .sym c
   | .space => .space
-  | .math d b => .math d b
+  | .math d b p => .math d b p
   | .other w => .other w
 
 end
@@ -5703,7 +5725,7 @@ private def expandTok (tbl : List (String × Macro)) : Tok → Tok
   | .num m => .num m
   | .sym c => .sym c
   | .space => .space
-  | .math d b => .math d b
+  | .math d b p => .math d b p
   | .other w => .other w
 
 end
@@ -5756,7 +5778,7 @@ private def refArityTok : Tok → Nat
   | .num _ => 0
   | .sym _ => 0
   | .space => 0
-  | .math _ _ => 0
+  | .math _ _ _ => 0
   | .other _ => 0
 
 end
@@ -5879,7 +5901,8 @@ parameter exists to close. `ladder` and `declStyles` are the document's
 size ladder and the elaborator's declaration table, without defaults for
 the same reason: a forgotten ladder sets a venue's `\small` at the engine's
 step. `bodySize` is likewise required: label leading and relative lengths
-must read the same document size as their artifact measurement. -/
+must read the same document size as their artifact measurement. `locate`
+is the elaborator's source location for a label's formula (`Cx.locate`). -/
 public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -5888,7 +5911,8 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (macros : Array (String × String) := #[])
     (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat))
-    (declStyles : List (String × Ir.Style)) (bodySize : Sp) :
+    (declStyles : List (String × Ir.Style)) (bodySize : Sp)
+    (locate : Pos → Option Span := fun _ => none) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRaws raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
@@ -5984,6 +6008,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    everyText := everyOf everyTextKey
                    dist := dist
                    math := math
+                   locate := locate
                    argStyles := argStyles
                    ladder := ladder
                    declStyles := declStyles

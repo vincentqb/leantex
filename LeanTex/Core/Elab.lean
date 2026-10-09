@@ -4504,7 +4504,9 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
 
 /-- The rendered subset's drawing of one picture body, with what it names:
 the one elaboration both the block arm and the in-line arm read, so the
-two cannot disagree about what the subset draws. -/
+two cannot disagree about what the subset draws. A label's formula is
+located at its opener, as `sourceInline` locates a paragraph's, so the notes
+the formula census raises after elaboration name the label. -/
 private def subsetPicture (ctx : Ctx) (body : Array Raw) :
     Ir.Pic.Picture × Array Picture.PDiag :=
   let mathOf (d : Bool) (raws : Array Parse.Raw) :
@@ -4517,6 +4519,7 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) :
 formula {floorWording (Parse.rawSrc raws)}")])
   Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
+    (locate := fun pos => some (ctx.sourceSpan pos))
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
@@ -10167,6 +10170,8 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       let set : Inline := match shown with
         | #[x] => x
         | xs => .role "qedsymbol" xs
+      -- No picture label holds the marker: the label reader refuses
+      -- `\qedhere` (`Picture.salCtrl`).
       let inner := if here then
           Ir.mapBlocks (fun x => if x == .label qedHereKey then set else x) inner
         else inner

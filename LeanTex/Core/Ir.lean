@@ -3957,7 +3957,7 @@ label paints as it reaches a caption's. -/
   { p with shapes := p.shapes.map (·.mapLabel f) }
 
 /-- A label rewrite rewrites exactly the label contents, in order. -/
-public theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inline)
+private theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inline)
     (p : Picture) : (p.mapLabels f).labelContents = p.labelContents.map f := by
   simp only [Picture.mapLabels, Picture.labelContents, Array.filterMap_map,
     Array.map_filterMap]
@@ -3966,7 +3966,7 @@ public theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inlin
   cases s <;> rfl
 
 /-- Two label rewrites compose into one. -/
-public theorem Picture.mapLabels_comp (f g : Array Inline → Array Inline) (p : Picture) :
+private theorem Picture.mapLabels_comp (f g : Array Inline → Array Inline) (p : Picture) :
     (p.mapLabels g).mapLabels f = p.mapLabels (f ∘ g) := by
   simp only [Picture.mapLabels, Array.map_map]
   congr 2
@@ -15036,6 +15036,10 @@ defaults; annotation erasure uses the same descent. -/
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
   mapBlockList gp f #[] xs.toList finish listing
 
+/-- The generic map with every picture passed through untouched: a label's
+inlines are not this map's leaves. A rewrite that must reach the text a
+label paints — alphabet resolution, location erasure — maps labels through
+`mapBlocksPic`; each caller of this one says why its rewrite need not. -/
 @[expose] public def mapBlocks (f : Inline → Inline) (xs : Array Block)
     (finish : Array Inline → Array Inline := id)
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
@@ -15223,7 +15227,8 @@ private def mathRequestFold (scope : MathRequestScope) :
 A location binds only its own descendants; siblings cannot
 borrow it. Outermost locations retain a macro's authored call site.
 
-The face scope matches the regions of `Layout.docMathScalars`; the alphabet
+The face scope reads the regions of `Layout.docMathScalars` — a corpus check
+holds the two to one scalar set (`mathCensusRegionChecks`); the alphabet
 scope is the regions `resolveMathAlphas` rewrites — body, furniture, notes,
 style templates, listing captions, formatted references and picture labels
 — and `missingMathAlphas` is defined over it. Holding the scope to the
@@ -15249,6 +15254,12 @@ private def noteRequestAlphas (coverage : Math.MathAlphabetCoverage)
   (Math.missingMathAlphas coverage r.body).foldl (fun out a =>
     if out.contains a then out else out.push a) out
 
+/-- Every alphabet whose used range the selected symbol face lacks over a
+request census, deduplicated in first-use order. -/
+public def missingAlphasOf (coverage : Math.MathAlphabetCoverage)
+    (requests : Array MathRequest) : Array Math.MathAlphabet :=
+  requests.foldl (noteRequestAlphas coverage) #[]
+
 /-- Every alphabet whose used range the selected symbol face lacks,
 deduplicated in first-use order over the alphabet census's requests — the
 body and furniture, notes, style templates, listing captions, formatted
@@ -15256,7 +15267,7 @@ references and picture labels: the requests each note takes its source
 from, so which alphabets are named and where cannot read two region lists. -/
 public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
     (doc : Doc) : Array Math.MathAlphabet :=
-  (mathRequests .alphabets doc).foldl (noteRequestAlphas coverage) #[]
+  missingAlphasOf coverage (mathRequests .alphabets doc)
 
 /-- The first actual formula needing glyphs, before a face is selected.
 An unsourced request stays unsourced rather than borrowing a later site. -/
@@ -15282,7 +15293,7 @@ mapped and therefore keep the ordinary per-character fallback path. -/
   let resolved := mapDoc (mapInlines leaf)
     (mapBlocksPic (resolveMathAlphaPicture coverage) leaf) doc
   let requests := mathRequests .alphabets doc
-  let diags := (missingMathAlphas coverage doc).map fun a =>
+  let diags := (missingAlphasOf coverage requests).map fun a =>
     let source := (requests.find? fun r =>
       (Math.missingMathAlphas coverage r.body).contains a).bind (·.source)
     Diag.of .N0018
@@ -15325,7 +15336,7 @@ public theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
     (resolveMathAlphas coverage family doc).2.map (·.subject) =
       (missingMathAlphas coverage doc).map
         (fun a => some ("math-alpha:" ++ a.name)) := by
-  simp [resolveMathAlphas, Diag.of_subject, Array.map_map, Function.comp]
+  simp [resolveMathAlphas, missingMathAlphas, Diag.of_subject, Array.map_map, Function.comp]
 
 /-- Expose the completed-region combiner without changing the generic map's walk. -/
 public theorem mapInlineList_finish_exact (f : Inline → Inline) (out : Array Inline)
@@ -15920,9 +15931,10 @@ end
 (`_covers`): after `resolveMathAlphas`, every request of the painted census —
 the regions the face is loaded for and both backends set, picture labels
 included — and of the alphabet census asks for an alphabet-free formula, for
-every document, coverage and family. The painted census is held to
-`Layout.docMathScalars`' regions, so a region a backend paints and the
-resolver skips breaks this statement: picture labels once shipped their
+every document, coverage and family. The painted census reads
+`Layout.docMathScalars`' regions (a corpus check, not a theorem, holds the
+two to one scalar set), so a region a backend paints and the resolver skips
+breaks this statement: picture labels once shipped their
 alphabets unresolved, which MathML framed as an error and the page set in the
 source glyphs. -/
 public theorem mathRequests_resolve_covers (scope : MathRequestScope)
@@ -15979,7 +15991,7 @@ public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCove
       simp only [List.foldl_cons, noteRequestAlphas,
         Math.missingMathAlphas_alphaFree_exact coverage _ (hrs r (by simp)), Array.foldl_empty]
       exact ih fun q hq => hrs q (by simp [hq])
-  rw [missingMathAlphas, ← Array.foldl_toList]
+  rw [missingMathAlphas, missingAlphasOf, ← Array.foldl_toList]
   exact spent _ fun r hr =>
     mathRequests_resolve_covers .alphabets coverage family doc r (by simpa using hr)
 
@@ -16010,6 +16022,8 @@ Both backends read this one afforded body: `Layout`'s `.decorated`/`.colored`
 arms lower it to a PDF underline fill and coloured glyphs, HtmlDoc's to a
 `<u>` and an ink span. -/
 public def Styles.linkBodyAfford (s : Styles) (kind : String) (xs : Array Block) : Array Block :=
+  -- A picture's labels are the diagram's text, not the link's: they keep
+  -- their own ink and are never underlined.
   mapBlocks (s.linkLeafAfford kind) xs
 
 mutual
@@ -17197,6 +17211,8 @@ it replaced. -/
 private def resolveRefsIdx (loc : Locale)
     (idx : Std.HashMap String (String × Option RefBinding))
     (xs : Array Block) : Array Block :=
+  -- No label holds a reference: the label reader refuses `\ref` and drops
+  -- its key (`Picture.salCtrl`).
   mapBlocks (resolveRefLeaf loc (fun k => idx[k]?)) xs
 
 private def resolveRefInlinesIdx (loc : Locale)
