@@ -262,7 +262,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
         (bodies.map fun (kind, body) => (kind, body, "0pt")) ++ #[
           ("zero-before", "\\block[before=0pt]{\\begin{block}{}BODY\\end{block}}", "0pt"),
           ("positive-before", "\\block[before=7pt]{\\begin{block}{}BODY\\end{block}}", "7pt"),
-          ("leading-vspace", "\\vspace{7pt}\\begin{block}{}BODY\\end{block}", "7pt"),
+          ("leading-vspace", "\\vspace{7pt}\\begin{block}{}BODY\\end{block}", "0pt"),
           ("leading-note", "\\note{SPEAKER}\\begin{block}{}BODY\\end{block}", "0pt"),
           ("note-before", "\\note{SPEAKER}\\block[before=7pt]{\\begin{block}{}BODY\\end{block}}",
             "7pt")] do
@@ -286,6 +286,16 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       check ref (name ++ ": body survives in both artifacts")
         ((out.pages.flatMap (·.lines)).any (fun line => lineText line == "BODY") &&
           (nodeTextList "" nodes.toList).contains "BODY")
+      -- A document skip opening the frame is a box of its own: it takes the
+      -- opening, and the authored space is its height, a separate addend.
+      if kind == "leading-vspace" then
+        check ref (name ++ ": a leading skip takes the opening as a box as tall as the skip")
+          (!stages.isEmpty && stages.all fun stage => match stage with
+            | .elem _ _ kids => ((kids.filter participates)[0]?).any fun node =>
+                hasClass node HtmlDoc.skipClass && hasClass node "frame-body-start" &&
+                ((property (styleOf node) "--skip").bind remMilliOf ==
+                  some (HtmlDoc.screenMilli doc.page.fontSize (Dim.pt 7) : Int))
+            | .text _ | .style _ | .script .. => false)
       if kind == "leading-note" || kind == "note-before" then
         check ref (name ++ ": note remains hidden and cannot own the opening")
           ((elemNodesList (· == "aside") #[] nodes.toList).any fun node =>

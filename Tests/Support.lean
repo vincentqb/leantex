@@ -1782,6 +1782,15 @@ def cssRulesOf (css sel : String) : List String :=
 exactly: the text between its braces. -/
 def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
 
+/-- A CSS length in `rem` as thousandths of a rem — the unit every boundary
+of the gap sheet is written in (`HtmlDoc.screenMilli`) — or nothing for any
+other spelling. -/
+def remMilliOf (value : String) : Option Int := do
+  let value := value.trimAscii.toString
+  guard (value.endsWith "rem")
+  let (m, sc) ← Decl.parseDecimal (value.dropEnd 3).toString
+  return m * 1000 / (sc : Int)
+
 /-- Read a CSS stage length and compare its share to the shipped PDF
 length. One printed milli-percent is the rounding bound, independently of
 viewport height. -/
