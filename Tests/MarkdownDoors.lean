@@ -48,7 +48,8 @@ two:
   content that is the include is the same document with the file's raws in
   the call's place, with the call written tight and on a line of its own,
   and a frame whose call stands on a line of its own is the tight frame.
-  This is `Elab.elabBlockScope_input_exact`'s accumulator at a frame,
+  This is the include lemma's accumulator at a frame (private to
+  `InputContract`, as the accumulator it reads is to the elaborator),
   composed with the rest of the frame arm, end to end. The shapes a source
   writes — the hosts here and the corpus deck — are held to the theorems'
   domain (`includeStands`): one wrapper, blank source either side.

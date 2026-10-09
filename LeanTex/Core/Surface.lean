@@ -12,13 +12,13 @@ and desugaring. Past the door the elaborator reads raws, never the surface
 that wrote them; what a document's surface may still decide is its own
 defaults — how its content sets, never what is set. The door is this
 file's definition, and the hook holds the CLI to it: a CLI source reads a
-surface only through `read` and `fragment` (`surfaceDoorBypasses` in
-`scripts/precommit.lean`). Inside the core no rule holds yet, and six
-places lex and parse tex text the way the tex door does without going
-through it, each over text the engine itself holds rather than a file:
-the elaborator's whole-document entry (`Elab.run`, which tests elaborate a
-string with), a style declaration's value (`Elab.applyStyle`), a setting's
-tex value (`Data.valParsed`), the compatibility layer's synthesized source
+surface only through `read` and `fragment`, and a core source lexes and
+parses tex text only inside a declared reader (`surfaceDoorBypasses` and
+`coreTexReaders` in `scripts/precommit.lean`). The six declared readers
+each read text the engine itself holds rather than a file: the elaborator's
+whole-document entry (`Elab.run`, which tests elaborate a string with), a
+style declaration's value (`Elab.applyStyle`), a setting's tex value
+(`Data.valParsed`), the compatibility layer's synthesized source
 (`Compat.synth`), a picture's macro definition (`Picture.readMacro`) and a
 bibliography style's formula (`BibStyle.formulaOf`).
 
@@ -27,10 +27,12 @@ one wrapper the elaborator knows a file by (`Parse.inputEnv`), so an
 included file's diagnostics name the file and line that hold the construct.
 The wrapper means nothing but the file's name: an include standing as its
 block sequence, with only blank source around the call, elaborates exactly
-as the file alone does (`Elab.elabBlocks_input_exact`; at any block
-accumulator, a frame's content among them, `Elab.elabBlockScope_input_exact`),
-and a markdown file meets that statement's hypotheses by construction once
-it has content (`Elab.markdownInput_blocks_exact`). -/
+as the file alone does (`Elab.elabBlocks_input_exact`), and a markdown file
+meets that statement's hypotheses by construction once it has content
+(`Elab.markdownInput_blocks_exact`). The same holds at any block
+accumulator the elaborator opens, a frame's content among them, by a lemma
+private to `InputContract` because the accumulator it speaks of is private
+to the elaborator. -/
 
 namespace LeanTex.Core
 

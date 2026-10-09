@@ -1,6 +1,6 @@
 /-
 Does the markdown twin read back? Committed as numbers. Run from the
-repository root:
+repository root after `lake build TestsModules ScriptsModules`:
 
   lake env lean --run scripts/mdtwin.lean              regenerate the baseline
   lake env lean --run scripts/mdtwin.lean --check      gate against the committed one

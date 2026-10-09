@@ -1,7 +1,8 @@
 /-
 The CommonMark classifier: what this engine's markdown dialect does with
 every one of the 652 spec examples. Run from the repository root after
-`lake build`:
+`lake build TestsModules ScriptsModules` — the modules it imports, which
+`lake env lean --run` reads as they stand and rebuilds none of:
 
   lake env lean --run scripts/commonmark.lean              regenerate the verdicts and the tier, then check
   lake env lean --run scripts/commonmark.lean --check      check the committed verdicts and tier only
