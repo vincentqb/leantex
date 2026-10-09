@@ -212,6 +212,34 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
   t "world/host: a declared output that links outside the scratch directory is no output"
     (linked.complete && linked.ran == .exited 0 &&
       linked.outputs == #[("out.txt", none), ("sub/up/outside-secret", none)])
+  -- A directory outside every scratch directory, with a file and a subtree.
+  let outsideAt (name : String) : IO (System.FilePath × IO Bool) := do
+    let outside := dir / name
+    IO.FS.createDirAll (outside / "keep")
+    IO.FS.writeFile (outside / "outside-secret") "not the tool's"
+    IO.FS.writeFile (outside / "keep" / "file") "kept"
+    return (outside, do
+      return (← (outside / "outside-secret").pathExists) && (← (outside / "keep" / "file").pathExists))
+  let (outside, untouched) ← outsideAt "outside"
+  let moved ← Host.answer (.run { call "/bin/sh"
+      #["-c", "d=$PWD; mv \"$d\" \"$d.moved\" && ln -s \"$1\" \"$d\" && printf '%s' \"$d\"", "sh",
+        outside.toString] 10000 with
+    outputs := #["outside-secret"] })
+  let movedScratch := moved.out.trimAscii.toString
+  t "world/host: a run that leaves a link where its scratch directory stood gets nothing outside back"
+    (moved.complete && moved.ran == .exited 0 && moved.outputs == #[("outside-secret", none)])
+  t "world/host: cleanup removes a link where the scratch directory stood, and nothing it names"
+    (!movedScratch.isEmpty && (← untouched) && !(← System.FilePath.pathExists movedScratch))
+  unless movedScratch.isEmpty do
+    discard <| (IO.FS.removeDirAll (movedScratch ++ ".moved")).toBaseIO
+  let (elsewhere, kept) ← outsideAt "elsewhere"
+  let linkedAway ← Host.answer (.run (call "/bin/sh"
+    #["-c", "ln -s \"$1\" away && ln -s /nonexistent-leantex-target dangling && mkdir -p a/b && " ++
+      "ln -s \"$1\" a/b/away && printf '%s' \"$PWD\"", "sh", elsewhere.toString] 10000))
+  let awayScratch := linkedAway.out.trimAscii.toString
+  t "world/host: cleanup removes the links a run left, dangling or to a directory outside, and nothing they name"
+    (linkedAway.complete && linkedAway.ran == .exited 0 && (← kept) && !awayScratch.isEmpty &&
+      !(← System.FilePath.pathExists awayScratch))
   let target := (dir / "published").toString
   t "world/host: an atomic write is read back whole"
     (match ← Host.answer (.writeAtomic target "whole".toUTF8),
@@ -322,10 +350,7 @@ budget, under a version question that never ends: a child whose PATH starts
 with a shim that sleeps. An unbounded probe holds the child past the
 parent's budget. -/
 def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "world checks require the Lean interpreter on PATH"
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let (lean, leanPath) ← leanChild "world checks"
   writeScript (dir / "hang" / "leantex-hang-probe") "#!/bin/sh\nexec sleep 30\n"
   let driver := dir / "probe.lean"
   IO.FS.writeFile driver <|
@@ -349,10 +374,7 @@ child whose TMPDIR names a missing directory: the reply is a run that never
 started. `IO.FS.createTempDir` ends such a process with a segmentation fault
 on Lean v4.34.1. -/
 def scratchChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "world checks require the Lean interpreter on PATH"
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let (lean, leanPath) ← leanChild "world checks"
   let driver := dir / "scratch.lean"
   IO.FS.writeFile driver <|
     "import LeanTex.Cli.Host\n" ++

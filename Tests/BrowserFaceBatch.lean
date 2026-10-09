@@ -235,11 +235,8 @@ synthetic tools. No installed vector converter or shared user cache is used.
 A run the host denied a tool identity runs again, three runs per limit at
 most; the first run at `slowProbeLimit` is denied on purpose. -/
 def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "browser batch checks require the Lean interpreter"
+  let (lean, leanPath) ← leanChild "browser batch checks"
   let cwd ← IO.currentDir
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
   let denied := PicCache.Ran.exited BrowserFaceBatch.deniedExit.toNat
   for limit in #[0, 1, 2, 4] do
     let mut runs : Array (RunBounded.Ended × Bool) := #[]

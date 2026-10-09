@@ -363,6 +363,15 @@ def symlink (target link : System.FilePath) : IO Unit := do
   let out ← IO.Process.output { cmd := "ln", args := #["-s", target.toString, link.toString] }
   unless out.exitCode == 0 do throw <| IO.userError s!"ln -s failed: {out.stderr}"
 
+/-- The Lean interpreter on PATH, and the `LEAN_PATH` under which a child
+`lean --run` imports this build's modules: how the checks that need a
+process of their own run their drivers. `what` names those checks. -/
+def leanChild (what : String) : IO (System.FilePath × String) := do
+  let some lean ← ToolProbe.onPath "lean" |
+    throw <| IO.userError s!"{what} require the Lean interpreter on PATH"
+  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
+  return (lean, libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD "")
+
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
 is not valid UTF-8, so the search is over bytes. -/

@@ -56,10 +56,7 @@ def runCacheCwdChild (args : List String) : IO UInt32 := do
 /-- Optional identity IO may prevent caching, but must neither bypass the
 producer nor turn its answer into an IO exception. -/
 def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "cache identity checks require the Lean interpreter"
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let (lean, leanPath) ← leanChild "cache identity checks"
   for stage in #["before", "after"] do
     IO.FS.withTempDir fun dir => do
       let cwd := dir / "cwd"
