@@ -32,7 +32,7 @@ private theorem allocation_perm (t : ObjTable) :
         ((t.imgIds.zip t.imgSpans).toList.flatMap fun p : Nat × Nat =>
           List.range' p.1 p.2) ++
         (List.range t.nf).flatMap (fun k => [ObjTable.toUniId k, t.fileId k]) ++
-        [t.xmpId]) ++ [t.objStmId, t.xrefId]).Perm t.ids.toList := by
+        [t.xmpId]) ++ (List.range t.nStm).map t.objStmId ++ [t.xrefId]).Perm t.ids.toList := by
   apply List.perm_iff_count.mpr
   intro n
   have split3 := count_flatMap_cons (List.range t.nf) ObjTable.type0Id
@@ -59,9 +59,10 @@ private theorem allocation_perm (t : ObjTable) :
     List.count_cons, List.count_nil, Nat.add_zero, Nat.zero_add]
   all_goals ac_rfl
 
-/-- The actual compressed and direct transcripts, with the two final
-stream ids, are a permutation of every allocated slot. Thus no source id
-can be silently replaced by another emission with the same number. -/
+/-- The actual compressed and direct transcripts, with the object-stream
+ids and the xref's, are a permutation of every allocated slot. Thus no
+source id can be silently replaced by another emission with the same
+number. -/
 public theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
@@ -69,7 +70,8 @@ public theorem prepare_allocation_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
     let p := prepare geom fs pages info imgs outline streams tree ops programs
     (p.compressed.map Prod.fst ++ p.direct.toList.map Row.id ++
-      [p.table.objStmId, p.table.xrefId]).Perm p.table.ids.toList := by
+      (List.range p.table.nStm).map p.table.objStmId ++ [p.table.xrefId]).Perm
+        p.table.ids.toList := by
   dsimp only
   rw [prepare_compressed_ids_exact, prepare_direct_ids_exact]
   exact allocation_perm _
@@ -87,6 +89,20 @@ public theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
   rw [prepare_table_exact]
   exact objTable_ids_exact ..
 
+/-- The writer always has the catalog to compress, so it always writes at
+least one object stream. -/
+public theorem prepare_compressed_ne_nil (geom : Layout.Geom) (fs : Font.FontSet)
+    (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
+    (outline : Array Layout.OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    (prepare geom fs pages info imgs outline streams tree ops programs).compressed ≠ [] := by
+  intro h
+  have hc := prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs
+  dsimp only at hc
+  rw [h] at hc
+  simp at hc
+
 /-- The production emissions themselves have unique ids; this is
 stronger than allocation coverage and prevents last-write-wins aliases. -/
 public theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)
@@ -96,7 +112,7 @@ public theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
     let p := prepare geom fs pages info imgs outline streams tree ops programs
     (p.compressed.map Prod.fst ++ p.direct.toList.map Row.id ++
-      [p.table.objStmId, p.table.xrefId]).Nodup := by
+      (List.range p.table.nStm).map p.table.objStmId ++ [p.table.xrefId]).Nodup := by
   apply (prepare_allocation_exact geom fs pages info imgs outline streams tree ops programs).symm.nodup
   rw [prepare_ids_exact]
   exact List.nodup_range' 1

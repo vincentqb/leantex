@@ -13,11 +13,11 @@ import all LeanTex.Core.PdfLex
 namespace LeanTex.Core.Pdf
 open PdfRead PdfLex
 
-/-! Recovery from the production file's object stream. The source domain
+/-! Recovery from the production file's object streams. The source domain
 describes spelling and numeric storage; no parser or codec result is an
 assumption. This is a contract of the serialized artifact. -/
 
-/-- The fields of the writer's single object stream, including its
+/-- The fields of one of the writer's object streams, including its
 actual compression choice and the length of the retained payload. -/
 public def objectStreamDict (count first : Nat) (filtered : Bool) (len : Nat) : Obj :=
   .dict (#[("Type", .name "ObjStm"), ("N", .int count), ("First", .int first)] ++
@@ -71,32 +71,31 @@ public theorem objectStreamDict_render_exact (count first : Nat) (filtered : Boo
     Int.repr_eq_ite, Int.natCast_nonneg, ↓reduceIte, Int.toNat_natCast]
   all_goals rfl
 
-public def WritePlan.objectDict (p : WritePlan) : Obj :=
-  let data := (objectStream p.compressed).bytes
+/-- The dictionary the writer spells for the object stream holding `c`:
+its count, its header's size, and its compression choice. -/
+public def chunkDict (c : List (Nat × Obj)) : Obj :=
+  let data := (objectStream c).bytes
   let z := Flate.deflate data
-  objectStreamDict p.compressed.length (objectStream p.compressed).header.utf8ByteSize
+  objectStreamDict c.length (objectStream c).header.utf8ByteSize
     (decide (z.size < data.size)) (if z.size < data.size then z.size else data.size)
 
-public def WritePlan.objectRaw (p : WritePlan) : ByteArray :=
-  let data := (objectStream p.compressed).bytes
+/-- The stream bytes the writer retains for the object stream holding `c`. -/
+public def chunkRaw (c : List (Nat × Obj)) : ByteArray :=
+  let data := (objectStream c).bytes
   let z := Flate.deflate data
   if z.size < data.size then z else data
 
-public theorem WritePlan.object_body_exact (p : WritePlan) :
-    p.measure.body =
-      (serialize p.head p.direct).1 ++ (s!"{p.table.objStmId} 0 obj\n").toUTF8 ++
-      p.objectDict.render ++ "\nstream\n".toUTF8 ++ p.objectRaw ++
-      "\nendstream\nendobj\n".toUTF8 := by
-  rw [p.measure_body_exact]
-  change (serialize p.head (p.direct.push (flateRow p.table.objStmId
-    s!"/Type /ObjStm /N {p.compressed.length} /First {(objectStream p.compressed).header.utf8ByteSize}"
-    (objectStream p.compressed).bytes))).1 = _
-  simp only [serialize, Array.toList_push, serializeList_append, serializeList]
-  unfold WritePlan.objectDict WritePlan.objectRaw flateRow zRow
+/-- One object stream's row spells exactly its typed dictionary and its
+retained bytes, whichever compression choice it made. -/
+public theorem objStmRow_bytes_exact (id : Nat) (c : List (Nat × Obj)) :
+    rowInto ByteArray.empty id (objStmRow id c.length (objectStream c)).body =
+      (s!"{id} 0 obj\n").toUTF8 ++ (chunkDict c).render ++ "\nstream\n".toUTF8 ++
+        chunkRaw c ++ "\nendstream\nendobj\n".toUTF8 := by
+  unfold chunkDict chunkRaw objStmRow flateRow zRow
   split <;> rename_i h
   all_goals simp only [h, decide_true, decide_false, Bool.false_eq_true, ↓reduceIte,
     objectStreamDict_render_exact, rowInto, toString, String.append_assoc,
-    utf8_append, ByteArray.append_assoc]
+    utf8_append, ByteArray.append_assoc, ByteArray.empty_append]
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp
   all_goals simp only [ByteArray.data_append, Array.toList_append,
@@ -114,35 +113,76 @@ private theorem span_append {b : ByteArray} {off : Nat} {cs : List Nat}
     rw [at?_append_left b tail (off+j) (by have := h.bound; omega)]
     exact h.byte j hj
 
-public theorem WritePlan.object_span_exact (p : WritePlan) :
-    PdfLex.Span p.bytes (serialize p.head p.direct).1.size
-      (octets (s!"{p.table.objStmId} 0 obj\n").toUTF8 ++ octets p.objectDict.render ++
-        octets "\nstream\n".toUTF8 ++ octets p.objectRaw ++
+/-- The complete file begins with the serialized rows, direct rows then
+object streams; the xref and footer follow them. -/
+public theorem WritePlan.rows_suffix_exact (p : WritePlan) :
+    ∃ tail, p.bytes = (serialize p.head p.rows).1 ++ tail := by
+  rw [WritePlan.bytes, p.measure.bytes_stream_exact, p.measure_body_exact]
+  simp only [ByteArray.append_assoc]
+  exact ⟨_, rfl⟩
+
+private theorem serializeList_row_span_exact (head : ByteArray)
+    (before after : List Row) (r : Row) :
+    PdfLex.Span (serializeList head #[] (before ++ r::after)).1
+      (serializeList head #[] before).1.size
+      (octets (rowInto ByteArray.empty r.id r.body)) := by
+  rw [serializeList_append]
+  simp only [serializeList]
+  rw [serializeList_bytes, rowInto_bytes]
+  exact PdfLex.Span.of_bytes _ _ _
+
+/-- Every row of the plan, direct or object stream, is spelled in the
+complete file at the offset its serializer reaches it. -/
+public theorem WritePlan.row_span_exact (p : WritePlan) (before after : List Row) (r : Row)
+    (hs : p.rows.toList = before ++ r :: after) :
+    PdfLex.Span p.bytes (serialize p.head before.toArray).1.size
+      (octets (rowInto ByteArray.empty r.id r.body)) := by
+  obtain ⟨tail, ht⟩ := p.rows_suffix_exact
+  rw [ht]
+  apply span_append
+  change PdfLex.Span (serializeList p.head #[] p.rows.toList).1 _ _
+  rw [hs]
+  exact serializeList_row_span_exact ..
+
+/-- The object-stream rows, as a list. -/
+private theorem stmRowsOf_getElem? (t : ObjTable) (p : WritePlan) (k : Nat)
+    (c : List (Nat × Obj)) (hk : p.chunks[k]? = some c) :
+    (stmRowsOf t p.packed).toList[k]? = some (objStmRow (t.objStmId k) c.length (objectStream c)) := by
+  simp only [stmRowsOf, List.toList_toArray, List.getElem?_map, List.getElem?_zipIdx,
+    WritePlan.packed, hk, Option.map_some, Nat.zero_add]
+
+/-- Where object stream `k` is written: after the direct rows and every
+stream before it. -/
+public def WritePlan.stmOffset (p : WritePlan) (k : Nat) : Nat :=
+  (serialize p.head (p.direct.toList ++ (stmRowsOf p.table p.packed).toList.take k).toArray).1.size
+
+/-- Object stream `k` spells its dictionary and retained bytes at its
+offset in the complete file, for every stream the plan writes. -/
+public theorem WritePlan.stm_span_exact (p : WritePlan) (k : Nat) (c : List (Nat × Obj))
+    (hk : p.chunks[k]? = some c) :
+    PdfLex.Span p.bytes (p.stmOffset k)
+      (octets (s!"{p.table.objStmId k} 0 obj\n").toUTF8 ++ octets (chunkDict c).render ++
+        octets "\nstream\n".toUTF8 ++ octets (chunkRaw c) ++
         octets "\nendstream\nendobj\n".toUTF8) := by
-  have hs : PdfLex.Span p.measure.body (serialize p.head p.direct).1.size
-      (octets (s!"{p.table.objStmId} 0 obj\n").toUTF8 ++ octets p.objectDict.render ++
-        octets "\nstream\n".toUTF8 ++ octets p.objectRaw ++
-        octets "\nendstream\nendobj\n".toUTF8) := by
-    rw [p.object_body_exact]
-    have hs := PdfLex.Span.of_bytes (serialize p.head p.direct).1
-        ((s!"{p.table.objStmId} 0 obj\n").toUTF8 ++ p.objectDict.render ++
-          "\nstream\n".toUTF8 ++ p.objectRaw ++ "\nendstream\nendobj\n".toUTF8)
-        ByteArray.empty
-    change PdfLex.Span _ _ (octets
-      ((s!"{p.table.objStmId} 0 obj\n").toUTF8 ++ p.objectDict.render ++
-        "\nstream\n".toUTF8 ++ p.objectRaw ++ "\nendstream\nendobj\n".toUTF8)) at hs
-    simpa only [octets_append, ByteArray.append_assoc, ByteArray.append_empty,
-      List.append_assoc]
-      using hs
-  have h := span_append hs
-      ((s!"{p.table.xrefId} 0 obj\n").toUTF8 ++
-        (p.measure.xrefDict p.table).render ++ "\nstream\n".toUTF8 ++
-        (if (Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size
-          then Flate.deflate p.measure.xrefPayload else p.measure.xrefPayload) ++
-        "\nendstream\nendobj\n".toUTF8 ++
-        (s!"startxref\n{p.measure.body.size}\n%%EOF\n").toUTF8)
-  rw [WritePlan.bytes, p.measure.bytes_stream_exact]
-  simpa only [ByteArray.append_assoc] using h
+  have hr := stmRowsOf_getElem? p.table p k c hk
+  have hlt : k < (stmRowsOf p.table p.packed).toList.length := by
+    have := (List.getElem?_eq_some_iff.mp hr).1
+    exact this
+  have hrows : p.rows.toList =
+      (p.direct.toList ++ (stmRowsOf p.table p.packed).toList.take k) ++
+        objStmRow (p.table.objStmId k) c.length (objectStream c) ::
+          (stmRowsOf p.table p.packed).toList.drop (k + 1) := by
+    rw [WritePlan.rows, Array.toList_append, List.append_assoc]
+    congr 1
+    have he : objStmRow (p.table.objStmId k) c.length (objectStream c) =
+        (stmRowsOf p.table p.packed).toList[k] :=
+      ((List.getElem_eq_iff hlt).mpr hr).symm
+    rw [he, List.getElem_cons_drop, List.take_append_drop]
+  have hs := p.row_span_exact _ _ _ hrows
+  have hid : (objStmRow (p.table.objStmId k) c.length (objectStream c)).id =
+      p.table.objStmId k := flateRow_id ..
+  rw [hid, objStmRow_bytes_exact] at hs
+  simpa only [WritePlan.stmOffset, octets_append, List.append_assoc] using hs
 
 private theorem objectStreamDict_decode_exact (count first : Nat) (data : ByteArray)
     (h : data.size ≤ maxDecoded) :
@@ -164,11 +204,12 @@ private theorem objectStreamDict_decode_exact (count first : Nat) (data : ByteAr
     exact decodeStream_unfiltered_exact _ data
       (objectStreamDict_fields_exact count first false data.size).2.2.2.1
 
-public theorem WritePlan.object_decode_exact (p : WritePlan) (h : p.WithinBounds) :
-    decodeStream p.objectDict p.objectRaw = .ok (objectStream p.compressed).bytes :=
-  objectStreamDict_decode_exact p.compressed.length
-    (objectStream p.compressed).header.utf8ByteSize
-    (objectStream p.compressed).bytes h.2.2.2.2.1
+/-- Every object stream of a bounded plan decodes to its exact payload. -/
+public theorem WritePlan.stm_decode_exact (p : WritePlan) (h : p.WithinBounds)
+    (c : List (Nat × Obj)) (hc : c ∈ p.chunks) :
+    decodeStream (chunkDict c) (chunkRaw c) = .ok (objectStream c).bytes :=
+  objectStreamDict_decode_exact c.length (objectStream c).header.utf8ByteSize
+    (objectStream c).bytes (h.2.1 c hc)
 
 private theorem objectStreamDict_retained_fields (count first : Nat) (data : ByteArray) :
     let z := Flate.deflate data
@@ -197,29 +238,26 @@ private theorem objectStreamDict_retained_fields (count first : Nat) (data : Byt
   · simpa only [hz, ↓reduceIte] using h.1
 
 /-- The retained stream's dictionary declares exactly its retained byte
-length and the producer's object count and payload boundary. -/
-public theorem WritePlan.object_fields_exact (p : WritePlan) :
-    p.objectDict.get? "Length" = some (.int p.objectRaw.size) ∧
-    p.objectDict.get? "N" = some (.int p.compressed.length) ∧
-    p.objectDict.get? "First" =
-      some (.int (objectStream p.compressed).header.utf8ByteSize) :=
-  objectStreamDict_retained_fields p.compressed.length
-    (objectStream p.compressed).header.utf8ByteSize (objectStream p.compressed).bytes
+length and the stream's object count and payload boundary. -/
+public theorem chunkDict_fields_exact (c : List (Nat × Obj)) :
+    (chunkDict c).get? "Length" = some (.int (chunkRaw c).size) ∧
+    (chunkDict c).get? "N" = some (.int c.length) ∧
+    (chunkDict c).get? "First" = some (.int (objectStream c).header.utf8ByteSize) :=
+  objectStreamDict_retained_fields c.length (objectStream c).header.utf8ByteSize
+    (objectStream c).bytes
 
-/-- The production file itself supplies the object-stream reading. The
+/-- The production file itself supplies each object stream's reading. The
 location premise is discharged by the writer's xref-location contract. -/
-public theorem WritePlan.object_reads_exact (p : WritePlan) (locs : Std.HashMap Nat Loc)
-    (hloc : locs.get? p.table.objStmId =
-      some (.direct (serialize p.head p.direct).1.size)) :
-    ({num := p.table.objStmId, header := p.table.objStmId,
-      loc := .direct (serialize p.head p.direct).1.size,
-      val := p.objectDict, stream := some p.objectRaw} : Entry).Reads p.bytes locs
-      (some ((serialize p.head p.direct).1.size +
-        (s!"{p.table.objStmId} 0 obj\n").toUTF8.size + p.objectDict.render.size)) :=
-  Entry.reads_stream_exact p.bytes locs p.table.objStmId
-    (serialize p.head p.direct).1.size p.objectDict
-    (objectStreamDict_representable_exact ..) p.objectRaw
-    p.object_span_exact p.object_fields_exact.1 hloc
+public theorem WritePlan.stm_reads_exact (p : WritePlan) (k : Nat) (c : List (Nat × Obj))
+    (hk : p.chunks[k]? = some c) (locs : Std.HashMap Nat Loc)
+    (hloc : locs.get? (p.table.objStmId k) = some (.direct (p.stmOffset k))) :
+    ({num := p.table.objStmId k, header := p.table.objStmId k, loc := .direct (p.stmOffset k),
+      val := chunkDict c, stream := some (chunkRaw c)} : Entry).Reads p.bytes locs
+      (some (p.stmOffset k + (s!"{p.table.objStmId k} 0 obj\n").toUTF8.size +
+        (chunkDict c).render.size)) :=
+  Entry.reads_stream_exact p.bytes locs (p.table.objStmId k) (p.stmOffset k) (chunkDict c)
+    (objectStreamDict_representable_exact ..) (chunkRaw c)
+    (p.stm_span_exact k c hk) (chunkDict_fields_exact c).1 hloc
 
 private theorem payload_cons_size (id : Nat) (v : Obj) (xs : List (Nat × Obj)) :
     (objectStream ((id,v)::xs)).payload.size =
@@ -247,37 +285,47 @@ public theorem objectStreamPositions_entry_exact (before after : List (Nat × Ob
     omega
 
 /-- A representable source object is recovered from the writer's complete
-file, through its actual stream spelling, compression decision, decoder,
-decimal header, and payload parser. Only the two locations still have to
-be supplied by the actual xref transcript; no reader result is assumed. -/
+file, through its own object stream's spelling, compression decision,
+decoder, decimal header, and payload parser: the stream at
+`before.length / objStmCapacity`, at index `before.length % objStmCapacity`.
+Only the two locations still have to be supplied by the actual xref
+transcript; no reader result is assumed. -/
 public theorem WritePlan.compressed_reads_exact (p : WritePlan) (h : p.WithinBounds)
     (locs : Std.HashMap Nat Loc) (before after : List (Nat × Obj))
     (num : Nat) (v : Obj)
     (hsource : p.compressed = before ++ (num,v)::after)
     (hv : v.Representable) (ha : ∀ e ∈ after, e.2.Representable)
-    (hstm : locs.get? p.table.objStmId =
-      some (.direct (serialize p.head p.direct).1.size))
-    (hloc : locs.get? num = some (.inStm p.table.objStmId before.length)) :
-    ({num, header := num, loc := .inStm p.table.objStmId before.length,
+    (hstm : locs.get? (p.table.objStmId (before.length / objStmCapacity)) =
+      some (.direct (p.stmOffset (before.length / objStmCapacity))))
+    (hloc : locs.get? num = some (.inStm (p.table.objStmId (before.length / objStmCapacity))
+      (before.length % objStmCapacity))) :
+    ({num, header := num, loc := .inStm (p.table.objStmId (before.length / objStmCapacity))
+        (before.length % objStmCapacity),
       val := v, stream := none} : Entry).Reads p.bytes locs none := by
-  apply Entry.reads_compressed_exact p.bytes locs num p.table.objStmId before.length
-    (serialize p.head p.direct).1.size
-    ((serialize p.head p.direct).1.size +
-      (s!"{p.table.objStmId} 0 obj\n").toUTF8.size + p.objectDict.render.size)
-    p.compressed.length (objectStream p.compressed).header.utf8ByteSize
-    (objectStream before).payload.size
-    ((objectStream p.compressed).header.utf8ByteSize +
-      (objectStream before).payload.size + v.render.size)
-    p.objectDict v p.objectRaw (objectStream p.compressed).bytes
-    (objectStreamPositions 0 p.compressed).toArray
-    (p.object_reads_exact locs hstm) (p.object_decode_exact h)
-    p.object_fields_exact.2.1 p.object_fields_exact.2.2
-    (objectStream_header_exact p.compressed) ?_ ?_ hloc
-  · rw [hsource]
-    simpa only [List.getElem?_toArray, Nat.zero_add] using
-      objectStreamPositions_entry_exact before after 0 num v
-  · rw [hsource]
-    simpa only [String.toUTF8_eq_toByteArray, String.size_toByteArray] using
-      objectStream_parse_entry_exact before after num v hv ha
+  obtain ⟨cb, ca, hk, hcb, hca⟩ := objStmChunks_entry_exact before after (num, v)
+  rw [← hsource] at hk
+  change p.chunks[before.length / objStmCapacity]? = some (cb ++ (num, v) :: ca) at hk
+  rw [← hcb] at hloc ⊢
+  let c := cb ++ (num, v) :: ca
+  apply Entry.reads_compressed_exact p.bytes locs num
+    (p.table.objStmId (before.length / objStmCapacity)) cb.length
+    (p.stmOffset (before.length / objStmCapacity))
+    (p.stmOffset (before.length / objStmCapacity) +
+      (s!"{p.table.objStmId (before.length / objStmCapacity)} 0 obj\n").toUTF8.size +
+        (chunkDict c).render.size)
+    c.length (objectStream c).header.utf8ByteSize
+    (objectStream cb).payload.size
+    ((objectStream c).header.utf8ByteSize +
+      (objectStream cb).payload.size + v.render.size)
+    (chunkDict c) v (chunkRaw c) (objectStream c).bytes
+    (objectStreamPositions 0 c).toArray
+    (p.stm_reads_exact _ c hk locs hstm)
+    (p.stm_decode_exact h c (List.mem_of_getElem? hk))
+    (chunkDict_fields_exact c).2.1 (chunkDict_fields_exact c).2.2
+    (objectStream_header_exact c) ?_ ?_ hloc
+  · simpa only [List.getElem?_toArray, Nat.zero_add] using
+      objectStreamPositions_entry_exact cb ca 0 num v
+  · simpa only [String.toUTF8_eq_toByteArray, String.size_toByteArray] using
+      objectStream_parse_entry_exact cb ca num v hv (fun e he => ha e (hca e he))
 
 end LeanTex.Core.Pdf

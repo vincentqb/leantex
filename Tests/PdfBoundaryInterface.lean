@@ -20,7 +20,7 @@ example (o : Obj) (h : o.encodable = true) :
     parseVal o.render 0 = .ok (o, o.render.size) :=
   o.encodable_render_exact h
 
-example (pre : ByteArray) (offset : Nat) (h : offset < 256^4) :
+example (pre : ByteArray) (offset : Nat) (h : offset < 2^64) :
     readStartxref (pre ++ (s!"startxref\n{offset}\n%%EOF\n").toUTF8) = .ok offset :=
   readStartxref_footer_exact pre offset h
 

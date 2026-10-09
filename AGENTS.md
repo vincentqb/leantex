@@ -281,6 +281,11 @@ in this repo; refer to the private reference corpus abstractly.
   module downstream. A zero-argument `def` is evaluated when its module
   initializes, in every process; take `Unit` to defer the cost to first
   use.
+- A closed term a loop's closure captures can be copied into the loop's
+  specialized body and rebuilt once per element: a 65,536-entry PDF plan
+  captured by one `find?` held `lake test` for 25 minutes instead of 3. A
+  large value in a check block depends on a runtime read (a ref, an
+  argument) before any closure captures it (`pdfBoundsChecks`).
 - The inline elaboration knot compiles at its heartbeat budget (more than
   198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
   fields: state the knot never reads goes in a record of its own

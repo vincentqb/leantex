@@ -3436,7 +3436,8 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "table: one face, one page, no outline, one structure element"
     (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.structTreeRoot == 11 &&
      t0.parentTree == 12 && t0.namespaceId == 13 && t0.structElemId 0 == 14 && t0.xmpId == 15 &&
-     t0.objStmId == 16 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 && t0.np == 1)
+     t0.objStmId 0 == 16 && t0.nStm == 1 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 &&
+     t0.np == 1)
   t "table: the conditional families allocate nothing yet"
     (t0.outputIntent.isNone && t0.icc.isNone)
   -- Two faces, three pages, a two-item outline: the root then its items
@@ -3472,8 +3473,15 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "table: the pages follow the last image block"
     (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
      ti.size == 24 + formN)
+  -- 600 outline items make 612 compressed objects: three object streams,
+  -- their ids after XMP and before the xref.
+  let tl := Pdf.objTable #[0] {} #[] 1 600 1
+  t "table: one object stream per capacity of compressed objects"
+    (Pdf.compressedCount tl.nf tl.np tl.nOut tl.nElems == 612 && tl.nStm == 3 &&
+     tl.objStmId 0 == tl.xmpId + 1 && tl.objStmId 2 == tl.xmpId + 3 &&
+     tl.xrefId == tl.xmpId + 4 && tl.size == tl.xmpId + 5)
   -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
-  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti)] do
+  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti), ("streams", tl)] do
     t s!"table {name}: the ids are exactly [1, size)"
       (tb.ids.toList == List.range' 1 (tb.size - 1))
   -- The row kind is a function of the table and the object stream's index.

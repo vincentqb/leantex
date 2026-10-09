@@ -40,14 +40,8 @@ public def outputPathsConflict (detail : String) : Diag :=
 font metadata do not identify a source command, so no span is invented. -/
 public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
   let message := match error with
-    | .objectIndex count =>
-      s!"the PDF needs {count} compressed objects; the supported limit is {256 ^ 2}"
     | .byteOffset bytes =>
-      s!"the PDF body needs {bytes} bytes; offsets must be below {256 ^ 4}"
-    | .objectNumber number =>
-      s!"the PDF object number {number} exceeds the supported limit of {256 ^ 4 - 1}"
-    | .tableSize count =>
-      s!"the PDF object table needs {count} entries; the supported limit is {256 ^ 4 - 1}"
+      s!"the PDF body needs {bytes} bytes; offsets must be below {2 ^ 64}"
     | .objectStreamSize bytes =>
       s!"the PDF object stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
     | .xrefStreamSize bytes =>

@@ -18,7 +18,7 @@ and its two identifiers. This value describes the emitted bytes. -/
 public def WriteMeasurement.xrefDict (m : WriteMeasurement) (t : ObjTable) : Obj :=
   let z := Flate.deflate m.xrefPayload
   let filtered := decide (z.size < m.xrefPayload.size)
-  xrefStreamDict t.size t.infoId
+  xrefStreamDict t.size t.infoId m.widths
     (Flate.fnv64 14695981039346656037 m.body)
     (Flate.fnv64 1099511628211 m.body) filtered
     (if z.size < m.xrefPayload.size then z.size else m.xrefPayload.size)
@@ -30,7 +30,7 @@ public theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : O
       m.body ++ (s!"{t.xrefId} 0 obj\n").toUTF8 ++ (m.xrefDict t).render ++
         "\nstream\n".toUTF8 ++ raw ++ "\nendstream\nendobj\n".toUTF8 ++
         (s!"startxref\n{m.body.size}\n%%EOF\n").toUTF8 := by
-  unfold WriteMeasurement.bytes WriteMeasurement.xrefDict
+  unfold WriteMeasurement.bytes WriteMeasurement.xrefDict WriteMeasurement.xrefDictText
   simp only [serialize, serializeList, flateRow, zRow]
   split <;> rename_i h
   all_goals simp only [h, decide_true, decide_false, Bool.false_eq_true, ↓reduceIte,
@@ -47,19 +47,20 @@ public theorem WriteMeasurement.bytes_stream_exact (m : WriteMeasurement) (t : O
 dictionary parser, stream extraction, Flate decoder, checksum check, and
 xref traversal. Only byte-offset and decoded-payload bounds are assumed. -/
 public theorem WriteMeasurement.readXref_exact (m : WriteMeasurement) (t : ObjTable)
-    (hb : m.body.size < 256^4) (hp : m.xrefPayload.size ≤ maxDecoded) :
+    (hb : m.body.size < 2^64) (hp : m.xrefPayload.size ≤ maxDecoded) :
     readXref (m.bytes t) =
-      .ok ((readXrefSubsection m.xrefPayload 1 4 2 0 t.size 0
+      .ok ((readXrefSubsection m.xrefPayload 1 m.widths.first m.widths.second 0 t.size 0
         {start := m.body.size, root := some 1, trailer := some (m.xrefDict t)}).1) := by
   rw [m.bytes_stream_exact]
   let z := Flate.deflate m.xrefPayload
-  have fields := xrefStreamDict_fields_exact t.size t.infoId
+  have fields := xrefStreamDict_fields_exact t.size t.infoId m.widths
     (Flate.fnv64 14695981039346656037 m.body)
     (Flate.fnv64 1099511628211 m.body)
     (decide (z.size < m.xrefPayload.size))
     (if z.size < m.xrefPayload.size then z.size else m.xrefPayload.size)
   have hd : (m.xrefDict t).Representable := xrefStreamDict_representable_exact ..
-  apply readXref_stream_exact m.body t.xrefId (m.xrefDict t) hd _ m.xrefPayload t.size 1 hb
+  apply readXref_stream_exact m.body t.xrefId (m.xrefDict t) hd _ m.xrefPayload t.size 1
+    m.widths hb
   · split <;> rename_i h <;>
       simpa only [WriteMeasurement.xrefDict, z, h, decide_true, decide_false, ↓reduceIte]
         using fields.1
@@ -87,10 +88,11 @@ stream from a plan's actual emitted file. Allocation coverage determines
 which of these rows are live; no parser or codec premise is required. -/
 public theorem WritePlan.readXref_exact (p : WritePlan) (h : p.WithinBounds) :
     readXref p.bytes =
-      .ok ((readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0
+      .ok ((readXrefSubsection (Xref.encode p.widths p.entries) 1 p.widths.first
+        p.widths.second 0 p.table.size 0
         {start := p.measure.body.size, root := some 1,
          trailer := some (p.measure.xrefDict p.table)}).1) := by
-  exact p.measure.readXref_exact p.table h.2.1 h.2.2.2.2.2
+  exact p.measure.readXref_exact p.table h.1 h.2.2
 
 /-- A numerically bounded plan yields a readable xref whose root and
 declared size are exactly the allocation's. Relating that declared size
@@ -102,13 +104,13 @@ public theorem WritePlan.readXref_contract (p : WritePlan) (bounds : p.WithinBou
   let x0 : PdfRead.Xref :=
     {start := p.measure.body.size, root := some 1,
      trailer := some (p.measure.xrefDict p.table)}
-  refine ⟨(readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0 x0).1,
-    p.readXref_exact bounds, ?_⟩
-  have hm := readXrefSubsection_metadata_exact (Xref.encode p.entries)
-    1 4 2 0 p.table.size 0 x0
+  refine ⟨(readXrefSubsection (Xref.encode p.widths p.entries) 1 p.widths.first
+    p.widths.second 0 p.table.size 0 x0).1, p.readXref_exact bounds, ?_⟩
+  have hm := readXrefSubsection_metadata_exact (Xref.encode p.widths p.entries)
+    1 p.widths.first p.widths.second 0 p.table.size 0 x0
   refine ⟨hm.1, ?_, hm.2.2⟩
   rw [hm.2.1]
-  have fields := xrefStreamDict_fields_exact p.table.size p.table.infoId
+  have fields := xrefStreamDict_fields_exact p.table.size p.table.infoId p.measure.widths
     (Flate.fnv64 14695981039346656037 p.measure.body)
     (Flate.fnv64 1099511628211 p.measure.body)
     (decide ((Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size))
@@ -161,13 +163,14 @@ public theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
     {start := p.measure.body.size, root := some 1,
      trailer := some (p.measure.xrefDict p.table)}
   have hv : x =
-      (readXrefSubsection (Xref.encode p.entries) 1 4 2 0 p.table.size 0 x0).1 := by
+      (readXrefSubsection (Xref.encode p.widths p.entries) 1 p.widths.first p.widths.second
+        0 p.table.size 0 x0).1 := by
     have hp := p.readXref_exact h
     rw [hx] at hp
     exact Except.ok.inj hp
   have hn : x.locs.size = p.table.size - 1 := by
     rw [hv]
-    exact readXrefSubsection_size_exact p.entries (p.entries_fits h)
+    exact readXrefSubsection_size_exact p.widths p.entries p.entries_fits
       he.2.1 he.2.2 p.table.size (by omega) x0 rfl
   have hp : 0 < p.table.size := by
     have ht := prepare_table_exact geom fs pages info imgs outline streams tree ops programs

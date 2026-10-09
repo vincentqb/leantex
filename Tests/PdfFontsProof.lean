@@ -19,8 +19,8 @@ names. Invented program bytes witness transport and reference recovery;
 they make no claim about sfnt validity or viewer rendering.
 
 Malformed source names are refused by the producer itself. The separate
-`pdfBoundsChecks` block carries the 65536-outline overflow counterexample
-to the original unrestricted statement. -/
+`pdfBoundsChecks` block reads the census of a 65536-entry outline, past
+the compressed-object ceiling the fixed-width xref once imposed. -/
 def pdfFontsProofChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)

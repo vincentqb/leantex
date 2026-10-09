@@ -503,8 +503,9 @@ public def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 
 /-- What the cross-reference row of one object id says (ISO 32000-2
 §7.5.8.3, Table 18): the object is written at a byte offset (type 1), sits
-at an index inside the object stream (type 2), or is the cross-reference
-stream itself — type 1 too, at the offset the trailer's `startxref` names. -/
+at a position of the compressed list, hence an index inside one object
+stream (type 2), or is the cross-reference stream itself — type 1 too, at
+the offset the trailer's `startxref` names. -/
 public inductive ObjKind where
   | direct
   | inStream (idx : Nat)
@@ -546,11 +547,31 @@ private def blockStarts (base : Nat) : List Nat → List Nat
   | [] => []
   | n :: ns => base :: blockStarts (base + n) ns
 
+/-- The most objects one object stream holds: as many as a one-byte
+stream-index field addresses, so reading one compressed object inflates at
+most this many and a cross-reference row never needs a second index byte.
+pdfTeX and LuaTeX stop at 100 (pdftex.web's object-stream limit); at 256 a
+stream of small dictionaries fills about one deflate window, and what the
+split costs over a single unbounded stream falls from about 5% of the
+file to under 2%. -/
+@[expose] public def objStmCapacity : Nat := 256
+
+/-- How many object streams `n` compressed objects take. -/
+@[expose] public def objStmCount (n : Nat) : Nat := (n + objStmCapacity - 1) / objStmCapacity
+
+/-- How many objects the writer compresses for these counts: the catalog
+and page tree, three dictionaries per face, Info, the outline root and
+items, one dictionary per page, the structure root, parent tree and
+namespace, and one dictionary per structure element (`prepare`'s list,
+`prepare_compressed_ids_exact`). -/
+@[expose] public def compressedCount (nf np nOut nElems : Nat) : Nat :=
+  3 * nf + np + (if nOut == 0 then 0 else nOut + 1) + nElems + 6
+
 /-- Every object id one file allocates, computed once from the counts that
 decide it, in id order: 1 the catalog, 2 the page tree, four ids per kept
 face and then one file per face, per placed image its XObject followed by
 what it brings (`ImgExtra`), two per page, Info, the outline — root then
-items — when the layout carried one, XMP, the object stream, and the
+items — when the layout carried one, XMP, the object streams, and the
 cross-reference stream last. `write` reads its ids here and nowhere else;
 the conditional families are slots no document fills yet. -/
 public structure ObjTable where
@@ -569,7 +590,10 @@ public structure ObjTable where
   infoId : Nat
   outlineRootId : Nat
   xmpId : Nat
-  objStmId : Nat
+  /-- The object streams, `nStm` consecutive ids from here: one per
+  `objStmCapacity` compressed objects (`objStmChunks`). -/
+  objStmBase : Nat
+  nStm : Nat
   xrefId : Nat
   size : Nat
   /-- OutputIntent and its ICC stream: filled by the colour plan. -/
@@ -598,6 +622,7 @@ public def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
 public def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
 public def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
 public def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
+public def objStmId (t : ObjTable) (k : Nat) : Nat := t.objStmBase + k
 
 /-- Every allocated id, in emission order — each block spelled from its
 own slot function, so `objTable_inj` and `objTable_covers` are facts about
@@ -613,10 +638,10 @@ public def ids (t : ObjTable) : Array Nat :=
       else #[t.outlineRootId] ++ (Array.range t.nOut).map t.outlineItemId)
   ++ #[t.structTreeRoot, t.parentTree, t.namespaceId]
   ++ (Array.range t.nElems).map t.structElemId
-  ++ #[t.xmpId, t.objStmId, t.xrefId]
+  ++ (#[t.xmpId] ++ (Array.range t.nStm).map t.objStmId ++ #[t.xrefId])
 
-/-- The cross-reference row kind of an id, given where the object stream
-holds it (`compressedIdx`): a function of the table, so an id the table
+/-- The cross-reference row kind of an id, given its position in the
+compressed list (`compressedIdx`): a function of the table, so an id the table
 never allocated is `none` — and `objTable_kindOf_some` says that never
 happens on `ids`. -/
 public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
@@ -640,6 +665,7 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
   let infoId := pageBase + 2 * np
   let structTreeRoot := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
   let xmpId := structTreeRoot + 3 + nElems
+  let nStm := objStmCount (compressedCount nf np nOut nElems)
   { nf, ni := usedImgs.size, np, nOut, imgIds, imgSpans := spans
     smaskIds := (imgIds.zip extras).map fun (id, e) => match e with
       | .alpha => some (id + 1)
@@ -654,7 +680,7 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
       | .plain => 0
       | .alpha => 0
     pageBase, infoId, outlineRootId := infoId + 1, xmpId
-    objStmId := xmpId + 1, xrefId := xmpId + 2, size := xmpId + 3
+    objStmBase := xmpId + 1, nStm, xrefId := xmpId + 1 + nStm, size := xmpId + 2 + nStm
     nElems, structTreeRoot, parentTree := structTreeRoot + 1, namespaceId := structTreeRoot + 2
     structBase := structTreeRoot + 3 }
 
@@ -704,8 +730,8 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (hsr : t.structTreeRoot = if t.nOut == 0 then t.infoId + 1 else t.infoId + 2 + t.nOut)
     (hpt : t.parentTree = t.structTreeRoot + 1) (hns : t.namespaceId = t.structTreeRoot + 2)
     (hsb : t.structBase = t.structTreeRoot + 3) (hxmp : t.xmpId = t.structBase + t.nElems)
-    (hstm : t.objStmId = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 2)
-    (hsize : t.size = t.xmpId + 3) :
+    (hstm : t.objStmBase = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 1 + t.nStm)
+    (hsize : t.size = t.xmpId + 2 + t.nStm) :
     t.ids.toList = List.range' 1 (t.size - 1) := by
   have joinRanges (s m s' n : Nat) (h : s' = s + m) :
       List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
@@ -721,8 +747,16 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     rw [List.range'_eq_map_range]; rfl
   have h12 : [1, 2] = List.range' 1 2 := rfl
   have hinfo1 : [t.infoId] = List.range' t.infoId 1 := rfl
-  have htail : [t.xmpId, t.objStmId, t.xrefId] = List.range' t.xmpId 3 := by
-    rw [hstm, hxref]; rfl
+  have hstms : List.map t.objStmId (List.range t.nStm) = List.range' (t.xmpId + 1) t.nStm := by
+    rw [List.range'_eq_map_range, ← hstm]; rfl
+  have htail : [t.xmpId] ++ List.map t.objStmId (List.range t.nStm) ++ [t.xrefId] =
+      List.range' t.xmpId (t.nStm + 2) := by
+    rw [hstms, hxref]
+    rw [show [t.xmpId] = List.range' t.xmpId 1 from rfl,
+      show [t.xmpId + 1 + t.nStm] = List.range' (t.xmpId + 1 + t.nStm) 1 from rfl,
+      joinRanges _ _ _ _ rfl, joinRanges _ _ _ _ (by omega)]
+    congr 1
+    omega
   have hstruct : [t.structTreeRoot, t.parentTree, t.namespaceId] = List.range' t.structTreeRoot 3 := by
     rw [hpt, hns]; rfl
   have helems : List.map t.structElemId (List.range t.nElems)
@@ -806,22 +840,31 @@ public theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (use
   · rfl
   · split <;> rfl
 
-/-- A row of the writer's cross-reference. A missing direct object is
-declared free; it is never redirected to an unrelated compressed object. -/
+/-- A row of the writer's cross-reference. A compressed object at
+position `idx` of the compressed list sits in object stream
+`idx / objStmCapacity` at index `idx % objStmCapacity` (`objStmChunks`).
+A missing direct object is declared free; it is never redirected to an
+unrelated compressed object. -/
 public def xrefEntry (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff id : Nat) : Xref.Entry :=
   if id == t.xrefId then .direct xrefOff 0 else
     match compressedIdx id with
-    | some idx => .compressed t.objStmId idx
+    | some idx => .compressed (t.objStmId (idx / objStmCapacity)) (idx % objStmCapacity)
     | none => match offset id with
       | some off => .direct off 0
       | none => .free 0 0
+
+/-- Row zero, the head of the free list (§7.5.4): no next free object, and
+the largest generation a one-byte field holds — the stream spelling of
+the table's 65535, as pdfTeX and LuaTeX write it, so the head never widens
+the index field the object streams need. -/
+public def freeHead : Xref.Entry := .free 0 255
 
 /-- The free-list head and one row per allocated id, in allocation order.
 `write` encodes this array itself; it is not a reconstructed certificate. -/
 public def xrefEntries (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
     (xrefOff : Nat) : Array Xref.Entry :=
-  #[.free 0 65535] ++ t.ids.map (xrefEntry t compressedIdx offset xrefOff)
+  #[freeHead] ++ t.ids.map (xrefEntry t compressedIdx offset xrefOff)
 
 /-- The row selection is the allocation table's kind decision on every
 allocated id, including its explicit missing-direct-object case. -/
@@ -831,7 +874,8 @@ public theorem xrefEntry_kind_exact (t : ObjTable)
     some (xrefEntry t compressedIdx offset xrefOff id) =
       (t.kindOf compressedIdx id).map (fun k => match k with
         | .xref => .direct xrefOff 0
-        | .inStream idx => .compressed t.objStmId idx
+        | .inStream idx =>
+          .compressed (t.objStmId (idx / objStmCapacity)) (idx % objStmCapacity)
         | .direct => match offset id with
           | some off => .direct off 0
           | none => .free 0 0) := by
@@ -844,14 +888,14 @@ public theorem xrefEntry_kind_exact (t : ObjTable)
   · rfl
   · cases compressedIdx id <;> rfl
 
-/-- The actual xref payload has exactly the number of seven-byte rows
-declared by `/Size` and `/Index`, including row zero. -/
+/-- The actual xref payload has exactly the number of rows declared by
+`/Size` and `/Index`, including row zero, at any row layout. -/
 public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems : Nat)
-    (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) :
+    (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) (w : Xref.Widths) :
     let t := objTable keep imgs usedImgs np nOut nElems
     (xrefEntries t compressedIdx offset xrefOff).size = t.size ∧
-      (Xref.encode (xrefEntries t compressedIdx offset xrefOff)).size = 7 * t.size := by
+      (Xref.encode w (xrefEntries t compressedIdx offset xrefOff)).size = w.row * t.size := by
   dsimp only
   have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
   have hn := congrArg List.length ht
@@ -875,7 +919,7 @@ public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
     let t := objTable keep imgs usedImgs np nOut nElems
     (xrefEntries t compressedIdx offset xrefOff)[id]? =
-      some (if id = 0 then .free 0 65535 else xrefEntry t compressedIdx offset xrefOff id) := by
+      some (if id = 0 then freeHead else xrefEntry t compressedIdx offset xrefOff id) := by
   dsimp only
   have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
   have hta : (objTable keep imgs usedImgs np nOut nElems).ids =
@@ -890,21 +934,26 @@ public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     simp [show id < (objTable keep imgs usedImgs np nOut nElems).size - 1 by omega,
       Nat.add_comm]
 
-/-- Numeric field bounds suffice for every emitted xref entry. This
-assumes no property of our writer, parser, or compressor. -/
-public theorem xrefEntry_fits (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
-    (xrefOff id : Nat) (hx : xrefOff < 256 ^ 4) (hs : t.objStmId < 256 ^ 4)
-    (hc : ∀ n i, compressedIdx n = some i → i < 256 ^ 2)
-    (ho : ∀ n i, offset n = some i → i < 256 ^ 4) :
-    (xrefEntry t compressedIdx offset xrefOff id).Fits := by
-  unfold xrefEntry
-  split
-  · exact ⟨hx, by change 0 < 256 ^ 2; omega⟩
-  · split
-    · exact ⟨hs, hc _ _ ‹_›⟩
+/-- No row of the writer's cross-reference has a third field above 255:
+generations are zero, the free-list head is 255, and a stream index is
+below `objStmCapacity`. So the index field is one byte wide whatever the
+object count — the width the object-stream layout was chosen to keep. -/
+public theorem xrefEntries_second_between (t : ObjTable) (compressedIdx offset : Nat → Option Nat)
+    (xrefOff : Nat) : ∀ e ∈ xrefEntries t compressedIdx offset xrefOff, e.fields.2.2 < 256 := by
+  intro e he
+  simp only [xrefEntries, Array.mem_append, Array.mem_singleton, Array.mem_map] at he
+  obtain he | ⟨id, _, rfl⟩ := he
+  · subst e
+    decide
+  · unfold xrefEntry
+    split
+    · simp [Xref.Entry.fields]
     · split
-      · exact ⟨ho _ _ ‹_›, by change 0 < 256 ^ 2; omega⟩
-      · exact ⟨by decide, by decide⟩
+      · simp only [Xref.Entry.fields]
+        have := Nat.mod_lt (id : Nat) (show 0 < objStmCapacity by decide)
+        simp only [objStmCapacity] at this ⊢
+        omega
+      · split <;> simp [Xref.Entry.fields]
 
 -- ## The feature census
 
@@ -1318,8 +1367,9 @@ public theorem indexObjects_entry_exact {α : Type} (size : Nat)
   · rfl
   · simpa using hid
 
-/-- The object-stream index uses the same position list that is packed
-into the object stream. -/
+/-- Each compressed id's position in the same list the object streams
+pack, in order (`objStmChunks` cuts it; `xrefEntry` reads the stream and
+index off the position). -/
 public def compressedIndex (size : Nat) (objects : List (Nat × PdfRead.Obj)) :
     Array (Option Nat) :=
   indexObjects size (objects.zipIdx.map (fun (row, i) => (row.1, i)))
@@ -1378,59 +1428,61 @@ public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
   xrefEntries t (fun id => (compressed[id]?).join)
     (fun id => (offsets[id]?).join) xrefOff
 
-/-- Scalar representability bounds suffice for the actual xref payload:
-the serialized body and object-stream id fit four bytes, and at most
-65536 compressed objects fit the two-byte positional index. -/
-public theorem writerXrefEntries_fits (t : ObjTable) (head : ByteArray) (rows : Array Row)
-    (objects : List (Nat × PdfRead.Obj))
-    (hbody : (serialize head rows).1.size < 256 ^ 4)
-    (hstream : t.objStmId < 256 ^ 4) (hobjects : objects.length ≤ 256 ^ 2) :
-    ∀ e ∈ writerXrefEntries t (serialize head rows).2 objects (serialize head rows).1.size,
-      e.Fits := by
-  intro e he
-  simp only [writerXrefEntries, xrefEntries, Array.mem_append, Array.mem_singleton,
-    Array.mem_map] at he
-  obtain he | ⟨id, _, he⟩ := he
-  · subst e
-    exact ⟨by decide, by decide⟩
-  · subst e
-    apply xrefEntry_fits _ _ _ _ _ hbody hstream
-    · intro n i hi
-      exact Nat.lt_of_lt_of_le (compressedIndex_between _ _ n i hi) hobjects
-    · intro n i hi
-      have hm := indexObjects_mem t.size (serialize head rows).2.toList n i hi
-      exact Nat.lt_of_le_of_lt (serialize_offsets_between head rows n i (by simpa using hm)) hbody
+/-- Every row of the actual xref payload fits the `/W` the writer declares
+for it, for every table, serialization and object list, unconditionally —
+the widths are read off the rows (`Xref.widthsOf`), so the bounds the old
+fixed `/W [1 4 2]` needed — a body below 4 GiB, object numbers below 2³²,
+at most 65536 compressed objects — no longer stand between a document and
+its file. -/
+public theorem writerXrefEntries_fits (t : ObjTable) (locs : Array (Nat × Nat))
+    (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) :
+    ∀ e ∈ writerXrefEntries t locs objects xrefOff,
+      e.Fits (Xref.widthsOf (writerXrefEntries t locs objects xrefOff)) :=
+  Xref.widthsOf_fits _
 
-/-- Every field in the actual xref payload reads back at seven times the
-object id. The table is constructed from source counts; the only premises
-are the three numeric limits imposed by its declared field widths.
+/-- The index field the writer declares is one byte wide for every
+document: no row's third field exceeds 255 (`xrefEntries_second_between`),
+and a field is never narrower than one byte. -/
+public theorem writerXrefWidths_second_exact (t : ObjTable) (locs : Array (Nat × Nat))
+    (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) :
+    (Xref.widthsOf (writerXrefEntries t locs objects xrefOff)).second = 1 := by
+  have hw := Xref.widthsOf_least (writerXrefEntries t locs objects xrefOff) ⟨_, 1⟩
+    (Xref.width_between (Xref.maxFirst (writerXrefEntries t locs objects xrefOff))).1
+    (Nat.le_refl 1) (fun e he => ⟨(Xref.widthsOf_fits _ e he).1,
+      by simpa using xrefEntries_second_between _ _ _ _ e he⟩)
+  have := (Xref.width_between (Xref.maxSecond (writerXrefEntries t locs objects xrefOff))).1
+  simp only [Xref.widthsOf] at hw this ⊢
+  omega
+
+/-- Every field in the actual xref payload reads back at its row's offset,
+`w.row` bytes per object id, in the widths the writer declares. The table
+is constructed from source counts; there is no numeric premise left.
 Decompression and the reader's row walk remain separate contracts. -/
 public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
     (usedImgs : Array Nat) (np nOut nElems : Nat) (head : ByteArray) (rows : Array Row)
-    (objects : List (Nat × PdfRead.Obj))
-    (hbody : (serialize head rows).1.size < 256 ^ 4)
-    (hstream : (objTable keep imgs usedImgs np nOut nElems).objStmId < 256 ^ 4)
-    (hobjects : objects.length ≤ 256 ^ 2) (id : Nat)
+    (objects : List (Nat × PdfRead.Obj)) (id : Nat)
     (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
     let t := objTable keep imgs usedImgs np nOut nElems
     let out := serialize head rows
-    let e := if id = 0 then Xref.Entry.free 0 65535 else
+    let es := writerXrefEntries t out.2 objects out.1.size
+    let w := Xref.widthsOf es
+    let e := if id = 0 then freeHead else
       xrefEntry t (fun n => ((compressedIndex t.size objects)[n]?).join)
         (fun n => ((indexObjects t.size out.2.toList)[n]?).join) out.1.size id
-    let data := Xref.encode (writerXrefEntries t out.2 objects out.1.size)
-    Binary.readNatBE 1 data (7 * id) = some e.fields.1.toNat ∧
-      Binary.readNatBE 4 data (7 * id + 1) = some e.fields.2.1 ∧
-      Binary.readNatBE 2 data (7 * id + 5) = some e.fields.2.2 := by
+    let data := Xref.encode w es
+    Binary.readNatBE 1 data (w.row * id) = some e.fields.1.toNat ∧
+      Binary.readNatBE w.first data (w.row * id + 1) = some e.fields.2.1 ∧
+      Binary.readNatBE w.second data (w.row * id + 1 + w.first) = some e.fields.2.2 := by
   dsimp only
   have hi := xrefEntries_index_exact keep imgs usedImgs np nOut nElems
     (fun n => ((compressedIndex (objTable keep imgs usedImgs np nOut nElems).size objects)[n]?).join)
     (fun n => ((indexObjects (objTable keep imgs usedImgs np nOut nElems).size
       (serialize head rows).2.toList)[n]?).join) (serialize head rows).1.size id hid
   have he := writerXrefEntries_fits (objTable keep imgs usedImgs np nOut nElems)
-    head rows objects hbody hstream hobjects _ (Array.mem_of_getElem? hi)
+    (serialize head rows).2 objects (serialize head rows).1.size _ (Array.mem_of_getElem? hi)
   simpa only [writerXrefEntries, ByteArray.empty_append, ByteArray.append_empty,
     ByteArray.size_empty, Nat.zero_add] using
-    Xref.encode_index_fields_exact _ id _ hi he ByteArray.empty ByteArray.empty
+    Xref.encode_index_fields_exact _ _ id _ hi he ByteArray.empty ByteArray.empty
 
 /-- The two buffers of an object stream (§7.5.7). Header offsets are
 relative to `payload`, whose bytes are appended by the same step. -/
@@ -1613,8 +1665,105 @@ public theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteA
     (flateRow id p.text data).body.Native :=
   zRow_native_exact id p data _
 
+/-- `n` consecutive slices of at most `objStmCapacity` items each, in
+order: the structural fold `objStmChunks` runs. -/
+public def chunksN {α : Type} : Nat → List α → List (List α)
+  | 0, _ => []
+  | n + 1, xs => xs.take objStmCapacity :: chunksN n (xs.drop objStmCapacity)
+
+/-- The compressed objects cut into object streams: consecutive slices of
+`objStmCapacity`, the last one shorter. -/
+public def objStmChunks {α : Type} (xs : List α) : List (List α) :=
+  chunksN (objStmCount xs.length) xs
+
+/-- Slice `k` is the objects from position `k * objStmCapacity` on, at
+most `objStmCapacity` of them. -/
+public theorem chunksN_getElem?_exact {α : Type} (n : Nat) (xs : List α) (k : Nat) :
+    (chunksN n xs)[k]? =
+      if k < n then some ((xs.drop (k * objStmCapacity)).take objStmCapacity) else none := by
+  induction n generalizing xs k with
+  | zero => simp [chunksN]
+  | succ n ih =>
+    cases k with
+    | zero => simp [chunksN]
+    | succ k =>
+      simp only [chunksN, List.getElem?_cons_succ, ih, List.drop_drop, Nat.succ_mul,
+        Nat.add_comm objStmCapacity, Nat.add_lt_add_iff_right]
+
+@[simp] public theorem chunksN_length {α : Type} (n : Nat) (xs : List α) :
+    (chunksN n xs).length = n := by
+  induction n generalizing xs with
+  | zero => rfl
+  | succ n ih => simp [chunksN, ih]
+
+public theorem objStmChunks_length {α : Type} (xs : List α) :
+    (objStmChunks xs).length = objStmCount xs.length := chunksN_length _ _
+
+private theorem objStmCount_mul_le (n : Nat) : n ≤ objStmCount n * objStmCapacity := by
+  simp only [objStmCount, objStmCapacity]
+  omega
+
+private theorem lt_of_lt_objStmCount (n k : Nat) (hk : k < objStmCount n) :
+    k * objStmCapacity < n := by
+  simp only [objStmCount, objStmCapacity] at hk ⊢
+  omega
+
+/-- **`objStmChunks_flatten_id`**: the streams hold every compressed object
+once, in order — nothing dropped, nothing repeated. -/
+public theorem objStmChunks_flatten_id {α : Type} (xs : List α) :
+    (objStmChunks xs).flatten = xs := by
+  have h (n : Nat) (ys : List α) : (chunksN n ys).flatten = ys.take (n * objStmCapacity) := by
+    induction n generalizing ys with
+    | zero => simp [chunksN]
+    | succ n ih =>
+      rw [chunksN, List.flatten_cons, ih, Nat.succ_mul, Nat.add_comm, List.take_add]
+  rw [objStmChunks, h, List.take_of_length_le (objStmCount_mul_le _)]
+
+/-- **`objStmChunks_between`**: every object stream holds at least one and
+at most `objStmCapacity` objects — reading any one compressed object
+inflates at most that many. -/
+public theorem objStmChunks_between {α : Type} (xs : List α) :
+    ∀ c ∈ objStmChunks xs, 0 < c.length ∧ c.length ≤ objStmCapacity := by
+  intro c hc
+  obtain ⟨k, hk⟩ := List.mem_iff_getElem?.mp hc
+  rw [objStmChunks, chunksN_getElem?_exact] at hk
+  split at hk
+  · rename_i hlt
+    cases hk
+    have := lt_of_lt_objStmCount xs.length k hlt
+    simp only [List.length_take, List.length_drop]
+    simp only [objStmCapacity] at this ⊢
+    omega
+  · cases hk
+
+/-- The object at position `before.length` sits in stream
+`before.length / objStmCapacity` at index `before.length % objStmCapacity`,
+and what follows it in that stream follows it in the source. -/
+public theorem objStmChunks_entry_exact {α : Type} (before after : List α) (x : α) :
+    ∃ cb ca, (objStmChunks (before ++ x :: after))[before.length / objStmCapacity]? =
+        some (cb ++ x :: ca) ∧
+      cb.length = before.length % objStmCapacity ∧ ∀ y ∈ ca, y ∈ after := by
+  refine ⟨before.drop (before.length / objStmCapacity * objStmCapacity),
+    after.take (objStmCapacity - 1 - before.length % objStmCapacity), ?_, ?_, ?_⟩
+  · have hk : before.length / objStmCapacity < objStmCount (before ++ x :: after).length := by
+      simp only [objStmCount, List.length_append, List.length_cons, objStmCapacity]
+      omega
+    rw [objStmChunks, chunksN_getElem?_exact]
+    simp only [hk, ↓reduceIte, Option.some.injEq]
+    rw [List.drop_append_of_le_length (by simp only [objStmCapacity]; omega), List.take_append,
+      List.take_of_length_le (by simp only [List.length_drop, objStmCapacity]; omega)]
+    congr 1
+    simp only [List.length_drop]
+    rw [show objStmCapacity - (before.length - before.length / objStmCapacity * objStmCapacity) =
+      (objStmCapacity - 1 - before.length % objStmCapacity) + 1 by simp only [objStmCapacity]; omega,
+      List.take_succ_cons]
+  · simp only [List.length_drop, objStmCapacity]
+    omega
+  · intro y hy
+    exact List.mem_of_mem_take hy
+
 /-- The writer's actual allocation and emissions, before serialization.
-The object stream and xref are derived from these rows and values; their
+The object streams and xref are derived from these rows and values; their
 offsets are never supplied separately. This is artifact bookkeeping. -/
 public structure WritePlan where
   table : ObjTable
@@ -1622,15 +1771,27 @@ public structure WritePlan where
   direct : Array Row
   compressed : List (Nat × PdfRead.Obj)
 
-private def WritePlan.rowsWith (p : WritePlan) (first : Nat) (payload : ByteArray) :
-    Array Row :=
-  p.direct.push (flateRow p.table.objStmId
-    s!"/Type /ObjStm /N {p.compressed.length} /First {first}" payload)
+/-- The object streams' contents, `objStmCapacity` objects at most each. -/
+public def WritePlan.chunks (p : WritePlan) : List (List (Nat × PdfRead.Obj)) :=
+  objStmChunks p.compressed
 
-/-- The one object stream is appended to the direct rows it accompanies. -/
+/-- One object stream: its count, its header and payload, deflated when
+that is smaller (`flateRow`). -/
+public def objStmRow (id count : Nat) (packed : ObjectStream) : Row :=
+  flateRow id s!"/Type /ObjStm /N {count} /First {packed.header.utf8ByteSize}" packed.bytes
+
+/-- Each chunk packed once, with its object count: what the rows and the
+size check share. -/
+public def WritePlan.packed (p : WritePlan) : List (Nat × ObjectStream) :=
+  p.chunks.map fun c => (c.length, objectStream c)
+
+/-- The object-stream rows, stream `k` under the table's `k`-th id. -/
+public def stmRowsOf (t : ObjTable) (packed : List (Nat × ObjectStream)) : Array Row :=
+  (packed.zipIdx.map fun ((count, s), k) => objStmRow (t.objStmId k) count s).toArray
+
+/-- The object streams are appended to the direct rows they accompany. -/
 public def WritePlan.rows (p : WritePlan) : Array Row :=
-  let packed := objectStream p.compressed
-  p.rowsWith packed.header.utf8ByteSize packed.bytes
+  p.direct ++ stmRowsOf p.table p.packed
 
 public def WritePlan.serialized (p : WritePlan) : ByteArray × Array (Nat × Nat) :=
   serialize p.head p.rows
@@ -1639,30 +1800,42 @@ public def WritePlan.entries (p : WritePlan) : Array Xref.Entry :=
   let (body, locs) := p.serialized
   writerXrefEntries p.table locs p.compressed body.size
 
+/-- The row layout the writer declares: the widths the rows need. -/
+public def WritePlan.widths (p : WritePlan) : Xref.Widths :=
+  Xref.widthsOf p.entries
+
+/-- The largest decoded object stream, as the size check reads it. -/
+public def packedMax (packed : List (Nat × ObjectStream)) : Nat :=
+  packed.foldl (fun m x => max m (x.2.header.utf8ByteSize + x.2.payload.size)) 0
+
 /-- The measured bytes retained for final emission. Numeric validation
 reads these values, then publishes the same body and xref payload.
-The object stream is assembled and compressed only during measurement. -/
+The object streams are assembled and compressed only during measurement. -/
 public structure WriteMeasurement where
   body : ByteArray
   offsets : Array (Nat × Nat)
+  widths : Xref.Widths
   xrefPayload : ByteArray
   objectPayloadSize : Nat
 
 public def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
-  let packed := objectStream p.compressed
-  let payload := packed.bytes
-  let (body, locs) := serialize p.head (p.rowsWith packed.header.utf8ByteSize payload)
-  { body, offsets := locs,
-    xrefPayload := Xref.encode (writerXrefEntries p.table locs p.compressed body.size),
-    objectPayloadSize := payload.size }
+  let packed := p.packed
+  let (body, locs) := serialize p.head (p.direct ++ stmRowsOf p.table packed)
+  let entries := writerXrefEntries p.table locs p.compressed body.size
+  let widths := Xref.widthsOf entries
+  { body, offsets := locs, widths, xrefPayload := Xref.encode widths entries,
+    objectPayloadSize := packedMax packed }
+
+/-- The xref stream's own dictionary, as `bytes` spells it. -/
+public def WriteMeasurement.xrefDictText (m : WriteMeasurement) (t : ObjTable) : String :=
+  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 m.body)
+  let idB := Flate.hex16 (Flate.fnv64 1099511628211 m.body)
+  s!"/Type /XRef /Size {t.size} /W [1 {m.widths.first} {m.widths.second}] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
 
 /-- Finish a measurement: its xref describes this serialization, and
 `startxref` names the byte immediately after its retained body. -/
 public def WriteMeasurement.bytes (m : WriteMeasurement) (t : ObjTable) : ByteArray :=
-  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 m.body)
-  let idB := Flate.hex16 (Flate.fnv64 1099511628211 m.body)
-  let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let (out, _) := serialize m.body #[flateRow t.xrefId xrefDict m.xrefPayload]
+  let (out, _) := serialize m.body #[flateRow t.xrefId (m.xrefDictText t) m.xrefPayload]
   out ++ (s!"startxref\n{m.body.size}\n%%EOF\n").toUTF8
 
 public def WritePlan.bytes (p : WritePlan) : ByteArray :=
@@ -1674,11 +1847,29 @@ public theorem WritePlan.measure_body_exact (p : WritePlan) :
 public theorem WritePlan.measure_offsets_exact (p : WritePlan) :
     p.measure.offsets = p.serialized.2 := by rfl
 
-public theorem WritePlan.measure_xref_exact (p : WritePlan) :
-    p.measure.xrefPayload = Xref.encode p.entries := by rfl
+public theorem WritePlan.measure_widths_exact (p : WritePlan) :
+    p.measure.widths = p.widths := by rfl
 
-public theorem WritePlan.measure_object_size_exact (p : WritePlan) :
-    p.measure.objectPayloadSize = (objectStream p.compressed).bytes.size := by rfl
+public theorem WritePlan.measure_xref_exact (p : WritePlan) :
+    p.measure.xrefPayload = Xref.encode p.widths p.entries := by rfl
+
+private theorem foldl_packedMax_le (B : Nat) (xs : List (Nat × ObjectStream)) (acc : Nat) :
+    xs.foldl (fun m x => max m (x.2.header.utf8ByteSize + x.2.payload.size)) acc ≤ B ↔
+      acc ≤ B ∧ ∀ x ∈ xs, x.2.header.utf8ByteSize + x.2.payload.size ≤ B := by
+  induction xs generalizing acc with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.foldl_cons, ih, List.mem_cons, forall_eq_or_imp, Nat.max_le, and_assoc]
+
+/-- The measured stream size is within a bound exactly when every object
+stream's decoded bytes are. -/
+public theorem WritePlan.measure_object_size_exact (p : WritePlan) (B : Nat) :
+    p.measure.objectPayloadSize ≤ B ↔ ∀ c ∈ p.chunks, (objectStream c).bytes.size ≤ B := by
+  change packedMax p.packed ≤ B ↔ _
+  rw [packedMax, foldl_packedMax_le]
+  simp only [Nat.zero_le, true_and, WritePlan.packed, List.mem_map, forall_exists_index,
+    and_imp, forall_apply_eq_imp_iff₂, ObjectStream.bytes, ByteArray.size_append,
+    String.toUTF8_eq_toByteArray, String.size_toByteArray]
 
 /-- Retaining the measurement preserves the existing writer's complete
 byte spelling, including its hash identifiers, compression choices,
@@ -1686,10 +1877,12 @@ offsets, and footer. This equality is independent of input bounds. -/
 public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
     p.bytes =
       let (body, locs) := p.serialized
-      let xrefRows := Xref.encode (writerXrefEntries p.table locs p.compressed body.size)
+      let entries := writerXrefEntries p.table locs p.compressed body.size
+      let w := Xref.widthsOf entries
+      let xrefRows := Xref.encode w entries
       let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 body)
       let idB := Flate.hex16 (Flate.fnv64 1099511628211 body)
-      let dict := s!"/Type /XRef /Size {p.table.size} /W [1 4 2] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
+      let dict := s!"/Type /XRef /Size {p.table.size} /W [1 {w.first} {w.second}] /Index [0 {p.table.size}] /Root 1 0 R /Info {p.table.infoId} 0 R /ID [<{idA}> <{idB}>]"
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
       out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl
 
@@ -2329,6 +2522,20 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
   simp only [List.map_nil, List.nil_append, ← List.map_eq_flatMap]
   rfl
 
+/-- The object-stream rows carry the table's stream ids, in order. -/
+public theorem stmRowsOf_ids_exact (t : ObjTable) (packed : List (Nat × ObjectStream)) :
+    (stmRowsOf t packed).toList.map Row.id = (List.range packed.length).map t.objStmId := by
+  simp only [stmRowsOf, List.toList_toArray, List.map_map, Function.comp_def,
+    objStmRow, flateRow_id]
+  exact map_zipIdx_snd packed t.objStmId
+
+/-- The plan's rows are its direct rows and then one row per object stream. -/
+public theorem WritePlan.rows_ids_exact (p : WritePlan) :
+    p.rows.toList.map Row.id =
+      p.direct.toList.map Row.id ++ (List.range p.chunks.length).map p.table.objStmId := by
+  simp only [WritePlan.rows, Array.toList_append, List.map_append, stmRowsOf_ids_exact,
+    WritePlan.packed, List.length_map]
+
 private theorem emission_covers (p : WritePlan)
     (hd : p.direct.toList.map Row.id =
       (List.range p.table.np).map p.table.contentId ++
@@ -2343,15 +2550,15 @@ private theorem emission_covers (p : WritePlan)
         (List.range p.table.nOut).map p.table.outlineItemId) ++
       (List.range p.table.np).map p.table.pageId ++
       [p.table.structTreeRoot, p.table.parentTree, p.table.namespaceId] ++
-      (List.range p.table.nElems).map p.table.structElemId) :
+      (List.range p.table.nElems).map p.table.structElemId)
+    (hs : p.chunks.length = p.table.nStm) :
     ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
       id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst := by
   intro id hid
-  simp only [WritePlan.rows, WritePlan.rowsWith, Array.toList_push, List.map_append,
-    List.map_cons, List.map_nil, flateRow_id, hd, hc]
+  rw [p.rows_ids_exact, hs, hd, hc]
   simp only [Array.mem_def, ObjTable.ids, Array.toList_append, Array.toList_flatMap,
     Array.toList_map, Array.toList_range, Array.toList_range'] at hid
-  clear hd hc
+  clear hd hc hs
   cases hout : p.table.nOut == 0
   all_goals
     simp only [hout, Bool.false_eq_true, ↓reduceIte,
@@ -2361,9 +2568,44 @@ private theorem emission_covers (p : WritePlan)
       Array.toList_empty] at hid ⊢
     grind only
 
+private theorem chunks_count_exact (p : WritePlan)
+    (hc : p.compressed.map Prod.fst =
+      [1, 2] ++ (List.range p.table.nf).flatMap (fun k =>
+        [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k]) ++
+      [p.table.infoId] ++
+      (if p.table.nOut == 0 then [] else p.table.outlineRootId ::
+        (List.range p.table.nOut).map p.table.outlineItemId) ++
+      (List.range p.table.np).map p.table.pageId ++
+      [p.table.structTreeRoot, p.table.parentTree, p.table.namespaceId] ++
+      (List.range p.table.nElems).map p.table.structElemId)
+    (hstm : p.table.nStm =
+      objStmCount (compressedCount p.table.nf p.table.np p.table.nOut p.table.nElems)) :
+    p.chunks.length = p.table.nStm := by
+  have hl := congrArg List.length hc
+  rw [List.length_map] at hl
+  rw [WritePlan.chunks, objStmChunks_length, hstm, hl]
+  congr 1
+  simp only [List.length_append, List.length_cons, List.length_nil, List.length_flatMap,
+    List.length_map, List.length_range, List.map_const', List.sum_replicate_nat,
+    compressedCount]
+  cases p.table.nOut == 0 <;> simp <;> omega
+
+/-- The table allocates exactly one id per object stream the plan fills:
+its stream count is computed from the same counts that decide the
+compressed list (`compressedCount`). -/
+public theorem prepare_chunks_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    let p := prepare geom fs pages info imgs outline streams tree ops programs
+    p.chunks.length = p.table.nStm :=
+  chunks_count_exact _
+    (prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs)
+    (by rw [prepare_table_exact]; rfl)
+
 /-- Every allocated object is emitted by the production writer: as the
-xref itself, a direct row, or a value in the object stream. This includes
-the resource graphs and soft masks of all loaded images. -/
+xref itself, a direct row, an object stream, or a value in one. This
+includes the resource graphs and soft masks of all loaded images. -/
 public theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2374,6 +2616,7 @@ public theorem prepare_emission_covers (geom : Geom) (fs : FontSet) (pages : Arr
   emission_covers _
     (prepare_direct_ids_exact geom fs pages info imgs outline streams tree ops programs)
     (prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs)
+    (prepare_chunks_exact geom fs pages info imgs outline streams tree ops programs)
 
 private theorem indexObjectsList_live {α : Type} (rows : List (Nat × α))
     (out : Array (Option α)) (id : Nat) (hid : id < out.size)
@@ -2448,9 +2691,9 @@ private theorem plan_entries_contract (p : WritePlan)
       (xrefEntries_size_exact keep imgs used np no ne
         (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
         (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
-        p.serialized.1.size).1
+        p.serialized.1.size default).1
   have hi (i : Nat) (hib : i < p.table.size) :
-      p.entries[i]? = some (if i = 0 then Xref.Entry.free 0 65535 else
+      p.entries[i]? = some (if i = 0 then freeHead else
         xrefEntry p.table
           (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
           (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)

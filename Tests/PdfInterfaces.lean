@@ -71,9 +71,13 @@ example (plan : Pdf.WritePlan) (error : Pdf.WriteError)
     (h : plan.checked = .error error) : ¬ plan.WithinDomain :=
   plan.checked_error_gated error h
 
-example (plan : Pdf.WritePlan) (h : plan.WithinBounds) :
-    ∀ entry ∈ plan.entries, entry.Fits :=
-  plan.entries_fits h
+example (plan : Pdf.WritePlan) :
+    ∀ entry ∈ plan.entries, entry.Fits plan.widths :=
+  plan.entries_fits
+
+example (plan : Pdf.WritePlan) :
+    ∀ chunk ∈ plan.chunks, 0 < chunk.length ∧ chunk.length ≤ Pdf.objStmCapacity :=
+  plan.chunks_between
 
 example (geom : Layout.Geom) (fonts : Font.FontSet) (pages : Array Layout.PageOut)
     (info : Ir.Meta) (images : Image.Store) (outline : Array Layout.OutlineEntry)
@@ -89,10 +93,7 @@ example (geom : Layout.Geom) (fonts : Font.FontSet) (pages : Array Layout.PageOu
 /-- Typed publishers can inspect every refusal without reading serializer internals. -/
 example (error : Pdf.WriteError) : Nat :=
   match error with
-  | .objectIndex count => count
   | .byteOffset bytes => bytes
-  | .objectNumber number => number
-  | .tableSize count => count
   | .objectStreamSize bytes => bytes
   | .xrefStreamSize bytes => bytes
   | .objectSpelling id => id

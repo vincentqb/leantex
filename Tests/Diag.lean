@@ -516,7 +516,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- emission path is `listingStyleTableChecks`'.
   | .W0397 => (Tests.ListingStyleTable.boxedDoc .default 1).2.filter (·.kind == .W0397)
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
-  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537),
+  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectStreamSize 67108865),
       DriverDiag.pdfWriteRefused (.objectSpelling 4)]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
