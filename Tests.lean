@@ -486,6 +486,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   footlineChecks ref
   Tests.FrameArea.checks ref
   Tests.FrameArea.htmlChecks ref
+  Tests.FrameArea.footBoxChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace

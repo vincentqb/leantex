@@ -12769,6 +12769,15 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
       (max acc.1 h, max acc.2 d)
     | none => acc) (0, 0)
 
+/-- The footline band's box on page `n` at the document's resolved body
+x-height: `bandBox`, the box the page's text-area floor and the band's
+baseline read, for the web deck the driver hands it to
+(`HtmlDoc.Config.footBox`), so the deck's footline is as tall as the page's
+and stands its slots' baseline where the page does. -/
+public def footBandBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (n : Nat)
+    (band : Array Ir.BandSlot) : Sp × Sp :=
+  bandBox fs imgs geom (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) n band
+
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the
 footer that belongs to the frame — its pages, spill pages included, carry
 the frame's own number. Title and standout pages normally carry no footer:

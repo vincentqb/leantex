@@ -131,6 +131,14 @@ public structure Config where
   (`Pdf.picture_box_agree`). The default answers nothing — a caller with no
   font environment sizes a picture by its declared box and node borders. -/
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
+  /-- The footline band's box on frame `n`, from the driver: its slots'
+  tallest and deepest ink as the page sets them (`Layout.footBandBox`, the
+  box the page's text-area floor and the band's baseline read), so the deck's
+  footline is as tall as the page's and stands its slots' baseline their
+  glyphs' depth above the closing skip. The default answers nothing — a
+  caller with no font environment keeps the cap-height strut
+  (`footCapDecl`). -/
+  footBox : Nat → Array Ir.BandSlot → Option (Sp × Sp) := fun _ _ => none
   /-- Measured cancellation in the resolved surrounding text style, supplied
   by the same font environment and assembly as the native backend. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
@@ -1707,6 +1715,12 @@ private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSiz
 private def stageVh (page : PageSpec) (x : Sp) : String :=
   s!"{decMilli (deckStageMilli x page.height)}vh"
 
+/-- The footline band's box as the stage lengths `footlineCss` reads: its
+glyphs' height and depth, the page's own (`Config.footBox`). -/
+private def footBoxDecls (page : PageSpec) : Option (Sp × Sp) → List String
+  | some (h, d) => [s!"--foot-h: {stageVh page h};", s!"--foot-d: {stageVh page d};"]
+  | none => []
+
 /-- The frame title's step over the body, the size the PDF sets it at
 (`Layout.collectFrameTitle`): the `frametitle` style's font template's
 (`Ir.templateSize`), else the engine's Large. -/
@@ -1733,12 +1747,14 @@ as the paper, its slots inset from the paper's sides and their baseline its
 closing `\vskip4pt` above the edge; the text area ends `\footheight` above
 it — the band's box plus 4 pt, the PDF's floor (`Layout.frameFloor`), the
 4 pt the frame's end spacer (`deckAreaCss`), which the band stands after.
-The box's height is the cap height of its tallest slot's type
-(`--foot-cap`, per `footCapDecl`) plus that skip: struts, so no font metric
-enters the baseline. The band sets at its own step of the body and at the
-body's weight whatever frame it closes, as the page sets it (`setBandSlot`'s
-own style): a standout frame's type is the whole frame's, so its footline
-undoes that step for its own. -/
+The box is the page's own where the driver measures it (`Config.footBox`):
+its slots' glyph height and depth plus that skip, the slots' baseline their
+depth above the skip, as TeX's box of the line has it; with no font
+environment the cap height of its tallest slot's type (`--foot-cap`, per
+`footCapDecl`) stands for the height and the depth is none. The band sets at
+its own step of the body and at the body's weight whatever frame it closes,
+as the page sets it (`setBandSlot`'s own style): a standout frame's type is
+the whole frame's, so its footline undoes that step for its own. -/
 private def footlineCss (page : PageSpec) : String :=
   let raise := stageVh page Ir.footline.raise
   let step := milliFactor (Ir.scaleStepIn page.scale 1000 Ir.footline.step).toNat
@@ -1748,13 +1764,14 @@ private def footlineCss (page : PageSpec) : String :=
   s!"section.slide.standout > footer.slide-foot \{ font-size: calc({step}em / \
 {stepFactor standoutStep}); }\n" ++
   "footer.slide-foot::before { content: \"\"; display: inline-block;\n" ++
-  s!"  height: calc(var(--foot-cap, 1) * 1cap + {raise}); }\n" ++
+  s!"  height: calc(var(--foot-h, var(--foot-cap, 1) * 1cap) + var(--foot-d, 0px) + {raise}); }\n" ++
   s!"footer.slide-foot > .band-left \{ position: absolute; left: {stageVh page Ir.footline.left};\n" ++
   "  bottom: 0; white-space: nowrap; }\n" ++
   s!"footer.slide-foot > .band-right \{ position: absolute; right: {stageVh page Ir.footline.right};\n" ++
   "  bottom: 0; white-space: nowrap; }\n" ++
   "footer.slide-foot > :is(.band-left, .band-right)::before { content: \"\";\n" ++
-  s!"  display: inline-block; height: calc(1cap + {raise}); vertical-align: calc(-1 * {raise}); }\n"
+  s!"  display: inline-block; height: calc(1cap + {raise} + var(--foot-d, 0px));\n" ++
+  s!"  vertical-align: calc(-1 * ({raise} + var(--foot-d, 0px))); }\n"
 
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
@@ -8239,8 +8256,9 @@ first; retitle one frame, or link to '#{id}'"))
                       ("style", s!"z-index: {s.rank}")])
                   #[("class", "slide-foot size-" ++ Ir.footline.step),
                     ("style", String.intercalate " "
-                      (paint ++ footCapDecl doc.page.scale band ++ (look.bar.map fun ground =>
-                        inkDecls design ground).getD []))]))
+                      (paint ++ footCapDecl doc.page.scale band ++
+                        footBoxDecls doc.page (cfg.footBox (num.getD 0) band) ++
+                        (look.bar.map fun ground => inkDecls design ground).getD []))]))
               | _, other => other
             else node
           -- The frame's logo: the state in force at this position, from

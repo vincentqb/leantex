@@ -175,16 +175,17 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame area html: on paper a frame's end never opens a sheet, its footline kept with its content"
     ((cssBlocksFor css "section.slide > :is(.fill, footer.slide-foot), section.slide::after").any
       (cssDeclOf · "break-before" == some "avoid"))
-  let raised (d : String) : Bool :=
-    (cssDeclOf d "height").any fun h => hasStr h "1cap + " &&
-      cssStageLength s!"x: {((h.splitOn "1cap + ").getD 1 "").dropEnd 1}" "x"
-        Ir.footline.raise height
-  t "frame area html: the footline's box is its tallest cap height and its closing skip"
+  -- A value holding the stage's share of the closing skip (`Ir.footline.raise`).
+  let raised (v : String) : Bool :=
+    (v.splitOn " ").any fun tok =>
+      cssStageLength s!"x: {(tok.replace ")" "").replace "(" ""}" "x" Ir.footline.raise height
+  t "frame area html: the footline's box is the band's glyph height and depth and its closing skip"
     ((cssBlocksFor css "footer.slide-foot::before").any fun d =>
-      raised d && hasStr ((cssDeclOf d "height").getD "") "var(--foot-cap, 1) * 1cap")
-  t "frame area html: each slot's baseline stands the closing skip above the stage's edge"
+      (cssDeclOf d "height").any fun h => raised h &&
+        hasStr h "var(--foot-h, var(--foot-cap, 1) * 1cap)" && hasStr h "var(--foot-d, 0px)")
+  t "frame area html: each slot's baseline stands the band's depth and the closing skip above the edge"
     ((cssBlocksFor css "footer.slide-foot > :is(.band-left, .band-right)::before").any fun d =>
-      raised d && hasStr ((cssDeclOf d "vertical-align").getD "") "calc(-1 * ")
+      (cssDeclOf d "vertical-align").any fun v => raised v && hasStr v "var(--foot-d, 0px)")
   t "frame area html: the slots stand inset from the paper's sides, as moloch's footline"
     ((cssBlocksFor css "footer.slide-foot > .band-left").any (cssStageLength · "left" Ir.footline.left height) &&
      (cssBlocksFor css "footer.slide-foot > .band-right").any (cssStageLength · "right" Ir.footline.right height))
@@ -227,5 +228,51 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame area html: with no title bar the title opens at the slides' top margin, as the PDF sets it"
     ((cssBlocksFor bcss "section.slide:not(.title-page) > header").any fun d =>
       cssStageLength d "padding-top" bdoc.page.vmargin bdoc.page.height)
+
+/-- A moloch deck whose footer note has glyphs that descend: one frame,
+invented words. -/
+private def noteDeck : String :=
+  "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
+  "\\newenvironment{framefooter}[1]{%\n" ++
+  "  \\setbeamertemplate{frame footer}{{\\scriptsize #1}}%\n" ++
+  "}{\\setbeamertemplate{frame footer}{}}\n" ++
+  "\\begin{document}\n\\begin{framefooter}{Quay jog}\n" ++
+  "\\begin{frame}{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
+  "\\end{framefooter}\n\\end{document}\n"
+
+/-- **The web footline is the page's band box** (`Layout.footBandBox`,
+`HtmlDoc.Config.footBox`): where the driver measures it, a frame's footer
+declares its band's glyph height and depth as the stage's shares of the box
+the shipped page's footline lines carry, so its slots' baseline stands their
+depth above the closing skip, as TeX's box of the line puts it. Asserted
+over `Layout.Out` and the typed tree on `noteDeck`, whose note descends. At
+`913469fb` the footer declared no box: the slots stood their baseline the
+closing skip above the stage's edge whatever they held, and a note that
+descends stood its depth (1.42 bp at seven points) below the page's.
+Invented words. -/
+def footBoxChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← (do
+      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
+      | .ok f => pure (some (oneFaceOf f))
+      | .error _ => pure none : IO (Option Font.FontSet))
+    | t "footline box: the shipped Fira Sans parses" false
+  let (doc, _) := elabStr noteDeck
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf fira doc geom
+  let feet := ((out.pages[0]?.map (·.lines)).getD #[]).filter (·.furniture)
+  let (h, d) := feet.foldl (fun (acc : Dim.Sp × Dim.Sp) l =>
+    let (lh, ld) := Layout.segsInk fira l.segs
+    (max acc.1 lh, max acc.2 ld)) (0, 0)
+  let (_, body, _) := HtmlDoc.emitTree
+    { footBox := fun n band => some (Layout.footBandBox geom fira {} n band) } doc
+  let styles := (elemAttrsList (· == "footer") #[] body.toList).filterMap fun (_, attrs) =>
+    (attrs.find? (·.1 == "style")).map (·.2)
+  t "footline box: the shipped page's footline descends"
+    (feet.size == 2 && 0 < d)
+  t "footline box: the web footline declares the shipped page's band box"
+    (styles.size == 1 && styles.all fun st =>
+      cssStageLength st "--foot-h" h doc.page.height &&
+      cssStageLength st "--foot-d" d doc.page.height)
 
 end Tests.FrameArea
