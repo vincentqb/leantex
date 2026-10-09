@@ -2715,21 +2715,33 @@ rule (`leadingFor`) sets a `\footnotesize` line 0.1 pt loose and a
    ("normalsize", 1200), ("large", 1400), ("Large", 1800), ("LARGE", 2200),
    ("huge", 2500), ("Huge", 3000)]
 
+/-- **A named step's leading at a base**: the size file's skip column
+(`sizeSkipScale`) applied to the base the step's size column scales — the
+`\baselineskip` a size command sets with its size, before `\linespread`.
+At the body that is the size file's own length (`\footnotesize` 9.5 pt at
+10 pt); on a display base — a heading or a title, whose size the step
+scales — the leading scales with the type it leads, so a step's lines stand
+in the size file's proportion to their type whatever base they set on
+(`stepLead_between`). Reading the body's column under a display base set a
+`\LARGE` title line on a `\small` body's leading, solid. `none` off the
+table. -/
+@[expose] public def stepLead (step : String) (base : Sp) : Option Sp :=
+  (sizeSkipScale.lookup step).map fun l => base * (l : Int) / 1000
+
 /-- **The baseline distance a run sets at** — the one resolving site the
-page's line boxes and the deck's line heights read: a named step's own
-`\baselineskip` (`sizeSkipScale` over the body), any other size the 6⁄5
-rule of its own size (`leadingFor`), both under the page's `\linespread`
-factor, which LaTeX's `\selectfont` applies to whatever `\baselineskip`
-the size command left. -/
-@[expose] public def stepSkip (body : Sp) (step : Option String) (size : Sp)
-    (factor : Nat := 1000) : Sp :=
-  match step.bind (fun n => sizeSkipScale.lookup n) with
-  | some k => body * (k : Int) / 1000 * factor / 1000
+page's line boxes and the deck's line heights read: the leading of the
+named step it was set under (`stepLead`), any other size the 6⁄5 rule of
+its own size (`leadingFor`), both under the page's `\linespread` factor,
+which LaTeX's `\selectfont` applies to whatever `\baselineskip` the size
+command left. -/
+@[expose] public def stepSkip (lead : Option Sp) (size : Sp) (factor : Nat := 1000) : Sp :=
+  match lead with
+  | some l => l * factor / 1000
   | none => leadingFor size factor
 
 /-- A run under no size command sets at the 6⁄5 rule of its own size. -/
-@[simp] public theorem stepSkip_none_exact (body size : Sp) (factor : Nat) :
-    stepSkip body none size factor = leadingFor size factor := rfl
+@[simp] public theorem stepSkip_none_exact (size : Sp) (factor : Nat) :
+    stepSkip none size factor = leadingFor size factor := rfl
 
 /-- The size file's two columns — each row's size (`sizeScale`) and its
 leading (`sizeSkipScale`) — name the same steps in the same order: a step
@@ -2744,11 +2756,63 @@ public theorem sizeSkipScale_between :
     ∀ p ∈ sizeScale, ∀ q ∈ sizeSkipScale, p.1 = q.1 →
       8 * p.2 ≤ 7 * q.2 ∧ 7 * q.2 ≤ 9 * p.2 := by decide
 
+/-- **A step's lines clear their type on every base**: whatever base a
+named step scales — the body, a heading's size, a title's — its leading
+(`stepLead`) stands above the type it leads (`scaleStep`), and by no more
+than the size file's loosest proportion, 9⁄7, to the rounding of the two
+integer divisions. The floor of ten sp is what strictness costs under that
+rounding: below it, a tenth of the base rounds to nothing. -/
+public theorem stepLead_between (base : Int) (hb : 10 ≤ base) :
+    ∀ p ∈ sizeScale, ∃ l, stepLead p.1 base = some l ∧
+      scaleStep base p.1 < l ∧ 7 * l ≤ 9 * scaleStep base p.1 + 9 := by
+  intro p hp
+  simp only [sizeScale, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with h|h|h|h|h|h|h|h|h|h <;> subst h <;>
+    simp only [stepLead, scaleStep, sizeSkipScale, sizeScale, List.lookup] <;> simp <;>
+    first
+    | (show base * 500 / 1000 < base * 600 / 1000 ∧
+        7 * (base * 600 / 1000) ≤ 9 * (base * 500 / 1000) + 9; omega)
+    | (show base * 700 / 1000 < base * 800 / 1000 ∧
+        7 * (base * 800 / 1000) ≤ 9 * (base * 700 / 1000) + 9; omega)
+    | (show base * 800 / 1000 < base * 950 / 1000 ∧
+        7 * (base * 950 / 1000) ≤ 9 * (base * 800 / 1000) + 9; omega)
+    | (show base * 900 / 1000 < base * 1100 / 1000 ∧
+        7 * (base * 1100 / 1000) ≤ 9 * (base * 900 / 1000) + 9; omega)
+    | (show base < base * 1200 / 1000 ∧
+        7 * (base * 1200 / 1000) ≤ 9 * base + 9; omega)
+    | (show base * 1200 / 1000 < base * 1400 / 1000 ∧
+        7 * (base * 1400 / 1000) ≤ 9 * (base * 1200 / 1000) + 9; omega)
+    | (show base * 1440 / 1000 < base * 1800 / 1000 ∧
+        7 * (base * 1800 / 1000) ≤ 9 * (base * 1440 / 1000) + 9; omega)
+    | (show base * 1728 / 1000 < base * 2200 / 1000 ∧
+        7 * (base * 2200 / 1000) ≤ 9 * (base * 1728 / 1000) + 9; omega)
+    | (show base * 2074 / 1000 < base * 2500 / 1000 ∧
+        7 * (base * 2500 / 1000) ≤ 9 * (base * 2074 / 1000) + 9; omega)
+    | (show base * 2488 / 1000 < base * 3000 / 1000 ∧
+        7 * (base * 3000 / 1000) ≤ 9 * (base * 2488 / 1000) + 9; omega)
+
 /-- At the body's own step the table is the 6⁄5 rule exactly: a paragraph
 that names `\normalsize` sets where an undeclared one does. -/
 public theorem stepSkip_normalsize_exact (body : Sp) (factor : Nat) :
-    stepSkip body (some "normalsize") body factor = leadingFor body factor := by
-  simp [stepSkip, sizeSkipScale, List.lookup, leadingFor, leadingMilli]
+    stepSkip (stepLead "normalsize" body) body factor = leadingFor body factor := by
+  simp [stepSkip, stepLead, sizeSkipScale, List.lookup, leadingFor, leadingMilli]
+
+/-- A step's leading is linear in its base to the sp (`_between`): the
+per-mille reading a screen states a step's line height from
+(`HtmlDoc.stepLineHeightMilli`) scales to the page's leading at any base
+within one sp — the two backends read one column of one table. -/
+public theorem stepLead_linear_between (step : String) (base : Int) :
+    ∀ l l' : Int, stepLead step base = some l → stepLead step 1000 = some l' →
+      base * l' - 1000 < 1000 * l ∧ 1000 * l ≤ base * l' := by
+  intro l l' h h'
+  unfold stepLead at h h'
+  cases hk : sizeSkipScale.lookup step with
+  | none => simp [hk] at h
+  | some k =>
+    simp [hk] at h h'
+    subst h h'
+    generalize base * (k : Int) = x
+    omega
 
 /-- The size a document title sets at when no `titlepage` font template
 declares one: the one resolving site, so the two backends read one
@@ -16720,7 +16784,10 @@ public def paraStepOne (acc : Option String) (x : Inline) : Option String :=
   match x with
   | .styled (.size n) body => paraStepIn (some n) body.toList
   | .styled (.fontSize _ _) _ | .styled .normal _ => none
-  | .styled _ body => paraStepIn acc body.toList
+  | .styled .bold body | .styled .italic body | .styled .mono body
+  | .styled .smallcaps body | .styled .emph body | .styled .sans body
+  | .styled .roman body | .styled .medium body | .styled (.series _) body
+  | .styled .upright body | .styled (.lang _) body => paraStepIn acc body.toList
   | .colored _ _ body => paraStepIn acc body.toList
   | .located _ body => paraStepIn acc body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
@@ -16761,7 +16828,17 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .styled (.size _) body => liftParaStepIn body.toList
   | .styled (.fontSize s l) body => #[.styled (.fontSize s l) body]
   | .styled .normal body => #[.styled .normal body]
-  | .styled st body => #[.styled st (liftParaStepIn body.toList)]
+  | .styled .bold body => #[.styled .bold (liftParaStepIn body.toList)]
+  | .styled .italic body => #[.styled .italic (liftParaStepIn body.toList)]
+  | .styled .mono body => #[.styled .mono (liftParaStepIn body.toList)]
+  | .styled .smallcaps body => #[.styled .smallcaps (liftParaStepIn body.toList)]
+  | .styled .emph body => #[.styled .emph (liftParaStepIn body.toList)]
+  | .styled .sans body => #[.styled .sans (liftParaStepIn body.toList)]
+  | .styled .roman body => #[.styled .roman (liftParaStepIn body.toList)]
+  | .styled .medium body => #[.styled .medium (liftParaStepIn body.toList)]
+  | .styled (.series w) body => #[.styled (.series w) (liftParaStepIn body.toList)]
+  | .styled .upright body => #[.styled .upright (liftParaStepIn body.toList)]
+  | .styled (.lang tag) body => #[.styled (.lang tag) (liftParaStepIn body.toList)]
   | .colored c n body => #[.colored c n (liftParaStepIn body.toList)]
   | .located span body => #[.located span (liftParaStepIn body.toList)]
   | .text s => #[.text s]

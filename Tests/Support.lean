@@ -1236,6 +1236,12 @@ flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- The distances between consecutive body baselines, in page order: the
+line pitches a page shipped. -/
+def baselinePitches (out : Layout.Out) : Array Dim.Sp :=
+  let lines := bodyLines out
+  (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
+
 /-- Face indices and character scalars of shipped body glyphs, in paint order. -/
 def bodyGlyphs (out : Layout.Out) : Array (Nat × Char) :=
   (bodyLines out).flatMap fun line => line.segs.flatMap fun seg => match seg with

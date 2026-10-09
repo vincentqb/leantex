@@ -2017,7 +2017,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
   let leadedAt (sz : Dim.Sp) (step : Option String := none) : Dim.Sp × Dim.Sp :=
     Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
-      (Ir.stepSkip body step sz geom.leading)
+      (Ir.stepSkip (step.bind (Ir.stepLead · body)) sz geom.leading)
   -- Interline is the metric rule (CSS 2.1 §10.8.1): the previous line's
   -- leaded below plus this line's leaded above — for uniform text exactly
   -- one leading, and after a Huge line the Huge box's own below, never a

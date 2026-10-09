@@ -2268,10 +2268,36 @@ private def scaleSize (name : String) (unit : String) : String :=
   milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
 
 /-- The leading a named size step sets, as a CSS line height over the
-step's own font size: its `\baselineskip` (`Ir.stepSkip` of a per-mille
-body) over its size, under the page's `\linespread` factor. -/
+step's own font size, in milli: its `\baselineskip` at a per-mille base
+(`Ir.stepLead`, the function the page's line boxes read) over the step's
+size `k` on that base, under the page's `\linespread` factor. A unitless
+line height multiplies the element's own size, so the box is the step's
+leading on whatever base the step's size scales — the body, or a heading's
+— as the page's is (`stepLineHeight_projects`). -/
+@[expose] public def stepLineHeightMilli (factor : Nat) (step : String) (k : Nat) : Nat :=
+  (Ir.stepSkip (Ir.stepLead step 1000) 1000 factor).toNat * 1000 / max k 1
+
+/-- `stepLineHeightMilli` as CSS. -/
 private def stepLeadingCss (factor : Nat) (step : String) (k : Nat) : String :=
-  milliFactor ((Ir.stepSkip 1000 (some step) 1000 factor).toNat * 1000 / max k 1)
+  milliFactor (stepLineHeightMilli factor step k)
+
+/-- **The deck's step line height projects the page's step leading**
+(`_projects`): the factor is `Ir.stepSkip` of `Ir.stepLead` — the leading
+the page sets a step's lines at (`Layout`'s line boxes read the same two
+functions) — over the step's size, never a second table. -/
+public theorem stepLineHeight_projects (factor : Nat) (step : String) (k : Nat) :
+    stepLineHeightMilli factor step k =
+      (Ir.stepSkip (Ir.stepLead step 1000) 1000 factor).toNat * 1000 / max k 1 := rfl
+
+/-- At the page's own leading, every shipped step's line height is its
+size file's leading over its type floored to the milli (`_between`): the
+browser's line box for a step's line stands under the page's by less than
+a thousandth of the step's type, on any base. -/
+public theorem stepLineHeight_between :
+    ∀ p ∈ Ir.sizeScale, ∀ q ∈ Ir.sizeSkipScale, p.1 = q.1 →
+      stepLineHeightMilli 1000 p.1 p.2 * p.2 ≤ 1000 * q.2 ∧
+        1000 * q.2 < (stepLineHeightMilli 1000 p.1 p.2 + 1) * p.2 := by
+  decide +kernel
 
 /-- Size rules generated from the document's ladder (`Ir.PageSpec.scale`),
 so the two backends cannot drift apart on what `\Huge` means — the PDF
@@ -2650,7 +2676,13 @@ private def deckBase (ty : DeckType) : List DeckRule :=
     { selector := [.lit "section.slide > header h2"]
       decls := [("font-size", scaleSize "Large" "em")], part := .stage },
     -- The root size the sheet's rem gaps read: the stage's rhythm unit.
-    { selector := [.lit "html"], decls := [("font-size", ty.root)], part := .stage } ]
+    { selector := [.lit "html"], decls := [("font-size", ty.root)], part := .stage },
+    -- A listing on the stage is the page's: its lines at the text's edge on
+    -- the stage's own ground. The page pads no listing and paints no ground
+    -- under one, so the reading page's code box — a tinted padding in rem,
+    -- which the stage's rhythm root would scale — is no part of a slide.
+    { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
+      part := .stage } ]
 
 /-- `deckGlideRule`'s reduced-motion counterpart: the deck pages jump
 instead of gliding. -/
@@ -3433,12 +3465,14 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
                decls := [("flex-shrink", "0")], part := .stage })
     (h12 : P { selector := [.lit "section.slide > header h2"]
                decls := [("font-size", scaleSize "Large" "em")], part := .stage })
-    (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage }) :
+    (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage })
+    (h14 : P { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
+               part := .stage }) :
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl <;>
+    rfl | rfl | rfl <;>
     assumption
 
 /-- `deck_css_partition`'s per-rule check: a rule whose syntax uses a
@@ -3456,7 +3490,7 @@ rule enters the contract the moment it is written. -/
 public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3515,7 +3549,7 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3550,7 +3584,7 @@ public theorem floor_hides_nothing (v : DeckType) (pg : String) (cp ms : Nat) :
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3573,7 +3607,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -3635,7 +3669,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3710,7 +3744,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty, String.toList_append]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -3811,7 +3845,7 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -3900,7 +3934,7 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3975,12 +4009,12 @@ public def deckRootMilli (fontSize height : Int) : Int :=
   deckStageMilli (fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int)) height
 
 /-- **The deck's screen quantum is the print quantum on the stage**
-(`_projects`): the emitted root share times the stage brackets the body's
+(`_between`): the emitted root share times the stage brackets the body's
 print-to-screen leading ratio to within one printed milli, so `k` quanta
 of the sheet's rem stand `k` print quanta of the page's stage — the
 multiple `backend_gaps_agree` holds the two backends to, realized here in
 one unit instead of two. -/
-public theorem deck_root_projects (fontSize height : Int) (hh : 0 < height) :
+public theorem deck_root_between (fontSize height : Int) (hh : 0 < height) :
     deckRootMilli fontSize height * height ≤
         fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * 100000 ∧
       fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * 100000 <
@@ -5105,7 +5139,7 @@ private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : 
     String :=
   let k := (page.scale.lookup step).getD 1000
   let overlap := spec.lineOverlap * 1000 / max page.fontSize 1
-  let pitch := Ir.stepSkip 1000 (some step) 1000 page.leading - overlap
+  let pitch := Ir.stepSkip (Ir.stepLead step 1000) 1000 page.leading - overlap
   decMilli (pitch * 1000 / max (k : Int) 1)
 
 /-- Absolute font size and leading keep their physical lengths in the IR;
@@ -5519,6 +5553,17 @@ private def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Arra
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
     | .natural | .flex _ => cfg
+  -- A cell set wholly in one named size carries the step's class on its
+  -- own element, as a paragraph does (`stepNode`): the page sets the cell's
+  -- paragraph on the step's strut and leading (`Ir.paraStep?`), and a size
+  -- span inside the cell would leave the body's strut under every line.
+  let (cell, attrs) := match Ir.paraStep? cell with
+    | some n =>
+      let cls := "size-" ++ n
+      (Ir.liftParaStep cell, match attrs.find? (·.1 == "class") with
+        | some (_, c) => attrs.map fun (k, v) => if k == "class" then (k, c ++ " " ++ cls) else (k, v)
+        | none => attrs.push ("class", cls))
+    | none => (cell, attrs)
   let content := inlines child cell
   -- Chromium does not resolve query units against a table-cell container.
   -- A block inside the cell has the same content measure and works in both

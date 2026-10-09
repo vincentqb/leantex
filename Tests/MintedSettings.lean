@@ -72,10 +72,6 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
     | .poly _ _ => pure ()
   return none
 
-def baselineGaps (out : Layout.Out) : Array Dim.Sp :=
-  let lines := bodyLines out
-  (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
-
 end MintedSettings
 
 /-- LuaLaTeX (minted 3 / FancyVerb) synthetic probe:
@@ -139,10 +135,10 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     let src := dvDoc "" (code ("fontsize=\\" ++ step) "text"
       "Alpha Bravo\n\nAlpha Bravo\nAlpha Bravo")
     let out := rendered src
-    let gaps := MintedSettings.baselineGaps out
+    let gaps := baselinePitches out
     t s!"minted rhythm: {step} owns its line box, including a blank line"
       (hasSize src pt && gaps.size == 3 &&
-        gaps.all (· == Ir.stepSkip (Dim.pt 10) (some step) 0 - Ir.fvextraLineOverlap))
+        gaps.all (· == Ir.stepSkip (Ir.stepLead step (Dim.pt 10)) 0 - Ir.fvextraLineOverlap))
     t s!"minted rhythm: {step} has an explicit typed HTML baseline ratio"
       ((MintedSettings.html src).1.any fun n =>
         hasStr (MintedSettings.preStyle n) s!"line-height:{ratio};")
@@ -150,7 +146,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("{\\fontsize{8pt}{13pt}\\selectfont\n" ++
       code "" "text" "Alpha Bravo\nAlpha Bravo\nAlpha Bravo" ++ "}")
   t "minted rhythm: inherited absolute size and leading resolve once"
-    (hasSize explicit 8 && MintedSettings.baselineGaps (rendered explicit) == #[Dim.pt 13, Dim.pt 13] &&
+    (hasSize explicit 8 && baselinePitches (rendered explicit) == #[Dim.pt 13, Dim.pt 13] &&
       (MintedSettings.html explicit).1.any fun n =>
         hasStr (MintedSettings.preStyle n) "line-height:13pt;")
   -- A deck magnifies every physical font length by the same stage share.
@@ -282,8 +278,8 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A wrapped source line's continuation keeps the step's own skip; fvextra
   -- takes its overlap after each source line only.
   t "minted wrapping: continuation baselines use the selected listing size"
-    (let skip := Ir.stepSkip (Dim.pt 10) (some "footnotesize") 0
-     let gaps := MintedSettings.baselineGaps realWrap
+    (let skip := Ir.stepSkip (Ir.stepLead "footnotesize" (Dim.pt 10)) 0
+     let gaps := baselinePitches realWrap
      gaps.contains skip && gaps.contains (skip - Ir.fvextraLineOverlap) &&
        gaps.all fun g => g == skip || g == skip - Ir.fvextraLineOverlap)
   for wrap in ["true", "false"] do

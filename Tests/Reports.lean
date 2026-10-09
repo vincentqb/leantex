@@ -960,12 +960,17 @@ def reports : List Report := [
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
+      check% Tests.LineRhythm.displayStepChecks, check% Tests.LineRhythm.deckListingChecks,
+      check% Tests.LineRhythm.cellStepChecks,
       thm% Ir.stepSkip_normalsize_exact, thm% Ir.sizeSkipScale_between,
-      thm% Ir.liftParaStep_text, thm% HtmlDoc.deck_root_projects,
+      thm% Ir.stepLead_between, thm% Ir.stepLead_linear_between,
+      thm% HtmlDoc.stepLineHeight_projects, thm% HtmlDoc.stepLineHeight_between,
+      thm% Ir.liftParaStep_text, thm% HtmlDoc.deck_root_between,
       Pin.tier "rhythm" "article-steps/step-footnotesize.within",
       Pin.tier "rhythm" "slides-steps/step-small.within"]
     accept := ["a ten-point deck rebuilt in both artifacts beside the reference engine's: body, small-size and code lines at its line pitch",
-      "the same deck's slides measured in a browser: line pitch and paragraph gaps at the page's on the stage"]
+      "the same deck's slides measured in a browser: line pitch and paragraph gaps at the page's on the stage, and a code slide that fits its page fits its stage",
+      "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R111", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
