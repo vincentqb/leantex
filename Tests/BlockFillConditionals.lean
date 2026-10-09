@@ -130,12 +130,13 @@ private def compareChecks (ref : IO.Ref (List String)) (label : String)
     (actual.serialized == control.serialized)
 
 /-- Source conditionals must retain the selected body declaration through
-Compat, Elab and both artifact paths. The positive availability witness
-defines a small synthetic `molochset`; it does not claim that selecting the
-builtin theme installs the upstream setter. Its literal `block=fill` branch
-uses the supported `setbeamercolor` surface. Source overrides use that same
-surface; the false `directlua` guard is followed by an unconditional native
-palette declaration.
+Compat, Elab and both artifact paths. moloch defines `\molochset`
+(beamerthememoloch.sty), so under it the guard holds and runs the theme's
+setter, as the unguarded setter does; a document redefining the setter
+(`\renewcommand`, since moloch defined it) runs its own definition, whose
+literal `block=fill` branch uses the supported `setbeamercolor` surface.
+Source overrides use that same surface; the false `directlua` guard is
+followed by an unconditional native palette declaration.
 
 These are finite source/artifact checks for normal, alert and example
 blocks, with two body paragraphs. They assert Layout.Out geometry and the
@@ -150,20 +151,27 @@ public def blockFillConditionalChecks (ref : IO.Ref (List String)) (fonts : Font
     let other := "\\setbeamercolor{" ++ element ++ "}{fg=white,bg=black}"
     let native := "\\palette{" ++ role ++ "bodyfg=#173B58," ++ role ++ "bodybg=#E8EDF3}"
     let setter (fill : String) :=
-      "\\newcommand{\\molochset}[1]{\\ifstrequal{#1}{block=fill}{" ++ fill ++ "}{" ++ other ++ "}}"
+      "\\renewcommand{\\molochset}[1]{\\ifstrequal{#1}{block=fill}{" ++ fill ++ "}{" ++ other ++ "}}"
     let guard := "\\ifdefined\\molochset\\molochset{block=fill}\\else" ++ other ++ "\\fi"
     for (name, pre, controlPre) in #[
-        ("defined moloch fill", setter declared ++ guard, declared),
-        ("undefined moloch followed by body declaration",
-          "\\ifdefined\\molochset\\molochset{block=fill}\\fi" ++ declared, declared),
+        ("redefined moloch setter fill", setter declared ++ guard, declared),
+        ("moloch's setter followed by body declaration",
+          "\\ifdefined\\molochset\\molochset{block=fill}\\fi" ++ declared,
+          "\\molochset{block=fill}" ++ declared),
         ("false directlua followed by native body declaration",
           "\\ifdefined\\directlua\\directlua{unselected}" ++ other ++ "\\fi" ++ native, native),
         ("authored colors override guarded defaults", setter other ++ guard ++ declared, declared)] do
       let label := "block fill conditional " ++ env ++ "/" ++ name
       let actual := artifacts fonts (source env pre)
       let control := artifacts fonts (source env controlPre)
-      check ref (label ++ ": source has no loss") (actual.diags.all (·.severity == .note))
-      check ref (label ++ ": declaration control has no loss") (control.diags.all (·.severity == .note))
+      -- moloch's own fill sets the example title's teal on its grey bar,
+      -- which the contrast contract names (3.16:1) wherever the setter
+      -- runs, guarded or not: the guard adds nothing the setter does not.
+      let named (a : Artifacts) := (a.diags.filter (·.severity != .note)).map (·.code)
+      let contrast (a : Artifacts) := named a |>.filter fun c => c != "W0315" && c != "W0345"
+      check ref (label ++ ": source has no loss") (contrast actual).isEmpty
+      check ref (label ++ ": declaration control has no loss") (contrast control).isEmpty
+      check ref (label ++ ": the source names what its control names") (named actual == named control)
       compareChecks ref label actual control
       filledChecks ref label actual
 

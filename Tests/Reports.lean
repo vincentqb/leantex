@@ -776,7 +776,7 @@ def reports : List Report := [
       thm% Layout.Spacing.Tail.join_boxDepth_exact,
       thm% SeedPalette.generated_beamer_contract]
     accept := ["eighteen artifact assertions and forty-eight generated-palette assertions failed before the body renderer, covering normal, alert and example blocks with and without titles",
-      "independent rendered review checks local colour changes, nested boxes, empty filled bodies and page continuations against native ink and rendered browser pages",
+      "independent rendered review checks local colour changes, nested insets, empty filled bodies and page continuations against native ink and rendered browser pages",
       "reference presentations use six title and body colour pairs derived from their common theme palette in both renderers",
       "one hundred forty-nine source and artifact assertions cover command availability, guarded defaults and explicit overrides; four mutations remove, truncate or mispaint the body and each is rejected",
       "twelve typed HTML controls check actual declaration ownership and nesting; six malformed variants accepted by the earlier assertions are now rejected",

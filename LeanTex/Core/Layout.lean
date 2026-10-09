@@ -7411,10 +7411,16 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
 
 /-- Measure children before their parents, so every enclosing surface owns
-its inset outside its children's paint. The caller paints the reverse order. -/
+its inset outside its children's paint. The caller paints the reverse order:
+parents first, and boxes of one depth in the order they close, which is the
+order they stand — TeX ships a later box over an earlier one, so a block's
+body box covers the half point of its title box it overlaps
+(`Ir.blockSeam`). -/
 private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
     (fills : Array Fill) (paths : Array PathOut) : Array (RegionSpan × Fill) :=
-  (spans.qsort (fun a b => b.depth < a.depth)).foldl (fun out span =>
+  let order := spans.zipIdx.qsort fun (a, i) (b, j) =>
+    b.depth < a.depth || (b.depth == a.depth && j < i)
+  order.foldl (fun out (span, _) =>
     match span.fill lines fills paths out with
     | some fill => out.push (span, fill)
     | none => out) #[]
@@ -9164,6 +9170,13 @@ private def Spacing.Page.firstRise (b : B) (ink : Sp) (box : LineBox) (lead : Sp
     else max t ink
   | none => max b.ascent box.above
 
+/-- A line's TeX box: its glyphs' (`ink`), and at least the strut it
+carries, `\strutbox` of `\baselineskip` `s` — 0.7 and 0.3 of it. -/
+private def lineStrutInk (strut : Option Sp) (ink : Sp × Sp) : Sp × Sp :=
+  match strut with
+  | some s => strutInk ink (s * 7 / 10, s * 3 / 10)
+  | none => ink
+
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
 not the paragraph's nominal size: a line carrying `\Huge` needs room above
 its baseline and below it.
@@ -9190,7 +9203,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
     (display : Option DisplayJob := none) (opens : Bool := false)
     (anchors : Array String := #[]) (paintPadding : Option Sp := none)
-    (rowStrut : Option (Sp × Sp) := none) : B :=
+    (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
@@ -9206,11 +9219,14 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let peer (b : B) := b.peerGap box (ruleOnly segs) (segs.any Seg.isMath) ink.1
   -- A display's box is TeX's too (tex.web §1199), and a display
   -- alignment's row stands on amsmath's strut (`\strut@`: latex.ltx's
-  -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`).
+  -- `\strutbox`, 0.7 and 0.3 of `\baselineskip`), as a line its package
+  -- struts stands on one of its own `\baselineskip` (`strut`: fancyvrb's
+  -- lines): the box the band below and a colour box around the line read.
   let bs := Ir.leadingFor size b.geom.leading
-  let (h, d) := match display with
-    | some dj => if dj.ctx.align then (max ink.1 (bs * 7 / 10), max ink.2 (bs * 3 / 10)) else ink
-    | none => ink
+  let strut := match display with
+    | some dj => if dj.ctx.align then some bs else strut
+    | none => strut
+  let tex := lineStrutInk strut ink
   let rl := ruleOnly segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
@@ -9225,7 +9241,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let bottom := noteFloor b.bottom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
-      regionExtent := some ink
+      regionExtent := some tex
       hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors }
   -- The distance from the band above: TeX's interline glue on either side
   -- of display math (`texBaselineGap`), over the empty line amsmath's `$$`
@@ -9239,10 +9255,10 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       texBoxTop (Ir.leadingFor b.geom.fontSize b.geom.leading) b.boxDepth
         (ink.1 + ink.2 + 2 * pad) + ink.1
     | none, some dj, true =>
-      if dj.emptyLine then texBaselineGap bs b.boxDepth 0 + texBaselineGap bs 0 h
-      else texBaselineGap bs b.boxDepth h
+      if dj.emptyLine then texBaselineGap bs b.boxDepth 0 + texBaselineGap bs 0 tex.1
+      else texBaselineGap bs b.boxDepth tex.1
     | none, _, _ =>
-      if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth h
+      if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth tex.1
       else peer b
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
@@ -9261,7 +9277,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     -- Below the reopened frame chrome: interline from the chrome's own
     -- baseline.
     (fun b => b.y + peer b)
-    box.inkBelow box.below rl box.inkBelow bottom notes).keepInk d).displayState
+    box.inkBelow box.below rl box.inkBelow bottom notes).keepInk tex.2).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
 private theorem sourceBound_warnSpill {n : Nat} (b : B) (over : Sp)
@@ -9324,10 +9340,10 @@ private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size :
     (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
     (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
     (opens : Bool) (anchors : Array String) (paintPadding : Option Sp)
-    (rs : Option (Sp × Sp)) (hb : b.SourceBound n)
+    (rs : Option (Sp × Sp)) (strut : Option Sp) (hb : b.SourceBound n)
     (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
     (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
-      anchors paintPadding rs).SourceBound n := by
+      anchors paintPadding rs strut).SourceBound n := by
   simp only [Spacing.Page.placeLine]
   apply sourceBound_displayState
   apply sourceBound_keepInk
@@ -9657,6 +9673,10 @@ public structure Spacing.Paragraph where
   /-- A table row's strut, height and depth (`tableStrut`): every line placed
   from the job is TeX's row box (`strutBox`). `none` off a table. -/
   private rowStrut : Option (Sp × Sp) := none
+  /-- Every line carries a strut of this `\baselineskip` (fancyvrb's
+  `\strut` in each code line): its box is the strut's at least
+  (`Spacing.Page.placeLine`'s `strut`). -/
+  private strut : Option Sp := none
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10378,7 +10398,7 @@ private def collectPara (r : Rd) (a : Acc)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
     (hangIndent : Sp := 0) (literalLines : Bool := false)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
-    (rowStrut : Option (Sp × Sp) := none) : Acc :=
+    (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -10511,6 +10531,7 @@ private def collectPara (r : Rd) (a : Acc)
       indent := indent, center := center, size := size
       firstBaseline := firstBaseline
       paintPadding := paintPadding
+      strut := strut
       flushRight := r.geom.flushRight
       justify := r.geom.justify
       protrude := r.geom.protrude
@@ -12207,6 +12228,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     a inner indent false size
     (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
+    (strut := if spec.lineStrut then some leading else none)
 
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: each line one display-type paragraph at the body size —
@@ -14113,7 +14135,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (display := j.display) (opens := st.2.2)
       (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))
       (paintPadding := if st.2.2 then j.paintPadding else none)
-      (rowStrut := j.rowStrut)),
+      (rowStrut := j.rowStrut) (strut := j.strut)),
     brk, false)
 
 /-- The breaker may choose the end-fill immediately before a forced
@@ -14771,10 +14793,10 @@ private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
     (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
     (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) (rs : Option (Sp × Sp))
+    (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
     (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.placeLine fs b x size segs w hang ex #[] counted leaf
-      firstBaseline display opens anchors paintPadding rs) =
+      firstBaseline display opens anchors paintPadding rs strut) =
       Spacing.Page.census pick b ++ (if pick leaf counted then segs.toList.flatMap Seg.glyphChars else []) := by
   simp only [Spacing.Page.placeLine]
   rw [census_displayState, census_keepInk]
@@ -15722,7 +15744,7 @@ private theorem stepStaged_boxAnchor_b (fs : FontSet) (imgs : Image.Store) (st :
 
 /-- Closing a region moves the cursor only: the shipped pages, the ground,
 the frame and the ledgers stand. -/
-private theorem closeRegion_keeps (fs : FontSet) (b : B) :
+private theorem closeRegion_shipped_id (fs : FontSet) (b : B) :
     (b.closeRegion fs).pages = b.pages ∧ (b.closeRegion fs).noBreak = b.noBreak ∧
       (b.closeRegion fs).geom = b.geom ∧ (b.closeRegion fs).docBg = b.docBg ∧
       ((b.closeRegion fs).curFrameOrigin, (b.closeRegion fs).curFrame,
@@ -16078,9 +16100,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
     PagesExtend b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut) := by
   simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
   exact fitCommit_extends ..
 
@@ -16089,9 +16111,9 @@ the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).pages =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut).pages =
       b.pages := by
   simp only [Spacing.Page.placeLine, displayState_pages, keepInk_pages]
   exact fitCommit_pages_noBreak (h := h) ..
@@ -16099,9 +16121,9 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).noBreak =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut).noBreak =
       true := by
   simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
   exact fitCommit_keeps_noBreak (h := h) ..
@@ -16124,9 +16146,9 @@ private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
     (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
+    (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
     PagesExtend b0
-      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) :=
+      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -16197,7 +16219,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     simp [stepStaged]
   case regionClose =>
     rw [stepStaged_regionClose_b]
-    exact pagesExtend_of_eq (closeRegion_keeps fs st.b).1
+    exact pagesExtend_of_eq (closeRegion_shipped_id fs st.b).1
   case boxAnchor h shift paints =>
     rw [stepStaged_boxAnchor_b]
     exact placeAnchor_extends ..
@@ -16246,14 +16268,14 @@ private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : Option Sp) (shi
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).pages =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut).pages =
       b.pages ∧
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).noBreak =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut).noBreak =
       true :=
-  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs h,
-   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs h⟩
+  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut h,
+   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut h⟩
 
 /-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
@@ -16286,7 +16308,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     refine ⟨?_, ?_⟩ <;> simp [stepStaged, h]
   case regionClose =>
     rw [stepStaged_regionClose_b]
-    exact ⟨(closeRegion_keeps fs st.b).1, (closeRegion_keeps fs st.b).2.1.trans h⟩
+    exact ⟨(closeRegion_shipped_id fs st.b).1, (closeRegion_shipped_id fs st.b).2.1.trans h⟩
   case boxAnchor h' shift paints =>
     rw [stepStaged_boxAnchor_b]
     exact placeAnchor_noBreak (h := h) ..
@@ -16456,9 +16478,9 @@ private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (shift
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
     BgStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut) := by
   simp only [Spacing.Page.placeLine]
   apply BgStep.displayState
   apply BgStep.keepInk
@@ -16512,8 +16534,8 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
   cases op
   case regionClose =>
     rw [stepStaged_regionClose_b]
-    exact BgStep.of_eq (closeRegion_keeps fs st.b).2.2.1 (closeRegion_keeps fs st.b).2.2.2.1
-      (closeRegion_keeps fs st.b).1
+    exact BgStep.of_eq (closeRegion_shipped_id fs st.b).2.2.1 (closeRegion_shipped_id fs st.b).2.2.2.1
+      (closeRegion_shipped_id fs st.b).1
   case boxAnchor h' shift paints =>
     rw [stepStaged_boxAnchor_b]
     exact bgStep_placeAnchor ..
@@ -17168,9 +17190,9 @@ private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (sh
 private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
     FrameStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut) := by
   simp only [Spacing.Page.placeLine]
   apply FrameStep.displayState
   apply FrameStep.keepInk
@@ -17262,8 +17284,8 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
     exact ⟨Or.inl rfl, hb.2⟩
   | regionClose =>
     rw [stepStaged_regionClose_b]
-    exact hb.step (FrameStep.of_eq (closeRegion_keeps fs st.b).2.2.2.2.1
-      (closeRegion_keeps fs st.b).1)
+    exact hb.step (FrameStep.of_eq (closeRegion_shipped_id fs st.b).2.2.2.2.1
+      (closeRegion_shipped_id fs st.b).1)
   | boxAnchor h shift paints =>
     rw [stepStaged_boxAnchor_b]
     exact hb.step (frameStep_placeAnchor ..)
@@ -17636,9 +17658,9 @@ private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : Option Sp) (s
 private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
     ReflowStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs strut) := by
   simp only [Spacing.Page.placeLine]
   apply ReflowStep.displayState
   apply ReflowStep.keepInk
@@ -17774,8 +17796,8 @@ private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)
   cases op
   case regionClose =>
     rw [stepStaged_regionClose_b]
-    exact hb.step (ReflowStep.of_eq (closeRegion_keeps fs st.b).2.2.2.2.2.1
-      (closeRegion_keeps fs st.b).2.2.2.2.2.2)
+    exact hb.step (ReflowStep.of_eq (closeRegion_shipped_id fs st.b).2.2.2.2.2.1
+      (closeRegion_shipped_id fs st.b).2.2.2.2.2.2)
   case boxAnchor h shift paints =>
     rw [stepStaged_boxAnchor_b]
     exact hb.step (reflowStep_placeAnchor ..)
@@ -21019,15 +21041,16 @@ private def LineFits (fs : FontSet) (b : B) (size : Sp)
 private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
     (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
-    (h : Ready b segs) (hf : LineFits fs b size segs first) :
-    b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors =
+    (strut : Option Sp) (h : Ready b segs) (hf : LineFits fs b size segs first) :
+    b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors none
+        none strut =
       ((b.commit
         { x, y := nextBaseline fs b size segs first, size
           segs := segs.filter fun s => match s with
             | .rule width _ _ _ => width != 0
             | _ => true
           setWidth := w, hang, expand, counted, leaf, anchors
-          regionExtent := some (segsInk fs segs) }
+          regionExtent := some (lineStrutInk strut (segsInk fs segs)) }
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
           b.geom.leading size segs).inkBelow
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
@@ -21036,7 +21059,7 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
         (min (nextBaseline fs b size segs first +
           (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
             b.geom.leading size segs).inkBelow + b.surfaceBottom - b.bottom)
-          (b.pageShrink + b.skip.shrink))).keepInk (segsInk fs segs).2).displayState
+          (b.pageShrink + b.skip.shrink))).keepInk (lineStrutInk strut (segsInk fs segs)).2).displayState
         false (some (x + w - b.geom.hmargin)) := by
   rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit
@@ -21051,17 +21074,17 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
 private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
     (leaf : Option Nat) (first : Option Sp) (opens : Bool)
-    (aa ab : Array String) (h : PageRise a b)
+    (aa ab : Array String) (strut : Option Sp) (h : PageRise a b)
     (ha : Ready a segs) (hb : Ready b segs)
     (hfa : LineFits fs a size segs first) (hfb : LineFits fs b size segs first) :
-    PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa)
-      (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab) := by
+    PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa none none strut)
+      (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens ab none none strut) := by
   have hy : nextBaseline fs a size segs first ≤ nextBaseline fs b size segs first := by
     simp only [nextBaseline, Spacing.Page.surfaceTop, h.regions, h.geom, h.ascent,
       h.capHeight, h.descent, Spacing.Page.textGap, h.below, h.depth, h.math]
     exact Int.add_le_add_right (Int.add_le_add_right h.cursor _) _
-  rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa ha hfa,
-      ordinary_line fs b x size segs w hang expand counted leaf first opens ab hb hfb]
+  rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa strut ha hfa,
+      ordinary_line fs b x size segs w hang expand counted leaf first opens ab strut hb hfb]
   constructor
   · exact h.geom
   · exact h.ascent
@@ -21115,9 +21138,9 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, hr, ite_self]
   apply trailer_rise
   split
-  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
-  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
 
 /-- A proof trace of the numeric input conditions at every iteration of the

@@ -7546,8 +7546,10 @@ own. Refuse it only when no supported site resolves through it. -/
 private def finishBeamerColors (ctx : Ctx) : EM Unit := do
   let colors := (← get).flowPalette
   for e in colors.elements do
-    -- premise: beamerColorsChecks — changing a consumed parent changes
-    -- heading ink on Layout.Out; an unsupported placement changes none.
+    -- premise: beamerReachChecks — under both colour themes an element is
+    -- named here exactly when declaring it leaves both artifacts unchanged:
+    -- a reached element (`BeamerColor.reach`) changes paint, an element no
+    -- open channel reaches changes none.
     if e.declared && !(colors.reached.contains e.name) then
       let origin := { ctx with file := e.span.file, callSite := none }
       warnOnce origin ("beamercolor:element:" ++ e.name) .W0104
@@ -9305,6 +9307,7 @@ size commands; the current style stands" (some pos)
     fontSize := fontSize
     tabSize := tabSize
     breakLines := breakLines
+    lineStrut := env == "minted" && breakLines
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -11834,9 +11837,10 @@ the text width; the box takes the whole measure" pos
   else if n == "block" || n == "alertblock" || n == "exampleblock" then
     -- beamer's titled blocks (user guide §12.3): the {title} group on
     -- the `\begin` line is the title — beamer's own mandatory argument,
-    -- so an empty group is the documented untitled block (no title bar)
-    -- and a missing group is named (E0304). A paragraph break before a
-    -- group makes it content, as the frame's title rule reads it.
+    -- so an empty group is the documented untitled block, whose title box
+    -- beamer still sets, empty, and a missing group is named (E0304). A
+    -- paragraph break before a group makes it content, as the frame's
+    -- title rule reads it.
     let kind : Ir.TitledKind :=
       if n == "alertblock" then .alert
       else if n == "exampleblock" then .example

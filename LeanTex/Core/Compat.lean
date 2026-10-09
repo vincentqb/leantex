@@ -2864,6 +2864,11 @@ private def nativeStandoutDefined (st : St) : Bool :=
     ["beamerthememoloch", "beamerthememetropolis", "beamerthemem",
      "beamerinnerthememoloch", "beamerinnerthememetropolis"].contains name
 
+/-- A theme's own setter, which the engine implements (`molochOptions`), is
+defined once the theme loads: beamerthememoloch.sty's `\molochset`. -/
+private def nativeSetterDefined (st : St) (n : String) : Bool :=
+  n == "molochset" && st.loads.pkgs.any (·.1 == "beamerthememoloch")
+
 /-- Read the head `h` at `raws[i]` against the state in force there. `neg`:
 an `\unless` stands before it, which reverses a two-way test (e-TeX) and is
 refused before `\ifcase`. -/
@@ -2891,9 +2896,12 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     | some (.ctrl n _) =>
       if st.picBound.contains n then return undecided
       -- premise: standoutPaletteChecks — inherited, absent and later-loaded
-      -- hooks take different branches and ship the corresponding colours.
+      -- hooks take different branches and ship the corresponding colours;
+      -- blockFillConditionalChecks holds the setter's guard to the
+      -- unguarded setter's artifact.
       let v := st.binds.contains n ||
-        (n == "KV@beamerframe@standout" && nativeStandoutDefined st)
+        (n == "KV@beamerframe@standout" && nativeStandoutDefined st) ||
+        nativeSetterDefined st n
       if neg then return two v s!"\\{n}" "" (toString v) (k - i) none
       return { frame := .decided v, used := k - i,
                note := some (s!"ifdefined:{n}:{v}", condMsg n v) }
@@ -6401,12 +6409,14 @@ private def simpleNative : List (String × String) :=
 /-- moloch's `block` option (beamercolorthememoloch.sty, `/moloch/color/block`):
 `fill` paints the boxes from the page's own colours and `transparent`
 clears them — the theme's own declarations, `\moloch@block@fill` and
-`\moloch@block@transparent`, resolved like any `\setbeamercolor`. -/
+`\moloch@block@transparent`, spelled as it spells them and resolved like
+any `\setbeamercolor`: each keeps the `use` the theme declared at load
+(`BeamerColor.themeElement`) where it names none. -/
 private def molochBlockColors : String → Option (List (String × String))
-  | "fill" => some [("block title", "use=normal text,bg=normal text.bg!80!fg"),
-      ("block body", "use={block title,normal text},bg=block title.bg!50!normal text.bg"),
-      ("block title alerted", "use=block title,bg=block title.bg"),
-      ("block title example", "use=block title,bg=block title.bg")]
+  | "fill" => some [("block title", "bg=normal text.bg!80!fg"),
+      ("block body", "use=block title,bg=block title.bg!50!normal text.bg"),
+      ("block title alerted", "bg=block title.bg"),
+      ("block title example", "bg=block title.bg")]
   | "transparent" => some [("block title", "bg="), ("block body", "bg="),
       ("block title alerted", "bg="), ("block title example", "bg=")]
   | _ => none
@@ -7610,7 +7620,7 @@ its value is skipped" pos
     let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
       else pure #[]
     return some ((← synthAt native pos) ++ options, k)
-  | "molochset" | "metropolisset" =>
+  | "molochset" =>
     let (args, k) := takeGroups raws start 1
     if h : args.size = 1 then
       return some (← molochOptions s!"\\{name}" (rawSrc args[0]) pos, k)

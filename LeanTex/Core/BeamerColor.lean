@@ -71,25 +71,29 @@ public structure Element where
 
 /-- A colour theme's own declarations over the default theme's, as it runs
 them at load: unstarred `\setbeamercolor`s, each keeping what it does not
-name. moloch's (beamercolorthememoloch.sty: `\moloch@setup@text@colors`,
-`\moloch@setup@block@colors`, the progress-bar parents, and the
-`transparent` block option it loads with): `titlelike` hangs on normal
-text, the block title takes normal text's ink and no fill whatever
-`structure` holds, the alerted and example titles no fill, and the alerted
-and example bodies inherit the block body. Every other theme declares none
-of these. -/
+name. moloch 2.1.0's (beamercolorthememoloch.sty: `\moloch@setup@text@colors`,
+`\moloch@setup@block@colors` and the progress-bar parents, which its
+`background=light` default runs; it loads with no `block` option):
+`titlelike` hangs on normal text and `structure` takes its ink; the block
+title takes normal text's ink and clears its fill, keeping its `structure`
+parent, which therefore reaches neither channel; the alerted and example
+titles only `use` the block title and their text role, keeping the default
+theme's parents, so a fill declared on `alerted text` or `example text`
+paints their bars; the alerted and example bodies inherit the block body,
+which the theme leaves the default theme's empty one. Every other theme
+declares none of these. The `block` option's declarations are the
+document's own (`Compat.molochOptions`). -/
 private def themeElement (theme name : String) : Option Element :=
   if theme != "moloch" then none else
   match name with
   | "titlelike" => some { name, uses := ["normal text"], parents := some ["normal text"] }
+  | "structure" =>
+    some { name, uses := ["normal text"], fg := some (.source "normal text.fg") }
   | "block title" =>
     some { name, uses := ["normal text"], fg := some (.source "normal text.fg"),
            bg := some (.source "") }
-  | "block title alerted" =>
-    some { name, uses := ["block title", "alerted text"], bg := some (.source "") }
-  | "block title example" =>
-    some { name, uses := ["block title", "example text"], bg := some (.source "") }
-  | "block body" => some { name, bg := some (.source "") }
+  | "block title alerted" => some { name, uses := ["block title", "alerted text"] }
+  | "block title example" => some { name, uses := ["block title", "example text"] }
   | "block body alerted" | "block body example" =>
     some { name, uses := ["block body"], parents := some ["block body"] }
   | "progress bar in section page" | "title separator" =>
@@ -214,14 +218,10 @@ private structure Reading where
   explicitly clears it. Empty `fg={}` / `bg={}` still run. -/
   fg : Option Channel := none
   bg : Option Channel := none
-  reached : List String := []
   issues : List Issue := []
-  changed : Bool := false
 
 private def Reading.over (a b : Reading) : Reading :=
-  { fg := b.fg.or a.fg, bg := b.bg.or a.bg,
-    reached := a.reached ++ b.reached, issues := a.issues ++ b.issues,
-    changed := a.changed || b.changed }
+  { fg := b.fg.or a.fg, bg := b.bg.or a.bg, issues := a.issues ++ b.issues }
 
 /-- Dropping origins commutes with the per-channel override decision. -/
 private theorem Reading.over_projects (a b : Reading) :
@@ -270,7 +270,7 @@ private def read (theme : String) (pal : Palette) (path : List (String × Option
   if h : i < es.length then
     let e := withTheme pal theme es[i]
     let rest := es.eraseIdx i
-    let mut r : Reading := { changed := e.declared, reached := [name] }
+    let mut r : Reading := {}
     let mut aliases := pal
     -- beamer@thc@docolor runs `use` before `parent`. Empty used channels
     -- bind the current foreground/background, rather than no alias.
@@ -279,8 +279,7 @@ private def read (theme : String) (pal : Palette) (path : List (String × Option
       let current := Design.ofPalette aliases
       aliases := aliases.declare (used ++ ".fg") ((u.fg.bind (·.color)).getD current.fg)
       aliases := aliases.declare (used ++ ".bg") ((u.bg.bind (·.color)).getD current.bg)
-      r := { r with reached := r.reached ++ u.reached,
-                    issues := r.issues ++ u.issues }
+      r := { r with issues := r.issues ++ u.issues }
     for parent in e.parents.getD (if e.reset then [] else defaultParents name) do
       r := r.over (read theme aliases ((name, e.sites.lookup "parent") :: path) rest parent)
     let defaults := if e.reset then ({} : Reading) else own pal name
@@ -305,6 +304,64 @@ decreasing_by all_goals
   rw [List.length_eraseIdx_of_lt h']
   omega
 
+/-- The channels a paint site reads through an element. -/
+private structure Open where
+  fg : Bool
+  bg : Bool
+
+/-- The colour names an xcolor expression reads (`a!30!b`); a percentage
+never spells an alias, so every part may be compared. -/
+private def mentions : Option Value → List String
+  | some (.source src) => (src.splitOn "!").map (·.trimAscii.toString)
+  | _ => []
+
+/-- The elements a paint site reading channels `o` of `name` reaches, and
+the aliases the expressions it consumes name: what `read` resolves, as a
+census of whose declarations can change the paint. A channel the element's
+own value or the palette's native one fills is closed to its parents, a
+later parent's to an earlier one (beamerbasecolor.sty's `docolor`, own
+values last), and a `use` reaches only through a consumed expression naming
+its alias. So a parent the child overrides on every channel — moloch's
+block title over `structure` — is not reached, and its declaration is named
+unused (`finishBeamerColors`). -/
+private def reach (theme : String) (pal : Palette) (es : List Element) (name : String)
+    (o : Open) : List String × List String := Id.run do
+  if !(o.fg || o.bg) then return ([], [])
+  let i := es.findIdx (·.name == name)
+  if h : i < es.length then
+    let e := withTheme pal theme es[i]
+    let rest := es.eraseIdx i
+    let native := if e.reset then ({} : Reading) else own pal name
+    let mut said := (if o.fg then mentions e.fg else []) ++ (if o.bg then mentions e.bg else [])
+    let mut names := [name]
+    let mut po : Open :=
+      { fg := o.fg && e.fg.isNone && native.fg.isNone,
+        bg := o.bg && e.bg.isNone && native.bg.isNone }
+    for parent in (e.parents.getD (if e.reset then [] else defaultParents name)).reverse do
+      let (n, m) := reach theme pal rest parent po
+      names := names ++ n
+      said := said ++ m
+      let r := read theme pal [] rest parent
+      po := { fg := po.fg && r.fg.isNone, bg := po.bg && r.bg.isNone }
+    for used in e.uses do
+      let (n, m) := reach theme pal rest used
+        { fg := said.contains (used ++ ".fg"), bg := said.contains (used ++ ".bg") }
+      names := names ++ n
+      said := said ++ m
+    return (names, said)
+  else return ([], [])
+termination_by es.length
+decreasing_by all_goals
+  have h' : es.findIdx (·.name == name) < es.length := h
+  rw [List.length_eraseIdx_of_lt h']
+  omega
+
+/-- beamer names these at the document's start (beamerbasecolor.sty:
+`\usebeamercolor{normal text}` and the starred `structure`, `alerted text`,
+`example text`), so any declaration may read them without `use`. -/
+private def startColors : List String :=
+  ["normal text", "structure", "alerted text", "example text"]
+
 /-- Resolve the finite set of engine sites against the declarations in force.
 Later explicit aliases of one native site win. `use` makes temporary xcolor
 aliases available to expressions, but contributes no inherited channel.
@@ -328,10 +385,7 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     | some none => p.erase key
     | some (some c) => p.declare key c) base
   let normalFg := (Design.ofPalette context).fg
-  -- beamer names these at the document's start (beamerbasecolor.sty:
-  -- `\usebeamercolor{normal text}` and the starred `structure`, `alerted
-  -- text`, `example text`), so any declaration may read them without `use`.
-  let context := ["normal text", "structure", "alerted text", "example text"].foldl
+  let context := startColors.foldl
     (fun p name =>
       let r := read s.theme p [] es name
       let d := Design.ofPalette p
@@ -343,8 +397,13 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   let ordered := roles.mergeSort fun a b => rank a.1 ≤ rank b.1
   for (name, fgKey, bgKey) in ordered do
     let r := read s.theme context [] es name
-    if r.changed then
-      s := { s with reached := s.reached ++ r.reached }
+    let (names, said) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
+    let names := startColors.foldl (fun acc start => acc ++ (reach s.theme context es start
+      { fg := said.contains (start ++ ".fg"), bg := said.contains (start ++ ".bg") }).1) names
+    s := { s with reached := s.reached ++ names }
+    -- A site is repainted only when a declaration reaches it: a declared
+    -- parent its element overrides on every channel leaves it as it was.
+    if names.any fun n => es.any fun e => e.name == n && e.declared then
       issues := issues ++ r.issues
       for (key, value) in [(fgKey, r.fg), (bgKey, r.bg)] do
         unless key.isEmpty do

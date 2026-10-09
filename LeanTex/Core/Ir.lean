@@ -5385,6 +5385,13 @@ public structure ListingSpec where
   tabSize : Nat := 8
   /-- FancyVerb/listings default: source lines do not wrap. -/
   breakLines : Bool := false
+  /-- Every code line carries a `\strut`, so its box is that strut's at
+  least, whatever its glyphs: minted's lines under `breaklines`, which
+  fvextra sets each as `\parbox[t]{…}{\noindent\strut … \strut}`
+  (`\FV@ListProcessLine@Break`). Its unbroken lines are bare `\hbox`es,
+  their glyphs' boxes, as verbatim's are. A colour box around the code ends
+  on the last line's box. -/
+  lineStrut : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The declared language as the bare token, `none` when none is declared:

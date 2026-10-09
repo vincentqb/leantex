@@ -161,6 +161,17 @@ private def shapeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   check ref "block geometry: block text stands on the measure"
     (out.pages.all fun page => page.lines.all fun l =>
       l.furniture || lineText l false != letters "Body words here." || l.x == geom.hmargin)
+  -- TeX ships the body box after the title box it overlaps by half a
+  -- point (`\nointerlineskip\vskip-0.5pt`), so the body paints over the
+  -- title's last half point: in paint order every body follows the title
+  -- it meets.
+  let seams := out.pages.flatMap fun page =>
+    page.fills.zipIdx.flatMap fun (bar, i) =>
+      if bar.color != titleColor then #[] else
+        (page.fills.zipIdx.filter fun (body, _) =>
+          body.color == bodyColor && body.y == bar.y + bar.h - Ir.blockSeam).map fun (_, j) => (i, j)
+  check ref "block geometry: a body box paints over the title box it overlaps"
+    (!seams.isEmpty && seams.all fun (i, j) => i < j)
   -- The wrapped title: one box covers both lines, `.75ex` beyond their
   -- TeX boxes, the lines one `\baselineskip` apart.
   match out.pages[4]? with
@@ -282,7 +293,7 @@ private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       ink[1]? != ink[0]? && ink[2]? != ink[0]? && ink[1]? != ink[2]?)
   for (name, src) in #[("usetheme option", pre ++ "\\usetheme[block=fill]{moloch}\n" ++ frame),
       ("molochset", pre ++ "\\usetheme{moloch}\n\\molochset{block=fill}\n" ++ frame),
-      ("metropolisset", pre ++ "\\usetheme{metropolis}\n\\metropolisset{block=fill}\n" ++ frame)] do
+      ("metropolis option", pre ++ "\\usetheme[block=fill]{metropolis}\n" ++ frame)] do
     let (p, i, ds) := blockPaint fonts src
     check ref s!"block colours: the {name} spelling is moloch's own declarations"
       (p == paint && i == ink)
@@ -297,6 +308,62 @@ private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       "\\setbeamercolor{block body}{use=normal text,bg=normal text.bg!90!fg}\n" ++ frame)
   check ref "block colours: the alerted and example bodies inherit the block body"
     (inherited.size == 3 && inherited.all (· == inherited[0]!))
+
+/-- minted's lines under `breaklines` each carry a `\strut` (fvextra's
+`\FV@ListProcessLine@Break`: `\parbox[t]{…}{\noindent\strut … \strut}`), so
+a colour box around the code ends the strut's depth below the last
+baseline, whatever that line's glyphs; unbroken lines are bare `\hbox`es,
+their glyphs' boxes. lualatex paints two such bodies, one ending on
+descenders, 36.3 bp each under `breaklines` and 32.8 and 35.0 bp without. -/
+private def strutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let src (opts : String) :=
+    "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
+    "\\definecolor{probeTitle}{HTML}{C9D6E8}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
+    "\\setbeamercolor{block title}{bg=probeTitle}\n" ++
+    "\\setbeamercolor{block body}{bg=probeSurface}\n\\begin{document}\n" ++
+    "\\begin{frame}[t,fragile]{Struts}\n\\begin{block}{Shallow}\n\\begin{minted}" ++ opts ++
+    "{python}\nabc = def\nabc = mno\n\\end{minted}\n\\end{block}\n" ++
+    "\\begin{block}{Deep}\n\\begin{minted}" ++ opts ++
+    "{python}\nabc = def\nagp = jqy\n\\end{minted}\n\\end{block}\n\\end{frame}\n\\end{document}\n"
+  let bodies (opts : String) : Array Dim.Sp :=
+    (((layout fonts (src opts)).1.pages[0]?.getD ({} : Layout.PageOut)).fills.filter
+      (·.color == bodyColor)).map (·.h)
+  let broken := bodies "[breaklines]"
+  let unbroken := bodies ""
+  check ref s!"block struts: under breaklines a body ends on its last line's strut ({broken})"
+    (broken.size == 2 && broken[0]? == broken[1]?)
+  check ref s!"block struts: unbroken lines end a body on their glyphs ({unbroken})"
+    (unbroken.size == 2 && (match unbroken[0]?, unbroken[1]? with
+      | some a, some b => a < b
+      | _, _ => false))
+
+/-- moloch 2.1.0 loads with no `block` option: its alerted and example
+titles only `use` the block title and their text role
+(`\moloch@setup@block@colors`), keeping the default theme's `parent=alerted
+text` and `parent=example text`, so a fill declared on the text role paints
+their bars there as under the default theme; the `transparent` option
+clears them and `fill` repaints them the block title's. lualatex on this
+frame, all four ways: the two text roles' fills under moloch and the
+default theme, no bar under `transparent`, six grey boxes under `fill`. -/
+private def textGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let decl := "\\definecolor{probeAlert}{HTML}{E4C76B}\n\\definecolor{probeExample}{HTML}{8FD3C1}\n" ++
+    "\\setbeamercolor{alerted text}{bg=probeAlert}\n\\setbeamercolor{example text}{bg=probeExample}\n"
+  let frame := "\\begin{document}\\begin{frame}[t]{Kinds}" ++
+    "\\begin{alertblock}{Loud}A\\end{alertblock}\\begin{exampleblock}{Shown}E\\end{exampleblock}" ++
+    "\\begin{block}{Plain}P\\end{block}\\end{frame}\\end{document}\n"
+  let src (theme : String) := "\\documentclass{beamer}\n" ++ theme ++ decl ++ frame
+  let alertInk : Ir.Color := { r := 0xE4, g := 0xC7, b := 0x6B }
+  let exampleInk : Ir.Color := { r := 0x8F, g := 0xD3, b := 0xC1 }
+  for (name, theme) in [("moloch", "\\usetheme{moloch}\n"), ("the default theme", "")] do
+    let (paint, _, _) := blockPaint fonts (src theme)
+    check ref s!"block text grounds: under {name} the text roles' fills paint the alerted and example bars"
+      (paint == #[alertInk, exampleInk])
+  let (cleared, _, _) := blockPaint fonts (src "\\usetheme[block=transparent]{moloch}\n")
+  check ref "block text grounds: moloch's transparent option clears them" cleared.isEmpty
+  let (filled, _, _) := blockPaint fonts (src "\\usetheme[block=fill]{moloch}\n")
+  check ref "block text grounds: moloch's fill option repaints them the block title's"
+    (filled.size == 6 && filled[0]? == filled[2]? && filled[2]? == filled[4]? &&
+      !filled.contains alertInk && !filled.contains exampleInk)
 
 /-- Each colour theme's own relationships, and only its own. beamer's
 default colour theme (beamercolorthemedefault.sty) leaves the alerted and
@@ -512,6 +579,23 @@ private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr sheet ":is(.step, .step-set):has(> section.block:first-child)")
   check ref "block step wrappers HTML: a wrapper a block closes passes its space below on"
     (hasStr sheet ":is(.step, .step-set):has(> section.block:last-child)")
+  -- A frame opening on a stepped block: the opening rule reads the block's
+  -- space above (`--frame-body-before`) on the frame's first body element,
+  -- here the step's carrier, which therefore declares it.
+  let opening := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{Steps}\n" ++
+    "\\begin{block}<2->{Later}Late words.\\end{block}\n\\end{frame}\n\\end{document}\n"
+  let (doc, _) := Elab.run "block-step-opening.tex" opening
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
+  let starts := (elemAttrsList (fun _ => true) #[] body.toList).filter fun (_, attrs) =>
+    attrs.any fun (k, v) => k == "class" && hasStr v "frame-body-start"
+  check ref "block step wrappers HTML: a frame's opening falls on the step a block opens"
+    (starts.size == 1 && starts.all fun (_, attrs) =>
+      attrs.any fun (k, v) => k == "class" && hasStr v "step")
+  check ref "block step wrappers HTML: that step declares the block's space above"
+    ((sheet.splitOn "\n").any fun l =>
+      hasStr l ":is(.step, .step-set):has(> section.block:first-child)" &&
+        hasStr l "--frame-body-before:" && !hasStr l "margin-top")
 
 /-- beamer's transparent covering mixes every colour a covered step uses
 with the page (`\opaqueness`, beamerbaseoverlay.sty), a block's colour
@@ -567,6 +651,8 @@ def blockGeometryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   shapeChecks ref fonts out
   htmlChecks ref
   colorChecks ref fonts
+  textGroundChecks ref fonts
+  strutChecks ref fonts
   parentChecks ref fonts
   coveredChecks ref fonts
   coveredItemChecks ref fonts

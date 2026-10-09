@@ -1685,9 +1685,11 @@ public def themeCss (doc : Doc) : String :=
   -- A colour box keeps the glue its list holds: no margin collapses
   -- through its edge (beamer's boxes are TeX boxes). A frame's first
   -- block spends its own space above at the frame's opening, where the
-  -- frame's `\vskip-\parskip` stands too: the opening's authored addend.
+  -- frame's `\vskip-\parskip` stands too: the opening's authored addend,
+  -- declared where the opening rule reads it — on the block, or on the
+  -- overlay step's carrier the block opens (`blockAt`).
   "section.block, section.block > .block-body { display: flow-root; }\n" ++
-  s!"section.block \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
+  s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
