@@ -7230,38 +7230,25 @@ fills here have one order, so the skip sets at its natural width" pos
     return some (← synthAt native pos, k)
   | "vskip" =>
     -- TeX's primitive reads its glue unbraced (TeXbook ch. 12) and puts it
-    -- on the vertical list where it stands, as `\vspace` does. The one
-    -- difference, `\vspace`'s closing `\vskip\z@skip`, lets an `\addvspace`
-    -- after it add where after `\vskip` it takes the larger; the skip adds
-    -- here after both. A glue the native reader reads, or `\vfill`'s own
-    -- spelling; a register or an expression stays the unknown command. In
-    -- a definition's body it means what its use makes it mean.
+    -- on the vertical list where it stands, as `\vspace` does, but leaves
+    -- its own glue as the last skip where `\vspace` closes on
+    -- `\vskip\z@skip`: the native skip's `kind = vskip` says so, and an
+    -- element's `\addvspace` after it takes the larger. A glue the native
+    -- reader reads, or `\vfill`'s own spelling (`skipSrc`); a register or an
+    -- expression stays the unknown command. In a definition's body it
+    -- means what its use makes it mean.
     if (← get).inDef then return none
     let v0 := skipSpaces raws start
     let e := glueEnd raws v0
     let src := lengthSrc (raws.extract v0 e)
-    let value? : Option String :=
-      if e ≤ v0 then none
-      else if (Decl.parseGlue src).isSome then some src
-      else match src.splitOn " plus " with
-        | [w, s] =>
-          match Decl.parseLength w, Decl.filFactor? s with
-          | some l, some ((m, sc), order) =>
-            -- `\vfill`'s own glue is the engine's one infinite stretch. A
-            -- stretch of another order or factor ranks against the page's
-            -- other infinite glues, which the engine does not tell apart:
-            -- it sets at its natural width, named.
-            if l == {} && order == 2 && m == (sc : Int) then some "fill"
-            else some (w.trimAscii.toString)
-          | _, _ => none
-        | _ => none
-    let some value := value? | return none
-    if value != "fill" && (Decl.parseGlue src).isNone then
+    let (value, unranked) := skipSrc src
+    if e ≤ v0 || (value != "fill" && (Decl.parseGlue value).isNone) then return none
+    if unranked then
       sayOnce "ctrl:vskip:fil" .W0104
         s!"'\\vskip {src}' has an infinite stretch of an order or factor other than \\vfill's; \
 fills here have one order, so the skip sets at its natural width" pos
         (help := "write \\vfill for the page's leftover")
-    let native := s!"\\block[before = {value}]\{}"
+    let native := s!"\\block[before = {value}, kind = vskip]\{}"
     became "\\vskip" native pos
     return some (← synthAt native pos, e)
   | "newpage" | "clearpage" =>

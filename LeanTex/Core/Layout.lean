@@ -10548,6 +10548,26 @@ private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
   have h := addvspace_zero_adds_exact (a.vspace v) g {} (by simp [Spacing.Pending.vspace]) rfl
   exact ⟨h, h, h⟩
 
+/-- After a primitive `\vskip` (`Ir.primitiveSkipRole`, the mark just after
+its skip): the zero `\vspace` closes on (`Spacing.Pending.vspace`) is not on
+the list, so the skip is the last glue an `\addvspace` compares with, and
+the larger of the two stands (`addvspace_after_vskip_exact`), as
+latex.ltx's `\@xaddvskip` takes it. -/
+private def Spacing.Pending.primitiveSkip (a : Acc) : Acc :=
+  let drop (o : Array Glue) : Array Glue := if o.back? = some {} then o.pop else o
+  { a with owed := drop a.owed, dispAlt := a.dispAlt.map drop }
+
+/-- **An element's space after a primitive `\vskip` takes the larger**
+(`_exact`): where the skip is not zero and no narrower than the element's
+own space, the owed glue is the skip alone — measured under lualatex, a
+centred block after `\vskip 12pt` moves by 12 pt less its own `\topsep`, not
+by 12 pt. -/
+private theorem addvspace_after_vskip_exact (a : Acc) (v g : Glue) (hv : v.width ≠ 0)
+    (hg : ¬ v.width < g.width) :
+    (((a.vspace v).primitiveSkip).addvspace g).owed = a.owed.push v := by
+  simp [Spacing.Pending.primitiveSkip, Spacing.Pending.vspace, Spacing.Pending.addvspace,
+    hv, hg]
+
 /-- The glue one boundary pays: the declared glue owed, and — when a
 document skip stands in it at a peer boundary — the page's parskip *on top
 of* it. A paragraph break has two independent contributors and TeX pays
@@ -14056,6 +14076,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- next (`Spacing.Pending.flushAnchored`), and `\nointerlineskip` is the next box's.
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
     else if n == Ir.noInterlineRole then { a with ops := a.ops.push .noInterline }
+    else if n == Ir.primitiveSkipRole then a.primitiveSkip
     else
     let st := r.style n
     let a := match st.before with
@@ -14440,14 +14461,16 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   have hpa : (n == Ir.pageAnchorRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.1
   have hni : (n == Ir.noInterlineRole) = false := by
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.2
+  have hps : (n == Ir.primitiveSkipRole) = false := by
     simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.2
   have hop : Ir.pageOpeningOfRole? n = none := by
     simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
     exact Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hpm.2)
-  simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hdc, hop,
-    Bool.false_eq_true, ite_false]
+  simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
+    hdc, hop, Bool.false_eq_true, ite_false]
 
 /-- Collection carries the shared opening value to placement verbatim:
 the backend has no second reading of the titlepage's boundary spelling. -/

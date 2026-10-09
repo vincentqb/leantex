@@ -230,9 +230,10 @@ glue — 7 pt between paragraphs, and mid-paragraph too, where the vertical
 command ends the paragraph (a `\vspace` there is a `\vadjust` and keeps it),
 -3 pt for a negative skip, and `3pt plus2pt` or `3pt minus1pt` by 3 pt — and
 `\vskip 0pt plus 1fill` is `\vfill`, spelled `\vskip0pt plus1fill` too. One
-difference stays owed: an `\addvspace` after `\vskip` takes the larger, so
-lualatex moves a centred block after `\vskip 12pt` by 4 pt (its `\topsep`
-is 8 pt) where the engine adds the skip whole. -/
+difference: an element's `\addvspace` after `\vskip` takes the larger, where
+after `\vspace`, which closes on `\vskip\z@skip`, it adds — lualatex moves a
+centred block after `\vskip 12pt` by 4 pt, the skip less the block's own
+8 pt `\topsep`, and after `\vspace{12pt}` by 12. -/
 private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
   let cases := [("between paragraphs", "\n\n\\vskip 7pt\n\n", 7),
@@ -263,10 +264,18 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   check ref "block skips: \\vskip0pt plus1fill stands where \\vfill stands"
     ((fillOf "\\vskip0pt plus1fill").isSome && fillOf "\\vskip0pt plus1fill" == fillOf "\\vfill")
   let centred := document "" [frame (para ++ "\n\n" ++ below "centred"),
-    frame (para ++ "\n\n\\vskip 12pt\n\n" ++ below "centred")]
-  let (pages, _) := pagesOf fonts centred
-  check ref "owed: \\vskip before a centred block adds 12 pt where TeX takes the larger, 4 pt"
-    (((pages[0]?.bind span).bind fun d0 => (pages[1]?.bind span).map (· - d0)) == some (Dim.pt 12))
+    frame (para ++ "\n\n\\vskip 12pt\n\n" ++ below "centred"),
+    frame (para ++ "\n\n\\vspace{12pt}\n\n" ++ below "centred")]
+  let (pages, doc) := pagesOf fonts centred
+  let size := doc.page.fontSize
+  let topsep := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens size 0).width.resolve
+    size (size / 2)
+  let moved (i : Nat) : Option Dim.Sp := do
+    pure ((← pages[i]?.bind span) - (← pages[0]?.bind span))
+  check ref s!"block skips: a centred block's space after \\vskip 12pt is the larger, the skip less its own {spMilli topsep}, got {(moved 1).map spMilli}"
+    (moved 1 == some (Dim.pt 12 - topsep))
+  check ref s!"block skips: a centred block's space after \\vspace\{12pt} adds, 12 pt, got {(moved 2).map spMilli}"
+    (moved 2 == some (Dim.pt 12))
 
 /-- A declaration's value in an inline style. -/
 private def styleDecl (style name : String) : Option String :=
@@ -436,8 +445,8 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
     check ref s!"block skips: a skip inside {name} builds, got {(diags.filter (·.severity == .error)).map (·.code)}"
       (diags.all (·.severity != .error))
-    check ref s!"block skips: a skip inside {name} is named once, W0329"
-      ((diags.filter (·.code == "W0329")).size == 1)
+    check ref s!"block skips: a skip inside {name} is named once, W0329, and nothing of it unknown"
+      ((diags.filter (·.code == "W0329")).size == 1 && diags.all (·.code != "W0301"))
     check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
       (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
   let titled := document "" ["\\begin{frame}[t]{Frame \\vskip 3pt title}Words.\\end{frame}\n"]
@@ -464,6 +473,11 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let (fill, diags) := pageOf "\\vskip 0pt plus 1fill"
   check ref "block skips: \\vskip 0pt plus 1fill is \\vfill, unnamed"
     (fill.isSome && fill != natural && diags.all (·.code != "W0104"))
+  -- The skip door reads `\\vspace`'s argument the same way.
+  let (vnatural, _) := pageOf "\\vspace{0pt}"
+  let (vfil, vdiags) := pageOf "\\vspace{0pt plus 1fil}"
+  check ref "block skips: \\vspace{0pt plus 1fil} sets at its natural width, named once"
+    (vfil.isSome && vfil == vnatural && (vdiags.filter (·.code == "W0104")).size == 1)
 
 /-- The sheet's rules for a skip box where its follower's term is not the
 one the generic boundary assumes: a skip opening an untitled frame pays the

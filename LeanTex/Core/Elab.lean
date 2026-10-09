@@ -11388,6 +11388,37 @@ LaTeX reads there. Outside the elaboration knot, as `pageMark?` is. -/
 private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
   ctx.tokens.entries ++ ctx.engineTokens
 
+/-- A `\block`'s option, read: its `before` skip, and whether the skip is
+TeX's primitive `\vskip` (`kind = vskip`, the spelling Compat's `\vskip`
+door writes) — its glue stays the last skip an element's `\addvspace`
+compares with (`Ir.primitiveSkipRole`) — rather than `\vspace`'s
+(`kind = vspace`, the default). Outside the elaboration knot, whose arm
+keeps only the bracket scan. -/
+private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × Bool) := do
+  let (opts, ds) := Decl.parseBlock ctx.file (rawSrc optSrc) pos "block" (blockSkipTokens ctx)
+  modify fun st => { st with diags := st.diags ++ ds }
+  let mut before : SymGlue := {}
+  let mut primitive := false
+  for e in opts do
+    match e.key, e.value with
+    | "before", .glue g => before := g
+    | "before", .dim d => before := { width := Dim.Length.ofSp d }
+    | "kind", .ident "vskip" => primitive := true
+    | "kind", .ident "vspace" => primitive := false
+    | key, v =>
+      let d := if key == "before" then Decl.wrongType ctx.file "block" key "a length" v pos
+        else if key == "kind" then Decl.wrongType ctx.file "block" key "vspace or vskip" v pos
+        else Decl.unknownKey ctx.file "block" key ["before", "kind"] pos
+      modify fun st => { st with diags := st.diags.push d }
+  return (before, primitive)
+
+/-- A skip block, and after it, where it is TeX's primitive `\vskip`, the
+page-model mark that keeps its glue the last skip (`Ir.primitiveSkipRole`). -/
+private def pushSkipBlock (blocks : Array Block) (b : Block) (primitive : Bool) : Array Block :=
+  if primitive then (blocks.push b).push (.role Ir.primitiveSkipRole #[]) else blocks.push b
+
+seal blockSkipTokens blockOptions pushSkipBlock
+
 /-- The page-model marks a control word stands for between blocks: the
 declared boundary `\pagebreak` names, `\vspace*`'s anchor
 (`Compat.vspaceAnchorMark`, which no document spells) and
@@ -13055,7 +13086,7 @@ a side channel, never slide content" cpos
         -- \block[before = <len>]{content}
         let j0 := skipSpaces raws (i + 1)
         have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
-        let ⟨(before, jf), hjf⟩ : { t : SymGlue × Nat // i + 1 ≤ t.2 } ←
+        let ⟨((before, primitive), jf), hjf⟩ : { t : (SymGlue × Bool) × Nat // i + 1 ≤ t.2 } ←
           if let some (.sym '[' _) := raws[j0]? then do
             let ⟨(optSrc, k), hk⟩ : { t : Array Raw × Nat // i + 1 ≤ t.2 } :=
               match hc : closeBracketFrom raws (j0 + 1) with
@@ -13063,29 +13094,13 @@ a side channel, never slide content" cpos
                   have := closeBracketFrom_ge hc; omega⟩
               | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
             have hk2 : i + 1 ≤ k := hk
-            let (opts, ds) := Decl.parseBlock ctx'.file (rawSrc optSrc) cpos
-              "block" (blockSkipTokens ctx')
-            modify fun st => { st with diags := st.diags ++ ds }
-            let mut before : SymGlue := {}
-            for e in opts do
-              match e.key, e.value with
-              | "before", .glue g => before := g
-              | "before", .dim d => before := { width := Dim.Length.ofSp d }
-              | key, v =>
-                if key == "before" then
-                  modify fun st => { st with
-                    diags := st.diags.push (Decl.wrongType ctx'.file "block" key
-                      "a length" v cpos) }
-                else
-                  modify fun st => { st with
-                    diags := st.diags.push (Decl.unknownKey ctx'.file "block" key
-                      ["before"] cpos) }
-            pure ⟨(before, skipSpaces raws k), by
+            let opt ← blockOptions ctx' optSrc cpos
+            pure ⟨(opt, skipSpaces raws k), by
               have := skipSpaces_ge raws k
               show i + 1 ≤ skipSpaces raws k
               omega⟩
           else
-            pure ⟨({}, j0), hj0⟩
+            pure ⟨(({}, false), j0), hj0⟩
         have hjf2 : i + 1 ≤ jf := hjf
         match hgf : raws[jf]? with
         | some (.group body _) =>
@@ -13110,7 +13125,7 @@ a side channel, never slide content" cpos
           have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
             slicePars_le raws (by omega)
           elabBlocksGo ctx' raws (jf + 1)
-            (blocks.push (.spaced (Ir.Sourced.bare before) inner)) #[] gen'
+            (pushSkipBlock blocks (.spaced (Ir.Sourced.bare before) inner) primitive) #[] gen'
         | _ =>
           diag ctx' .E0304 "'\\block' needs a {body}" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
@@ -13180,6 +13195,7 @@ public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
   ⟨_, rfl⟩
 
 unseal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
+unseal blockSkipTokens blockOptions pushSkipBlock
 unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
 unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix

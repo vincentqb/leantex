@@ -1031,6 +1031,14 @@ public def pageAnchorRole : String := "page-anchor"
 interline glue (TeXbook ch. 12). A fact of the paged artifact alone. -/
 public def noInterlineRole : String := "no-interline"
 
+/-- The role a primitive `\vskip` rides in, an empty marker just after its
+skip: TeX's `\vskip` leaves its own glue as `\lastskip`, where `\vspace`
+leaves zero (latex.ltx's `\@vspace` closes on `\vskip\z@skip`), so an
+element's `\addvspace` after it takes the larger of the two (`\@xaddvskip`)
+instead of adding. A fact of the paged artifact's skip arithmetic. A name no
+document command can spell (it carries a space). -/
+public def primitiveSkipRole : String := "primitive vskip"
+
 
 /-- A declaration at a page boundary, independent of the page's ground and
 vertical distribution. `empty` suppresses running furniture on one shipped
@@ -1096,7 +1104,8 @@ public theorem titlepage_empty_exact (s : PageState) :
 /-- The engine roles that mark a fact of the page model and carry no
 content: HTML, markdown and the structure tree read them as nothing. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
-  n == pageAnchorRole || n == noInterlineRole || (pageOpeningOfRole? n).isSome
+  n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
+    (pageOpeningOfRole? n).isSome
 
 /-- Every declared opening is a page-model mark, with no continuous-medium
 content of its own. HTML projects this fact instead of interpreting a
